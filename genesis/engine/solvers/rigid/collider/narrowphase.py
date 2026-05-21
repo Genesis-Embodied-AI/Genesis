@@ -132,6 +132,89 @@ def func_contact_vertex_sdf(
 
 
 @qd.func
+def func_contact_nonconvex_convex_sdf(
+    i_ga,
+    i_gb,
+    i_b,
+    ga_pos: qd.types.vector(3, dtype=gs.qd_float),
+    ga_quat: qd.types.vector(4, dtype=gs.qd_float),
+    gb_pos: qd.types.vector(3, dtype=gs.qd_float),
+    gb_quat: qd.types.vector(4, dtype=gs.qd_float),
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_static_config: qd.template(),
+    sdf_info: array_class.SDFInfo,
+):
+    # Contact between geoms in a mixed-convexity pair where A is the smaller-AABB side (whether convex or not) and B
+    # is the other side, used in lieu of the symmetric two-pass dispatch of func_narrow_phase_nonconvex_vs_nonterrain.
+    # A's vertex enumeration alone finds the deepest penetration into B - in a mixed pair the smaller geom is always
+    # the one penetrating the larger - and skipping the other side's O(n_verts) scan kills the cost that dominates
+    # when the larger side is a static mesh with many tens of thousands of vertices. A bounding-sphere-vs-SDF coarse
+    # reject at A's centre mirrors MPR's "if no support certifies overlap, exit" pattern: every point of A lies within
+    # rbound_a of geoms_info.center[i_ga], so when B's SDF at A's centre exceeds rbound_a no point of A can reach B's
+    # zero level set and the entire vertex scan is skipped.
+    is_col = False
+    penetration = gs.qd_float(0.0)
+    normal = qd.Vector.zero(gs.qd_float, 3)
+    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+
+    # rbound_a is the radius of the smallest sphere centred at geoms_info.center[i_ga] that contains A's AABB.
+    # func_compute_geom_rbound returns half the AABB diagonal, which is correct only when the geom centre coincides
+    # with the AABB midpoint - true for primitives but not for arbitrary decomposed convex mesh pieces, whose centroid
+    # (used as geoms_info.center by MPR) is offset. Iterating the 8 AABB corners gives the tight per-centre bound and
+    # ensures the reject test never discards a pair whose vertices could still be inside B.
+    center_local = geoms_info.center[i_ga]
+    rbound_a_sq = gs.qd_float(0.0)
+    for k in qd.static(range(8)):
+        delta = geoms_init_AABB[i_ga, k] - center_local
+        d_sq = delta.dot(delta)
+        if d_sq > rbound_a_sq:
+            rbound_a_sq = d_sq
+    rbound_a = qd.sqrt(rbound_a_sq)
+
+    # The reject is only valid when the SDF value at A's centre is the true distance to B's surface. For SPHERE and
+    # PLANE B that is the analytical branch of sdf_func_world_local - exact everywhere. For grid-based SDFs the query
+    # returns the true trilinear interpolation only when the point falls inside the SDF grid; outside the grid
+    # sdf_func_world_local routes to sdf_func_proxy_sdf, which returns ||P - grid_center||_world + sdf_max. That proxy
+    # is NOT a one-sided bound on true_sdf: with R_mesh the mesh's bounding radius from grid_center, the gap
+    # proxy - true_sdf lies in [sdf_max - R_mesh, sdf_max + R_mesh]. Typical grids use a 20% padding so
+    # sdf_max ~ 0.2*R_mesh < R_mesh, and the proxy can overestimate true_sdf by up to ~1.2*R_mesh - large enough to
+    # satisfy proxy > rbound_a while true_sdf < rbound_a, silently missing a real contact. Falling through to the
+    # vertex scan when outside the grid costs at most one extra func_contact_vertex_sdf pass on the smaller side and
+    # keeps the reject correct in all cases.
+    center_a_world = gu.qd_transform_by_trans_quat(center_local, ga_pos, ga_quat)
+    # SPHERE B has an analytical SDF; grid-based B is only safe when the query point falls inside the grid.
+    can_use_sd_reject = geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
+    if not can_use_sd_reject:
+        pos_mesh = gu.qd_inv_transform_by_trans_quat(center_a_world, gb_pos, gb_quat)
+        pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[i_gb])
+        can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, i_gb)
+    sd_center = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_world, i_gb, gb_pos, gb_quat)
+
+    if (not can_use_sd_reject) or sd_center <= rbound_a:
+        is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
+            i_ga,
+            i_gb,
+            i_b,
+            ga_pos,
+            ga_quat,
+            gb_pos,
+            gb_quat,
+            geoms_state,
+            geoms_info,
+            verts_info,
+            rigid_global_info,
+            collider_static_config,
+            sdf_info,
+        )
+
+    return is_col, normal, penetration, contact_pos
+
+
+@qd.func
 def func_contact_edge_sdf(
     i_ga,
     i_gb,
@@ -2559,6 +2642,22 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                     if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
                         i_ga, i_gb = i_gb, i_ga
 
+                    # Non-plane pair: iterate the smaller-AABB side's vertices only, gated by a bounding-sphere-vs-SDF
+                    # coarse reject. The smaller side is the one that actually penetrates into the larger - true for a
+                    # small convex primitive inside a large non-convex mesh (spacecraft scene), for a small non-convex
+                    # object resting on a larger decomposed-convex piece (spoon on table), and for a small non-convex
+                    # object resting on a larger non-convex mesh (spoon on spacecraft). The convexity of either side
+                    # is not load-bearing: the smaller side's vertices are dense enough relative to the contact patch
+                    # to capture the deepest penetration in practice, while the larger side's scan only wastes time
+                    # iterating verts that are far from any contact. Plane has no bounded support so it stays on the
+                    # symmetric two-pass path.
+                    small_side_only = geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE
+                    if small_side_only:
+                        diag_a_sq = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]).norm_sqr()
+                        diag_b_sq = (geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]).norm_sqr()
+                        if diag_a_sq > diag_b_sq:
+                            i_ga, i_gb = i_gb, i_ga
+
                     is_col = False
                     tolerance = func_compute_tolerance(
                         i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
@@ -2566,32 +2665,53 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
 
                     for i in range(2):
                         if i == 1:
+                            if small_side_only:
+                                break
                             i_ga, i_gb = i_gb, i_ga
 
                         # initial point
                         is_col_i = False
                         normal_i = qd.Vector.zero(gs.qd_float, 3)
                         contact_pos_i = qd.Vector.zero(gs.qd_float, 3)
+                        penetration_i = gs.qd_float(0.0)
                         if not is_col:
                             ga_pos = geoms_state.pos[i_ga, i_b]
                             ga_quat = geoms_state.quat[i_ga, i_b]
                             gb_pos = geoms_state.pos[i_gb, i_b]
                             gb_quat = geoms_state.quat[i_gb, i_b]
-                            is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
-                                i_ga,
-                                i_gb,
-                                i_b,
-                                ga_pos,
-                                ga_quat,
-                                gb_pos,
-                                gb_quat,
-                                geoms_state,
-                                geoms_info,
-                                verts_info,
-                                rigid_global_info,
-                                collider_static_config,
-                                sdf_info,
-                            )
+                            if small_side_only:
+                                is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_nonconvex_convex_sdf(
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    ga_pos,
+                                    ga_quat,
+                                    gb_pos,
+                                    gb_quat,
+                                    geoms_state,
+                                    geoms_info,
+                                    geoms_init_AABB,
+                                    verts_info,
+                                    rigid_global_info,
+                                    collider_static_config,
+                                    sdf_info,
+                                )
+                            else:
+                                is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    ga_pos,
+                                    ga_quat,
+                                    gb_pos,
+                                    gb_quat,
+                                    geoms_state,
+                                    geoms_info,
+                                    verts_info,
+                                    rigid_global_info,
+                                    collider_static_config,
+                                    sdf_info,
+                                )
                             if is_col_i:
                                 contact_pos_i = func_apply_smooth_refinement(
                                     i_ga,
@@ -2662,21 +2782,43 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                         gb_pos_original, gb_quat_original, contact_pos_i, gu.qd_inv_quat(qrot)
                                     )
 
-                                    is_col_mc, normal, penetration, contact_pos = func_contact_vertex_sdf(
-                                        i_ga,
-                                        i_gb,
-                                        i_b,
-                                        ga_pos_perturbed,
-                                        ga_quat_perturbed,
-                                        gb_pos_perturbed,
-                                        gb_quat_perturbed,
-                                        geoms_state,
-                                        geoms_info,
-                                        verts_info,
-                                        rigid_global_info,
-                                        collider_static_config,
-                                        sdf_info,
-                                    )
+                                    is_col_mc = False
+                                    penetration = gs.qd_float(0.0)
+                                    normal = qd.Vector.zero(gs.qd_float, 3)
+                                    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+                                    if small_side_only:
+                                        is_col_mc, normal, penetration, contact_pos = func_contact_nonconvex_convex_sdf(
+                                            i_ga,
+                                            i_gb,
+                                            i_b,
+                                            ga_pos_perturbed,
+                                            ga_quat_perturbed,
+                                            gb_pos_perturbed,
+                                            gb_quat_perturbed,
+                                            geoms_state,
+                                            geoms_info,
+                                            geoms_init_AABB,
+                                            verts_info,
+                                            rigid_global_info,
+                                            collider_static_config,
+                                            sdf_info,
+                                        )
+                                    else:
+                                        is_col_mc, normal, penetration, contact_pos = func_contact_vertex_sdf(
+                                            i_ga,
+                                            i_gb,
+                                            i_b,
+                                            ga_pos_perturbed,
+                                            ga_quat_perturbed,
+                                            gb_pos_perturbed,
+                                            gb_quat_perturbed,
+                                            geoms_state,
+                                            geoms_info,
+                                            verts_info,
+                                            rigid_global_info,
+                                            collider_static_config,
+                                            sdf_info,
+                                        )
 
                                     if is_col_mc:
                                         contact_pos = func_apply_smooth_refinement(
