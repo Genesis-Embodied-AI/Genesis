@@ -1104,7 +1104,9 @@ def _ellipsoid_mjcf_path(tmp_path, semi_axes):
         ("sphere", "prim", "terrain"),
         ("sphere", "prim", "nonconvex"),
         ("sphere", "mesh", "mesh"),
+        ("sphere", "nonconvex", "prim"),
         ("sphere", "nonconvex", "nonconvex"),
+        ("sphere", "nonconvex", "plane"),
     ],
 )
 @pytest.mark.parametrize("gjk_collision", [False, True])
@@ -1124,7 +1126,6 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
     tilt_axis = np.array([1.0, 1.0, 0.0]) / math.sqrt(2.0)
     tilt_quat = gu.rotvec_to_quat(math.radians(WORLD_TILT_ANGLE) * tilt_axis)
     R = gu.quat_to_R(tilt_quat)
-    terrain_pos_world = R @ np.array([-BOX_HALF_EXTENT, -BOX_HALF_EXTENT, HEIGHT])
     box_pos_world = R @ np.array([0.0, 0.0, 0.5 * HEIGHT])
     gravity_world = R @ np.array([0.0, 0.0, -9.81])
 
@@ -1162,6 +1163,7 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
         box.geoms[0]._is_convex = is_ground_convex
     elif ground_type == "terrain":
         flat_hf = np.zeros((2, 2), dtype=np.float32)
+        terrain_pos_world = R @ np.array([-BOX_HALF_EXTENT, -BOX_HALF_EXTENT, HEIGHT])
         scene.add_entity(
             morph=gs.morphs.Terrain(
                 horizontal_scale=2.0 * BOX_HALF_EXTENT,
@@ -1169,6 +1171,15 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
                 height_field=flat_hf,
                 pos=terrain_pos_world,
                 quat=tilt_quat,
+            ),
+        )
+    elif ground_type == "plane":
+        plane_pos_world = R @ np.array([0.0, 0.0, HEIGHT])
+        scene.add_entity(
+            morph=gs.morphs.Plane(
+                pos=plane_pos_world,
+                quat=tilt_quat,
+                fixed=True,
             ),
         )
     else:  # if ground_type == "prim":
