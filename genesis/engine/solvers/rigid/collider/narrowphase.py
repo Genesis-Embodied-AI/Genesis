@@ -128,6 +128,11 @@ def func_add_polytope_vertex_contacts_sdf(
     # The reject is gated on can_use_sd_reject: only valid when the SDF query returns the true trilinear interpolation,
     # i.e. SPHERE B (analytical) or grid B with the query point inside the grid - outside the grid
     # sdf_func_world_local falls back to a proxy that can over-report distance and silently miss a contact.
+    # A directional bound (SAT projection of A's AABB onto the SDF gradient direction at A's centre) was tried for
+    # extra reject coverage on elongated A (e.g. spoons) approaching a flat face of B, but is unsafe on nonconvex B:
+    # the centre gradient is only a local linearisation, so an A vertex on the opposite side can still reach a
+    # different feature of B that the centre direction points away from. Without a cheap multi-feature detection
+    # criterion (Lipschitz-tight sampling reduces back to rbound_a), the bounding sphere stays as the only safe reject.
     center_local = geoms_info.center[i_ga]
     rbound_a_sq = gs.qd_float(0.0)
     for k in qd.static(range(8)):
@@ -181,12 +186,12 @@ def func_add_polytope_vertex_contacts_sdf(
                             top_iv[weakest_idx] = i_v
 
         # Pass 2: emit contacts at the selected vertices. Reference normal is the grid SDF gradient sampled at A's
-        # center, which gives a stable per-patch direction whenever A is small relative to B's features. Per-vertex
-        # grads agreeing with that reference (positive dot product) are kept verbatim - this is what allows an A wedged
-        # at a concave L-corner to expose both axis-aligned face normals (floor + wall). A per-vertex grad that opposes
-        # the reference indicates the vertex is closer to B's OPPOSITE surface across a thin feature, i.e. A has
-        # partially tunneled through; using its raw grad would push A further through, so we fall back to the reference
-        # direction.
+        # center, which gives a stable per-patch normal whenever A is small relative to B's features. Per-vertex
+        # grads agreeing with that reference (positive dot product) are kept verbatim - this is what allows an A
+        # wedged at a concave L-corner to expose both axis-aligned face normals (floor + wall). A per-vertex grad
+        # that opposes the reference indicates the vertex is closer to B's OPPOSITE surface across a thin feature,
+        # i.e. A has partially tunneled through; using its raw grad would push A further through, so we fall back
+        # to the reference direction.
         grad_center = sdf.sdf_func_grad_world_local(
             geoms_info, rigid_global_info, collider_static_config, sdf_info, center_a_world, i_gb, gb_pos, gb_quat
         )
