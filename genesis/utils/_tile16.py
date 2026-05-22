@@ -16,6 +16,8 @@ The distinct class name keeps it cleanly separated from quadrants' stock
 tracked by its own slice-dispatch cache. Callers that consume this class therefore
 use explicit `_load3d` / `_store3d` / `_resolve_vec3d` / `_ger_sub` methods instead
 of the `tile[:] = arr[r:r2, c:c2]` slice syntax.
+
+FIXME: move the changes in this file back into Quadrants.
 """
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING

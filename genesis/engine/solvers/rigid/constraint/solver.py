@@ -1900,6 +1900,9 @@ def func_cholesky_factor_direct_tiled(
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
             L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            # FIXME: migrate back to using slice index, i.e. L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+            # and similar.
+            # We'll do this once we move _tile16.py changes back into Quadrants.
             L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
