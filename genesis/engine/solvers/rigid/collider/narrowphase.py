@@ -78,6 +78,199 @@ def func_contact_sphere_sdf(
 
 
 @qd.func
+def func_add_polytope_vertex_contacts_sdf(
+    i_ga,
+    i_gb,
+    i_b,
+    i_pair,
+    ga_pos: qd.types.vector(3, dtype=gs.qd_float),
+    ga_quat: qd.types.vector(4, dtype=gs.qd_float),
+    gb_pos: qd.types.vector(3, dtype=gs.qd_float),
+    gb_quat: qd.types.vector(4, dtype=gs.qd_float),
+    tolerance,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_static_config: qd.template(),
+    sdf_info: array_class.SDFInfo,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    errno: qd.Tensor,
+):
+    # Multi-contact generation for the n_max deepest of A's vertices penetrating (or near-touching) B's surface. Pass 1
+    # scans every vertex of A and keeps the n_max with the largest grid-SDF penetration in a small sorted buffer
+    # (descending pen). Pass 2 re-evaluates the gradient at each kept vertex and emits a contact. Picking the deepest
+    # verts is required for meshes with many verts (e.g. spoons or fine-tessellated balls): a first-N-in-iteration-order
+    # scheme picks arbitrary body verts with shallow pen instead of the bottom of the geom in contact, starving the
+    # solver of normal-force capacity and letting A sink through B. The margin is sized to B's smallest SDF cell, the
+    # upper bound on grid resolution. Each vertex's contact normal and pen come from either B's grid SDF (when the local
+    # gradient is well-defined) or a geometric fallback (when trilinear interpolation has smoothed the grid across a
+    # feature and produces an unreliable gradient direction with a small magnitude). The fallback emits a bounded
+    # synthetic pen so the solver registers the contact and applies a reaction force even where the kernel reports
+    # pen <= 0.
+    n_max = qd.static(collider_static_config.n_contacts_per_pair)
+    EPS = rigid_global_info.EPS[None]
+    gb_cell = sdf_info.geoms_info.sdf_cell_size[i_gb]
+    margin = qd.min(qd.min(gb_cell[0], gb_cell[1]), gb_cell[2])
+    # Synthetic pen used when the kernel reports the vertex outside B but still within the margin band. The constraint
+    # solver applies a position correction proportional to pen; using a value scaled smoothly to zero at the outer edge
+    # of the band avoids the discontinuity that drives a settled body into a sustained limit-cycle oscillation when its
+    # corners hover just inside the band edge.
+    synthetic_pen_max = 1e-4
+
+    # Bounding-sphere-vs-SDF coarse reject at A's centre, mirroring func_contact_nonconvex_convex_sdf. Every point of A
+    # lies within rbound_a of geoms_info.center[i_ga]; when B's SDF at A's centre exceeds rbound_a no point of A can
+    # reach B's zero level set, so the O(n_verts) scan is skipped. rbound_a comes from the tightest sphere around A's
+    # AABB centred at A's geom centre (the centre is not necessarily the AABB midpoint for decomposed convex pieces).
+    # The reject is gated on can_use_sd_reject: only valid when the SDF query returns the true trilinear interpolation,
+    # i.e. SPHERE B (analytical) or grid B with the query point inside the grid - outside the grid
+    # sdf_func_world_local falls back to a proxy that can over-report distance and silently miss a contact.
+    center_local = geoms_info.center[i_ga]
+    rbound_a_sq = gs.qd_float(0.0)
+    for k in qd.static(range(8)):
+        delta = geoms_init_AABB[i_ga, k] - center_local
+        d_sq = delta.dot(delta)
+        if d_sq > rbound_a_sq:
+            rbound_a_sq = d_sq
+    rbound_a = qd.sqrt(rbound_a_sq)
+    center_a_world = gu.qd_transform_by_trans_quat(center_local, ga_pos, ga_quat)
+    can_use_sd_reject = geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
+    if not can_use_sd_reject:
+        pos_mesh = gu.qd_inv_transform_by_trans_quat(center_a_world, gb_pos, gb_quat)
+        pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[i_gb])
+        can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, i_gb)
+    sd_center = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_world, i_gb, gb_pos, gb_quat)
+
+    n_added = 0
+    if (not can_use_sd_reject) or sd_center <= rbound_a:
+        # Pass 1: select the n_max deepest spatially-diverse vertices of A by grid SDF pen. A bare top-N pen would
+        # cluster on the lowest pole of a tessellated sphere or the tip of a spoon, then pass-2's same-position dedup
+        # would collapse them to a single contact - too little force-capacity to stop A from tunneling on the next step.
+        # The insertion rule keeps the buffer's verts at least `tolerance` apart in world space: a candidate close to an
+        # existing entry replaces that entry only when deeper, otherwise it displaces the weakest entry of the buffer.
+        top_iv = qd.Vector.zero(gs.qd_int, n_max)
+        top_pen = qd.Vector.zero(gs.qd_float, n_max)
+        for k in qd.static(range(n_max)):
+            top_pen[k] = -gs.qd_float(1e30)
+            top_iv[k] = -1
+        for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
+            vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
+            if func_point_in_geom_aabb(geoms_state, i_gb, i_b, vertex_pos):
+                pen_v = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
+                if pen_v > -margin:
+                    close_idx = -1
+                    for k in qd.static(range(n_max)):
+                        if close_idx < 0 and top_iv[k] >= 0:
+                            other_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[top_iv[k]], ga_pos, ga_quat)
+                            if (vertex_pos - other_pos).norm() < tolerance:
+                                close_idx = k
+                    if close_idx >= 0:
+                        if pen_v > top_pen[close_idx]:
+                            top_pen[close_idx] = pen_v
+                            top_iv[close_idx] = i_v
+                    else:
+                        weakest_idx = 0
+                        for k in qd.static(range(1, n_max)):
+                            if top_pen[k] < top_pen[weakest_idx]:
+                                weakest_idx = k
+                        if pen_v > top_pen[weakest_idx]:
+                            top_pen[weakest_idx] = pen_v
+                            top_iv[weakest_idx] = i_v
+
+        # Pass 2: emit contacts at the selected vertices. Reference normal is the grid SDF gradient sampled at A's
+        # center, which gives a stable per-patch direction whenever A is small relative to B's features. Per-vertex
+        # grads agreeing with that reference (positive dot product) are kept verbatim - this is what allows an A wedged
+        # at a concave L-corner to expose both axis-aligned face normals (floor + wall). A per-vertex grad that opposes
+        # the reference indicates the vertex is closer to B's OPPOSITE surface across a thin feature, i.e. A has
+        # partially tunneled through; using its raw grad would push A further through, so we fall back to the reference
+        # direction.
+        grad_center = sdf.sdf_func_grad_world_local(
+            geoms_info, rigid_global_info, collider_static_config, sdf_info, center_a_world, i_gb, gb_pos, gb_quat
+        )
+        normal_center = gu.qd_normalize(grad_center, EPS)
+        for k in qd.static(range(n_max)):
+            if top_iv[k] >= 0:
+                i_v = top_iv[k]
+                vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
+                pen_v = top_pen[k]
+                grad_v = sdf.sdf_func_grad_world_local(
+                    geoms_info,
+                    rigid_global_info,
+                    collider_static_config,
+                    sdf_info,
+                    vertex_pos,
+                    i_gb,
+                    gb_pos,
+                    gb_quat,
+                )
+                # Per-vertex grad magnitude classifies the local grid SDF regime.
+                # - Smoothed (|grad| < 0.5): trilinear interpolation has smoothed across a feature. The pen value is
+                #   unreliable. Emit a tapered synthetic pen for approach detection.
+                # - Edge (0.5 <= |grad| <= 0.9): the vertex sits on a concave seam. The kernel pen is unreliable. Emit
+                #   a bounded synthetic pen so the contact registers without dominating the clean face contacts that
+                #   wedge the body at the seam.
+                # - Clean (|grad| > 0.9): trust the kernel pen.
+                grad_norm = grad_v.norm()
+                pen_emit = gs.qd_float(0.0)
+                contact_pos_v = vertex_pos
+                if grad_norm < 0.5:
+                    if pen_v > 0.0:
+                        pen_emit = qd.min(pen_v, margin)
+                    else:
+                        pen_emit = synthetic_pen_max * (1.0 + pen_v / margin)
+                elif grad_norm > 0.9:
+                    if pen_v > 0.0:
+                        pen_emit = qd.min(pen_v, margin)
+                elif pen_v > 0.0:
+                    pen_emit = synthetic_pen_max
+                normal_v = normal_center
+                if grad_v.dot(grad_center) > 0.0:
+                    normal_v = gu.qd_normalize(grad_v, EPS)
+                repeated = False
+                for j in range(n_added):
+                    idx_prev = collider_state.n_contacts[i_b] - 1 - j
+                    if (contact_pos_v - collider_state.contact_data.pos[idx_prev, i_b]).norm() < tolerance:
+                        repeated = True
+                if not repeated and pen_emit > 0.0:
+                    # Snap the contact position onto A's smooth surface when A is a smooth primitive
+                    # (SPHERE/ELLIPSOID/CAPSULE). The tessellation vertex sits an O(tessellation chord error) inboard
+                    # of the true surface; on a settled static contact that offset becomes a torque arm and drives a
+                    # slow tangential drift. The refinement is a no-op for polytope-typed A.
+                    contact_pos_v = func_apply_smooth_refinement(
+                        i_ga,
+                        i_gb,
+                        normal_v,
+                        pen_emit,
+                        contact_pos_v,
+                        ga_pos,
+                        ga_quat,
+                        gb_pos,
+                        gb_quat,
+                        geoms_info,
+                        static_rigid_sim_config,
+                    )
+                    func_add_contact(
+                        i_ga,
+                        i_gb,
+                        normal_v,
+                        contact_pos_v,
+                        pen_emit,
+                        i_b,
+                        i_pair,
+                        geoms_state,
+                        geoms_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                    n_added = n_added + 1
+    return n_added
+
+
+@qd.func
 def func_contact_vertex_sdf(
     i_ga,
     i_gb,
@@ -2615,12 +2808,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
     sdf_info: array_class.SDFInfo,
     errno: qd.Tensor,
 ):
-    """
-    NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
-    Therefore, for a big non-batched scene, users are encouraged to simply use `gs.cpu` backend.
-    Updated NOTE & TODO: For a HUGE scene with numerous bodies, it's also reasonable to run on GPU. Let's save this for later.
-    Update2: Now we use n_broad_pairs instead of n_collision_pairs, so we probably need to think about how to handle non-batched large scene better.
-    """
     EPS = rigid_global_info.EPS[None]
 
     _B = collider_state.active_buffer.shape[1]
@@ -2674,12 +2861,49 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         normal_i = qd.Vector.zero(gs.qd_float, 3)
                         contact_pos_i = qd.Vector.zero(gs.qd_float, 3)
                         penetration_i = gs.qd_float(0.0)
+                        # Small-side-vs-non-convex multi-contact uses direct vertex enumeration. The legacy perturbation
+                        # path produced a single deepest-vertex contact whose pen_v often reported ~0 even when the
+                        # analytic SDF said the vertex was inside the mesh: the grid SDF over-reports distance by up to
+                        # one cell size in regions where it interpolates across a feature, the solver gets a near-zero
+                        # pen, applies no reaction force, and A sinks through B. Vertex enumeration recovers
+                        # multi-contact support directly (no perturbation required), and the helper compensates for the
+                        # under-reported pen with a margin band tied to B's cell size. This runs for every small-side
+                        # non-convex pair regardless of A's geom type.
+                        use_polytope_vertex_pass = (
+                            qd.static(static_rigid_sim_config.enable_multi_contact) and small_side_only
+                        )
                         if not is_col:
                             ga_pos = geoms_state.pos[i_ga, i_b]
                             ga_quat = geoms_state.quat[i_ga, i_b]
                             gb_pos = geoms_state.pos[i_gb, i_b]
                             gb_quat = geoms_state.quat[i_gb, i_b]
-                            if small_side_only:
+                            if use_polytope_vertex_pass:
+                                n_added_pv = func_add_polytope_vertex_contacts_sdf(
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    i_pair,
+                                    ga_pos,
+                                    ga_quat,
+                                    gb_pos,
+                                    gb_quat,
+                                    tolerance,
+                                    geoms_state,
+                                    geoms_info,
+                                    geoms_init_AABB,
+                                    verts_info,
+                                    rigid_global_info,
+                                    static_rigid_sim_config,
+                                    collider_static_config,
+                                    sdf_info,
+                                    collider_state,
+                                    collider_info,
+                                    errno,
+                                )
+                                if n_added_pv > 0:
+                                    is_col = True
+                                    is_col_i = True
+                            elif small_side_only:
                                 is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_nonconvex_convex_sdf(
                                     i_ga,
                                     i_gb,
@@ -2712,7 +2936,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     collider_static_config,
                                     sdf_info,
                                 )
-                            if is_col_i:
+                            if is_col_i and not use_polytope_vertex_pass:
                                 contact_pos_i = func_apply_smooth_refinement(
                                     i_ga,
                                     i_gb,
@@ -2742,7 +2966,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 )
                                 is_col = True
 
-                        if qd.static(static_rigid_sim_config.enable_multi_contact):
+                        if qd.static(static_rigid_sim_config.enable_multi_contact) and not use_polytope_vertex_pass:
                             if is_col_i:
                                 ga_pos_original, ga_quat_original = (
                                     geoms_state.pos[i_ga, i_b],
