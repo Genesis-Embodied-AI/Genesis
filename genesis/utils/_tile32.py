@@ -826,17 +826,26 @@ def _make_tile32x32_class(dtype):
 
                 diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(k))
 
+                # 4-way dot-split for ILP: each `dot_n` chain has ~8 FMAs at k=31, cutting the back-to-back FMA
+                # dependency chain length from 32 (single chain) or 16 (2-way as in _tile16.py) to ~8.  The 32-deep
+                # tile makes this matter more than at 16-deep where 2-way was already enough.
                 dot0 = qd.cast(0.0, dtype)
                 dot1 = qd.cast(0.0, dtype)
+                dot2 = qd.cast(0.0, dtype)
+                dot3 = qd.cast(0.0, dtype)
                 for j in qd.static(range(32)):
                     if k > j:
                         my_col = self._r(j)
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
-                        if j % 2 == 0:
+                        if j % 4 == 0:
                             dot0 += Lkj * my_col  # type: ignore[reportOperatorIssue]
-                        else:
+                        elif j % 4 == 1:
                             dot1 += Lkj * my_col  # type: ignore[reportOperatorIssue]
-                dot = dot0 + dot1
+                        elif j % 4 == 2:
+                            dot2 += Lkj * my_col  # type: ignore[reportOperatorIssue]
+                        else:
+                            dot3 += Lkj * my_col  # type: ignore[reportOperatorIssue]
+                dot = (dot0 + dot1) + (dot2 + dot3)
 
                 new_val = qd.cast(0.0, dtype)
                 if tid > k:  # type: ignore[reportOperatorIssue]
