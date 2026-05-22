@@ -60,8 +60,9 @@ if _TYPE_CHECKING:
 _TILE = 16
 
 # Field-name lookup table for direct register access in qd.static-unrolled loops.
-# Using `getattr(self, _REGS[k])` with a python-int `k` (which is what `qd.static(range(16))`
-# binds inside its body) collapses to a single field-reference AST node, vs. the 16-way
+# Used via `self._r(k)` (defined below) which is just `getattr(self, _REGS[k])`. With
+# a python-int `k` (which is what `qd.static(range(16))` binds inside its body) this
+# collapses to a single field-reference AST node, vs. the 16-way
 # `if k == 0: val = self.r0; if k == 1: ...` cascade emitted by a dynamic `_get_col(k)`
 # call. Empirically this cuts cold-compile time on dex_hand significantly because every
 # such call site avoids re-emitting (and later folding) 16 conditional nodes per use.
@@ -328,7 +329,7 @@ def _make_tile16x16_class(dtype):
                     col_stop = arr_col_stop
                 for j in qd.static(range(16)):
                     if col_start + j < col_stop:
-                        arr[row, col_start + j] = getattr(self, _REGS[j])
+                        arr[row, col_start + j] = self._r(j)
 
         @qd.func
         def _store3d(self, arr: qd.template(), batch, row_start, row_stop, col_start, col_stop):
@@ -347,7 +348,7 @@ def _make_tile16x16_class(dtype):
                     col_stop = arr_col_stop
                 for j in qd.static(range(16)):
                     if col_start + j < col_stop:
-                        arr[batch, row, col_start + j] = getattr(self, _REGS[j])
+                        arr[batch, row, col_start + j] = self._r(j)
 
         @qd.func
         def eye_(self):
@@ -452,7 +453,7 @@ def _make_tile16x16_class(dtype):
             """General rank-1 subtract in-place: self -= a @ b^T."""
             for j in qd.static(range(16)):
                 bc = qd.simt.subgroup.shuffle(b, qd.u32(j))
-                val = getattr(self, _REGS[j]) - a * bc
+                val = self._r(j) - a * bc
                 if j == 0:  self.r0  = val
                 if j == 1:  self.r1  = val
                 if j == 2:  self.r2  = val
@@ -479,20 +480,20 @@ def _make_tile16x16_class(dtype):
             """
             # `k` and `j` are wrapped in qd.static so the `if k > j` predicates fold at
             # compile time and register access on the outer `k` and inner `j` collapses to a
-            # single field reference via `getattr(self, _REGS[<py_int>])` rather than a
-            # 16-deep register-indexing cascade. Writes use an inline `if k == N: self.rN =
-            # ...` chain (setattr is rejected by the quadrants AST builder) which the AST
-            # transformer folds at build time when `k` is a python int. The per-lane row-
-            # norm used for the diagonal update is carried in `my_norm_sq`, so each diagonal
-            # step is O(1) rather than O(k). The off-diagonal `dot` is split into two
-            # interleaved partial sums (`dot0`/`dot1`) so the back-to-back FMA dependency
+            # single field reference via `self._r(<py_int>)` (a thin getattr wrapper) rather
+            # than a 16-deep register-indexing cascade. Writes use an inline `if k == N:
+            # self.rN = ...` chain (setattr is rejected by the quadrants AST builder) which
+            # the AST transformer folds at build time when `k` is a python int. The per-lane
+            # row-norm used for the diagonal update is carried in `my_norm_sq`, so each
+            # diagonal step is O(1) rather than O(k). The off-diagonal `dot` is split into
+            # two interleaved partial sums (`dot0`/`dot1`) so the back-to-back FMA dependency
             # chain is cut in half, exposing more instruction-level parallelism.
             tid = qd.i32(qd.simt.subgroup.invocation_id())
             my_norm_sq = qd.cast(0.0, dtype)
             for k in qd.static(range(16)):
                 diag_val = qd.cast(0.0, dtype)
                 if tid == k:
-                    diag_val = qd.sqrt(qd.max(getattr(self, _REGS[k]) - my_norm_sq, eps))
+                    diag_val = qd.sqrt(qd.max(self._r(k) - my_norm_sq, eps))
                     if k == 0:  self.r0  = diag_val
                     if k == 1:  self.r1  = diag_val
                     if k == 2:  self.r2  = diag_val
@@ -516,7 +517,7 @@ def _make_tile16x16_class(dtype):
                 dot1 = qd.cast(0.0, dtype)
                 for j in qd.static(range(16)):
                     if k > j:
-                        my_col = getattr(self, _REGS[j])
+                        my_col = self._r(j)
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
                         if j % 2 == 0:
                             dot0 += Lkj * my_col  # type: ignore[reportOperatorIssue]
@@ -526,7 +527,7 @@ def _make_tile16x16_class(dtype):
 
                 new_val = qd.cast(0.0, dtype)
                 if tid > k:  # type: ignore[reportOperatorIssue]
-                    new_val = (getattr(self, _REGS[k]) - dot) / diag_k  # type: ignore[reportOperatorIssue]
+                    new_val = (self._r(k) - dot) / diag_k  # type: ignore[reportOperatorIssue]
                     if k == 0:  self.r0  = new_val
                     if k == 1:  self.r1  = new_val
                     if k == 2:  self.r2  = new_val
@@ -580,6 +581,17 @@ def _make_tile16x16_class(dtype):
         # of this method (and the proxy constructors below) after class
         # definition to restore parity with stock `qd.simt.Tile16x16`.
         solve_triangular_.__module__ = "quadrants.gen.tile16_cholesky"
+
+        def _r(self, k):
+            """Direct field read by python-int index. Used at qd.static-unrolled call sites
+            to bypass the 16-way ``_get_col(k)`` cascade: with ``k`` a python int (from
+            ``qd.static(range(16))``), ``getattr(self, _REGS[k])`` is evaluated by the AST
+            transformer at build time and returns a single field-reference expression.
+            The ``__module__`` override below silences the AST transformer's external-
+            function warning (same trick as ``solve_triangular_``); no semantic change."""
+            return getattr(self, _REGS[k])
+
+        _r.__module__ = "quadrants.gen.tile16_cholesky"
 
         @qd.func
         def _resolve_vec2d(self, arr: qd.template(), row_start, row_stop, col):
