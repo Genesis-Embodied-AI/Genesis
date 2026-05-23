@@ -408,7 +408,7 @@ class RigidSolver(KinematicSolver):
         density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
         legacy 1-thread-per-env path is already coalesced under (len_constraints_, _B) and warp scheduling dominates.
 
-        Empirical pattern:
+        Empirical pattern from `perso_hugh/doc/linesearch_shuffle.md` (Exp 5):
           - Wins (>+3%): dex_hand, g1_fall, box_pyramid_3..6; all 4096 envs, n_dofs >= ~18.
           - Wash / regression: anymal/franka families; 30000 envs, n_dofs <= ~12.
 
