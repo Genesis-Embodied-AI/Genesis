@@ -143,11 +143,20 @@ def func_add_polytope_vertex_contacts_sdf(
 
     n_added = 0
     if (not can_use_sd_reject) or sd_center <= rbound_a:
-        # Pass 1: select the n_max deepest spatially-diverse vertices of A by grid SDF pen. A bare top-N pen would
-        # cluster on the lowest pole of a tessellated sphere or the tip of a spoon, then pass-2's same-position dedup
-        # would collapse them to a single contact - too little force-capacity to stop A from tunneling on the next step.
-        # The insertion rule keeps the buffer's verts at least `tolerance` apart in world space: a candidate close to an
-        # existing entry replaces that entry only when deeper, otherwise it displaces the weakest entry of the buffer.
+        # Pass 1: select the n_max deepest spatially-diverse vertices of A by grid SDF pen. The buffer keeps verts at
+        # least `diversity_radius` apart in world space: a candidate close to an existing entry replaces that entry
+        # only when deeper, otherwise it displaces the weakest entry. The radius starts at the default `tolerance`
+        # and is widened by the "needle extent" of A - how much of the long axis sticks out beyond twice the
+        # cross-section - divided across n_max slots. A near-cube/sphere/spoon-bowl has zero (clipped) needle extent
+        # and stays at `tolerance`, which lets a small curved patch keep its tight cluster of contacts without
+        # picking up rim verts whose grad is tilted relative to the surface and would inject torque; a 1:1:16 rod
+        # recovers a radius near rbound_a/n_max so the buffer spreads along the long axis instead of collapsing onto
+        # the deepest tip and letting the body pivot about a single contact patch.
+        ext = geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]
+        ext_max = qd.max(qd.max(ext[0], ext[1]), ext[2])
+        ext_sum_other = ext[0] + ext[1] + ext[2] - ext_max
+        needle_extent = ext_max - gs.qd_float(2.0) * ext_sum_other
+        diversity_radius = qd.max(tolerance, needle_extent * gs.qd_float(0.5 / n_max))
         top_iv = qd.Vector.zero(gs.qd_int, n_max)
         top_pen = qd.Vector.zero(gs.qd_float, n_max)
         for k in qd.static(range(n_max)):
@@ -162,7 +171,7 @@ def func_add_polytope_vertex_contacts_sdf(
                     for k in qd.static(range(n_max)):
                         if close_idx < 0 and top_iv[k] >= 0:
                             other_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[top_iv[k]], ga_pos, ga_quat)
-                            if (vertex_pos - other_pos).norm() < tolerance:
+                            if (vertex_pos - other_pos).norm() < diversity_radius:
                                 close_idx = k
                     if close_idx >= 0:
                         if pen_v > top_pen[close_idx]:

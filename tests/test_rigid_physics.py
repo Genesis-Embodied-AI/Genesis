@@ -2959,6 +2959,48 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
     # put) but does not match the clean 2-floor + 2-wall configuration the sphere case enforces.
 
 
+# Force CPU because nonconvex SDF is slow on GPU
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_nonconvex_tunneling(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.002,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/tank.obj",
+            euler=(95, 0, 0),
+            scale=5.0,
+            fixed=True,
+            convexify=False,
+        ),
+        vis_mode="collision",
+    )
+    rod = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/stirrer.obj",
+            pos=(0.0, 0.0, 0.2),
+            convexify=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    # It collides with the tank bottom at step 200
+    for step in range(250):
+        scene.step()
+    assert rod.get_pos()[..., 2] > -0.05
+    assert_allclose(rod.get_dofs_velocity(dofs_idx_local=slice(None, 3)), 0, atol=0.05)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("convexify", [True, False])
 @pytest.mark.parametrize("gjk_collision", [True, False])

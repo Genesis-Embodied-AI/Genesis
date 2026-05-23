@@ -326,9 +326,9 @@ def init(
             ("🔖 version", __version__),
             ("🎨 theme", theme),
             ("🌱 seed", seed),
-            ("🐛 debug", debug),
+            ("🐛 debug", bool(debug)),
             ("📏 precision", precision),
-            ("🔥 performance", performance_mode),
+            ("🔥 performance", bool(performance_mode)),
             ("💬 verbose", _logging.getLevelName(logger.level)),
         )
     )
