@@ -3029,7 +3029,8 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     obj = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
-            pos=(0.3, 0, 0.015),
+            pos=(0.3, 0, 0.006),
+            euler=(0.0, -2.5, 0.0),
             convexify=convexify,
             scale=1.0,
         ),
@@ -3037,6 +3038,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         visualize_contact=True,
     )
     scene.build()
+    init_pos = obj.geoms[0].get_pos()
 
     for geom in obj.geoms:
         assert ("decomposed" in geom.metadata) ^ (not convexify)
@@ -3055,7 +3057,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
             qvel = obj.get_dofs_velocity()
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
-    assert_allclose(obj.geoms[0].get_pos()[:2], (0.3, 0.0), atol=2e-3)
+    assert_allclose(obj.geoms[0].get_pos()[:2], init_pos[:2], atol=1e-3)
 
 
 @pytest.mark.slow  # ~160s
