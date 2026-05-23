@@ -212,20 +212,39 @@ def _make_tile32x32(dtype=None) -> "type[_Tile32x32Proto]":
 
 
 def _make_tile32x32_class(dtype):
-    vec_dtype = qd.types.vector(_TILE, dtype)
+    # 32 elements broken into 4 sub-vectors of 8.  vec32 fails to register-promote on cuda 7.x
+    # (places the per-thread tile row in local memory, costing -19% FPS on dex_hand), but vec8
+    # reliably register-promotes via SROA (matches the 12x12 / 144-element matrices that
+    # quadrants's per-thread linalg ops rely on).  All hot indexing in this module is static
+    # (via qd.static unrolls in cholesky_, _ger_sub, _load3d, _store3d, eye_), so the 4-way
+    # bank selection (j // 8) folds at trace time to direct sub-vector + intra-vector indexing.
+    vec8_dtype = qd.types.vector(8, dtype)
+
+    # Helper: emit a python-int 4-way cascade for static k accesses.  Folded at trace time.
+    def _static_read(self_, k_py_int):
+        bank = k_py_int // 8
+        off = k_py_int % 8
+        if bank == 0:
+            return self_.b0[off]
+        if bank == 1:
+            return self_.b1[off]
+        if bank == 2:
+            return self_.b2[off]
+        return self_.b3[off]
+
+    _static_read.__module__ = "quadrants.gen.tile32_cholesky"
 
     class _Tile32x32Cholesky:
-        """A 32x32 tile distributed one row per subgroup thread, held in a 32-element register vector ``r``."""
+        """A 32x32 tile distributed one row per subgroup thread, held in 4 vec8 sub-banks ``b0..b3``."""
 
-        r: vec_dtype
+        b0: vec8_dtype
+        b1: vec8_dtype
+        b2: vec8_dtype
+        b3: vec8_dtype
 
         @qd.func
         def _load(self, arr: qd.template(), row_start, row_stop, col_start, col_stop):
-            """Load from a 2D array within [row_start, row_stop) x [col_start, col_stop).
-
-            Each thread loads arr[row_start + tid, col_start:col_stop].  Threads where row_start + tid >= row_stop
-            skip the load (tile row unchanged).
-            """
+            """Load from a 2D array within [row_start, row_stop) x [col_start, col_stop)."""
             arr_row_stop = arr.shape[0]
             if arr_row_stop < row_stop:
                 row_stop = arr_row_stop
@@ -234,17 +253,22 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[1]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(32)):
+                for j in qd.static(range(8)):
                     if col_start + j < col_stop:
-                        self.r[j] = arr[row, col_start + j]
+                        self.b0[j] = arr[row, col_start + j]
+                for j in qd.static(range(8)):
+                    if col_start + 8 + j < col_stop:
+                        self.b1[j] = arr[row, col_start + 8 + j]
+                for j in qd.static(range(8)):
+                    if col_start + 16 + j < col_stop:
+                        self.b2[j] = arr[row, col_start + 16 + j]
+                for j in qd.static(range(8)):
+                    if col_start + 24 + j < col_stop:
+                        self.b3[j] = arr[row, col_start + 24 + j]
 
         @qd.func
         def _load3d(self, arr: qd.template(), batch, row_start, row_stop, col_start, col_stop):
-            """Load from a 3D array within [row_start, row_stop) x [col_start, col_stop).
-
-            Each thread loads arr[batch, row_start+tid, col_start:col_stop].  Threads where row_start + tid >=
-            row_stop skip the load (tile row unchanged).
-            """
+            """Load from a 3D array within [row_start, row_stop) x [col_start, col_stop)."""
             arr_row_stop = arr.shape[1]
             if arr_row_stop < row_stop:
                 row_stop = arr_row_stop
@@ -253,17 +277,22 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[2]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(32)):
+                for j in qd.static(range(8)):
                     if col_start + j < col_stop:
-                        self.r[j] = arr[batch, row, col_start + j]
+                        self.b0[j] = arr[batch, row, col_start + j]
+                for j in qd.static(range(8)):
+                    if col_start + 8 + j < col_stop:
+                        self.b1[j] = arr[batch, row, col_start + 8 + j]
+                for j in qd.static(range(8)):
+                    if col_start + 16 + j < col_stop:
+                        self.b2[j] = arr[batch, row, col_start + 16 + j]
+                for j in qd.static(range(8)):
+                    if col_start + 24 + j < col_stop:
+                        self.b3[j] = arr[batch, row, col_start + 24 + j]
 
         @qd.func
         def _store(self, arr: qd.template(), row_start, row_stop, col_start, col_stop):
-            """Store to a 2D array within [row_start, row_stop) x [col_start, col_stop).
-
-            Each thread stores to arr[row_start + tid, col_start:col_stop].  Threads where row_start + tid >=
-            row_stop skip the store.
-            """
+            """Store to a 2D array within [row_start, row_stop) x [col_start, col_stop)."""
             arr_row_stop = arr.shape[0]
             if arr_row_stop < row_stop:
                 row_stop = arr_row_stop
@@ -272,17 +301,22 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[1]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(32)):
+                for j in qd.static(range(8)):
                     if col_start + j < col_stop:
-                        arr[row, col_start + j] = self.r[j]
+                        arr[row, col_start + j] = self.b0[j]
+                for j in qd.static(range(8)):
+                    if col_start + 8 + j < col_stop:
+                        arr[row, col_start + 8 + j] = self.b1[j]
+                for j in qd.static(range(8)):
+                    if col_start + 16 + j < col_stop:
+                        arr[row, col_start + 16 + j] = self.b2[j]
+                for j in qd.static(range(8)):
+                    if col_start + 24 + j < col_stop:
+                        arr[row, col_start + 24 + j] = self.b3[j]
 
         @qd.func
         def _store3d(self, arr: qd.template(), batch, row_start, row_stop, col_start, col_stop):
-            """Store to a 3D array within [row_start, row_stop) x [col_start, col_stop).
-
-            Each thread stores to arr[batch, row_start+tid, col_start:col_stop].  Threads where row_start + tid >=
-            row_stop skip the store.
-            """
+            """Store to a 3D array within [row_start, row_stop) x [col_start, col_stop)."""
             arr_row_stop = arr.shape[1]
             if arr_row_stop < row_stop:
                 row_stop = arr_row_stop
@@ -291,35 +325,80 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[2]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(32)):
+                for j in qd.static(range(8)):
                     if col_start + j < col_stop:
-                        arr[batch, row, col_start + j] = self.r[j]
+                        arr[batch, row, col_start + j] = self.b0[j]
+                for j in qd.static(range(8)):
+                    if col_start + 8 + j < col_stop:
+                        arr[batch, row, col_start + 8 + j] = self.b1[j]
+                for j in qd.static(range(8)):
+                    if col_start + 16 + j < col_stop:
+                        arr[batch, row, col_start + 16 + j] = self.b2[j]
+                for j in qd.static(range(8)):
+                    if col_start + 24 + j < col_stop:
+                        arr[batch, row, col_start + 24 + j] = self.b3[j]
 
         @qd.func
         def eye_(self):
             """Set this tile to the 32x32 identity matrix.  Each thread sets its diagonal element to 1.0 and all
             others to 0.0."""
             tid = qd.simt.subgroup.invocation_id()
-            for j in qd.static(range(32)):
-                self.r[j] = qd.cast(1.0, dtype) if tid == j else qd.cast(0.0, dtype)
+            for j in qd.static(range(8)):
+                self.b0[j] = qd.cast(1.0, dtype) if tid == j else qd.cast(0.0, dtype)
+                self.b1[j] = qd.cast(1.0, dtype) if tid == (8 + j) else qd.cast(0.0, dtype)
+                self.b2[j] = qd.cast(1.0, dtype) if tid == (16 + j) else qd.cast(0.0, dtype)
+                self.b3[j] = qd.cast(1.0, dtype) if tid == (24 + j) else qd.cast(0.0, dtype)
 
         @qd.func
         def _get_col(self, k):
-            """Return the value of register (column) k.  With static-int k, lowers to a direct register access;
-            with runtime k, lowers to a 32-way switch on the per-thread r vector."""
-            return self.r[k]
+            """Return the value of register (column) k.  4-way cascade selecting the sub-bank, with intra-bank
+            indexing.  With static k the cascade folds to a direct sub-bank scalar access; with runtime k
+            quadrants emits a 4-way switch over the sub-banks (each of which is small enough to register-promote)."""
+            val = qd.cast(0.0, dtype)
+            if k < 8:
+                val = self.b0[k]
+            elif k < 16:
+                val = self.b1[k - 8]
+            elif k < 24:
+                val = self.b2[k - 16]
+            else:
+                val = self.b3[k - 24]
+            return val
 
         @qd.func
         def _set_col(self, k, val):
-            """Set register (column) k to val.  Same lowering as _get_col."""
-            self.r[k] = val
+            """Set register (column) k to val.  Same 4-way bank-selection lowering as _get_col."""
+            if k < 8:
+                self.b0[k] = val
+            elif k < 16:
+                self.b1[k - 8] = val
+            elif k < 24:
+                self.b2[k - 16] = val
+            else:
+                self.b3[k - 24] = val
+
+        # Direct field read by python-int index, bypassing the 4-way runtime cascade.  Used at qd.static-unrolled
+        # call sites inside this module (cholesky_, _ger_sub) for compile-time register access.
+        def _r(self, k):
+            return _static_read(self, k)
+
+        _r.__module__ = "quadrants.gen.tile32_cholesky"
 
         @qd.func
         def _ger_sub(self, a, b):
             """General rank-1 subtract in-place: self -= a @ b^T."""
-            for j in qd.static(range(32)):
+            for j in qd.static(range(8)):
                 bc = qd.simt.subgroup.shuffle(b, qd.u32(j))
-                self.r[j] = self.r[j] - a * bc
+                self.b0[j] = self.b0[j] - a * bc
+            for j in qd.static(range(8)):
+                bc = qd.simt.subgroup.shuffle(b, qd.u32(8 + j))
+                self.b1[j] = self.b1[j] - a * bc
+            for j in qd.static(range(8)):
+                bc = qd.simt.subgroup.shuffle(b, qd.u32(16 + j))
+                self.b2[j] = self.b2[j] - a * bc
+            for j in qd.static(range(8)):
+                bc = qd.simt.subgroup.shuffle(b, qd.u32(24 + j))
+                self.b3[j] = self.b3[j] - a * bc
 
         @qd.func
         def cholesky_(self, eps):
@@ -327,21 +406,30 @@ def _make_tile32x32_class(dtype):
 
             On return, the lower triangle holds L such that A = L @ L^T.  Diagonal clamped to
             sqrt(max(value, eps)) for numerical stability.
+
+            All register access in this body uses python-int indices via the qd.static-unrolled outer/inner loops,
+            so ``self._r(k)`` (a thin getattr+vec8-subscript wrapper, see ``_static_read`` above) and the write-side
+            ``if k < 8: self.b0[k - 0] = val ...`` cascade are folded at trace time to direct sub-vector accesses.
+            The 4 sub-vectors (``b0..b3``) are small enough to reliably register-promote (vs. the vec32 single-field
+            layout which fell back to local memory and cost -19% FPS).
             """
-            # `k` and `j` are wrapped in qd.static so the `if k > j` predicates fold at compile time and register
-            # access on the outer `k` and inner `j` collapses to a single field reference via ``self.r[<py_int>]``
-            # rather than a 32-deep register-indexing cascade.  The per-lane row-norm used for the diagonal update
-            # is carried in ``my_norm_sq``, so each diagonal step is O(1) rather than O(k).  The off-diagonal `dot`
-            # is split into two interleaved partial sums (``dot0`` / ``dot1``) so the back-to-back FMA dependency
-            # chain is cut in half, exposing more instruction-level parallelism (matches the _tile16 split width;
-            # 4-way split was tested and not measurably better — see perso_hugh/doc/cholesky_tile32_2026may22.md).
             tid = qd.i32(qd.simt.subgroup.invocation_id())
             my_norm_sq = qd.cast(0.0, dtype)
             for k in qd.static(range(32)):
+                # Python ints — used for static sub-bank dispatch at compile time.
+                kb = k // 8
+                ko = k % 8
                 diag_val = qd.cast(0.0, dtype)
                 if tid == k:
-                    diag_val = qd.sqrt(qd.max(self.r[k] - my_norm_sq, eps))
-                    self.r[k] = diag_val
+                    diag_val = qd.sqrt(qd.max(self._r(k) - my_norm_sq, eps))
+                    if kb == 0:
+                        self.b0[ko] = diag_val
+                    elif kb == 1:
+                        self.b1[ko] = diag_val
+                    elif kb == 2:
+                        self.b2[ko] = diag_val
+                    else:
+                        self.b3[ko] = diag_val
 
                 diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(k))
 
@@ -349,7 +437,7 @@ def _make_tile32x32_class(dtype):
                 dot1 = qd.cast(0.0, dtype)
                 for j in qd.static(range(32)):
                     if k > j:
-                        my_col = self.r[j]
+                        my_col = self._r(j)
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
                         if j % 2 == 0:
                             dot0 += Lkj * my_col  # type: ignore[reportOperatorIssue]
@@ -359,8 +447,15 @@ def _make_tile32x32_class(dtype):
 
                 new_val = qd.cast(0.0, dtype)
                 if tid > k:  # type: ignore[reportOperatorIssue]
-                    new_val = (self.r[k] - dot) / diag_k  # type: ignore[reportOperatorIssue]
-                    self.r[k] = new_val
+                    new_val = (self._r(k) - dot) / diag_k  # type: ignore[reportOperatorIssue]
+                    if kb == 0:
+                        self.b0[ko] = new_val
+                    elif kb == 1:
+                        self.b1[ko] = new_val
+                    elif kb == 2:
+                        self.b2[ko] = new_val
+                    else:
+                        self.b3[ko] = new_val
                 if tid > k:  # type: ignore[reportOperatorIssue]
                     my_norm_sq += new_val * new_val
 
@@ -375,11 +470,12 @@ def _make_tile32x32_class(dtype):
                 dot = qd.cast(0.0, dtype)
                 for j in range(32):
                     if c > j:
-                        Lkj = qd.simt.subgroup.shuffle(L.r[j], qd.u32(c))
-                        dot += self.r[j] * Lkj  # type: ignore[reportOperatorIssue]
+                        Lkj = qd.simt.subgroup.shuffle(L._get_col(j), qd.u32(c))
+                        dot += self._get_col(j) * Lkj  # type: ignore[reportOperatorIssue]
 
-                diag_c = qd.simt.subgroup.shuffle(L.r[c], qd.u32(c))
-                self.r[c] = (self.r[c] - dot) / diag_c  # type: ignore[reportOperatorIssue]
+                diag_c = qd.simt.subgroup.shuffle(L._get_col(c), qd.u32(c))
+                new_val = (self._get_col(c) - dot) / diag_c  # type: ignore[reportOperatorIssue]
+                self._set_col(c, new_val)
 
         def solve_triangular_(self, B: Any, lower: bool = True) -> None:
             """Triangular solve: X @ self^T = B, storing result X in B in-place.
