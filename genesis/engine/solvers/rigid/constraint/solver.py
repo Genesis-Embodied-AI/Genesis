@@ -1857,18 +1857,179 @@ def func_cholesky_factor_direct_batch(
 
 
 @qd.func
-def func_cholesky_factor_direct_tiled(
+def func_cholesky_factor_direct_tiled_t16(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """T=16 register-tile variant of the Hessian Cholesky factorization.
+
+    Restored from origin/main 79a0e9b7 for the n_dofs-based dispatch (see func_cholesky_factor_direct_tiled).
+    Selected when n_dofs falls in a band where T=16 beats T=32 (typically n_dofs <= 48).
+
+    Same algorithm as the T=32 variant but with 16x16 tiles and block_dim=16; uses Tile16x16Cholesky primitives.
+    """
+    EPS = rigid_global_info.EPS[None]
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
+
+    qd.loop_config(name="cholesky_factor_direct_tiled_t16", block_dim=16)
+    for i in range(_B * 16):
+        i_b = i // 16
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        for kb in range(N_BLOCKS):
+            k0 = kb * 16
+            k1 = qd.min(k0 + 16, n_dofs)
+
+            L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
+
+            for jb in range(kb):
+                j0 = jb * 16
+                for t in range(16):
+                    v = L_kk._resolve_vec3d(constraint_state.nt_H, i_b, k0, k1, j0 + t)
+                    L_kk._ger_sub(v, v)
+
+            L_kk.cholesky_(EPS)
+
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 16
+                i1 = qd.min(i0 + 16, n_dofs)
+
+                L_ik = Tile16x16Cholesky.zeros(dtype=gs.qd_float)
+                L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
+
+                for jb in range(kb):
+                    j0 = jb * 16
+                    for t in range(16):
+                        v_own = L_ik._resolve_vec3d(constraint_state.nt_H, i_b, i0, i1, j0 + t)
+                        v_diag = L_ik._resolve_vec3d(constraint_state.nt_H, i_b, k0, k1, j0 + t)
+                        L_ik._ger_sub(v_own, v_diag)
+
+                L_kk.solve_triangular_(L_ik)
+
+                L_ik._store3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
+
+            L_kk._store3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
+
+
+@qd.func
+def func_cholesky_and_solve_fused_tiled_t16(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """T=16 fused Cholesky+solve variant. Restored from origin/main 79a0e9b7. See func_cholesky_and_solve_fused_tiled."""
+    EPS = rigid_global_info.EPS[None]
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
+
+    qd.loop_config(name="cholesky_and_solve_fused_tiled_t16", block_dim=16)
+    for i in range(_B * 16):
+        tid = i % 16
+        i_b = i // 16
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
+
+        for kb in range(N_BLOCKS):
+            k0 = kb * 16
+            k1 = qd.min(k0 + 16, n_dofs)
+
+            L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
+
+            for jb in range(kb):
+                j0 = jb * 16
+                for t in range(16):
+                    v = L_kk._resolve_vec2d(L_sh, k0, k1, j0 + t)
+                    L_kk._ger_sub(v, v)
+
+            L_kk.cholesky_(EPS)
+
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 16
+                i1 = qd.min(i0 + 16, n_dofs)
+
+                L_ik = Tile16x16Cholesky.zeros(dtype=gs.qd_float)
+                L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
+
+                for jb in range(kb):
+                    j0 = jb * 16
+                    for t in range(16):
+                        v_own = L_ik._resolve_vec2d(L_sh, i0, i1, j0 + t)
+                        v_diag = L_ik._resolve_vec2d(L_sh, k0, k1, j0 + t)
+                        L_ik._ger_sub(v_own, v_diag)
+
+                L_kk.solve_triangular_(L_ik)
+
+                L_ik._store(L_sh, i0, i1, k0, k1)
+
+            L_kk._store(L_sh, k0, k1, k0, k1)
+
+        k = tid
+        while k < n_dofs:
+            v_sh[k] = constraint_state.grad[k, i_b]
+            k = k + 16
+        qd.simt.block.sync()
+
+        for i_d in range(n_dofs):
+            dot = gs.qd_float(0.0)
+            j = tid
+            while j < i_d:
+                dot = dot + L_sh[i_d, j] * v_sh[j]
+                j = j + 16
+            dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            qd.simt.block.sync()
+
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            dot = gs.qd_float(0.0)
+            j = i_d + 1 + tid
+            while j < n_dofs:
+                dot = dot + L_sh[j, i_d] * v_sh[j]
+                j = j + 16
+            dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            qd.simt.block.sync()
+
+        k = tid
+        while k < n_dofs:
+            constraint_state.Mgrad[k, i_b] = v_sh[k]
+            k = k + 16
+
+
+@qd.func
+def func_cholesky_factor_direct_tiled_t32(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
+    T=32 register-tile variant. Selected by the dispatcher when n_dofs >= 49 (see func_cholesky_factor_direct_tiled).
+
     This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked algorithm
     with Tile32x32 primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
     Uses full-warp execution (block_dim=32) to avoid the sub-warp penalty of the prior 16x16 tile geometry.
     No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused variant
-    (func_cholesky_and_solve_fused_tiled) requires shared memory for L, so the caller gates both behind the same
+    (func_cholesky_and_solve_fused_tiled_t32) requires shared memory for L, so the caller gates both behind the same
     shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
     opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
@@ -1885,7 +2046,7 @@ def func_cholesky_factor_direct_tiled(
     n_dofs = constraint_state.nt_H.shape[1]
     N_BLOCKS = (n_dofs + 32 - 1) // 32
 
-    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=32)
+    qd.loop_config(name="cholesky_factor_direct_tiled_t32", block_dim=32)
     for i in range(_B * 32):
         i_b = i // 32
         if i_b >= _B:
@@ -1942,12 +2103,14 @@ def func_cholesky_factor_direct_tiled(
 
 
 @qd.func
-def func_cholesky_and_solve_fused_tiled(
+def func_cholesky_and_solve_fused_tiled_t32(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
     """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
+
+    T=32 register-tile variant. Selected by the dispatcher when n_dofs >= 49.
 
     Factorizes H = L L^T using register-resident 32x32 tiles, storing completed L tiles in shared memory. Then solves
     L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
@@ -1960,7 +2123,7 @@ def func_cholesky_and_solve_fused_tiled(
     n_dofs = constraint_state.nt_H.shape[1]
     N_BLOCKS = (n_dofs + 32 - 1) // 32
 
-    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=32)
+    qd.loop_config(name="cholesky_and_solve_fused_tiled_t32", block_dim=32)
     for i in range(_B * 32):
         tid = i % 32
         i_b = i // 32
@@ -2063,6 +2226,37 @@ def func_cholesky_and_solve_fused_tiled(
         while k < n_dofs:
             constraint_state.Mgrad[k, i_b] = v_sh[k]
             k = k + 32
+
+
+@qd.func
+def func_cholesky_factor_direct_tiled(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Tile-size dispatcher for the Hessian Cholesky factorization.
+
+    Picks Tile16x16 vs Tile32x32 based on the build-time-resolved n_dofs (see rigid_solver.py). Empirically:
+    - T=32 wins when n_dofs >= ~49 (dex_hand n_dofs=62 +2.6 %, box_pyramid_6 +4.7 %).
+    - T=16 wins when n_dofs <= ~48 (g1_fall n_dofs=35 +2.9 %, box_pyramid_3 +4.3 %; small problems too).
+    """
+    if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
+        func_cholesky_factor_direct_tiled_t32(constraint_state, rigid_global_info, static_rigid_sim_config)
+    else:
+        func_cholesky_factor_direct_tiled_t16(constraint_state, rigid_global_info, static_rigid_sim_config)
+
+
+@qd.func
+def func_cholesky_and_solve_fused_tiled(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Tile-size dispatcher for the fused Cholesky+solve. See func_cholesky_factor_direct_tiled."""
+    if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
+        func_cholesky_and_solve_fused_tiled_t32(constraint_state, rigid_global_info, static_rigid_sim_config)
+    else:
+        func_cholesky_and_solve_fused_tiled_t16(constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
 @qd.func

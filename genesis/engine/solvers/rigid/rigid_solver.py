@@ -469,12 +469,23 @@ class RigidSolver(KinematicSolver):
 
                 enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
                 enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
-                tiled_n_dofs = min(max(math.ceil(self.n_dofs / 32), 1), max_n_warps) * 32
+
+                # n_dofs-based dispatch between Tile16x16 and Tile32x32 Cholesky kernels (Hessian only).
+                # Empirical: T=32 wins for large problems (dex_hand n_dofs=62, +2.6 %), T=16 wins when n_dofs lands in
+                # a padding-unfavorable band (g1_fall n_dofs=35, +2.9 % T=16; small problems too).
+                # Threshold 49 is the simplest rule consistent with the box_pyramid sweep + g1_fall regression:
+                # n_dofs >= 49 uses T=32, otherwise T=16. See perso_hugh/doc/cholesky_tile32_2026may22.md.
+                cholesky_tile_size = 32 if self.n_dofs >= 49 else 16
+                tiled_n_dofs = min(
+                    max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size,
+                    max_n_warps * 32,
+                )
                 tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
                     enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
+                    cholesky_tile_size=cholesky_tile_size,
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
                     tiled_n_dofs=tiled_n_dofs,
                 )
