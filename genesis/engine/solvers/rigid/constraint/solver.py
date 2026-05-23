@@ -1886,6 +1886,7 @@ def func_cholesky_factor_direct_tiled(
     internally, so no `if tid < ...` guards are needed at the call site.
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
+    TileCls = qd.static(Tile32x32Cholesky if T == 32 else Tile16x16Cholesky)
 
     EPS = rigid_global_info.EPS[None]
 
@@ -1909,11 +1910,9 @@ def func_cholesky_factor_direct_tiled(
             k1 = qd.min(k0 + T, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init).
-            # qd.static branches on T; only the live branch reaches Quadrants IR.
-            if qd.static(T == 32):
-                L_kk = Tile32x32Cholesky.eye(dtype=gs.qd_float)
-            else:
-                L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            # TileCls is a parse-time Python class binding (Tile16x16Cholesky or Tile32x32Cholesky), so
+            # this resolves to a single class per build.
+            L_kk = TileCls.eye(dtype=gs.qd_float)
             L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
@@ -1932,10 +1931,7 @@ def func_cholesky_factor_direct_tiled(
                 i1 = qd.min(i0 + T, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
-                if qd.static(T == 32):
-                    L_ik = Tile32x32Cholesky.zeros(dtype=gs.qd_float)
-                else:
-                    L_ik = Tile16x16Cholesky.zeros(dtype=gs.qd_float)
+                L_ik = TileCls.zeros(dtype=gs.qd_float)
                 L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
                 # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
@@ -1972,6 +1968,7 @@ def func_cholesky_and_solve_fused_tiled(
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     LOG2_T = qd.static(T.bit_length() - 1)
+    TileCls = qd.static(Tile32x32Cholesky if T == 32 else Tile16x16Cholesky)
 
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
@@ -2002,10 +1999,7 @@ def func_cholesky_and_solve_fused_tiled(
             k1 = qd.min(k0 + T, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
-            if qd.static(T == 32):
-                L_kk = Tile32x32Cholesky.eye(dtype=gs.qd_float)
-            else:
-                L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            L_kk = TileCls.eye(dtype=gs.qd_float)
             L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions from shared memory
@@ -2024,10 +2018,7 @@ def func_cholesky_and_solve_fused_tiled(
                 i1 = qd.min(i0 + T, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
-                if qd.static(T == 32):
-                    L_ik = Tile32x32Cholesky.zeros(dtype=gs.qd_float)
-                else:
-                    L_ik = Tile16x16Cholesky.zeros(dtype=gs.qd_float)
+                L_ik = TileCls.zeros(dtype=gs.qd_float)
                 L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
                 # Subtract prior-column contributions from shared memory
