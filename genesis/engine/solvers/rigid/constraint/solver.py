@@ -1925,7 +1925,10 @@ def func_cholesky_and_solve_fused_tiled_t16(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """T=16 fused Cholesky+solve variant. Restored from origin/main 79a0e9b7. See func_cholesky_and_solve_fused_tiled."""
+    """T=16 fused Cholesky+solve variant. Restored from origin/main 79a0e9b7.
+
+    See func_cholesky_and_solve_fused_tiled (dispatcher) for the tile-size selection rationale.
+    """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
 
@@ -2023,15 +2026,16 @@ def func_cholesky_factor_direct_tiled_t32(
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
-    T=32 register-tile variant. Selected by the dispatcher when n_dofs >= 49 (see func_cholesky_factor_direct_tiled).
+    T=32 register-tile variant. Selected by the dispatcher when n_dofs is in [17..32] or >= 49.
+    See func_cholesky_factor_direct_tiled for the full n_dofs-band rule.
 
-    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked algorithm
-    with Tile32x32 primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
-    Uses full-warp execution (block_dim=32) to avoid the sub-warp penalty of the prior 16x16 tile geometry.
-    No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused variant
-    (func_cholesky_and_solve_fused_tiled_t32) requires shared memory for L, so the caller gates both behind the same
-    shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
-    opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
+    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked
+    algorithm with Tile32x32 primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via
+    subgroup shuffles. Uses full-warp execution (block_dim=32) to avoid the sub-warp penalty of the prior 16x16 tile
+    geometry. No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused
+    variant (func_cholesky_and_solve_fused_tiled_t32) requires shared memory for L, so the caller gates both behind
+    the same shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher
+    with opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
     Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
 
