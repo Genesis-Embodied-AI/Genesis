@@ -1886,7 +1886,7 @@ def func_cholesky_factor_direct_tiled(
     internally, so no `if tid < ...` guards are needed at the call site.
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
-    TileCls = Tile32x32Cholesky if T == 32 else Tile16x16Cholesky
+    TileCls = Tile32x32Cholesky if qd.static(T == 32) else Tile16x16Cholesky
 
     EPS = rigid_global_info.EPS[None]
 
@@ -1968,7 +1968,7 @@ def func_cholesky_and_solve_fused_tiled(
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     LOG2_T = qd.static(T.bit_length() - 1)
-    TileCls = Tile32x32Cholesky if T == 32 else Tile16x16Cholesky
+    TileCls = Tile32x32Cholesky if qd.static(T == 32) else Tile16x16Cholesky
 
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
