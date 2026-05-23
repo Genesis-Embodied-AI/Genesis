@@ -1885,7 +1885,7 @@ def func_cholesky_factor_direct_tiled(
     factorization is correct for the original n_dofs x n_dofs submatrix. Tile slice ops handle the per-thread bounds
     internally, so no `if tid < ...` guards are needed at the call site.
     """
-    T = static_rigid_sim_config.cholesky_tile_size
+    T = qd.static(static_rigid_sim_config.cholesky_tile_size)
 
     EPS = rigid_global_info.EPS[None]
 
@@ -1970,8 +1970,8 @@ def func_cholesky_and_solve_fused_tiled(
     L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
     global memory. Uses block_dim=T to keep full-warp execution when T=32 and avoid the sub-warp penalty.
     """
-    T = static_rigid_sim_config.cholesky_tile_size
-    LOG2_T = T.bit_length() - 1
+    T = qd.static(static_rigid_sim_config.cholesky_tile_size)
+    LOG2_T = qd.static(T.bit_length() - 1)
 
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
