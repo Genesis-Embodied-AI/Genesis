@@ -1864,8 +1864,8 @@ def func_cholesky_factor_direct_tiled_t16(
 ):
     """T=16 register-tile variant of the Hessian Cholesky factorization.
 
-    Restored from origin/main 79a0e9b7 for the n_dofs-based dispatch (see func_cholesky_factor_direct_tiled).
-    Selected when n_dofs falls in a band where T=16 beats T=32 (typically n_dofs <= 48).
+    Restored from origin/main 79a0e9b7 for the n_dofs-based dispatch (see func_cholesky_factor_direct_tiled). Selected
+    when n_dofs falls in a band where T=16 beats T=32 (typically n_dofs <= 48).
 
     Same algorithm as the T=32 variant but with 16x16 tiles and block_dim=16; uses Tile16x16Cholesky primitives.
     """
@@ -2026,16 +2026,14 @@ def func_cholesky_factor_direct_tiled_t32(
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
-    T=32 register-tile variant. Selected by the dispatcher when n_dofs is in [17..32] or >= 49.
-    See func_cholesky_factor_direct_tiled for the full n_dofs-band rule.
+    T=32 register-tile variant. Dispatched by func_cholesky_factor_direct_tiled when n_dofs is in [17..32] or >= 49.
 
-    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked
-    algorithm with Tile32x32 primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via
-    subgroup shuffles. Uses full-warp execution (block_dim=32) to avoid the sub-warp penalty of the prior 16x16 tile
-    geometry. No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused
-    variant (func_cholesky_and_solve_fused_tiled_t32) requires shared memory for L, so the caller gates both behind
-    the same shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher
-    with opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
+    GPU-only, left-looking blocked Cholesky with Tile32x32 primitives (potrf, trsm, syr_sub, ger_sub) operating entirely
+    in registers via subgroup shuffles. Full-warp execution (block_dim=32) avoids the sub-warp penalty of the prior
+    16x16 tile geometry. No shared memory or block synchronization needed. This function has no inherent DOF limit, but
+    the fused variant (func_cholesky_and_solve_fused_tiled_t32) needs shared memory for L, so the caller gates both
+    behind the same shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory,
+    higher with opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
     Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
 
@@ -2058,9 +2056,9 @@ def func_cholesky_factor_direct_tiled_t32(
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
-        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
-        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
-        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
+        # Loop over column blocks sequentially: each block depends on all prior columns (inherent to left-looking
+        # Cholesky). Within a block, factor the diagonal first then process off-diagonal rows sequentially (these depend
+        # only on the diagonal, but each tile uses all threads).
         for kb in range(N_BLOCKS):
             k0 = kb * 32
             k1 = qd.min(k0 + 32, n_dofs)
@@ -2141,9 +2139,9 @@ def func_cholesky_and_solve_fused_tiled_t32(
         v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
 
         # --- Blocked Cholesky factorization (same algorithm as func_cholesky_factor_direct_tiled) ---
-        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
-        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
-        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
+        # Loop over column blocks sequentially: each block depends on all prior columns (inherent to left-looking
+        # Cholesky). Within a block, factor the diagonal first then process off-diagonal rows sequentially (these depend
+        # only on the diagonal, but each tile uses all threads).
         for kb in range(N_BLOCKS):
             k0 = kb * 32
             k1 = qd.min(k0 + 32, n_dofs)
@@ -2189,9 +2187,8 @@ def func_cholesky_and_solve_fused_tiled_t32(
             L_kk._store(L_sh, k0, k1, k0, k1)
 
         # --- Scalar triangular solve using L from shared memory ---
-        # No longer using 32x32 tiles; the 32 threads parallelize each row's
-        # dot product by striping across columns, then subgroup-reduce to
-        # sum the partial products. Thread 0 writes each solved element.
+        # No longer using 32x32 tiles; the 32 threads parallelize each row's dot product by striping across columns,
+        # then subgroup-reduce to sum the partial products. Thread 0 writes each solved element.
 
         # Load gradient into v_sh
         k = tid
