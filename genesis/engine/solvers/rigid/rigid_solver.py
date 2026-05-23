@@ -408,7 +408,7 @@ class RigidSolver(KinematicSolver):
         density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
         legacy 1-thread-per-env path is already coalesced under (len_constraints_, _B) and warp scheduling dominates.
 
-        Empirical pattern from `perso_hugh/doc/linesearch_shuffle.md` (Exp 5):
+        Empirical pattern:
           - Wins (>+3%): dex_hand, g1_fall, box_pyramid_3..6; all 4096 envs, n_dofs >= ~18.
           - Wash / regression: anymal/franka families; 30000 envs, n_dofs <= ~12.
 
@@ -477,7 +477,6 @@ class RigidSolver(KinematicSolver):
                 #   n_dofs in [33..48]   -> T=16 (T=32 pads to 64 = ~29 wasted lanes; T=16 pads to 48 = ~13 wasted)
                 #   n_dofs in [49..]     -> T=32 (lane utilization wins, T=16 needs many sequential tiles)
                 # Confirmed by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
-                # See perso_hugh/doc/cholesky_tile32_2026may22.md for the box_pyramid sweep + analysis.
                 cholesky_tile_size = 16 if (self.n_dofs <= 16 or 32 < self.n_dofs <= 48) else 32
                 tiled_n_dofs = min(
                     max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size,

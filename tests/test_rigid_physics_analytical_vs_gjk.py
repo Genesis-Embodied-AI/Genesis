@@ -682,9 +682,6 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     2. Apply monkey-patch (replaces the @qd.kernel with a new object from a tmp file)
     3. Run ALL GJK scenarios (patched kernel with its own empty cache)
 
-    Note that these can be visualized, for verification purposes, using the script at:
-    https://github.com/Genesis-Embodied-AI/perso_hugh/blob/main/genesis/visualize_sphere_capsule.py
-    (note: only accessible internally)
     """
     test_cases = [
         # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal)

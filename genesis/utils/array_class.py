@@ -2100,8 +2100,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     enable_tiled_cholesky_hessian: bool = False
     # Register-tile width for the Hessian Cholesky kernels: 16 (Tile16x16) or 32 (Tile32x32). Selected at build time
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
-    # padding-unfavorable band (e.g. g1_fall, n_dofs=35). See perso_hugh/doc/cholesky_tile32_2026may22.md for the
-    # box_pyramid sweep + dispatch model.
+    # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
     # When True, some constraint-state tensors (eg Jaref, efc_D, ...) are allocated with ``layout=(1, 0)``,
     # i.e. (_B, len_constraints_) physical storage. This unlocks coalesced cross-lane reads for the
