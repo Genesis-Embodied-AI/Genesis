@@ -12,6 +12,7 @@ small input, compare to a CPU reference.
 
 Run on GPU only; the tile primitive requires GPU backend.
 """
+
 from __future__ import annotations
 
 import numpy as np
