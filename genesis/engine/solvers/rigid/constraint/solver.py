@@ -1883,9 +1883,7 @@ def func_cholesky_factor_direct_tiled(
 
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
-    # F3-S2: pull tile-block count from the static tiled_n_dofs config (always a multiple of 32, set in
-    # rigid_solver.py:472 as ceil(n_dofs/32)*32). Lets the kb/ib/jb tile-block loops compile-time unroll.
-    N_BLOCKS = qd.static(static_rigid_sim_config.tiled_n_dofs // 32)
+    N_BLOCKS = (n_dofs + 32 - 1) // 32
 
     qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=32)
     for i in range(_B * 32):
@@ -1898,8 +1896,8 @@ def func_cholesky_factor_direct_tiled(
         # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
         # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
-        for kb in qd.static(range(N_BLOCKS)):
-            k0 = qd.static(kb * 32)
+        for kb in range(N_BLOCKS):
+            k0 = kb * 32
             k1 = qd.min(k0 + 32, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
@@ -1907,9 +1905,9 @@ def func_cholesky_factor_direct_tiled(
             L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
-            for jb in qd.static(range(kb)):
-                j0 = qd.static(jb * 32)
-                for t in qd.static(range(32)):
+            for jb in range(kb):
+                j0 = jb * 32
+                for t in range(32):
                     v = L_kk._resolve_vec3d(constraint_state.nt_H, i_b, k0, k1, j0 + t)
                     L_kk._ger_sub(v, v)
 
@@ -1917,8 +1915,8 @@ def func_cholesky_factor_direct_tiled(
             L_kk.cholesky_(EPS)
 
             # Solve off-diagonal tiles: L[i,k] = (H[i,k] - sum_j L[i,j] L[k,j]^T) @ inv(L[k,k]^T)
-            for ib in qd.static(range(kb + 1, N_BLOCKS)):
-                i0 = qd.static(ib * 32)
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 32
                 i1 = qd.min(i0 + 32, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
@@ -1926,9 +1924,9 @@ def func_cholesky_factor_direct_tiled(
                 L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
                 # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
-                for jb in qd.static(range(kb)):
-                    j0 = qd.static(jb * 32)
-                    for t in qd.static(range(32)):
+                for jb in range(kb):
+                    j0 = jb * 32
+                    for t in range(32):
                         v_own = L_ik._resolve_vec3d(constraint_state.nt_H, i_b, i0, i1, j0 + t)
                         v_diag = L_ik._resolve_vec3d(constraint_state.nt_H, i_b, k0, k1, j0 + t)
                         L_ik._ger_sub(v_own, v_diag)
@@ -1957,11 +1955,10 @@ def func_cholesky_and_solve_fused_tiled(
     """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
-    # F3-S2: pull tile-block count from static tiled_n_dofs (multiple of 32) so the kb/ib/jb loops compile-time unroll.
-    N_BLOCKS = qd.static(MAX_DOFS // 32)
 
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + 32 - 1) // 32
 
     qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=32)
     for i in range(_B * 32):
@@ -1980,8 +1977,8 @@ def func_cholesky_and_solve_fused_tiled(
         # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
         # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
-        for kb in qd.static(range(N_BLOCKS)):
-            k0 = qd.static(kb * 32)
+        for kb in range(N_BLOCKS):
+            k0 = kb * 32
             k1 = qd.min(k0 + 32, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
@@ -1989,9 +1986,9 @@ def func_cholesky_and_solve_fused_tiled(
             L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions from shared memory
-            for jb in qd.static(range(kb)):
-                j0 = qd.static(jb * 32)
-                for t in qd.static(range(32)):
+            for jb in range(kb):
+                j0 = jb * 32
+                for t in range(32):
                     v = L_kk._resolve_vec2d(L_sh, k0, k1, j0 + t)
                     L_kk._ger_sub(v, v)
 
@@ -1999,8 +1996,8 @@ def func_cholesky_and_solve_fused_tiled(
             L_kk.cholesky_(EPS)
 
             # Solve off-diagonal tiles and store in shared memory (not global)
-            for ib in qd.static(range(kb + 1, N_BLOCKS)):
-                i0 = qd.static(ib * 32)
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 32
                 i1 = qd.min(i0 + 32, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
@@ -2008,9 +2005,9 @@ def func_cholesky_and_solve_fused_tiled(
                 L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
                 # Subtract prior-column contributions from shared memory
-                for jb in qd.static(range(kb)):
-                    j0 = qd.static(jb * 32)
-                    for t in qd.static(range(32)):
+                for jb in range(kb):
+                    j0 = jb * 32
+                    for t in range(32):
                         v_own = L_ik._resolve_vec2d(L_sh, i0, i1, j0 + t)
                         v_diag = L_ik._resolve_vec2d(L_sh, k0, k1, j0 + t)
                         L_ik._ger_sub(v_own, v_diag)
