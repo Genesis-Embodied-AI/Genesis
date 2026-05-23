@@ -1104,7 +1104,9 @@ def _ellipsoid_mjcf_path(tmp_path, semi_axes):
         ("sphere", "prim", "terrain"),
         ("sphere", "prim", "nonconvex"),
         ("sphere", "mesh", "mesh"),
+        ("sphere", "nonconvex", "prim"),
         ("sphere", "nonconvex", "nonconvex"),
+        ("sphere", "nonconvex", "plane"),
     ],
 )
 @pytest.mark.parametrize("gjk_collision", [False, True])
@@ -1124,7 +1126,6 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
     tilt_axis = np.array([1.0, 1.0, 0.0]) / math.sqrt(2.0)
     tilt_quat = gu.rotvec_to_quat(math.radians(WORLD_TILT_ANGLE) * tilt_axis)
     R = gu.quat_to_R(tilt_quat)
-    terrain_pos_world = R @ np.array([-BOX_HALF_EXTENT, -BOX_HALF_EXTENT, HEIGHT])
     box_pos_world = R @ np.array([0.0, 0.0, 0.5 * HEIGHT])
     gravity_world = R @ np.array([0.0, 0.0, -9.81])
 
@@ -1162,6 +1163,7 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
         box.geoms[0]._is_convex = is_ground_convex
     elif ground_type == "terrain":
         flat_hf = np.zeros((2, 2), dtype=np.float32)
+        terrain_pos_world = R @ np.array([-BOX_HALF_EXTENT, -BOX_HALF_EXTENT, HEIGHT])
         scene.add_entity(
             morph=gs.morphs.Terrain(
                 horizontal_scale=2.0 * BOX_HALF_EXTENT,
@@ -1169,6 +1171,15 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
                 height_field=flat_hf,
                 pos=terrain_pos_world,
                 quat=tilt_quat,
+            ),
+        )
+    elif ground_type == "plane":
+        plane_pos_world = R @ np.array([0.0, 0.0, HEIGHT])
+        scene.add_entity(
+            morph=gs.morphs.Plane(
+                pos=plane_pos_world,
+                quat=tilt_quat,
+                fixed=True,
             ),
         )
     else:  # if ground_type == "prim":
@@ -2946,6 +2957,48 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
     # The detailed contact set is not asserted because the grid SDF emits an edge-regime contact at the bottom-right
     # corners with a non-axis-aligned normal; the resulting contact pattern works physically (the body wedges and stays
     # put) but does not match the clean 2-floor + 2-wall configuration the sphere case enforces.
+
+
+# Force CPU because nonconvex SDF is slow on GPU
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_nonconvex_tunneling(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.002,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/tank.obj",
+            euler=(95, 0, 0),
+            scale=5.0,
+            fixed=True,
+            convexify=False,
+        ),
+        vis_mode="collision",
+    )
+    rod = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/stirrer.obj",
+            pos=(0.0, 0.0, 0.2),
+            convexify=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    # It collides with the tank bottom at step 200
+    for step in range(250):
+        scene.step()
+    assert rod.get_pos()[..., 2] > -0.05
+    assert_allclose(rod.get_dofs_velocity(dofs_idx_local=slice(None, 3)), 0, atol=0.05)
 
 
 @pytest.mark.required
