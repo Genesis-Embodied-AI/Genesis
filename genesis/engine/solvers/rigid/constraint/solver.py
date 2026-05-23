@@ -1,3 +1,4 @@
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -17,6 +18,31 @@ from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tens
 from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
+
+# Writeback variant for the fused warm-start factor+solve in ``func_solve_init``. Picked at
+# module-import time from ``GS_FUSED_WB_VARIANT`` so the kernel statically specialises on
+# exactly one variant per process; the inactive branches are dead-code-eliminated at compile.
+#   "fullsquare" -- (default) ``tid``-strided flat ``n_dofs * n_dofs`` writes with no upper-tri
+#                 predicate. The upper triangle ends up holding the un-zeroed L_sh-residue
+#                 (effectively L^T mirrored); harmless because all downstream nt_H readers
+#                 (incremental Cholesky update, direct factor, solve) touch only the lower
+#                 triangle. Wins +0.4 % FPS vs lowertri on dex_hand (5-repeat A/B); the
+#                 predicate branch divergence in lowertri was costing more than the wasted
+#                 upper-tri writes.
+#   "lowertri" -- ``tid``-strided flat ``n_dofs * n_dofs`` walk with an ``if i_d2 <= i_d1``
+#                 predicate. The original step-3 implementation. Roughly half the warp idles
+#                 per inner iter for the first ~32 elements.
+#   "rowperlane" -- lane ``t`` owns rows ``t, t+32, ...`` and writes each owned row's lower
+#                 triangle sequentially. Imbalanced load (lane 0: 34 writes; lane 31: 96).
+#   "interleave" -- write each finalised tile to nt_H inside the factor loop with ``_store3d``.
+#                 Targets store-latency hiding under the next tile's work; in practice
+#                 +0.027 ms / call vs fullsquare on dex_hand.
+#   "store3d"  -- end-of-kernel pass: re-load each tile from L_sh into a Tile32 and ``_store3d``
+#                 to nt_H. Slowest variant (+0.053 ms / call vs fullsquare).
+#   "off"      -- diagnostic-only; the monolith body's incremental Cholesky will see nt_H = H
+#                 and run divergent updates; body convergence cost balloons ~5x.
+# See ``doc/dex_hand_fused_writeback_opt_2026may23.md`` in perso_hugh for the full A/B numbers.
+WB_VARIANT = os.environ.get("GS_FUSED_WB_VARIANT", "fullsquare")
 
 
 @qd.func
@@ -2023,9 +2049,16 @@ def func_cholesky_and_solve_fused_tiled(
 
                 # Write L[i,k] to shared memory
                 L_ik._store(L_sh, i0, i1, k0, k1)
+                # Interleaved writeback: also store the finalised L_ik tile to nt_H here so the
+                # store latency overlaps with the next tile's setup. Gated on the WB_VARIANT
+                # selector below; ``write_L_to_nt_H=True`` + variant ``interleave`` are needed.
+                if qd.static(write_L_to_nt_H and WB_VARIANT == "interleave"):
+                    L_ik._store3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
             # Write L[k,k] to shared memory
             L_kk._store(L_sh, k0, k1, k0, k1)
+            if qd.static(write_L_to_nt_H and WB_VARIANT == "interleave"):
+                L_kk._store3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
         # --- Scalar triangular solve using L from shared memory ---
         # No longer using 32x32 tiles; the 32 threads parallelize each row's
@@ -2075,17 +2108,24 @@ def func_cholesky_and_solve_fused_tiled(
         # ``nt_H`` and expects ``nt_H`` to hold L (not H). The original separate-kernel factor
         # writes L into nt_H tile-by-tile; the fused kernel above leaves L only in shmem to save
         # the global-mem L round-trip with the solve. Restore the post-condition (nt_H holds L)
-        # so the monolith body's first iter can run incremental as usual. The cost is one lower-
-        # triangle write of L (~n_dofs*(n_dofs+1)/2 elements), strictly less traffic than the
-        # original factor's full-tile writes to nt_H plus the solve's L-from-nt_H reads.
-        # The decomposed body path uses ``nt_H`` to hold H (patched), not L; it never sets this
-        # flag (gated to ``prefer_decomposed_solver != 1`` in ``rigid_solver.py``), so the
-        # writeback never fires on that path.
-        if qd.static(write_L_to_nt_H):
-            # Coalesced row-major writeback: walk a flattened n_dofs*n_dofs grid in tid-strided
-            # order so adjacent lanes write adjacent column entries, then skip the upper triangle
-            # by predicate. Wasted 50% of writes vs a lower-tri linearization, but the cache lines
-            # are fully populated and the inner loop body is statically simple.
+        # so the monolith body's first iter can run incremental as usual.
+        #
+        # The variant selector ``WB_VARIANT`` (at module top) picks the writeback shape; on
+        # dex_hand fullsquare wins because the warp branch divergence in lowertri's predicate
+        # costs more wall-clock than fullsquare's extra ``n_dofs*(n_dofs-1)/2`` upper-tri stores.
+        # All branches below are statically dead-code-eliminated except the chosen one. The
+        # post-condition is the same for all variants: lower triangle of ``nt_H[i_b]`` holds L.
+        # Upper-tri contents are not relied on by any downstream nt_H reader, so the variants
+        # that incidentally write to the upper triangle (fullsquare) remain semantically correct.
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "fullsquare"):
+            i_flat = tid
+            n_dofs_sq = n_dofs * n_dofs
+            while i_flat < n_dofs_sq:
+                i_d1 = i_flat // n_dofs
+                i_d2 = i_flat % n_dofs
+                constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
+                i_flat = i_flat + 32
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "lowertri"):
             i_flat = tid
             n_dofs_sq = n_dofs * n_dofs
             while i_flat < n_dofs_sq:
@@ -2094,6 +2134,22 @@ def func_cholesky_and_solve_fused_tiled(
                 if i_d2 <= i_d1:
                     constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
                 i_flat = i_flat + 32
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "rowperlane"):
+            i_d1 = tid
+            while i_d1 < n_dofs:
+                for i_d2 in range(i_d1 + 1):
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
+                i_d1 = i_d1 + 32
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "store3d"):
+            for kb_w in range(N_BLOCKS):
+                k0_w = kb_w * 32
+                k1_w = qd.min(k0_w + 32, n_dofs)
+                for ib_w in range(kb_w, N_BLOCKS):
+                    i0_w = ib_w * 32
+                    i1_w = qd.min(i0_w + 32, n_dofs)
+                    L_out = Tile32x32Cholesky.zeros(dtype=gs.qd_float)
+                    L_out._load(L_sh, i0_w, i1_w, k0_w, k1_w)
+                    L_out._store3d(constraint_state.nt_H, i_b, i0_w, i1_w, k0_w, k1_w)
 
 
 @qd.func
