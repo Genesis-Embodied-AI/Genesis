@@ -396,14 +396,17 @@ def _make_tile32x32_class(dtype):
             for k in qd.static(range(32)):
                 kb = k // 8  # python int — sub-bank index, statically dispatched
                 ko = k % 8   # python int — intra-bank offset
-                # Inline read for col k (static-folded to direct sub-bank scalar access at trace time).
+                # Inline read for col k (static-folded to direct sub-bank scalar access at trace time).  Quadrants
+                # treats if/elif scopes as locals-introducing, so pre-declare self_k (matches the `diag_val =
+                # qd.cast(0.0, dtype)` pre-declare pattern in the original _tile16 cholesky_).
+                self_k = qd.cast(0.0, dtype)
                 if kb == 0:
                     self_k = self.b0[ko]
-                elif kb == 1:
+                if kb == 1:
                     self_k = self.b1[ko]
-                elif kb == 2:
+                if kb == 2:
                     self_k = self.b2[ko]
-                else:
+                if kb == 3:
                     self_k = self.b3[ko]
 
                 diag_val = qd.cast(0.0, dtype)
@@ -411,11 +414,11 @@ def _make_tile32x32_class(dtype):
                     diag_val = qd.sqrt(qd.max(self_k - my_norm_sq, eps))
                     if kb == 0:
                         self.b0[ko] = diag_val
-                    elif kb == 1:
+                    if kb == 1:
                         self.b1[ko] = diag_val
-                    elif kb == 2:
+                    if kb == 2:
                         self.b2[ko] = diag_val
-                    else:
+                    if kb == 3:
                         self.b3[ko] = diag_val
 
                 diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(k))
@@ -426,13 +429,14 @@ def _make_tile32x32_class(dtype):
                     if k > j:
                         jb = j // 8  # python int — same trace-time folding as kb
                         jo = j % 8   # python int
+                        my_col = qd.cast(0.0, dtype)
                         if jb == 0:
                             my_col = self.b0[jo]
-                        elif jb == 1:
+                        if jb == 1:
                             my_col = self.b1[jo]
-                        elif jb == 2:
+                        if jb == 2:
                             my_col = self.b2[jo]
-                        else:
+                        if jb == 3:
                             my_col = self.b3[jo]
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
                         if j % 2 == 0:
@@ -449,11 +453,11 @@ def _make_tile32x32_class(dtype):
                     new_val = (self_k - dot) / diag_k  # type: ignore[reportOperatorIssue]
                     if kb == 0:
                         self.b0[ko] = new_val
-                    elif kb == 1:
+                    if kb == 1:
                         self.b1[ko] = new_val
-                    elif kb == 2:
+                    if kb == 2:
                         self.b2[ko] = new_val
-                    else:
+                    if kb == 3:
                         self.b3[ko] = new_val
                 if tid > k:  # type: ignore[reportOperatorIssue]
                     my_norm_sq += new_val * new_val
