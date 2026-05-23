@@ -1863,14 +1863,27 @@ def _cholesky_factor_direct_tiled_impl(
     static_rigid_sim_config: qd.template(),
     TileCls: qd.template(),
 ):
-    """Tile-parameterized body of func_cholesky_factor_direct_tiled.
+    """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
-    TileCls is passed as a qd.template() so the value is part of the kernel's compile-time signature (no closure
-    capture -> no PURE violation, no slice-dispatch cache leak). T is read at compile time from
-    static_rigid_sim_config.cholesky_tile_size; the dispatcher wrapper guarantees TileCls matches T.
+    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked algorithm
+    with TileTxT primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
+    No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused variant
+    (func_cholesky_and_solve_fused_tiled) requires shared memory for L, so the caller gates both behind the same
+    shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
+    opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
-    See the func_cholesky_factor_direct_tiled wrapper for the n_dofs-based dispatch rule and the algorithmic
-    description.
+    The tile size T (16 or 32) is dispatched at build time from static_rigid_sim_config.cholesky_tile_size based on
+    n_dofs (see rigid_solver.py): T=16 for n_dofs in [1..16] or [33..48], T=32 for n_dofs in [17..32] or [49..].
+    Confirmed at the endpoints by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %). TileCls is
+    passed as a qd.template() so the value is part of the kernel's compile-time signature (no closure capture, no
+    PURE violation); the func_cholesky_factor_direct_tiled wrapper guarantees TileCls matches T.
+
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
+
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    When n_dofs is not a multiple of T, partial tiles are padded with identity (diagonal=1, off-diagonal=0) so the
+    factorization is correct for the original n_dofs x n_dofs submatrix. Tile slice ops handle the per-thread bounds
+    internally, so no `if tid < ...` guards are needed at the call site.
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
 
@@ -1946,8 +1959,15 @@ def _cholesky_and_solve_fused_tiled_impl(
     static_rigid_sim_config: qd.template(),
     TileCls: qd.template(),
 ):
-    """Tile-parameterized body of func_cholesky_and_solve_fused_tiled. See _cholesky_factor_direct_tiled_impl for
-    the TileCls=qd.template() rationale."""
+    """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
+
+    Factorizes H = L L^T using register-resident TxT tiles, storing completed L tiles in shared memory. Then solves
+    L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
+    global memory.
+
+    Tile size T and TileCls are dispatched by the func_cholesky_and_solve_fused_tiled wrapper; see
+    _cholesky_factor_direct_tiled_impl for the rule.
+    """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     LOG2_T = qd.static(T.bit_length() - 1)
 
@@ -2068,26 +2088,7 @@ def func_cholesky_factor_direct_tiled(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
-
-    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked algorithm
-    with TileTxT primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
-    No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused variant
-    (func_cholesky_and_solve_fused_tiled) requires shared memory for L, so the caller gates both behind the same
-    shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
-    opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
-
-    The tile size T (16 or 32) is dispatched at build time from static_rigid_sim_config.cholesky_tile_size based on
-    n_dofs (see rigid_solver.py): T=16 for n_dofs in [1..16] or [33..48], T=32 for n_dofs in [17..32] or [49..].
-    Confirmed at the endpoints by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
-
-    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
-
-    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
-    When n_dofs is not a multiple of T, partial tiles are padded with identity (diagonal=1, off-diagonal=0) so the
-    factorization is correct for the original n_dofs x n_dofs submatrix. Tile slice ops handle the per-thread bounds
-    internally, so no `if tid < ...` guards are needed at the call site.
-    """
+    """Tile-size dispatcher; see _cholesky_factor_direct_tiled_impl for the algorithm and dispatch rule."""
     if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
         _cholesky_factor_direct_tiled_impl(
             constraint_state, rigid_global_info, static_rigid_sim_config, Tile32x32Cholesky
@@ -2104,14 +2105,7 @@ def func_cholesky_and_solve_fused_tiled(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
-
-    Factorizes H = L L^T using register-resident TxT tiles, storing completed L tiles in shared memory. Then solves
-    L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
-    global memory.
-
-    The tile size T (16 or 32) is dispatched at build time; see func_cholesky_factor_direct_tiled for the rule.
-    """
+    """Tile-size dispatcher; see _cholesky_and_solve_fused_tiled_impl for the algorithm and dispatch rule."""
     if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
         _cholesky_and_solve_fused_tiled_impl(
             constraint_state, rigid_global_info, static_rigid_sim_config, Tile32x32Cholesky
