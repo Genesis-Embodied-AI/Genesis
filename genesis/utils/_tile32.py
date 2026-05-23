@@ -220,20 +220,6 @@ def _make_tile32x32_class(dtype):
     # bank selection (j // 8) folds at trace time to direct sub-vector + intra-vector indexing.
     vec8_dtype = qd.types.vector(8, dtype)
 
-    # Helper: emit a python-int 4-way cascade for static k accesses.  Folded at trace time.
-    def _static_read(self_, k_py_int):
-        bank = k_py_int // 8
-        off = k_py_int % 8
-        if bank == 0:
-            return self_.b0[off]
-        if bank == 1:
-            return self_.b1[off]
-        if bank == 2:
-            return self_.b2[off]
-        return self_.b3[off]
-
-    _static_read.__module__ = "quadrants.gen.tile32_cholesky"
-
     class _Tile32x32Cholesky:
         """A 32x32 tile distributed one row per subgroup thread, held in 4 vec8 sub-banks ``b0..b3``."""
 
@@ -377,13 +363,6 @@ def _make_tile32x32_class(dtype):
             else:
                 self.b3[k - 24] = val
 
-        # Direct field read by python-int index, bypassing the 4-way runtime cascade.  Used at qd.static-unrolled
-        # call sites inside this module (cholesky_, _ger_sub) for compile-time register access.
-        def _r(self, k):
-            return _static_read(self, k)
-
-        _r.__module__ = "quadrants.gen.tile32_cholesky"
-
         @qd.func
         def _ger_sub(self, a, b):
             """General rank-1 subtract in-place: self -= a @ b^T."""
@@ -407,21 +386,29 @@ def _make_tile32x32_class(dtype):
             On return, the lower triangle holds L such that A = L @ L^T.  Diagonal clamped to
             sqrt(max(value, eps)) for numerical stability.
 
-            All register access in this body uses python-int indices via the qd.static-unrolled outer/inner loops,
-            so ``self._r(k)`` (a thin getattr+vec8-subscript wrapper, see ``_static_read`` above) and the write-side
-            ``if k < 8: self.b0[k - 0] = val ...`` cascade are folded at trace time to direct sub-vector accesses.
-            The 4 sub-vectors (``b0..b3``) are small enough to reliably register-promote (vs. the vec32 single-field
-            layout which fell back to local memory and cost -19% FPS).
+            All sub-bank dispatch is inlined as ``if kb == N: self.bN[ko] = val`` 4-way cascades where ``kb``,
+            ``ko`` are python ints from the qd.static outer/inner loops.  Each cascade fully folds at trace time
+            to a single ``self.bN[ko] = val`` line (the inactive branches are dropped by Python evaluation of the
+            const-int predicate during qd.static unroll).  Reads use the same inline dispatch.
             """
             tid = qd.i32(qd.simt.subgroup.invocation_id())
             my_norm_sq = qd.cast(0.0, dtype)
             for k in qd.static(range(32)):
-                # Python ints — used for static sub-bank dispatch at compile time.
-                kb = k // 8
-                ko = k % 8
+                kb = k // 8  # python int — sub-bank index, statically dispatched
+                ko = k % 8   # python int — intra-bank offset
+                # Inline read for col k (static-folded to direct sub-bank scalar access at trace time).
+                if kb == 0:
+                    self_k = self.b0[ko]
+                elif kb == 1:
+                    self_k = self.b1[ko]
+                elif kb == 2:
+                    self_k = self.b2[ko]
+                else:
+                    self_k = self.b3[ko]
+
                 diag_val = qd.cast(0.0, dtype)
                 if tid == k:
-                    diag_val = qd.sqrt(qd.max(self._r(k) - my_norm_sq, eps))
+                    diag_val = qd.sqrt(qd.max(self_k - my_norm_sq, eps))
                     if kb == 0:
                         self.b0[ko] = diag_val
                     elif kb == 1:
@@ -437,7 +424,16 @@ def _make_tile32x32_class(dtype):
                 dot1 = qd.cast(0.0, dtype)
                 for j in qd.static(range(32)):
                     if k > j:
-                        my_col = self._r(j)
+                        jb = j // 8  # python int — same trace-time folding as kb
+                        jo = j % 8   # python int
+                        if jb == 0:
+                            my_col = self.b0[jo]
+                        elif jb == 1:
+                            my_col = self.b1[jo]
+                        elif jb == 2:
+                            my_col = self.b2[jo]
+                        else:
+                            my_col = self.b3[jo]
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
                         if j % 2 == 0:
                             dot0 += Lkj * my_col  # type: ignore[reportOperatorIssue]
@@ -445,9 +441,12 @@ def _make_tile32x32_class(dtype):
                             dot1 += Lkj * my_col  # type: ignore[reportOperatorIssue]
                 dot = dot0 + dot1
 
+                # self_k SSA value above is still the original loaded col-k value for all lanes; only the
+                # tid==k lane mutated its register (writing diag_val).  Lanes with tid > k therefore reuse self_k
+                # to compute new_val below.
                 new_val = qd.cast(0.0, dtype)
                 if tid > k:  # type: ignore[reportOperatorIssue]
-                    new_val = (self._r(k) - dot) / diag_k  # type: ignore[reportOperatorIssue]
+                    new_val = (self_k - dot) / diag_k  # type: ignore[reportOperatorIssue]
                     if kb == 0:
                         self.b0[ko] = new_val
                     elif kb == 1:
