@@ -2236,9 +2236,11 @@ def func_cholesky_factor_direct_tiled(
 ):
     """Tile-size dispatcher for the Hessian Cholesky factorization.
 
-    Picks Tile16x16 vs Tile32x32 based on the build-time-resolved n_dofs (see rigid_solver.py). Empirically:
-    - T=32 wins when n_dofs >= ~49 (dex_hand n_dofs=62 +2.6 %, box_pyramid_6 +4.7 %).
-    - T=16 wins when n_dofs <= ~48 (g1_fall n_dofs=35 +2.9 %, box_pyramid_3 +4.3 %; small problems too).
+    Picks Tile16x16 vs Tile32x32 based on the build-time-resolved n_dofs (see rigid_solver.py):
+    - n_dofs in [1..16] or [33..48] -> T=16 (padding-unfavorable for T=32).
+    - n_dofs in [17..32] or [49..]  -> T=32 (single-tile fit or lane-utilization wins).
+
+    Confirmed at the endpoints by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
     """
     if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
         func_cholesky_factor_direct_tiled_t32(constraint_state, rigid_global_info, static_rigid_sim_config)

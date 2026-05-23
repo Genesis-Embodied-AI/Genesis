@@ -471,11 +471,14 @@ class RigidSolver(KinematicSolver):
                 enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
 
                 # n_dofs-based dispatch between Tile16x16 and Tile32x32 Cholesky kernels (Hessian only).
-                # Empirical: T=32 wins for large problems (dex_hand n_dofs=62, +2.6 %), T=16 wins when n_dofs lands in
-                # a padding-unfavorable band (g1_fall n_dofs=35, +2.9 % T=16; small problems too).
-                # Threshold 49 is the simplest rule consistent with the box_pyramid sweep + g1_fall regression:
-                # n_dofs >= 49 uses T=32, otherwise T=16. See perso_hugh/doc/cholesky_tile32_2026may22.md.
-                cholesky_tile_size = 32 if self.n_dofs >= 49 else 16
+                # Derived from a padded-volume + sub-warp utilization model:
+                #   n_dofs in [1..16]    -> T=16 (one tight tile, no benefit going to T=32)
+                #   n_dofs in [17..32]   -> T=32 (single 32-lane tile beats two sequential 16-lane tiles)
+                #   n_dofs in [33..48]   -> T=16 (T=32 pads to 64 = ~29 wasted lanes; T=16 pads to 48 = ~13 wasted)
+                #   n_dofs in [49..]     -> T=32 (lane utilization wins, T=16 needs many sequential tiles)
+                # Confirmed by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
+                # See perso_hugh/doc/cholesky_tile32_2026may22.md for the box_pyramid sweep + analysis.
+                cholesky_tile_size = 16 if (self.n_dofs <= 16 or 32 < self.n_dofs <= 48) else 32
                 tiled_n_dofs = min(
                     max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size,
                     max_n_warps * 32,
