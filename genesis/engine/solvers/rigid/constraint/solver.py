@@ -1946,12 +1946,18 @@ def func_cholesky_and_solve_fused_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    write_L_to_nt_H: qd.template() = False,
 ):
     """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
 
     Factorizes H = L L^T using register-resident 32x32 tiles, storing completed L tiles in shared memory. Then solves
     L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
     global memory. Uses block_dim=32 (full warp) to avoid the sub-warp penalty of the prior 16-lane tile geometry.
+
+    When ``write_L_to_nt_H`` is True (warm-start path from ``func_solve_init``), the final L is also
+    written back into ``constraint_state.nt_H`` (lower triangle) so the monolith body's incremental
+    rank-1 Cholesky update can pick up from there. The default (False) is used by the decomposed-
+    body invocation, where ``nt_H`` must continue to hold patched H, not L.
     """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
@@ -2064,6 +2070,31 @@ def func_cholesky_and_solve_fused_tiled(
             constraint_state.Mgrad[k, i_b] = v_sh[k]
             k = k + 32
 
+        # When dispatched from func_solve_init's warm-start (``enable_fused_factor_solve_init``),
+        # the monolith body's iterative refinement runs an incremental rank-1 Cholesky update on
+        # ``nt_H`` and expects ``nt_H`` to hold L (not H). The original separate-kernel factor
+        # writes L into nt_H tile-by-tile; the fused kernel above leaves L only in shmem to save
+        # the global-mem L round-trip with the solve. Restore the post-condition (nt_H holds L)
+        # so the monolith body's first iter can run incremental as usual. The cost is one lower-
+        # triangle write of L (~n_dofs*(n_dofs+1)/2 elements), strictly less traffic than the
+        # original factor's full-tile writes to nt_H plus the solve's L-from-nt_H reads.
+        # The decomposed body path uses ``nt_H`` to hold H (patched), not L; it never sets this
+        # flag (gated to ``prefer_decomposed_solver != 1`` in ``rigid_solver.py``), so the
+        # writeback never fires on that path.
+        if qd.static(write_L_to_nt_H):
+            # Coalesced row-major writeback: walk a flattened n_dofs*n_dofs grid in tid-strided
+            # order so adjacent lanes write adjacent column entries, then skip the upper triangle
+            # by predicate. Wasted 50% of writes vs a lower-tri linearization, but the cache lines
+            # are fully populated and the inner loop body is statically simple.
+            i_flat = tid
+            n_dofs_sq = n_dofs * n_dofs
+            while i_flat < n_dofs_sq:
+                i_d1 = i_flat // n_dofs
+                i_d2 = i_flat % n_dofs
+                if i_d2 <= i_d1:
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
+                i_flat = i_flat + 32
+
 
 @qd.func
 def func_hessian_and_cholesky_factor_direct_batch(
@@ -2116,7 +2147,14 @@ def func_hessian_and_cholesky_factor_direct(
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
 
         if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
+            # When the warm-start fused factor+solve is enabled, the factor step here would be
+            # redundant: the fused kernel (invoked from func_update_gradient_tiled) does the factor
+            # in shared memory and the solve in the same kernel, leaving nt_H holding H (not L).
+            # Skip the factor to save one full traversal of nt_H, which is the whole point of the
+            # fused path. The fused call site below sees H freshly-built in nt_H, exactly as it
+            # expects from the iterative-body invocation.
+            if qd.static(not static_rigid_sim_config.enable_fused_factor_solve_init):
+                func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
             qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
@@ -3480,7 +3518,17 @@ def func_update_gradient_tiled(
             )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
+        # When enable_fused_factor_solve_init is set, the warm-start path dispatches both factor
+        # and solve through the fused kernel here (the factor step above has been skipped). The
+        # ``write_L_to_nt_H=True`` argument tells the fused kernel to also write L back into nt_H
+        # at the end, so the monolith body's incremental rank-1 update finds L there as the
+        # baseline separate-factor path used to leave it.
+        if qd.static(static_rigid_sim_config.enable_fused_factor_solve_init):
+            func_cholesky_and_solve_fused_tiled(
+                constraint_state, rigid_global_info, static_rigid_sim_config, write_L_to_nt_H=True
+            )
+        else:
+            func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
 
 
 @qd.func
