@@ -234,7 +234,7 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[1]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(_TILE)):
+                for j in qd.static(range(32)):
                     if col_start + j < col_stop:
                         self.r[j] = arr[row, col_start + j]
 
@@ -253,7 +253,7 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[2]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(_TILE)):
+                for j in qd.static(range(32)):
                     if col_start + j < col_stop:
                         self.r[j] = arr[batch, row, col_start + j]
 
@@ -272,7 +272,7 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[1]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(_TILE)):
+                for j in qd.static(range(32)):
                     if col_start + j < col_stop:
                         arr[row, col_start + j] = self.r[j]
 
@@ -291,7 +291,7 @@ def _make_tile32x32_class(dtype):
                 arr_col_stop = arr.shape[2]
                 if arr_col_stop < col_stop:
                     col_stop = arr_col_stop
-                for j in qd.static(range(_TILE)):
+                for j in qd.static(range(32)):
                     if col_start + j < col_stop:
                         arr[batch, row, col_start + j] = self.r[j]
 
@@ -300,7 +300,7 @@ def _make_tile32x32_class(dtype):
             """Set this tile to the 32x32 identity matrix.  Each thread sets its diagonal element to 1.0 and all
             others to 0.0."""
             tid = qd.simt.subgroup.invocation_id()
-            for j in qd.static(range(_TILE)):
+            for j in qd.static(range(32)):
                 self.r[j] = qd.cast(1.0, dtype) if tid == j else qd.cast(0.0, dtype)
 
         @qd.func
@@ -317,7 +317,7 @@ def _make_tile32x32_class(dtype):
         @qd.func
         def _ger_sub(self, a, b):
             """General rank-1 subtract in-place: self -= a @ b^T."""
-            for j in qd.static(range(_TILE)):
+            for j in qd.static(range(32)):
                 bc = qd.simt.subgroup.shuffle(b, qd.u32(j))
                 self.r[j] = self.r[j] - a * bc
 
@@ -337,7 +337,7 @@ def _make_tile32x32_class(dtype):
             # 4-way split was tested and not measurably better — see perso_hugh/doc/cholesky_tile32_2026may22.md).
             tid = qd.i32(qd.simt.subgroup.invocation_id())
             my_norm_sq = qd.cast(0.0, dtype)
-            for k in qd.static(range(_TILE)):
+            for k in qd.static(range(32)):
                 diag_val = qd.cast(0.0, dtype)
                 if tid == k:
                     diag_val = qd.sqrt(qd.max(self.r[k] - my_norm_sq, eps))
@@ -347,7 +347,7 @@ def _make_tile32x32_class(dtype):
 
                 dot0 = qd.cast(0.0, dtype)
                 dot1 = qd.cast(0.0, dtype)
-                for j in qd.static(range(_TILE)):
+                for j in qd.static(range(32)):
                     if k > j:
                         my_col = self.r[j]
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
@@ -371,9 +371,9 @@ def _make_tile32x32_class(dtype):
             L is a Tile32x32 holding the lower-triangular Cholesky factor (from cholesky_).  On return, self holds
             the solution X.
             """
-            for c in range(_TILE):
+            for c in range(32):
                 dot = qd.cast(0.0, dtype)
-                for j in range(_TILE):
+                for j in range(32):
                     if c > j:
                         Lkj = qd.simt.subgroup.shuffle(L.r[j], qd.u32(c))
                         dot += self.r[j] * Lkj  # type: ignore[reportOperatorIssue]
