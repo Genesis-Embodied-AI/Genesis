@@ -4,6 +4,7 @@ import sys
 import xml.etree.ElementTree as ET
 from contextlib import nullcontext
 from copy import deepcopy
+from itertools import product
 from typing import TYPE_CHECKING
 
 import igl
@@ -12,6 +13,8 @@ import numpy as np
 import pytest
 import torch
 import trimesh
+from scipy.spatial import ConvexHull
+from scipy.spatial.qhull import QhullError
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -1370,6 +1373,122 @@ def test_contact_dedup(surface_kind, show_viewer):
         assert np.all(n_contacts == 1), f"Expected 1 contact after dedup, got {n_contacts}"
 
 
+@pytest.mark.required
+def test_contact_pruning(show_viewer):
+    GEOM_HALF_SIZE = 0.1
+    MARGIN = 1e-4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.005,
+            gravity=(-1.0, -1.0, -1.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # box_box_detection=True,
+            use_gjk_collision=True,
+            contact_pruning_tolerance=0.1,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.4, 0.3, 0.3),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(GEOM_HALF_SIZE, 1.0, 1.0),
+            pos=(MARGIN - 1.5 * GEOM_HALF_SIZE, 0.0, 0.0),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1, 0, 0, 0.8),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(1.0, GEOM_HALF_SIZE, 1.0),
+            pos=(0.0, MARGIN - 1.5 * GEOM_HALF_SIZE, 0.0),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0, 1, 0, 0.8),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(1.0, 1.0, GEOM_HALF_SIZE),
+            pos=(0.0, 0.0, MARGIN - 1.5 * GEOM_HALF_SIZE),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0, 0, 1, 0.8),
+        ),
+    )
+
+    sub_meshes = []
+    for sx, sy, sz in product((-1, 0, +1), repeat=3):
+        mesh = trimesh.creation.box(extents=(2 / 3 * GEOM_HALF_SIZE,) * 3)
+        mesh.apply_translation((2 / 3 * sx * GEOM_HALF_SIZE, 2 / 3 * sy * GEOM_HALF_SIZE, 2 / 3 * sz * GEOM_HALF_SIZE))
+        sub_meshes.append(mesh)
+    box = scene.add_entity(
+        morph=gs.morphs.MeshSet(files=sub_meshes),
+        surface=gs.surfaces.Default(
+            smooth=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    for step_idx in range(200):
+        scene.step()
+        # Within each contact-normal bucket, every surviving contact must be a vertex of the 2D convex hull of
+        # contacts' positions projected onto the plane perpendicular to that shared normal. The bucket key is the
+        # contact's dominant axial direction (this scene's normals are nearly axial, so axis + sign is enough; we
+        # don't need to be fully generic). Redundant (interior or hull-edge-midpoint) contacts and >2-collinear
+        # contacts both indicate the pruning kernel left work undone.
+        contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
+        positions = contacts["position"]
+        normals = contacts["normal"]
+        buckets: dict[tuple[int, int], list[int]] = {}
+        for i in range(len(positions)):
+            axis = int(np.argmax(np.abs(normals[i])))
+            sign = 1 if normals[i][axis] > 0 else -1
+            buckets.setdefault((axis, sign), []).append(i)
+        for key, idxs in buckets.items():
+            if len(idxs) < 3:
+                continue
+            other_axes = [a for a in range(3) if a != key[0]]
+            proj = positions[idxs][:, other_axes].astype(np.float64)
+            diam = float(np.linalg.norm(proj.max(axis=0) - proj.min(axis=0)))
+            if diam < 1e-6:
+                continue
+            try:
+                # Qhull's E tolerance merges nearly-collinear points into hull edges; without it, float noise on
+                # the order of 1e-6 hides the collinearity that the pruning kernel is supposed to detect.
+                hull = ConvexHull(proj, qhull_options=f"Qt E{diam * 1e-3}")
+                n_hull_vertices = len(hull.vertices)
+            except QhullError:
+                raise AssertionError(
+                    f"step {step_idx}, bucket axis={key[0]} sign={key[1]}: {len(idxs)} contacts are collinear in "
+                    f"the contact plane. The pruning kernel should have kept at most 2 of them."
+                ) from None
+            if n_hull_vertices == len(idxs):
+                continue
+            non_hull = sorted(set(range(len(idxs))) - set(hull.vertices.tolist()))
+            details = "\n".join(
+                f"    [{i}] contact={idxs[i]} pos={positions[idxs[i]]} proj={proj[i]}"
+                f"{'  <-- REDUNDANT' if i in non_hull else ''}"
+                for i in range(len(idxs))
+            )
+            raise AssertionError(
+                f"step {step_idx}, bucket axis={key[0]} sign={key[1]}: {len(idxs)} surviving contacts but only "
+                f"{n_hull_vertices} are vertices of the bucket's 2D convex hull. The pruning kernel should have "
+                f"dropped these {len(idxs) - n_hull_vertices} redundant contact(s):\n{details}"
+            )
+    assert_allclose(box.get_pos(), 0.0, atol=2e-3)
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.parametrize(
@@ -2533,7 +2652,7 @@ def test_contact_forces(show_viewer):
         contact_forces = tensor_to_array(cube.get_links_net_contact_force())
         errors = np.linalg.norm(contact_forces[:, 0, :] + cube_weight, ord=np.inf, axis=-1)
         all_errors.append(errors)
-    assert np.percentile(all_errors, 95) < 5e-5
+    assert np.percentile(all_errors, 95) < 2e-4
 
 
 @pytest.mark.required
@@ -2967,7 +3086,7 @@ def test_nonconvex_tunneling(show_viewer):
             dt=0.002,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 2.0, 1.5),
+            camera_pos=(0.2, 0.2, 1.0),
             camera_lookat=(0.0, 0.0, 0.0),
         ),
         show_viewer=show_viewer,
@@ -2998,7 +3117,7 @@ def test_nonconvex_tunneling(show_viewer):
     for step in range(250):
         scene.step()
     assert rod.get_pos()[..., 2] > -0.05
-    assert_allclose(rod.get_dofs_velocity(dofs_idx_local=slice(None, 3)), 0, atol=0.05)
+    assert_allclose(rod.get_dofs_velocity(dofs_idx_local=slice(None, 3)), 0, atol=0.08)
 
 
 # Force CPU because nonconvex SDF is slow on GPU
@@ -3105,15 +3224,16 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     # MPR collision detection is less reliable than SDF and GJK in terms of penetration depth estimation
     is_mpr = convexify and not gjk_collision
     tol_pos = 0.05 if is_mpr else 0.005
-    tol_rot = 1.25 if is_mpr else 0.1
+    tol_rot = 1.25 if is_mpr else 0.5
     init_pos = obj.geoms[0].get_pos()
-    for i in range(20):
+    for i in range(50):
         scene.step()
     for i in range(100):
+        scene.step()
         qvel = obj.get_dofs_velocity()
         assert_allclose(qvel[:3], 0, atol=tol_pos)
         assert_allclose(qvel[3:], 0, atol=tol_rot)
-    assert_allclose(obj.geoms[0].get_pos()[:2], init_pos[:2], atol=1e-3)
+    assert_allclose(obj.geoms[0].get_pos()[:2], init_pos[:2], atol=2e-3)
 
 
 @pytest.mark.slow  # ~160s

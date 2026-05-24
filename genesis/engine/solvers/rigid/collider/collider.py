@@ -48,6 +48,7 @@ from .contact import (
     func_rotate_frame,
     func_set_upstream_grad,
     func_clamp_and_sort_contacts,
+    func_prune_contacts,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -88,6 +89,7 @@ class Collider:
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
+        self._prune_deep_penetration_ratio = 3.0
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -160,6 +162,12 @@ class Collider:
             has_nonconvex_nonterrain,
         ) = self._compute_collision_pair_idx()
 
+        # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
+        # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
+        # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
+        any_link_multi_geom = any(len(link.geoms) > 1 for link in self._solver.links)
+        link_pair_pruning_supported = any_link_multi_geom or has_nonconvex_nonterrain or has_terrain
+
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.ColliderStaticConfig(
@@ -167,6 +175,7 @@ class Collider:
             has_non_box_plane_convex_convex=has_non_box_plane_convex_convex,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
+            link_pair_pruning_supported=link_pair_pruning_supported,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
@@ -189,6 +198,8 @@ class Collider:
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
+            contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
+            prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
@@ -806,6 +817,18 @@ class Collider:
                 self._collider_static_config,
                 self._sdf._sdf_info,
                 self._solver._errno,
+            )
+
+        if (
+            self._collider_static_config.link_pair_pruning_supported
+            and self._solver._options.contact_pruning_tolerance is not None
+            and not self._solver._static_rigid_sim_config.requires_grad
+        ):
+            func_prune_contacts(
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
             )
 
         if self._use_split_narrowphase:

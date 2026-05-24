@@ -101,9 +101,13 @@ class Options(RBC, BaseModel):
         self_fields = set(self.__class__.model_fields)
         other_dump = other.model_dump()
         other_dump = {k: v for k, v in other_dump.items() if k in self_fields}
-        self_dump = self.model_dump(exclude_none=True)
+        self_dump = self.model_dump()
+        # Do not include default None
+        for field, value in tuple(self_dump.items()):
+            if value is None and field not in self.model_fields_set:
+                del self_dump[field]
         merged = {**self_dump, **other_dump} if override else {**other_dump, **self_dump}
-        # Cannot use 'self.model_copy(update=merged)' because it bypasses validators.
+        # Cannot use 'self.model_copy(update=merged)' because it bypasses validators
         return self.__class__(**merged)
 
     def __repr__colorized__(self) -> str:

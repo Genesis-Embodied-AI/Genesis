@@ -507,6 +507,7 @@ class RigidOptions(Options):
     ls_tolerance: PositiveFloat = 1e-2
     noslip_iterations: NonNegativeInt = 0
     noslip_tolerance: PositiveFloat = 1e-6
+    contact_pruning_tolerance: PositiveFloat | None = None
     sparse_solve: StrictBool = False
     constraint_timeconst: PositiveFloat = 0.01
     use_contact_island: StrictBool = False
@@ -539,6 +540,13 @@ class RigidOptions(Options):
         super().model_post_init(context)
         if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL and self.use_hibernation:
             gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
+        if self.contact_pruning_tolerance is not None and self.enable_mujoco_compatibility:
+            if "contact_pruning_tolerance" in self.model_fields_set:
+                gs.raise_exception(
+                    "'contact_pruning_tolerance' is not supported when 'enable_mujoco_compatibility' is True"
+                )
+            # User did not explicitly request pruning, silently disable to guarantee mujoco compatibility
+            self.contact_pruning_tolerance = None
 
 
 class MPMOptions(Options):

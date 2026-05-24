@@ -99,7 +99,7 @@ dev = [
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
-    # Used for validating polar decomposition in unit tests
+    # Used for ground truth validation in unit tests
     "scipy",
     # Used for code formatting during commits
     "pre_commit",

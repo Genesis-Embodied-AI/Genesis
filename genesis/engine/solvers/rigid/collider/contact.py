@@ -641,6 +641,367 @@ def func_clamp_and_sort_contacts(
                 collider_state.contact_sort_idx[j, i_b] = j
 
 
+@qd.kernel(fastcache=True)
+def func_prune_contacts(
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Prune redundant contacts per link-pair via support-polygon (2D convex hull on the contact-patch plane).
+
+    Operates after func_clamp_and_sort_contacts. Groups contacts by canonical (min(link_a, link_b), max(link_a,
+    link_b)) and, for each bucket of >= 5 contacts whose positions lie in a single plane (perpendicular to the
+    bucket's folded mean normal), keeps only the 2D convex hull vertices of the projected positions. Buckets whose
+    positions are not single-plane (e.g. multi-wall corner with contacts on perpendicular surfaces) are left
+    untouched. The normal direction of each surviving contact is preserved verbatim; the bucket's mean normal is used
+    only as the projection direction.
+
+    The single ``tol`` parameter controls the depth gate as a dimensionless slop fraction:
+      max |out-of-plane offset| / in-plane radius <= tol.
+
+    Phases (per env, scratch sized to max_contact_pairs):
+    1. Group by canonical link-pair: insertion-sort indices by (min_link, max_link) key, then apply the permutation
+       in-place via cycle decomposition (11-field swap per contact record).
+    2. Per bucket of >= 5 contacts: compute mean normal (folded to a common hemisphere). Check depth coplanarity of
+       contact positions. If they share a plane, project to (u, v), Andrew's monotone chain. Mark survivors in
+       contact_keep[].
+    3. Compact: copy kept contacts to the front, update n_contacts.
+    """
+    _B = collider_state.n_contacts.shape[0]
+    max_contact_pairs = collider_info.max_contact_pairs[None]
+    tol = collider_info.contact_pruning_tolerance[None]
+    prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
+    LP_KEY_STRIDE = gs.qd_float(1.0e7)
+    EPS = rigid_global_info.EPS[None]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        n_con = qd.min(collider_state.n_contacts[i_b], max_contact_pairs)
+        collider_state.n_contacts[i_b] = n_con
+        if n_con < 5:
+            continue
+
+        # Phase 1a: insertion-sort indices by canonical (min_link, max_link) key.
+        for i in range(n_con):
+            la = collider_state.contact_data.link_a[i, i_b]
+            lb = collider_state.contact_data.link_b[i, i_b]
+            la_min = qd.min(la, lb)
+            la_max = qd.max(la, lb)
+            collider_state.contact_sort_key[i, i_b] = qd.cast(la_min, gs.qd_float) * LP_KEY_STRIDE + qd.cast(
+                la_max, gs.qd_float
+            )
+            collider_state.contact_sort_idx[i, i_b] = i
+
+        for i in range(1, n_con):
+            ck = collider_state.contact_sort_key[i, i_b]
+            if collider_state.contact_sort_key[i - 1, i_b] <= ck:
+                continue
+            ci = collider_state.contact_sort_idx[i, i_b]
+            j = i - 1
+            while j >= 0:
+                if collider_state.contact_sort_key[j, i_b] <= ck:
+                    break
+                collider_state.contact_sort_key[j + 1, i_b] = collider_state.contact_sort_key[j, i_b]
+                collider_state.contact_sort_idx[j + 1, i_b] = collider_state.contact_sort_idx[j, i_b]
+                j = j - 1
+            collider_state.contact_sort_key[j + 1, i_b] = ck
+            collider_state.contact_sort_idx[j + 1, i_b] = ci
+
+        # Phase 1b: apply permutation in-place via cycle decomposition (11 fields).
+        for i in range(n_con):
+            if collider_state.contact_sort_idx[i, i_b] != i:
+                tmp_geom_a = collider_state.contact_data.geom_a[i, i_b]
+                tmp_geom_b = collider_state.contact_data.geom_b[i, i_b]
+                tmp_penetration = collider_state.contact_data.penetration[i, i_b]
+                tmp_normal = collider_state.contact_data.normal[i, i_b]
+                tmp_pos = collider_state.contact_data.pos[i, i_b]
+                tmp_friction = collider_state.contact_data.friction[i, i_b]
+                tmp_sol_params = collider_state.contact_data.sol_params[i, i_b]
+                tmp_force = collider_state.contact_data.force[i, i_b]
+                tmp_link_a = collider_state.contact_data.link_a[i, i_b]
+                tmp_link_b = collider_state.contact_data.link_b[i, i_b]
+                tmp_pair_idx = collider_state.contact_data.pair_idx[i, i_b]
+
+                j = i
+                while collider_state.contact_sort_idx[j, i_b] != i:
+                    src = collider_state.contact_sort_idx[j, i_b]
+                    collider_state.contact_data.geom_a[j, i_b] = collider_state.contact_data.geom_a[src, i_b]
+                    collider_state.contact_data.geom_b[j, i_b] = collider_state.contact_data.geom_b[src, i_b]
+                    collider_state.contact_data.penetration[j, i_b] = collider_state.contact_data.penetration[src, i_b]
+                    collider_state.contact_data.normal[j, i_b] = collider_state.contact_data.normal[src, i_b]
+                    collider_state.contact_data.pos[j, i_b] = collider_state.contact_data.pos[src, i_b]
+                    collider_state.contact_data.friction[j, i_b] = collider_state.contact_data.friction[src, i_b]
+                    collider_state.contact_data.sol_params[j, i_b] = collider_state.contact_data.sol_params[src, i_b]
+                    collider_state.contact_data.force[j, i_b] = collider_state.contact_data.force[src, i_b]
+                    collider_state.contact_data.link_a[j, i_b] = collider_state.contact_data.link_a[src, i_b]
+                    collider_state.contact_data.link_b[j, i_b] = collider_state.contact_data.link_b[src, i_b]
+                    collider_state.contact_data.pair_idx[j, i_b] = collider_state.contact_data.pair_idx[src, i_b]
+                    collider_state.contact_sort_idx[j, i_b] = j
+                    j = src
+
+                collider_state.contact_data.geom_a[j, i_b] = tmp_geom_a
+                collider_state.contact_data.geom_b[j, i_b] = tmp_geom_b
+                collider_state.contact_data.penetration[j, i_b] = tmp_penetration
+                collider_state.contact_data.normal[j, i_b] = tmp_normal
+                collider_state.contact_data.pos[j, i_b] = tmp_pos
+                collider_state.contact_data.friction[j, i_b] = tmp_friction
+                collider_state.contact_data.sol_params[j, i_b] = tmp_sol_params
+                collider_state.contact_data.force[j, i_b] = tmp_force
+                collider_state.contact_data.link_a[j, i_b] = tmp_link_a
+                collider_state.contact_data.link_b[j, i_b] = tmp_link_b
+                collider_state.contact_data.pair_idx[j, i_b] = tmp_pair_idx
+                collider_state.contact_sort_idx[j, i_b] = j
+
+        # Default: keep everything. Buckets that pass the gates flip their entries to drop and then mark only
+        # hull-vertex contacts as keep again.
+        for i in range(n_con):
+            collider_state.contact_keep[i, i_b] = 1
+
+        # Phase 2: walk link-pair buckets.
+        b_start = 0
+        while b_start < n_con:
+            la0 = collider_state.contact_data.link_a[b_start, i_b]
+            lb0 = collider_state.contact_data.link_b[b_start, i_b]
+            la0_min = qd.min(la0, lb0)
+            la0_max = qd.max(la0, lb0)
+            b_end = b_start + 1
+            while b_end < n_con:
+                la = collider_state.contact_data.link_a[b_end, i_b]
+                lb = collider_state.contact_data.link_b[b_end, i_b]
+                if qd.min(la, lb) != la0_min or qd.max(la, lb) != la0_max:
+                    break
+                b_end += 1
+            b_size = b_end - b_start
+
+            if b_size >= 5:
+                # Mean normal (folded to the hemisphere of contact b_start) and centroid.
+                ref_n = collider_state.contact_data.normal[b_start, i_b]
+                rnx = ref_n[0]
+                rny = ref_n[1]
+                rnz = ref_n[2]
+                mnx = gs.qd_float(0.0)
+                mny = gs.qd_float(0.0)
+                mnz = gs.qd_float(0.0)
+                cx = gs.qd_float(0.0)
+                cy = gs.qd_float(0.0)
+                cz = gs.qd_float(0.0)
+                for i in range(b_start, b_end):
+                    n_i = collider_state.contact_data.normal[i, i_b]
+                    s = gs.qd_float(1.0)
+                    if rnx * n_i[0] + rny * n_i[1] + rnz * n_i[2] < gs.qd_float(0.0):
+                        s = gs.qd_float(-1.0)
+                    mnx += s * n_i[0]
+                    mny += s * n_i[1]
+                    mnz += s * n_i[2]
+                    p_i = collider_state.contact_data.pos[i, i_b]
+                    cx += p_i[0]
+                    cy += p_i[1]
+                    cz += p_i[2]
+                inv_n = gs.qd_float(1.0) / qd.cast(b_size, gs.qd_float)
+                cx *= inv_n
+                cy *= inv_n
+                cz *= inv_n
+                mnrm = qd.sqrt(mnx * mnx + mny * mny + mnz * mnz)
+
+                # Hoisted out so the hull-build branch below can read it (quadrants scopes per if).
+                max_in_plane_r2 = gs.qd_float(0.0)
+
+                coplanar = mnrm > EPS
+                if coplanar:
+                    mnx /= mnrm
+                    mny /= mnrm
+                    mnz /= mnrm
+
+                    # Depth coplanarity: positions must lie in a single plane perpendicular to the mean normal. No
+                    # per-contact normal check: a contact whose normal is diagonal (e.g. an edge-vs-edge contact at a
+                    # corner of the contact patch) still participates in the 2D hull because its position is a vertex of
+                    # the patch; dropping a collinear-edge contact in the same bucket is justified by the positional
+                    # support polygon regardless of that contact's normal direction.
+                    max_depth = gs.qd_float(0.0)
+                    for i in range(b_start, b_end):
+                        p_i = collider_state.contact_data.pos[i, i_b]
+                        dx = p_i[0] - cx
+                        dy = p_i[1] - cy
+                        dz = p_i[2] - cz
+                        depth = qd.abs(dx * mnx + dy * mny + dz * mnz)
+                        if depth > max_depth:
+                            max_depth = depth
+                        r2 = dx * dx + dy * dy + dz * dz - depth * depth
+                        if r2 > max_in_plane_r2:
+                            max_in_plane_r2 = r2
+
+                    if max_depth > tol * qd.sqrt(max_in_plane_r2):
+                        coplanar = False
+
+                if coplanar:
+                    # In-plane basis (u, v): seed from the world axis least-aligned with mean normal.
+                    abs_mnx = qd.abs(mnx)
+                    abs_mny = qd.abs(mny)
+                    abs_mnz = qd.abs(mnz)
+                    ax = gs.qd_float(1.0)
+                    ay = gs.qd_float(0.0)
+                    az = gs.qd_float(0.0)
+                    if abs_mny < abs_mnx and abs_mny < abs_mnz:
+                        ax = gs.qd_float(0.0)
+                        ay = gs.qd_float(1.0)
+                        az = gs.qd_float(0.0)
+                    elif abs_mnz < abs_mnx and abs_mnz <= abs_mny:
+                        ax = gs.qd_float(0.0)
+                        ay = gs.qd_float(0.0)
+                        az = gs.qd_float(1.0)
+                    adn = ax * mnx + ay * mny + az * mnz
+                    ux = ax - adn * mnx
+                    uy = ay - adn * mny
+                    uz = az - adn * mnz
+                    unrm = qd.sqrt(ux * ux + uy * uy + uz * uz)
+                    ux /= unrm
+                    uy /= unrm
+                    uz /= unrm
+                    vx = mny * uz - mnz * uy
+                    vy = mnz * ux - mnx * uz
+                    vz = mnx * uy - mny * ux
+
+                    # Project bucket contacts to (u, v). Reuse contact_sort_key for u (phase 1 has consumed it);
+                    # v goes into the dedicated scratch buffer.
+                    for i in range(b_start, b_end):
+                        p_i = collider_state.contact_data.pos[i, i_b]
+                        collider_state.contact_sort_key[i, i_b] = p_i[0] * ux + p_i[1] * uy + p_i[2] * uz
+                        collider_state.contact_proj_v[i, i_b] = p_i[0] * vx + p_i[1] * vy + p_i[2] * vz
+
+                    # Sort bucket indices lexicographically by (u, v), with a tolerance on u so that contacts whose u
+                    # values differ only by float noise (or by sub-millimeter physics noise from MPR perturbations) sort
+                    # by v. Without the tolerance, the wrong point pops from a 3-collinear triplet when the corner and
+                    # the mid-edge have u values that differ by a few microns and the mid-edge happens to sort first.
+                    sort_u_tol = gs.qd_float(1e-3) * qd.sqrt(max_in_plane_r2)
+                    for i in range(b_start, b_end):
+                        collider_state.contact_sort_idx[i, i_b] = i
+                    for i in range(b_start + 1, b_end):
+                        ci = collider_state.contact_sort_idx[i, i_b]
+                        cu = collider_state.contact_sort_key[ci, i_b]
+                        cv = collider_state.contact_proj_v[ci, i_b]
+                        j = i - 1
+                        while j >= b_start:
+                            pj = collider_state.contact_sort_idx[j, i_b]
+                            pu = collider_state.contact_sort_key[pj, i_b]
+                            pv = collider_state.contact_proj_v[pj, i_b]
+                            if (pu < cu - sort_u_tol) or (qd.abs(pu - cu) <= sort_u_tol and pv <= cv):
+                                break
+                            collider_state.contact_sort_idx[j + 1, i_b] = pj
+                            j -= 1
+                        collider_state.contact_sort_idx[j + 1, i_b] = ci
+
+                    # Mark all bucket entries as drop, then mark hull vertices as keep.
+                    for i in range(b_start, b_end):
+                        collider_state.contact_keep[i, i_b] = 0
+
+                    # Collinearity threshold for hull pops, scaled to the bucket extent. A pure "cross <= 0" check fails
+                    # on numerically-near-collinear edge points (cross is a tiny positive epsilon from float roundoff),
+                    # so genuine midpoints would survive as spurious hull vertices.
+                    hull_collinear_tol = tol * max_in_plane_r2
+
+                    # Andrew's monotone chain. Stack lives in contact_hull_stack[b_start..b_start + k).
+                    k = 0
+                    for i in range(b_start, b_end):
+                        ci = collider_state.contact_sort_idx[i, i_b]
+                        cu = collider_state.contact_sort_key[ci, i_b]
+                        cv = collider_state.contact_proj_v[ci, i_b]
+                        while k >= 2:
+                            idx_a = collider_state.contact_hull_stack[b_start + k - 2, i_b]
+                            idx_b = collider_state.contact_hull_stack[b_start + k - 1, i_b]
+                            au = collider_state.contact_sort_key[idx_a, i_b]
+                            av = collider_state.contact_proj_v[idx_a, i_b]
+                            bu = collider_state.contact_sort_key[idx_b, i_b]
+                            bv = collider_state.contact_proj_v[idx_b, i_b]
+                            cross = (bu - au) * (cv - av) - (bv - av) * (cu - au)
+                            if cross <= hull_collinear_tol:
+                                k -= 1
+                            else:
+                                break
+                        collider_state.contact_hull_stack[b_start + k, i_b] = ci
+                        k += 1
+
+                    upper_start = k
+                    # quadrants range supports 1 or 2 args only; iterate sorted indices backward over
+                    # [b_start, b_end - 2] by reflecting the index.
+                    for k_step in range(b_size - 1):
+                        ii = b_end - 2 - k_step
+                        ci = collider_state.contact_sort_idx[ii, i_b]
+                        cu = collider_state.contact_sort_key[ci, i_b]
+                        cv = collider_state.contact_proj_v[ci, i_b]
+                        while k >= upper_start + 1:
+                            idx_a = collider_state.contact_hull_stack[b_start + k - 2, i_b]
+                            idx_b = collider_state.contact_hull_stack[b_start + k - 1, i_b]
+                            au = collider_state.contact_sort_key[idx_a, i_b]
+                            av = collider_state.contact_proj_v[idx_a, i_b]
+                            bu = collider_state.contact_sort_key[idx_b, i_b]
+                            bv = collider_state.contact_proj_v[idx_b, i_b]
+                            cross = (bu - au) * (cv - av) - (bv - av) * (cu - au)
+                            if cross <= hull_collinear_tol:
+                                k -= 1
+                            else:
+                                break
+                        # The closing iteration of the upper hull visits the leftmost point, which already sits at
+                        # stack[b_start] from the lower hull. Skipping that push, plus the k < b_size guard, bounds k to
+                        # b_size and keeps the write index within max_contact_pairs even for buckets where the lower-
+                        # hull pass already kept all b_size points (downward-convex layouts: every lex-sorted triple
+                        # makes a left turn so nothing gets popped, then the upper-hull pass tries to push a duplicate
+                        # of an already-kept lower-hull vertex).
+                        if ci != collider_state.contact_hull_stack[b_start, i_b] and k < b_size:
+                            collider_state.contact_hull_stack[b_start + k, i_b] = ci
+                            k += 1
+
+                    # Chain holds k unique hull vertices (no trailing duplicate).
+                    for hk in range(k):
+                        survivor = collider_state.contact_hull_stack[b_start + hk, i_b]
+                        collider_state.contact_keep[survivor, i_b] = 1
+
+                    # Restore non-hull contacts whose penetration is much deeper than the hull boundary's average. The
+                    # support-polygon argument says interior contacts are wrench-redundant only when ALL contacts share
+                    # the same normal and penetration; a contact with substantially higher penetration than the hull's
+                    # average represents a distinct physical support (the body of a fork resting beyond its tines, the
+                    # deep middle of a long body) and dropping it lets the body sink into the surface. The 3x factor is
+                    # well above the typical ~1.x penetration spread on transient/rocking faces (so non-uniform-
+                    # penetration buckets like irregular mesh contacts keep only the hull) but well below the deep
+                    # interior penetrations seen when a non-flat body rests inside its convex envelope (so genuine deep
+                    # supports are restored).
+                    hull_pen_sum = gs.qd_float(0.0)
+                    for hk in range(k):
+                        survivor = collider_state.contact_hull_stack[b_start + hk, i_b]
+                        hull_pen_sum = hull_pen_sum + collider_state.contact_data.penetration[survivor, i_b]
+                    hull_pen_avg = hull_pen_sum / qd.cast(k, gs.qd_float)
+                    deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_avg
+                    for i in range(b_start, b_end):
+                        if collider_state.contact_keep[i, i_b] == 0:
+                            if collider_state.contact_data.penetration[i, i_b] > deep_keep_threshold:
+                                collider_state.contact_keep[i, i_b] = 1
+
+            b_start = b_end
+
+        # Phase 3: compact kept contacts to the front.
+        write = 0
+        for read in range(n_con):
+            if collider_state.contact_keep[read, i_b] != 0:
+                if write != read:
+                    collider_state.contact_data.geom_a[write, i_b] = collider_state.contact_data.geom_a[read, i_b]
+                    collider_state.contact_data.geom_b[write, i_b] = collider_state.contact_data.geom_b[read, i_b]
+                    collider_state.contact_data.penetration[write, i_b] = collider_state.contact_data.penetration[
+                        read, i_b
+                    ]
+                    collider_state.contact_data.normal[write, i_b] = collider_state.contact_data.normal[read, i_b]
+                    collider_state.contact_data.pos[write, i_b] = collider_state.contact_data.pos[read, i_b]
+                    collider_state.contact_data.friction[write, i_b] = collider_state.contact_data.friction[read, i_b]
+                    collider_state.contact_data.sol_params[write, i_b] = collider_state.contact_data.sol_params[
+                        read, i_b
+                    ]
+                    collider_state.contact_data.force[write, i_b] = collider_state.contact_data.force[read, i_b]
+                    collider_state.contact_data.link_a[write, i_b] = collider_state.contact_data.link_a[read, i_b]
+                    collider_state.contact_data.link_b[write, i_b] = collider_state.contact_data.link_b[read, i_b]
+                    collider_state.contact_data.pair_idx[write, i_b] = collider_state.contact_data.pair_idx[read, i_b]
+                write += 1
+        collider_state.n_contacts[i_b] = write
+
+
 @qd.kernel
 def func_set_upstream_grad(
     dL_dposition: qd.types.ndarray(),
