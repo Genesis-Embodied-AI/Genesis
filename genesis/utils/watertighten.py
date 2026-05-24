@@ -980,6 +980,32 @@ def _adaptive_params(verts: np.ndarray, faces: np.ndarray, aggressiveness: int):
     return alpha, pitch, max_cost
 
 
+def _keep_outer_shell(verts: np.ndarray, faces: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Drop inverted-winding components produced by dual contouring around internal cavities of the source mesh.
+
+    When the source has hollow regions, dual contouring on the unsigned distance field extracts one outer shell around
+    the full source plus one separate inner shell per cavity. The inner shells inherit the outward-from-source gradient
+    and end up with INWARD normals relative to their own enclosed volume, so their signed volume is negative. The full
+    mesh is "watertight" only in the edge-manifoldness sense, but its divergence-theorem integrals (volume, center of
+    mass, inertia) silently cancel outer against inner and produce garbage. Keep only the positive-signed-volume
+    components so the wrap really is a single closed envelope of the source.
+    """
+    if faces.shape[0] == 0:
+        return verts, faces
+    mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    components = mesh.split(only_watertight=False)
+    if len(components) <= 1:
+        return verts, faces
+    keep = [c for c in components if c.volume > 0.0]
+    if not keep or len(keep) == len(components):
+        return verts, faces
+    combined = trimesh.util.concatenate(keep)
+    return (
+        np.ascontiguousarray(combined.vertices, dtype=np.float64),
+        np.ascontiguousarray(combined.faces, dtype=np.int32),
+    )
+
+
 def watertighten_mesh(
     verts: np.ndarray,
     faces: np.ndarray,
@@ -1018,6 +1044,7 @@ def watertighten_mesh(
     field = gaussian_blur_3d(field, sigma)
     grad = _sdf_gradient(field, pitch)
     v, f = _dc_extract(field, grad, alpha, pitch, origin)
+    v, f = _keep_outer_shell(v, f)
     # One Newton step on the unsigned distance: snap each wrap vertex to the analytical `alpha`-isosurface of the source
     # mesh. Erases SDF-grid discretisation noise without changing topology - flat source regions stay flat in the wrap.
     _, _, closest = igl.point_mesh_squared_distance(v, verts, faces)

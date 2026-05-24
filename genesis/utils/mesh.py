@@ -39,6 +39,8 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
+WT_CACHE_VERSION = 2
+
 
 def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:
     return np.round(arr / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64)
@@ -156,7 +158,7 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
 
 
 def get_wt_path(verts, faces, aggressiveness):
-    hashkey = get_hashkey(verts, faces, aggressiveness)
+    hashkey = get_hashkey(verts, faces, aggressiveness, WT_CACHE_VERSION)
     return os.path.join(get_wt_cache_dir(), f"{hashkey}.wt")
 
 

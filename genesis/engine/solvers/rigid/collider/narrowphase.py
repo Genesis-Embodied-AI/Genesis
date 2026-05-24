@@ -197,6 +197,46 @@ def func_add_polytope_vertex_contacts_sdf(
             geoms_info, rigid_global_info, collider_static_config, sdf_info, center_a_world, i_gb, gb_pos, gb_quat
         )
         normal_center = gu.qd_normalize(grad_center, EPS)
+        # When two comparably-sized bodies meet "across" each other (the crossed-thin-rod regime: A's center sits within
+        # one A-bounding-radius of B's surface, with both bodies of similar bounding-sphere size), the grid SDF gradient
+        # at A's center is poorly conditioned - it lands on B's local radial direction, which is perpendicular to the
+        # closing motion. The geometric line from B's origin to A's center is a stronger reference there: it points
+        # along the relative-pose offset, which for a head-on closing pair coincides with the closing direction. The
+        # per-vertex grad is also locally radial and just as biased, so in this regime we use the closing direction as
+        # the FINAL normal rather than letting per-vertex grad override it. The size-ratio gate keeps the existing
+        # behavior for one-big-one-small pairs where the SDF grad at A's center is reliable and the closing-direction
+        # line is wrong (sphere on a large floor mesh).
+        rbound_b_sq = gs.qd_float(0.0)
+        b_center_local = geoms_info.center[i_gb]
+        for k in qd.static(range(8)):
+            delta_b = geoms_init_AABB[i_gb, k] - b_center_local
+            d_sq_b = delta_b.dot(delta_b)
+            if d_sq_b > rbound_b_sq:
+                rbound_b_sq = d_sq_b
+        rbound_b = qd.sqrt(rbound_b_sq)
+        center_b_world = gu.qd_transform_by_trans_quat(b_center_local, gb_pos, gb_quat)
+        use_closing_dir = qd.abs(sd_center) < rbound_a and rbound_a_sq > gs.qd_float(0.25) * rbound_b_sq
+        approach_depth_pair = gs.qd_float(0.0)
+        if use_closing_dir:
+            closing_dir = center_a_world - center_b_world
+            if closing_dir.norm() > EPS:
+                normal_center = gu.qd_normalize(closing_dir, EPS)
+                # OBB extent of A and B along the closing direction. Using the identity (R . e_i) . d = e_i . (R^T . d),
+                # we only need one inverse rotation per body to express closing_dir in that body's local frame; the OBB
+                # extent is then a 3-term weighted sum of local half-extents against the abs components of the
+                # local-frame direction. The geometric overlap along the closing axis is (h_a + h_b) - |distance between
+                # centers along that axis|. This is the depth the bodies have advanced into each other along the
+                # direction the constraint will push them apart, and it is much larger than the per-vertex SDF
+                # "distance to nearest surface" for crossed thin geoms where most A verts sit on A's outer skin one
+                # radial gap away from B's lateral surface.
+                half_ext_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]) * gs.qd_float(0.5)
+                half_ext_b = (geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]) * gs.qd_float(0.5)
+                d_local_a = gu.qd_inv_transform_by_quat(normal_center, ga_quat)
+                d_local_b = gu.qd_inv_transform_by_quat(normal_center, gb_quat)
+                h_a = half_ext_a.dot(qd.abs(d_local_a))
+                h_b = half_ext_b.dot(qd.abs(d_local_b))
+                center_proj = qd.abs((center_a_world - center_b_world).dot(normal_center))
+                approach_depth_pair = h_a + h_b - center_proj
         for k in qd.static(range(n_max)):
             if top_iv[k] >= 0:
                 i_v = top_iv[k]
@@ -229,12 +269,18 @@ def func_add_polytope_vertex_contacts_sdf(
                         pen_emit = synthetic_pen_max * (1.0 + pen_v / margin)
                 elif grad_norm > 0.9:
                     if pen_v > 0.0:
-                        pen_emit = qd.min(pen_v, margin)
+                        pen_emit = pen_v
                 elif pen_v > 0.0:
                     pen_emit = synthetic_pen_max
                 normal_v = normal_center
-                if grad_v.dot(grad_center) > 0.0:
+                if not use_closing_dir and grad_v.dot(normal_center) > 0.0:
                     normal_v = gu.qd_normalize(grad_v, EPS)
+                # In the closing-direction regime, the SDF "distance to nearest surface" measured at a vertex on A's
+                # outer skin is the small radial gap to B's lateral, not the much larger approach depth along the
+                # closing axis. Use the geometric approach depth as a floor on pen_emit so the constraint solver sees
+                # the actual overlap rather than just the radial gap.
+                if use_closing_dir and pen_v > 0.0 and approach_depth_pair > pen_emit:
+                    pen_emit = approach_depth_pair
                 repeated = False
                 for j in range(n_added):
                     idx_prev = collider_state.n_contacts[i_b] - 1 - j
