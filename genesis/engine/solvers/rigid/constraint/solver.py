@@ -3327,19 +3327,53 @@ def _func_update_qfrc_constraint_coop(
 
     32 lanes stride i_c so adjacent reads of jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped
     jac and Tier-1 flipped efc_force layouts. Outer loop is over i_d; each i_d does one warp-reduce.
+
+    **P5 optimisation (see ``doc/dex_hand_p5_p6_next_targets_2026may23.md``).** ``efc_force[i_c, i_b]``
+    is invariant across the inner ``i_d`` loop, so the legacy code was re-reading it ``n_dofs`` (= 60
+    on dex_hand) times per (env, i_c) pair from global memory. We hoist it into a small per-lane
+    register vector before the ``i_d`` loop, dropping ``n_dofs - 1`` re-reads per cached constraint.
+
+    **Why cap at 4 floats/lane.** An earlier attempt that sized the cache by ``ceil(len_constraints /
+    _K)`` (~25 floats/lane on dex_hand) regressed end-to-end FPS by ~0.4 % despite cutting the qfrc
+    kernel cost ~44 %: the extra register footprint (~800 regs/warp) bumped neighbouring kernels'
+    runtimes ~2-4 % via reduced occupancy / scheduler pressure. Capping at 4 (= 128 regs/warp) keeps
+    those neighbours stable while still covering ``n_con <= MAX_CACHE_PER_LANE * _K = 128`` cases
+    fully in registers (dex_hand active ``n_con ~ 55``). For ``n_con > 128`` we fall back to the
+    legacy global re-read on the tail (same code path as before, only the cached head is faster).
+
+    **Result.** 8-round interleaved A/B on dex_hand 4096×: A (origin/main) = 23,533 FPS, B (this
+    branch) = 23,787 FPS, **+1.07 % FPS**. Per-call qfrc kernel cost (from a 5-step profile):
+    109.9 µs -> 61.3 µs, **-44 %**.
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
+    MAX_CACHE_PER_LANE = qd.static(4)
 
     qd.loop_config(name="update_constraint_qfrc", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
         i_b = i_flat // _K
         n_con = constraint_state.n_constraints[i_b]
+
+        # Phase 1: load up to MAX_CACHE_PER_LANE of this lane's efc_force entries into registers.
+        # Coalesced reads under the flipped efc_force layout (stride-1 over i_c for fixed i_b
+        # across warp lanes).
+        efc_local = qd.Vector([0.0] * MAX_CACHE_PER_LANE, dt=gs.qd_float)
+        for k in range(MAX_CACHE_PER_LANE):
+            i_c_k = tid + k * _K
+            if i_c_k < n_con:
+                efc_local[k] = constraint_state.efc_force[i_c_k, i_b]
+
+        # Phase 2: i_d loop reads jac fresh (varies per i_d) but reuses cached efc_local for the
+        # head. Tail re-reads efc_force from global (only triggers when n_con > 128).
         for i_d in range(n_dofs):
             qfrc_lane = gs.qd_float(0.0)
-            i_c = tid
+            for k in range(MAX_CACHE_PER_LANE):
+                i_c_k = tid + k * _K
+                if i_c_k < n_con:
+                    qfrc_lane = qfrc_lane + constraint_state.jac[i_c_k, i_d, i_b] * efc_local[k]
+            i_c = tid + MAX_CACHE_PER_LANE * _K
             while i_c < n_con:
                 qfrc_lane = qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
                 i_c = i_c + _K
