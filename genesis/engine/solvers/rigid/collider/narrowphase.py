@@ -214,10 +214,11 @@ def func_add_polytope_vertex_contacts_sdf(
             if d_sq_b > rbound_b_sq:
                 rbound_b_sq = d_sq_b
         rbound_b = qd.sqrt(rbound_b_sq)
+        center_b_world = gu.qd_transform_by_trans_quat(b_center_local, gb_pos, gb_quat)
         use_closing_dir = qd.abs(sd_center) < rbound_a and rbound_a_sq > gs.qd_float(0.25) * rbound_b_sq
         approach_depth_pair = gs.qd_float(0.0)
         if use_closing_dir:
-            closing_dir = center_a_world - gb_pos
+            closing_dir = center_a_world - center_b_world
             if closing_dir.norm() > EPS:
                 normal_center = gu.qd_normalize(closing_dir, EPS)
                 # OBB extent of A and B along the closing direction. Using the identity (R . e_i) . d = e_i . (R^T . d),
@@ -234,7 +235,7 @@ def func_add_polytope_vertex_contacts_sdf(
                 d_local_b = gu.qd_inv_transform_by_quat(normal_center, gb_quat)
                 h_a = half_ext_a.dot(qd.abs(d_local_a))
                 h_b = half_ext_b.dot(qd.abs(d_local_b))
-                center_proj = qd.abs((center_a_world - gb_pos).dot(normal_center))
+                center_proj = qd.abs((center_a_world - center_b_world).dot(normal_center))
                 approach_depth_pair = h_a + h_b - center_proj
         for k in qd.static(range(n_max)):
             if top_iv[k] >= 0:
