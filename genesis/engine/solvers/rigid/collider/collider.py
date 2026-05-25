@@ -192,8 +192,8 @@ class Collider:
         # saturation).
         if link_pair_pruning_supported and gs.backend == gs.cpu:
             gs.logger.info(
-                f"Disabling link-pair contact dedup: cooperative kernel doesn't help on CPU (Quadrants serializes "
-                f"the per-env loop)."
+                "Disabling link-pair contact dedup: cooperative kernel doesn't help on CPU (Quadrants serializes "
+                "the per-env loop)."
             )
             link_pair_pruning_supported = False
         if link_pair_pruning_supported and self._solver.n_envs > _DEDUP_MAX_N_ENVS:
