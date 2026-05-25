@@ -89,7 +89,6 @@ class Collider:
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
         self._prune_deep_penetration_ratio = 3.0
-        self._prune_hull_collinear_tol = 1e-3
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -200,7 +199,6 @@ class Collider:
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
             prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
-            prune_hull_collinear_tol=self._prune_hull_collinear_tol,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
