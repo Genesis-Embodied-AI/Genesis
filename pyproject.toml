@@ -178,7 +178,9 @@ ignore = [
 [tool.pytest.ini_options]
 addopts = [
     "--verbose",
-    "-r", "a",
+    # Exclude 'f' (failed) from short test summary because it duplicates the FAILURES section in verbose mode.
+    # A plain list of failed test IDs is printed instead by 'pytest_terminal_summary' hook in tests/conftest.py.
+    "-r", "EsxXw",
     "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
