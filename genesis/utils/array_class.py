@@ -698,6 +698,7 @@ class ColliderState:
     contact_proj_v: qd.Tensor
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
+    contact_lex_idx: qd.Tensor
 
 
 def get_collider_state(
@@ -760,6 +761,7 @@ def get_collider_state(
         contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape),
         contact_keep=V(dtype=gs.qd_int, shape=prune_shape),
         contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape),
+        contact_lex_idx=V(dtype=gs.qd_int, shape=prune_shape),
     )
 
 

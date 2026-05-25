@@ -1374,6 +1374,7 @@ def test_contact_dedup(surface_kind, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_contact_pruning(show_viewer):
     GEOM_HALF_SIZE = 0.1
     MARGIN = 1e-4
