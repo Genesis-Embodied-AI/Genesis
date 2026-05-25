@@ -993,8 +993,50 @@ def func_prune_contacts_coop(
                 collider_state.contact_sort_idx[ii, i_b] = ii
                 ii += _K
 
-            if tid == 0:
-                # SERIAL on lane 0: phase 1a insertion sort + phase 2 bucket walk.
+            # Phase 1a sort: parallel bitonic sort across 32 lanes when n_con <= 32 (typical for coop-dispatched
+            # scenes like dex_hand ~30 contacts / g1_fall ~30); fall back to serial-on-lane-0 insertion sort
+            # otherwise. Bitonic sort across 32 lanes is 1+2+3+4+5 = 15 compare-exchange stages, each a single
+            # subgroup shuffle + compare; total ~30 ops vs. ~n²/2 for insertion sort on lane 0 (~450 for n=30).
+            #
+            # Algorithm: load (key, idx) into one register per lane (sentinel +inf for lanes >= n_con). Run the
+            # bitonic compare-exchange sequence; each lane keeps min or max with its partner depending on the
+            # standard "ascending bit" formula. Write back ordered values to contact_sort_key / contact_sort_idx.
+            if n_con <= _K:
+                # Load with sentinel for out-of-range lanes (pushes them to the end of ascending sort).
+                my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
+                my_idx = qd.i32(-1)
+                if tid < n_con:
+                    my_key = collider_state.contact_sort_key[tid, i_b]
+                    my_idx = collider_state.contact_sort_idx[tid, i_b]
+
+                # 15 bitonic stages: (k, j) pairs walking the standard schedule.
+                for k_log2 in qd.static(range(1, 6)):
+                    k_mask = qd.static(1 << k_log2)
+                    for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
+                        j = qd.static(1 << j_log2)
+                        partner = qd.u32(tid ^ j)
+                        their_key = qd.simt.subgroup.shuffle(my_key, partner)
+                        their_idx = qd.simt.subgroup.shuffle(my_idx, partner)
+                        # Take lower-of-pair iff (i_am_low XOR ascending) is False; equivalently,
+                        # (tid & j == 0) == (tid & k_mask == 0).
+                        i_am_low = (tid & j) == 0
+                        asc = (tid & k_mask) == 0
+                        take_min = i_am_low == asc
+                        if take_min:
+                            if their_key < my_key:
+                                my_key = their_key
+                                my_idx = their_idx
+                        else:
+                            if their_key > my_key:
+                                my_key = their_key
+                                my_idx = their_idx
+
+                # Write back the sorted values for the real range.
+                if tid < n_con:
+                    collider_state.contact_sort_key[tid, i_b] = my_key
+                    collider_state.contact_sort_idx[tid, i_b] = my_idx
+            elif tid == 0:
+                # Serial fallback: insertion sort on lane 0 for n_con > 32.
                 for i in range(1, n_con):
                     ck = collider_state.contact_sort_key[i, i_b]
                     if collider_state.contact_sort_key[i - 1, i_b] <= ck:
