@@ -672,6 +672,7 @@ def func_prune_contacts(
     max_contact_pairs = collider_info.max_contact_pairs[None]
     tol = collider_info.contact_pruning_tolerance[None]
     prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
+    prune_hull_collinear_tol = collider_info.prune_hull_collinear_tol[None]
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
     EPS = rigid_global_info.EPS[None]
 
@@ -898,7 +899,7 @@ def func_prune_contacts(
                     # Collinearity threshold for hull pops, scaled to the bucket extent. A pure "cross <= 0" check fails
                     # on numerically-near-collinear edge points (cross is a tiny positive epsilon from float roundoff),
                     # so genuine midpoints would survive as spurious hull vertices.
-                    hull_collinear_tol = tol * max_in_plane_r2
+                    hull_collinear_tol = prune_hull_collinear_tol * max_in_plane_r2
 
                     # Andrew's monotone chain. Stack lives in contact_hull_stack[b_start..b_start + k).
                     k = 0
@@ -922,6 +923,14 @@ def func_prune_contacts(
                         k += 1
 
                     upper_start = k
+                    # Memory-fence workaround for a Quadrants codegen issue on parallel envs (Metal backend, _B >= 2):
+                    # without an explicit scratch store between the lower-hull and upper-hull passes, the upper-hull
+                    # pop-loop's reads of contact_hull_stack don't observe the writes from the lower hull, so its
+                    # cross-product / pop-check effectively runs on stale data and every candidate is kept. This shows
+                    # up as the kernel never popping anything in the upper hull and producing a hull whose size equals
+                    # the bucket size. Writing any value to a non-overlapping scratch slot here serializes the two
+                    # passes' contact_hull_stack accesses and restores parallel correctness; the value is unused.
+                    collider_state.contact_hull_stack[max_contact_pairs - 1, i_b] = 0
                     # quadrants range supports 1 or 2 args only; iterate sorted indices backward over
                     # [b_start, b_end - 2] by reflecting the index.
                     for k_step in range(b_size - 1):
@@ -965,12 +974,13 @@ def func_prune_contacts(
                     # penetration buckets like irregular mesh contacts keep only the hull) but well below the deep
                     # interior penetrations seen when a non-flat body rests inside its convex envelope (so genuine deep
                     # supports are restored).
-                    hull_pen_sum = gs.qd_float(0.0)
+                    hull_pen_max = gs.qd_float(0.0)
                     for hk in range(k):
                         survivor = collider_state.contact_hull_stack[b_start + hk, i_b]
-                        hull_pen_sum = hull_pen_sum + collider_state.contact_data.penetration[survivor, i_b]
-                    hull_pen_avg = hull_pen_sum / qd.cast(k, gs.qd_float)
-                    deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_avg
+                        p = collider_state.contact_data.penetration[survivor, i_b]
+                        if p > hull_pen_max:
+                            hull_pen_max = p
+                    deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_max
                     for i in range(b_start, b_end):
                         if collider_state.contact_keep[i, i_b] == 0:
                             if collider_state.contact_data.penetration[i, i_b] > deep_keep_threshold:
