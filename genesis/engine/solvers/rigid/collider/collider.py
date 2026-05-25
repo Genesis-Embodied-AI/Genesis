@@ -47,8 +47,7 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
-    func_clamp_and_sort_contacts,
-    func_prune_contacts,
+    func_clamp_prune_and_sort_contacts,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -70,19 +69,6 @@ from .narrowphase import (
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
-
-
-# Above this env count, the cooperative warp-per-env dedup kernel stops paying off because the GPU's SMs are already
-# grid-saturated by the launch itself, so the per-env serial sub-phases (lex sort, hull build, opt-10 cycle permute)
-# start to dominate. The threshold is a sweet spot for current consumer + datacenter GPUs (5090 / H100 class), where
-# 8192 blocks of 32 threads each already exceeds ~10x the SM count.
-_DEDUP_MAX_N_ENVS = 8192
-
-# Default tolerance applied automatically when scene gates allow dedup and the user explicitly sets the option
-# RigidOptions.contact_pruning_tolerance to None. Upstream default (post-PR #2831) is also 0.1; this constant keeps
-# the "auto-enable when user explicitly None" path independent of the upstream default. 0.1 = 10 percent
-# dimensionless slop fraction on the depth coplanarity gate.
-_DEDUP_DEFAULT_TOLERANCE = 0.1
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -181,38 +167,6 @@ class Collider:
         # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
         any_link_multi_geom = any(len(link.geoms) > 1 for link in self._solver.links)
         link_pair_pruning_supported = any_link_multi_geom or has_nonconvex_nonterrain or has_terrain
-        # The dedup kernel is GPU-only: its cooperative 32-lane structure relies on warp-level qd.simt.subgroup
-        # primitives (reduce_all_add_tiled, broadcast, shuffle, sync) that map cleanly to NVIDIA warps and AMD
-        # wavefronts and (post-PR #2831 memory-fence workaround) to Apple Metal simdgroups. CPU has no equivalent --
-        # Quadrants serializes the cooperative loop per env so the kernel just adds overhead without parallel speedup.
-        # At very large n_envs the GPU is already grid-saturated by the warp-cooperative launch (n_envs warps), and
-        # the per-env serial phases (lex sort + hull build + opt-10 cycle permute) start to dominate, so dedup loses
-        # its margin over the baseline narrowphase output. The 8192 threshold is conservative: a 5090 has ~170 SMs
-        # and the kernel uses 32 threads/block, so 8192 envs = 8192 blocks = ~48 blocks/SM (past occupancy
-        # saturation).
-        if link_pair_pruning_supported and gs.backend == gs.cpu:
-            gs.logger.info(
-                "Disabling link-pair contact dedup: cooperative kernel doesn't help on CPU (Quadrants serializes "
-                "the per-env loop)."
-            )
-            link_pair_pruning_supported = False
-        if link_pair_pruning_supported and self._solver.n_envs > _DEDUP_MAX_N_ENVS:
-            gs.logger.info(
-                f"Disabling link-pair contact dedup: n_envs={self._solver.n_envs} exceeds threshold "
-                f"_DEDUP_MAX_N_ENVS={_DEDUP_MAX_N_ENVS} (the cooperative kernel's overhead stops paying off "
-                f"once the GPU is already grid-saturated)."
-            )
-            link_pair_pruning_supported = False
-
-        # Resolve the effective dedup tolerance. The upstream option default is 0.1 (post-PR #2831), so dedup is on
-        # by default whenever the scene gates allow. A user-supplied float overrides; explicit user None plus
-        # gates-allow auto-enables to _DEDUP_DEFAULT_TOLERANCE; gates-disallow forces None regardless of user setting
-        # (so an explicit float on CPU still doesn't run -- the cooperative kernel wouldn't pay off there).
-        user_tol = self._solver._options.contact_pruning_tolerance
-        if link_pair_pruning_supported:
-            self._effective_pruning_tolerance = user_tol if user_tol is not None else _DEDUP_DEFAULT_TOLERANCE
-        else:
-            self._effective_pruning_tolerance = None
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
@@ -244,7 +198,7 @@ class Collider:
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
-            contact_pruning_tolerance=self._effective_pruning_tolerance or 0.0,
+            contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
             prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
             prune_hull_collinear_tol=self._prune_hull_collinear_tol,
         )
@@ -866,28 +820,13 @@ class Collider:
                 self._solver._errno,
             )
 
-        # deskai6 opt 10: func_prune_contacts fuses the spatial clamp+sort into its phase 3, so when dedup runs we skip
-        # the standalone clamp_and_sort kernel (one less launch + one less full permute pass). The dispatch gate uses
-        # the resolved effective tolerance (auto-enabled to 0.1 in _init_static_config when scene gates pass), not the
-        # raw user option, so dedup runs by default on supported scenes whenever the user didn't explicitly disable it.
-        ran_fused_dedup = (
-            self._effective_pruning_tolerance is not None and not self._solver._static_rigid_sim_config.requires_grad
+        func_clamp_prune_and_sort_contacts(
+            self._collider_state,
+            self._collider_info,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+            self._collider_static_config,
         )
-
-        if ran_fused_dedup:
-            func_prune_contacts(
-                self._collider_state,
-                self._collider_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
-
-        if self._use_split_narrowphase and not ran_fused_dedup:
-            func_clamp_and_sort_contacts(
-                self._collider_state,
-                self._collider_info,
-                self._solver._static_rigid_sim_config,
-            )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
