@@ -1392,6 +1392,9 @@ def test_contact_pruning(show_viewer):
             camera_pos=(0.4, 0.3, 0.3),
             camera_lookat=(0.0, 0.0, 0.0),
         ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=(0,),
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(
@@ -1438,7 +1441,7 @@ def test_contact_pruning(show_viewer):
         vis_mode="collision",
         visualize_contact=True,
     )
-    scene.build()
+    scene.build(n_envs=2)
 
     for step_idx in range(200):
         scene.step()
@@ -1448,44 +1451,45 @@ def test_contact_pruning(show_viewer):
         # don't need to be fully generic). Redundant (interior or hull-edge-midpoint) contacts and >2-collinear
         # contacts both indicate the pruning kernel left work undone.
         contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
-        positions = contacts["position"]
-        normals = contacts["normal"]
-        buckets: dict[tuple[int, int], list[int]] = {}
-        for i in range(len(positions)):
-            axis = int(np.argmax(np.abs(normals[i])))
-            sign = 1 if normals[i][axis] > 0 else -1
-            buckets.setdefault((axis, sign), []).append(i)
-        for key, idxs in buckets.items():
-            if len(idxs) < 3:
-                continue
-            other_axes = [a for a in range(3) if a != key[0]]
-            proj = positions[idxs][:, other_axes].astype(np.float64)
-            diam = float(np.linalg.norm(proj.max(axis=0) - proj.min(axis=0)))
-            if diam < 1e-6:
-                continue
-            try:
-                # Qhull's E tolerance merges nearly-collinear points into hull edges; without it, float noise on
-                # the order of 1e-6 hides the collinearity that the pruning kernel is supposed to detect.
-                hull = ConvexHull(proj, qhull_options=f"Qt E{diam * 1e-3}")
-                n_hull_vertices = len(hull.vertices)
-            except QhullError:
+        for i_b in range(scene.n_envs):
+            positions = contacts["position"][i_b]
+            normals = contacts["normal"][i_b]
+            buckets: dict[tuple[int, int], list[int]] = {}
+            for i in range(len(positions)):
+                axis = int(np.argmax(np.abs(normals[i])))
+                sign = 1 if normals[i][axis] > 0 else -1
+                buckets.setdefault((axis, sign), []).append(i)
+            for key, idxs in buckets.items():
+                if len(idxs) < 3:
+                    continue
+                other_axes = [a for a in range(3) if a != key[0]]
+                proj = positions[idxs][:, other_axes].astype(np.float64)
+                diam = float(np.linalg.norm(proj.max(axis=0) - proj.min(axis=0)))
+                if diam < 1e-6:
+                    continue
+                try:
+                    # Qhull's E tolerance merges nearly-collinear points into hull edges; without it, float noise on
+                    # the order of 1e-6 hides the collinearity that the pruning kernel is supposed to detect.
+                    hull = ConvexHull(proj, qhull_options=f"Qt E{diam * 1e-3}")
+                    n_hull_vertices = len(hull.vertices)
+                except QhullError:
+                    raise AssertionError(
+                        f"step {step_idx}, bucket axis={key[0]} sign={key[1]}: {len(idxs)} contacts are collinear in "
+                        f"the contact plane. The pruning kernel should have kept at most 2 of them."
+                    ) from None
+                if n_hull_vertices == len(idxs):
+                    continue
+                non_hull = sorted(set(range(len(idxs))) - set(hull.vertices.tolist()))
+                details = "\n".join(
+                    f"    [{i}] contact={idxs[i]} pos={positions[idxs[i]]} proj={proj[i]}"
+                    f"{'  <-- REDUNDANT' if i in non_hull else ''}"
+                    for i in range(len(idxs))
+                )
                 raise AssertionError(
-                    f"step {step_idx}, bucket axis={key[0]} sign={key[1]}: {len(idxs)} contacts are collinear in "
-                    f"the contact plane. The pruning kernel should have kept at most 2 of them."
-                ) from None
-            if n_hull_vertices == len(idxs):
-                continue
-            non_hull = sorted(set(range(len(idxs))) - set(hull.vertices.tolist()))
-            details = "\n".join(
-                f"    [{i}] contact={idxs[i]} pos={positions[idxs[i]]} proj={proj[i]}"
-                f"{'  <-- REDUNDANT' if i in non_hull else ''}"
-                for i in range(len(idxs))
-            )
-            raise AssertionError(
-                f"step {step_idx}, bucket axis={key[0]} sign={key[1]}: {len(idxs)} surviving contacts but only "
-                f"{n_hull_vertices} are vertices of the bucket's 2D convex hull. The pruning kernel should have "
-                f"dropped these {len(idxs) - n_hull_vertices} redundant contact(s):\n{details}"
-            )
+                    f"step {step_idx}, bucket axis={key[0]} sign={key[1]}: {len(idxs)} surviving contacts but only "
+                    f"{n_hull_vertices} are vertices of the bucket's 2D convex hull. The pruning kernel should have "
+                    f"dropped these {len(idxs) - n_hull_vertices} redundant contact(s):\n{details}"
+                )
     assert_allclose(box.get_pos(), 0.0, atol=2e-3)
 
 

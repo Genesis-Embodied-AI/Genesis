@@ -922,6 +922,13 @@ def func_prune_contacts(
                         k += 1
 
                     upper_start = k
+                    # Memory-fence for a Quadrants codegen issue on parallel envs (Metal backend, _B >= 2): without an
+                    # explicit barrier between the lower-hull and upper-hull passes, the upper-hull pop-loop's reads
+                    # of contact_hull_stack don't observe the writes from the lower hull, so its cross-product /
+                    # pop-check effectively runs on stale data and every candidate is kept, producing a hull whose
+                    # size equals the bucket size.
+                    if qd.static(static_rigid_sim_config.backend == gs.metal):
+                        qd.simt.block.sync()
                     # quadrants range supports 1 or 2 args only; iterate sorted indices backward over
                     # [b_start, b_end - 2] by reflecting the index.
                     for k_step in range(b_size - 1):
@@ -965,12 +972,13 @@ def func_prune_contacts(
                     # penetration buckets like irregular mesh contacts keep only the hull) but well below the deep
                     # interior penetrations seen when a non-flat body rests inside its convex envelope (so genuine deep
                     # supports are restored).
-                    hull_pen_sum = gs.qd_float(0.0)
+                    hull_pen_max = gs.qd_float(0.0)
                     for hk in range(k):
                         survivor = collider_state.contact_hull_stack[b_start + hk, i_b]
-                        hull_pen_sum = hull_pen_sum + collider_state.contact_data.penetration[survivor, i_b]
-                    hull_pen_avg = hull_pen_sum / qd.cast(k, gs.qd_float)
-                    deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_avg
+                        p = collider_state.contact_data.penetration[survivor, i_b]
+                        if p > hull_pen_max:
+                            hull_pen_max = p
+                    deep_keep_threshold = prune_deep_penetration_ratio * hull_pen_max
                     for i in range(b_start, b_end):
                         if collider_state.contact_keep[i, i_b] == 0:
                             if collider_state.contact_data.penetration[i, i_b] > deep_keep_threshold:
