@@ -48,6 +48,7 @@ from .contact import (
     func_rotate_frame,
     func_set_upstream_grad,
     func_clamp_prune_and_sort_contacts,
+    func_prune_contacts_coop,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -840,13 +841,33 @@ class Collider:
                 self._solver._errno,
             )
 
-        func_clamp_prune_and_sort_contacts(
-            self._collider_state,
-            self._collider_info,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-            self._collider_static_config,
+        # On GPU backends, when the scene is dedup-eligible and we're not in autodiff mode, dispatch the cooperative
+        # warp-per-env kernel (32 lanes/block; parallel reductions + lex-stride writes; serial sorts + hull build on
+        # lane 0; fused compact+spatial-sort in the final phase). This beats the serial fused kernel on dex_hand /
+        # g1_fall by ~2-3% by spreading the per-env work across the warp instead of running one env per block thread.
+        # Everything else (CPU, autodiff, scenes where link_pair_pruning_supported=False) falls through to the serial
+        # fused kernel, which has internal qd.static gates that drop the prune phases when they're not eligible.
+        ran_fused_dedup_coop = (
+            gs.backend != gs.cpu
+            and self._collider_static_config.link_pair_pruning_supported
+            and not self._solver._static_rigid_sim_config.requires_grad
+            and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
         )
+        if ran_fused_dedup_coop:
+            func_prune_contacts_coop(
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        else:
+            func_clamp_prune_and_sort_contacts(
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_static_config,
+            )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
