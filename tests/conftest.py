@@ -487,6 +487,29 @@ def pytest_runtest_makereport(item, call):
             report.longrepr = (os.path.relpath(__file__), lineno, reason)
 
 
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print a plain list of failed test IDs at the end of the run.
+
+    Replaces pytest's default 'FAILED test_id - msg' short summary lines (which in verbose mode
+    duplicate the FAILURES section) with a compact, easy-to-scan ID-only list.
+    """
+    failed = terminalreporter.stats.get("failed")
+    if not failed:
+        return
+    terminalreporter.write_sep("=", "Failed tests")
+    fullwidth = terminalreporter._tw.fullwidth
+    for report in failed:
+        reprcrash = getattr(report.longrepr, "reprcrash", None)
+        msg = " ".join(reprcrash.message.split()) if reprcrash is not None else ""
+        if not msg:
+            terminalreporter.write_line(report.nodeid)
+            continue
+        line = f"{report.nodeid} - {msg}"
+        if len(line) > fullwidth:
+            line = line[: fullwidth - 3] + "..."
+        terminalreporter.write_line(line)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
     parser.addoption(
