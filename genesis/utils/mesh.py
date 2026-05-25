@@ -1068,7 +1068,8 @@ def create_plane(
         faces = np.vstack([faces, faces[:, ::-1]])
 
     vmesh = trimesh.Trimesh(verts, faces, process=False)
-    vmesh.vertices[:, 2] -= thickness / 2
+    # Align visual surface with the collision top face, both at z=0 in link-local frame, so morph.pos specifies
+    # the actual rendered surface position.
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
     if texture_path is not None:

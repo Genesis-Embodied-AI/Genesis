@@ -194,27 +194,29 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
 
 @pytest.mark.required
 def test_rasterizer_batched(show_viewer, png_snapshot):
-    # FIXME: Small discrepancy between different hardware due to contact visualization with onscreen viewer
-    png_snapshot.extension._std_err_threshold = 2.0
+    CAM_RES = (128, 128)
 
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
-
-    # Add a plane
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            pos=(-2.0, 0.0, 0.0),
+            plane_size=(8.0, 3.0),
+        ),
     )
-
-    # Add a sphere
     sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(pos=(0.0, 0.0, 1.0), radius=0.3),
-        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
+        morph=gs.morphs.Sphere(
+            radius=0.3,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 0.5, 0.5),
+        ),
     )
     camera = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=(3.0, 0.0, 1.5),
+            res=CAM_RES,
+            pos=(4.0, 0.0, 1.5),
             lookat=(0.0, 0.0, 0.5),
             fov=60.0,
             draw_debug=show_viewer,
@@ -224,20 +226,18 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
 
     # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
     camera._shared_metadata.context.shadow = False
+    # Small discrepancy on apple software renderer
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        png_snapshot.extension._std_err_threshold = 2.0
 
-    sphere.set_pos([[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]])
+    sphere.set_pos([[0.0, 0.0, 2.0], [1.0, 0.5, 0.3]])
     scene.step()
 
     data = camera.read()
 
-    assert data.rgb.shape == (2, 64, 64, 3)
+    assert data.rgb.shape == (2, *CAM_RES, 3)
     assert data.rgb.dtype == torch.uint8
-    try:
-        assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
-    except AssertionError:
-        if sys.platform == "darwin" and scene.visualizer.is_software:
-            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
-        raise
+    assert (data.rgb[0] != data.rgb[1]).any(), "Frames should be different"
 
     for i in range(scene.n_envs):
         assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot

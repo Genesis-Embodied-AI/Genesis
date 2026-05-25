@@ -1181,6 +1181,7 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
         scene.add_entity(
             morph=gs.morphs.Plane(
                 pos=plane_pos_world,
+                plane_size=(2.0 * BOX_HALF_EXTENT, 2.0 * BOX_HALF_EXTENT),
                 quat=tilt_quat,
                 fixed=True,
             ),
