@@ -47,8 +47,7 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
-    func_clamp_and_sort_contacts,
-    func_prune_contacts,
+    func_clamp_prune_and_sort_contacts,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -819,24 +818,13 @@ class Collider:
                 self._solver._errno,
             )
 
-        if (
-            self._collider_static_config.link_pair_pruning_supported
-            and self._solver._options.contact_pruning_tolerance is not None
-            and not self._solver._static_rigid_sim_config.requires_grad
-        ):
-            func_prune_contacts(
-                self._collider_state,
-                self._collider_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
-
-        if self._use_split_narrowphase:
-            func_clamp_and_sort_contacts(
-                self._collider_state,
-                self._collider_info,
-                self._solver._static_rigid_sim_config,
-            )
+        func_clamp_prune_and_sort_contacts(
+            self._collider_state,
+            self._collider_info,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+            self._collider_static_config,
+        )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
