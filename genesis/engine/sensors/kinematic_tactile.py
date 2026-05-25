@@ -57,10 +57,11 @@ def _func_query_contact_depth_penetration(
 
     n_contacts = collider_state.n_contacts[i_b]
     for i_c in range(n_contacts):
-        c_link_a = collider_state.contact_data.link_a[i_c, i_b]
-        c_link_b = collider_state.contact_data.link_b[i_c, i_b]
-        c_geom_a = collider_state.contact_data.geom_a[i_c, i_b]
-        c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
+        i_col = collider_state.contact_sort_idx[i_c, i_b]
+        c_link_a = collider_state.contact_data.link_a[i_col, i_b]
+        c_link_b = collider_state.contact_data.link_b[i_col, i_b]
+        c_geom_a = collider_state.contact_data.geom_a[i_col, i_b]
+        c_geom_b = collider_state.contact_data.geom_b[i_col, i_b]
 
         for side in qd.static(range(2)):
             c_link = c_link_a if side == 0 else c_link_b
@@ -113,10 +114,11 @@ def _func_query_contact_depth(
     # Iterate over contacts directly from collider state; each contact may have the sensor link on either side.
     n_contacts = collider_state.n_contacts[i_b]
     for i_c in range(n_contacts):
-        c_link_a = collider_state.contact_data.link_a[i_c, i_b]
-        c_link_b = collider_state.contact_data.link_b[i_c, i_b]
-        c_geom_a = collider_state.contact_data.geom_a[i_c, i_b]
-        c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
+        i_col = collider_state.contact_sort_idx[i_c, i_b]
+        c_link_a = collider_state.contact_data.link_a[i_col, i_b]
+        c_link_b = collider_state.contact_data.link_b[i_col, i_b]
+        c_geom_a = collider_state.contact_data.geom_a[i_col, i_b]
+        c_geom_b = collider_state.contact_data.geom_b[i_col, i_b]
 
         # Check if either side of this contact involves the sensor link.
         for side in qd.static(range(2)):

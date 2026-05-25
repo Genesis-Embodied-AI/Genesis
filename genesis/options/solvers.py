@@ -507,7 +507,7 @@ class RigidOptions(Options):
     ls_tolerance: PositiveFloat = 1e-2
     noslip_iterations: NonNegativeInt = 0
     noslip_tolerance: PositiveFloat = 1e-6
-    contact_pruning_tolerance: PositiveFloat | None = None
+    contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool = False
     constraint_timeconst: PositiveFloat = 0.01
     use_contact_island: StrictBool = False
@@ -546,6 +546,14 @@ class RigidOptions(Options):
                     "'contact_pruning_tolerance' is not supported when 'enable_mujoco_compatibility' is True"
                 )
             # User did not explicitly request pruning, silently disable to guarantee mujoco compatibility
+            self.contact_pruning_tolerance = None
+        if self.contact_pruning_tolerance is not None and self.use_contact_island:
+            if "contact_pruning_tolerance" in self.model_fields_set:
+                gs.raise_exception(
+                    "'contact_pruning_tolerance' is not supported when 'use_contact_island' is True. The contact "
+                    "island path consumes contacts in physical layout and does not honor the logical permutation "
+                    "that link-pair pruning produces."
+                )
             self.contact_pruning_tolerance = None
 
 

@@ -164,8 +164,29 @@ class Collider:
         # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
         # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
         # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
+        # Disabled outright when use_contact_island is True: pruning produces a logical permutation in
+        # contact_sort_idx that the contact-island construction kernel does not honor (it reads contact_data in
+        # physical order). Options.model_post_init has already rejected an explicit contact_pruning_tolerance in this
+        # combination, so disabling the static gate here is a no-op for users who did not request pruning.
         any_link_multi_geom = any(len(link.geoms) > 1 for link in self._solver.links)
-        link_pair_pruning_supported = any_link_multi_geom or has_nonconvex_nonterrain or has_terrain
+        use_contact_island = self._solver._options.use_contact_island
+        link_pair_pruning_supported = (
+            any_link_multi_geom or has_nonconvex_nonterrain or has_terrain
+        ) and not use_contact_island
+
+        # Spatial sort by x-position only runs on GPU when the split narrowphase produced contacts that could
+        # benefit from locality. Disabled when use_contact_island is True for the same reason as pruning.
+        spatial_sort_supported = has_non_box_plane_convex_convex and gs.backend != gs.cpu and not use_contact_island
+
+        # Hibernation (func_collision_clear / func_collider_clear_env in this module's siblings) advects carried
+        # contacts by walking physical slots [0, n_contacts), which only matches the live set when sort_idx is the
+        # identity. The use_hibernation -> use_contact_island chain in RigidSolver already enforces that pruning and
+        # spatial sort are off, so this is a defensive assertion meant to fail loudly if either gate is loosened.
+        if self._solver._use_hibernation and (link_pair_pruning_supported or spatial_sort_supported):
+            gs.raise_exception(
+                "Hibernation is incompatible with link-pair pruning and spatial sort: both reorder logical contacts "
+                "via contact_sort_idx, but the hibernation advect loop reads contact_data in physical order."
+            )
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
@@ -175,6 +196,7 @@ class Collider:
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             link_pair_pruning_supported=link_pair_pruning_supported,
+            spatial_sort_supported=spatial_sort_supported,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
@@ -833,22 +855,50 @@ class Collider:
             return contact_data.copy()
 
         n_envs = self._solver.n_envs
+        # When pruning and spatial sort are both statically disabled, contact_sort_idx is guaranteed to stay at the
+        # identity permutation, so the physical layout of contact_data already matches the logical order. In that
+        # case the zero-copy fast path returns torch views over contact_data storage truncated to n_contacts_max.
+        # Otherwise the permutation must be applied: read both contact_data and contact_sort_idx as zero-copy torch
+        # views, then materialize each field via a single torch.gather along the contact axis. This still avoids the
+        # Quadrants gather kernel and produces a contiguous output suitable for downstream consumers.
+        zerocopy_aligned = (
+            not self._collider_static_config.link_pair_pruning_supported
+            and not self._collider_static_config.spatial_sort_supported
+        )
         if gs.use_zerocopy:
             n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
             if as_tensor or n_envs == 0:
                 n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()
 
-            for key, data in self._contact_data.items():
-                if n_envs == 0:
-                    data = data[0, :n_contacts_max] if not keep_batch_dim else data[:, :n_contacts_max]
-                elif as_tensor:
-                    data = data[:, :n_contacts_max]
+            if not zerocopy_aligned:
+                # Build a (_B, n_contacts_max) index tensor once, expanded to (_B, n_contacts_max, 3) for vector
+                # fields. n_contacts_max comes from the max-across-envs reduction so the same index drives every
+                # field; per-env trimming to n_contacts[i] happens in the ragged split below.
+                if not (as_tensor or n_envs == 0):
+                    n_contacts_max = n_contacts.max().item()
+                sort_idx_view = qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
+                gather_idx_flat = sort_idx_view[:, :n_contacts_max]
+                gather_idx_vec = gather_idx_flat.unsqueeze(-1).expand(-1, -1, 3)
 
-                if to_torch:
-                    if gs.backend == gs.cpu:
-                        data = data.clone()
+            for key, data in self._contact_data.items():
+                if zerocopy_aligned:
+                    if n_envs == 0:
+                        data = data[0, :n_contacts_max] if not keep_batch_dim else data[:, :n_contacts_max]
+                    elif as_tensor:
+                        data = data[:, :n_contacts_max]
+                    if to_torch:
+                        if gs.backend == gs.cpu:
+                            data = data.clone()
+                    else:
+                        data = tensor_to_array(data)
                 else:
-                    data = tensor_to_array(data)
+                    # data shape is (_B, max_contact_pairs) for scalars or (_B, max_contact_pairs, 3) for vectors.
+                    gidx = gather_idx_vec if data.dim() == 3 else gather_idx_flat
+                    data = data.gather(dim=1, index=gidx)
+                    if n_envs == 0 and not keep_batch_dim:
+                        data = data[0]
+                    if not to_torch:
+                        data = tensor_to_array(data)
 
                 if n_envs > 0 and not as_tensor:
                     if keep_batch_dim:

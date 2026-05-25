@@ -839,10 +839,15 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
     # True when link-pair contact pruning can ever do useful work. False when every link has at most one convex geom
-    # and no terrain is present, because each (link_a, link_b) bucket then holds at most one geom-pair's contacts
-    # (capped at n_contacts_per_pair) and the 2D hull would be at best a marginal reduction. Lets us skip the pruning
-    # kernel call and its scratch buffers entirely.
+    # and no terrain is present (each (link_a, link_b) bucket then holds at most one geom-pair's contacts, capped at
+    # n_contacts_per_pair, so the 2D hull is at best a marginal reduction) or when use_contact_island is True (the
+    # contact-island path consumes contact_data in physical layout and does not honor the sort_idx indirection).
+    # Lets us skip the pruning kernel call and its scratch buffers entirely.
     link_pair_pruning_supported: bool
+    # True when func_clamp_prune_and_sort_contacts should also spatial-sort contacts by x-position. Gated by both
+    # narrowphase configuration (only meaningful when has_non_box_plane_convex_convex on GPU) and use_contact_island
+    # (the island path does not honor the resulting sort_idx permutation).
+    spatial_sort_supported: bool
     # maximum number of contact pairs per collision pair
     n_contacts_per_pair: int
     # ccd algorithm

@@ -606,7 +606,7 @@ def constraint_solver_kernel_masked_clear(
 @qd.func
 def _add_friction_constraint(
     i_b,
-    i_col,
+    i_col_,
     i_friction,
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -622,6 +622,7 @@ def _add_friction_constraint(
 
     collision_con_start = constraint_state.n_constraints[i_b]
 
+    i_col = collider_state.contact_sort_idx[i_col_, i_b]
     contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
     contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
 
@@ -645,7 +646,7 @@ def _add_friction_constraint(
     d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
     n = d * contact_data_friction - contact_data_normal
 
-    n_con = collision_con_start + i_col * 4 + i_friction
+    n_con = collision_con_start + i_col_ * 4 + i_friction
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
             i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -715,7 +716,7 @@ def _add_collision_constraints_per_friction(
     """Build all collision-contact constraints with one GPU thread per friction-basis constraint.
 
     Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction slot
-    ``i_col * 4 + i_friction`` so within a warp adjacent threads write adjacent n_con values. Under the flipped jac
+    i_col_ * 4 + i_friction so within a warp adjacent threads write adjacent n_con values. Under the flipped jac
     layout (_B, n_dofs, n_constraints), n_con is stride-1, so jac writes coalesce.
     """
     _B = dofs_state.ctrl_mode.shape[1]
@@ -725,12 +726,12 @@ def _add_collision_constraints_per_friction(
     for flat_idx in range(_B * max_contact_pairs * 4):
         slot = flat_idx % (max_contact_pairs * 4)
         i_b = flat_idx // (max_contact_pairs * 4)
-        i_col = slot // 4
+        i_col_ = slot // 4
         i_friction = slot % 4
-        if i_col < collider_state.n_contacts[i_b]:
+        if i_col_ < collider_state.n_contacts[i_b]:
             _add_friction_constraint(
                 i_b,
-                i_col,
+                i_col_,
                 i_friction,
                 links_info=links_info,
                 links_state=links_state,
@@ -761,10 +762,11 @@ def _add_collision_constraints_per_contact(
     qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for flat_idx in range(max_contact_pairs * _B):
         i_b = flat_idx % _B
-        i_col = flat_idx // _B
-        if i_col < collider_state.n_contacts[i_b]:
+        i_col_ = flat_idx // _B
+        if i_col_ < collider_state.n_contacts[i_b]:
             collision_con_start = constraint_state.n_constraints[i_b]
 
+            i_col = collider_state.contact_sort_idx[i_col_, i_b]
             contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
             contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
 
@@ -789,7 +791,7 @@ def _add_collision_constraints_per_contact(
                 d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
                 n = d * contact_data_friction - contact_data_normal
 
-                n_con = collision_con_start + i_col * 4 + i_friction
+                n_con = collision_con_start + i_col_ * 4 + i_friction
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                         i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -4065,10 +4067,11 @@ def func_update_contact_force(
 
         # contact constraints should be after equality and frictionloss constraints and before joint limit constraints
         for i_c in range(collider_state.n_contacts[i_b]):
-            contact_data_normal = collider_state.contact_data.normal[i_c, i_b]
-            contact_data_friction = collider_state.contact_data.friction[i_c, i_b]
-            contact_data_link_a = collider_state.contact_data.link_a[i_c, i_b]
-            contact_data_link_b = collider_state.contact_data.link_b[i_c, i_b]
+            i_col = collider_state.contact_sort_idx[i_c, i_b]
+            contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
+            contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+            contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
+            contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
 
             force = qd.Vector.zero(gs.qd_float, 3)
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
@@ -4077,7 +4080,7 @@ def func_update_contact_force(
                 n = d * contact_data_friction - contact_data_normal
                 force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
-            collider_state.contact_data.force[i_c, i_b] = force
+            collider_state.contact_data.force[i_col, i_b] = force
 
             links_state.contact_force[contact_data_link_a, i_b] = (
                 links_state.contact_force[contact_data_link_a, i_b] - force

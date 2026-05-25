@@ -1113,7 +1113,7 @@ def _ellipsoid_mjcf_path(tmp_path, semi_axes):
     ],
 )
 @pytest.mark.parametrize("gjk_collision", [False, True])
-def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_viewer, tmp_path):
+def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_viewer, tmp_path):
     WORLD_TILT_ANGLE = 50.0
     HEIGHT = 0.02
     # The smooth-primitive characteristic length must be small enough to amplify the bias and make drift evident
@@ -1139,6 +1139,8 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
         ),
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=gjk_collision,
+            # FIXME: Temporarily overwrite default pruning tolerance for capsule
+            contact_pruning_tolerance=0.1 if entity_kind == "capsule" else 0.02,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.25, 0.25, 0.2),
@@ -1262,12 +1264,12 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
 
     # Randomly sample position in local frame.
     # Add small vertical offset to ensure contact at init; otherwise the primitive will sink before bouncing up.
-    sphere_offsets = np.random.uniform(
+    smooth_xy_local = np.random.uniform(
         low=-(BOX_HALF_EXTENT - 2.0 * SMOOTH_RADIUS),
         high=BOX_HALF_EXTENT - 2.0 * SMOOTH_RADIUS,
         size=(N_ENVS, 2),
     )
-    smooth_pos_local = np.concatenate([sphere_offsets, np.full((N_ENVS, 1), HEIGHT + SMOOTH_RADIUS - 1e-4)], axis=-1)
+    smooth_pos_local = np.concatenate([smooth_xy_local, np.full((N_ENVS, 1), HEIGHT + SMOOTH_RADIUS - 1e-4)], axis=-1)
 
     # Randomly sample orientation in local frame.
     # Special handling for capsule to ensure stable barrel contact if needed.
@@ -1305,7 +1307,7 @@ def test_smooth_box_no_drift(gjk_collision, entity_kind, entity_type, ground_typ
 
     pos_local = tensor_to_array(entity.get_pos()) @ R
     # The tolerance must be large enough to accomate small numerical error for mesh-mesh.
-    assert_allclose(pos_local[..., :2], sphere_offsets, atol=1e-3)
+    assert_allclose(pos_local[..., :2], smooth_xy_local, atol=1e-3)
 
 
 @pytest.mark.required
@@ -1386,7 +1388,7 @@ def test_contact_pruning(show_viewer):
         rigid_options=gs.options.RigidOptions(
             # box_box_detection=True,
             use_gjk_collision=True,
-            contact_pruning_tolerance=0.1,
+            contact_pruning_tolerance=0.02,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.3, 0.3),

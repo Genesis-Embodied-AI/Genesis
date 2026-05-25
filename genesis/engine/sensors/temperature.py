@@ -216,30 +216,33 @@ def _kernel_compute_contact_areas(
     for i_b in range(n_batches):
         n_c = collider_state.n_contacts[i_b]
         for i_c in range(n_c):
-            la = collider_state.contact_data.link_a[i_c, i_b]
-            lb = collider_state.contact_data.link_b[i_c, i_b]
+            i_col = collider_state.contact_sort_idx[i_c, i_b]
+            la = collider_state.contact_data.link_a[i_col, i_b]
+            lb = collider_state.contact_data.link_b[i_col, i_b]
             scratch[i_b, i_c, _ScratchIdx.OTHER_LINK] = gs.qd_float(lb)
             scratch[i_b, i_c, _ScratchIdx.CONTACT_IDX] = gs.qd_float(i_c)
-            scratch[i_b, i_c, _ScratchIdx.DEPTH] = collider_state.contact_data.penetration[i_c, i_b]
-            p_world = collider_state.contact_data.pos[i_c, i_b]
+            scratch[i_b, i_c, _ScratchIdx.DEPTH] = collider_state.contact_data.penetration[i_col, i_b]
+            p_world = collider_state.contact_data.pos[i_col, i_b]
             link_pos = links_state.pos[la, i_b]
             link_quat = links_state.quat[la, i_b]
             p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
             scratch[i_b, i_c, _ScratchIdx.POS_X] = p_local.x
             scratch[i_b, i_c, _ScratchIdx.POS_Y] = p_local.y
             scratch[i_b, i_c, _ScratchIdx.POS_Z] = p_local.z
-            n_w = collider_state.contact_data.normal[i_c, i_b]
+            n_w = collider_state.contact_data.normal[i_col, i_b]
             scratch[i_b, i_c, _ScratchIdx.NORMAL_X] = n_w.x
             scratch[i_b, i_c, _ScratchIdx.NORMAL_Y] = n_w.y
             scratch[i_b, i_c, _ScratchIdx.NORMAL_Z] = n_w.z
 
         for i_c in range(n_c):
-            la = collider_state.contact_data.link_a[i_c, i_b]
-            lb = collider_state.contact_data.link_b[i_c, i_b]
+            i_col = collider_state.contact_sort_idx[i_c, i_b]
+            la = collider_state.contact_data.link_a[i_col, i_b]
+            lb = collider_state.contact_data.link_b[i_col, i_b]
             is_first = True
             for k in range(i_c):
-                la_k = collider_state.contact_data.link_a[k, i_b]
-                lb_k = collider_state.contact_data.link_b[k, i_b]
+                k_phys = collider_state.contact_sort_idx[k, i_b]
+                la_k = collider_state.contact_data.link_a[k_phys, i_b]
+                lb_k = collider_state.contact_data.link_b[k_phys, i_b]
                 if la_k == la and lb_k == lb:
                     is_first = False
             if not is_first:
@@ -247,8 +250,9 @@ def _kernel_compute_contact_areas(
 
             count = 0
             for j in range(n_c):
-                la_j = collider_state.contact_data.link_a[j, i_b]
-                lb_j = collider_state.contact_data.link_b[j, i_b]
+                j_phys = collider_state.contact_sort_idx[j, i_b]
+                la_j = collider_state.contact_data.link_a[j_phys, i_b]
+                lb_j = collider_state.contact_data.link_b[j_phys, i_b]
                 if la_j == la and lb_j == lb:
                     scratch[i_b, count, _ScratchIdx.GROUP_CONTACT_IDX] = scratch[i_b, j, _ScratchIdx.CONTACT_IDX]
                     scratch[i_b, count, _ScratchIdx.GROUP_POS_X] = scratch[i_b, j, _ScratchIdx.POS_X]
@@ -326,8 +330,9 @@ def _kernel_contact_heat(
         vs = qd.math.vec3(voxel_size[i_s, 0] + eps, voxel_size[i_s, 1] + eps, voxel_size[i_s, 2] + eps)
         n_c = collider_state.n_contacts[i_b]
         for i_c in range(n_c):
-            la = collider_state.contact_data.link_a[i_c, i_b]
-            lb = collider_state.contact_data.link_b[i_c, i_b]
+            i_col = collider_state.contact_sort_idx[i_c, i_b]
+            la = collider_state.contact_data.link_a[i_col, i_b]
+            lb = collider_state.contact_data.link_b[i_col, i_b]
             if la != sensor_link_idx and lb != sensor_link_idx:
                 continue
             other_link = lb if la == sensor_link_idx else la
@@ -338,7 +343,7 @@ def _kernel_contact_heat(
                     T_other = link_temps[i_b, other_link]
                 k_other = link_conductivity[mat_other]
                 k_eff = _qd_k_eff(k_sensor, k_other, eps)
-                p_world = collider_state.contact_data.pos[i_c, i_b]
+                p_world = collider_state.contact_data.pos[i_col, i_b]
                 link_pos = links_state.pos[sensor_link_idx, i_b]
                 link_quat = links_state.quat[sensor_link_idx, i_b]
                 p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
@@ -352,7 +357,8 @@ def _kernel_contact_heat(
                 T_cell = output[start + cell_idx, i_b]
                 area_base = contact_area[i_c, i_b] + eps
                 area = qd.max(
-                    area_base, qd.cast(qd.math.pi, gs.qd_float) * dw * collider_state.contact_data.penetration[i_c, i_b]
+                    area_base,
+                    qd.cast(qd.math.pi, gs.qd_float) * dw * collider_state.contact_data.penetration[i_col, i_b],
                 )
                 flux = k_eff * (T_other - T_cell) / (vol / area + eps)
                 Q_vol = flux * area / vol
@@ -364,8 +370,9 @@ def _kernel_contact_heat(
         for i_b in range(n_batches):
             n_c = collider_state.n_contacts[i_b]
             for i_c in range(n_c):
-                la = collider_state.contact_data.link_a[i_c, i_b]
-                lb = collider_state.contact_data.link_b[i_c, i_b]
+                i_col = collider_state.contact_sort_idx[i_c, i_b]
+                la = collider_state.contact_data.link_a[i_col, i_b]
+                lb = collider_state.contact_data.link_b[i_col, i_b]
                 mat_la = link_to_material_idx[la]
                 mat_lb = link_to_material_idx[lb]
                 if mat_la < 0 or mat_lb < 0:
