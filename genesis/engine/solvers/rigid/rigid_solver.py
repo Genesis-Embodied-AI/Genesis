@@ -488,7 +488,10 @@ class RigidSolver(KinematicSolver):
                 # Route the per-step warm-start factor+solve through the fused kernel whenever the tiled cholesky path
                 # is available. The monolith body's incremental rank-1 update needs L in nt_H, so the fused kernel
                 # also writes L back via the ``write_L_to_nt_H`` argument; see ``func_update_gradient_tiled``.
-                enable_fused_factor_solve_init = enable_tiled_cholesky_hessian
+                # Disabled for ``sparse_solve`` because the sparse path runs the per-env factor inside
+                # ``func_hessian_and_cholesky_factor_direct_batch`` (leaving nt_H = L); routing the warm-start through
+                # the fused kernel would then re-factor L as if it were H.
+                enable_fused_factor_solve_init = enable_tiled_cholesky_hessian and not self._options.sparse_solve
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
