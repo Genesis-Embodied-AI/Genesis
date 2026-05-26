@@ -151,3 +151,79 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     pyrender_viewer.on_draw()
     rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
     assert rgb_array_to_png_bytes(rgb) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
+def test_imgui_overlay_enable_gui_flag_screenshot(png_snapshot, monkeypatch):
+    """Snapshot the panel when ``ViewerOptions.enable_gui=True`` is used on a vanilla Scene.
+
+    Expectations baked into the snapshot:
+    - The ImGui panel auto-attaches (no explicit ``add_plugin`` call in this test).
+    - ``enable_help_text`` and ``enable_default_keybinds`` were forced off by the validator, so the
+      help-text overlay does not appear in the frame.
+    - The Rebuild Scene button, Add Entity collapsing header, and per-entity "X" remove buttons
+      render in their disabled visual state (greyed) because the scene is a vanilla ``gs.Scene``
+      rather than ``gs.InteractiveScene``.
+    """
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=(640, 480),
+            camera_pos=(4.5, -1.2, 2.5),
+            camera_lookat=(0.0, -1.2, 0.5),
+            run_in_thread=False,
+            enable_gui=True,
+        ),
+        vis_options=gs.options.VisOptions(
+            shadow=False,
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=True,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2.0, 2.0, 0.02),
+            pos=(0.0, 0.0, -0.01),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.60, 0.85, 0.55, 1.0),
+        ),
+        name="ground",
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.15, 0.15, 0.15),
+            pos=(0.0, 0.4, 0.075),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.85, 0.45, 0.20, 1.0),
+        ),
+        name="cube",
+    )
+    scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            pos=(0.0, 0.0, 0.0),
+        ),
+        name="panda",
+    )
+
+    _apply_deterministic_imgui_overrides(monkeypatch)
+
+    # Pin the auto-attached plugin's panel width so the snapshot layout is stable. The auto-attach
+    # was constructed with default args (``panel_width=None``), so we mutate the attribute directly
+    # — equivalent to the explicit ``ImGuiOverlayPlugin(panel_width=420)`` used by the existing test.
+    auto_plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
+    auto_plugin._panel_width = 420
+
+    scene.build()
+
+    pyrender_viewer = scene.viewer._pyrender_viewer
+    pyrender_viewer.switch_to()
+    pyrender_viewer.on_draw()
+    rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+    assert rgb_array_to_png_bytes(rgb) == png_snapshot

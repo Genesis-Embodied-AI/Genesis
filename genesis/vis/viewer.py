@@ -50,6 +50,12 @@ class Viewer(RBC):
         self._viewer_plugins: list["ViewerPlugin"] = []
         if options.enable_default_keybinds:
             self._viewer_plugins.append(DefaultControlsPlugin())
+        if options.enable_gui:
+            # Lazy import so non-GUI users do not pay the imgui_bundle import cost.
+            from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
+
+            if not any(isinstance(p, ImGuiOverlayPlugin) for p in self._viewer_plugins):
+                self._viewer_plugins.append(ImGuiOverlayPlugin())
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):

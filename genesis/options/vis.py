@@ -48,6 +48,13 @@ class ViewerOptions(Options):
         Whether to enable the rendering of instructions text in the viewer.
     enable_default_keybinds : bool
         Whether to enable the default keyboard controls in the viewer.
+    enable_gui : bool
+        Whether to automatically attach the ImGui overlay panel (``ImGuiOverlayPlugin``) when the viewer
+        is constructed. Defaults to ``False``. When ``True``, ``enable_help_text`` and
+        ``enable_default_keybinds`` are forced to ``False`` because the GUI panel covers their
+        functionality and ImGui's input capture conflicts with the default keybind plugin. Scene editing
+        controls (Rebuild Scene, Add Entity, per-entity remove) are visible but disabled unless the
+        scene was constructed via ``gs.InteractiveScene``.
     """
 
     res: PositiveVec2IType | None = None
@@ -60,6 +67,14 @@ class ViewerOptions(Options):
     camera_fov: float = 40
     enable_help_text: StrictBool = True
     enable_default_keybinds: StrictBool = True
+    enable_gui: StrictBool = False
+
+    @model_validator(mode="after")
+    def _gui_overrides_help_and_keybinds(self):
+        if self.enable_gui:
+            self.enable_help_text = False
+            self.enable_default_keybinds = False
+        return self
 
 
 class DirectionalLight(Options):
