@@ -19,22 +19,18 @@ from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
 
-# Writeback variant for the fused warm-start factor+solve in ``func_solve_init``. Picked at
-# module-import time from ``GS_FUSED_WB_VARIANT`` so the kernel statically specialises on
-# exactly one variant per process; the inactive branches are dead-code-eliminated at compile.
-#   "fullsquare" -- (default) ``tid``-strided flat ``n_dofs * n_dofs`` writes with no upper-tri
-#                 predicate. The upper triangle ends up holding the un-zeroed L_sh-residue
-#                 (effectively L^T mirrored); harmless because all downstream nt_H readers
-#                 (incremental Cholesky update, direct factor, solve) touch only the lower
-#                 triangle. Wins +0.4 % FPS vs lowertri on dex_hand (5-repeat A/B); the
-#                 predicate branch divergence in lowertri was costing more than the wasted
-#                 upper-tri writes.
-#   "lowertri" -- ``tid``-strided flat ``n_dofs * n_dofs`` walk with an ``if i_d2 <= i_d1``
-#                 predicate.
-#   "rowperlane" -- lane ``t`` owns rows ``t, t+T, ...`` and writes each owned row's lower
-#                 triangle sequentially. Imbalanced load across lanes.
-#   "store3d"  -- end-of-kernel pass: re-load each tile from L_sh into a TileCls and ``_store3d``
-#                 to nt_H.
+# Writeback variant for the fused warm-start factor+solve in ``func_solve_init``. Picked at module-import time from
+# ``GS_FUSED_WB_VARIANT`` so the kernel statically specialises on exactly one variant per process; the inactive branches
+# are dead-code-eliminated at compile.
+#   "fullsquare" -- (default) ``tid``-strided flat ``n_dofs * n_dofs`` writes with no upper-tri predicate. The upper
+#                 triangle ends up holding the un-zeroed L_sh-residue (effectively L^T mirrored); harmless because all
+#                 downstream nt_H readers (incremental Cholesky update, direct factor, solve) touch only the lower
+#                 triangle. Wins +0.4 % FPS vs lowertri on dex_hand (5-repeat A/B); the predicate branch divergence in
+#                 lowertri was costing more than the wasted upper-tri writes.
+#   "lowertri" -- ``tid``-strided flat ``n_dofs * n_dofs`` walk with an ``if i_d2 <= i_d1`` predicate.
+#   "rowperlane" -- lane ``t`` owns rows ``t, t+T, ...`` and writes each owned row's lower triangle sequentially.
+#                 Imbalanced load across lanes.
+#   "store3d"  -- end-of-kernel pass: re-load each tile from L_sh into a TileCls and ``_store3d`` to nt_H.
 # See ``doc/dex_hand_fused_writeback_opt_2026may23.md`` in perso_hugh for the full A/B numbers.
 WB_VARIANT = os.environ.get("GS_FUSED_WB_VARIANT", "fullsquare")
 
@@ -2109,20 +2105,18 @@ def _cholesky_and_solve_fused_tiled_impl(
             constraint_state.Mgrad[k, i_b] = v_sh[k]
             k = k + T
 
-        # When dispatched from func_solve_init's warm-start (``enable_fused_factor_solve_init``),
-        # the monolith body's iterative refinement runs an incremental rank-1 Cholesky update on
-        # ``nt_H`` and expects ``nt_H`` to hold L (not H). The original separate-kernel factor
-        # writes L into nt_H tile-by-tile; the fused kernel above leaves L only in shmem to save
-        # the global-mem L round-trip with the solve. Restore the post-condition (nt_H holds L)
+        # When dispatched from func_solve_init's warm-start (``enable_fused_factor_solve_init``), the monolith body's
+        # iterative refinement runs an incremental rank-1 Cholesky update on ``nt_H`` and expects ``nt_H`` to hold L
+        # (not H). The original separate-kernel factor writes L into nt_H tile-by-tile; the fused kernel above leaves L
+        # only in shmem to save the global-mem L round-trip with the solve. Restore the post-condition (nt_H holds L)
         # so the monolith body's first iter can run incremental as usual.
         #
-        # The variant selector ``WB_VARIANT`` (at module top) picks the writeback shape; on
-        # dex_hand fullsquare wins because the warp branch divergence in lowertri's predicate
-        # costs more wall-clock than fullsquare's extra ``n_dofs*(n_dofs-1)/2`` upper-tri stores.
-        # All branches below are statically dead-code-eliminated except the chosen one. The
-        # post-condition is the same for all variants: lower triangle of ``nt_H[i_b]`` holds L.
-        # Upper-tri contents are not relied on by any downstream nt_H reader, so the variants
-        # that incidentally write to the upper triangle (fullsquare) remain semantically correct.
+        # The variant selector ``WB_VARIANT`` (at module top) picks the writeback shape; on dex_hand fullsquare wins
+        # because the warp branch divergence in lowertri's predicate costs more wall-clock than fullsquare's extra
+        # ``n_dofs*(n_dofs-1)/2`` upper-tri stores. All branches below are statically dead-code-eliminated except the
+        # chosen one. The post-condition is the same for all variants: lower triangle of ``nt_H[i_b]`` holds L.
+        # Upper-tri contents are not relied on by any downstream nt_H reader, so the variants that incidentally write
+        # to the upper triangle (fullsquare) remain semantically correct.
         if qd.static(write_L_to_nt_H and WB_VARIANT == "fullsquare"):
             i_flat = tid
             n_dofs_sq = n_dofs * n_dofs
@@ -2244,9 +2238,8 @@ def func_hessian_and_cholesky_factor_direct(
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
 
         if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            # When the fused warm-start dispatch is on, the factor is folded into
-            # ``func_cholesky_and_solve_fused_tiled`` (called from ``func_update_gradient_tiled``
-            # below); skipping the standalone factor here avoids doing the work twice.
+            # When the fused warm-start dispatch is on, the factor is folded into the fused kernel (called from
+            # ``func_update_gradient_tiled`` below); skipping the standalone factor here avoids doing the work twice.
             if qd.static(not static_rigid_sim_config.enable_fused_factor_solve_init):
                 func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
@@ -3409,25 +3402,23 @@ def _func_update_qfrc_constraint_coop(
     32 lanes stride i_c so adjacent reads of jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped
     jac and Tier-1 flipped efc_force layouts. Outer loop is over i_d; each i_d does one warp-reduce.
 
-    **P5 optimisation (see ``doc/p5_qfrc_register_cache_2026may23.md``).** ``efc_force[i_c, i_b]``
-    is invariant across the inner ``i_d`` loop, so the legacy code was re-reading it ``n_dofs`` (= 60
-    on dex_hand) times per (env, i_c) pair from global memory. We hoist it into a small per-lane
-    register vector before the ``i_d`` loop, dropping ``n_dofs - 1`` re-reads per cached constraint.
+    **P5 optimisation (see ``doc/p5_qfrc_register_cache_2026may23.md``).** ``efc_force[i_c, i_b]`` is invariant across
+    the inner ``i_d`` loop, so the legacy code was re-reading it ``n_dofs`` (= 60 on dex_hand) times per (env, i_c) pair
+    from global memory. We hoist it into a small per-lane register vector before the ``i_d`` loop, dropping
+    ``n_dofs - 1`` re-reads per cached constraint.
 
-    **Why cap at 2 floats/lane.** The cache size sits on a sharp register-pressure cliff: too small
-    and we keep re-reading from global, too large and we bump neighbouring kernels off the SM. On the
-    pre-#2827 cholesky baseline (Tile16x16) cap=4 was the sweet spot (+1.07 % FPS on dex_hand cluster
-    A/B; +0.27 % on 5090 single-run). After #2827 widened the Cholesky kernel to Tile32x32 for
-    n_dofs >= 17 (so n_dofs=62 on dex_hand uses T=32), the per-warp register budget tightened: cap=4
-    regressed dex_hand by -1.42 % even though the qfrc kernel itself sped up -77 % (111->25 us/call).
-    Re-tuned on post-#2827 main (cluster A/B, 6 rounds): cap=4 -1.42 %, **cap=2 +0.69 %**, cap=1
-    +0.63 %. Cap=2 covers ``n_con <= 64`` fully (dex_hand active ``n_con ~ 55``); larger n_con falls
-    back to the global re-read on the tail (same code path as before).
+    **Why cap at 2 floats/lane.** The cache size sits on a sharp register-pressure cliff: too small and we keep
+    re-reading from global, too large and we bump neighbouring kernels off the SM. On the pre-#2827 cholesky baseline
+    (Tile16x16) cap=4 was the sweet spot (+1.07 % FPS on dex_hand cluster A/B; +0.27 % on 5090 single-run). After #2827
+    widened the Cholesky kernel to Tile32x32 for n_dofs >= 17 (so n_dofs=62 on dex_hand uses T=32), the per-warp
+    register budget tightened: cap=4 regressed dex_hand by -1.42 % even though the qfrc kernel itself sped up -77 %
+    (111->25 us/call). Re-tuned on post-#2827 main (cluster A/B, 6 rounds): cap=4 -1.42 %, **cap=2 +0.69 %**, cap=1
+    +0.63 %. Cap=2 covers ``n_con <= 64`` fully (dex_hand active ``n_con ~ 55``); larger n_con falls back to the global
+    re-read on the tail (same code path as before).
 
-    **Result.** 6-round interleaved A/B on dex_hand 4096× (post-#2827, cluster RTX PRO 6000):
-    A (origin/main) = 23,374 FPS, B (cap=2) = 23,535 FPS, **+0.69 % FPS** (~6 SEMs significant,
-    sd=41-46 FPS/run). Per-call qfrc kernel cost (5-step profile, cap=4 measurement, cap=2 similar):
-    111 µs -> 25 µs, **-77 %**.
+    **Result.** 6-round interleaved A/B on dex_hand 4096× (post-#2827, cluster RTX PRO 6000): A (origin/main) = 23,374
+    FPS, B (cap=2) = 23,535 FPS, **+0.69 % FPS** (~6 SEMs significant, sd=41-46 FPS/run). Per-call qfrc kernel cost
+    (5-step profile, cap=4 measurement, cap=2 similar): 111 µs -> 25 µs, **-77 %**.
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
@@ -3440,17 +3431,16 @@ def _func_update_qfrc_constraint_coop(
         i_b = i_flat // _K
         n_con = constraint_state.n_constraints[i_b]
 
-        # Phase 1: load up to MAX_CACHE_PER_LANE of this lane's efc_force entries into registers.
-        # Coalesced reads under the flipped efc_force layout (stride-1 over i_c for fixed i_b
-        # across warp lanes).
+        # Phase 1: load up to MAX_CACHE_PER_LANE of this lane's efc_force entries into registers. Coalesced reads under
+        # the flipped efc_force layout (stride-1 over i_c for fixed i_b across warp lanes).
         efc_local = qd.Vector([0.0] * MAX_CACHE_PER_LANE, dt=gs.qd_float)
         for k in range(MAX_CACHE_PER_LANE):
             i_c_k = tid + k * _K
             if i_c_k < n_con:
                 efc_local[k] = constraint_state.efc_force[i_c_k, i_b]
 
-        # Phase 2: i_d loop reads jac fresh (varies per i_d) but reuses cached efc_local for the
-        # head. Tail re-reads efc_force from global (only triggers when n_con > MAX_CACHE_PER_LANE * _K).
+        # Phase 2: i_d loop reads jac fresh (varies per i_d) but reuses cached efc_local for the head. Tail re-reads
+        # efc_force from global (only triggers when n_con > MAX_CACHE_PER_LANE * _K).
         for i_d in range(n_dofs):
             qfrc_lane = gs.qd_float(0.0)
             for k in range(MAX_CACHE_PER_LANE):
@@ -3649,11 +3639,10 @@ def func_update_gradient_tiled(
             )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        # Warm-start path: dispatch through the fused factor+solve kernel so L stays in shared
-        # memory between factor and solve. ``write_L_to_nt_H=True`` makes the kernel also write
-        # the lower triangle of L back to ``nt_H``; this is required because the monolith body's
-        # first iter runs an incremental rank-1 Cholesky update on nt_H and expects L (not H) to
-        # be there. See ``doc/dex_hand_fused_writeback_opt_2026may23.md`` in perso_hugh.
+        # Warm-start path: dispatch through the fused factor+solve kernel so L stays in shared memory between factor
+        # and solve. ``write_L_to_nt_H=True`` makes the kernel also write the lower triangle of L back to ``nt_H``;
+        # this is required because the monolith body's first iter runs an incremental rank-1 Cholesky update on nt_H
+        # and expects L (not H) to be there. See ``doc/dex_hand_fused_writeback_opt_2026may23.md`` in perso_hugh.
         if qd.static(static_rigid_sim_config.enable_fused_factor_solve_init):
             func_cholesky_and_solve_fused_tiled(
                 constraint_state, rigid_global_info, static_rigid_sim_config, write_L_to_nt_H=True

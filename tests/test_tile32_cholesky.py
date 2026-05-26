@@ -1,14 +1,12 @@
 # pyright: reportInvalidTypeForm=false
 """Numerical-equivalence test for the 32x32 register-tile Cholesky primitive.
 
-This test exercises `genesis.utils._tile32.Tile32x32Cholesky` directly via a
-small standalone kernel and checks the factorization against numpy on a
-known SPD matrix. It does *not* go through the rigid solver — it validates
-just the tile primitive.
+This test exercises `genesis.utils._tile32.Tile32x32Cholesky` directly via a small standalone kernel and checks the
+factorization against numpy on a known SPD matrix. It does *not* go through the rigid solver — it validates just the
+tile primitive.
 
-Mirrors the spirit of the upstream `test_subgroup_*` tests in
-`quadrants/tests/python/test_simt.py`: build a one-warp kernel, run it on a
-small input, compare to a CPU reference.
+Mirrors the spirit of the upstream `test_subgroup_*` tests in `quadrants/tests/python/test_simt.py`: build a one-warp
+kernel, run it on a small input, compare to a CPU reference.
 
 Run on GPU only; the tile primitive requires GPU backend.
 """
@@ -75,15 +73,13 @@ def _run_tile32_cholesky(A: np.ndarray, eps: float = 1e-12) -> np.ndarray:
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_tile32_cholesky_matches_numpy(seed):
-    """tile32.cholesky_ on a random 32x32 SPD matrix matches numpy's np.linalg.cholesky
-    within fp32 tolerance."""
+    """tile32.cholesky_ on a random 32x32 SPD matrix matches numpy's np.linalg.cholesky within fp32 tolerance."""
     A = _make_spd_matrix(32, seed=seed)
     L_ours = _run_tile32_cholesky(A, eps=1e-10)
     L_ref = np.linalg.cholesky(A).astype(np.float32)
 
-    # Only the lower triangle is meaningful in our output (upper is whatever
-    # the load leaves it, since cholesky_ writes only diag + below-diag
-    # registers). Compare lower triangle including diagonal.
+    # Only the lower triangle is meaningful in our output (upper is whatever the load leaves it, since cholesky_ writes
+    # only diag + below-diag registers). Compare lower triangle including diagonal.
     tri = np.tril_indices(32)
     diff = np.abs(L_ours[tri] - L_ref[tri])
     rel = diff / (np.abs(L_ref[tri]) + 1e-6)
