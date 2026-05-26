@@ -485,17 +485,10 @@ class RigidSolver(KinematicSolver):
                 )
                 tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
 
-                # The warm-start fused factor+solve path is only meaningful when the tiled cholesky path is available;
-                # we route the warm-start through the same fused kernel the iterative body's Newton+tiled path already
-                # uses, with an extra ``write_L_to_nt_H`` argument so the monolith body's incremental rank-1 update
-                # finds L in nt_H. The decomposed body's invocation of the fused kernel keeps the default
-                # ``write_L_to_nt_H=False`` and so is unaffected; both solver-body variants stay compatible with the
-                # warm-start change. Opt-in via GS_FUSED_FACTOR_SOLVE_INIT while we collect dex_hand FPS data; flip the
-                # default once the win is confirmed.
-                enable_fused_factor_solve_init = (
-                    enable_tiled_cholesky_hessian
-                    and os.environ.get("GS_FUSED_FACTOR_SOLVE_INIT", "0") == "1"
-                )
+                # Route the per-step warm-start factor+solve through the fused kernel whenever the tiled cholesky path
+                # is available. The monolith body's incremental rank-1 update needs L in nt_H, so the fused kernel
+                # also writes L back via the ``write_L_to_nt_H`` argument; see ``func_update_gradient_tiled``.
+                enable_fused_factor_solve_init = enable_tiled_cholesky_hessian
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
