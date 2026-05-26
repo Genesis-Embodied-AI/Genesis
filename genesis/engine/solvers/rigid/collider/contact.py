@@ -930,31 +930,14 @@ def func_clamp_prune_and_sort_contacts_coop(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """GPU-only cooperative warp-per-env variant of the fused clamp+prune+sort kernel.
+    """GPU-only cooperative warp-per-env variant of `func_clamp_prune_and_sort_contacts`.
 
-    Contract matches `func_clamp_prune_and_sort_contacts`:
-    - Always: clamp `n_contacts` to `max_contact_pairs`; initialise `contact_sort_idx` to the identity. (Clamp is
-      mandatory; downstream consumers always indirect through contact_sort_idx so we must leave it valid even for
-      envs with n_con < 5 where the prune/sort branch is skipped.)
-    - Pruning + spatial sort: cooperative warp-per-env variant of the same algorithm.
-
-    Pruning logic matches Alexis's serial `func_clamp_prune_and_sort_contacts` (same depth coplanarity gate, same
-    Andrew's monotone chain, same hull-pen-max deep-penetration restore, same Metal memory-fence workaround). The
-    difference is the per-env work is spread across 32 warp lanes:
-      - PARALLEL: contact_keep init, phase-1a (link-pair) key+idx init, phase-2 mean-normal / centroid reduction
-        (via qd.simt.subgroup.reduce_all_add_tiled), coplanarity check reduction (via reduce_all_max_tiled), in-plane
-        projection writes.
-      - SERIAL on lane 0: insertion sorts (phase 1a + lex), bucket walk control, Andrew's monotone chain, hull-mark,
-        deep-penetration restore, and the final fused compact + spatial sort.
-
-    The fused final phase (lane 0) replaces both dedup phase-3 compact and the standalone func_clamp_and_sort_contacts
-    with a single permutation pass: dropped contacts get a sentinel +inf sort key (pushed past the end), kept contacts
-    get the geom-pair group's x-pos (preserving narrowphase intra-group order via stable insertion sort), then one
-    cycle-decomposition permute moves each kept record exactly once. Saves one full kernel launch + one full 11-field
-    permute pass vs the serial fused kernel on dex_hand / g1_fall workloads.
-
-    This kernel is dispatched only when gs.backend is GPU AND has_prunable_contacts AND not requires_grad AND
-    contact_pruning_tolerance > 0. Everything else falls through to the serial `func_clamp_prune_and_sort_contacts`.
+    Same contract (mandatory clamp + identity-init contact_sort_idx; gated prune; gated spatial sort) and same
+    pruning algorithm as the serial fused kernel. Difference: 32 warp lanes split the per-env work:
+      - PARALLEL: per-contact init, phase-2 mean-normal / centroid reductions, coplanarity reduction, in-plane
+        projection writes, phase-1a bitonic sort (when n_con <= 32; falls back to serial insertion sort otherwise).
+      - SERIAL on lane 0: bucket walk control, lex sort, Andrew's monotone chain, hull-mark, deep-pen restore, and
+        the fused phase-3 compact + spatial sort.
     """
     _B = collider_state.n_contacts.shape[0]
     max_contact_pairs = collider_info.max_contact_pairs[None]
@@ -963,10 +946,6 @@ def func_clamp_prune_and_sort_contacts_coop(
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
     EPS = rigid_global_info.EPS[None]
 
-    # deskai6 opt 9d (real warp-coop, stage 1): pull contact_keep init and phase-1a key+idx init OUT of `if tid == 0:`
-    # and parallelize them across the 32 lanes (stride-tid). Phase 1a sort, phase 2 bucket walk, and phase 3 (sort +
-    # cycle-permute) stay serial on lane 0. Subsequent stages add coop reductions (phase-2 mean / centroid) and parallel
-    # cycle-permute.
     _K = qd.static(32)
     qd.loop_config(name="clamp_prune_and_sort_contacts_coop", block_dim=_K)
     for i_flat in range(_B * _K):
@@ -1002,14 +981,9 @@ def func_clamp_prune_and_sort_contacts_coop(
                 )
                 ii += _K
 
-            # Phase 1a sort: parallel bitonic sort across 32 lanes when n_con <= 32 (typical for coop-dispatched
-            # scenes like dex_hand ~30 contacts / g1_fall ~30); fall back to serial-on-lane-0 insertion sort
-            # otherwise. Bitonic sort across 32 lanes is 1+2+3+4+5 = 15 compare-exchange stages, each a single
-            # subgroup shuffle + compare; total ~30 ops vs. ~n²/2 for insertion sort on lane 0 (~450 for n=30).
-            #
-            # Algorithm: load (key, idx) into one register per lane (sentinel +inf for lanes >= n_con). Run the
-            # bitonic compare-exchange sequence; each lane keeps min or max with its partner depending on the
-            # standard "ascending bit" formula. Write back ordered values to contact_sort_key / contact_sort_idx.
+            # Phase 1a sort: parallel bitonic sort across 32 lanes when n_con <= 32; fall back to serial-on-lane-0
+            # insertion sort otherwise. Bitonic is 15 compare-exchange stages (k=2..32, j=k/2..1), each a single
+            # subgroup shuffle + compare, replacing the O(n^2/2) lane-0 insertion sort.
             if n_con <= _K:
                 # Load with sentinel for out-of-range lanes (pushes them to the end of ascending sort).
                 my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
@@ -1062,11 +1036,9 @@ def func_clamp_prune_and_sort_contacts_coop(
 
             qd.simt.subgroup.sync()
 
-            # Phase 2 (deskai6 opt 9d stage 2): bucket walk runs on ALL 32 lanes. The outer control flow (find b_end,
-            # iterate buckets) is duplicated across lanes since the inputs are all in DRAM (cache-friendly). Inside a
-            # bucket, the mean-normal / centroid sum is done coop via 6 reduce_all_add_tiled calls. The rest of the
-            # bucket processing (coplanarity check with early-exit, in-plane basis, projection, lex sort, hull build,
-            # mark survivors) stays serial on lane 0.
+            # Phase 2: bucket walk control runs on all 32 lanes (inputs are DRAM-cached). Inside a bucket, mean-normal
+            # / centroid sums and the coplanarity-check max-reduction run coop via subgroup reduce_all_*; the lex
+            # sort, hull build, mark-survivors, and deep-pen restore stay serial on lane 0.
             b_start = 0
             while b_start < n_con:
                 key0 = collider_state.contact_sort_key[b_start, i_b]
@@ -1205,83 +1177,27 @@ def func_clamp_prune_and_sort_contacts_coop(
                             collider_state.contact_lex_idx[jj, i_b] = jj
                             jj += _K
 
-                        # SYNC between coop writes (sort_key, proj_v, lex_idx, contact_keep[orig]) and the lex sort
-                        # below (whether lane-0 serial or 32-lane bitonic).
+                        # SYNC between coop writes (sort_key, proj_v, lex_idx, contact_keep[orig]) and the lane-0 lex
+                        # sort + hull build that reads them.
                         qd.simt.subgroup.sync()
 
-                    if coplanar:
-                        # sort_u_tol scales the u tolerance to the bucket extent. See original comment block above.
-                        sort_u_tol = gs.qd_float(1e-3) * qd.sqrt(max_in_plane_r2)
-
-                        # Phase 2 lex sort (exp M): parallel bitonic across 32 lanes when b_size <= 32. Loads
-                        # (lex_idx, u, v) per lane, sentinel +inf for out-of-range lanes. Bitonic compare-exchange
-                        # uses the custom (u, v)-with-u-tolerance comparator, stable via tiebreak on lex_idx.
-                        # Falls back to serial-on-lane-0 insertion sort for b_size > 32.
-                        if b_size <= _K:
-                            my_lex = qd.i32(-1)
-                            my_u = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
-                            my_v = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
-                            if tid < b_size:
-                                my_lex = collider_state.contact_lex_idx[b_start + tid, i_b]
-                                my_u = collider_state.contact_sort_key[my_lex, i_b]
-                                my_v = collider_state.contact_proj_v[my_lex, i_b]
-
-                            for k_log2 in qd.static(range(1, 6)):
-                                k_mask = qd.static(1 << k_log2)
-                                for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
-                                    j = qd.static(1 << j_log2)
-                                    partner = qd.u32(tid ^ j)
-                                    their_lex = qd.simt.subgroup.shuffle(my_lex, partner)
-                                    their_u = qd.simt.subgroup.shuffle(my_u, partner)
-                                    their_v = qd.simt.subgroup.shuffle(my_v, partner)
-                                    i_am_low = (tid & j) == 0
-                                    asc = (tid & k_mask) == 0
-                                    take_min = i_am_low == asc
-                                    # Lexicographic comparator with u-tolerance: a < b iff (au + tol < bu) OR
-                                    # (|au - bu| <= tol AND av < bv). Stable via lex-idx tiebreak.
-                                    eq_u = qd.abs(their_u - my_u) <= sort_u_tol
-                                    their_lt_mine = (their_u + sort_u_tol < my_u) or (
-                                        eq_u and (their_v < my_v or (their_v == my_v and their_lex < my_lex))
-                                    )
-                                    if take_min:
-                                        if their_lt_mine:
-                                            my_lex = their_lex
-                                            my_u = their_u
-                                            my_v = their_v
-                                    else:
-                                        if not their_lt_mine and (
-                                            their_u != my_u or their_v != my_v or their_lex != my_lex
-                                        ):
-                                            my_lex = their_lex
-                                            my_u = their_u
-                                            my_v = their_v
-
-                            if tid < b_size:
-                                collider_state.contact_lex_idx[b_start + tid, i_b] = my_lex
-                            qd.simt.subgroup.sync()
-                        elif tid == 0:
-                            for i in range(b_start + 1, b_end):
-                                ci = collider_state.contact_lex_idx[i, i_b]
-                                cu = collider_state.contact_sort_key[ci, i_b]
-                                cv = collider_state.contact_proj_v[ci, i_b]
-                                j = i - 1
-                                while j >= b_start:
-                                    pj = collider_state.contact_lex_idx[j, i_b]
-                                    pu = collider_state.contact_sort_key[pj, i_b]
-                                    pv = collider_state.contact_proj_v[pj, i_b]
-                                    if (pu < cu - sort_u_tol) or (qd.abs(pu - cu) <= sort_u_tol and pv <= cv):
-                                        break
-                                    collider_state.contact_lex_idx[j + 1, i_b] = pj
-                                    j -= 1
-                                collider_state.contact_lex_idx[j + 1, i_b] = ci
-
                     if tid == 0 and coplanar:
-                        # SERIAL on lane 0: Andrew monotone-chain hull build + mark survivors. These walk a stack
-                        # and have data-dependent inner loops that don't decompose across warp lanes.
+                        sort_u_tol = gs.qd_float(1e-3) * qd.sqrt(max_in_plane_r2)
+                        for i in range(b_start + 1, b_end):
+                            ci = collider_state.contact_lex_idx[i, i_b]
+                            cu = collider_state.contact_sort_key[ci, i_b]
+                            cv = collider_state.contact_proj_v[ci, i_b]
+                            j = i - 1
+                            while j >= b_start:
+                                pj = collider_state.contact_lex_idx[j, i_b]
+                                pu = collider_state.contact_sort_key[pj, i_b]
+                                pv = collider_state.contact_proj_v[pj, i_b]
+                                if (pu < cu - sort_u_tol) or (qd.abs(pu - cu) <= sort_u_tol and pv <= cv):
+                                    break
+                                collider_state.contact_lex_idx[j + 1, i_b] = pj
+                                j -= 1
+                            collider_state.contact_lex_idx[j + 1, i_b] = ci
 
-                        # Collinearity threshold for hull pops, scaled to the bucket extent. A pure "cross <= 0" check
-                        # fails on numerically-near-collinear edge points (cross is a tiny positive epsilon from float
-                        # roundoff), so genuine midpoints would survive as spurious hull vertices.
                         hull_collinear_tol = tol * max_in_plane_r2
 
                         k = 0
@@ -1305,13 +1221,9 @@ def func_clamp_prune_and_sort_contacts_coop(
                             k += 1
 
                         upper_start = k
-                        # Memory-fence workaround for a Quadrants codegen issue on Metal _B >= 2 (genesis PR #2831):
-                        # without an explicit scratch store between the lower- and upper-hull lane-0 ``for`` passes,
-                        # the upper-hull pop-loop's reads of contact_hull_stack don't observe the lower-hull writes,
-                        # so the cross-product check effectively runs on stale data and every candidate is kept (hull
-                        # size == bucket size, no pruning). Writing any value to a non-overlapping slot here forces
-                        # write-then-read ordering on the shared buffer. The value is unused. See
-                        # perso_hugh/prot/qd_metal_hull_chain_visibility_repro.py for a standalone reproduction.
+                        # Lane-0 variant of the lower/upper hull memory-fence workaround used in the serial kernel
+                        # (PR #2831): write to a non-overlapping scratch slot to force write-then-read ordering on
+                        # contact_hull_stack between the two hull passes.
                         collider_state.contact_hull_stack[max_contact_pairs - 1, i_b] = 0
                         for k_step in range(b_size - 1):
                             ii_lex = b_end - 2 - k_step
@@ -1339,17 +1251,9 @@ def func_clamp_prune_and_sort_contacts_coop(
                             survivor_orig = collider_state.contact_sort_idx[survivor_sort, i_b]
                             collider_state.contact_keep[survivor_orig, i_b] = 1
 
-                        # Restore non-hull contacts whose penetration is much deeper than the hull boundary's max
-                        # (PR #2831 switched from avg to max). Rationale: a contact whose penetration substantially
-                        # exceeds the hull's deepest vertex represents a distinct physical support (deep body of a
-                        # fork beyond its tines, deep middle of a long body) that the support-polygon argument
-                        # doesn't actually authorize dropping (the argument only holds when all contacts share
-                        # normal AND penetration). The 3x factor over the hull max is well above the typical ~1.x
-                        # penetration spread on transient/rocking faces but well below the deep interior penetrations
-                        # seen when a non-flat body rests inside its convex envelope. Indices here live in orig-space
-                        # (because the cycle-permute is fused into the phase 3 below in opt 10 -- contact_data is
-                        # still in pre-sort order, so we translate sort-space hull/bucket indices through
-                        # contact_sort_idx).
+                        # Lane-0 deep-penetration restore. See serial kernel for the rationale. Indices here live in
+                        # orig-space because the cycle-permute is fused into phase 3 below (contact_data is still in
+                        # pre-sort order, so we translate sort-space hull/bucket indices through contact_sort_idx).
                         hull_pen_max = gs.qd_float(0.0)
                         for hk in range(k):
                             survivor_sort = collider_state.contact_hull_stack[b_start + hk, i_b]
@@ -1367,15 +1271,10 @@ def func_clamp_prune_and_sort_contacts_coop(
                 b_start = b_end
 
         if tid == 0:
-            # Phase 3 (deskai6 opt 11, mirror Alexis's adae82ef): leave contact_data physical, encode the drop / spatial
-            # sort decisions in contact_sort_idx only. Downstream consumers (constraint solver, sensors) already read
-            # via contact_sort_idx[i_c, i_b], so the 9-field cycle-permute is pure waste here. Saves ~9 * n_kept
-            # writes per env per step (dex_hand: ~25 displaced * 9 = 225 writes; box_pyramid: more).
-            #
-            # We still build a sort_key per logical slot (sentinel +inf for dropped slots so they sort to the tail,
-            # geom-pair group's x-pos for kept slots so spatial locality is preserved). We sort sort_key + sort_idx
-            # in lock-step so sort_idx ends as the logical->physical permutation. Then n_contacts = count of non-
-            # sentinel kept slots.
+            # Phase 3: fused compact + spatial sort encoded entirely in contact_sort_idx. Sentinel +inf sort_key
+            # pushes dropped slots to the tail; kept slots get the geom-pair group's x-pos for spatial locality.
+            # Lock-step insertion sort on (sort_key, sort_idx) lands sort_idx as the final logical->physical
+            # permutation. n_contacts = count of non-sentinel slots.
             SENTINEL_BIG = gs.qd_float(1e30)
             group_key = gs.qd_float(0.0)
             prev_ga = -1
@@ -1393,49 +1292,6 @@ def func_clamp_prune_and_sort_contacts_coop(
                     collider_state.contact_sort_key[i, i_b] = SENTINEL_BIG
                 collider_state.contact_sort_idx[i, i_b] = i
 
-            n_kept = 0
-            for i in range(n_con):
-                if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
-                    n_kept += 1
-            collider_state.n_contacts[i_b] = n_kept
-
-        # Sync between lane-0 phase-3 init and the parallel sort below.
-        qd.simt.subgroup.sync()
-
-        # Phase 3 sort (exp F): parallel bitonic across 32 lanes when n_con <= 32; fallback serial insertion sort on
-        # lane 0 otherwise. Sorts (sort_key, sort_idx) together; sentinel-keyed dropped slots end at the tail.
-        if n_con <= _K:
-            my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
-            my_idx = qd.i32(-1)
-            if tid < n_con:
-                my_key = collider_state.contact_sort_key[tid, i_b]
-                my_idx = collider_state.contact_sort_idx[tid, i_b]
-
-            for k_log2 in qd.static(range(1, 6)):
-                k_mask = qd.static(1 << k_log2)
-                for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
-                    j = qd.static(1 << j_log2)
-                    partner = qd.u32(tid ^ j)
-                    their_key = qd.simt.subgroup.shuffle(my_key, partner)
-                    their_idx = qd.simt.subgroup.shuffle(my_idx, partner)
-                    i_am_low = (tid & j) == 0
-                    asc = (tid & k_mask) == 0
-                    take_min = i_am_low == asc
-                    # Stable compare: tiebreak on idx so the sort matches the serial insertion sort byte-for-byte.
-                    their_lt_mine = (their_key < my_key) or (their_key == my_key and their_idx < my_idx)
-                    if take_min:
-                        if their_lt_mine:
-                            my_key = their_key
-                            my_idx = their_idx
-                    else:
-                        if not their_lt_mine and (their_key != my_key or their_idx != my_idx):
-                            my_key = their_key
-                            my_idx = their_idx
-
-            if tid < n_con:
-                collider_state.contact_sort_key[tid, i_b] = my_key
-                collider_state.contact_sort_idx[tid, i_b] = my_idx
-        elif tid == 0:
             for i in range(1, n_con):
                 ck = collider_state.contact_sort_key[i, i_b]
                 if collider_state.contact_sort_key[i - 1, i_b] <= ck:
@@ -1450,6 +1306,14 @@ def func_clamp_prune_and_sort_contacts_coop(
                     j = j - 1
                 collider_state.contact_sort_key[j + 1, i_b] = ck
                 collider_state.contact_sort_idx[j + 1, i_b] = ci
+
+            n_kept = 0
+            for i in range(n_con):
+                if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
+                    n_kept += 1
+                else:
+                    break
+            collider_state.n_contacts[i_b] = n_kept
 
 
 @qd.kernel

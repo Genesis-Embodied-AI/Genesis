@@ -863,16 +863,9 @@ class Collider:
                 self._solver._errno,
             )
 
-        # On GPU backends, when the scene is dedup-eligible and we're not in autodiff mode, dispatch the cooperative
-        # warp-per-env kernel (32 lanes/block; parallel reductions + lex-stride writes; serial sorts + hull build on
-        # lane 0; fused compact+spatial-sort in the final phase). This beats the serial fused kernel on dex_hand /
-        # g1_fall by spreading the per-env work across the warp instead of running one env per block thread, but only
-        # while the GPU has spare occupancy. Once n_envs exceeds half the GPU's CUDA core count, the coop launch fills
-        # the device and the warp-cooperation overhead stops paying off — the serial fused kernel (one thread per env)
-        # wins. The half-core threshold leaves room for the existing kernels already sharing the SMs (narrowphase,
-        # constraint solver) so we don't push them to second-wave scheduling. Everything else (CPU, autodiff, scenes
-        # where has_prunable_contacts=False, oversubscribed n_envs) falls through to the serial fused kernel,
-        # which has internal qd.static gates that drop the prune phases when they're not eligible.
+        # GPU dedup-eligible path: warp-per-env coop kernel beats one-env-per-thread serial fused kernel only when
+        # the GPU has spare occupancy. The _B * 2 <= gpu_cores gate keeps the coop launch from oversubscribing the
+        # SMs (the serial fused kernel wins above that threshold).
         ran_fused_dedup_coop = (
             gs.backend != gs.cpu
             and self._collider_static_config.has_prunable_contacts
@@ -880,9 +873,6 @@ class Collider:
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
         )
-        # Both kernels honor the same contract: clamp + identity-init contact_sort_idx (mandatory, always run),
-        # then (gated) prune, then (gated) spatial sort. The _coop variant uses 32-lane warp cooperation; the serial
-        # variant does one env per thread. Clamp is not optional in either path.
         if ran_fused_dedup_coop:
             func_clamp_prune_and_sort_contacts_coop(
                 self._collider_state,
