@@ -164,25 +164,44 @@ class Collider:
         # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
         # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
         # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
-        # Disabled outright when use_contact_island is True: pruning produces a logical permutation in
-        # contact_sort_idx that the contact-island construction kernel does not honor (it reads contact_data in
-        # physical order). Options.model_post_init has already rejected an explicit contact_pruning_tolerance in this
-        # combination, so disabling the static gate here is a no-op for users who did not request pruning.
-        any_link_multi_geom = any(len(link.geoms) > 1 for link in self._solver.links)
-        use_contact_island = self._solver._options.use_contact_island
-        link_pair_pruning_supported = (
-            any_link_multi_geom or has_nonconvex_nonterrain or has_terrain
-        ) and not use_contact_island
+        # Disabled outright when use_contact_island is True: pruning produces a logical permutation in contact_sort_idx
+        # that the contact-island construction kernel does not honor (it reads contact_data in physical order).
+        if self._solver._options.use_contact_island:
+            has_prunable_contacts = False
+        elif has_nonconvex_nonterrain or has_terrain:
+            has_prunable_contacts = True
+        else:
+            has_prunable_contacts = False
+            for link in self._solver.links:
+                variant_geom_ranges = link._variant_geom_ranges
+                if variant_geom_ranges is None:
+                    variant_geom_ranges = ((link.geom_start, link.geom_end),)
+                for geom_range in variant_geom_ranges:
+                    n_geoms = geom_range[1] - geom_range[0]
+                    if n_geoms < 2:
+                        continue
+                    if n_geoms >= 5:
+                        has_prunable_contacts = True
+                        continue
+                    for geom_idx in range(*geom_range):
+                        geom = self._solver.geoms[geom_idx]
+                        if self._solver._options.enable_multi_contact and geom.type not in (
+                            gs.GEOM_TYPE.SPHERE,
+                            gs.GEOM_TYPE.ELLIPSOID,
+                        ):
+                            has_prunable_contacts = True
 
         # Spatial sort by x-position only runs on GPU when the split narrowphase produced contacts that could
         # benefit from locality. Disabled when use_contact_island is True for the same reason as pruning.
-        spatial_sort_supported = has_non_box_plane_convex_convex and gs.backend != gs.cpu and not use_contact_island
+        spatial_sort_supported = (
+            has_non_box_plane_convex_convex and gs.backend != gs.cpu and not self._solver._options.use_contact_island
+        )
 
         # Hibernation (func_collision_clear / func_collider_clear_env in this module's siblings) advects carried
         # contacts by walking physical slots [0, n_contacts), which only matches the live set when sort_idx is the
         # identity. The use_hibernation -> use_contact_island chain in RigidSolver already enforces that pruning and
         # spatial sort are off, so this is a defensive assertion meant to fail loudly if either gate is loosened.
-        if self._solver._use_hibernation and (link_pair_pruning_supported or spatial_sort_supported):
+        if self._solver._use_hibernation and (has_prunable_contacts or spatial_sort_supported):
             gs.raise_exception(
                 "Hibernation is incompatible with link-pair pruning and spatial sort: both reorder logical contacts "
                 "via contact_sort_idx, but the hibernation advect loop reads contact_data in physical order."
@@ -195,7 +214,7 @@ class Collider:
             has_non_box_plane_convex_convex=has_non_box_plane_convex_convex,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
-            link_pair_pruning_supported=link_pair_pruning_supported,
+            has_prunable_contacts=has_prunable_contacts,
             spatial_sort_supported=spatial_sort_supported,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
@@ -862,7 +881,7 @@ class Collider:
         # views, then materialize each field via a single torch.gather along the contact axis. This still avoids the
         # Quadrants gather kernel and produces a contiguous output suitable for downstream consumers.
         zerocopy_aligned = (
-            not self._collider_static_config.link_pair_pruning_supported
+            not self._collider_static_config.has_prunable_contacts
             and not self._collider_static_config.spatial_sort_supported
         )
         if gs.use_zerocopy:

@@ -727,7 +727,7 @@ def get_collider_state(
     box_axi_shape = maybe_shape((3, _B), static_rigid_sim_config.box_box_detection)
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
-    prune_shape = maybe_shape((max(max_contact_pairs, 1), _B), collider_static_config.link_pair_pruning_supported)
+    prune_shape = maybe_shape((max(max_contact_pairs, 1), _B), collider_static_config.has_prunable_contacts)
 
     return ColliderState(
         sort_buffer=get_sort_buffer(solver),
@@ -843,7 +843,7 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     # n_contacts_per_pair, so the 2D hull is at best a marginal reduction) or when use_contact_island is True (the
     # contact-island path consumes contact_data in physical layout and does not honor the sort_idx indirection).
     # Lets us skip the pruning kernel call and its scratch buffers entirely.
-    link_pair_pruning_supported: bool
+    has_prunable_contacts: bool
     # True when func_clamp_prune_and_sort_contacts should also spatial-sort contacts by x-position. Gated by both
     # narrowphase configuration (only meaningful when has_non_box_plane_convex_convex on GPU) and use_contact_island
     # (the island path does not honor the resulting sort_idx permutation).

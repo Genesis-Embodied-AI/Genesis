@@ -552,7 +552,7 @@ def func_clamp_prune_and_sort_contacts(
 
     Phases per env (gated at compile time by ``collider_static_config``):
     - Always: clamp ``n_contacts`` to ``max_contact_pairs``; initialise ``contact_sort_idx`` to the identity.
-    - If ``link_pair_pruning_supported and not requires_grad``: prune redundant contacts via 2D convex hull on the
+    - If ``has_prunable_contacts and not requires_grad``: prune redundant contacts via 2D convex hull on the
       contact-patch plane (skipped at runtime when ``contact_pruning_tolerance`` is 0). Drops are realised by
       compacting ``contact_sort_idx`` rather than ``contact_data``.
     - If ``has_non_box_plane_convex_convex and backend != cpu``: spatial sort the index permutation by x-position
@@ -598,7 +598,7 @@ def func_clamp_prune_and_sort_contacts(
         # === Pruning phase (link-pair support polygon). Gated by static config: only emitted when the
         # scene has multi-geom links / nonconvex / terrain, and not in autodiff mode. Skipped at runtime
         # when contact_pruning_tolerance is 0.
-        if qd.static(collider_static_config.link_pair_pruning_supported and not static_rigid_sim_config.requires_grad):
+        if qd.static(collider_static_config.has_prunable_contacts and not static_rigid_sim_config.requires_grad):
             if n_con >= 5 and tol > gs.qd_float(0.0):
                 # Phase 1: insertion-sort contact_sort_idx by canonical (min_link, max_link) key. The sort_idx
                 # already holds the identity from the unconditional init above, so the initial key read is direct.
