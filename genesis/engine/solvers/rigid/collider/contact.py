@@ -1272,17 +1272,15 @@ def func_prune_contacts_coop(
                 b_start = b_end
 
         if tid == 0:
-            # Phase 3 (deskai6 opt 10): FUSED compact + spatial sort. Replaces:
-            #   - dedup phase 3 (compact based on contact_keep)
-            #   - func_clamp_and_sort_contacts (assign group-x sort key + insertion sort + cycle-permute)
-            # with a single permutation pass: compute a sort key per slot that pushes dropped contacts past the end
-            # (sentinel +inf) and orders kept contacts by their geom-pair group's x-pos (anchored to the first kept
-            # contact in the group, preserving narrowphase intra-group order via stable sort). Then sort sort-keys +
-            # sort-indices, then cycle-permute the 9 contact_data fields exactly once.
+            # Phase 3 (deskai6 opt 11, mirror Alexis's adae82ef): leave contact_data physical, encode the drop / spatial
+            # sort decisions in contact_sort_idx only. Downstream consumers (constraint solver, sensors) already read
+            # via contact_sort_idx[i_c, i_b], so the 9-field cycle-permute is pure waste here. Saves ~9 * n_kept
+            # writes per env per step (dex_hand: ~25 displaced * 9 = 225 writes; box_pyramid: more).
             #
-            # On dex_hand this saves ~25 displaced contacts worth of field copies that used to be done in dedup phase 3
-            # before clamp_and_sort re-permuted everything. Same 9 fields per contact (force & pair_idx still skipped
-            # per opt 8a; clamp_and_sort still runs in the grad path so its own opt 8b gate stays in place).
+            # We still build a sort_key per logical slot (sentinel +inf for dropped slots so they sort to the tail,
+            # geom-pair group's x-pos for kept slots so spatial locality is preserved). We sort sort_key + sort_idx
+            # in lock-step so sort_idx ends as the logical->physical permutation. Then n_contacts = count of non-
+            # sentinel kept slots.
             SENTINEL_BIG = gs.qd_float(1e30)
             group_key = gs.qd_float(0.0)
             prev_ga = -1
@@ -1315,8 +1313,6 @@ def func_prune_contacts_coop(
                 collider_state.contact_sort_key[j + 1, i_b] = ck
                 collider_state.contact_sort_idx[j + 1, i_b] = ci
 
-            # n_contacts is the count of non-sentinel sort keys (the dropped contacts sit at the tail and are ignored
-            # by downstream consumers via the new n_contacts).
             n_kept = 0
             for i in range(n_con):
                 if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
@@ -1324,50 +1320,6 @@ def func_prune_contacts_coop(
                 else:
                     break
             collider_state.n_contacts[i_b] = n_kept
-
-            # Cycle-permute contact_data fields into their sorted positions. Only n_kept positions need correct values;
-            # the tail (dropped) slots are scratched but not read again this step.
-            for i in range(n_kept):
-                if collider_state.contact_sort_idx[i, i_b] != i:
-                    tmp_geom_a = collider_state.contact_data.geom_a[i, i_b]
-                    tmp_geom_b = collider_state.contact_data.geom_b[i, i_b]
-                    tmp_penetration = collider_state.contact_data.penetration[i, i_b]
-                    tmp_normal = collider_state.contact_data.normal[i, i_b]
-                    tmp_pos = collider_state.contact_data.pos[i, i_b]
-                    tmp_friction = collider_state.contact_data.friction[i, i_b]
-                    tmp_sol_params = collider_state.contact_data.sol_params[i, i_b]
-                    tmp_link_a = collider_state.contact_data.link_a[i, i_b]
-                    tmp_link_b = collider_state.contact_data.link_b[i, i_b]
-
-                    j = i
-                    while collider_state.contact_sort_idx[j, i_b] != i:
-                        src = collider_state.contact_sort_idx[j, i_b]
-                        collider_state.contact_data.geom_a[j, i_b] = collider_state.contact_data.geom_a[src, i_b]
-                        collider_state.contact_data.geom_b[j, i_b] = collider_state.contact_data.geom_b[src, i_b]
-                        collider_state.contact_data.penetration[j, i_b] = collider_state.contact_data.penetration[
-                            src, i_b
-                        ]
-                        collider_state.contact_data.normal[j, i_b] = collider_state.contact_data.normal[src, i_b]
-                        collider_state.contact_data.pos[j, i_b] = collider_state.contact_data.pos[src, i_b]
-                        collider_state.contact_data.friction[j, i_b] = collider_state.contact_data.friction[src, i_b]
-                        collider_state.contact_data.sol_params[j, i_b] = collider_state.contact_data.sol_params[
-                            src, i_b
-                        ]
-                        collider_state.contact_data.link_a[j, i_b] = collider_state.contact_data.link_a[src, i_b]
-                        collider_state.contact_data.link_b[j, i_b] = collider_state.contact_data.link_b[src, i_b]
-                        collider_state.contact_sort_idx[j, i_b] = j
-                        j = src
-
-                    collider_state.contact_data.geom_a[j, i_b] = tmp_geom_a
-                    collider_state.contact_data.geom_b[j, i_b] = tmp_geom_b
-                    collider_state.contact_data.penetration[j, i_b] = tmp_penetration
-                    collider_state.contact_data.normal[j, i_b] = tmp_normal
-                    collider_state.contact_data.pos[j, i_b] = tmp_pos
-                    collider_state.contact_data.friction[j, i_b] = tmp_friction
-                    collider_state.contact_data.sol_params[j, i_b] = tmp_sol_params
-                    collider_state.contact_data.link_a[j, i_b] = tmp_link_a
-                    collider_state.contact_data.link_b[j, i_b] = tmp_link_b
-                    collider_state.contact_sort_idx[j, i_b] = j
 
 
 @qd.kernel
