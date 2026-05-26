@@ -1298,6 +1298,49 @@ def func_prune_contacts_coop(
                     collider_state.contact_sort_key[i, i_b] = SENTINEL_BIG
                 collider_state.contact_sort_idx[i, i_b] = i
 
+            n_kept = 0
+            for i in range(n_con):
+                if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
+                    n_kept += 1
+            collider_state.n_contacts[i_b] = n_kept
+
+        # Sync between lane-0 phase-3 init and the parallel sort below.
+        qd.simt.subgroup.sync()
+
+        # Phase 3 sort (exp F): parallel bitonic across 32 lanes when n_con <= 32; fallback serial insertion sort on
+        # lane 0 otherwise. Sorts (sort_key, sort_idx) together; sentinel-keyed dropped slots end at the tail.
+        if n_con <= _K:
+            my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
+            my_idx = qd.i32(-1)
+            if tid < n_con:
+                my_key = collider_state.contact_sort_key[tid, i_b]
+                my_idx = collider_state.contact_sort_idx[tid, i_b]
+
+            for k_log2 in qd.static(range(1, 6)):
+                k_mask = qd.static(1 << k_log2)
+                for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
+                    j = qd.static(1 << j_log2)
+                    partner = qd.u32(tid ^ j)
+                    their_key = qd.simt.subgroup.shuffle(my_key, partner)
+                    their_idx = qd.simt.subgroup.shuffle(my_idx, partner)
+                    i_am_low = (tid & j) == 0
+                    asc = (tid & k_mask) == 0
+                    take_min = i_am_low == asc
+                    # Stable compare: tiebreak on idx so the sort matches the serial insertion sort byte-for-byte.
+                    their_lt_mine = (their_key < my_key) or (their_key == my_key and their_idx < my_idx)
+                    if take_min:
+                        if their_lt_mine:
+                            my_key = their_key
+                            my_idx = their_idx
+                    else:
+                        if not their_lt_mine and (their_key != my_key or their_idx != my_idx):
+                            my_key = their_key
+                            my_idx = their_idx
+
+            if tid < n_con:
+                collider_state.contact_sort_key[tid, i_b] = my_key
+                collider_state.contact_sort_idx[tid, i_b] = my_idx
+        elif tid == 0:
             for i in range(1, n_con):
                 ck = collider_state.contact_sort_key[i, i_b]
                 if collider_state.contact_sort_key[i - 1, i_b] <= ck:
@@ -1312,14 +1355,6 @@ def func_prune_contacts_coop(
                     j = j - 1
                 collider_state.contact_sort_key[j + 1, i_b] = ck
                 collider_state.contact_sort_idx[j + 1, i_b] = ci
-
-            n_kept = 0
-            for i in range(n_con):
-                if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
-                    n_kept += 1
-                else:
-                    break
-            collider_state.n_contacts[i_b] = n_kept
 
 
 @qd.kernel
