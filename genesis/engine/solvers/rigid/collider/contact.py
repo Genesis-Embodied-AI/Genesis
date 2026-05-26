@@ -1009,7 +1009,7 @@ def func_prune_contacts_coop(
                     my_key = collider_state.contact_sort_key[tid, i_b]
                     my_idx = collider_state.contact_sort_idx[tid, i_b]
 
-                # 15 bitonic stages: (k, j) pairs walking the standard schedule.
+                # 15 bitonic stages: (k, j) pairs walking the standard schedule. Stable compare (tiebreak on idx).
                 for k_log2 in qd.static(range(1, 6)):
                     k_mask = qd.static(1 << k_log2)
                     for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
@@ -1017,17 +1017,16 @@ def func_prune_contacts_coop(
                         partner = qd.u32(tid ^ j)
                         their_key = qd.simt.subgroup.shuffle(my_key, partner)
                         their_idx = qd.simt.subgroup.shuffle(my_idx, partner)
-                        # Take lower-of-pair iff (i_am_low XOR ascending) is False; equivalently,
-                        # (tid & j == 0) == (tid & k_mask == 0).
                         i_am_low = (tid & j) == 0
                         asc = (tid & k_mask) == 0
                         take_min = i_am_low == asc
+                        their_lt_mine = (their_key < my_key) or (their_key == my_key and their_idx < my_idx)
                         if take_min:
-                            if their_key < my_key:
+                            if their_lt_mine:
                                 my_key = their_key
                                 my_idx = their_idx
                         else:
-                            if their_key > my_key:
+                            if not their_lt_mine and (their_key != my_key or their_idx != my_idx):
                                 my_key = their_key
                                 my_idx = their_idx
 
