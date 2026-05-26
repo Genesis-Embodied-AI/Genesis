@@ -698,6 +698,9 @@ class ColliderState:
     contact_proj_v: qd.Tensor
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
+    # Per-bucket lex sort permutation used by the cooperative dedup kernel (func_prune_contacts_coop) for the
+    # phase-3 (u, v) lex sort. Sized to max_contact_pairs because each env writes its own permutation.
+    contact_lex_idx: qd.Tensor
 
 
 def get_collider_state(
@@ -760,6 +763,7 @@ def get_collider_state(
         contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape),
         contact_keep=V(dtype=gs.qd_int, shape=prune_shape),
         contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape),
+        contact_lex_idx=V(dtype=gs.qd_int, shape=prune_shape),
     )
 
 
