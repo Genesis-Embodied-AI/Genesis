@@ -879,6 +879,7 @@ class Collider:
                 self._collider_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
+                self._collider_static_config,
             )
         else:
             func_clamp_prune_and_sort_contacts(

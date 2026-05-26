@@ -929,6 +929,7 @@ def func_clamp_prune_and_sort_contacts_coop(
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    collider_static_config: qd.template(),
 ):
     """GPU-only cooperative warp-per-env variant of `func_clamp_prune_and_sort_contacts`.
 
@@ -937,7 +938,7 @@ def func_clamp_prune_and_sort_contacts_coop(
       - PARALLEL: per-contact init, phase-2 mean-normal / centroid reductions, coplanarity reduction, in-plane
         projection writes, phase-1a bitonic sort (when n_con <= 32; falls back to serial insertion sort otherwise).
       - SERIAL on lane 0: bucket walk control, lex sort, Andrew's monotone chain, hull-mark, deep-pen restore, and
-        the fused phase-3 compact + spatial sort.
+        the phase-3 compact (with fused spatial sort when `collider_static_config.spatial_sort_supported`).
     """
     _B = collider_state.n_contacts.shape[0]
     max_contact_pairs = collider_info.max_contact_pairs[None]
@@ -1271,49 +1272,60 @@ def func_clamp_prune_and_sort_contacts_coop(
                 b_start = b_end
 
         if tid == 0:
-            # Phase 3: fused compact + spatial sort encoded entirely in contact_sort_idx. Sentinel +inf sort_key
-            # pushes dropped slots to the tail; kept slots get the geom-pair group's x-pos for spatial locality.
-            # Lock-step insertion sort on (sort_key, sort_idx) lands sort_idx as the final logical->physical
-            # permutation. n_contacts = count of non-sentinel slots.
-            SENTINEL_BIG = gs.qd_float(1e30)
-            group_key = gs.qd_float(0.0)
-            prev_ga = -1
-            prev_gb = -1
-            for i in range(n_con):
-                if collider_state.contact_keep[i, i_b] != 0:
-                    ga = collider_state.contact_data.geom_a[i, i_b]
-                    gb = collider_state.contact_data.geom_b[i, i_b]
-                    if ga != prev_ga or gb != prev_gb:
-                        group_key = collider_state.contact_data.pos[i, i_b][0]
-                        prev_ga = ga
-                        prev_gb = gb
-                    collider_state.contact_sort_key[i, i_b] = group_key
-                else:
-                    collider_state.contact_sort_key[i, i_b] = SENTINEL_BIG
-                collider_state.contact_sort_idx[i, i_b] = i
+            if qd.static(collider_static_config.spatial_sort_supported):
+                # Phase 3 (with spatial sort): fused compact + spatial sort encoded entirely in contact_sort_idx.
+                # Sentinel +inf sort_key pushes dropped slots to the tail; kept slots get the geom-pair group's
+                # x-pos for spatial locality. Lock-step insertion sort on (sort_key, sort_idx) lands sort_idx as
+                # the final logical->physical permutation. n_contacts = count of non-sentinel slots.
+                SENTINEL_BIG = gs.qd_float(1e30)
+                group_key = gs.qd_float(0.0)
+                prev_ga = -1
+                prev_gb = -1
+                for i in range(n_con):
+                    if collider_state.contact_keep[i, i_b] != 0:
+                        ga = collider_state.contact_data.geom_a[i, i_b]
+                        gb = collider_state.contact_data.geom_b[i, i_b]
+                        if ga != prev_ga or gb != prev_gb:
+                            group_key = collider_state.contact_data.pos[i, i_b][0]
+                            prev_ga = ga
+                            prev_gb = gb
+                        collider_state.contact_sort_key[i, i_b] = group_key
+                    else:
+                        collider_state.contact_sort_key[i, i_b] = SENTINEL_BIG
+                    collider_state.contact_sort_idx[i, i_b] = i
 
-            for i in range(1, n_con):
-                ck = collider_state.contact_sort_key[i, i_b]
-                if collider_state.contact_sort_key[i - 1, i_b] <= ck:
-                    continue
-                ci = collider_state.contact_sort_idx[i, i_b]
-                j = i - 1
-                while j >= 0:
-                    if collider_state.contact_sort_key[j, i_b] <= ck:
+                for i in range(1, n_con):
+                    ck = collider_state.contact_sort_key[i, i_b]
+                    if collider_state.contact_sort_key[i - 1, i_b] <= ck:
+                        continue
+                    ci = collider_state.contact_sort_idx[i, i_b]
+                    j = i - 1
+                    while j >= 0:
+                        if collider_state.contact_sort_key[j, i_b] <= ck:
+                            break
+                        collider_state.contact_sort_key[j + 1, i_b] = collider_state.contact_sort_key[j, i_b]
+                        collider_state.contact_sort_idx[j + 1, i_b] = collider_state.contact_sort_idx[j, i_b]
+                        j = j - 1
+                    collider_state.contact_sort_key[j + 1, i_b] = ck
+                    collider_state.contact_sort_idx[j + 1, i_b] = ci
+
+                n_kept = 0
+                for i in range(n_con):
+                    if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
+                        n_kept += 1
+                    else:
                         break
-                    collider_state.contact_sort_key[j + 1, i_b] = collider_state.contact_sort_key[j, i_b]
-                    collider_state.contact_sort_idx[j + 1, i_b] = collider_state.contact_sort_idx[j, i_b]
-                    j = j - 1
-                collider_state.contact_sort_key[j + 1, i_b] = ck
-                collider_state.contact_sort_idx[j + 1, i_b] = ci
-
-            n_kept = 0
-            for i in range(n_con):
-                if collider_state.contact_sort_key[i, i_b] < SENTINEL_BIG:
-                    n_kept += 1
-                else:
-                    break
-            collider_state.n_contacts[i_b] = n_kept
+                collider_state.n_contacts[i_b] = n_kept
+            else:
+                # Phase 3 (compact-only): when spatial sort is statically disabled, preserve the serial kernel's
+                # contract -- squeeze dropped orig-space slots out of contact_sort_idx in orig order and update
+                # n_contacts. Kept slots map logical-position w to physical-position i (orig-space).
+                write = 0
+                for i in range(n_con):
+                    if collider_state.contact_keep[i, i_b] != 0:
+                        collider_state.contact_sort_idx[write, i_b] = i
+                        write += 1
+                collider_state.n_contacts[i_b] = write
 
 
 @qd.kernel
