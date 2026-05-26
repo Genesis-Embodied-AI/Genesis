@@ -599,10 +599,10 @@ class RasterizerContext:
                 gb_aabb = geoms_aabb[contacts_info["geom_b"]]
                 ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
                 gb_aabb_size = np.linalg.norm(gb_aabb[:, -1] - gb_aabb[:, 0], axis=1)
-                normal_scale = np.minimum(ga_aabb_size, gb_aabb_size)
-
+                arrow_scale = np.minimum(ga_aabb_size, gb_aabb_size)
+                radius = np.minimum(arrow_scale * 0.04, 0.005)
                 contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
-                contact_normal_scaled = contacts_info["normal"] * normal_scale[:, None]
+                contact_normal_scaled = contacts_info["normal"] * arrow_scale[:, None]
                 contact_force = contacts_info["force"]
 
                 for i_c in range(n_contacts):
@@ -610,11 +610,13 @@ class RasterizerContext:
                         if self.sim.rigid_solver.links[link_idx].visualize_contact:
                             self.draw_contact_arrow(
                                 pos=contact_pos[i_c],
+                                radius=radius[i_c],
                                 force=sign * contact_force[i_c],
                                 env_idx=env_i,
                             )
                             self.draw_debug_arrow(
                                 pos=contact_pos[i_c],
+                                radius=radius[i_c],
                                 vec=-sign * contact_normal_scaled[i_c],
                                 color=(0.9, 0.0, 0.8, 1.0),
                                 persistent=False,

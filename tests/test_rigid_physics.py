@@ -1245,6 +1245,7 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
                 size=(2.0 * BOX_HALF_EXTENT, 2.0 * BOX_HALF_EXTENT, HEIGHT),
                 fixed=True,
             ),
+            visualize_contact=True,
         )
 
     if entity_kind == "sphere":
