@@ -380,7 +380,7 @@ class RigidGeom(RBC):
     @gs.assert_built
     def get_AABB(self):
         """
-        Get the axis-aligned bounding box (AABB) of the geom in world frame.
+        Get the vertex-based axis-aligned bounding box (AABB) of the geom in world frame.
         """
         verts = self.get_verts()
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)

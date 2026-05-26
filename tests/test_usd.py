@@ -1185,9 +1185,11 @@ def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):
     for _ in range(50):
         scene.step()
 
-    capsule_aabb_min, _capsule_aabb_max = tensor_to_array(capsule.get_AABB())
+    capsule_aabb_min, _capsule_aabb_max = tensor_to_array(
+        scene.rigid_solver.get_AABB(entities_idx=(capsule.idx,))[..., 0, :]
+    )
     capsule_aabb_min_z = float(capsule_aabb_min[-1])
-    assert -0.001 < capsule_aabb_min_z < 0.0
+    assert -5e-4 < capsule_aabb_min_z < 0.0
 
 
 @pytest.mark.required

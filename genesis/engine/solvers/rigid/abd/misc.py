@@ -514,13 +514,38 @@ def kernel_init_geom_fields(
         geoms_info.is_decomposed[i_g] = geoms_is_decomp[i_g]
 
         # compute init AABB.
-        # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
-        # in the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes.
+        # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere in
+        # the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes. For
+        # primitives, use exact analytical AABB bounds rather than tessellated mesh vertices, which are inscribed in
+        # the true surface. Using the mesh AABB would shrink the box and cause broadphase to false-negative shallow
+        # penetrations.
         lower = gu.qd_vec3(qd.math.inf)
         upper = gu.qd_vec3(-qd.math.inf)
-        for i_v in range(geoms_vert_start[i_g], geoms_vert_end[i_g]):
-            lower = qd.min(lower, verts_info.init_pos[i_v])
-            upper = qd.max(upper, verts_info.init_pos[i_v])
+        geom_type = geoms_type[i_g]
+        if geom_type == gs.GEOM_TYPE.SPHERE:
+            radius = geoms_data[i_g, 0]
+            lower = qd.Vector([-radius, -radius, -radius], dt=gs.qd_float)
+            upper = qd.Vector([radius, radius, radius], dt=gs.qd_float)
+        elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+            a = geoms_data[i_g, 0]
+            b = geoms_data[i_g, 1]
+            c = geoms_data[i_g, 2]
+            lower = qd.Vector([-a, -b, -c], dt=gs.qd_float)
+            upper = qd.Vector([a, b, c], dt=gs.qd_float)
+        elif geom_type == gs.GEOM_TYPE.CAPSULE:
+            radius = geoms_data[i_g, 0]
+            half_length = 0.5 * geoms_data[i_g, 1]
+            lower = qd.Vector([-radius, -radius, -(half_length + radius)], dt=gs.qd_float)
+            upper = qd.Vector([radius, radius, half_length + radius], dt=gs.qd_float)
+        elif geom_type == gs.GEOM_TYPE.CYLINDER:
+            radius = geoms_data[i_g, 0]
+            half_length = 0.5 * geoms_data[i_g, 1]
+            lower = qd.Vector([-radius, -radius, -half_length], dt=gs.qd_float)
+            upper = qd.Vector([radius, radius, half_length], dt=gs.qd_float)
+        else:
+            for i_v in range(geoms_vert_start[i_g], geoms_vert_end[i_g]):
+                lower = qd.min(lower, verts_info.init_pos[i_v])
+                upper = qd.max(upper, verts_info.init_pos[i_v])
         geoms_init_AABB[i_g, 0] = qd.Vector([lower[0], lower[1], lower[2]], dt=gs.qd_float)
         geoms_init_AABB[i_g, 1] = qd.Vector([lower[0], lower[1], upper[2]], dt=gs.qd_float)
         geoms_init_AABB[i_g, 2] = qd.Vector([lower[0], upper[1], lower[2]], dt=gs.qd_float)
