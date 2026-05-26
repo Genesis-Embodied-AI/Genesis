@@ -454,6 +454,9 @@ class RigidSolver(KinematicSolver):
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0
+        # Prefer the decomposed solver on CUDA, which supports hardware accelerated graph and do-while condition
+        elif gs.backend == gs.cuda:
+            static_rigid_sim_config["prefer_decomposed_solver"] = 1
 
         if self.is_active:
             # TODO: These alternative tiled algorithms are designed to reduce the impact of latency. However, naive
