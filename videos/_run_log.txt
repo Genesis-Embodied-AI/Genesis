@@ -1,0 +1,178 @@
+==== collision_contype (skip, already exists) ====
+==== collision_pyramid ====
+[38;5;159m[Genesis] [14:44:48] [INFO] [38;5;121m╭───────────────────────────────────────────────╮[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:48] [INFO] [38;5;121m│┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈[0m[38;5;159m [38;5;121m[1m[3mGenesis[0m[38;5;159m [38;5;121m┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈│[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:48] [INFO] [38;5;121m╰───────────────────────────────────────────────╯[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:49] [INFO] Running on [38;5;121m[4m[Intel(R) Core(TM) i9-14900KF][0m[38;5;159m with backend [38;5;121m[4mgs.cpu[0m[38;5;159m. Device memory: [38;5;121m[4m62.51[0m[38;5;159m GB.[0m
+[38;5;159m[Genesis] [14:44:49] [INFO] 🚀 Genesis initialized. 🔖 version: [38;5;121m[4m0.4.7[0m[38;5;159m, 🎨 theme: [38;5;121m[4mdark[0m[38;5;159m, 🌱 seed: [38;5;121m[4mNone[0m[38;5;159m, 🐛 debug: [38;5;121m[4mFalse[0m[38;5;159m, 📏 precision: [38;5;121m[4m32[0m[38;5;159m, 🔥 performance: [38;5;121m[4mFalse[0m[38;5;159m, 💬 verbose: [38;5;121m[4mINFO[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Scene [38;5;121m[3m<bd85634>[0m[38;5;159m created.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m0[0m[38;5;159m, uid: [38;5;121m[3m<1a70f55>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Plane>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m1[0m[38;5;159m, uid: [38;5;121m[3m<f9ecda1>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m2[0m[38;5;159m, uid: [38;5;121m[3m<e7fcb2e>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m3[0m[38;5;159m, uid: [38;5;121m[3m<df3b0b4>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m4[0m[38;5;159m, uid: [38;5;121m[3m<285dd08>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m5[0m[38;5;159m, uid: [38;5;121m[3m<1a71c57>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m6[0m[38;5;159m, uid: [38;5;121m[3m<6261cd2>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m7[0m[38;5;159m, uid: [38;5;121m[3m<417618a>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m8[0m[38;5;159m, uid: [38;5;121m[3m<259949f>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m9[0m[38;5;159m, uid: [38;5;121m[3m<32c8bc3>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m10[0m[38;5;159m, uid: [38;5;121m[3m<c584fed>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m11[0m[38;5;159m, uid: [38;5;121m[3m<dcef169>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m12[0m[38;5;159m, uid: [38;5;121m[3m<f990173>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m13[0m[38;5;159m, uid: [38;5;121m[3m<715fe62>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m14[0m[38;5;159m, uid: [38;5;121m[3m<5f8e75d>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m15[0m[38;5;159m, uid: [38;5;121m[3m<07bcf1c>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Building scene [38;5;121m[3m<bd85634>[0m[38;5;159m...[0m
+[38;5;159m[Genesis] [14:44:50] [INFO] Compiling simulation kernels...[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Building visualizer...[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Running at [38;5;121m1066.13[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Running at [38;5;121m1283.58[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Running at [38;5;121m1639.28[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Running at [38;5;121m1679.30[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Running at [38;5;121m1699.85[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:51] [INFO] Running at [38;5;121m1700.67[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1700.93[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1681.87[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1702.27[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1722.35[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1722.19[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1702.98[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1703.58[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1703.47[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1703.50[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1704.08[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1704.19[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] Running at [38;5;121m1704.23[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:44:52] [INFO] 💤 Exiting Genesis and caching compiled kernels...[0m
+  OK  7s
+==== collision_tower (skip, already exists) ====
+==== coupling_cloth_attached_to_rigid (skip, already exists) ====
+==== coupling_cloth_on_rigid (skip, already exists) ====
+==== coupling_cut_dragon (skip, already exists) ====
+==== coupling_fem_cube_linked_with_arm (skip, already exists) ====
+==== coupling_flush_cubes (skip, already exists) ====
+==== coupling_grasp_soft_cube (skip, already exists) ====
+==== coupling_rigid_mpm_attachment (skip, already exists) ====
+==== coupling_sand_wheel (skip, already exists) ====
+==== coupling_sph_mpm (skip, already exists) ====
+==== coupling_sph_rigid (skip, already exists) ====
+==== coupling_water_wheel (skip, already exists) ====
+==== drone_fly (skip, already exists) ====
+==== elastic_dragon (skip, already exists) ====
+==== fem_hard_and_soft_constraint (skip, already exists) ====
+==== keyboard_teleop ====
+[38;5;159m[Genesis] [14:44:54] [INFO] [38;5;121m╭───────────────────────────────────────────────╮[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:54] [INFO] [38;5;121m│┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈[0m[38;5;159m [38;5;121m[1m[3mGenesis[0m[38;5;159m [38;5;121m┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈│[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:54] [INFO] [38;5;121m╰───────────────────────────────────────────────╯[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:55] [INFO] Running on [38;5;121m[4m[Intel(R) Core(TM) i9-14900KF][0m[38;5;159m with backend [38;5;121m[4mgs.cpu[0m[38;5;159m. Device memory: [38;5;121m[4m62.51[0m[38;5;159m GB.[0m
+[38;5;159m[Genesis] [14:44:55] [INFO] 🚀 Genesis initialized. 🔖 version: [38;5;121m[4m0.4.7[0m[38;5;159m, 🎨 theme: [38;5;121m[4mdark[0m[38;5;159m, 🌱 seed: [38;5;121m[4mNone[0m[38;5;159m, 🐛 debug: [38;5;121m[4mFalse[0m[38;5;159m, 📏 precision: [38;5;121m[4m32[0m[38;5;159m, 🔥 performance: [38;5;121m[4mFalse[0m[38;5;159m, 💬 verbose: [38;5;121m[4mINFO[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:44:56] [INFO] Scene [38;5;121m[3m<6380e6d>[0m[38;5;159m created.[0m
+[38;5;159m[Genesis] [14:44:56] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m0[0m[38;5;159m, uid: [38;5;121m[3m<8a582be>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Plane>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:56] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m1[0m[38;5;159m, uid: [38;5;121m[3m<f2a3d4a>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.MJCF(file='/home/qq/Desktop/github/Genesis/genesis/assets/xml/franka_emika_panda/panda.xml')>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;226m[Genesis] [14:44:57] [WARNING] (MJCF) Approximating tendon by joint actuator for `finger_joint1`[0m
+[38;5;226m[Genesis] [14:44:57] [WARNING] (MJCF) Approximating tendon by joint actuator for `finger_joint2`[0m
+[38;5;159m[Genesis] [14:44:57] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m2[0m[38;5;159m, uid: [38;5;121m[3m<0c9c65e>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:57] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m3[0m[38;5;159m, uid: [38;5;121m[3m<a692952>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Mesh(file='/home/qq/Desktop/github/Genesis/genesis/assets/meshes/axis.obj')>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:44:57] [INFO] Building scene [38;5;121m[3m<6380e6d>[0m[38;5;159m...[0m
+[38;5;159m[Genesis] [14:44:57] [INFO] Mass is not specified and collision geoms can not be found for link 'axis_obj_baselink'. Using visual geoms to compute inertial properties.[0m
+[38;5;226m[Genesis] [14:44:57] [WARNING] Neutral robot position (qpos0) exceeds joint limits.[0m
+[38;5;226m[Genesis] [14:44:58] [WARNING] Filtered out geometry pairs causing self-collision for the neutral configuration (qpos0): (6, 11), (7, 11), (14, 21), (15, 20), (16, 23), (17, 22). Consider tuning Morph option 'decompose_robot_error_threshold' or specify dedicated collision meshes. This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'.[0m
+[38;5;159m[Genesis] [14:44:58] [INFO] Compiling simulation kernels...[0m
+[38;5;159m[Genesis] [14:44:59] [INFO] Building visualizer...[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m9.95[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m283.23[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m283.37[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m284.01[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m284.44[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m285.14[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m285.08[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m285.45[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m285.61[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Running at [38;5;121m285.60[0m[38;5;159m FPS.[0m
+[38;5;159m[Genesis] [14:45:01] [INFO] Saving video to [38;5;121m"/home/qq/Desktop/github/Genesis/videos/keyboard_teleop.mp4"[0m[38;5;159m...[0m
+[38;5;159m[Genesis] [14:45:02] [INFO] Video saved.[0m
+[38;5;159m[Genesis] [14:45:02] [INFO] saved /home/qq/Desktop/github/Genesis/videos/keyboard_teleop.mp4[0m
+[38;5;159m[Genesis] [14:45:02] [INFO] 💤 Exiting Genesis and caching compiled kernels...[0m
+  OK  9s
+==== pbd_liquid (skip, already exists) ====
+==== rendering_demo (skip, already exists) ====
+==== rendering_follow_entity (skip, already exists) ====
+==== rendering_moving_camera (skip, already exists) ====
+==== rigid_closed_loop (skip, already exists) ====
+==== rigid_control_franka (skip, already exists) ====
+==== rigid_diffik_controller (skip, already exists) ====
+==== rigid_domain_randomization (skip, already exists) ====
+==== rigid_franka_cube (skip, already exists) ====
+==== rigid_grasp_bottle (skip, already exists) ====
+==== rigid_heterogeneous_simulation (skip, already exists) ====
+==== sap_fem_fixed_constraint (skip, already exists) ====
+==== sap_franka_grasp_fem_sphere (skip, already exists) ====
+==== sap_franka_grasp_rigid_cube (skip, already exists) ====
+==== sensors_contact_force_go2 (skip, already exists) ====
+==== sensors_depth_camera_custom_vverts (skip, already exists) ====
+==== sensors_imu_franka (skip, already exists) ====
+==== sensors_tactile_franka ====
+[38;5;159m[Genesis] [14:45:04] [INFO] [38;5;121m╭───────────────────────────────────────────────╮[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:04] [INFO] [38;5;121m│┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈[0m[38;5;159m [38;5;121m[1m[3mGenesis[0m[38;5;159m [38;5;121m┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈│[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:04] [INFO] [38;5;121m╰───────────────────────────────────────────────╯[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:05] [INFO] Running on [38;5;121m[4m[Intel(R) Core(TM) i9-14900KF][0m[38;5;159m with backend [38;5;121m[4mgs.cpu[0m[38;5;159m. Device memory: [38;5;121m[4m62.51[0m[38;5;159m GB.[0m
+[38;5;159m[Genesis] [14:45:05] [INFO] 🚀 Genesis initialized. 🔖 version: [38;5;121m[4m0.4.7[0m[38;5;159m, 🎨 theme: [38;5;121m[4mdark[0m[38;5;159m, 🌱 seed: [38;5;121m[4mNone[0m[38;5;159m, 🐛 debug: [38;5;121m[4mFalse[0m[38;5;159m, 📏 precision: [38;5;121m[4m32[0m[38;5;159m, 🔥 performance: [38;5;121m[4mFalse[0m[38;5;159m, 💬 verbose: [38;5;121m[4mINFO[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:06] [INFO] Scene [38;5;121m[3m<ec26f52>[0m[38;5;159m created.[0m
+[38;5;159m[Genesis] [14:45:06] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m0[0m[38;5;159m, uid: [38;5;121m[3m<edbf2bf>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Plane>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:06] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m1[0m[38;5;159m, uid: [38;5;121m[3m<4acc5ce>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.MJCF(file='/home/qq/Desktop/github/Genesis/genesis/assets/xml/franka_emika_panda/panda.xml')>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;226m[Genesis] [14:45:07] [WARNING] (MJCF) Approximating tendon by joint actuator for `finger_joint1`[0m
+[38;5;226m[Genesis] [14:45:07] [WARNING] (MJCF) Approximating tendon by joint actuator for `finger_joint2`[0m
+[38;5;159m[Genesis] [14:45:07] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m2[0m[38;5;159m, uid: [38;5;121m[3m<4adda19>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:07] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m3[0m[38;5;159m, uid: [38;5;121m[3m<950116a>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Sphere>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:07] [INFO] Building scene [38;5;121m[3m<ec26f52>[0m[38;5;159m...[0m
+[38;5;226m[Genesis] [14:45:07] [WARNING] Neutral robot position (qpos0) exceeds joint limits.[0m
+[38;5;226m[Genesis] [14:45:08] [WARNING] Filtered out geometry pairs causing self-collision for the neutral configuration (qpos0): (6, 11), (7, 11), (14, 21), (15, 20), (16, 23), (17, 22). Consider tuning Morph option 'decompose_robot_error_threshold' or specify dedicated collision meshes. This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'.[0m
+[38;5;159m[Genesis] [14:45:08] [INFO] Compiling simulation kernels...[0m
+[38;5;159m[Genesis] [14:45:09] [INFO] Building visualizer...[0m
+[38;5;159m[Genesis] [14:45:12] [INFO] Saving video to [38;5;121m"/home/qq/Desktop/github/Genesis/videos/sensors_tactile_franka.mp4"[0m[38;5;159m...[0m
+[38;5;159m[Genesis] [14:45:12] [INFO] Video saved.[0m
+[38;5;159m[Genesis] [14:45:12] [INFO] saved /home/qq/Desktop/github/Genesis/videos/sensors_tactile_franka.mp4[0m
+[38;5;159m[Genesis] [14:45:12] [INFO] 💤 Exiting Genesis and caching compiled kernels...[0m
+  OK  11s
+==== sensors_tactile_sandbox (skip, already exists) ====
+==== sensors_temperature_grid ====
+[38;5;159m[Genesis] [14:45:14] [INFO] [38;5;121m╭───────────────────────────────────────────────╮[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:14] [INFO] [38;5;121m│┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈[0m[38;5;159m [38;5;121m[1m[3mGenesis[0m[38;5;159m [38;5;121m┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈│[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:14] [INFO] [38;5;121m╰───────────────────────────────────────────────╯[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:15] [INFO] Running on [38;5;121m[4m[Intel(R) Core(TM) i9-14900KF][0m[38;5;159m with backend [38;5;121m[4mgs.cpu[0m[38;5;159m. Device memory: [38;5;121m[4m62.51[0m[38;5;159m GB.[0m
+[38;5;159m[Genesis] [14:45:15] [INFO] 🚀 Genesis initialized. 🔖 version: [38;5;121m[4m0.4.7[0m[38;5;159m, 🎨 theme: [38;5;121m[4mdark[0m[38;5;159m, 🌱 seed: [38;5;121m[4mNone[0m[38;5;159m, 🐛 debug: [38;5;121m[4mFalse[0m[38;5;159m, 📏 precision: [38;5;121m[4m32[0m[38;5;159m, 🔥 performance: [38;5;121m[4mFalse[0m[38;5;159m, 💬 verbose: [38;5;121m[4mINFO[0m[38;5;159m[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Scene [38;5;121m[3m<466c7d4>[0m[38;5;159m created.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m0[0m[38;5;159m, uid: [38;5;121m[3m<9242a04>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Plane>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m1[0m[38;5;159m, uid: [38;5;121m[3m<3c50ee1>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m2[0m[38;5;159m, uid: [38;5;121m[3m<8d1b697>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m3[0m[38;5;159m, uid: [38;5;121m[3m<c2462d2>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m4[0m[38;5;159m, uid: [38;5;121m[3m<aa67e2b>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m5[0m[38;5;159m, uid: [38;5;121m[3m<a442ef6>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m6[0m[38;5;159m, uid: [38;5;121m[3m<728c8a8>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Cylinder>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m7[0m[38;5;159m, uid: [38;5;121m[3m<b239642>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Box>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m8[0m[38;5;159m, uid: [38;5;121m[3m<d33c95c>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Cylinder>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m9[0m[38;5;159m, uid: [38;5;121m[3m<dcf8e46>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Sphere>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+[38;5;159m[Genesis] [14:45:16] [INFO] Building scene [38;5;121m[3m<466c7d4>[0m[38;5;159m...[0m
+[38;5;159m[Genesis] [14:45:17] [INFO] Compiling simulation kernels...[0m
+[38;5;159m[Genesis] [14:45:18] [INFO] Building visualizer...[0m
+[38;5;159m[Genesis] [14:45:19] [INFO] Saving video to [38;5;121m"/home/qq/Desktop/github/Genesis/videos/sensors_temperature_grid.mp4"[0m[38;5;159m...[0m
+[38;5;159m[Genesis] [14:45:20] [INFO] Video saved.[0m
+[38;5;159m[Genesis] [14:45:20] [INFO] saved /home/qq/Desktop/github/Genesis/videos/sensors_temperature_grid.mp4[0m
+[38;5;159m[Genesis] [14:45:20] [INFO] 💤 Exiting Genesis and caching compiled kernels...[0m
+  OK  7s
+==== tutorials_advanced_hybrid_robot (skip, already exists) ====
+==== tutorials_advanced_IK_multilink (skip, already exists) ====
+==== tutorials_advanced_muscle (skip, already exists) ====
+==== tutorials_advanced_worm (skip, already exists) ====
+==== tutorials_batched_IK (skip, already exists) ====
+==== tutorials_control_your_robot (skip, already exists) ====
+==== tutorials_entity_name (skip, already exists) ====
+==== tutorials_hello_genesis (skip, already exists) ====
+==== tutorials_IK_motion_planning_grasp (skip, already exists) ====
+==== tutorials_mpm (skip, already exists) ====
+==== tutorials_parallel_simulation (skip, already exists) ====
+==== tutorials_pbd_cloth (skip, already exists) ====
+==== tutorials_position_control_comparison (skip, already exists) ====
+==== tutorials_selecting_rendered_envs (skip, already exists) ====
+==== tutorials_sph_liquid (skip, already exists) ====
+==== tutorials_visualization (skip, already exists) ====
