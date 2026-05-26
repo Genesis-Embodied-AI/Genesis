@@ -48,7 +48,7 @@ from .contact import (
     func_rotate_frame,
     func_set_upstream_grad,
     func_clamp_prune_and_sort_contacts,
-    func_prune_contacts_coop,
+    func_clamp_prune_and_sort_contacts_coop,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -880,8 +880,11 @@ class Collider:
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
         )
+        # Both kernels honor the same contract: clamp + identity-init contact_sort_idx (mandatory, always run),
+        # then (gated) prune, then (gated) spatial sort. The _coop variant uses 32-lane warp cooperation; the serial
+        # variant does one env per thread. Clamp is not optional in either path.
         if ran_fused_dedup_coop:
-            func_prune_contacts_coop(
+            func_clamp_prune_and_sort_contacts_coop(
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,

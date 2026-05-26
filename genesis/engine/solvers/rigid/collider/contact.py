@@ -924,13 +924,19 @@ def func_clamp_prune_and_sort_contacts(
 
 
 @qd.kernel(fastcache=True)
-def func_prune_contacts_coop(
+def func_clamp_prune_and_sort_contacts_coop(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
     """GPU-only cooperative warp-per-env variant of the fused clamp+prune+sort kernel.
+
+    Contract matches `func_clamp_prune_and_sort_contacts`:
+    - Always: clamp `n_contacts` to `max_contact_pairs`; initialise `contact_sort_idx` to the identity. (Clamp is
+      mandatory; downstream consumers always indirect through contact_sort_idx so we must leave it valid even for
+      envs with n_con < 5 where the prune/sort branch is skipped.)
+    - Pruning + spatial sort: cooperative warp-per-env variant of the same algorithm.
 
     Pruning logic matches Alexis's serial `func_clamp_prune_and_sort_contacts` (same depth coplanarity gate, same
     Andrew's monotone chain, same hull-pen-max deep-penetration restore, same Metal memory-fence workaround). The
@@ -962,7 +968,7 @@ def func_prune_contacts_coop(
     # cycle-permute) stay serial on lane 0. Subsequent stages add coop reductions (phase-2 mean / centroid) and parallel
     # cycle-permute.
     _K = qd.static(32)
-    qd.loop_config(name="prune_contacts_coop", block_dim=_K)
+    qd.loop_config(name="clamp_prune_and_sort_contacts_coop", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
         i_b = i_flat // _K
