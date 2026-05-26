@@ -52,7 +52,15 @@ class Viewer(RBC):
             self._viewer_plugins.append(DefaultControlsPlugin())
         if options.enable_gui:
             # Lazy import so non-GUI users do not pay the imgui_bundle import cost.
-            from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
+            try:
+                from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
+            except ImportError as e:
+                gs.raise_exception_from(
+                    "ViewerOptions.enable_gui=True requires the optional 'imgui-bundle' dependency. "
+                    "Install it via the 'render' extra: `pip install \"genesis-world[render]\"` "
+                    '(or `pip install -e ".[render]"` for editable installs). Requires Python >= 3.11.',
+                    e,
+                )
 
             if not any(isinstance(p, ImGuiOverlayPlugin) for p in self._viewer_plugins):
                 self._viewer_plugins.append(ImGuiOverlayPlugin())
