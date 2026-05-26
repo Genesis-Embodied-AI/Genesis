@@ -983,7 +983,8 @@ def func_prune_contacts_coop(
             ii += _K
 
         if n_con >= 5:
-            # PARALLEL: phase 1a key + idx init, 32 lanes stride.
+            # PARALLEL: phase 1a key init, 32 lanes stride. contact_sort_idx identity was already written in the
+            # unconditional init block above so the phase-1a sort can read+sort it in place.
             ii = tid
             while ii < n_con:
                 la = collider_state.contact_data.link_a[ii, i_b]
@@ -993,7 +994,6 @@ def func_prune_contacts_coop(
                 collider_state.contact_sort_key[ii, i_b] = qd.cast(la_min, gs.qd_float) * LP_KEY_STRIDE + qd.cast(
                     la_max, gs.qd_float
                 )
-                collider_state.contact_sort_idx[ii, i_b] = ii
                 ii += _K
 
             # Phase 1a sort: parallel bitonic sort across 32 lanes when n_con <= 32 (typical for coop-dispatched
