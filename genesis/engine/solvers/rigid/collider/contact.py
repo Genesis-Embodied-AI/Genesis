@@ -971,12 +971,15 @@ def func_prune_contacts_coop(
         if tid == 0:
             collider_state.n_contacts[i_b] = n_con
 
-        # PARALLEL: contact_keep init. Default-keep marked here unconditionally so the fused phase 3 (compact + spatial
-        # sort) below produces a correct result for envs with n_con < 5 (no dedup buckets, but still need spatial sort).
-        # 32 lanes stride.
+        # PARALLEL: clamp+init. Mirrors the fused kernel's unconditional init block: every env (including n_con < 5
+        # where the prune/sort branch below is skipped) needs contact_sort_idx set to identity so downstream consumers
+        # that always indirect through contact_sort_idx (constraint solver, sensors) read valid permutations rather
+        # than stale data from the previous step. contact_keep default-keep is set here for the same reason. 32 lanes
+        # stride.
         ii = tid
         while ii < n_con:
             collider_state.contact_keep[ii, i_b] = 1
+            collider_state.contact_sort_idx[ii, i_b] = ii
             ii += _K
 
         if n_con >= 5:
