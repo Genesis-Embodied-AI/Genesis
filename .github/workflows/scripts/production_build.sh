@@ -5,7 +5,7 @@ set -ex
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv --version
 
-uv venv --python '3.10' /venv
+uv venv --python '3.10' --clear /venv
 source /venv/bin/activate
 # Note: the version of cuda must tightly align with what is being installed
 # in the Slurm container image, otherwise poorly packaged libraries, such as
