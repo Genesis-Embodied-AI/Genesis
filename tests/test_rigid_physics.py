@@ -1087,6 +1087,57 @@ def _capsule_mjcf_path(tmp_path, radius, length, name="capsule"):
     return str(path)
 
 
+def _build_primitive_pair_mjcf(prim_type, radius, length, offset, name=None):
+    """Generate an MJCF model of two primitives attached to a single free body."""
+    mjcf = ET.Element("mujoco", model=name or f"{prim_type}_pair")
+    body = ET.SubElement(ET.SubElement(mjcf, "worldbody"), "body")
+    for sign in (-0.5, 0.5):
+        cx, cy, cz = sign * offset[0], sign * offset[1], sign * offset[2]
+        if prim_type == "sphere":
+            ET.SubElement(
+                body,
+                "geom",
+                type="sphere",
+                pos=f"{cx} {cy} {cz}",
+                size=str(radius),
+            )
+        else:
+            ET.SubElement(
+                body,
+                "geom",
+                type=prim_type,
+                fromto=f"{cx - 0.5 * length} {cy} {cz} {cx + 0.5 * length} {cy} {cz}",
+                size=str(radius),
+            )
+    ET.SubElement(body, "joint", type="free")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def side_by_side_capsules():
+    return _build_primitive_pair_mjcf("capsule", radius=0.0025, length=0.02, offset=(0.0, 0.0025, 0.0))
+
+
+@pytest.fixture(scope="session")
+def collinear_capsules():
+    return _build_primitive_pair_mjcf("capsule", radius=0.0025, length=0.02, offset=(0.02, 0.0, 0.0))
+
+
+@pytest.fixture(scope="session")
+def side_by_side_cylinders():
+    return _build_primitive_pair_mjcf("cylinder", radius=0.0025, length=0.02, offset=(0.0, 0.0025, 0.0))
+
+
+@pytest.fixture(scope="session")
+def collinear_cylinders():
+    return _build_primitive_pair_mjcf("cylinder", radius=0.0025, length=0.02, offset=(0.02, 0.0, 0.0))
+
+
+@pytest.fixture(scope="session")
+def collinear_spheres():
+    return _build_primitive_pair_mjcf("sphere", radius=0.0025, length=0.0, offset=(0.005, 0.0, 0.0))
+
+
 def _ellipsoid_mjcf_path(tmp_path, semi_axes):
     path = tmp_path / "ellipsoid.xml"
     ET.ElementTree(_ellipsoid_mjcf(semi_axes)).write(path)
@@ -1492,6 +1543,80 @@ def test_contact_pruning(show_viewer):
                     f"dropped these {len(idxs) - n_hull_vertices} redundant contact(s):\n{details}"
                 )
     assert_allclose(box.get_pos(), 0.0, atol=2e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "side_by_side_capsules",
+        "collinear_capsules",
+        "side_by_side_cylinders",
+        "collinear_cylinders",
+        "collinear_spheres",
+    ],
+)
+def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
+    HEIGHT = 0.02
+    BOX_HALFSIZE = 0.15
+    PRIM_RADIUS = 0.0025
+    PRIM_LENGTH = 0.02
+    N_ENVS = 16
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.25, 0.25, 0.2),
+            camera_lookat=(0.0, 0.0, 0.5 * HEIGHT),
+            camera_fov=30.0,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2 * BOX_HALFSIZE, 2 * BOX_HALFSIZE, HEIGHT),
+            pos=(0.0, 0.0, 0.5 * HEIGHT),
+            fixed=True,
+        ),
+        visualize_contact=True,
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=xml_path,
+        ),
+    )
+    scene.build(n_envs=N_ENVS)
+
+    # Randomly sample position in local frame.
+    # Add small vertical offset to ensure contact at init; otherwise the primitive will sink before bouncing up.
+    smooth_xy = np.random.uniform(
+        low=-(BOX_HALFSIZE - 2.0 * PRIM_LENGTH), high=BOX_HALFSIZE - 2.0 * PRIM_LENGTH, size=(N_ENVS, 2)
+    )
+    smooth_pos = np.concatenate([smooth_xy, np.full((N_ENVS, 1), HEIGHT + PRIM_RADIUS - 1e-4)], axis=-1)
+    entity.set_pos(smooth_pos)
+
+    # Random yaw about world z; capsules/cylinders stay horizontal since their fromto axis lies in the body xy plane.
+    angle_yaw = np.random.uniform(low=-np.pi, high=np.pi, size=(N_ENVS, 1))
+    smooth_quat = gu.xyz_to_quat(np.concatenate([np.zeros((N_ENVS, 2)), angle_yaw], axis=-1), rpy=True)
+    entity.set_quat(smooth_quat)
+
+    if show_viewer:
+        scene.visualizer.update()
+
+    for _ in range(20):
+        scene.step()
+    for _ in range(300):
+        scene.step()
+        n_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
+        assert n_contacts.all()
+        if model_name.startswith("side_by_side"):
+            assert (n_contacts == 4).all()
+        elif model_name == collinear_spheres:
+            assert (n_contacts == 2).all()
+
+    assert_allclose(entity.get_pos()[..., :2], smooth_xy, atol=1e-3)
 
 
 @pytest.mark.slow  # ~200s

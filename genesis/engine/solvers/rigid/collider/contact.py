@@ -739,23 +739,23 @@ def func_clamp_prune_and_sort_contacts(
                             vy = mnz * ux - mnx * uz
                             vz = mnx * uy - mny * ux
 
-                            # Project bucket contacts to (u, v). sort_key holds u, contact_proj_v holds v. Both
-                            # are indexed by bucket-logical position so the (u, v) sort below can read them without
-                            # another indirection.
+                            # Project bucket contacts to (u, v). sort_key holds u, contact_proj_v holds v. Both are
+                            # indexed by bucket-logical position so the (u, v) sort below can read them without another
+                            # indirection.
                             for i in range(b_start, b_end):
                                 phys_i = collider_state.contact_sort_idx[i, i_b]
                                 p_i = collider_state.contact_data.pos[phys_i, i_b]
                                 collider_state.contact_sort_key[i, i_b] = p_i[0] * ux + p_i[1] * uy + p_i[2] * uz
                                 collider_state.contact_proj_v[i, i_b] = p_i[0] * vx + p_i[1] * vy + p_i[2] * vz
 
-                            # Sort bucket positions lexicographically by (u, v), with a tolerance on u so that
-                            # contacts whose u values differ only by float noise (or by sub-millimeter physics noise
-                            # from MPR perturbations) sort by v. Without the tolerance, the wrong point pops from a
-                            # 3-collinear triplet when the corner and the mid-edge have u values that differ by a
-                            # few microns and the mid-edge happens to sort first.
+                            # Sort bucket positions lexicographically by (u, v), with a tolerance on u so that contacts
+                            # whose u values differ only by float noise (or by sub-millimeter physics noise from MPR
+                            # perturbations) sort by v. Without the tolerance, the wrong point pops from a 3-collinear
+                            # triplet when the corner and the mid-edge have u values that differ by a few microns and
+                            # the mid-edge happens to sort first.
                             #
-                            # The permutation lives in contact_keep[b_start..b_end). contact_keep is rewritten with
-                            # the final keep flags below before this bucket exits, so reusing it as scratch is safe.
+                            # The permutation lives in contact_keep[b_start..b_end). contact_keep is rewritten with the
+                            # final keep flags below before this bucket exits, so reusing it as scratch is safe.
                             sort_u_tol = gs.qd_float(1e-3) * qd.sqrt(max_in_plane_r2)
                             for i in range(b_start, b_end):
                                 collider_state.contact_keep[i, i_b] = i
@@ -774,10 +774,9 @@ def func_clamp_prune_and_sort_contacts(
                                     j -= 1
                                 collider_state.contact_keep[j + 1, i_b] = ci
 
-                            # Collinearity threshold for hull pops, scaled to the bucket extent. A pure
-                            # "cross <= 0" check fails on numerically-near-collinear edge points (cross is a tiny
-                            # positive epsilon from float roundoff), so genuine midpoints would survive as spurious
-                            # hull vertices.
+                            # Collinearity threshold for hull pops, scaled to the bucket extent. A pure "cross <= 0"
+                            # check fails on numerically-near-collinear edge points (cross is a tiny positive epsilon
+                            # from float roundoff), so genuine midpoints would survive as spurious  hull vertices.
                             hull_collinear_tol = tol * max_in_plane_r2
 
                             # Andrew's monotone chain. The (u, v) permutation lives in contact_keep; the hull stack
@@ -828,13 +827,12 @@ def func_clamp_prune_and_sort_contacts(
                                         k -= 1
                                     else:
                                         break
-                                # The closing iteration of the upper hull visits the leftmost point, which already
-                                # sits at stack[b_start] from the lower hull. Skipping that push, plus the
-                                # k < b_size guard, bounds k to b_size and keeps the write index within
-                                # max_contact_pairs even for buckets where the lower-hull pass already kept all
-                                # b_size points (downward-convex layouts: every lex-sorted triple makes a left turn
-                                # so nothing gets popped, then the upper-hull pass tries to push a duplicate of an
-                                # already-kept lower-hull vertex).
+                                # The closing iteration of the upper hull visits the leftmost point, which already sits
+                                # at stack[b_start] from the lower hull. Skipping that push, plus the k < b_size guard,
+                                # bounds k to b_size and keeps the write index within max_contact_pairs even for buckets
+                                # where the lower-hull pass already kept all b_size points (downward-convex layouts:
+                                # every lex-sorted triple makes a left turn so nothing gets popped, then the upper-hull
+                                # pass tries to push a duplicate of an already-kept lower-hull vertex).
                                 if ci != collider_state.contact_hull_stack[b_start, i_b] and k < b_size:
                                     collider_state.contact_hull_stack[b_start + k, i_b] = ci
                                     k += 1
@@ -851,12 +849,12 @@ def func_clamp_prune_and_sort_contacts(
                             # average. The support-polygon argument says interior contacts are wrench-redundant only
                             # when ALL contacts share the same normal and penetration; a contact with substantially
                             # higher penetration than the hull's average represents a distinct physical support (the
-                            # body of a fork resting beyond its tines, the deep middle of a long body) and dropping
-                            # it lets the body sink into the surface. The 3x factor is well above the typical ~1.x
+                            # body of a fork resting beyond its tines, the deep middle of a long body) and dropping it
+                            # lets the body sink into the surface. The 3x factor is well above the typical ~1.x
                             # penetration spread on transient/rocking faces (so non-uniform-penetration buckets like
-                            # irregular mesh contacts keep only the hull) but well below the deep interior
-                            # penetrations seen when a non-flat body rests inside its convex envelope (so genuine
-                            # deep supports are restored).
+                            # irregular mesh contacts keep only the hull) but well below the deep interior penetrations
+                            # seen when a non-flat body rests inside its convex envelope (so genuine deep supports are
+                            # restored).
                             hull_pen_max = gs.qd_float(0.0)
                             for hk in range(k):
                                 survivor = collider_state.contact_hull_stack[b_start + hk, i_b]
