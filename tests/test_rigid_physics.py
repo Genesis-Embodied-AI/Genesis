@@ -1139,8 +1139,6 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
         ),
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=gjk_collision,
-            # FIXME: Temporarily overwrite default pruning tolerance for capsule
-            contact_pruning_tolerance=0.1 if entity_kind == "capsule" else 0.02,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.25, 0.25, 0.2),
