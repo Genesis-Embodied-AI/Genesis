@@ -1155,34 +1155,79 @@ def func_prune_contacts_coop(
                             collider_state.contact_lex_idx[jj, i_b] = jj
                             jj += _K
 
-                        # SYNC between coop writes (sort_key, proj_v, lex_idx, contact_keep[orig]) and the lane-0 lex
-                        # sort + hull build that reads them.
+                        # SYNC between coop writes (sort_key, proj_v, lex_idx, contact_keep[orig]) and the lex sort
+                        # below (whether lane-0 serial or 32-lane bitonic).
                         qd.simt.subgroup.sync()
 
-                    if tid == 0 and coplanar:
-                        # SERIAL on lane 0: lex sort + Andrew monotone-chain hull build + mark survivors. These walk a
-                        # stack and have data-dependent inner loops that don't decompose across warp lanes.
-                        #
-                        # The sort_u_tol on the u comparison is critical for correctness, not just a perf tweak:
-                        # contacts whose u values differ only by sub-millimeter MPR noise need to sort by v, otherwise
-                        # mid-edge points get sorted between the two corners they sit between and survive the lower-
-                        # hull pass as spurious hull vertices (cf. upstream test_contact_pruning regression when this
-                        # tolerance is missing).
+                    if coplanar:
+                        # sort_u_tol scales the u tolerance to the bucket extent. See original comment block above.
                         sort_u_tol = gs.qd_float(1e-3) * qd.sqrt(max_in_plane_r2)
-                        for i in range(b_start + 1, b_end):
-                            ci = collider_state.contact_lex_idx[i, i_b]
-                            cu = collider_state.contact_sort_key[ci, i_b]
-                            cv = collider_state.contact_proj_v[ci, i_b]
-                            j = i - 1
-                            while j >= b_start:
-                                pj = collider_state.contact_lex_idx[j, i_b]
-                                pu = collider_state.contact_sort_key[pj, i_b]
-                                pv = collider_state.contact_proj_v[pj, i_b]
-                                if (pu < cu - sort_u_tol) or (qd.abs(pu - cu) <= sort_u_tol and pv <= cv):
-                                    break
-                                collider_state.contact_lex_idx[j + 1, i_b] = pj
-                                j -= 1
-                            collider_state.contact_lex_idx[j + 1, i_b] = ci
+
+                        # Phase 2 lex sort (exp M): parallel bitonic across 32 lanes when b_size <= 32. Loads
+                        # (lex_idx, u, v) per lane, sentinel +inf for out-of-range lanes. Bitonic compare-exchange
+                        # uses the custom (u, v)-with-u-tolerance comparator, stable via tiebreak on lex_idx.
+                        # Falls back to serial-on-lane-0 insertion sort for b_size > 32.
+                        if b_size <= _K:
+                            my_lex = qd.i32(-1)
+                            my_u = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
+                            my_v = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
+                            if tid < b_size:
+                                my_lex = collider_state.contact_lex_idx[b_start + tid, i_b]
+                                my_u = collider_state.contact_sort_key[my_lex, i_b]
+                                my_v = collider_state.contact_proj_v[my_lex, i_b]
+
+                            for k_log2 in qd.static(range(1, 6)):
+                                k_mask = qd.static(1 << k_log2)
+                                for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
+                                    j = qd.static(1 << j_log2)
+                                    partner = qd.u32(tid ^ j)
+                                    their_lex = qd.simt.subgroup.shuffle(my_lex, partner)
+                                    their_u = qd.simt.subgroup.shuffle(my_u, partner)
+                                    their_v = qd.simt.subgroup.shuffle(my_v, partner)
+                                    i_am_low = (tid & j) == 0
+                                    asc = (tid & k_mask) == 0
+                                    take_min = i_am_low == asc
+                                    # Lexicographic comparator with u-tolerance: a < b iff (au + tol < bu) OR
+                                    # (|au - bu| <= tol AND av < bv). Stable via lex-idx tiebreak.
+                                    eq_u = qd.abs(their_u - my_u) <= sort_u_tol
+                                    their_lt_mine = (their_u + sort_u_tol < my_u) or (
+                                        eq_u and (their_v < my_v or (their_v == my_v and their_lex < my_lex))
+                                    )
+                                    if take_min:
+                                        if their_lt_mine:
+                                            my_lex = their_lex
+                                            my_u = their_u
+                                            my_v = their_v
+                                    else:
+                                        if not their_lt_mine and (
+                                            their_u != my_u or their_v != my_v or their_lex != my_lex
+                                        ):
+                                            my_lex = their_lex
+                                            my_u = their_u
+                                            my_v = their_v
+
+                            if tid < b_size:
+                                collider_state.contact_lex_idx[b_start + tid, i_b] = my_lex
+                            qd.simt.subgroup.sync()
+                        elif tid == 0:
+                            for i in range(b_start + 1, b_end):
+                                ci = collider_state.contact_lex_idx[i, i_b]
+                                cu = collider_state.contact_sort_key[ci, i_b]
+                                cv = collider_state.contact_proj_v[ci, i_b]
+                                j = i - 1
+                                while j >= b_start:
+                                    pj = collider_state.contact_lex_idx[j, i_b]
+                                    pu = collider_state.contact_sort_key[pj, i_b]
+                                    pv = collider_state.contact_proj_v[pj, i_b]
+                                    if (pu < cu - sort_u_tol) or (qd.abs(pu - cu) <= sort_u_tol and pv <= cv):
+                                        break
+                                    collider_state.contact_lex_idx[j + 1, i_b] = pj
+                                    j -= 1
+                                collider_state.contact_lex_idx[j + 1, i_b] = ci
+
+                    if tid == 0 and coplanar:
+                        # SERIAL on lane 0: Andrew monotone-chain hull build + mark survivors. These walk a stack
+                        # and have data-dependent inner loops that don't decompose across warp lanes.
 
                         # Collinearity threshold for hull pops, scaled to the bucket extent. A pure "cross <= 0" check
                         # fails on numerically-near-collinear edge points (cross is a tiny positive epsilon from float
