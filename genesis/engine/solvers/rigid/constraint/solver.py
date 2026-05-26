@@ -1,3 +1,4 @@
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -17,6 +18,25 @@ from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tens
 from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
+
+# Writeback variant for the fused warm-start factor+solve in ``func_solve_init``. Picked at
+# module-import time from ``GS_FUSED_WB_VARIANT`` so the kernel statically specialises on
+# exactly one variant per process; the inactive branches are dead-code-eliminated at compile.
+#   "fullsquare" -- (default) ``tid``-strided flat ``n_dofs * n_dofs`` writes with no upper-tri
+#                 predicate. The upper triangle ends up holding the un-zeroed L_sh-residue
+#                 (effectively L^T mirrored); harmless because all downstream nt_H readers
+#                 (incremental Cholesky update, direct factor, solve) touch only the lower
+#                 triangle. Wins +0.4 % FPS vs lowertri on dex_hand (5-repeat A/B); the
+#                 predicate branch divergence in lowertri was costing more than the wasted
+#                 upper-tri writes.
+#   "lowertri" -- ``tid``-strided flat ``n_dofs * n_dofs`` walk with an ``if i_d2 <= i_d1``
+#                 predicate.
+#   "rowperlane" -- lane ``t`` owns rows ``t, t+T, ...`` and writes each owned row's lower
+#                 triangle sequentially. Imbalanced load across lanes.
+#   "store3d"  -- end-of-kernel pass: re-load each tile from L_sh into a TileCls and ``_store3d``
+#                 to nt_H.
+# See ``doc/dex_hand_fused_writeback_opt_2026may23.md`` in perso_hugh for the full A/B numbers.
+WB_VARIANT = os.environ.get("GS_FUSED_WB_VARIANT", "fullsquare")
 
 
 @qd.func
@@ -1960,6 +1980,7 @@ def _cholesky_and_solve_fused_tiled_impl(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     TileCls: qd.template(),
+    write_L_to_nt_H: qd.template() = False,
 ):
     """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
 
@@ -1969,6 +1990,11 @@ def _cholesky_and_solve_fused_tiled_impl(
 
     Tile size T and TileCls are dispatched by the func_cholesky_and_solve_fused_tiled wrapper; see
     _cholesky_factor_direct_tiled_impl for the rule.
+
+    When ``write_L_to_nt_H`` is True, the lower triangle of L is also written back to ``constraint_state.nt_H`` at the
+    end of the kernel. This is required by the warm-start dispatch (``enable_fused_factor_solve_init``) so the monolith
+    body's incremental rank-1 Cholesky update finds L (not H) in nt_H. The writeback shape is selected by ``WB_VARIANT``
+    at module top; fullsquare is the default winner on dex_hand (see perso_hugh's writeback-opt doc for the A/B).
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     LOG2_T = qd.static(T.bit_length() - 1)
@@ -2083,6 +2109,54 @@ def _cholesky_and_solve_fused_tiled_impl(
             constraint_state.Mgrad[k, i_b] = v_sh[k]
             k = k + T
 
+        # When dispatched from func_solve_init's warm-start (``enable_fused_factor_solve_init``),
+        # the monolith body's iterative refinement runs an incremental rank-1 Cholesky update on
+        # ``nt_H`` and expects ``nt_H`` to hold L (not H). The original separate-kernel factor
+        # writes L into nt_H tile-by-tile; the fused kernel above leaves L only in shmem to save
+        # the global-mem L round-trip with the solve. Restore the post-condition (nt_H holds L)
+        # so the monolith body's first iter can run incremental as usual.
+        #
+        # The variant selector ``WB_VARIANT`` (at module top) picks the writeback shape; on
+        # dex_hand fullsquare wins because the warp branch divergence in lowertri's predicate
+        # costs more wall-clock than fullsquare's extra ``n_dofs*(n_dofs-1)/2`` upper-tri stores.
+        # All branches below are statically dead-code-eliminated except the chosen one. The
+        # post-condition is the same for all variants: lower triangle of ``nt_H[i_b]`` holds L.
+        # Upper-tri contents are not relied on by any downstream nt_H reader, so the variants
+        # that incidentally write to the upper triangle (fullsquare) remain semantically correct.
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "fullsquare"):
+            i_flat = tid
+            n_dofs_sq = n_dofs * n_dofs
+            while i_flat < n_dofs_sq:
+                i_d1 = i_flat // n_dofs
+                i_d2 = i_flat % n_dofs
+                constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
+                i_flat = i_flat + T
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "lowertri"):
+            i_flat = tid
+            n_dofs_sq = n_dofs * n_dofs
+            while i_flat < n_dofs_sq:
+                i_d1 = i_flat // n_dofs
+                i_d2 = i_flat % n_dofs
+                if i_d2 <= i_d1:
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
+                i_flat = i_flat + T
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "rowperlane"):
+            i_d1 = tid
+            while i_d1 < n_dofs:
+                for i_d2 in range(i_d1 + 1):
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = L_sh[i_d1, i_d2]
+                i_d1 = i_d1 + T
+        if qd.static(write_L_to_nt_H and WB_VARIANT == "store3d"):
+            for kb_w in range(N_BLOCKS):
+                k0_w = kb_w * T
+                k1_w = qd.min(k0_w + T, n_dofs)
+                for ib_w in range(kb_w, N_BLOCKS):
+                    i0_w = ib_w * T
+                    i1_w = qd.min(i0_w + T, n_dofs)
+                    L_out = TileCls.zeros(dtype=gs.qd_float)
+                    L_out._load(L_sh, i0_w, i1_w, k0_w, k1_w)
+                    L_out._store3d(constraint_state.nt_H, i_b, i0_w, i1_w, k0_w, k1_w)
+
 
 @qd.func
 def func_cholesky_factor_direct_tiled(
@@ -2106,15 +2180,16 @@ def func_cholesky_and_solve_fused_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    write_L_to_nt_H: qd.template() = False,
 ):
     """Tile-size dispatcher; see _cholesky_and_solve_fused_tiled_impl for the algorithm and dispatch rule."""
     if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
         _cholesky_and_solve_fused_tiled_impl(
-            constraint_state, rigid_global_info, static_rigid_sim_config, Tile32x32Cholesky
+            constraint_state, rigid_global_info, static_rigid_sim_config, Tile32x32Cholesky, write_L_to_nt_H
         )
     else:
         _cholesky_and_solve_fused_tiled_impl(
-            constraint_state, rigid_global_info, static_rigid_sim_config, Tile16x16Cholesky
+            constraint_state, rigid_global_info, static_rigid_sim_config, Tile16x16Cholesky, write_L_to_nt_H
         )
 
 
@@ -2169,7 +2244,11 @@ def func_hessian_and_cholesky_factor_direct(
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
 
         if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
+            # When the fused warm-start dispatch is on, the factor is folded into
+            # ``func_cholesky_and_solve_fused_tiled`` (called from ``func_update_gradient_tiled``
+            # below); skipping the standalone factor here avoids doing the work twice.
+            if qd.static(not static_rigid_sim_config.enable_fused_factor_solve_init):
+                func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
             qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
@@ -3570,7 +3649,17 @@ def func_update_gradient_tiled(
             )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
+        # Warm-start path: dispatch through the fused factor+solve kernel so L stays in shared
+        # memory between factor and solve. ``write_L_to_nt_H=True`` makes the kernel also write
+        # the lower triangle of L back to ``nt_H``; this is required because the monolith body's
+        # first iter runs an incremental rank-1 Cholesky update on nt_H and expects L (not H) to
+        # be there. See ``doc/dex_hand_fused_writeback_opt_2026may23.md`` in perso_hugh.
+        if qd.static(static_rigid_sim_config.enable_fused_factor_solve_init):
+            func_cholesky_and_solve_fused_tiled(
+                constraint_state, rigid_global_info, static_rigid_sim_config, write_L_to_nt_H=True
+            )
+        else:
+            func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
 
 
 @qd.func
