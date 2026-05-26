@@ -45,6 +45,10 @@ class Options(RBC, BaseModel):
 
         # Aggregate invalid type errors
         err_invalid_infos = {}
+        # Track the required length of fixed-size sequences reported as too short. Pydantic emits one 'missing'
+        # error per absent element (e.g. loc ['pos', 2] for a 2-tuple given a 3-tuple field), so the maximum
+        # missing index plus one yields the expected length.
+        err_too_short_lengths = {}
         for err in exception.errors():
             err_type, (attr, *index), msg, value = err["type"], err["loc"], err["msg"], err.get("input")
             if msg.startswith("Input should be a valid "):
@@ -52,6 +56,8 @@ class Options(RBC, BaseModel):
                 info["type"].setdefault(tuple(index), []).append(msg[24:])
             elif attr in err_invalid_infos and err_type == "too_short":
                 err_invalid_infos[attr]["value"] = value
+            elif err_type == "missing" and index:
+                err_too_short_lengths[attr] = max(err_too_short_lengths.get(attr, 0), index[0] + 1)
 
         # Format all errors without early stopping
         filtered_attrs = set()
@@ -65,6 +71,12 @@ class Options(RBC, BaseModel):
                 trace = f"Unrecognized attribute '{attr}'."
             elif err_type in ("frozen_instance", "frozen_field"):
                 trace = f"{msg[0].lower()}{msg[1:]}."
+            elif err_type == "missing" and attr in err_too_short_lengths:
+                filtered_attrs.add(attr)
+                trace = (
+                    f"Invalid attribute '{attr}': should be a sequence of length "
+                    f"{err_too_short_lengths[attr]}. Got {repr(value)}."
+                )
             elif err_type == "missing":
                 trace = f"Missing attribute '{attr}'."
             elif attr in err_invalid_infos:
