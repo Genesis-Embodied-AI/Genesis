@@ -2,6 +2,7 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 
 
 @qd.func
@@ -250,3 +251,394 @@ def kernel_compute_gradients(
                     val0 = -constraint_state.bw_u[i, i_b] * constraint_state.qacc[j, i_b]
                     val1 = -constraint_state.bw_u[j, i_b] * constraint_state.qacc[i, i_b]
                     constraint_state.dL_dM[i, j, i_b] += (val0 + val1) * 0.5  # symmetrize
+
+
+# ---------------------------------------------------------------------------
+# Manual reverses of the constraint-force inequality constraints (collision,
+# joint-limit). Shared conventions for the two kernels below.
+#
+# Why manual (not autograd): the constraint rows are built inside the forward
+# solver with a data-dependent count and ordering -- `n_con` is assigned by
+# atomic_add as active constraints are discovered -- which autograd cannot
+# differentiate cleanly (the row index is not a static, taped quantity).
+#
+# Upstream grads: `kernel_compute_gradients` populates, per constraint row
+# `n_con`, `constraint_state.dL_daref[n_con]` (dL/d aref), `dL_defc_D[n_con]`
+# (dL/d efc_D), and `dL_djac[n_con, i_d]` (dL/d jac). The collision reverse uses
+# `dL_djac`; the joint-limit reverse ignores it (its jac entries are piecewise-
+# constant +-1, so the sub-gradient is 0). Each kernel consumes these and
+# accumulates into its own differentiable inputs.
+#
+# n_con row layout: the forward adds constraints in the order frictionloss ->
+# collision -> joint-limit (see add_inequality_constraints). So with collision
+# on, the collision group occupies rows [0, 4 * n_contacts) (4 friction-pyramid
+# rows per contact) in logical (sorted) contact order, and joint-limit rows
+# follow it. Each reverse re-walks the same forward loop deterministically to
+# recover its own n_con (no atomic_add, no n_constraints reset): collision uses
+# n_con = i_col_ * 4 + i with i_col_ the sorted contact index; joint-limit
+# seeds its counter at 4 * n_contacts.
+#
+# TODO: only collision + joint-limit are handled. If other constraint groups
+# (equality, frictionloss) are ever added to a differentiable scene, the `n_con`
+# offset in each reverse must be updated to account for them -- they are
+# currently assumed absent (not offset).
+# ---------------------------------------------------------------------------
+@qd.kernel(fastcache=True)
+def kernel_manual_add_joint_limit_constraints_bw(
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    enable_collision: qd.template(),
+):
+    """Manual reverse of `add_joint_limit_constraints`. See the section header
+    above for the shared `n_con` layout and upstream-grad conventions.
+
+    Accumulates into rigid_info.qpos.grad[i_q] and dyn_state.dofs.vel.grad[i_d].
+
+    Chain rule (per active joint, `pos_delta < 0`):
+
+        Forward:
+            pos_delta_min = qpos[i_q] - limit_lo
+            pos_delta_max = limit_hi - qpos[i_q]
+            pos_delta     = min(pos_delta_min, pos_delta_max)
+            sign          = +1 if pos_delta_min < pos_delta_max else -1
+            jac_qvel      = sign * dofs_vel[i_d]
+            imp, aref     = gu.imp_aref(sol_params, pos_delta, jac_qvel, pos_delta)
+            diag_raw      = invweight * (1 - imp) / imp
+            diag          = max(diag_raw, EPS)
+            efc_D         = 1 / diag
+
+        d(pos_delta) / d(qpos) = sign      (chosen branch of `min`)
+        d(jac_qvel) / d(vel)   = sign
+
+        dL/d(imp) = ga * d(aref)/d(imp) + gD * d(efc_D)/d(imp)
+                  ga = dL_daref[n_con],  gD = dL_defc_D[n_con]
+
+        dL/d(pos_delta) = ga * d(aref)/d(pos_delta)|_direct
+                        + dL/d(imp) * d(imp)/d(imp_x) * d(imp_x)/d(pos_delta)
+
+        dL/d(jac_qvel)  = ga * d(aref)/d(jac_qvel) = -ga * b_coef
+
+        dL/d(qpos)      += sign * dL/d(pos_delta)
+        dL/d(vel)       += sign * dL/d(jac_qvel)
+    """
+    EPS = rigid_info.EPS[None]
+    _B = constraint_state.jac.shape[2]
+    n_links = dyn_info.links.root_idx.shape[0]
+
+    qd.loop_config(
+        name="kernel_manual_add_joint_limit_constraints_bw",
+        serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
+    )
+    for i_b in range(_B):
+        # Collision constraints (4 rows per contact) are added before joint
+        # limits in `add_inequality_constraints`, so offset the joint-limit row
+        # counter past them when collision is on.
+        n_con_counter = gs.qd_int(0)
+        if qd.static(enable_collision):
+            n_con_counter = gs.qd_int(collider_state.n_contacts[i_b] * 4)
+
+        for i_l in range(n_links):
+            I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+            for i_j in range(dyn_info.links.joint_start[I_l], dyn_info.links.joint_end[I_l]):
+                I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
+
+                if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE or dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
+                    i_q = dyn_info.joints.q_start[I_j]
+                    i_d = dyn_info.joints.dof_start[I_j]
+                    I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
+
+                    pos_delta_min = rigid_info.qpos[i_q, i_b] - dyn_info.dofs.limit[I_d][0]
+                    pos_delta_max = dyn_info.dofs.limit[I_d][1] - rigid_info.qpos[i_q, i_b]
+                    pos_delta = qd.min(pos_delta_min, pos_delta_max)
+
+                    if pos_delta < 0:
+                        n_con = n_con_counter
+                        n_con_counter = n_con_counter + 1
+
+                        # Replay forward intermediates (cheap, avoids stashing).
+                        sign_pos = (pos_delta_min < pos_delta_max) * 2 - 1
+                        sign_f = gs.qd_float(sign_pos)
+
+                        sol_params = dyn_info.joints.sol_params[I_j]
+                        timeconst = sol_params[0]
+                        dampratio = sol_params[1]
+                        dmin = sol_params[2]
+                        dmax = sol_params[3]
+                        width = sol_params[4]
+                        mid = sol_params[5]
+                        power = sol_params[6]
+
+                        imp_x = qd.abs(pos_delta) / width
+                        imp_a_coef = 1.0 / mid ** (power - 1.0)
+                        imp_b_coef = 1.0 / (1.0 - mid) ** (power - 1.0)
+                        imp_a = imp_a_coef * imp_x**power
+                        imp_b = 1.0 - imp_b_coef * (1.0 - imp_x) ** power
+                        imp_y = imp_a if imp_x < mid else imp_b
+                        imp_raw = dmin + imp_y * (dmax - dmin)
+                        imp_clamped = qd.math.clamp(imp_raw, dmin, dmax)
+                        imp = dmax if imp_x > 1.0 else imp_clamped
+
+                        b_coef = 2.0 / (dmax * timeconst)
+                        k_coef = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
+
+                        invweight = dyn_info.dofs.invweight[I_d]
+                        diag_raw = invweight * (1.0 - imp) / imp
+                        diag = qd.max(diag_raw, EPS)
+
+                        # Upstream grads.
+                        ga = constraint_state.dL_daref[n_con, i_b]
+                        gD = constraint_state.dL_defc_D[n_con, i_b]
+
+                        # --- Partials of forward outputs w.r.t. intermediates ---
+                        # aref = -b_coef * jac_qvel - k_coef * imp * pos_delta
+                        d_aref_d_imp = -k_coef * pos_delta
+                        d_aref_d_jac_qvel = -b_coef
+                        d_aref_d_pos_delta_direct = -k_coef * imp
+
+                        # diag_raw = invweight*(1-imp)/imp => d(diag_raw)/d(imp) = -invweight/imp^2
+                        # diag = max(diag_raw, EPS); efc_D = 1/diag
+                        # d(efc_D)/d(imp) = -1/diag^2 * d(diag)/d(imp), 0 if clamped to EPS
+                        d_diag_d_imp = gs.qd_float(0.0)
+                        if diag_raw > EPS:
+                            d_diag_d_imp = -invweight / (imp * imp)
+                        d_efc_D_d_imp = -d_diag_d_imp / (diag * diag)
+
+                        # d(imp)/d(imp_x): active only inside the smooth clamp band.
+                        within_clamp = (imp_raw > dmin) and (imp_raw < dmax) and (imp_x <= 1.0)
+                        d_imp_y_d_imp_x = gs.qd_float(0.0)
+                        if imp_x < mid:
+                            d_imp_y_d_imp_x = power * imp_a_coef * imp_x ** (power - 1.0)
+                        else:
+                            d_imp_y_d_imp_x = power * imp_b_coef * (1.0 - imp_x) ** (power - 1.0)
+                        d_imp_d_imp_x = gs.qd_float(0.0)
+                        if within_clamp:
+                            d_imp_d_imp_x = (dmax - dmin) * d_imp_y_d_imp_x
+
+                        # d(imp_x)/d(pos_delta) = sign(pos_delta)/width; pos_delta < 0 => -1/width
+                        d_imp_x_d_pos_delta = -1.0 / width
+                        d_imp_d_pos_delta = d_imp_d_imp_x * d_imp_x_d_pos_delta
+
+                        # --- Combine ---
+                        dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
+                        dL_d_pos_delta = ga * d_aref_d_pos_delta_direct + dL_d_imp * d_imp_d_pos_delta
+                        dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+
+                        # --- Propagate ---
+                        rigid_info.qpos.grad[i_q, i_b] += sign_f * dL_d_pos_delta
+                        dyn_state.dofs.vel.grad[i_d, i_b] += sign_f * dL_d_jac_qvel
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_add_collision_constraints_bw(
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Manual reverse of `add_collision_constraints`. See the section header
+    above for the shared `n_con` layout and upstream-grad conventions.
+
+    Produces the gradients w.r.t. the collision constraint's differentiable inputs:
+        collider_state.contact_data.{pos, normal, penetration}.grad   (-> collider.backward)
+        dyn_state.dofs.{cdof_ang, cdof_vel, vel}.grad
+        dyn_state.links.root_COM.grad
+    (cdof / root_COM / vel grads feed the COM / forward-dynamics reverse chain;
+    contact_data grads feed `collider.backward`.)
+
+    Forward recap (per contact `i_col`, per friction-pyramid row `i` in 0..3):
+        d1, d2 = qd_orthogonals(normal);  d = s_i * (d1 if i<2 else d2),  s_i = 2*(i%2)-1
+        n      = d * friction - normal
+        jac[n_con, i_d] = sum_chain (sign * vel_motion(i_d)) . n
+            vel_motion = cdof_vel - t_pos x cdof_ang,  t_pos = contact_pos - root_COM[link]
+        jac_qvel = sum_chain jac[n_con, i_d] * dofs_vel[i_d]
+        imp, aref = imp_aref(sol_params, -penetration, jac_qvel, -penetration)
+        diag = (invweight + friction^2 invweight) * 2 friction^2 (1-imp)/imp ; efc_D = 1/diag
+    """
+    EPS = rigid_info.EPS[None]
+    _B = dyn_state.dofs.ctrl_mode.shape[1]
+    n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
+    max_contact_pairs = collider_state.contact_data.link_a.shape[0]
+
+    qd.loop_config(
+        name="kernel_manual_add_collision_constraints_bw",
+        serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
+    )
+    for flat_idx in range(max_contact_pairs * _B):
+        i_b = flat_idx % _B
+        i_col_ = flat_idx // _B
+        if i_col_ < collider_state.n_contacts[i_b]:
+            # The forward assembles the contact rows in logical (sorted) contact order: row group i_col_ maps to
+            # physical contact contact_sort_idx[i_col_] (see add_inequality_constraints).
+            i_col = collider_state.contact_sort_idx[i_col_, i_b]
+            link_a = collider_state.contact_data.link_a[i_col, i_b]
+            link_b = collider_state.contact_data.link_b[i_col, i_b]
+            contact_pos = collider_state.contact_data.pos[i_col, i_b]
+            normal = collider_state.contact_data.normal[i_col, i_b]
+            friction = collider_state.contact_data.friction[i_col, i_b]
+            sol_params = collider_state.contact_data.sol_params[i_col, i_b]
+            penetration = collider_state.contact_data.penetration[i_col, i_b]
+
+            link_a_maybe_batch = [link_a, i_b] if qd.static(rigid_config.batch_links_info) else link_a
+            invweight = dyn_info.links.invweight[link_a_maybe_batch][0]
+            if link_b > -1:
+                link_b_maybe_batch = [link_b, i_b] if qd.static(rigid_config.batch_links_info) else link_b
+                invweight = invweight + dyn_info.links.invweight[link_b_maybe_batch][0]
+
+            # --- forward intermediates of qd_orthogonals(normal) ---
+            #   b_raw branches on |normal[1]| < 0.5; b = normalize(b_raw)
+            #   d1 = b x normal, d2 = b
+            n0, n1, n2 = normal[0], normal[1], normal[2]
+            branch_a = qd.abs(n1) < 0.5
+            b_raw = gs.qd_vec3(0.0, 0.0, 0.0)
+            if branch_a:
+                b_raw = gs.qd_vec3(-n0 * n1, 1.0 - n1 * n1, -n2 * n1)
+            else:
+                b_raw = gs.qd_vec3(-n0 * n2, -n1 * n2, 1.0 - n2 * n2)
+            b_raw_norm = b_raw.norm()
+            b = b_raw / b_raw_norm
+            d1 = b.cross(normal)
+            d2 = b
+
+            sol_timeconst = sol_params[0]
+            sol_dampratio = sol_params[1]
+            sol_dmin = sol_params[2]
+            sol_dmax = sol_params[3]
+            sol_width = sol_params[4]
+            sol_mid = sol_params[5]
+            sol_power = sol_params[6]
+
+            neg_pen = -penetration
+            imp_x = qd.abs(neg_pen) / sol_width
+            # d(imp_x)/d(penetration) = -sign(neg_pen)/width
+            sign_neg = gs.qd_float(1.0) if neg_pen >= 0 else gs.qd_float(-1.0)
+            d_imp_x_d_pen = -sign_neg / sol_width
+
+            imp_a_coef = 1.0 / sol_mid ** (sol_power - 1.0)
+            imp_b_coef = 1.0 / (1.0 - sol_mid) ** (sol_power - 1.0)
+            imp_a = imp_a_coef * imp_x**sol_power
+            imp_b = 1.0 - imp_b_coef * (1.0 - imp_x) ** sol_power
+            imp_y = imp_a if imp_x < sol_mid else imp_b
+            imp_raw = sol_dmin + imp_y * (sol_dmax - sol_dmin)
+            imp_clamped = qd.math.clamp(imp_raw, sol_dmin, sol_dmax)
+            imp = sol_dmax if imp_x > 1.0 else imp_clamped
+
+            b_coef = 2.0 / (sol_dmax * sol_timeconst)
+            # k_coef matches gu.imp_aref's k = 1/(dmax^2 timeconst^2 dampratio^2)
+            k_coef = 1.0 / (sol_dmax * sol_dmax * sol_timeconst * sol_timeconst * sol_dampratio * sol_dampratio)
+
+            # diag = C0 * (1-imp)/imp, C0 = 2 friction^2 invweight (1 + friction^2)
+            C0 = (invweight + friction * friction * invweight) * 2.0 * friction * friction
+            diag_raw = C0 * (1.0 - imp) / imp
+            diag = qd.max(diag_raw, EPS)
+
+            within_clamp = (imp_raw > sol_dmin) and (imp_raw < sol_dmax) and (imp_x <= 1.0)
+            d_imp_y_d_imp_x = gs.qd_float(0.0)
+            if imp_x < sol_mid:
+                d_imp_y_d_imp_x = sol_power * imp_a_coef * imp_x ** (sol_power - 1.0)
+            else:
+                d_imp_y_d_imp_x = sol_power * imp_b_coef * (1.0 - imp_x) ** (sol_power - 1.0)
+            d_imp_d_imp_x = gs.qd_float(0.0)
+            if within_clamp:
+                d_imp_d_imp_x = (sol_dmax - sol_dmin) * d_imp_y_d_imp_x
+
+            d_diag_d_imp = gs.qd_float(0.0)
+            if diag_raw > EPS:
+                d_diag_d_imp = -C0 / (imp * imp)
+            d_efc_D_d_imp = -d_diag_d_imp / (diag * diag)
+
+            # Accumulators for this contact's differentiable inputs.
+            g_pos = gs.qd_vec3(0.0, 0.0, 0.0)
+            g_normal = gs.qd_vec3(0.0, 0.0, 0.0)
+            g_pen = gs.qd_float(0.0)
+            g_d1 = gs.qd_vec3(0.0, 0.0, 0.0)
+            g_d2 = gs.qd_vec3(0.0, 0.0, 0.0)
+
+            for i in range(4):
+                s_i = gs.qd_float(2 * (i % 2) - 1)
+                d = s_i * d1 if i < 2 else s_i * d2
+                n = d * friction - normal
+                n_con = i_col_ * 4 + i
+
+                ga = constraint_state.dL_daref[n_con, i_b]
+                gD = constraint_state.dL_defc_D[n_con, i_b]
+
+                # aref = -b_coef*jac_qvel + k_coef*imp*penetration  (pos arg = -penetration)
+                d_aref_d_imp = k_coef * penetration
+                d_aref_d_pen_direct = k_coef * imp
+                d_aref_d_jac_qvel = -b_coef
+
+                dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
+                dL_d_pen = ga * d_aref_d_pen_direct + dL_d_imp * d_imp_d_imp_x * d_imp_x_d_pen
+                g_pen += dL_d_pen
+                dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+
+                # Reverse jac[n_con, i_d] over the kinematic chain.
+                dL_dn = gs.qd_vec3(0.0, 0.0, 0.0)
+                for i_ab in range(2):
+                    sign = gs.qd_float(-1.0)
+                    link = link_a
+                    if i_ab == 1:
+                        sign = gs.qd_float(1.0)
+                        link = link_b
+                    while link > -1:
+                        link_mb = [link, i_b] if qd.static(rigid_config.batch_links_info) else link
+                        for i_d_ in range(dyn_info.links.n_dofs[link_mb]):
+                            i_d = dyn_info.links.dof_end[link_mb] - 1 - i_d_
+
+                            cdof_ang = dyn_state.dofs.cdof_ang[i_d, i_b]
+                            cdof_vel = dyn_state.dofs.cdof_vel[i_d, i_b]
+                            t_pos = contact_pos - dyn_state.links.root_COM[link, i_b]
+                            vel_motion = cdof_vel - t_pos.cross(cdof_ang)
+
+                            jac_stored = constraint_state.jac[n_con, i_d, i_b]
+                            g_jac = constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                            dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel * jac_stored
+
+                            # jac_contrib = (sign * vel_motion) . n
+                            dL_dn += g_jac * sign * vel_motion
+                            g_vm = g_jac * sign * n  # dL/d(vel_motion)
+
+                            # vel_motion = cdof_vel - t_pos x cdof_ang
+                            dyn_state.dofs.cdof_vel.grad[i_d, i_b] += g_vm
+                            dyn_state.dofs.cdof_ang.grad[i_d, i_b] += t_pos.cross(g_vm)
+                            dt = -(cdof_ang.cross(g_vm))  # dL/d(t_pos)
+                            g_pos += dt
+                            dyn_state.links.root_COM.grad[link, i_b] += -dt
+
+                        link = dyn_info.links.parent_idx[link_mb]
+
+                # n = d*friction - normal
+                g_normal += -dL_dn
+                g_d = dL_dn * friction
+                if i < 2:
+                    g_d1 += s_i * g_d
+                else:
+                    g_d2 += s_i * g_d
+
+            # Reverse qd_orthogonals: d1 = b x normal, d2 = b, b = normalize(b_raw(normal)).
+            dL_db = g_d2 + normal.cross(g_d1)
+            g_normal += g_d1.cross(b)
+            # b = b_raw / |b_raw|
+            dL_db_raw = (dL_db - dL_db.dot(b) * b) / b_raw_norm
+            # b_raw(normal) branch Jacobian
+            if branch_a:
+                # b_raw = (-n0 n1, 1 - n1^2, -n2 n1)
+                g_normal[0] += dL_db_raw[0] * (-n1)
+                g_normal[1] += dL_db_raw[0] * (-n0) + dL_db_raw[1] * (-2.0 * n1) + dL_db_raw[2] * (-n2)
+                g_normal[2] += dL_db_raw[2] * (-n1)
+            else:
+                # b_raw = (-n0 n2, -n1 n2, 1 - n2^2)
+                g_normal[0] += dL_db_raw[0] * (-n2)
+                g_normal[1] += dL_db_raw[1] * (-n2)
+                g_normal[2] += dL_db_raw[0] * (-n0) + dL_db_raw[1] * (-n1) + dL_db_raw[2] * (-2.0 * n2)
+
+            for j in qd.static(range(3)):
+                collider_state.contact_data.pos.grad[i_col, i_b][j] = g_pos[j]
+                collider_state.contact_data.normal.grad[i_col, i_b][j] = g_normal[j]
+            collider_state.contact_data.penetration.grad[i_col, i_b] = g_pen
