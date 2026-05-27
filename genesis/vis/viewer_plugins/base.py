@@ -59,3 +59,13 @@ class ViewerPlugin:
 
     def on_close(self) -> None:
         pass
+
+    def consume_rebuild_request(self) -> bool:
+        """Polled by Scene.step() on the main thread. A plugin that drives scene edits performs its pending
+        rebuild here and returns True; the default is a no-op for plugins that do not rebuild the scene."""
+        return False
+
+    def should_step(self) -> bool:
+        """Whether this plugin permits the simulation to advance this frame. Polled by Scene.step(); a GUI
+        with play/pause returns False while paused. The default never vetoes stepping."""
+        return True

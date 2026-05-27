@@ -13,40 +13,41 @@ import os
 import time
 
 import genesis as gs
-from genesis.engine.interactive_scene import InteractiveScene
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 gs.init()
 
-interactive = InteractiveScene()
-interactive.rebuild(
-    scene_kwargs=dict(
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 2.0, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-        ),
-        show_viewer=True,
+# enable_gui attaches the ImGui overlay and lets it manage scene editing internally, so no manual
+# InteractiveScene is needed: a plain Scene is the whole setup, and Rebuild Scene is handled inside step().
+scene = gs.Scene(
+    viewer_options=gs.options.ViewerOptions(
+        camera_pos=(2.0, 2.0, 1.5),
+        camera_lookat=(0.0, 0.0, 0.5),
+        enable_gui=True,
     ),
-    entities_kwargs={
-        "Plane": dict(
-            morph=gs.morphs.Plane(),
-        ),
-        "Panda": dict(
-            morph=gs.morphs.MJCF(
-                file="xml/franka_emika_panda/panda.xml",
-            ),
-        ),
-        "Box": dict(
-            morph=gs.morphs.Box(
-                pos=(0, 0, 1.0),
-                size=(0.2, 0.2, 0.2),
-            ),
-        ),
-    },
+    show_viewer=True,
 )
+scene.add_entity(
+    morph=gs.morphs.Plane(),
+    name="Plane",
+)
+scene.add_entity(
+    morph=gs.morphs.MJCF(
+        file="xml/franka_emika_panda/panda.xml",
+    ),
+    name="Panda",
+)
+scene.add_entity(
+    morph=gs.morphs.Box(
+        pos=(0, 0, 1.0),
+        size=(0.2, 0.2, 0.2),
+    ),
+    name="Box",
+)
+scene.build()
 
-plugin = ImGuiOverlayPlugin()
-interactive.viewer.add_plugin(plugin)
+# Grab the auto-attached overlay to register a custom panel.
+plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
 
 
 def custom_panel(imgui):
@@ -59,12 +60,10 @@ plugin.register_panel(custom_panel)
 is_test = "PYTEST_VERSION" in os.environ
 horizon = 5 if is_test else None
 
+# step() honors the GUI: it advances only while playing, and applies a pending Rebuild Scene first.
 frame = 0
-while interactive.viewer.is_alive():
-    if plugin.rebuild_requested:
-        interactive.rebuild(entities_kwargs=plugin.pending_entities_kwargs)
-    if plugin.should_step():
-        interactive.scene.step()
+while scene.viewer.is_alive():
+    scene.step()
     frame += 1
     if horizon is not None and frame >= horizon:
         break

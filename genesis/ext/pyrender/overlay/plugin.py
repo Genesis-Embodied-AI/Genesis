@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.interactive_scene import InteractiveFeature, InteractiveScene
 from genesis.ext.pyrender.overlay.style import apply_dark_theme
 from genesis.ext.pyrender.overlay.types import build_entity_joint_data, EntityCacheEntry, EntityJointData
 from genesis.utils.misc import tensor_to_array
@@ -93,6 +94,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             )
 
         super().__init__()
+        # InteractiveScene wrapping the current scene, created and owned by this plugin in build(). It backs
+        # the scene-editing controls (feature gating + rebuild) so the user never instantiates one manually.
+        self._interactive_scene = None
         self._controlled_env_idx = controlled_env_idx
         self._free_joint_pos_limit = free_joint_pos_limit
         self._panel_width = panel_width
@@ -184,6 +188,25 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # Cache entity data now (doesn't require OpenGL)
         self._cache_entity_data()
         self._capture_pending_entities_kwargs()
+        # Wrap the scene on first build. On a rebuild the plugin is re-attached to the reconstructed scene
+        # (same object), so the existing wrapper still applies and must not be replaced.
+        if self._interactive_scene is None:
+            self._interactive_scene = InteractiveScene(scene)
+
+    @property
+    def _supported_features(self) -> frozenset[InteractiveFeature]:
+        """Editing features advertised by the plugin's InteractiveScene for the current simulator mode,
+        queried live. Each scene-editing control gates on its own feature and renders disabled when absent."""
+        return self._interactive_scene.supported_features
+
+    def consume_rebuild_request(self) -> bool:
+        """Run a pending Rebuild Scene request on the main thread (called from Scene.step). The button click
+        on the viewer thread only sets the flag; the actual in-place rebuild happens here."""
+        if not self._rebuild_requested:
+            return False
+        self._rebuild_requested = False
+        self._interactive_scene.rebuild(entities_kwargs=self._pending_entities_kwargs)
+        return True
 
     def _refresh_visuals(self):
         """Refresh render transforms after a GUI-driven mutation. Caller must hold the render lock."""
@@ -828,9 +851,28 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             # Popup was closed (e.g. clicking outside)
             self._file_browser_open = False
 
-    def _render_scene_editor(self):
-        """Render scene editing controls (entity scale, add entity, rebuild)."""
+    _SCENE_EDIT_DISABLED_TOOLTIP = "This action is unavailable for the current scene configuration."
+
+    def _maybe_show_disabled_tooltip(self, disabled: bool):
+        """Show the unavailable-feature tooltip when the previous item is disabled and hovered."""
+        if not disabled:
+            return
         imgui = self._imgui
+        if imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
+            imgui.set_tooltip(self._SCENE_EDIT_DISABLED_TOOLTIP)
+
+    def _render_scene_editor(self):
+        """Render scene editing controls (entity scale, add entity, rebuild).
+
+        Each control maps to an InteractiveFeature and renders in its disabled visual state when the
+        scene does not support that feature, so the panel layout stays identical across scene types.
+        """
+        imgui = self._imgui
+        features = self._supported_features
+        scale_disabled = InteractiveFeature.SCALE_ENTITY not in features
+        remove_disabled = InteractiveFeature.REMOVE_ENTITY not in features
+        add_disabled = InteractiveFeature.ADD_ENTITY not in features
+        rebuild_disabled = InteractiveFeature.REBUILD not in features
 
         # Per-entity scale editing (FileMorph only; primitives carry size/radius/height instead).
         to_remove: str | None = None
@@ -844,13 +886,21 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             if isinstance(morph, gs.morphs.FileMorph):
                 scale = morph.scale
                 scale_val = float(scale[0]) if isinstance(scale, (list, tuple, np.ndarray)) else float(scale)
+                imgui.begin_disabled(scale_disabled)
                 changed, new_scale = imgui.drag_float(f"Scale##scale_{name}", scale_val, 0.01, 0.01, 100.0, "%.3f")
-                if changed:
+                imgui.end_disabled()
+                self._maybe_show_disabled_tooltip(scale_disabled)
+                if changed and not scale_disabled:
                     morph.scale = new_scale
                     self._pending_dirty = True
 
                 imgui.same_line()
-            if imgui.button(f"X##remove_{name}"):
+
+            imgui.begin_disabled(remove_disabled)
+            remove_clicked = imgui.button(f"X##remove_{name}")
+            imgui.end_disabled()
+            self._maybe_show_disabled_tooltip(remove_disabled)
+            if remove_clicked and not remove_disabled:
                 to_remove = name
 
             draw_separator(imgui)
@@ -860,8 +910,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             self._pending_dirty = True
 
         # Add entity section
-        if imgui.collapsing_header("Add Entity##add_entity"):
+        imgui.begin_disabled(add_disabled)
+        add_header_open = imgui.collapsing_header("Add Entity##add_entity")
+        imgui.end_disabled()
+        self._maybe_show_disabled_tooltip(add_disabled)
+        if add_header_open:
             imgui.indent()
+            imgui.begin_disabled(add_disabled)
             changed_type, self._add_entity_morph_type = imgui.combo(
                 "Type##add_type", self._add_entity_morph_type, _MORPH_TYPES
             )
@@ -875,7 +930,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             if morph_type in ("URDF", "MJCF", "Mesh"):
                 _, self._add_entity_file = imgui.input_text("File##add_file", self._add_entity_file, 256)
                 imgui.same_line()
-                if imgui.button("Browse##add_browse"):
+                if imgui.button("Browse##add_browse") and not add_disabled:
                     self._file_browser_open = True
                     self._file_browser_selected = -1
                     # Start browsing from current file's directory if set
@@ -916,7 +971,10 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             # Fixed checkbox
             _, self._add_entity_fixed = imgui.checkbox("Fixed##add_fixed", self._add_entity_fixed)
 
-            if imgui.button("Add##add_btn"):
+            add_clicked = imgui.button("Add##add_btn")
+            imgui.end_disabled()
+            self._maybe_show_disabled_tooltip(add_disabled)
+            if add_clicked and not add_disabled:
                 pos = tuple(self._add_entity_pos)
                 scale = self._add_entity_scale
                 fixed = self._add_entity_fixed
@@ -954,7 +1012,11 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # destroy the context we are rendering from.
         if self._pending_dirty:
             imgui.text_colored((1.0, 0.7, 0.0, 1.0), "Changes pending")
-        if imgui.button("Rebuild Scene", size=(150, 0)):
+        imgui.begin_disabled(rebuild_disabled)
+        rebuild_clicked = imgui.button("Rebuild Scene", size=(150, 0))
+        imgui.end_disabled()
+        self._maybe_show_disabled_tooltip(rebuild_disabled)
+        if rebuild_clicked and not rebuild_disabled:
             self._rebuild_requested = True
             self._pending_dirty = False
 
@@ -1173,7 +1235,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         return non_free_changed
 
     def should_step(self) -> bool:
-        """Check if simulation should advance this frame."""
+        """Whether the simulation should advance this frame. False while the GUI is paused; True while
+        playing or for the requested number of single-step frames. Polled by Scene.step() each frame."""
         if self._steps_remaining > 0:
             self._steps_remaining -= 1
             return True

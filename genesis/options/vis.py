@@ -48,6 +48,13 @@ class ViewerOptions(Options):
         Whether to enable the rendering of instructions text in the viewer.
     enable_default_keybinds : bool
         Whether to enable the default keyboard controls in the viewer.
+    enable_gui : bool
+        Whether to automatically attach the ImGui overlay panel when the viewer is constructed. Defaults
+        to False. The overlay renders its own controls and captures keyboard input, so it requires
+        enable_help_text and enable_default_keybinds to be False; they default to False when enable_gui is
+        True, and explicitly setting either to True alongside enable_gui raises an error. Scene editing
+        controls (Rebuild Scene, Add Entity, per-entity remove) are visible but disabled unless the scene
+        is managed by a gs.InteractiveScene that supports them.
     """
 
     res: PositiveVec2IType | None = None
@@ -60,6 +67,23 @@ class ViewerOptions(Options):
     camera_fov: float = 40
     enable_help_text: StrictBool = True
     enable_default_keybinds: StrictBool = True
+    enable_gui: StrictBool = False
+
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+        if not self.enable_gui:
+            return
+        # The GUI overlay renders its own controls and captures keyboard input, so the help-text overlay and default
+        # keybind plugin must be off. Default them off when the user left them implicit, but raise if the user
+        # explicitly requested a conflicting value.
+        if self.enable_help_text:
+            if "enable_help_text" in self.model_fields_set:
+                gs.raise_exception("'enable_help_text' must be False when 'enable_gui' is True.")
+            self.enable_help_text = False
+        if self.enable_default_keybinds:
+            if "enable_default_keybinds" in self.model_fields_set:
+                gs.raise_exception("'enable_default_keybinds' must be False when 'enable_gui' is True.")
+            self.enable_default_keybinds = False
 
 
 class DirectionalLight(Options):

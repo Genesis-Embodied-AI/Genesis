@@ -280,60 +280,7 @@ class Viewer(pyglet.window.Window):
         #######################################################################
         # Set up camera node
         #######################################################################
-        self._camera_node = None
-        self._prior_main_camera_node = None
-        self._default_camera_pose = None
-        self._default_persp_cam = None
-        self._default_orth_cam = None
-        self._trackball = None
-
-        # Extract main camera from scene and set up our mirrored copy
-        znear = None
-        zfar = None
-        if self.scene.main_camera_node is not None:
-            n = self.scene.main_camera_node
-            camera = copy.copy(n.camera)
-            if isinstance(camera, (PerspectiveCamera, IntrinsicsCamera)):
-                self._default_persp_cam = camera
-                znear = camera.znear
-                zfar = camera.zfar
-            elif isinstance(camera, OrthographicCamera):
-                self._default_orth_cam = camera
-                znear = camera.znear
-                zfar = camera.zfar
-            self._default_camera_pose = self.scene.get_pose(self.scene.main_camera_node)
-            self._prior_main_camera_node = n
-
-        # Set defaults as needed
-        if zfar is None:
-            zfar = max(self.scene.scale * 10.0, DEFAULT_Z_FAR)
-        if znear is None or znear < 1e-6:
-            if self.scene.scale < 1e-6:
-                znear = DEFAULT_Z_NEAR
-            else:
-                znear = min(self.scene.scale / 10.0, DEFAULT_Z_NEAR)
-
-        if self._default_persp_cam is None:
-            self._default_persp_cam = PerspectiveCamera(yfov=np.pi / 3.0, znear=znear, zfar=zfar)
-        if self._default_orth_cam is None:
-            xmag = ymag = self.scene.scale
-            if self.scene.scale < 1e-6:
-                xmag = ymag = 1.0
-            self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
-        self._orth_cam_reset_mags = (self._default_orth_cam.xmag, self._default_orth_cam.ymag)
-        if self._default_camera_pose is None:
-            self._default_camera_pose = self._compute_initial_camera_pose()
-
-        # Pick camera
-        if self.viewer_flags["use_perspective_cam"]:
-            camera = self._default_persp_cam
-        else:
-            camera = self._default_orth_cam
-
-        self._camera_node = Node(matrix=self._default_camera_pose, camera=camera)
-        self.scene.add_node(self._camera_node)
-        self.scene.main_camera_node = self._camera_node
-        self._reset_view()
+        self._setup_main_camera()
 
         # Setup help text functionality
         is_dark_mode = np.mean(context.background_color[0:3]) < 0.5
@@ -494,6 +441,80 @@ class Viewer(pyglet.window.Window):
     @viewer_flags.setter
     def viewer_flags(self, value):
         self._viewer_flags = value
+
+    def _setup_main_camera(self):
+        # Extract main camera from the current scene and set up our mirrored copy. Re-runnable so a rebind
+        # to a rebuilt scene graph re-creates the camera node on the new scene.
+        self._camera_node = None
+        self._prior_main_camera_node = None
+        self._default_camera_pose = None
+        self._default_persp_cam = None
+        self._default_orth_cam = None
+        self._trackball = None
+
+        znear = None
+        zfar = None
+        if self.scene.main_camera_node is not None:
+            n = self.scene.main_camera_node
+            camera = copy.copy(n.camera)
+            if isinstance(camera, (PerspectiveCamera, IntrinsicsCamera)):
+                self._default_persp_cam = camera
+                znear = camera.znear
+                zfar = camera.zfar
+            elif isinstance(camera, OrthographicCamera):
+                self._default_orth_cam = camera
+                znear = camera.znear
+                zfar = camera.zfar
+            self._default_camera_pose = self.scene.get_pose(self.scene.main_camera_node)
+            self._prior_main_camera_node = n
+
+        # Set defaults as needed
+        if zfar is None:
+            zfar = max(self.scene.scale * 10.0, DEFAULT_Z_FAR)
+        if znear is None or znear < 1e-6:
+            if self.scene.scale < 1e-6:
+                znear = DEFAULT_Z_NEAR
+            else:
+                znear = min(self.scene.scale / 10.0, DEFAULT_Z_NEAR)
+
+        if self._default_persp_cam is None:
+            self._default_persp_cam = PerspectiveCamera(yfov=np.pi / 3.0, znear=znear, zfar=zfar)
+        if self._default_orth_cam is None:
+            xmag = ymag = self.scene.scale
+            if self.scene.scale < 1e-6:
+                xmag = ymag = 1.0
+            self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
+        self._orth_cam_reset_mags = (self._default_orth_cam.xmag, self._default_orth_cam.ymag)
+        if self._default_camera_pose is None:
+            self._default_camera_pose = self._compute_initial_camera_pose()
+
+        # Pick camera
+        if self.viewer_flags["use_perspective_cam"]:
+            camera = self._default_persp_cam
+        else:
+            camera = self._default_orth_cam
+
+        self._camera_node = Node(matrix=self._default_camera_pose, camera=camera)
+        self.scene.add_node(self._camera_node)
+        self.scene.main_camera_node = self._camera_node
+        self._reset_view()
+
+    def rebind(self, context, plugins):
+        """Re-point this live viewer/window at a rebuilt scene graph (InteractiveScene rebuild) instead of
+        opening a new window. Reuses the OS window and GL context, refreshing the context-bound state:
+        scene graph, segmentation map, renderer, camera node and plugins. Rough on purpose - assumes no
+        concurrent render thread is touching the old scene during the rebuild."""
+        with self._render_lock:
+            self.gs_context = context
+            self._scene = context._scene
+            self._seg_node_map = context.seg_node_map
+            if self._renderer is not None:
+                self._renderer.delete()
+            self._renderer = Renderer(*self._viewport_size, context.jit, self.render_flags["point_size"])
+            self._setup_main_camera()
+            self.plugins = []
+            for plugin in plugins:
+                self.register_plugin(plugin)
 
     def register_plugin(self, plugin: ViewerPlugin) -> None:
         """

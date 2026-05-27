@@ -1023,6 +1023,16 @@ class Scene(RBC):
         """
         Runs a simulation step forward in time.
         """
+        # Honor GUI controls on this (main) thread before stepping. A rebuild reconstructs this scene in
+        # place and tears down the current viewer, so skip the step that frame; a paused GUI vetoes the
+        # advance entirely. Both are no-ops without an interactive overlay.
+        viewer = self.viewer
+        if viewer is not None:
+            if viewer.consume_rebuild_requests():
+                return
+            if not viewer.should_advance_simulation():
+                return
+
         if not self._forward_ready:
             gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
 
