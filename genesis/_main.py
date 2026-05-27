@@ -384,8 +384,7 @@ def play(filename=None, collision=False, scale=1.0):
     scene.viewer.add_plugin(plugin)
 
     while scene.viewer.is_alive():
-        if plugin.should_step():
-            scene.step()
+        scene.step()
         time.sleep(0.01)
 
 

@@ -380,19 +380,6 @@ class Viewer(RBC):
             self._pyrender_viewer.register_plugin(plugin)
         return plugin
 
-    def consume_rebuild_requests(self) -> bool:
-        """Let any plugin perform a pending scene rebuild on the calling (main) thread. Returns True if one
-        did, in which case this viewer has just been torn down and the caller must stop using it."""
-        for plugin in tuple(self._viewer_plugins):
-            if plugin.consume_rebuild_request():
-                return True
-        return False
-
-    def should_advance_simulation(self) -> bool:
-        """Whether the simulation may advance this frame, i.e. no plugin (e.g. the GUI play/pause control)
-        vetoes it. Every plugin is polled so stateful single-step controls always observe the frame."""
-        return all([plugin.should_step() for plugin in self._viewer_plugins])
-
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------

@@ -64,21 +64,18 @@ class ImGuiOverlayPlugin(ViewerPlugin):
     - Only controls environment 0 in batched simulations
 
     Usage:
-        plugin = ImGuiOverlayPlugin()
-        scene.viewer.add_plugin(plugin)
+        scene = gs.Scene(viewer_options=gs.options.ViewerOptions(enable_gui=True), show_viewer=True)
         scene.build()
 
         while scene.viewer.is_alive():
-            if plugin.should_step():
-                scene.step()
+            scene.step()
+
+    The overlay drives play/pause and scene rebuild through an InteractiveScene it wraps the scene with, so
+    the loop just calls ``scene.step()``; the controls take effect there on the stepping thread.
     """
 
     def __init__(
         self,
-        show_sim_controls: bool = True,
-        show_entity_browser: bool = True,
-        show_visualization: bool = True,
-        show_camera_controls: bool = True,
         controlled_env_idx: int = 0,
         free_joint_pos_limit: float = 10.0,
         panel_width: int | None = None,
@@ -107,24 +104,17 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         self._available = False
         self._init_attempted = False
         self._last_time = None
-        self.paused = False
-        self._step_requested = False
-        self._steps_remaining = 0
+        # Number of frames a single "Step" click advances. Play/pause and stepping state itself live on the
+        # InteractiveScene (the controller); this overlay only toggles them.
         self._step_count = 1
         self._entity_cache = {}
         self._user_panels = []
         self._fps_history = []
+        # Name of the tab to force-select on the next frame, then cleared. None leaves the user's selection.
+        self._active_tab = None
 
-        # Section visibility flags
-        self.show_sim_controls = show_sim_controls
-        self.show_entity_browser = show_entity_browser
-        self.show_visualization = show_visualization
-        self.show_camera_controls = show_camera_controls
-
-        # Scene rebuild support: plugin maintains a local dict of pending entity kwargs that mirrors
-        # the live scene; the Scene editor panel mutates this dict and triggers rebuild via
-        # InteractiveScene.rebuild() from the main thread.
-        self._rebuild_requested = False
+        # The Scene editor panel mutates this local mirror of the live entities; on "Rebuild Scene" it is
+        # submitted to the InteractiveScene, which applies it on the stepping thread.
         self._pending_dirty = False
         self._pending_entities_kwargs: dict[str, dict] = {}
         self._add_entity_file = ""
@@ -189,8 +179,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # Cache entity data now (doesn't require OpenGL)
         self._cache_entity_data()
         self._capture_pending_entities_kwargs()
-        # Wrap the scene on first build. On a rebuild the plugin is re-attached to the reconstructed scene
-        # (same object), so the existing wrapper still applies and must not be replaced.
+        # Wrap the scene on first build. The InteractiveScene is the controller (it owns play/pause, stepping
+        # and rebuild); this overlay is just a view that reads and toggles its state. On a rebuild the plugin is
+        # re-attached to the reconstructed scene (same object), so the existing wrapper still applies.
         if self._interactive_scene is None:
             self._interactive_scene = InteractiveScene(scene)
 
@@ -199,15 +190,6 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         """Editing features advertised by the plugin's InteractiveScene for the current simulator mode,
         queried live. Each scene-editing control gates on its own feature and renders disabled when absent."""
         return self._interactive_scene.supported_features
-
-    def consume_rebuild_request(self) -> bool:
-        """Run a pending Rebuild Scene request on the main thread (called from Scene.step). The button click
-        on the viewer thread only sets the flag; the actual in-place rebuild happens here."""
-        if not self._rebuild_requested:
-            return False
-        self._rebuild_requested = False
-        self._interactive_scene.rebuild(entities_kwargs=self._pending_entities_kwargs)
-        return True
 
     def _refresh_visuals(self):
         """Refresh render transforms after a GUI-driven mutation. Caller must hold the render lock."""
@@ -383,22 +365,6 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 kwargs["visualize_contact"] = entity.visualize_contact
             self._pending_entities_kwargs[entity.name] = kwargs
 
-    @property
-    def rebuild_requested(self):
-        """True if the user clicked Rebuild. Check this in your main loop and call
-        ``interactive_scene.rebuild(entities_kwargs=plugin.pending_entities_kwargs)``.
-        Reading the flag clears it."""
-        if self._rebuild_requested:
-            self._rebuild_requested = False
-            return True
-        return False
-
-    @property
-    def pending_entities_kwargs(self) -> dict[str, dict]:
-        """Snapshot of the entity kwargs currently displayed in the Scene editor panel. Pass to
-        ``InteractiveScene.rebuild`` to reconstruct the scene with the latest edits."""
-        return self._pending_entities_kwargs
-
     def _is_capturing(self) -> bool:
         """Check if ImGui or gizmo wants mouse/keyboard input."""
         if not self._available:
@@ -503,30 +469,22 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             imgui.set_next_window_size_constraints((self._panel_width, 0.0), (self._panel_width, float("inf")))
         imgui.begin("Genesis Control Panel", flags=imgui.WindowFlags_.always_auto_resize)
 
-        if self.show_sim_controls:
-            self._render_sim_controls()
+        self._render_sim_controls()
 
         if imgui.begin_tab_bar("##main_tabs"):
-            if self.show_entity_browser:
-                if imgui.begin_tab_item("Entities")[0]:
-                    self._render_entity_browser()
+            for name, render_section in (
+                ("Entities", self._render_entity_browser),
+                ("Visualization", self._render_visualization),
+                ("Camera", self._render_camera_controls),
+                ("Scene", self._render_scene_editor),
+            ):
+                # Force the requested tab selected for this frame; otherwise honor the user's selection.
+                flags = imgui.TabItemFlags_.set_selected.value if self._active_tab == name else 0
+                if imgui.begin_tab_item(name, None, flags)[0]:
+                    render_section()
                     imgui.end_tab_item()
-
-            if self.show_visualization:
-                if imgui.begin_tab_item("Visualization")[0]:
-                    self._render_visualization()
-                    imgui.end_tab_item()
-
-            if self.show_camera_controls:
-                if imgui.begin_tab_item("Camera")[0]:
-                    self._render_camera_controls()
-                    imgui.end_tab_item()
-
-            if imgui.begin_tab_item("Scene")[0]:
-                self._render_scene_editor()
-                imgui.end_tab_item()
-
             imgui.end_tab_bar()
+        self._active_tab = None
 
         # Render user callback panels (side panels)
         for callback, section in self._user_panels:
@@ -543,22 +501,23 @@ class ImGuiOverlayPlugin(ViewerPlugin):
     def _render_sim_controls(self):
         """Render simulation control buttons, time display, and FPS."""
         imgui = self._imgui
+        interactive = self._interactive_scene
 
         # State label
-        if self.paused:
+        if interactive.paused:
             imgui.text_colored((1.0, 0.7, 0.0, 1.0), "Paused")
         else:
             imgui.text_colored((0.4, 0.9, 0.4, 1.0), "Running")
 
         # Play/Pause and Reset (always visible), Step (only when paused). Auto-fit the label but with a 60-px
         # floor so single-word verbs share a consistent baseline width and never get truncated.
-        play_pause = "Pause" if not self.paused else "Play"
+        play_pause = "Pause" if not interactive.paused else "Play"
         if imgui.button(play_pause, size=button_size_with_min(imgui, play_pause, 60.0)):
-            self.paused = not self.paused
-        if self.paused:
+            interactive.resume() if interactive.paused else interactive.pause()
+        if interactive.paused:
             imgui.same_line()
             if imgui.button("Step", size=button_size_with_min(imgui, "Step", 60.0)):
-                self._steps_remaining = self._step_count
+                interactive.step(self._step_count)
         imgui.same_line()
         if imgui.button("Reset", size=button_size_with_min(imgui, "Reset", 60.0)):
             with self.viewer.render_lock:
@@ -721,7 +680,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             new_qpos[qs + 3 : qs + 7] = new_quat_wxyz
 
             # Auto-pause on gizmo edit
-            self.paused = True
+            self._interactive_scene.pause()
             with self.viewer.render_lock:
                 entity.set_qpos(new_qpos, envs_idx=self._controlled_env_idx)
                 self._refresh_visuals()
@@ -1008,9 +967,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 self._pending_dirty = True
             imgui.unindent()
 
-        # Rebuild button. The actual rebuild runs on the main thread via the
-        # ``rebuild_requested`` property; doing it from the viewer thread would
-        # destroy the context we are rendering from.
+        # Rebuild button. The InteractiveScene performs the actual rebuild on the stepping thread; doing it
+        # here on the viewer thread would destroy the OpenGL context we are rendering from.
         if self._pending_dirty:
             imgui.text_colored((1.0, 0.7, 0.0, 1.0), "Changes pending")
         imgui.begin_disabled(rebuild_disabled)
@@ -1018,7 +976,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         imgui.end_disabled()
         self._maybe_show_disabled_tooltip(rebuild_disabled)
         if rebuild_clicked and not rebuild_disabled:
-            self._rebuild_requested = True
+            self._interactive_scene.rebuild(entities_kwargs=self._pending_entities_kwargs)
             self._pending_dirty = False
 
     def _render_entity_browser(self):
@@ -1142,7 +1100,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
                 if changed_any:
                     # Auto-pause when user edits joints
-                    self.paused = True
+                    self._interactive_scene.pause()
                     if not (data.joint_data.has_free_joint and self._rotation_mode.get(entity_idx) == "euler"):
                         # Normalize any edited quaternion groups (quat mode only)
                         for qstart, qend in data.joint_data.quat_groups:
@@ -1192,7 +1150,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         )
 
         if changed_pos or changed_rot:
-            self.paused = True
+            self._interactive_scene.pause()
             new_dofs = list(dofs)
             if changed_pos:
                 new_dofs[0], new_dofs[1], new_dofs[2] = new_pos
@@ -1234,18 +1192,6 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 non_free_changed = True
 
         return non_free_changed
-
-    def should_step(self) -> bool:
-        """Whether the simulation should advance this frame. False while the GUI is paused; True while
-        playing or for the requested number of single-step frames. Polled by Scene.step() each frame."""
-        if self._steps_remaining > 0:
-            self._steps_remaining -= 1
-            return True
-        # Legacy single-step support
-        if self._step_requested:
-            self._step_requested = False
-            return True
-        return not self.paused
 
     def on_close(self) -> None:
         """Clean up ImGui resources. Idempotent: the viewer dispatches close on both the window-close event

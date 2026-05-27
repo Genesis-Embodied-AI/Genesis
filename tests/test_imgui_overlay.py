@@ -1,12 +1,15 @@
 """Screenshot integration test for ImGuiOverlayPlugin."""
 
+import os
+
+import numpy as np
 import pytest
 
 import genesis as gs
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import rgb_array_to_png_bytes
+from .utils import assert_allclose, rgb_array_to_png_bytes
 
 try:
     import imgui_bundle  # noqa: F401
@@ -137,8 +140,7 @@ def _build_default_scene(*, enable_gui):
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
-@pytest.mark.xfail(reason="Snapshot predates the plugin-owned InteractiveScene refactor; pending regeneration.")
-def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
+def test_control_panel(png_snapshot, monkeypatch):
     scene = _build_default_scene(enable_gui=False)
 
     _apply_deterministic_imgui_overrides(monkeypatch)
@@ -163,52 +165,64 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
-def test_imgui_overlay_enable_gui_rebuild_in_place():
-    # enable_gui makes the overlay own an InteractiveScene and rebuild the scene in place: the same Scene
-    # object (and its viewer) stay valid across a rebuild, driven entirely through scene.step() with no
-    # manual InteractiveScene. A Rebuild click only sets a flag; scene.step() consumes it on the main thread.
-    scene = _build_default_scene(enable_gui=True)
-    scene.build()
-
-    scene_id = id(scene)
-    plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
-    assert plugin._interactive_scene is not None
-    names_before = [entity.name for entity in scene.entities]
-    # The rebuild must reuse the live window rather than closing and reopening it.
-    window_before = scene.viewer._pyrender_viewer
-
-    plugin._rebuild_requested = True
-    scene.step()
-
-    assert id(scene) == scene_id
-    assert scene.viewer is not None and scene.viewer.is_alive()
-    assert scene.viewer._pyrender_viewer is window_before
-    assert [entity.name for entity in scene.entities] == names_before
-    scene.step()
-
-
-@pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-@pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
-@pytest.mark.xfail(reason="Snapshot predates the plugin-owned InteractiveScene refactor; pending regeneration.")
-def test_imgui_overlay_enable_gui_flag_screenshot(png_snapshot, monkeypatch):
-    # Snapshot the panel when ViewerOptions.enable_gui=True is used. The overlay auto-attaches (no explicit
-    # add_plugin call), and enable_help_text / enable_default_keybinds are forced off so the help-text overlay is
-    # absent from the frame.
+@pytest.mark.parametrize("performance_mode", [False, True])
+def test_editing_controls(png_snapshot, monkeypatch):
+    # The scene-editing controls (Rebuild Scene, Add Entity, per-entity scale & remove) render enabled in normal
+    # mode and disabled (greyed) in performance mode, where the InteractiveScene advertises no editing features.
+    # They live in the Scene tab, so select it to capture this mode-dependent gating.
     scene = _build_default_scene(enable_gui=True)
 
     _apply_deterministic_imgui_overrides(monkeypatch)
 
-    # Pin the auto-attached plugin's panel width so the snapshot layout is stable. The auto-attach was constructed
-    # with default args (panel_width=None), so mutate the attribute directly - equivalent to the explicit
-    # ImGuiOverlayPlugin(panel_width=420) used by the existing test.
-    auto_plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
-    auto_plugin._panel_width = 420
+    plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
+    plugin._panel_width = 420
+    plugin._active_tab = "Scene"
 
     scene.build()
+
+    # The Scene tab prints each FileMorph's resolved path, which is an absolute machine-specific location. Reduce it
+    # to its basename so the captured frame is reproducible across the snapshot host and CI runners.
+    for entity_kwargs in plugin._pending_entities_kwargs.values():
+        morph = entity_kwargs["morph"]
+        if isinstance(morph, gs.morphs.FileMorph):
+            morph.file = os.path.basename(morph.file)
 
     pyrender_viewer = scene.viewer._pyrender_viewer
     pyrender_viewer.switch_to()
     pyrender_viewer.on_draw()
     rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
     assert rgb_array_to_png_bytes(rgb) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
+@pytest.mark.parametrize("performance_mode", [False])
+def test_scene_rebuild():
+    # enable_gui makes the overlay own an InteractiveScene and rebuild the scene in place: the same Scene
+    # object (and its viewer) stay valid across a rebuild, driven entirely through scene.step() with no
+    # manual InteractiveScene. A Rebuild click only queues the request; scene.step() applies it on its thread.
+    scene = _build_default_scene(enable_gui=True)
+    scene.build()
+
+    scene_id = id(scene)
+    plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
+    interactive = plugin._interactive_scene
+    assert interactive is not None
+    names_before = [entity.name for entity in scene.entities]
+    # The rebuild must reuse the live window rather than closing and reopening it.
+    window_before = scene.viewer._pyrender_viewer
+    # Move the camera off its default so the rebuild has to restore the exact viewpoint (including roll),
+    # not reset it to the ViewerOptions default.
+    scene.viewer.set_camera_pose(pos=np.array([2.0, 1.3, 1.7]), lookat=np.array([0.1, -0.2, 0.4]))
+    camera_pose_before = scene.viewer.camera_pose.copy()
+
+    interactive.rebuild(entities_kwargs=plugin._pending_entities_kwargs)
+    scene.step()
+
+    assert id(scene) == scene_id
+    assert scene.viewer is not None and scene.viewer.is_alive()
+    assert scene.viewer._pyrender_viewer is window_before
+    assert [entity.name for entity in scene.entities] == names_before
+    assert_allclose(scene.viewer.camera_pose, camera_pose_before, atol=1e-4)
+    scene.step()

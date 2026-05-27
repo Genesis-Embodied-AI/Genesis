@@ -203,6 +203,7 @@ class Scene(RBC):
         self._uid = gs.UID()
         self._t = 0
         self._is_built = False
+        self._pre_step_callbacks: list = []
 
         gs.logger.info(f"Scene ~~~<{self._uid}>~~~ created.")
 
@@ -1018,35 +1019,38 @@ class Scene(RBC):
         """
         return self._get_state()
 
+    def register_pre_step_callback(self, callback):
+        """Register a callback invoked at the start of each ``step()``, on the stepping thread. A callback
+        may run deferred work there and veto the advance of that step by returning ``True``. The scene calls
+        them opaquely; use this to drive a scene from an external controller without coupling the scene to it."""
+        self._pre_step_callbacks.append(callback)
+
     @gs.assert_built
     def step(self, update_visualizer=True, refresh_visualizer=True):
         """
         Runs a simulation step forward in time.
         """
-        # Honor GUI controls on this (main) thread before stepping. A rebuild reconstructs this scene in
-        # place and tears down the current viewer, so skip the step that frame; a paused GUI vetoes the
-        # advance entirely. Both are no-ops without an interactive overlay.
-        viewer = self.viewer
-        if viewer is not None:
-            if viewer.consume_rebuild_requests():
-                return
-            if not viewer.should_advance_simulation():
-                return
+        # Run pre-step callbacks on the stepping thread. A callback may perform deferred work and veto this
+        # frame's advance by returning True. The scene treats them opaquely, without knowing what they do or who
+        # registered them (e.g. an InteractiveScene driving GUI-requested rebuild/pause). The visualizer is still
+        # refreshed when the advance is vetoed, so the viewer keeps rendering and stays responsive while paused.
+        advance = not any([callback() for callback in tuple(self._pre_step_callbacks)])
 
-        if not self._forward_ready:
-            gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
-
-        self._sim.step()
-
-        self._t += 1
+        if advance:
+            if not self._forward_ready:
+                gs.raise_exception("Forward simulation not allowed after backward pass. Please reset scene state.")
+            self._sim.step()
+            self._t += 1
 
         if update_visualizer:
-            self._visualizer.update(force=False, auto=refresh_visualizer)
+            # Force the refresh when the sim did not advance (e.g. paused) so edits made off the step loop -
+            # like a GUI joint slider calling set_qpos - are still drawn and the viewer does not appear frozen.
+            self._visualizer.update(force=not advance, auto=refresh_visualizer)
 
-        if self.profiling_options.show_FPS:
-            self.FPS_tracker.step()
-
-        self._recorder_manager.step(self._sim.cur_step_global)
+        if advance:
+            if self.profiling_options.show_FPS:
+                self.FPS_tracker.step()
+            self._recorder_manager.step(self._sim.cur_step_global)
 
     def stop_recording(self):
         self._recorder_manager.stop()
