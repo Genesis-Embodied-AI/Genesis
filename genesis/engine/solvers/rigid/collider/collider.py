@@ -967,6 +967,13 @@ class Collider:
                 self._solver._errno,
             )
 
+        # Plane-convex contacts come from analytic paths that leave diff_contact_input unfilled; populate it here so
+        # the differentiable narrow-phase reverse can reconstruct them (see kernel_fill_diff_contact_input_plane).
+        if self._solver.rigid_config.requires_grad:
+            narrowphase.kernel_fill_diff_contact_input_plane(
+                self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config
+            )
+
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
         contact_data = self._contact_data_cache.setdefault((as_tensor, to_torch), {})
@@ -1109,8 +1116,9 @@ class Collider:
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
         func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
+        self.backward_narrowphase()
 
-        # Compute gradient
+    def backward_narrowphase(self):
         func_narrow_phase_diff_convex_vs_convex.grad(
             self._solver.dyn_state,
             self._collider_state,
