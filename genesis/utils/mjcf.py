@@ -167,9 +167,28 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 mesh_path = elem.get("filename")
                 if mesh_path.startswith("package://"):
                     mesh_path = mesh_path[10:]
+                    # First try the naive join `<URDF dir>/<stripped>`. If that
+                    # file doesn't exist, fall back to ROS-style package
+                    # resolution: walk UP `asset_path` looking for a directory
+                    # whose name equals the package name (the first path
+                    # component of the stripped URI) and resolve the rest of the
+                    # mesh path relative to that. This mirrors the fallback in
+                    # `genesis/ext/urdfpy/utils.py:get_filename()` and keeps the
+                    # primary Mujoco-based URDF parser from rejecting URDFs that
+                    # are laid out as `<pkg>/urdf/foo.urdf` while referencing
+                    # `package://<pkg>/meshes/...`.
+                    resolved = Path(asset_path) / mesh_path
+                    if not resolved.is_file():
+                        base_parts = Path(asset_path).parts
+                        mesh_parts = mesh_path.split("/")
+                        if mesh_parts and mesh_parts[0] in base_parts:
+                            idx = base_parts.index(mesh_parts[0])
+                            resolved = Path(*base_parts[:idx], *mesh_parts)
+                else:
+                    resolved = Path(asset_path) / mesh_path
                 # Beware symlinks must NOT be resolved, otherwise it may break the file extension, which is used by
                 # Mujoco MJCF parser to determine how to load mesh files.
-                elem.set("filename", str(Path(asset_path) / mesh_path))
+                elem.set("filename", str(resolved))
 
         with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
             # Parse updated URDF file as a string
