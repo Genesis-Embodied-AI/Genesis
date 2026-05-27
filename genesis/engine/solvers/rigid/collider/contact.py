@@ -981,8 +981,12 @@ def func_clamp_prune_and_sort_contacts_coop(
                 ii += _K
 
             # Phase 1a sort: parallel bitonic sort across 32 lanes when n_con <= 32; fall back to serial-on-lane-0
-            # insertion sort otherwise. Bitonic is 15 compare-exchange stages (k=2..32, j=k/2..1), each a single
-            # subgroup shuffle + compare, replacing the O(n^2/2) lane-0 insertion sort.
+            # insertion sort otherwise. The 15-stage compare-exchange schedule (k=2..32, j=k/2..1) is provided by
+            # ``qd.simt.subgroup.bitonic_sort_kv_tiled``; we pass ``log2_size = 5`` to pin the sort to a 32-lane
+            # tile, which matches the kernel's ``block_dim = _K = 32`` exactly regardless of the active subgroup
+            # width on the target backend (the tiled form sorts 32 lanes even on AMDGPU wave64, where the bare
+            # ``bitonic_sort_kv(...)`` wrapper would otherwise reach across all 64 lanes and mix in garbage from
+            # the inactive upper half).
             if n_con <= _K:
                 # Load with sentinel for out-of-range lanes (pushes them to the end of ascending sort).
                 my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
@@ -991,26 +995,7 @@ def func_clamp_prune_and_sort_contacts_coop(
                     my_key = collider_state.contact_sort_key[tid, i_b]
                     my_idx = collider_state.contact_sort_idx[tid, i_b]
 
-                # 15 bitonic stages: (k, j) pairs walking the standard schedule. Stable compare (tiebreak on idx).
-                for k_log2 in qd.static(range(1, 6)):
-                    k_mask = qd.static(1 << k_log2)
-                    for j_log2 in qd.static(range(k_log2 - 1, -1, -1)):
-                        j = qd.static(1 << j_log2)
-                        partner = qd.u32(tid ^ j)
-                        their_key = qd.simt.subgroup.shuffle(my_key, partner)
-                        their_idx = qd.simt.subgroup.shuffle(my_idx, partner)
-                        i_am_low = (tid & j) == 0
-                        asc = (tid & k_mask) == 0
-                        take_min = i_am_low == asc
-                        their_lt_mine = (their_key < my_key) or (their_key == my_key and their_idx < my_idx)
-                        if take_min:
-                            if their_lt_mine:
-                                my_key = their_key
-                                my_idx = their_idx
-                        else:
-                            if not their_lt_mine and (their_key != my_key or their_idx != my_idx):
-                                my_key = their_key
-                                my_idx = their_idx
+                my_key, my_idx = qd.simt.subgroup.bitonic_sort_kv_tiled(my_key, my_idx, 5)
 
                 # Write back the sorted values for the real range.
                 if tid < n_con:
