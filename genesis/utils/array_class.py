@@ -798,6 +798,7 @@ class ColliderInfo:
     # link-pair contact pruning
     contact_pruning_tolerance: qd.Tensor
     prune_deep_penetration_ratio: qd.Tensor
+    prune_degenerate_area_ratio: qd.Tensor
 
 
 def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_config, **kwargs):
@@ -830,6 +831,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
         contact_pruning_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_pruning_tolerance"]),
         prune_deep_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["prune_deep_penetration_ratio"]),
+        prune_degenerate_area_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["prune_degenerate_area_ratio"]),
     )
 
 

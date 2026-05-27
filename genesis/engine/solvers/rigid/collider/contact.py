@@ -538,6 +538,7 @@ def func_rotate_frame(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_and_sort_contacts(
+    links_info: array_class.LinksInfo,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -582,6 +583,7 @@ def func_clamp_prune_and_sort_contacts(
     max_contact_pairs = collider_info.max_contact_pairs[None]
     tol = collider_info.contact_pruning_tolerance[None]
     prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
+    prune_degenerate_area_ratio = collider_info.prune_degenerate_area_ratio[None]
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
     EPS = rigid_global_info.EPS[None]
 
@@ -869,6 +871,49 @@ def func_clamp_prune_and_sort_contacts(
                                     if collider_state.contact_data.penetration[phys_i, i_b] > deep_keep_threshold:
                                         collider_state.contact_keep[i, i_b] = 1
 
+                            # Support-polygon degeneracy gate. When the hull polygon's surface area is too small to
+                            # absorb the first-order-Taylor bias in perturbed contact normals (each contact's bias
+                            # creates a horizontal force ~ N * mc_perturbation^2; if the polygon is thin the moment arms
+                            # align rather than cancel and the LCP drifts), restore every contact the hull dropped, i.e.
+                            # skip pruning for this bucket. Closed-form shoelace area on the hull stack
+                            # contact_hull_stack[b_start..b_start+k); The threshold is the link-pair effective inertia
+                            # radius squared (invweight_trans / invweight_rot): mass cancels out, so the ratio is a
+                            # shape-and-density-distribution quantity.
+                            hull_area = gs.qd_float(0.0)
+                            if k >= 3:
+                                for i in range(k):
+                                    a_pos = collider_state.contact_hull_stack[b_start + i, i_b]
+                                    j = i + 1
+                                    if j == k:
+                                        j = 0
+                                    b_pos = collider_state.contact_hull_stack[b_start + j, i_b]
+                                    au = collider_state.contact_sort_key[a_pos, i_b]
+                                    av = collider_state.contact_proj_v[a_pos, i_b]
+                                    bu = collider_state.contact_sort_key[b_pos, i_b]
+                                    bv = collider_state.contact_proj_v[b_pos, i_b]
+                                    hull_area = hull_area + au * bv - bu * av
+                                hull_area = 0.5 * qd.abs(hull_area)
+                                I_la0 = (la0, i_b) if qd.static(static_rigid_sim_config.batch_links_info) else la0
+                                I_lb0 = (lb0, i_b) if qd.static(static_rigid_sim_config.batch_links_info) else lb0
+                                invw_ratio = gs.qd_float(0.0)
+                                if links_info.is_fixed[I_la0]:
+                                    invw_ratio = links_info.invweight[I_lb0][0] / qd.max(
+                                        links_info.invweight[I_lb0][1], EPS
+                                    )
+                                elif links_info.is_fixed[I_lb0]:
+                                    invw_ratio = links_info.invweight[I_la0][0] / qd.max(
+                                        links_info.invweight[I_la0][1], EPS
+                                    )
+                                else:
+                                    invw_ratio = min(
+                                        links_info.invweight[I_la0][0] / qd.max(links_info.invweight[I_la0][1], EPS),
+                                        links_info.invweight[I_lb0][0] / qd.max(links_info.invweight[I_lb0][1], EPS),
+                                    )
+                                if hull_area < prune_degenerate_area_ratio * invw_ratio:
+                                    for i in range(b_start, b_end):
+                                        if collider_state.contact_keep[i, i_b] == 0:
+                                            collider_state.contact_keep[i, i_b] = 1
+
                     b_start = b_end
 
                 # Phase 3: compact contact_sort_idx by squeezing out dropped slots.
@@ -923,6 +968,7 @@ def func_clamp_prune_and_sort_contacts(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_and_sort_contacts_coop(
+    links_info: array_class.LinksInfo,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -934,7 +980,8 @@ def func_clamp_prune_and_sort_contacts_coop(
     Same contract (mandatory clamp + identity-init contact_sort_idx; gated prune; gated spatial sort) and same
     pruning algorithm as the serial fused kernel. Difference: 32 warp lanes split the per-env work:
       - PARALLEL: per-contact init, phase-2 mean-normal / centroid reductions, coplanarity reduction, in-plane
-        projection writes, phase-1a bitonic sort (when n_con <= 32; falls back to serial insertion sort otherwise).
+        projection writes, phase-1a bitonic sort (when n_con <= 32; falls back to serial insertion sort otherwise),
+        and the degeneracy-gate shoelace-area reduce + bucket restore.
       - SERIAL on lane 0: bucket walk control, lex sort, Andrew's monotone chain, hull-mark, deep-pen restore, and
         the phase-3 compact (with fused spatial sort when `collider_static_config.spatial_sort_supported`).
     """
@@ -942,6 +989,7 @@ def func_clamp_prune_and_sort_contacts_coop(
     max_contact_pairs = collider_info.max_contact_pairs[None]
     tol = collider_info.contact_pruning_tolerance[None]
     prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
+    prune_degenerate_area_ratio = collider_info.prune_degenerate_area_ratio[None]
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
     EPS = rigid_global_info.EPS[None]
 
@@ -1180,6 +1228,8 @@ def func_clamp_prune_and_sort_contacts_coop(
                         # sort + hull build that reads them.
                         qd.simt.subgroup.sync()
 
+                    # Hull size, built serially on lane 0 and broadcast to all lanes for the coop degeneracy gate.
+                    k = 0
                     if tid == 0 and coplanar:
                         sort_u_tol = gs.qd_float(1e-3) * qd.sqrt(max_in_plane_r2)
                         for i in range(b_start + 1, b_end):
@@ -1199,7 +1249,6 @@ def func_clamp_prune_and_sort_contacts_coop(
 
                         hull_collinear_tol = tol * max_in_plane_r2
 
-                        k = 0
                         for i in range(b_start, b_end):
                             ci = collider_state.contact_lex_idx[i, i_b]
                             cu = collider_state.contact_sort_key[ci, i_b]
@@ -1267,7 +1316,62 @@ def func_clamp_prune_and_sort_contacts_coop(
                                 if collider_state.contact_data.penetration[orig, i_b] > deep_keep_threshold:
                                     collider_state.contact_keep[orig, i_b] = 1
 
+                    # COOP support-polygon degeneracy gate: a support polygon too thin to absorb the first-order
+                    # bias of perturbed contact normals lets the LCP drift, so every hull-dropped contact is forced
+                    # back. Publish lane-0's hull stack + contact_keep writes, broadcast the hull size so every lane
+                    # agrees on the (uniform) k >= 3 branch, then compute the shoelace area as a 32-lane reduce over
+                    # hull edges (hull stack holds sort-space positions, indexing sort_key / proj_v directly) and
+                    # restore via a lane-strided pass over the bucket.
+                    if coplanar:
+                        qd.simt.subgroup.sync()
+                        k = qd.simt.subgroup.shuffle(k, qd.u32(0))
+                        if k >= 3:
+                            hull_area_l = gs.qd_float(0.0)
+                            e = tid
+                            while e < k:
+                                a_pos = collider_state.contact_hull_stack[b_start + e, i_b]
+                                nxt = e + 1
+                                if nxt == k:
+                                    nxt = 0
+                                b_pos = collider_state.contact_hull_stack[b_start + nxt, i_b]
+                                au = collider_state.contact_sort_key[a_pos, i_b]
+                                av = collider_state.contact_proj_v[a_pos, i_b]
+                                bu = collider_state.contact_sort_key[b_pos, i_b]
+                                bv = collider_state.contact_proj_v[b_pos, i_b]
+                                hull_area_l += au * bv - bu * av
+                                e += _K
+                            hull_area = gs.qd_float(0.5) * qd.abs(qd.simt.subgroup.reduce_all_add_tiled(hull_area_l, 5))
+
+                            la0 = collider_state.contact_data.link_a[ref_src, i_b]
+                            lb0 = collider_state.contact_data.link_b[ref_src, i_b]
+                            I_la0 = (la0, i_b) if qd.static(static_rigid_sim_config.batch_links_info) else la0
+                            I_lb0 = (lb0, i_b) if qd.static(static_rigid_sim_config.batch_links_info) else lb0
+                            invw_ratio = gs.qd_float(0.0)
+                            if links_info.is_fixed[I_la0]:
+                                invw_ratio = links_info.invweight[I_lb0][0] / qd.max(
+                                    links_info.invweight[I_lb0][1], EPS
+                                )
+                            elif links_info.is_fixed[I_lb0]:
+                                invw_ratio = links_info.invweight[I_la0][0] / qd.max(
+                                    links_info.invweight[I_la0][1], EPS
+                                )
+                            else:
+                                invw_ratio = min(
+                                    links_info.invweight[I_la0][0] / qd.max(links_info.invweight[I_la0][1], EPS),
+                                    links_info.invweight[I_lb0][0] / qd.max(links_info.invweight[I_lb0][1], EPS),
+                                )
+                            if hull_area < prune_degenerate_area_ratio * invw_ratio:
+                                jj = b_start + tid
+                                while jj < b_end:
+                                    orig = collider_state.contact_sort_idx[jj, i_b]
+                                    if collider_state.contact_keep[orig, i_b] == 0:
+                                        collider_state.contact_keep[orig, i_b] = 1
+                                    jj += _K
+
                 b_start = b_end
+
+            # Publish the coop degeneracy-gate restore writes before lane 0 reads contact_keep in phase 3.
+            qd.simt.subgroup.sync()
 
         if tid == 0:
             if qd.static(collider_static_config.spatial_sort_supported):

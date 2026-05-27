@@ -90,6 +90,10 @@ class Collider:
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
         self._prune_deep_penetration_ratio = 3.0
+        # Multiplier on the link-pair effective inertia radius squared (invweight_trans / invweight_rot) that defines
+        # the support-polygon area threshold below which the bucket's hull pruning is skipped (all hull-dropped contacts
+        # restored). Catches buckets too thin to absorb the first-order-Taylor bias in perturbed contact normals.
+        self._prune_degenerate_area_ratio = 0.2
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -248,6 +252,7 @@ class Collider:
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
             prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
+            prune_degenerate_area_ratio=self._prune_degenerate_area_ratio,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
@@ -899,6 +904,7 @@ class Collider:
         )
         if ran_fused_dedup_coop:
             func_clamp_prune_and_sort_contacts_coop(
+                self._solver.links_info,
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,
@@ -907,6 +913,7 @@ class Collider:
             )
         else:
             func_clamp_prune_and_sort_contacts(
+                self._solver.links_info,
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,
