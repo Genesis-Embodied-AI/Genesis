@@ -980,13 +980,9 @@ def func_clamp_prune_and_sort_contacts_coop(
                 )
                 ii += _K
 
-            # Phase 1a sort: parallel bitonic sort across 32 lanes when n_con <= 32; fall back to serial-on-lane-0
-            # insertion sort otherwise. The 15-stage compare-exchange schedule (k=2..32, j=k/2..1) is provided by
-            # ``qd.simt.subgroup.bitonic_sort_kv_tiled``; we pass ``log2_size = 5`` to pin the sort to a 32-lane
-            # tile, which matches the kernel's ``block_dim = _K = 32`` exactly regardless of the active subgroup
-            # width on the target backend (the tiled form sorts 32 lanes even on AMDGPU wave64, where the bare
-            # ``bitonic_sort_kv(...)`` wrapper would otherwise reach across all 64 lanes and mix in garbage from
-            # the inactive upper half).
+            # Phase 1a sort: bitonic sort across 32 lanes when n_con <= _K, serial-on-lane-0 insertion sort
+            # otherwise.  ``log2_size = 5`` pins the tiled sort to 32 lanes to match ``block_dim = _K`` on every
+            # backend (correct on AMDGPU wave64 where the bare ``bitonic_sort_kv`` would reach all 64 lanes).
             if n_con <= _K:
                 # Load with sentinel for out-of-range lanes (pushes them to the end of ascending sort).
                 my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
