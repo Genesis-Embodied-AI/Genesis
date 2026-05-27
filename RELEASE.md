@@ -1,5 +1,31 @@
 # Genesis Release Note
 
+## 1.0.0
+
+This release adds full support of non-convex multi-contact collision detection. Besides, many components of the simulation have been sped up, incl the rigid solver that should now be up to 35% for contact-reach scenes with about 64 dofs.
+
+### New Features
+
+* Add robust non-convex mesh repair pipeline. (@duburcqa) (#2816)
+* Add robust non-convex multi-contact collision detection. (@duburcqa) (#2812, #2821, #2823, #2825, #2828, #2844)
+* Add 'ViewerOptions.enable_gui' option to easily enable ImGui overlay. (@duburcqa) (#2846, #2849)
+
+### Bug Fixes
+
+* Always register scene for destroy even in case of build failure. (@duburcqa) (#2807)
+* Fix static-contact drift on smooth-vs-polytope contacts. (@duburcqa) (#2801, #2841)
+* Fix spurious rotation on flat terrain. (@duburcqa) (#2810)
+* Fix elastomer taxel broken on Apple Metal. (@duburcqa) (#2811)
+* Fix inconsistency between broadphase and narrowphase. (@duburcqa) (#2838)
+* Fix tilted plane rendering. (@duburcqa) (#2824)
+
+### Miscellaneous
+
+* Speed up point cloud tactile sensors. (@Milotrince) (#2800)
+* Speed up MPM solver. (@Kashu7100) (#2720)
+* Speed up rigid constraint solver. (@hughperkins) (#2809, #2817, #2820, #2827, #2837)
+* Add contact pruning at link pair level. (@duburcqa, @hughperkins) (#2829, #2831, #2832, #2834, #2835)
+
 ## 0.4.7
 
 This release introduces a new type of tactile sensors while improving the existing raycasting-based and tactile sensors. Besides, a new opt-in experimental viewer plugin to interact with the simulation is now available.
