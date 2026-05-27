@@ -110,7 +110,9 @@ def func_add_polytope_vertex_contacts_sdf(
     # B's smallest SDF cell so verts within one cell of the surface still register a contact even when the kernel pen
     # reads <= 0; the synthetic pen tapers smoothly across the band to avoid a discontinuity that would drive a settled
     # body into a limit-cycle oscillation.
-    n_max = qd.static(collider_static_config.n_contacts_per_pair if static_rigid_sim_config.enable_multi_contact else 1)
+    n_max = qd.static(
+        collider_static_config.n_contacts_per_nonconvex_pair if static_rigid_sim_config.enable_multi_contact else 1
+    )
     EPS = rigid_global_info.EPS[None]
     gb_cell = sdf_info.geoms_info.sdf_cell_size[i_gb]
     margin = qd.min(qd.min(gb_cell[0], gb_cell[1]), gb_cell[2])
@@ -159,7 +161,7 @@ def func_add_polytope_vertex_contacts_sdf(
         diversity_radius = qd.max(tolerance, needle_extent * gs.qd_float(0.5 / n_max))
         top_iv = qd.Vector.zero(gs.qd_int, n_max)
         top_pen = qd.Vector.zero(gs.qd_float, n_max)
-        for k in qd.static(range(n_max)):
+        for k in range(n_max):
             top_pen[k] = -gs.qd_float(1e30)
             top_iv[k] = -1
         for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
@@ -168,7 +170,7 @@ def func_add_polytope_vertex_contacts_sdf(
                 pen_v = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
                 if pen_v > -margin:
                     close_idx = -1
-                    for k in qd.static(range(n_max)):
+                    for k in range(n_max):
                         if close_idx < 0 and top_iv[k] >= 0:
                             other_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[top_iv[k]], ga_pos, ga_quat)
                             if (vertex_pos - other_pos).norm() < diversity_radius:
@@ -179,7 +181,7 @@ def func_add_polytope_vertex_contacts_sdf(
                             top_iv[close_idx] = i_v
                     else:
                         weakest_idx = 0
-                        for k in qd.static(range(1, n_max)):
+                        for k in range(1, n_max):
                             if top_pen[k] < top_pen[weakest_idx]:
                                 weakest_idx = k
                         if pen_v > top_pen[weakest_idx]:
@@ -217,10 +219,14 @@ def func_add_polytope_vertex_contacts_sdf(
         center_b_world = gu.qd_transform_by_trans_quat(b_center_local, gb_pos, gb_quat)
         use_closing_dir = qd.abs(sd_center) < rbound_a and rbound_a_sq > gs.qd_float(0.25) * rbound_b_sq
         approach_depth_pair = gs.qd_float(0.0)
+        # Set when A wraps around B so that B passes through A along the center-to-center axis. There the SDF gradient
+        # at A's center is ill-conditioned (it sits inside B, away from any surface), so per-vertex grads are trusted
+        # directly rather than filtered against that unreliable reference normal.
+        enclosed_axis = False
         if use_closing_dir:
             closing_dir = center_a_world - center_b_world
             if closing_dir.norm() > EPS:
-                normal_center = gu.qd_normalize(closing_dir, EPS)
+                closing_normal = gu.qd_normalize(closing_dir, EPS)
                 # OBB extent of A and B along the closing direction. Using the identity (R . e_i) . d = e_i . (R^T . d),
                 # we only need one inverse rotation per body to express closing_dir in that body's local frame; the OBB
                 # extent is then a 3-term weighted sum of local half-extents against the abs components of the
@@ -231,13 +237,26 @@ def func_add_polytope_vertex_contacts_sdf(
                 # radial gap away from B's lateral surface.
                 half_ext_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]) * gs.qd_float(0.5)
                 half_ext_b = (geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]) * gs.qd_float(0.5)
-                d_local_a = gu.qd_inv_transform_by_quat(normal_center, ga_quat)
-                d_local_b = gu.qd_inv_transform_by_quat(normal_center, gb_quat)
+                d_local_a = gu.qd_inv_transform_by_quat(closing_normal, ga_quat)
+                d_local_b = gu.qd_inv_transform_by_quat(closing_normal, gb_quat)
                 h_a = half_ext_a.dot(qd.abs(d_local_a))
                 h_b = half_ext_b.dot(qd.abs(d_local_b))
-                center_proj = qd.abs((center_a_world - center_b_world).dot(normal_center))
-                approach_depth_pair = h_a + h_b - center_proj
-        for k in qd.static(range(n_max)):
+                # Reject the override when A wraps around B: the center-to-center line is then B's through-axis and the
+                # OBB "overlap" is the pass-through extent, not a real interpenetration, so resolving along it would
+                # eject A. The pose-robust signature is that A's own center lies in a cavity rather than inside A's
+                # material, so query A's SDF at A's center: positive for such a hollow/annular A, negative for the solid
+                # A of the genuine crossed-thin-geom regime.
+                sd_a_self = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_world, i_ga, ga_pos, ga_quat)
+                if sd_a_self > EPS:
+                    use_closing_dir = False
+                    enclosed_axis = True
+                else:
+                    normal_center = closing_normal
+                    center_proj = qd.abs((center_a_world - center_b_world).dot(closing_normal))
+                    approach_depth_pair = h_a + h_b - center_proj
+            else:
+                use_closing_dir = False
+        for k in range(n_max):
             if top_iv[k] >= 0:
                 i_v = top_iv[k]
                 vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
@@ -273,7 +292,13 @@ def func_add_polytope_vertex_contacts_sdf(
                 elif pen_v > 0.0:
                     pen_emit = synthetic_pen_max
                 normal_v = normal_center
-                if not use_closing_dir and grad_v.dot(normal_center) > 0.0:
+                if enclosed_axis:
+                    # The reference normal (grad at A's center) is unreliable here, so trust each vertex's local grad
+                    # when well-conditioned: it points out of B's surface at that vertex, keeping the normals diverse
+                    # across the contact patch so the net force balances instead of pushing A off to one side.
+                    if grad_norm > 0.5:
+                        normal_v = gu.qd_normalize(grad_v, EPS)
+                elif not use_closing_dir and grad_v.dot(normal_center) > 0.0:
                     normal_v = gu.qd_normalize(grad_v, EPS)
                 # In the closing-direction regime, the SDF "distance to nearest surface" measured at a vertex on A's
                 # outer skin is the small radial gap to B's lateral, not the much larger approach depth along the
@@ -814,7 +839,7 @@ def func_contact_mpr_terrain(
                     nvert = 0
                     for c in range(c_min, c_max + 1):
                         for i in range(2):
-                            if n_con < qd.static(collider_static_config.n_contacts_per_pair):
+                            if n_con < qd.static(collider_static_config.n_contacts_per_convex_pair):
                                 nvert = nvert + 1
                                 func_add_prism_vert(
                                     sh * (r + i) + collider_info.terrain_xyz_maxmin[3],
@@ -1293,7 +1318,7 @@ def func_convex_convex_contact(
                                         # points and stop multi-contact search.
                                         for i_c in range(n_contacts):
                                             # Ignore contact points if the number of contacts exceeds the limit.
-                                            if i_c < qd.static(collider_static_config.n_contacts_per_pair):
+                                            if i_c < qd.static(collider_static_config.n_contacts_per_convex_pair):
                                                 contact_pos = gjk_state.contact_pos[i_b, i_c]
                                                 normal = gjk_state.normal[i_b, i_c]
                                                 contact_pos = func_apply_smooth_refinement(
@@ -1974,7 +1999,7 @@ def _func_multicontact_gjk_full(
                     n_contacts_gjk = gjk_state.n_contacts[i_scratch]
                     if gjk_state.multi_contact_flag[i_scratch]:
                         for i_c in range(n_contacts_gjk):
-                            if i_c < qd.static(collider_static_config.n_contacts_per_pair):
+                            if i_c < qd.static(collider_static_config.n_contacts_per_convex_pair):
                                 gjk_contact_pos = gjk_state.contact_pos[i_scratch, i_c]
                                 gjk_normal = gjk_state.normal[i_scratch, i_c]
                                 gjk_contact_pos = func_apply_smooth_refinement(
@@ -2895,7 +2920,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                     )
 
                     # enable_multi_contact controls how many contacts the helper emits per pair (n_max=1 vs
-                    # n_contacts_per_pair); the dispatch is unconditional so disabling multi-contact never drops
+                    # n_contacts_per_convex_pair); the dispatch is unconditional so disabling multi-contact never drops
                     # collisions.
                     ga_pos = geoms_state.pos[i_ga, i_b]
                     ga_quat = geoms_state.quat[i_ga, i_b]

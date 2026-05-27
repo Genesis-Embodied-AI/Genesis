@@ -340,6 +340,26 @@ def postprocess_collision_geoms(
     if not g_infos:
         return []
 
+    # Weld coincident vertices of non-convex collision meshes onto a separate copy. Formats that store unshared
+    # per-face vertices (notably STL) yield a vertex soup whose duplicates differ only by float rounding; the
+    # downstream exact dedup at geom build only partially fuses them, leaving a degraded (sliver) mesh that corrupts
+    # the SDF. The convex path skips this (the hull / decomposition replaces the surface anyway). The collision mesh
+    # may be the very same trimesh as the visual geom, so the weld must not be done in place: only the collision geom
+    # is swapped for the welded copy, leaving the visual vertices untouched. Already-shared meshes (OBJ, glTF) weld to
+    # no fewer vertices and keep their original geom.
+    if not convexify:
+        for g_info in g_infos:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
+                continue
+            welded = g_info["mesh"].trimesh.copy()
+            welded.merge_vertices()
+            if len(welded.vertices) < len(g_info["mesh"].trimesh.vertices):
+                g_info["mesh"] = gs.Mesh.from_trimesh(
+                    mesh=welded,
+                    surface=gs.surfaces.Collision(),
+                    metadata=g_info["mesh"].metadata.copy(),
+                )
+
     # Try the repair meshes that seems to be "broken" but not beyond repair.
     # Note that this procedure is only applied if the estimated volume is significantly different before and after
     # repair, to avoid altering the original mesh without actual benefit. Moreover, only duplicate faces are removed,

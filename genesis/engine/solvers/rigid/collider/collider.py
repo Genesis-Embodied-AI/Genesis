@@ -144,12 +144,17 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
-        n_contacts_per_pair = 20 if self._solver._static_rigid_sim_config.requires_grad else 5
-        if (
-            self._solver._options.box_box_detection
-            and sum(geom.type == gs.GEOM_TYPE.BOX for geom in self._solver.geoms) > 1
-        ):
-            n_contacts_per_pair = max(n_contacts_per_pair, self._box_MAXCONPAIR)
+        n_contacts_per_convex_pair = 20 if self._solver._static_rigid_sim_config.requires_grad else 5
+
+        # Nonconvex vertex-vs-SDF pairs and box-box pairs (via their specialized detector) emit many contacts per pair -
+        # a full annular ring or face patch - unlike the handful a generic convex pair emits. They share a larger cap,
+        # kept separate from the convex cap so the contact buffer is not over-allocated for ordinary convex pairs, and
+        # are grouped together for the buffer sizing below. The cap is sized to keep an extended contact patch fully
+        # represented: too few points and parts of the patch drop out intermittently as the geometry moves, losing
+        # constraint directions and letting bodies slip.
+        n_contacts_per_nonconvex_pair = 40
+        if self._solver._options.box_box_detection and sum(g.type == gs.GEOM_TYPE.BOX for g in self._solver.geoms) > 1:
+            n_contacts_per_nonconvex_pair = max(n_contacts_per_nonconvex_pair, self._box_MAXCONPAIR)
 
         # Compute collision pairs and algorithm flags in a single pass
         (
@@ -160,6 +165,7 @@ class Collider:
             has_non_box_plane_convex_convex,
             has_convex_specialization,
             has_nonconvex_nonterrain,
+            self._n_possible_nonconvex_pairs,
         ) = self._compute_collision_pair_idx()
 
         # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
@@ -217,7 +223,8 @@ class Collider:
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             has_prunable_contacts=has_prunable_contacts,
             spatial_sort_supported=spatial_sort_supported,
-            n_contacts_per_pair=n_contacts_per_pair,
+            n_contacts_per_convex_pair=n_contacts_per_convex_pair,
+            n_contacts_per_nonconvex_pair=n_contacts_per_nonconvex_pair,
             ccd_algorithm=ccd_algorithm,
         )
 
@@ -245,7 +252,7 @@ class Collider:
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
-        self._init_max_contact_pairs(self._n_possible_pairs)
+        self._init_max_contact_pairs(self._n_possible_pairs, self._n_possible_nonconvex_pairs)
         self._init_terrain_state()
 
         # Initialize [state], which stores every data that are may be updated at every single simulation step
@@ -331,7 +338,7 @@ class Collider:
 
         if n_geoms == 0:
             empty_pairs = np.empty((0, 2), dtype=gs.np_int)
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_pairs, False, False, False, False
+            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_pairs, False, False, False, False, 0
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
@@ -528,13 +535,22 @@ class Collider:
                 )
             )
 
-        has_nonconvex_vs_nonterrain = bool(
-            np.any(
-                ~(valid_convex_a & valid_convex_b)
-                & (valid_type_a != gs.GEOM_TYPE.TERRAIN)
-                & (valid_type_b != gs.GEOM_TYPE.TERRAIN)
-            )
+        # Pairs routed to the vertex-vs-SDF nonconvex narrowphase (at least one nonconvex geom, neither terrain).
+        nonconvex_pair_mask = (
+            ~(valid_convex_a & valid_convex_b)
+            & (valid_type_a != gs.GEOM_TYPE.TERRAIN)
+            & (valid_type_b != gs.GEOM_TYPE.TERRAIN)
         )
+        has_nonconvex_vs_nonterrain = bool(np.any(nonconvex_pair_mask))
+        # Pairs that emit many contacts per pair, used to size the contact buffer. Box-box pairs (when the specialized
+        # detector is enabled) emit up to box_MAXCONPAIR contacts, so they join the nonconvex pairs in the large-cap
+        # bucket rather than being sized as generic convex pairs.
+        large_contact_mask = nonconvex_pair_mask
+        if self._solver._options.box_box_detection:
+            large_contact_mask = large_contact_mask | (
+                (valid_type_a == gs.GEOM_TYPE.BOX) & (valid_type_b == gs.GEOM_TYPE.BOX)
+            )
+        n_possible_nonconvex_pairs = int(np.count_nonzero(large_contact_mask))
 
         return (
             n_possible_pairs,
@@ -544,6 +560,7 @@ class Collider:
             has_non_box_plane_convex_convex,
             has_convex_specialization,
             has_nonconvex_vs_nonterrain,
+            n_possible_nonconvex_pairs,
         )
 
     def _compute_verts_connectivity(self):
@@ -583,9 +600,16 @@ class Collider:
             self._collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
             self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
-    def _init_max_contact_pairs(self, n_possible_pairs):
+    def _init_max_contact_pairs(self, n_possible_pairs, n_possible_nonconvex_pairs):
         max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
-        max_contact_pairs = max_collision_pairs * self._collider_static_config.n_contacts_per_pair
+        # Size the contact buffer per regime: nonconvex pairs each emit up to n_contacts_per_nonconvex_pair, convex and
+        # terrain pairs up to n_contacts_per_convex_pair. The worst case fills the capped pair budget with as many
+        # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs.
+        cap_nonconvex = self._collider_static_config.n_contacts_per_nonconvex_pair
+        cap_convex = self._collider_static_config.n_contacts_per_convex_pair
+        n_nonconvex = min(n_possible_nonconvex_pairs, max_collision_pairs)
+        n_convex = min(n_possible_pairs - n_possible_nonconvex_pairs, max_collision_pairs - n_nonconvex)
+        max_contact_pairs = n_nonconvex * cap_nonconvex + n_convex * cap_convex
         max_contact_pairs_broad = max_collision_pairs * self._solver._options.multiplier_collision_broad_phase
 
         self._collider_info.max_possible_pairs[None] = n_possible_pairs

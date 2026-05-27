@@ -716,14 +716,15 @@ def get_collider_state(
     n_geoms = solver.n_geoms_
     max_collision_pairs = min(solver.max_collision_pairs, n_possible_pairs)
     max_collision_pairs_broad = max_collision_pairs * max_collision_pairs_broad_k
-    max_contact_pairs = max_collision_pairs * collider_static_config.n_contacts_per_pair
+    # Already sized per regime (convex vs nonconvex) by Collider._init_max_contact_pairs, which runs before this.
+    max_contact_pairs = max(collider_info.max_contact_pairs[None], 1)
     requires_grad = static_rigid_sim_config.requires_grad
 
     box_depth_shape = maybe_shape(
-        (collider_static_config.n_contacts_per_pair, _B), static_rigid_sim_config.box_box_detection
+        (collider_static_config.n_contacts_per_nonconvex_pair, _B), static_rigid_sim_config.box_box_detection
     )
     box_points_shape = maybe_shape(
-        (collider_static_config.n_contacts_per_pair, _B), static_rigid_sim_config.box_box_detection
+        (collider_static_config.n_contacts_per_nonconvex_pair, _B), static_rigid_sim_config.box_box_detection
     )
     box_pts_shape = maybe_shape((6, _B), static_rigid_sim_config.box_box_detection)
     box_lines_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
@@ -843,10 +844,10 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_non_box_plane_convex_convex: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
-    # True when link-pair contact pruning can ever do useful work. False when every link has at most one convex geom
-    # and no terrain is present (each (link_a, link_b) bucket then holds at most one geom-pair's contacts, capped at
-    # n_contacts_per_pair, so the 2D hull is at best a marginal reduction) or when use_contact_island is True (the
-    # contact-island path consumes contact_data in physical layout and does not honor the sort_idx indirection).
+    # True when link-pair contact pruning can ever do useful work. False when every link has at most one convex geom and
+    # no terrain is present (each (link_a, link_b) bucket then holds at most one geom-pair's contacts, capped at
+    # n_contacts_per_convex_pair, so the 2D hull is at best a marginal reduction), or when use_contact_island is True
+    # (the contact-island path consumes contact_data in physical layout and does not honor the sort_idx indirection).
     # Lets us skip the pruning kernel call and its scratch buffers entirely.
     has_prunable_contacts: bool
     # True when func_clamp_prune_and_sort_contacts should also spatial-sort contacts by x-position. Gated by both
@@ -854,7 +855,9 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     # (the island path does not honor the resulting sort_idx permutation).
     spatial_sort_supported: bool
     # maximum number of contact pairs per collision pair
-    n_contacts_per_pair: int
+    n_contacts_per_convex_pair: int
+    # maximum number of contact pairs per nonconvex (vertex-vs-SDF) collision pair; >= n_contacts_per_convex_pair
+    n_contacts_per_nonconvex_pair: int
     # ccd algorithm
     ccd_algorithm: int
 

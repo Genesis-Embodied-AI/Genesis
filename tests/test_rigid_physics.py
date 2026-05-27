@@ -3298,6 +3298,140 @@ def test_nonconvex_overlap(show_viewer):
     assert total_energy_history[0] > 3.0 * total_energy_history[-1]
 
 
+# Force CPU because nonconvex SDF is slow on GPU
+@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("direction", ["down", "up"])
+def test_nonconvex_concentric_contact(direction, show_viewer):
+    PITCH = 3.0e-3  # matches genesis/assets/meshes/bolt_nut/generate_bolt_nut.py
+    PITCH_RATE = PITCH / (2.0 * np.pi)  # axial advance per radian of rotation
+    # Head top is at z = 11 mm, so the 18 mm nut seats with its center at z ~ 20 mm. Driving down, release just above
+    # that so the nut coasts onto the head rather than being driven into it. Driving up, release just below the shaft
+    # tip (z ~ 48 mm) where only a turn of thread is left engaged, so the nut spins off and falls rather than stalling.
+    SEAT_RELEASE_Z = 0.0202
+    TIP_RELEASE_Z = 0.048
+    # Advance-per-revolution is only meaningful while enough of the nut is still threaded. Past ~2/3 unscrewed (less
+    # than a third of the 18 mm nut still gripping below the 43 mm shaft tip) the few remaining threads slip, so the
+    # pitch is checked only up to that engagement.
+    NUT_HEIGHT = 0.018
+    SHAFT_TIP_Z = 0.043
+    # 4.5 N*m screws down and 5.0 N*m unscrews up within the step budget below. At this test's single-substep dt the
+    # solve diverges past ~5 N*m (the example tolerates more only because its substeps make each step stiffer).
+    torque = -4.5 if direction == "down" else 5.0
+    # Per-step thread coupling carries a contact jitter of a few mm/s; unscrewing jitters more, so its bound is looser.
+    coupling_atol = 5e-3 if direction == "down" else 1e-2
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1e-3,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # Fine-thread contact needs a stiff constraint (the default 0.01 is too soft, letting the nut sink through
+            # the flanks and advance faster than the pitch).
+            constraint_timeconst=4e-3,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.11, 0.075, 0.085),
+            camera_lookat=(0.0, 0.0, 0.03),
+            camera_fov=35,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    # Realistic steel density so the nut carries a real fastener's mass and inertia.
+    steel = gs.materials.Rigid(rho=7850.0)
+    scene.add_entity(
+        gs.morphs.Mesh(
+            # Head bottom rests on the plane (z = 0), head top at z = 11 mm, shaft tip at z = 43 mm.
+            pos=(0.0, 0.0, 0.011),
+            file="meshes/bolt_nut/bolt.stl",
+            decimate=False,
+            convexify=False,
+            fixed=True,
+        ),
+        material=steel,
+        vis_mode="collision",
+    )
+    nut = scene.add_entity(
+        gs.morphs.Mesh(
+            # Pre-engaged near the top of the shaft (base ~24 mm) so it has the whole thread to travel.
+            pos=(0.0, 0.0, 0.024),
+            file="meshes/bolt_nut/nut.stl",
+            decimate=False,
+            convexify=False,
+        ),
+        material=steel,
+        vis_mode="collision",
+    )
+    scene.build()
+
+    # Drive a steady torque about z (a wrench) until the nut reaches its release height, then let go: negative torque
+    # screws it down onto the head, positive torque unscrews it up and off the shaft tip.
+    z0 = nut.get_pos()[..., 2]
+    prev_yaw = gu.quat_to_xyz(nut.get_quat())[..., 2]
+    total_turn = 0.0
+    released_step = None
+    z_engaged = z0
+    turn_engaged = total_turn
+    z_history = []
+    horizon = 4100 if direction == "down" else 4800
+    for step in range(horizon):
+        z = nut.get_pos()[..., 2]
+        if released_step is None:
+            reached = (z < SEAT_RELEASE_Z).all() if direction == "down" else (z > TIP_RELEASE_Z).all()
+            if reached:
+                released_step = step
+        driving = released_step is None
+        nut.control_dofs_force([torque if driving else 0.0], dofs_idx_local=(5,))
+        scene.step()
+
+        pos = nut.get_pos()
+        rpy = gu.quat_to_xyz(nut.get_quat())
+        vel = nut.get_dofs_velocity()
+        z_history.append(pos[..., 2])
+        yaw = rpy[..., 2]
+        total_turn = total_turn + ((yaw - prev_yaw + np.pi) % (2.0 * np.pi) - np.pi)
+        prev_yaw = yaw
+        # Fraction of the nut height still threaded below the shaft tip (capped at 1 while fully on the shaft). Track
+        # the last driven sample with more than a third engaged for the advance-per-revolution check below.
+        engaged = torch.clamp((SHAFT_TIP_Z - (pos[..., 2] - NUT_HEIGHT / 2.0)) / NUT_HEIGHT, max=1.0)
+        if driving and (engaged > 1.0 / 3.0).all():
+            z_engaged = pos[..., 2]
+            turn_engaged = total_turn
+        # While steadily screwing through the middle of the thread (past the initial spin-up, away from the seat and
+        # the tip where engagement thins) the nut stays coaxial and upright and its axial speed stays locked to its
+        # rotation by the pitch (vz = wz * pitch/2pi). The bound is loose because of the per-step contact jitter; it
+        # guards against a flank dropping out and letting vz decouple from wz by tens of mm/s (the nut spins without
+        # translating, stripping).
+        if driving and step > 100 and (0.025 < pos[..., 2]).all() and (pos[..., 2] < 0.043).all():
+            assert (torch.linalg.norm(pos[..., :2], dim=-1) < 5e-4).all()
+            assert_allclose(rpy[..., :2], 0.0, atol=0.02)
+            assert_allclose(vel[..., 2], vel[..., 5] * PITCH_RATE, atol=coupling_atol)
+
+    # The nut travelled the thread and reached its release height.
+    assert released_step is not None
+    # Over the well-engaged phase the axial advance per revolution tracks the thread pitch (it really screwed along
+    # the thread rather than slipping).
+    travel = torch.abs(z_engaged - z0)
+    revolutions = torch.abs(turn_engaged) / (2.0 * np.pi)
+    assert_allclose(travel / revolutions, PITCH, rtol=0.1)
+
+    if direction == "down":
+        # Comes to a clean rest seated on the head - no bounce, no drift: over the final settle window the nut height
+        # holds within a tight band, since a bounce or a strip would show as a large z excursion. The seated nut keeps
+        # a small steady contact jitter in velocity, so the position band is the robust at-rest signal.
+        z_window = torch.stack(z_history[-200:], dim=0)
+        assert ((z_window.amax(dim=0) - z_window.amin(dim=0)) < 1e-4).all()
+        z_final = nut.get_pos()[..., 2]
+        assert ((0.019 < z_final) & (z_final < 0.021)).all()
+    else:
+        # Spun off the tip, fell, and came to rest flat on the ground: its bounding box now sits on the plane and all
+        # of its velocities have decayed to zero.
+        aabb = nut.get_AABB()
+        assert (aabb[..., 0, 2] < 1.0e-3).all()
+        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.05)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("convexify", [True, False])
 @pytest.mark.parametrize("gjk_collision", [True, False])
