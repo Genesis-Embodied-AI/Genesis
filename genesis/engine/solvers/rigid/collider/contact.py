@@ -946,7 +946,7 @@ def func_clamp_prune_and_sort_contacts_coop(
     EPS = rigid_global_info.EPS[None]
 
     _K = qd.static(32)
-    _LOG2_K = qd.static(5)  # log2(_K); kept as a paired constant so the bitonic-sort call below is self-documenting.
+    _LOG2_K = qd.static(_K.bit_length() - 1)  # = log2(_K), assuming _K is a power of two.
     qd.loop_config(name="clamp_prune_and_sort_contacts_coop", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
