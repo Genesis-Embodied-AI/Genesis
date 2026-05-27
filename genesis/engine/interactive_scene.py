@@ -214,9 +214,33 @@ class InteractiveScene:
             new_scene.add_sensor(sensor_opts)
         new_scene.build()
 
+        # Dedup: drop any auto-attached plugin in the new viewer whose type is about to be
+        # reattached from the old viewer. The reattach loop preserves the previous instance
+        # (panel_width, custom panels, _pending_entities_kwargs sync, etc.) instead of the
+        # fresh auto-attached one.
+        reattach_types = {type(p) for p in plugins_to_reattach}
+        new_scene.viewer._viewer_plugins = [
+            p
+            for p in new_scene.viewer._viewer_plugins
+            if not (getattr(p, "_auto_attached", False) and type(p) in reattach_types)
+        ]
+
         for plugin in plugins_to_reattach:
             new_scene.viewer.add_plugin(plugin)
         if had_previous:
             new_scene.viewer.set_camera_pose(pos=cam_pos, lookat=cam_lookat)
+
+        # Tag every ImGuiOverlayPlugin in the new viewer so its disabled-state predicate
+        # returns True. Covers both the initial build (auto-attached plugin survives the
+        # dedup because plugins_to_reattach is empty, then gets tagged here) and rebuilds
+        # (the reattached old plugin gets re-tagged).
+        try:
+            from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
+        except ImportError:
+            ImGuiOverlayPlugin = None
+        if ImGuiOverlayPlugin is not None:
+            for plugin in new_scene.viewer._viewer_plugins:
+                if isinstance(plugin, ImGuiOverlayPlugin):
+                    plugin._interactive_scene = self
 
         self._scene = new_scene
