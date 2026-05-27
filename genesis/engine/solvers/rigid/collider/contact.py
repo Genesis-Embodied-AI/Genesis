@@ -946,6 +946,7 @@ def func_clamp_prune_and_sort_contacts_coop(
     EPS = rigid_global_info.EPS[None]
 
     _K = qd.static(32)
+    _LOG2_K = qd.static(5)  # log2(_K); kept as a paired constant so the bitonic-sort call below is self-documenting.
     qd.loop_config(name="clamp_prune_and_sort_contacts_coop", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
@@ -981,8 +982,8 @@ def func_clamp_prune_and_sort_contacts_coop(
                 ii += _K
 
             # Phase 1a sort: bitonic sort across 32 lanes when n_con <= _K, serial-on-lane-0 insertion sort
-            # otherwise.  ``log2_size = 5`` pins the tiled sort to 32 lanes to match ``block_dim = _K`` on every
-            # backend (correct on AMDGPU wave64 where the bare ``bitonic_sort_kv`` would reach all 64 lanes).
+            # otherwise.  ``log2_size = _LOG2_K`` pins the tiled sort to _K = 32 lanes on every backend (correct
+            # on AMDGPU wave64 where the bare ``bitonic_sort_kv`` would reach all 64 lanes).
             if n_con <= _K:
                 # Load with sentinel for out-of-range lanes (pushes them to the end of ascending sort).
                 my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
@@ -991,7 +992,7 @@ def func_clamp_prune_and_sort_contacts_coop(
                     my_key = collider_state.contact_sort_key[tid, i_b]
                     my_idx = collider_state.contact_sort_idx[tid, i_b]
 
-                my_key, my_idx = qd.simt.subgroup.bitonic_sort_kv_tiled(my_key, my_idx, 5)
+                my_key, my_idx = qd.simt.subgroup.bitonic_sort_kv_tiled(my_key, my_idx, _LOG2_K)
 
                 # Write back the sorted values for the real range.
                 if tid < n_con:
