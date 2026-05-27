@@ -1613,7 +1613,7 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
         assert n_contacts.all()
         if model_name.startswith("side_by_side"):
             assert (n_contacts == 4).all()
-        elif model_name == collinear_spheres:
+        elif model_name == "collinear_spheres":
             assert (n_contacts == 2).all()
 
     assert_allclose(entity.get_pos()[..., :2], smooth_xy, atol=1e-3)
