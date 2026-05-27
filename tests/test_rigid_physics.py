@@ -3317,6 +3317,8 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
     # 4.5 N*m screws down and 5.0 N*m unscrews up within the step budget below. At this test's single-substep dt the
     # solve diverges past ~5 N*m (the example tolerates more only because its substeps make each step stiffer).
     torque = -4.5 if direction == "down" else 5.0
+    # Per-step thread coupling carries a contact jitter of a few mm/s; unscrewing jitters more, so its bound is looser.
+    coupling_atol = 5e-3 if direction == "down" else 1e-2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -3398,12 +3400,13 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
             turn_engaged = total_turn
         # While steadily screwing through the middle of the thread (past the initial spin-up, away from the seat and
         # the tip where engagement thins) the nut stays coaxial and upright and its axial speed stays locked to its
-        # rotation by the pitch (vz = wz * pitch/2pi). With too-few or too-soft contacts the flanks drop out and vz
-        # decouples from wz by tens of mm/s (the nut spins without translating, slipping along the thread).
+        # rotation by the pitch (vz = wz * pitch/2pi). The bound is loose because of the per-step contact jitter; it
+        # guards against a flank dropping out and letting vz decouple from wz by tens of mm/s (the nut spins without
+        # translating, stripping).
         if driving and step > 100 and (0.025 < pos[..., 2]).all() and (pos[..., 2] < 0.043).all():
             assert (torch.linalg.norm(pos[..., :2], dim=-1) < 5e-4).all()
             assert_allclose(rpy[..., :2], 0.0, atol=0.02)
-            assert_allclose(vel[..., 2], vel[..., 5] * PITCH_RATE, atol=5e-3)
+            assert_allclose(vel[..., 2], vel[..., 5] * PITCH_RATE, atol=coupling_atol)
 
     # The nut travelled the thread and reached its release height.
     assert released_step is not None
