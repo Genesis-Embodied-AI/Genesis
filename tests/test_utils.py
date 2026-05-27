@@ -15,6 +15,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
 from genesis.utils.urdf import compose_inertial_properties
+from genesis.utils.ring_buffer import TensorRingBuffer
 
 from .utils import assert_allclose
 
@@ -518,3 +519,267 @@ def test_polar_decomposition_batched_pure_rotation(side, tol):
         np_reconstructed = np_P @ np_U
 
     assert_allclose(np_A, np_reconstructed, tol=tol)
+
+
+# =============================================================================================================
+# TensorRingBuffer tests
+# =============================================================================================================
+
+
+@pytest.fixture
+def ring_buffer_1d():
+    """Create a simple 1D ring buffer of N=4, shape=(3,)."""
+    return TensorRingBuffer(N=4, shape=(3,), dtype=torch.float32)
+
+
+@pytest.fixture
+def ring_buffer_2d():
+    """Create a 2D ring buffer of N=3, shape=(2, 4)."""
+    return TensorRingBuffer(N=3, shape=(2, 4), dtype=torch.float64)
+
+
+@pytest.mark.required
+def test_ring_buffer_init_defaults():
+    """Verify auto-allocation of buffer and default idx of -1."""
+    buf = TensorRingBuffer(N=4, shape=(3,), dtype=torch.float32)
+    assert buf.N == 4
+    assert buf.buffer.shape == (4, 3)
+    assert buf.buffer.dtype == torch.float32
+    assert buf.buffer.device.type == gs.device.type
+    # _idx should be a 0D tensor with value -1
+    assert buf._idx.ndim == 0
+    assert buf._idx.item() == -1
+
+
+@pytest.mark.required
+def test_ring_buffer_init_with_external_buffer():
+    """Provide an external buffer tensor."""
+    ext = torch.empty((4, 3), dtype=torch.float32, device=gs.device)
+    buf = TensorRingBuffer(N=4, shape=(3,), dtype=torch.float32, buffer=ext)
+    assert buf.buffer is ext
+
+
+@pytest.mark.required
+def test_ring_buffer_init_buffer_shape_mismatch():
+    """Buffer shape mismatch should raise AssertionError."""
+    ext = torch.empty((5, 3), dtype=torch.float32, device=gs.device)
+    with pytest.raises(AssertionError):
+        TensorRingBuffer(N=4, shape=(3,), dtype=torch.float32, buffer=ext)
+
+
+@pytest.mark.required
+def test_ring_buffer_init_with_external_idx():
+    """Provide an external 0D index tensor."""
+    idx = torch.tensor(2, dtype=torch.int64, device=gs.device)
+    buf = TensorRingBuffer(N=4, shape=(3,), dtype=torch.float32, idx=idx)
+    assert buf._idx is idx
+    assert buf._idx.item() == 2
+
+
+@pytest.mark.required
+def test_ring_buffer_init_idx_wrong_dtype():
+    """Non-integer idx dtype should raise AssertionError."""
+    idx = torch.tensor(0, dtype=torch.float32, device=gs.device)
+    with pytest.raises(AssertionError):
+        TensorRingBuffer(N=4, shape=(3,), dtype=torch.float32, idx=idx)
+
+
+@pytest.mark.required
+def test_ring_buffer_set_and_get(ring_buffer_1d, tol):
+    """set() followed by at(0) returns what was just set (before rotate)."""
+    buf = ring_buffer_1d
+    t = torch.tensor([1.0, 2.0, 3.0], device=gs.device)
+    buf.set(t)
+    # at(0) after set (before rotate) reads from buffer[_idx] which holds the just-set value
+    assert_allclose(buf.at(0), t, tol=tol)
+
+
+@pytest.mark.required
+def test_ring_buffer_rotate_advances_idx(ring_buffer_1d):
+    """rotate() increments the internal index, wrapping at N."""
+    buf = ring_buffer_1d
+
+    # Production pattern: rotate then set. After each full cycle _idx points to the written slot.
+    for expected_idx in range(buf.N):
+        buf.rotate()
+        buf.set(torch.zeros(3, device=gs.device))
+        assert buf._idx.item() == expected_idx
+
+
+@pytest.mark.required
+def test_ring_buffer_at_relative_index(ring_buffer_1d, tol):
+    """at() indexes from most recent (0) to oldest (N-1) in stable state.
+
+    Stable state is reached by following the production pattern: rotate → set → at(0).
+    After each full cycle, _idx points to the slot just written.
+    """
+    buf = ring_buffer_1d
+    vals = [torch.tensor([float(i), 0.0, 0.0], device=gs.device) for i in range(4)]
+
+    # Write all values using the production pattern: rotate then set
+    for v in vals:
+        buf.rotate()
+        buf.set(v)
+
+    # Stable state: buffer = [v0, v1, v2, v3] (written in order), _idx=3
+    # at(0) = most recent = v3, at(1) = v2, ..., at(3) = v0
+    assert_allclose(buf.at(0), vals[3], tol=tol, err_msg="at(0) should be most recent")
+    assert_allclose(buf.at(1), vals[2], tol=tol, err_msg="at(1) should be second most recent")
+    assert_allclose(buf.at(2), vals[1], tol=tol, err_msg="at(2) should be third most recent")
+    assert_allclose(buf.at(3), vals[0], tol=tol, err_msg="at(3) should be oldest")
+
+
+@pytest.mark.required
+def test_ring_buffer_at_returns_view_or_clone(ring_buffer_1d):
+    """at() with copy=None returns a view when possible."""
+    buf = ring_buffer_1d
+    buf.rotate()
+    v = torch.tensor([1.0, 2.0, 3.0], device=gs.device)
+    buf.set(v)
+
+    # at(0) returns a view into the buffer
+    result = buf.at(0)
+    assert result.untyped_storage().data_ptr() == buf.buffer.untyped_storage().data_ptr()
+
+
+@pytest.mark.required
+def test_ring_buffer_at_copy_true(ring_buffer_1d):
+    """at() with copy=True always returns a clone."""
+    buf = ring_buffer_1d
+    buf.rotate()
+    v = torch.tensor([1.0, 2.0, 3.0], device=gs.device)
+    buf.set(v)
+
+    result = buf.at(0, copy=True)
+    assert result.untyped_storage().data_ptr() != buf.buffer.untyped_storage().data_ptr()
+
+
+@pytest.mark.required
+def test_ring_buffer_at_copy_false_raises_when_needed(ring_buffer_1d):
+    """at() with copy=False raises when a view is impossible."""
+    buf = ring_buffer_1d
+    buf.rotate()
+    v = torch.tensor([1.0, 2.0, 3.0], device=gs.device)
+    buf.set(v)
+
+    # at() with a 1D idx tensor forces allocation (advanced indexing)
+    idx_tensor = torch.tensor([0], device=gs.device)
+    with pytest.raises(Exception):
+        buf.at(idx_tensor, copy=False)
+
+
+@pytest.mark.required
+def test_ring_buffer_at_with_others_idx(ring_buffer_2d, tol):
+    """at() with others_idx extracts sub-slices."""
+    buf = ring_buffer_2d
+    v = torch.arange(8, dtype=torch.float64, device=gs.device).reshape(2, 4)
+    buf.rotate()
+    buf.set(v)
+
+    # at(0, 0) gives the first row of the most recent entry
+    result = buf.at(0, 0)
+    assert_allclose(result, v[0], tol=tol)
+
+
+@pytest.mark.required
+def test_ring_buffer_at_per_row(ring_buffer_2d):
+    """at() with per_row=True handles per-row indexing."""
+    buf = ring_buffer_2d
+    for i in range(3):
+        buf.rotate()
+        v = torch.full((2, 4), float(i * 10), dtype=torch.float64, device=gs.device)
+        buf.set(v)
+
+    # per_row selects one ring slot per row of the second dimension
+    idx_per_row = torch.tensor([0, 1], device=gs.device)
+    result = buf.at(idx_per_row, per_row=True)
+    assert result.shape == (2, 4)
+
+
+@pytest.mark.required
+def test_ring_buffer_clone_is_independent(ring_buffer_1d):
+    """Clone should be a deep copy, independent of the original."""
+    buf = ring_buffer_1d
+    v = torch.tensor([1.0, 2.0, 3.0], device=gs.device)
+    buf.rotate()
+    buf.set(v)
+
+    cloned = buf.clone()
+    assert cloned.N == buf.N
+    assert cloned.buffer.shape == buf.buffer.shape
+    assert cloned._idx.item() == buf._idx.item()
+    # Modifying clone should not affect original
+    cloned.buffer[0, 0] = 999.0
+    assert buf.buffer[0, 0] != 999.0
+
+
+@pytest.mark.required
+def test_ring_buffer_getitem_slice(ring_buffer_1d):
+    """__getitem__ with a slice returns a view-based sub-buffer."""
+    buf = ring_buffer_1d
+    sliced = buf[1:3]
+    assert sliced.N == 4
+    assert sliced.buffer.shape == (4, 2)  # shape went from (3,) to (2,)
+
+
+@pytest.mark.required
+def test_ring_buffer_getitem_int(ring_buffer_1d):
+    """__getitem__ with an integer returns a view-based sub-buffer of size 1."""
+    buf = ring_buffer_1d
+    sliced = buf[0]
+    assert sliced.N == 4
+    assert sliced.buffer.shape == (4, 1)
+
+
+@pytest.mark.required
+def test_ring_buffer_getitem_tuple(ring_buffer_1d):
+    """__getitem__ with a single-element tuple returns a view-based sub-buffer."""
+    buf = ring_buffer_1d
+    # Buffer shape (4, 3); key (0,) gives indexes=(slice(None), 0), sliced.shape=(4,)
+    # resulting sub-buffer has shape () with buffer shape (4,)
+    sliced = buf[(0,)]
+    assert sliced.N == 4
+    assert sliced.buffer.shape == (4,)
+
+
+@pytest.mark.required
+def test_ring_buffer_getitem_invalid_key(ring_buffer_1d):
+    """__getitem__ with an unsupported key type should raise TypeError."""
+    with pytest.raises(TypeError):
+        buf = ring_buffer_1d
+        buf["invalid"]
+
+
+@pytest.mark.required
+def test_ring_buffer_wraparound(tol):
+    """Writing more than N elements should wrap and overwrite oldest (production pattern: rotate then set)."""
+    N = 3
+    buf = TensorRingBuffer(N=N, shape=(2,), dtype=torch.float32)
+    for i in range(5):
+        buf.rotate()
+        v = torch.tensor([float(i), float(i * 10)], device=gs.device)
+        buf.set(v)
+
+    # After 5 rotate+set cycles starting from _idx=-1:
+    # Cycle 0: rotate→0, set→buf[0]=v0
+    # Cycle 1: rotate→1, set→buf[1]=v1
+    # Cycle 2: rotate→2, set→buf[2]=v2
+    # Cycle 3: rotate→0, set→buf[0]=v3 (overwrites v0)
+    # Cycle 4: rotate→1, set→buf[1]=v4 (overwrites v1)
+    # Final _idx=1, buffer=[v3, v4, v2]
+    assert buf._idx.item() == 1
+    # at(0) = most recent = v4, at(1) = v3, at(2) = oldest surviving = v2
+    assert_allclose(buf.at(0), torch.tensor([4.0, 40.0], device=gs.device), tol=tol)
+    assert_allclose(buf.at(1), torch.tensor([3.0, 30.0], device=gs.device), tol=tol)
+    assert_allclose(buf.at(2), torch.tensor([2.0, 20.0], device=gs.device), tol=tol)
+
+
+@pytest.mark.required
+def test_ring_buffer_multidimensional(tol):
+    """Work with multi-dimensional tensors."""
+    buf = TensorRingBuffer(N=3, shape=(2, 3, 4), dtype=torch.float32)
+    v = torch.randn(2, 3, 4, device=gs.device)
+    buf.rotate()
+    buf.set(v)
+    retrieved = buf.at(0)
+    assert_allclose(retrieved, v, tol=tol)
