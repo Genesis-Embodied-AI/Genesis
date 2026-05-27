@@ -244,6 +244,12 @@ class InteractiveScene:
         if had_previous:
             new_scene.viewer.set_camera_pose(pos=cam_pos, lookat=cam_lookat)
 
+        # Claim the viewer so any future ``viewer.add_plugin(ImGuiOverlayPlugin())`` call
+        # (e.g., users who manually attach a plugin AFTER the initial rebuild) auto-tags
+        # the new plugin via ``Viewer.add_plugin``. Without this, manually attached plugins
+        # would stay untagged until the NEXT rebuild and render with greyed-out controls.
+        new_scene.viewer._owning_interactive_scene = self
+
         # Tag every ImGuiOverlayPlugin in the new viewer so its disabled-state predicate
         # returns True. Covers both the initial build (auto-attached plugin survives the
         # dedup because plugins_to_reattach is empty, then gets tagged here) and rebuilds

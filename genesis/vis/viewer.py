@@ -48,6 +48,9 @@ class Viewer(RBC):
 
         self._enable_help_text = options.enable_help_text
         self._viewer_plugins: list["ViewerPlugin"] = []
+        # Back-reference set by ``InteractiveScene.rebuild()`` so ``add_plugin`` can auto-tag any
+        # incoming ``ImGuiOverlayPlugin`` even when the user attaches it AFTER initial rebuild.
+        self._owning_interactive_scene = None
         if options.enable_default_keybinds:
             self._viewer_plugins.append(DefaultControlsPlugin())
         if options.enable_gui:
@@ -380,6 +383,11 @@ class Viewer(RBC):
             The viewer plugin to add.
         """
         self._viewer_plugins.append(plugin)
+        if self._owning_interactive_scene is not None:
+            from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
+
+            if isinstance(plugin, ImGuiOverlayPlugin):
+                plugin._interactive_scene = self._owning_interactive_scene
         if self.is_built:
             self._pyrender_viewer.register_plugin(plugin)
         return plugin
