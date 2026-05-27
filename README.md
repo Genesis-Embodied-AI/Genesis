@@ -46,7 +46,7 @@ Genesis World occupies the four layers inside the dashed box. Above sits whateve
 
 ## Catalogue
 
-Three sections, mirroring the Genesis layers that ship runnable demos: **Physics** (solvers and multi-solver coupling), **Rendering** (in-repo camera setups plus the Nyx walkthroughs hosted in [genesis-nyx](https://github.com/Genesis-Embodied-AI/genesis-nyx)), and **Simulation Interface** (sensors, GUI, controllers, parallel/heterogeneous envs, and tutorials). Every script runs end-to-end after `pip install -e ".[dev]"`.
+Three sections, mirroring the Genesis layers that ship runnable demos: **Physics** (solvers and multi-solver coupling), **Rendering** (in-repo camera setups plus the Nyx walkthroughs hosted in [genesis-nyx](https://github.com/Genesis-Embodied-AI/genesis-nyx)), and **Simulation Interface** (sensors, GUI, controllers, parallel/heterogeneous envs, and tutorials). Most scripts run end-to-end after `pip install -e ".[dev]"`; demos that depend on optional backends (e.g. the IPC and Nyx examples) need the extras listed in [Optional extras](#optional-extras).
 
 ### Physics
 
@@ -115,7 +115,7 @@ Note that the package must still be updated manually to sync with main branch.
 Users seeking to contribute are encouraged to install Genesis in editable mode. First, make sure that `genesis-world` has been uninstalled, then clone the repository and install locally:
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/genesis-world.git
-cd Genesis
+cd genesis-world
 pip install -e ".[dev]"
 ```
 It is recommended to systematically execute `pip install -e ".[dev]"` after moving HEAD to make sure that all dependencies and entrypoints are up-to-date.
@@ -145,7 +145,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 **Quick start with uv:**
 ```bash
 git clone https://github.com/Genesis-Embodied-AI/genesis-world.git
-cd Genesis
+cd genesis-world
 uv sync
 ```
 
