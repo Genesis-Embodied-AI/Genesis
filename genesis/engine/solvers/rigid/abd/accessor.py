@@ -820,6 +820,20 @@ def kernel_set_dofs_velocity_grad(
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_dofs_force_grad(
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    force_grad: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+        force_grad[i_b_, i_d_] = dyn_state.dofs.ctrl_force.grad[dofs_idx[i_d_], envs_idx[i_b_]]
+        dyn_state.dofs.ctrl_force.grad[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_zero_velocity(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),

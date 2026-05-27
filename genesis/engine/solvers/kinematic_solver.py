@@ -46,6 +46,7 @@ from .rigid.abd.accessor import (
     kernel_set_dofs_position,
     kernel_set_dofs_velocity,
     kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_force_grad,
     kernel_set_dofs_zero_velocity,
     kernel_set_links_pos,
     kernel_set_links_quat,
@@ -1011,6 +1012,14 @@ class KinematicSolver(Solver):
         if self.n_envs == 0:
             velocity_grad_ = velocity_grad_.unsqueeze(0)
         kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.dyn_state, self.rigid_config)
+
+    def set_dofs_force_grad(self, dofs_idx, envs_idx, force_grad):
+        force_grad_, dofs_idx, envs_idx = self._sanitize_io_variables(
+            force_grad, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+        )
+        if self.n_envs == 0:
+            force_grad_ = force_grad_.unsqueeze(0)
+        kernel_set_dofs_force_grad(dofs_idx, envs_idx, force_grad_, self.dyn_state, self.rigid_config)
 
     @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
