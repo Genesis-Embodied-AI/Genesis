@@ -165,7 +165,9 @@ def func_plane_box_contact(
                 i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
             )
             for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
-                if n_con < qd.static(collider_static_config.n_contacts_per_pair):
+                # Plane-box pairs are sized with the convex cap (they are not in the large-contact mask), so the
+                # emission must stay within it to avoid overflowing a buffer allocated as a convex pair.
+                if n_con < qd.static(collider_static_config.n_contacts_per_convex_pair):
                     pos_corner = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], gb_pos, gb_quat)
                     penetration = normal.dot(pos_corner - ga_pos)
                     if penetration > 0.0:
@@ -519,7 +521,7 @@ def func_box_box_contact(
             n_added = 0
             n_start = collider_state.n_contacts[i_b]
             for i in range(n):
-                if n_added < qd.static(collider_static_config.n_contacts_per_pair):
+                if n_added < qd.static(collider_static_config.n_contacts_per_nonconvex_pair):
                     dist = collider_state.box_points[i, i_b][2]
                     collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
                     contact_pos = p + r @ collider_state.box_points[i, i_b]
@@ -847,7 +849,7 @@ def func_box_box_contact(
                 n_added = 0
                 n_start = collider_state.n_contacts[i_b]
                 for i in range(n):
-                    if n_added < qd.static(collider_static_config.n_contacts_per_pair):
+                    if n_added < qd.static(collider_static_config.n_contacts_per_nonconvex_pair):
                         dist = collider_state.box_depth[i, i_b]
                         collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
                         contact_pos = pos1 + (r @ collider_state.box_points[i, i_b])
