@@ -246,6 +246,7 @@ def mpr_refine_portal(
     quat_b: qd.types.vector(4, dtype=gs.qd_float),
 ):
     ret = 1
+    iterations = 0
     while True:
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
 
@@ -270,11 +271,12 @@ def mpr_refine_portal(
 
         if not mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr_portal_reach_tolerance(
             mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b
-        ):
+        ) or iterations > mpr_info.CCD_ITERATIONS[None]:
             ret = -1
             break
 
         mpr_expand_portal(mpr_state, v, v1, v2, i_ga, i_gb, i_b)
+        iterations += 1
     return ret
 
 
