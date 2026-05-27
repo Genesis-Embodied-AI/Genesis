@@ -981,9 +981,8 @@ def func_clamp_prune_and_sort_contacts_coop(
                 )
                 ii += _K
 
-            # Phase 1a sort: bitonic sort across 32 lanes when n_con <= _K, serial-on-lane-0 insertion sort
-            # otherwise.  ``log2_size = _LOG2_K`` pins the tiled sort to _K = 32 lanes on every backend (correct
-            # on AMDGPU wave64 where the bare ``bitonic_sort_kv`` would reach all 64 lanes).
+            # Phase 1a sort: bitonic sort across _K lanes when n_con <= _K, serial-on-lane-0 insertion sort
+            # otherwise.
             if n_con <= _K:
                 # Load with sentinel for out-of-range lanes (pushes them to the end of ascending sort).
                 my_key = qd.cast(gs.qd_float(1.0e30), gs.qd_float)
