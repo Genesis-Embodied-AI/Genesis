@@ -459,6 +459,10 @@ def func_forward_kinematics_entity(
                     + dyn_state.joints.xaxis[i_j, i_b] * dyn_state.dofs.pos[dof_start, i_b]
                 )
                 pos = W(next_I, pos_, dyn_state.links.pos_bw, BW)
+                # A prismatic joint leaves the link orientation unchanged, but the backward per-joint cache still
+                # needs the next slot populated: the final R(quat_bw, I_jf, ...) below reads it in backward mode and
+                # would get uninitialized memory (NaN gradients on qpos) otherwise.
+                quat = W(next_I, quat, dyn_state.links.quat_bw, BW)
 
         # Skip link pose update for fixed root links to let users manually overwrite them
         I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
@@ -1148,3 +1152,49 @@ def kernel_update_cartesian_space(
     is_backward: qd.template(),
 ):
     func_update_cartesian_space(dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward)
+
+
+# Standalone forward-replay kernels for the update_cartesian_space sub-stages, used only in the backward pass
+# (substep_pre_coupling_grad). The backward unroll replays each sub-stage with is_backward=True (static loops) and
+# then reverses it, stage by stage: COM-links and geom-pose updates reverse cleanly through Quadrants autodiff (their
+# replay kernel's .grad is called directly), while forward kinematics and forward velocity are reversed manually
+# (see kernel_manual_forward_kinematics_bw / kernel_manual_forward_velocity_bw in manual_bw.py) because autodiff
+# silently drops their gradient. TODO: once every sub-stage reverses correctly under autodiff, drop these kernels and
+# the manual reverses, and differentiate kernel_update_cartesian_space as a whole.
+@qd.kernel(fastcache=True)
+def kernel_forward_kinematics_replay(
+    envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    is_backward: qd.template(),
+):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
+        func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
+
+
+@qd.kernel(fastcache=True)
+def kernel_update_geoms_replay(
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    is_backward: qd.template(),
+):
+    func_update_geoms(
+        dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=False, is_backward=is_backward
+    )
+
+
+@qd.kernel(fastcache=True)
+def kernel_COM_links_replay(
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    is_backward: qd.template(),
+):
+    for i_b in range(dyn_state.links.pos.shape[1]):
+        func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
