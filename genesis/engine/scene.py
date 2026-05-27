@@ -995,13 +995,16 @@ class Scene(RBC):
         self._reset(state, envs_idx=envs_idx)
         self._recorder_manager.reset(envs_idx)
 
-    def _reset(self, state: SimState | None = None, *, envs_idx=None):
+    def _reset(self, state: SimState | None = None, *, envs_idx=None, keep_init: bool = False):
         if self._is_built:
             if state is None:
                 state = self._init_state
             else:
                 assert isinstance(state, SimState), "state must be a SimState object"
-                self._init_state = state
+                # `keep_init=True` restores the state without making it the new
+                # init, so a later bare `reset()` still rewinds to the true init.
+                if not keep_init:
+                    self._init_state = state
             self._sim.reset(state, envs_idx)
         else:
             self._init_state = self._get_state()
@@ -1021,6 +1024,49 @@ class Scene(RBC):
 
     def _reset_grad(self):
         self._backward_ready = True
+
+    @gs.assert_built
+    def backward(self, loss: torch.Tensor, *args, **kwargs):
+        """Differentiate `loss` and restore the terminal physics state.
+
+        Wraps the snapshot/backward/restore dance that differentiable rollouts
+        otherwise have to perform by hand. `scene._backward()` rewinds physics
+        state to step 0 as a side-effect of unrolling the adstack, so the safe
+        pattern is to snapshot the terminal state *before* backward and restore
+        it *after*:
+
+            snapshot = scene.get_state()   # terminal state
+            loss.backward()                # rewinds physics to step 0
+            scene.reset(snapshot)          # restore + clear grads + re-arm
+
+        This method does exactly that, so callers can just write
+        `scene.backward(loss)`. Afterwards the scene sits at the terminal physics
+        state with grads cleared and forward/backward re-armed — ready to continue
+        the rollout or to be reset to a fresh init.
+
+        The registered initial state (`reset()` with no args) is left untouched.
+
+        Parameters
+        ----------
+        loss : torch.Tensor
+            Scalar loss to differentiate. Extra args/kwargs (e.g. `gradient`,
+            `retain_graph`) are forwarded to `torch.autograd.backward`.
+        """
+        # Snapshot the terminal state before backward rewinds physics to step 0.
+        snapshot = self.get_state()
+        # `scene._backward()` re-enters the torch graph from each step's queried
+        # states (`_backward_from_qd` -> `state.backward(retain_graph=True)`), so
+        # the graph must survive the initial autograd pass.
+        kwargs.setdefault("retain_graph", True)
+        # Functional `torch.autograd.backward` fills torch + queried-state grads
+        # WITHOUT triggering `gs.Tensor.backward`'s auto `scene._backward()`, so
+        # we drive the sim unroll explicitly below.
+        torch.autograd.backward(loss, *args, **kwargs)
+        self._backward()
+        # Restore to the terminal snapshot; `keep_init=True` preserves the real
+        # initial state so a later bare `reset()` still rewinds to it.
+        self._reset(snapshot, keep_init=True)
+        return snapshot
 
     def _get_state(self):
         return self._sim.get_state()
