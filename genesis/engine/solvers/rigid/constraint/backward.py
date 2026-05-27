@@ -53,6 +53,55 @@ def func_matvec_Ap(
                 constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_c, i_d, i_b] * jv
 
 
+@qd.func
+def func_solve_adjoint_u_cg_env(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """CG solve of A u = g for a single environment [i_b].
+
+    A = M + J^T diag(D) J is applied implicitly by func_matvec_Ap, which reads rigid_info.mass_mat directly and loops
+    only over the active constraints, so this also solves the unconstrained case A = M (empty J term).
+    """
+    n_dofs = constraint_state.bw_u.shape[0]
+
+    # r = g - A*0 = g ; p = r ; u = 0
+    for i_d in range(n_dofs):
+        constraint_state.bw_u[i_d, i_b] = 0.0
+        constraint_state.bw_r[i_d, i_b] = constraint_state.dL_dqacc[i_d, i_b]
+        constraint_state.bw_p[i_d, i_b] = constraint_state.bw_r[i_d, i_b]
+
+    for it in range(rigid_info.iterations[None]):
+        func_matvec_Ap(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
+
+        # alpha = (r,r)/(p,Ap)
+        num = gs.qd_float(0.0)
+        den = gs.qd_float(0.0)
+        for i_d in range(n_dofs):
+            num += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
+            den += constraint_state.bw_p[i_d, i_b] * constraint_state.bw_Ap[i_d, i_b]
+        alpha = num / qd.max(den, rigid_info.EPS[None])
+
+        # u += alpha p ; r -= alpha Ap
+        for i_d in range(n_dofs):
+            constraint_state.bw_u[i_d, i_b] += alpha * constraint_state.bw_p[i_d, i_b]
+            constraint_state.bw_r[i_d, i_b] -= alpha * constraint_state.bw_Ap[i_d, i_b]
+
+        if num < rigid_info.EPS[None]:
+            break
+
+        # beta = (r_new,r_new)/(r_old,r_old) ; p = r + beta p
+        num_new = gs.qd_float(0.0)
+        for i_d in range(n_dofs):
+            num_new += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
+        beta = num_new / qd.max(num, rigid_info.EPS[None])
+        for i_d in range(n_dofs):
+            constraint_state.bw_p[i_d, i_b] = constraint_state.bw_r[i_d, i_b] + beta * constraint_state.bw_p[i_d, i_b]
+
+
 @qd.kernel
 def kernel_solve_adjoint_u(
     constraint_state: array_class.ConstraintState,
@@ -78,70 +127,34 @@ def kernel_solve_adjoint_u(
         constraint_state.bw_u[i_d, i_b] = 0.0
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):
-        # Since we already have the Cholesky decomposition of A (= L * L^T), we can use it to solve A * u = g.
         for i_b in range(_B):
-            # z = L^{-1} g  (forward substitution)
-            # Save solution to bw_r
-            for i_d in range(n_dofs):
-                z = constraint_state.dL_dqacc[i_d, i_b]
-                for j_d in range(i_d):
-                    z -= constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.bw_r[j_d, i_b]
-                z /= constraint_state.nt_H[i_b, i_d, i_d]
-                constraint_state.bw_r[i_d, i_b] = z
+            if constraint_state.n_constraints[i_b] == 0:
+                # No active constraint: A = M. The forward's constrained-Hessian Cholesky nt_H is unreliable for
+                # these envs (the GPU tiled factorization skips them), so solve M u = g via CG, which reads mass_mat
+                # directly and never touches nt_H.
+                func_solve_adjoint_u_cg_env(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
+            else:
+                # Reuse the forward's Cholesky decomposition A = L * L^T to solve A u = g.
+                # z = L^{-1} g  (forward substitution); saved to bw_r
+                for i_d in range(n_dofs):
+                    z = constraint_state.dL_dqacc[i_d, i_b]
+                    for j_d in range(i_d):
+                        z -= constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.bw_r[j_d, i_b]
+                    z /= constraint_state.nt_H[i_b, i_d, i_d]
+                    constraint_state.bw_r[i_d, i_b] = z
 
-            # u = L^{-T} z  (back substitution)
-            for i_d_ in range(n_dofs):
-                i_d = n_dofs - 1 - i_d_
-                u = constraint_state.bw_r[i_d, i_b]
-                for j_d in range(i_d + 1, n_dofs):
-                    u -= constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.bw_u[j_d, i_b]
-                u /= constraint_state.nt_H[i_b, i_d, i_d]
-                constraint_state.bw_u[i_d, i_b] = u
+                # u = L^{-T} z  (back substitution)
+                for i_d_ in range(n_dofs):
+                    i_d = n_dofs - 1 - i_d_
+                    u = constraint_state.bw_r[i_d, i_b]
+                    for j_d in range(i_d + 1, n_dofs):
+                        u -= constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.bw_u[j_d, i_b]
+                    u /= constraint_state.nt_H[i_b, i_d, i_d]
+                    constraint_state.bw_u[i_d, i_b] = u
     else:
-        # Use CG solver for solving A * u = g.
-        # 2. Local buffers for solving A * u = g
-        # Initialize r, p with dL_dqacc
-        for i_d, i_b in qd.ndrange(n_dofs, _B):
-            # Residual: g - A * 0 (u = 0)
-            constraint_state.bw_r[i_d, i_b] = constraint_state.dL_dqacc[i_d, i_b]
-            # Search direction: p = r
-            constraint_state.bw_p[i_d, i_b] = constraint_state.bw_r[i_d, i_b]
-
-        # 3. Solve A * u = g, parallelized over batch dimension
+        # CG solver for A * u = g (parallelized over the batch dimension).
         for i_b in range(_B):
-            # Compute Ap for the current search direction
-            for it in range(rigid_config.iterations):
-                func_matvec_Ap(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
-
-                # alpha = (r,r)/(p,Hp)
-                num = gs.qd_float(0.0)
-                den = gs.qd_float(0.0)
-                for i_d in range(n_dofs):
-                    num += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
-                    den += constraint_state.bw_p[i_d, i_b] * constraint_state.bw_Ap[i_d, i_b]
-                alpha = num / qd.max(den, rigid_info.EPS[None])
-
-                # u += alpha p ; r -= alpha Hp
-                for i_d in range(n_dofs):
-                    constraint_state.bw_u[i_d, i_b] += alpha * constraint_state.bw_p[i_d, i_b]
-                    constraint_state.bw_r[i_d, i_b] -= alpha * constraint_state.bw_Ap[i_d, i_b]
-
-                # check tol (optional: per-batch)
-                # TODO: Might need lower tolerance?
-                if num < rigid_info.EPS[None]:
-                    break
-
-                # beta = (r_new,r_new)/(r_old,r_old)
-                num_new = gs.qd_float(0.0)
-                for i_d in range(n_dofs):
-                    num_new += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
-                beta = num_new / qd.max(num, rigid_info.EPS[None])
-
-                # p = r + beta p
-                for i_d in range(n_dofs):
-                    constraint_state.bw_p[i_d, i_b] = (
-                        constraint_state.bw_r[i_d, i_b] + beta * constraint_state.bw_p[i_d, i_b]
-                    )
+            func_solve_adjoint_u_cg_env(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.kernel
