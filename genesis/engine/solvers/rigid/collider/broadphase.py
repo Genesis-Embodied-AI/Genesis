@@ -776,7 +776,13 @@ def func_broad_phase(
     This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for
     potential collision pairs based on the AABB overlap.
     """
-    if qd.static(static_rigid_sim_config.n_geoms <= MAX_GEOMS_IN_LDS and static_rigid_sim_config.backend != gs.cpu):
+    # NOTE: must use `n_geoms_` (always populated to max(1, n_geoms)) and not `n_geoms`
+    # (only populated when requires_grad=True; defaults to -1 otherwise). With the bare
+    # `n_geoms` check, non-grad runs evaluated `-1 <= MAX_GEOMS_IN_LDS` as True and
+    # selected the LDS path even when the actual geom count exceeded MAX_GEOMS_IN_LDS,
+    # producing OOB LDS reads/writes whose garbage `i_g` values then OOB'd into
+    # geoms_state.aabb_min and triggered an HSA aperture violation on AMD at scale.
+    if qd.static(static_rigid_sim_config.n_geoms_ <= MAX_GEOMS_IN_LDS and static_rigid_sim_config.backend != gs.cpu):
         func_broad_phase_lds(
             links_state,
             links_info,
