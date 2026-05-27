@@ -1,3 +1,4 @@
+import contextlib
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -250,50 +251,56 @@ class InteractiveScene:
         plugins_to_reattach: list = []
         pyrender_window = None
 
-        if scene is not None:
+        if scene is not None and scene.viewer is not None:
             viewer = scene.viewer
-            if viewer is not None:
-                cam_pos = viewer.camera_pos.copy()
-                cam_lookat = viewer.camera_lookat.copy()
-                # Skip default plugins; the rebuilt viewer recreates them based on its ViewerOptions.
-                plugins_to_reattach = [p for p in viewer._viewer_plugins if not isinstance(p, DefaultControlsPlugin)]
-                # Preserve the live window/GL context so the rebuild does not close and reopen it. Detaching it
-                # keeps scene.destroy() from closing the window; Viewer.build() re-points it at the rebuilt scene.
-                pyrender_window = viewer._pyrender_viewer
-                viewer._pyrender_viewer = None
-            scene.destroy()
-            # Re-initialize the SAME object in place so external references survive the rebuild.
-            scene.__init__(**self._scene_kwargs)
-        else:
-            scene = gs.Scene(**self._scene_kwargs)
+            cam_pos = viewer.camera_pos.copy()
+            cam_lookat = viewer.camera_lookat.copy()
+            # Skip default plugins; the rebuilt viewer recreates them based on its ViewerOptions.
+            plugins_to_reattach = [p for p in viewer._viewer_plugins if not isinstance(p, DefaultControlsPlugin)]
+            # Preserve the live window/GL context so the rebuild does not close and reopen it.
+            pyrender_window = viewer._pyrender_viewer
 
-        for name, kwargs in self._entities_kwargs.items():
-            scene.add_entity(name=name, **kwargs)
-        for sensor_opts in self._sensors_kwargs:
-            scene.add_sensor(sensor_opts)
-        # Hand the preserved window to the new viewer so build() reuses it instead of opening a new one.
-        if pyrender_window is not None and scene.viewer is not None:
-            scene.viewer._pyrender_viewer = pyrender_window
-        scene.build(**self._build_kwargs)
+        # Serialize the whole rebuild against a threaded render loop (run_in_thread=True): holding the preserved
+        # window's render_lock blocks on_draw so it never draws the scene while it is being torn down, rebuilt and
+        # re-pointed. No-op when there is no window (headless) or the viewer runs on the main thread.
+        with pyrender_window.render_lock if pyrender_window is not None else contextlib.nullcontext():
+            if scene is not None:
+                if pyrender_window is not None:
+                    # Detach so scene.destroy() does not close the preserved window.
+                    scene.viewer._pyrender_viewer = None
+                scene.destroy()
+                # Re-initialize the SAME object in place so external references survive the rebuild.
+                scene.__init__(**self._scene_kwargs)
+            else:
+                scene = gs.Scene(**self._scene_kwargs)
 
-        new_viewer = scene.viewer
-        if new_viewer is not None:
-            # A scene built with enable_gui=True auto-attaches its own ImGui overlay. When re-attaching the previous
-            # overlay (which carries user state - panel width, custom panels, pending edits), drop the fresh
-            # auto-attached one of the same type so the viewer does not end up with two overlays. The plugin must be
-            # cleared from both the wrapper staging list (_viewer_plugins) and pyrender's live list (plugins), since
-            # build() already copied it into the live render loop.
-            reattach_types = {type(p) for p in plugins_to_reattach}
-            pyrender_viewer = new_viewer._pyrender_viewer
-            for plugin in [p for p in new_viewer._viewer_plugins if type(p) in reattach_types]:
-                new_viewer._viewer_plugins.remove(plugin)
-                if pyrender_viewer is not None and plugin in pyrender_viewer.plugins:
-                    pyrender_viewer.plugins.remove(plugin)
-                    pyrender_viewer.remove_handlers(plugin)
+            for name, kwargs in self._entities_kwargs.items():
+                scene.add_entity(name=name, **kwargs)
+            for sensor_opts in self._sensors_kwargs:
+                scene.add_sensor(sensor_opts)
+            # Hand the preserved window to the new viewer so build() reuses it instead of opening a new one.
+            if pyrender_window is not None and scene.viewer is not None:
+                scene.viewer._pyrender_viewer = pyrender_window
+            scene.build(**self._build_kwargs)
 
-            for plugin in plugins_to_reattach:
-                new_viewer.add_plugin(plugin)
-            if cam_pos is not None:
-                new_viewer.set_camera_pose(pos=cam_pos, lookat=cam_lookat)
+            new_viewer = scene.viewer
+            if new_viewer is not None:
+                # A scene built with enable_gui=True auto-attaches its own ImGui overlay. When re-attaching the
+                # previous overlay (which carries user state - panel width, custom panels, pending edits), drop the
+                # fresh auto-attached one of the same type so the viewer does not end up with two overlays. The plugin
+                # must be cleared from both the wrapper staging list (_viewer_plugins) and pyrender's live list
+                # (plugins), since build() already copied it into the live render loop.
+                reattach_types = {type(p) for p in plugins_to_reattach}
+                pyrender_viewer = new_viewer._pyrender_viewer
+                for plugin in [p for p in new_viewer._viewer_plugins if type(p) in reattach_types]:
+                    new_viewer._viewer_plugins.remove(plugin)
+                    if pyrender_viewer is not None and plugin in pyrender_viewer.plugins:
+                        pyrender_viewer.plugins.remove(plugin)
+                        pyrender_viewer.remove_handlers(plugin)
+
+                for plugin in plugins_to_reattach:
+                    new_viewer.add_plugin(plugin)
+                if cam_pos is not None:
+                    new_viewer.set_camera_pose(pos=cam_pos, lookat=cam_lookat)
 
         self._scene = scene
