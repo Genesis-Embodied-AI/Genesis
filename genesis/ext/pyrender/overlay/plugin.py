@@ -101,6 +101,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         self._free_joint_pos_limit = free_joint_pos_limit
         self._panel_width = panel_width
         self._imgui = None
+        self._ctx = None
         self._impl = None
         self._io = None
         self._available = False
@@ -278,7 +279,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             from imgui_bundle.python_backends import pyglet_backend
 
             self._imgui = imgui
-            imgui.create_context()
+            self._ctx = imgui.create_context()
             # Load default font at larger size before renderer builds the atlas
             io = imgui.get_io()
             io.fonts.clear()
@@ -1247,8 +1248,17 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         return not self.paused
 
     def on_close(self) -> None:
-        """Clean up ImGui resources."""
-        if self._available and self._impl:
+        """Clean up ImGui resources. Idempotent: the viewer dispatches close on both the window-close event
+        and scene teardown, so guard against a second call once the context is already destroyed."""
+        if self._ctx is None:
+            return
+        # Make our context current before tearing it down; the backend shutdown and destroy_context both
+        # operate on the current ImGui context.
+        self._imgui.set_current_context(self._ctx)
+        if self._available and self._impl is not None:
             self._impl.shutdown()
-        if self._imgui:
-            self._imgui.destroy_context()
+        self._imgui.destroy_context(self._ctx)
+        self._ctx = None
+        self._impl = None
+        self._available = False
+        self._init_attempted = False
