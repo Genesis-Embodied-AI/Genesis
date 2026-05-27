@@ -93,6 +93,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             )
 
         super().__init__()
+        self._interactive_scene = None
         self._controlled_env_idx = controlled_env_idx
         self._free_joint_pos_limit = free_joint_pos_limit
         self._panel_width = panel_width
@@ -187,17 +188,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
     @property
     def _scene_is_interactive(self) -> bool:
-        """True when the cached scene supports rebuild / add / remove entity workflows.
+        """True when an :class:`InteractiveScene` has claimed this plugin.
 
-        Lazy import: ``InteractiveScene`` lives in ``genesis.engine`` and is only needed for this
-        check. Importing it at module load would couple every viewer plugin import to the
-        InteractiveScene subsystem, which we want to keep opt-in.
+        Set externally by ``InteractiveScene.rebuild()`` after each (re)attach. The
+        isinstance-on-self.scene approach does not work because the plugin receives
+        the inner ``gs.Scene`` (not the ``InteractiveScene`` wrapper).
         """
-        if self.scene is None:
-            return False
-        from genesis.engine.interactive_scene import InteractiveScene
-
-        return isinstance(self.scene, InteractiveScene)
+        return self._interactive_scene is not None
 
     def _refresh_visuals(self):
         """Refresh render transforms after a GUI-driven mutation. Caller must hold the render lock."""
