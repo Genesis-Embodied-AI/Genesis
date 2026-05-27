@@ -945,8 +945,8 @@ def func_clamp_prune_and_sort_contacts_coop(
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
     EPS = rigid_global_info.EPS[None]
 
-    _K = qd.static(32)
-    _LOG2_K = qd.static(_K.bit_length() - 1)  # = log2(_K), assuming _K is a power of two.
+    _K = 32
+    _LOG2_K = _K.bit_length() - 1  # = log2(_K), assuming _K is a power of two.
     qd.loop_config(name="clamp_prune_and_sort_contacts_coop", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
