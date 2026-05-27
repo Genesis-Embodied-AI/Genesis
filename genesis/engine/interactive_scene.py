@@ -217,13 +217,27 @@ class InteractiveScene:
         # Dedup: drop any auto-attached plugin in the new viewer whose type is about to be
         # reattached from the old viewer. The reattach loop preserves the previous instance
         # (panel_width, custom panels, _pending_entities_kwargs sync, etc.) instead of the
-        # fresh auto-attached one.
+        # fresh auto-attached one. Must clear the doomed plugin from BOTH the Genesis-wrapper
+        # staging list (``_viewer_plugins``) AND the live pyrender list (``_pyrender_viewer.plugins``)
+        # because ``Viewer.build`` already copied the staging list into pyrender's separate live
+        # list via ``register_plugin``; reassigning only the staging list would leave the
+        # auto-attached plugin live in the render loop.
         reattach_types = {type(p) for p in plugins_to_reattach}
-        new_scene.viewer._viewer_plugins = [
-            p
-            for p in new_scene.viewer._viewer_plugins
-            if not (getattr(p, "_auto_attached", False) and type(p) in reattach_types)
+        new_viewer = new_scene.viewer
+        pyrender_viewer = new_viewer._pyrender_viewer
+        doomed = [
+            p for p in new_viewer._viewer_plugins if getattr(p, "_auto_attached", False) and type(p) in reattach_types
         ]
+        for plugin in doomed:
+            new_viewer._viewer_plugins.remove(plugin)
+            if pyrender_viewer is not None and plugin in pyrender_viewer.plugins:
+                pyrender_viewer.plugins.remove(plugin)
+                try:
+                    pyrender_viewer.remove_handlers(plugin)
+                except Exception:
+                    # pyglet's remove_handlers raises if no matching handlers were pushed; safe
+                    # to ignore since the goal (no further event dispatch to this plugin) is met.
+                    pass
 
         for plugin in plugins_to_reattach:
             new_scene.viewer.add_plugin(plugin)
