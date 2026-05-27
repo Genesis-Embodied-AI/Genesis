@@ -63,7 +63,9 @@ class Viewer(RBC):
                 )
 
             if not any(isinstance(p, ImGuiOverlayPlugin) for p in self._viewer_plugins):
-                self._viewer_plugins.append(ImGuiOverlayPlugin())
+                plugin = ImGuiOverlayPlugin()
+                plugin._auto_attached = True
+                self._viewer_plugins.append(plugin)
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
