@@ -42,7 +42,7 @@ Genesis World occupies the four layers inside the dashed box. Above sits whateve
 ### Documentation
 - [Genesis World](https://genesis-world.readthedocs.io/en/latest/)
 - [Quadrants](https://genesis-embodied-ai.github.io/quadrants/index.html)
-- [Nyx](https://fictional-potato-7p2o9zw.pages.github.io/latest/index.html)
+- [Nyx](https://genesis-embodied-ai.github.io/genesis-nyx/latest/)
 
 ## Catalogue
 
