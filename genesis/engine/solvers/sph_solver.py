@@ -633,7 +633,7 @@ class SPHSolver(Solver):
         gs.logger.debug(f"DFSPH - iterations: {iteration} Avg density err: {avg_density_err:.4f} kg/m^3")
 
     @qd.kernel
-    def _kernel_compute_df sph_pressure(self):
+    def _kernel_compute_dfsph_pressure(self):
         """
         Extract implicit pressure from DFSPH density solve residual and write to particles.p.
 
@@ -719,7 +719,7 @@ class SPHSolver(Solver):
                 self._kernel_compute_non_pressure_forces(f, self._sim.cur_t)
                 self._kernel_predict_velocity(f)
                 self._density_solve(f)
-                self._kernel_compute_df sph_pressure()
+                self._kernel_compute_dfsph_pressure()
 
     def substep_pre_coupling_grad(self, f):
         pass
