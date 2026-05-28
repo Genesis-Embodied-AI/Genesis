@@ -315,13 +315,20 @@ class ContactForceSensor(
             raw_data_T[:] = result.permute(1, 2, 0).reshape(-1, n_envs)
         else:
             raw_data_T.zero_()
+            # quadrants may not handle 0-size ndarray dimensions; use a dummy placeholder so the kernel
+            # still compiles and launches. The filter loop immediately exits at the -1 sentinel.
+            filter_links = shared_metadata.filter_links_idx
+            if filter_links.shape[-1] == 0:
+                filter_links = torch.full(
+                    (filter_links.shape[0], 1), -1, dtype=gs.tc_int, device=gs.device
+                )
             _kernel_get_contacts_forces(
                 force.contiguous(),
                 link_a.contiguous(),
                 link_b.contiguous(),
                 links_quat.contiguous(),
                 shared_metadata.links_idx,
-                shared_metadata.filter_links_idx,
+                filter_links,
                 raw_data_T,
             )
 
