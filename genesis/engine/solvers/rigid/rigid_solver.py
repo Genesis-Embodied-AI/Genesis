@@ -32,6 +32,10 @@ from ..base_solver import MutatedLinks, Solver, StateChange, mutates
 from ..kinematic_solver import KinematicSolver, _select_links_offset, _offset_world_shift, _fill_base_link_geom_offsets
 from .collider import Collider
 from .constraint import ConstraintSolver
+from .constraint.backward import (
+    kernel_manual_add_collision_constraints_bw,
+    kernel_manual_add_joint_limit_constraints_bw,
+)
 from .abd.misc import (
     func_add_safe_backward,
     func_apply_coupling_force,
@@ -94,7 +98,10 @@ from .abd.forward_kinematics import (
     kernel_update_all_verts,
     kernel_update_geom_aabbs,
     kernel_update_vgeoms,
+    kernel_COM_links_replay,
     kernel_update_cartesian_space,
+    kernel_forward_kinematics_replay,
+    kernel_update_geoms_replay,
 )
 from .abd.forward_dynamics import (
     func_actuation,
@@ -179,6 +186,12 @@ from .abd.diff import (
     kernel_prepare_backward_substep,
     kernel_begin_backward_substep,
     kernel_copy_acc,
+    kernel_copy_next_to_curr_no_check,
+)
+from .abd.manual_bw import (
+    kernel_manual_compute_qacc_bw,
+    kernel_manual_forward_kinematics_bw,
+    kernel_manual_forward_velocity_bw,
 )
 
 if TYPE_CHECKING:
@@ -1231,7 +1244,7 @@ class RigidSolver(KinematicSolver):
         )
 
         if isinstance(self.sim.coupler, SAPCoupler):
-            update_qvel(self.dyn_state, self.rigid_info, self.rigid_config, self._is_backward)
+            update_qvel(self.dyn_state, self.rigid_info, self.rigid_config)
         else:
             self._func_constraint_force()
             kernel_step_2(
@@ -1286,6 +1299,12 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS:
             gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
+        if errno & array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED:
+            gs.raise_exception(
+                "Encountered a configuration (e.g. hibernation) that the manual backward kernels "
+                "do not support. Extend the corresponding `kernel_manual_*_bw` in "
+                "`genesis/engine/solvers/rigid/abd/manual_bw.py`."
+            )
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -1482,6 +1501,37 @@ class RigidSolver(KinematicSolver):
             qd_zero_grad(self.dyn_state_adjoint_cache.geoms)
             qd_zero_grad(self._rigid_adjoint_cache)
 
+    def _update_cartesian_grad(self, envs_idx):
+        """Forward-replay the post-integrate cartesian-space update (FK -> COM -> geom poses -> velocity) under
+        is_backward=True, then reverse it stage by stage: velocity and forward kinematics are reversed manually
+        (kernel_manual_*_bw in manual_bw.py), while COM and the link->geom transform are reversed by Quadrants
+        autodiff (.grad). Shared by the post-integrate reverse and the first-substep initial-state reverse in
+        substep_pre_coupling_grad.
+        """
+        # Forward replay in dependency order (FK -> COM -> geoms -> velocity).
+        kernel_forward_kinematics_replay(
+            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+        )
+        kernel_COM_links_replay(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True)
+        kernel_update_geoms_replay(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True)
+        kernel_forward_velocity(
+            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+        )
+
+        # Reverse in opposite order (velocity -> COM -> geoms -> FK).
+        kernel_manual_forward_velocity_bw(
+            self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, self._errno
+        )
+        kernel_COM_links_replay.grad(
+            self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+        )
+        kernel_update_geoms_replay.grad(
+            self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
+        )
+        kernel_manual_forward_kinematics_bw(
+            self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, self._errno
+        )
+
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
         self._is_backward = True
@@ -1498,21 +1548,13 @@ class RigidSolver(KinematicSolver):
             self.rigid_config,
         )
         self.substep(f)
-
         # =================== Backward substep ======================
         envs_idx = self._scene._sanitize_envs_idx(None)
         if not self._enable_mujoco_compatibility:
-            kernel_forward_velocity.grad(
-                envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
-            )
-            kernel_update_cartesian_space.grad(
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-                force_update_fixed_geoms=False,
-                is_backward=True,
-            )
+            # The FK backward below builds its Jacobian at the post-integrate qpos / vel, so copy the integrator's
+            # _next outputs into the current slots first.
+            kernel_copy_next_to_curr_no_check(self.dyn_state, self.rigid_info, self.rigid_config)
+            self._update_cartesian_grad(envs_idx)
 
         is_grad_valid = kernel_begin_backward_substep(
             f,
@@ -1537,16 +1579,59 @@ class RigidSolver(KinematicSolver):
             errno=self._errno,
         )
 
-        # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
-        # which is prohibited (https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules).
-        # In [kernel_forward_dynamics], we read [acc] in [func_update_acc] and overwrite it in [kernel_compute_qacc].
-        # As [kenrel_compute_qacc] is called at the end of [kernel_forward_dynamics], we first backpropagate through
-        # [kernel_compute_qacc] and then restore the original [acc] from the adjoint cache. This copy operation
-        # cannot be merged with [kernel_compute_qacc.grad] because .grad function itself is a standalone kernel.
-        # We could possibly merge this small kernel later if (1) .grad function is regarded as a function instead of a
-        # kernel, (2) we add another variable to store the new [acc] from [kernel_compute_qacc] and thus can avoid
-        # the data access violation. However, both of these require major changes.
-        kernel_compute_qacc.grad(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True)
+        # Two backward paths for force -> acc:
+        #   (A) Unconstrained: kernel_manual_compute_qacc_bw does the implicit function theorem (IFT) through M
+        #       (writes force.grad + mass_mat.grad).
+        #   (B) Constrained (active joint limits / collision): the constraint solve overwrites acc, so the IFT
+        #       through M alone is wrong. Instead drive constraint_solver.backward (adjoint KKT ->
+        #       dL_dM / djac / daref / defc_D / dforce) + the per-constraint manual reverses below.
+        has_collision = not self._disable_constraint and self._enable_collision
+        has_joint_limit = not self._disable_constraint and self._options.enable_joint_limit
+        if has_collision or has_joint_limit:
+            dL_dqacc = self.dyn_state.dofs.acc.grad.to_numpy()
+            self.dyn_state.dofs.acc.grad.fill(0.0)
+
+            self.constraint_solver.backward(dL_dqacc)
+
+            dL_dforce = self.constraint_solver.constraint_state.dL_dforce.to_numpy()
+            cur_force_grad = self.dyn_state.dofs.force.grad.to_numpy()
+            self.dyn_state.dofs.force.grad.from_numpy(cur_force_grad + dL_dforce)
+
+            dL_dM = self.constraint_solver.constraint_state.dL_dM.to_numpy()
+            cur_mass_grad = self.rigid_info.mass_mat.grad.to_numpy()
+            self.rigid_info.mass_mat.grad.from_numpy(cur_mass_grad + dL_dM)
+
+            if has_collision:
+                # Manual reverse of the collision constraint rows -> contact-data grads, then differentiate the
+                # narrow-phase (diff GJK) through collider.backward_narrowphase into geom pose grads.
+                collider_state = self.collider._collider_state
+                collider_state.contact_data.pos.grad.fill(0.0)
+                collider_state.contact_data.normal.grad.fill(0.0)
+                collider_state.contact_data.penetration.grad.fill(0.0)
+                kernel_manual_add_collision_constraints_bw(
+                    self.dyn_state,
+                    collider_state,
+                    self.constraint_solver.constraint_state,
+                    self.dyn_info,
+                    self.rigid_info,
+                    self.rigid_config,
+                )
+                # The contact-data grads are written directly above, so only the narrow-phase reverse runs.
+                self.collider.backward_narrowphase()
+
+            if has_joint_limit:
+                kernel_manual_add_joint_limit_constraints_bw(
+                    self.dyn_state,
+                    self.collider._collider_state,
+                    self.constraint_solver.constraint_state,
+                    self.dyn_info,
+                    self.rigid_info,
+                    self.rigid_config,
+                    enable_collision=has_collision,
+                )
+        else:
+            # Manual backward for func_compute_qacc via the implicit function theorem.
+            kernel_manual_compute_qacc_bw(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
         kernel_copy_acc(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_config)
 
         kernel_forward_dynamics_without_qacc.grad(
@@ -1560,17 +1645,7 @@ class RigidSolver(KinematicSolver):
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
-            kernel_forward_velocity.grad(
-                envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
-            )
-            kernel_update_cartesian_space.grad(
-                self.dyn_state,
-                self.dyn_info,
-                self.rigid_info,
-                self.rigid_config,
-                force_update_fixed_geoms=False,
-                is_backward=True,
-            )
+            self._update_cartesian_grad(envs_idx)
 
         # Change back to forward mode
         self._is_backward = False
@@ -1582,7 +1657,7 @@ class RigidSolver(KinematicSolver):
             return
 
         if isinstance(self.sim.coupler, SAPCoupler):
-            update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config, self._is_backward)
+            update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config)
             kernel_step_2(
                 self.dyn_state,
                 self.collider._collider_state,
@@ -1821,9 +1896,11 @@ class RigidSolver(KinematicSolver):
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
 
-            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos)
-            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel)
-            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc)
+            # `copy=True` required: with the zerocopy backend `qd_to_numpy` returns a
+            # view, so later substeps would overwrite this ckpt's buffer in place.
+            self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
+            self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)
+            self._ckpt[ckpt_name]["dofs_acc"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_acc, copy=True)
 
             for entity in self._entities:
                 entity.save_ckpt(ckpt_name)

@@ -19,7 +19,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .forward_kinematics import func_update_cartesian_space
+from .forward_kinematics import func_update_cartesian_space, func_forward_velocity
 
 
 @qd.func
@@ -150,6 +150,7 @@ def kernel_prepare_backward_substep(
         func_update_cartesian_space(
             dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=False, is_backward=True
         )
+        func_forward_velocity(dyn_state, dyn_info, rigid_info, rigid_config, is_backward=True)
 
         # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
         # Save results of [update_cartesian_space] to adjoint cache
@@ -171,9 +172,9 @@ def kernel_begin_backward_substep(
         func_copy_next_to_curr_grad(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
 
         if not rigid_config.enable_mujoco_compatibility:
-            # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
-            # Save results of [update_cartesian_space] to adjoint cache
-            func_copy_cartesian_space(dyn_state, dyn_state_adjoint_cache, rigid_config)
+            # Restore the cartesian space that was overwritten by the post-integrate forward replay in the backward
+            # substep (see _update_cartesian_grad in rigid_solver.py).
+            func_copy_cartesian_space(dyn_state_adjoint_cache, dyn_state, rigid_config)
 
     return is_grad_valid
 
@@ -262,6 +263,27 @@ def kernel_copy_acc(
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         dyn_state.dofs.acc[i_d, i_b] = rigid_adjoint_cache.dofs_acc[f, i_d, i_b]
+
+
+@qd.kernel(fastcache=True)
+def kernel_copy_next_to_curr_no_check(
+    dyn_state: array_class.DynState,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    # Unguarded copy of the _next slots to current, used in the backward substep right before the forward replay so
+    # the backward kernels see the post-integrate qpos / vel.
+    n_qs = rigid_info.qpos.shape[0]
+    n_dofs = dyn_state.dofs.vel.shape[0]
+    _B = dyn_state.dofs.vel.shape[1]
+
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_q, i_b in qd.ndrange(n_qs, _B):
+        rigid_info.qpos[i_q, i_b] = rigid_info.qpos_next[i_q, i_b]
+
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        dyn_state.dofs.vel[i_d, i_b] = dyn_state.dofs.vel_next[i_d, i_b]
 
 
 @qd.func
