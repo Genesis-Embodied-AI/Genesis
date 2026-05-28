@@ -5645,16 +5645,7 @@ def func_update_gradient_batch(
         )
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.CG):
-        func_solve_mass_batch(
-            i_b,
-            constraint_state.grad,
-            constraint_state.Mgrad,
-            out_bw=None,
-            dyn_info=dyn_info,
-            rigid_info=rigid_info,
-            rigid_config=rigid_config,
-            is_backward=False,
-        )
+        func_solve_mass_batch(i_b, constraint_state.grad, constraint_state.Mgrad, dyn_info, rigid_info, rigid_config)
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):
         if qd.static(rigid_config.enable_per_island_solve):
@@ -5725,14 +5716,7 @@ def func_update_gradient_tiled(
         )
         for i_b in range(_B):
             func_solve_mass_batch(
-                i_b,
-                constraint_state.grad,
-                constraint_state.Mgrad,
-                out_bw=None,
-                dyn_info=dyn_info,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
-                is_backward=False,
+                i_b, constraint_state.grad, constraint_state.Mgrad, dyn_info, rigid_info, rigid_config
             )
 
     if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):
