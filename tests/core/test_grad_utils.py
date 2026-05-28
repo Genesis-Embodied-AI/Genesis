@@ -4,12 +4,7 @@ Within the differentiable-rigid test suite, this is the *plumbing* layer —
 orthogonal to which physics is active. The other files check that the gradient
 is numerically correct; this one checks that the backward *machinery* (state
 snapshot/restore, gradient-tape clearing, no grad leak across chunked horizons)
-is correct. Siblings:
-  - test_diff_forward_kinematics : local FD of the FK + velocity gradient.
-  - test_diff_joint_limit        : the joint-limit constraint gradient.
-  - test_diff_contact            : the collision / diff-GJK contact gradient.
-  - test_diff_scene_backward     : *this file* — scene.backward() + horizon truncation.
-  - test_diff_optim              : end-to-end optimization convergence.
+is correct.
 
 `scene.backward(loss)` folds the snapshot → backward → restore dance
 (`scene.get_state()` → `loss.backward()` → `scene.reset(snapshot)`) into a single
@@ -30,14 +25,7 @@ runs three scenes in parallel:
 If `scene.backward(loss)` correctly (a) restores physics state, (b) clears
 the gradient tape, and (c) doesn't leak grad accumulation across horizons,
 then ``grad1_A == grad1_B`` and ``grad2_A == grad2_C`` exactly.
-
-We parameterize over the 5 J1~J5 topologies from
-`test_diff_forward_kinematics.py` to cover single freejoint, 1-DOF revolute /
-prismatic, freejoint+revolute child, and revolute chain-3.
 """
-
-import os
-import tempfile
 
 import numpy as np
 import pytest
@@ -45,7 +33,7 @@ import pytest
 import genesis as gs
 from genesis.utils.misc import qd_to_torch
 
-from .utils import assert_allclose
+from ..utils import assert_allclose
 
 
 pytestmark = [
@@ -53,7 +41,7 @@ pytestmark = [
 ]
 
 
-# Parametrization params (mirrors `test_diff_forward_kinematics.py`).
+# Parametrization params (mirrors `test_grad_fd.py`).
 _PRECISION_PARAMS = [
     pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
     pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
@@ -70,93 +58,13 @@ _TOL = {
 }
 
 
-# ---------------------------------------------------------------------------
-# MJCF topologies (copied from `tests/test_diff_forward_kinematics.py` to keep
-# this file self-contained).
-# ---------------------------------------------------------------------------
-
-MJCF_FREE = """
-<mujoco model="free">
-  <worldbody>
-    <body name="chassis" pos="0 0 0">
-      <freejoint/>
-      <inertial mass="1.0" pos="0 0 0" diaginertia="0.1 0.1 0.1"/>
-      <geom type="box" size="0.1 0.1 0.1" contype="0" conaffinity="0"/>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-MJCF_REVOLUTE = """
-<mujoco model="revolute">
-  <worldbody>
-    <body name="arm" pos="0 0 0">
-      <joint type="hinge" axis="0 1 0"/>
-      <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
-      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-MJCF_PRISMATIC = """
-<mujoco model="prismatic">
-  <worldbody>
-    <body name="slider" pos="0 0 0">
-      <joint type="slide" axis="1 0 0"/>
-      <inertial mass="0.5" pos="0 0 0" diaginertia="0.01 0.01 0.01"/>
-      <geom type="box" size="0.05 0.05 0.05" contype="0" conaffinity="0"/>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-MJCF_FREE_REV = """
-<mujoco model="free_with_child">
-  <worldbody>
-    <body name="chassis" pos="0 0 0">
-      <freejoint/>
-      <inertial mass="1.0" pos="0 0 0" diaginertia="0.1 0.1 0.1"/>
-      <geom type="box" size="0.1 0.1 0.1" contype="0" conaffinity="0"/>
-      <body name="arm" pos="0.2 0 0">
-        <joint type="hinge" axis="0 1 0"/>
-        <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
-        <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
-      </body>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-MJCF_REV_CHAIN3 = """
-<mujoco model="chain3">
-  <worldbody>
-    <body name="l1" pos="0 0 0">
-      <joint type="hinge" axis="0 1 0"/>
-      <inertial mass="0.3" pos="0.1 0 0" diaginertia="0.005 0.005 0.005"/>
-      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
-      <body name="l2" pos="0.2 0 0">
-        <joint type="hinge" axis="0 1 0"/>
-        <inertial mass="0.3" pos="0.1 0 0" diaginertia="0.005 0.005 0.005"/>
-        <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
-        <body name="l3" pos="0.2 0 0">
-          <joint type="hinge" axis="0 1 0"/>
-          <inertial mass="0.3" pos="0.1 0 0" diaginertia="0.005 0.005 0.005"/>
-          <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
-        </body>
-      </body>
-    </body>
-  </worldbody>
-</mujoco>
-"""
-
-
+# J1~J5 joint topologies, loaded from the shared `xml/grad/` MJCF assets.
 _TOPOLOGIES = [
-    pytest.param(MJCF_FREE, 6, id="J1_free"),
-    pytest.param(MJCF_REVOLUTE, 1, id="J2_revolute"),
-    pytest.param(MJCF_PRISMATIC, 1, id="J3_prismatic"),
-    pytest.param(MJCF_FREE_REV, 7, id="J4_free_rev"),
-    pytest.param(MJCF_REV_CHAIN3, 3, id="J5_chain3"),
+    pytest.param("free", 6, id="J1_free"),
+    pytest.param("revolute", 1, id="J2_revolute"),
+    pytest.param("prismatic", 1, id="J3_prismatic"),
+    pytest.param("free_with_revolute", 7, id="J4_free_rev"),
+    pytest.param("revolute_chain3", 3, id="J5_chain3"),
 ]
 
 
@@ -165,14 +73,7 @@ _TOPOLOGIES = [
 # ---------------------------------------------------------------------------
 
 
-def _mjcf_to_tmpfile(mjcf_str: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".xml")
-    with os.fdopen(fd, "w") as f:
-        f.write(mjcf_str)
-    return path
-
-
-def _build_scene(mjcf_str: str, n_envs: int = 0, substeps: int = 1):
+def _build_scene(model_name: str, n_envs: int = 0, substeps: int = 1):
     """Build a diff-rigid scene with the standard "no collision / no constraint" config."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -191,7 +92,7 @@ def _build_scene(mjcf_str: str, n_envs: int = 0, substeps: int = 1):
         ),
         show_viewer=False,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=_mjcf_to_tmpfile(mjcf_str)))
+    robot = scene.add_entity(gs.morphs.MJCF(file=f"xml/grad/{model_name}.xml"))
     scene.build(n_envs=n_envs)
     return scene, robot
 
@@ -228,12 +129,13 @@ def _read_qpos(scene) -> np.ndarray:
     return qd_to_torch(solver._rigid_global_info.qpos, copy=True).cpu().numpy()
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("precision_str", _PRECISION_PARAMS)
 @pytest.mark.parametrize("substeps", [1, 4])
 @pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("mjcf_str, n_dofs", _TOPOLOGIES)
-def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs, n_envs, substeps, precision_str):
+@pytest.mark.parametrize("model_name, n_dofs", _TOPOLOGIES)
+def test_horizon_truncation_matches_independent_scenes(model_name, n_dofs, n_envs, substeps, precision_str):
     """Two-segment trajectory in Scene A matches the same two
     segments run in independent Scene B (horizon 1) and Scene C (horizon 2,
     started from B's mid-trajectory snapshot via `scene.reset(state)`).
@@ -247,7 +149,7 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs, n_envs,
     H = 5
 
     # ----- Scene A: one scene, snapshot+reset between two horizons -----
-    sceneA, robotA = _build_scene(mjcf_str, n_envs=n_envs, substeps=substeps)
+    sceneA, robotA = _build_scene(model_name, n_envs=n_envs, substeps=substeps)
     sceneA.reset()
     v1A = gs.tensor(rng_v1, dtype=gs.tc_float, requires_grad=True)
     loss_h1_A = _run_segment(sceneA, robotA, v1A, H)
@@ -268,7 +170,7 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs, n_envs,
     grad2_A = v2A.grad.detach().clone().cpu().numpy()
 
     # ----- Scene B: same horizon 1 only -----
-    sceneB, robotB = _build_scene(mjcf_str, n_envs=n_envs, substeps=substeps)
+    sceneB, robotB = _build_scene(model_name, n_envs=n_envs, substeps=substeps)
     sceneB.reset()
     v1B = gs.tensor(rng_v1, dtype=gs.tc_float, requires_grad=True)
     loss_h1_B = _run_segment(sceneB, robotB, v1B, H)
@@ -285,7 +187,7 @@ def test_horizon_truncation_matches_independent_scenes(mjcf_str, n_dofs, n_envs,
     assert_allclose(grad1_A, grad1_B, **tol)
 
     # ----- Scene C: fresh scene, start from B's mid-trajectory snapshot -----
-    sceneC, robotC = _build_scene(mjcf_str, n_envs=n_envs, substeps=substeps)
+    sceneC, robotC = _build_scene(model_name, n_envs=n_envs, substeps=substeps)
     sceneC.reset(snapshot_B)
     v2C = gs.tensor(rng_v2, dtype=gs.tc_float, requires_grad=True)
     loss_h2_C = _run_segment(sceneC, robotC, v2C, H)

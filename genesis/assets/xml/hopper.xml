@@ -1,0 +1,27 @@
+<mujoco model="hopper">
+  <compiler angle="radian"/>
+  <default>
+    <joint limited="true" armature="1" damping="1"/>
+    <geom condim="3" friction="0.9 0.005 0.0001" rgba="0.8 0.6 0.4 1"/>
+  </default>
+  <worldbody>
+    <body name="torso" pos="0 0 1.25">
+      <joint name="rootx" pos="0 0 0" axis="1 0 0" type="slide" limited="false" armature="0" damping="0"/>
+      <joint name="rootz" pos="0 0 0" axis="0 0 1" type="slide" limited="false" armature="0" damping="0"/>
+      <joint name="rooty" pos="0 0 0" axis="0 1 0" type="hinge" limited="false" armature="0" damping="0"/>
+      <geom name="torso_geom" type="capsule" size="0.05 0.2"/>
+      <body name="thigh" pos="0 0 -0.2">
+        <joint name="thigh_joint" pos="0 0 0" axis="0 -1 0" type="hinge" range="-2.61799 0"/>
+        <geom name="thigh_geom" type="capsule" size="0.05 0.225" pos="0 0 -0.225"/>
+        <body name="leg" pos="0 0 -0.7">
+          <joint name="leg_joint" pos="0 0 0.25" axis="0 -1 0" type="hinge" range="-2.61799 0"/>
+          <geom name="leg_geom" type="capsule" size="0.04 0.25"/>
+          <body name="foot" pos="0 0 -0.25">
+            <joint name="foot_joint" pos="0 0 0" axis="0 -1 0" type="hinge" range="-0.785398 0.785398"/>
+            <geom name="foot_geom" type="capsule" size="0.06 0.195" pos="0.06 0 0" quat="0.707107 0 -0.707107 0" friction="2 0.005 0.0001"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

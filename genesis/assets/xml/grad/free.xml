@@ -1,0 +1,9 @@
+<mujoco model="free">
+  <worldbody>
+    <body name="chassis" pos="0 0 0">
+      <freejoint/>
+      <inertial mass="1.0" pos="0 0 0" diaginertia="0.1 0.1 0.1"/>
+      <geom type="box" size="0.1 0.1 0.1" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

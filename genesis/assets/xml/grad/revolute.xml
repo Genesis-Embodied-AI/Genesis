@@ -1,0 +1,9 @@
+<mujoco model="revolute">
+  <worldbody>
+    <body name="arm" pos="0 0 0">
+      <joint type="hinge" axis="0 1 0"/>
+      <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
+      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,15 @@
+<mujoco model="cartpole">
+  <option gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="cart" pos="0 0 0">
+      <joint name="slider" type="slide" axis="1 0 0" range="-4 4" damping="0.0"/>
+      <inertial pos="0 0 0" mass="1.0" diaginertia="1.0 1.0 1.0"/>
+      <geom name="cart_geom" type="box" size="0.25 0.25 0.1" contype="0" conaffinity="0" rgba="0 0 0.8 1"/>
+      <body name="pole" pos="0 0 0">
+        <joint name="hinge" type="hinge" axis="0 1 0" damping="0.0"/>
+        <inertial pos="0 0 0.5" mass="10.0" diaginertia="1.0 1.0 1.0"/>
+        <geom name="pole_geom" type="box" pos="0 0 0.5" size="0.025 0.025 0.5" contype="0" conaffinity="0" rgba="1 1 1 1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>

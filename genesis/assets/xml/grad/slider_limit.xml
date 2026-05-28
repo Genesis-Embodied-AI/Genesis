@@ -1,0 +1,10 @@
+<mujoco model="slider_limit">
+  <option gravity="0 0 0"/>
+  <worldbody>
+    <body name="cart" pos="0 0 0">
+      <joint name="slider" type="slide" axis="1 0 0" range="-4 4" damping="0.0"/>
+      <inertial pos="0 0 0" mass="1.0" diaginertia="1.0 1.0 1.0"/>
+      <geom type="box" size="0.25 0.25 0.1" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>
