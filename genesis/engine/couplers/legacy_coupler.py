@@ -192,6 +192,8 @@ class LegacyCoupler(RBC):
         pos_world,
         vel,
         mass,
+        particle_p,
+        particle_rest_rho,
         normal_prev,
         geom_idx,
         batch_idx,
@@ -219,6 +221,21 @@ class LegacyCoupler(RBC):
         if influence > 0.1:
             vel = self._func_collide_in_rigid_geom(
                 pos_world, vel, mass, normal_rigid, influence, geom_idx, batch_idx, geoms_info, links_state, rigid_info
+            )
+
+        # Pressure-based buoyancy force transfer: even when the particle is not actively colliding
+        # (rvel_normal_magnitude >= 0), its static pressure still exerts force on the rigid body.
+        # This is essential for correct buoyancy of submerged objects.
+        if signed_dist < 0 and particle_p > 0:
+            V = mass / particle_rest_rho
+            h = self.sph_solver._support_radius
+            buoyancy_force = -particle_p * V / h * normal_rigid
+            self.rigid_solver._func_apply_coupling_force(
+                pos_world,
+                buoyancy_force,
+                geoms_info.link_idx[geom_idx],
+                batch_idx,
+                links_state,
             )
 
         # attraction force
@@ -661,6 +678,8 @@ class LegacyCoupler(RBC):
                             self.sph_solver.particles_reordered[i_p, i_b].pos,
                             self.sph_solver.particles_reordered[i_p, i_b].vel,
                             self.sph_solver.particles_info_reordered[i_p, i_b].mass,
+                            self.sph_solver.particles_reordered[i_p, i_b].p,
+                            self.sph_solver.particles_info_reordered[i_p, i_b].rho,
                             self.sph_rigid_normal_reordered[i_p, i_g, i_b],
                             i_g,
                             i_b,
