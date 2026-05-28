@@ -1775,7 +1775,7 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     RENDERED_ENVS = (1, 2)
 
     # FIXME: Small discrepancies between different hardware due to contact visualization with onscreen viewer
-    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.0 if force_show_viewer else 1.05
+    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.5 if force_show_viewer else 1.05
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
