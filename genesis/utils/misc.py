@@ -702,7 +702,7 @@ def qd_to_torch(
         except AttributeError:
             try:
                 tc = value.to_torch(copy=False)
-            except (ValueError, RuntimeError):
+            except (ValueError, RuntimeError, TypeError):
                 if copy is False:
                     raise
                 tensor = _maybe_transpose(value.to_torch(), value, transpose)
