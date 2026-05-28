@@ -1590,6 +1590,20 @@ class RigidSolver(KinematicSolver):
         has_collision = not self._disable_constraint and self._enable_collision
         has_joint_limit = not self._disable_constraint and self._options.enable_joint_limit
         if has_collision or has_joint_limit:
+            # Reject equality / frictionloss constraints: the forward orders rows as equality -> frictionloss ->
+            # collision -> joint-limit, but the manual reverses below only re-walk the last two groups.
+            # TODO: implement manual reverses for equality and frictionloss rows so they can participate in
+            # differentiable scenes; until then reject host-side instead of producing a wrong gradient.
+            constraint_state = self.constraint_solver.constraint_state
+            n_eq_max = int(qd_to_numpy(constraint_state.n_constraints_equality).max())
+            n_fric_max = int(qd_to_numpy(constraint_state.n_constraints_frictionloss).max())
+            if n_eq_max > 0 or n_fric_max > 0:
+                gs.raise_exception(
+                    "Differentiable rigid backward does not support equality or frictionloss "
+                    f"constraints (found n_constraints_equality={n_eq_max}, "
+                    f"n_constraints_frictionloss={n_fric_max}). Disable them in a differentiable scene."
+                )
+
             kernel_load_dL_dqacc_from_acc_grad(
                 self.dyn_state, self.constraint_solver.constraint_state, self.rigid_config
             )
