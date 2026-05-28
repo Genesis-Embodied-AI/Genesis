@@ -632,6 +632,24 @@ class SPHSolver(Solver):
 
         gs.logger.debug(f"DFSPH - iterations: {iteration} Avg density err: {avg_density_err:.4f} kg/m^3")
 
+    @qd.kernel
+    def _kernel_compute_df sph_pressure(self):
+        """
+        Extract implicit pressure from DFSPH density solve residual and write to particles.p.
+
+        DFSPH does not compute explicit pressure via equation of state (unlike WCSPH). Instead, it
+        solves for velocity corrections that enforce incompressibility. The implicit pressure is
+        derived from the density residual (drho - 1.0) and the DFSPH factor (which encodes the
+        inverse squared kernel gradient sum, already scaled by 1/dt^2 during _density_solve):
+            p = -(drho - 1.0) * dfsph_factor * rho0
+        This gives p > 0 when the particle is compressed (drho > 1.0).
+        """
+        for i_p, i_b in qd.ndrange(self._n_particles, self._B):
+            if self.particles_ng_reordered[i_p, i_b].active:
+                rho0 = self.particles_info_reordered[i_p, i_b].rho
+                b_i = self.particles_reordered[i_p, i_b].drho - 1.0
+                self.particles_reordered[i_p, i_b].p = -b_i * self.particles_reordered[i_p, i_b].dfsph_factor * rho0
+
     # ------------------------------------------------------------------------------------
     # ------------------------------------- utils ----------------------------------------
     # ------------------------------------------------------------------------------------
@@ -701,6 +719,7 @@ class SPHSolver(Solver):
                 self._kernel_compute_non_pressure_forces(f, self._sim.cur_t)
                 self._kernel_predict_velocity(f)
                 self._density_solve(f)
+                self._kernel_compute_df sph_pressure()
 
     def substep_pre_coupling_grad(self, f):
         pass
