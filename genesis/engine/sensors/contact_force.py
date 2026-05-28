@@ -30,12 +30,31 @@ def _kernel_get_contacts_forces(
     link_b: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
     sensors_link_idx: qd.types.ndarray(),
+    filter_links_idx: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
     for i_c, i_s, i_b in qd.ndrange(link_a.shape[-1], sensors_link_idx.shape[-1], output.shape[-1]):
         contact_data_link_a = link_a[i_b, i_c]
         contact_data_link_b = link_b[i_b, i_c]
         if contact_data_link_a == sensors_link_idx[i_s] or contact_data_link_b == sensors_link_idx[i_s]:
+            # Determine the "other" link for filter check: the one that is NOT the sensor's link.
+            if contact_data_link_a == sensors_link_idx[i_s]:
+                other_link = contact_data_link_b
+            else:
+                other_link = contact_data_link_a
+
+            # Skip if the other participant is in this sensor's filter list.
+            is_filtered = False
+            for jf in range(filter_links_idx.shape[-1]):
+                filter_link = filter_links_idx[i_s, jf]
+                if filter_link == -1:
+                    break
+                if filter_link == other_link:
+                    is_filtered = True
+                    break
+            if is_filtered:
+                continue
+
             j_s = i_s * 3  # per-sensor output dimension is 3
 
             quat_a = qd.Vector.zero(gs.qd_float, 4)
@@ -302,6 +321,7 @@ class ContactForceSensor(
                 link_b.contiguous(),
                 links_quat.contiguous(),
                 shared_metadata.links_idx,
+                shared_metadata.filter_links_idx,
                 raw_data_T,
             )
 
