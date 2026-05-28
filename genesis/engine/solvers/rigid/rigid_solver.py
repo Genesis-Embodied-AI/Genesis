@@ -34,6 +34,8 @@ from .collider import Collider
 from .constraint import ConstraintSolver
 from .constraint.backward import (
     kernel_manual_add_collision_constraints_bw,
+    kernel_accumulate_constraint_solver_grads,
+    kernel_load_dL_dqacc_from_acc_grad,
     kernel_manual_add_joint_limit_constraints_bw,
 )
 from .abd.misc import (
@@ -1588,18 +1590,13 @@ class RigidSolver(KinematicSolver):
         has_collision = not self._disable_constraint and self._enable_collision
         has_joint_limit = not self._disable_constraint and self._options.enable_joint_limit
         if has_collision or has_joint_limit:
-            dL_dqacc = self.dyn_state.dofs.acc.grad.to_numpy()
-            self.dyn_state.dofs.acc.grad.fill(0.0)
-
-            self.constraint_solver.backward(dL_dqacc)
-
-            dL_dforce = self.constraint_solver.constraint_state.dL_dforce.to_numpy()
-            cur_force_grad = self.dyn_state.dofs.force.grad.to_numpy()
-            self.dyn_state.dofs.force.grad.from_numpy(cur_force_grad + dL_dforce)
-
-            dL_dM = self.constraint_solver.constraint_state.dL_dM.to_numpy()
-            cur_mass_grad = self.rigid_info.mass_mat.grad.to_numpy()
-            self.rigid_info.mass_mat.grad.from_numpy(cur_mass_grad + dL_dM)
+            kernel_load_dL_dqacc_from_acc_grad(
+                self.dyn_state, self.constraint_solver.constraint_state, self.rigid_config
+            )
+            self.constraint_solver.backward()
+            kernel_accumulate_constraint_solver_grads(
+                self.dyn_state, self.constraint_solver.constraint_state, self.rigid_info, self.rigid_config
+            )
 
             if has_collision:
                 # Manual reverse of the collision constraint rows -> contact-data grads, then differentiate the

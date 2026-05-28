@@ -1859,7 +1859,8 @@ def test_diff_solver(monkeypatch):
     dL_dqacc = tensor_to_array(torch.autograd.grad(loss, output_qacc)[0])
 
     # Compute gradients of the input variables: [mass], [jac], [aref], [efc_D], [force]
-    constraint_solver.backward(dL_dqacc)
+    constraint_solver.constraint_state.dL_dqacc.from_numpy(dL_dqacc)
+    constraint_solver.backward()
 
     # Fetch gradients of the input variables
     dL_dM = qd_to_numpy(constraint_solver.constraint_state.dL_dM)

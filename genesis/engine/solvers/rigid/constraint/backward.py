@@ -266,6 +266,49 @@ def kernel_compute_gradients(
                     constraint_state.dL_dM[i, j, i_b] += (val0 + val1) * 0.5  # symmetrize
 
 
+@qd.kernel(fastcache=True)
+def kernel_load_dL_dqacc_from_acc_grad(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
+):
+    """Copy the acc grad into constraint_state.dL_dqacc (the input buffer consumed by kernel_solve_adjoint_u) and
+    zero the source grad so the downstream implicit-function-theorem path does not re-consume it.
+    """
+    _B = dyn_state.dofs.acc.shape[1]
+    n_dofs = dyn_state.dofs.acc.shape[0]
+    qd.loop_config(
+        name="kernel_load_dL_dqacc_from_acc_grad",
+        serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
+    )
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        constraint_state.dL_dqacc[i_d, i_b] = dyn_state.dofs.acc.grad[i_d, i_b]
+        dyn_state.dofs.acc.grad[i_d, i_b] = gs.qd_float(0.0)
+
+
+@qd.kernel(fastcache=True)
+def kernel_accumulate_constraint_solver_grads(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Fold the constraint-solver adjoint outputs into the autodiff grad fields:
+    dyn_state.dofs.force.grad += constraint_state.dL_dforce
+    rigid_info.mass_mat.grad  += constraint_state.dL_dM
+    """
+    _B = dyn_state.dofs.force.shape[1]
+    n_dofs = dyn_state.dofs.force.shape[0]
+    qd.loop_config(
+        name="kernel_accumulate_constraint_solver_grads",
+        serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
+    )
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        dyn_state.dofs.force.grad[i_d, i_b] += constraint_state.dL_dforce[i_d, i_b]
+    for i, j, i_b in qd.ndrange(n_dofs, n_dofs, _B):
+        rigid_info.mass_mat.grad[i, j, i_b] += constraint_state.dL_dM[i, j, i_b]
+
+
 # ---------------------------------------------------------------------------
 # Manual reverses of the constraint-force inequality constraints (collision,
 # joint-limit). Shared conventions for the two kernels below.
