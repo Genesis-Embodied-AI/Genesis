@@ -196,6 +196,10 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata)
 
     min_force: torch.Tensor = make_tensor_field((0, 3))
     max_force: torch.Tensor = make_tensor_field((0, 3))
+    # (num_contact_force_sensors, max_num_filter_links); unused slots are -1.
+    filter_links_idx: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    # Indices into links_idx of sensors that have at least one filter link.
+    filtered_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class ContactForceSensor(
@@ -222,6 +226,21 @@ class ContactForceSensor(
         self._shared_metadata.max_force = concat_with_tensor(
             self._shared_metadata.max_force, self._options.max_force, expand=(1, 3)
         )
+
+        # === filter_link_idx handling ===
+        num_sensors, cur_num_filter_links = self._shared_metadata.filter_links_idx.shape
+        max_num_filter_links = max(cur_num_filter_links, len(self._options.filter_link_idx))
+        filter_links_idx = torch.full((num_sensors + 1, max_num_filter_links), -1, dtype=gs.tc_int, device=gs.device)
+        filter_links_idx[:num_sensors, :cur_num_filter_links] = self._shared_metadata.filter_links_idx
+        filter_links_idx[num_sensors, : len(self._options.filter_link_idx)] = torch.tensor(
+            self._options.filter_link_idx, dtype=gs.tc_int, device=gs.device
+        )
+        self._shared_metadata.filter_links_idx = filter_links_idx
+
+        if len(self._options.filter_link_idx) > 0:
+            self._shared_metadata.filtered_sensor_idx = concat_with_tensor(
+                self._shared_metadata.filtered_sensor_idx, num_sensors, expand=(1,), dim=0
+            )
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
@@ -260,6 +279,16 @@ class ContactForceSensor(
             force_mask_a = link_a[:, None] == shared_metadata.links_idx[None, :, None]
             force_mask_b = link_b[:, None] == shared_metadata.links_idx[None, :, None]
             force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
+            # Apply filter_link_idx: zero out contacts where the counterpart link is in the filter list.
+            if shared_metadata.filtered_sensor_idx.numel() > 0:
+                filt = shared_metadata.filtered_sensor_idx
+                sub_filter = shared_metadata.filter_links_idx[filt][None, :, None, :]
+                filtered_a = (link_b[:, None, :, None] == sub_filter).any(dim=-1)
+                filtered_b = (link_a[:, None, :, None] == sub_filter).any(dim=-1)
+                sub_mask_a = force_mask_a[:, filt, :]
+                sub_mask_b = force_mask_b[:, filt, :]
+                sub_filter_mask = (sub_mask_a & filtered_a) | (sub_mask_b & filtered_b)
+                force_mask[:, filt, :] = force_mask[:, filt, :].masked_fill(sub_filter_mask, 0.0)
             sensors_force = (force_mask[..., None] * force[:, None]).sum(dim=2)
             sensors_quat = links_quat[:, shared_metadata.links_idx]
             n_envs = max(shared_metadata.solver.n_envs, 1)

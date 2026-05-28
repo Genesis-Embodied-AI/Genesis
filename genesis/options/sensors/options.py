@@ -280,6 +280,10 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
 
     Parameters
     ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link where the other
+        participant is one of these links are excluded from the reported force. Default is empty (no
+        filtering).
     min_force : float | array-like[float, float, float], optional
         The minimum detectable absolute force per each axis. Values below this will be treated as 0. Default is 0.
     max_force : float | array-like[float, float, float], optional
@@ -290,6 +294,7 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
         The scale factor for the debug force arrow. Defaults to 0.01.
     """
 
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
     resolution: LaxVec3FType = 0.0
 
     min_force: LaxNonNegativeUnboundedVec3FType = 0.0
@@ -297,6 +302,15 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
 
     debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
     debug_scale: PositiveFloat = 0.01
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if self.filter_link_idx:
+            n_links = scene.sim.rigid_solver.n_links
+            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
+                gs.raise_exception(
+                    f"ContactForce sensor filter_link_idx should be in range [0, {n_links}). Got {self.filter_link_idx}"
+                )
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
