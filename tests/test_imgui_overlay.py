@@ -174,7 +174,7 @@ def test_editing_controls(png_snapshot, monkeypatch):
 
     _apply_deterministic_imgui_overrides(monkeypatch)
 
-    plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
+    plugin = next(p for p in scene.viewer.plugins if isinstance(p, ImGuiOverlayPlugin))
     plugin._panel_width = 420
     plugin._active_tab = "Scene"
 
@@ -206,8 +206,8 @@ def test_scene_rebuild():
     scene.build()
 
     scene_id = id(scene)
-    plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
-    interactive = plugin._interactive_scene
+    plugin = next(p for p in scene.viewer.plugins if isinstance(p, ImGuiOverlayPlugin))
+    interactive = plugin.interactive_scene
     assert interactive is not None
     names_before = [entity.name for entity in scene.entities]
     # The rebuild must reuse the live window rather than closing and reopening it.

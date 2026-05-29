@@ -48,11 +48,11 @@ class Viewer(RBC):
         self._camera_fov = options.camera_fov
 
         self._enable_help_text = options.enable_help_text
-        self._viewer_plugins: list["ViewerPlugin"] = []
+        self._plugins: list["ViewerPlugin"] = []
         if options.enable_default_keybinds:
-            self._viewer_plugins.append(DefaultControlsPlugin())
+            self._plugins.append(DefaultControlsPlugin())
         if options.enable_gui:
-            self._viewer_plugins.append(ImGuiOverlayPlugin())
+            self._plugins.append(ImGuiOverlayPlugin())
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
@@ -80,7 +80,7 @@ class Viewer(RBC):
         # would close and reopen the OS window). The preserved pyrender viewer is re-pointed at the rebuilt
         # scene graph in place.
         if self._pyrender_viewer is not None:
-            self._pyrender_viewer.rebind(self.context, self._viewer_plugins)
+            self._pyrender_viewer.rebind(self.context, self._plugins)
             self.lock = ViewerLock(self._pyrender_viewer)
             self._is_built = True
             return
@@ -118,7 +118,7 @@ class Viewer(RBC):
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
                         enable_help_text=self._enable_help_text,
-                        plugins=self._viewer_plugins,
+                        plugins=self._plugins,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,
@@ -375,14 +375,34 @@ class Viewer(RBC):
         plugin : ViewerPlugin
             The viewer plugin to add.
         """
-        self._viewer_plugins.append(plugin)
+        self._plugins.append(plugin)
         if self.is_built:
             self._pyrender_viewer.register_plugin(plugin)
         return plugin
 
+    def remove_plugin(self, plugin: "ViewerPlugin") -> None:
+        """
+        Remove a viewer plugin from the viewer, detaching it from the live render loop if already built.
+
+        Parameters
+        ----------
+        plugin : ViewerPlugin
+            The viewer plugin to remove.
+        """
+        if plugin in self._plugins:
+            self._plugins.remove(plugin)
+        if self.is_built and plugin in self._pyrender_viewer.plugins:
+            self._pyrender_viewer.plugins.remove(plugin)
+            self._pyrender_viewer.remove_handlers(plugin)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def plugins(self):
+        """The registered viewer plugins, read-only; use ``add_plugin`` to register one."""
+        return tuple(self._plugins)
 
     @property
     def is_built(self):
