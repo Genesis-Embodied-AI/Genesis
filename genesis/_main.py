@@ -9,7 +9,7 @@ from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 FPS = 60
 
 
-def launch(filename, collision, rotate, scale=1.0, show_link_frame=False, deprecated=False):
+def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_frame=False, deprecated=False):
     gs.init(backend=gs.cpu)
 
     if deprecated:
@@ -30,48 +30,52 @@ def launch(filename, collision, rotate, scale=1.0, show_link_frame=False, deprec
         show_viewer=True,
     )
 
-    filename_lower = filename.lower()
-    morphs = gs.options.morphs
-    material = gs.materials.Rigid()
-    # Morphs load collision geometry by default, so the overlay's collision vis-mode has something to show; the -c
-    # flag only selects which representation is displayed first.
-    surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
+    # With no file given, open an empty interactive scene; entities can be added live through the overlay's
+    # "Add Entity / Stage" panel and applied with "Rebuild Scene".
+    entities = []
+    if filename is not None:
+        filename_lower = filename.lower()
+        morphs = gs.options.morphs
+        material = gs.materials.Rigid()
+        # Morphs load collision geometry by default, so the overlay's collision vis-mode has something to show; the -c
+        # flag only selects which representation is displayed first.
+        surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
 
-    if filename_lower.endswith(morphs.USD_FORMATS):
-        morph = gs.morphs.USD(file=filename, scale=scale)
-        entities = scene.add_stage(morph=morph, vis_mode=surface.vis_mode)
-    elif filename_lower.endswith((morphs.URDF_FORMAT, morphs.XACRO_FORMAT)):
-        morph_cls = gs.morphs.URDF
-        entities = [
-            scene.add_entity(
-                morph_cls(file=filename, scale=scale),
-                material=material,
-                surface=surface,
+        if filename_lower.endswith(morphs.USD_FORMATS):
+            morph = gs.morphs.USD(file=filename, scale=scale)
+            entities = scene.add_stage(morph=morph, vis_mode=surface.vis_mode)
+        elif filename_lower.endswith((morphs.URDF_FORMAT, morphs.XACRO_FORMAT)):
+            morph_cls = gs.morphs.URDF
+            entities = [
+                scene.add_entity(
+                    morph_cls(file=filename, scale=scale),
+                    material=material,
+                    surface=surface,
+                )
+            ]
+        elif filename_lower.endswith(morphs.MJCF_FORMAT):
+            morph_cls = gs.morphs.MJCF
+            entities = [
+                scene.add_entity(
+                    morph_cls(file=filename, scale=scale),
+                    material=material,
+                    surface=surface,
+                )
+            ]
+        elif filename_lower.endswith(morphs.MESH_FORMATS):
+            morph_cls = gs.morphs.Mesh
+            entities = [
+                scene.add_entity(
+                    morph_cls(file=filename, scale=scale),
+                    material=material,
+                    surface=surface,
+                )
+            ]
+        else:
+            gs.raise_exception(
+                f"Unsupported file format for 'gs launch'. Expected {morphs.URDF_FORMAT}, {morphs.XACRO_FORMAT}, "
+                f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
             )
-        ]
-    elif filename_lower.endswith(morphs.MJCF_FORMAT):
-        morph_cls = gs.morphs.MJCF
-        entities = [
-            scene.add_entity(
-                morph_cls(file=filename, scale=scale),
-                material=material,
-                surface=surface,
-            )
-        ]
-    elif filename_lower.endswith(morphs.MESH_FORMATS):
-        morph_cls = gs.morphs.Mesh
-        entities = [
-            scene.add_entity(
-                morph_cls(file=filename, scale=scale),
-                material=material,
-                surface=surface,
-            )
-        ]
-    else:
-        gs.raise_exception(
-            f"Unsupported file format for 'gs view'. Expected {morphs.URDF_FORMAT}, {morphs.XACRO_FORMAT}, "
-            f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
-        )
 
     scene.build(compile_kernels=False)
 
@@ -154,7 +158,13 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     launch_args = argparse.ArgumentParser(add_help=False)
-    launch_args.add_argument("filename", type=str, help="File to visualize")
+    launch_args.add_argument(
+        "filename",
+        type=str,
+        nargs="?",
+        default=None,
+        help="Optional asset file (Mesh/URDF/MJCF/USD). Defaults to an empty interactive scene.",
+    )
     launch_args.add_argument(
         "-c", "--collision", action="store_true", default=False, help="Whether to visualize collision geometry"
     )
