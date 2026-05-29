@@ -320,7 +320,12 @@ class InteractiveScene:
             # Re-register the pre-step callback: the in-place re-init cleared Scene's callback list.
             scene.register_pre_step_callback(self._pre_step)
             for name, kwargs in self._entities_kwargs.items():
-                scene.add_entity(name=name, **kwargs)
+                # A USD morph describes a whole stage (potentially many bodies); add_stage parses and adds them and
+                # takes no name. Every other morph is a single entity added by name.
+                if isinstance(kwargs["morph"], gs.morphs.USD):
+                    scene.add_stage(**kwargs)
+                else:
+                    scene.add_entity(name=name, **kwargs)
             for sensor_opts in self._sensors_kwargs:
                 scene.add_sensor(sensor_opts)
             # Hand the preserved window to the new viewer so build() reuses it instead of opening a new one.

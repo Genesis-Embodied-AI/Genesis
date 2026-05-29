@@ -25,7 +25,9 @@ if TYPE_CHECKING:
     from genesis.ext.pyrender.viewer import Viewer
 
 _FPS_HISTORY_SIZE = 30
-_MORPH_TYPES = ["URDF", "MJCF", "Mesh", "Box", "Sphere", "Cylinder", "Plane"]
+# Add Entity / Stage dropdown. The "File" entry covers every file-based morph (URDF / MJCF / Mesh / USD); its
+# concrete type is deduced from the file extension. The others are primitive morphs built from their own params.
+_ADD_ENTITY_TYPES = ["File", "Box", "Sphere", "Cylinder", "Plane"]
 
 
 def button_size_with_min(imgui, label: str, min_width: float) -> tuple[float, float]:
@@ -117,11 +119,15 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # the InteractiveScene, which applies it on the stepping thread.
         self._pending_dirty = False
         self._pending_entities_kwargs: dict[str, dict] = {}
+        self._add_entity_morph_type = 0  # index into _ADD_ENTITY_TYPES
         self._add_entity_file = ""
-        self._add_entity_morph_type = 0  # index into _MORPH_TYPES
         self._add_entity_pos = [0.0, 0.0, 0.0]
         self._add_entity_scale = 1.0
-        # Type-specific geometry params
+        # Collision-mesh processing for file morphs (convexify replaces collision meshes with their convex hull,
+        # decimate reduces their face count).
+        self._add_convexify = True
+        self._add_decimate = True
+        # Primitive geometry params
         self._add_box_size = [0.2, 0.2, 0.2]
         self._add_sphere_radius = 0.1
         self._add_cylinder_radius = 0.05
@@ -721,13 +727,25 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         if imgui.button("Reset Camera", size=(120, 0)):
             self.viewer._reset_view()
 
-    _FILE_EXTENSIONS = {
-        "URDF": {".urdf"},
-        "MJCF": {".xml"},
-        "Mesh": {".obj", ".stl", ".ply", ".dae", ".glb", ".gltf"},
+    # Asset file extensions accepted by Add Entity, each mapped to the morph class deduced from it (matching how
+    # `gs launch` selects a morph from the filename). The Add Entity menu takes only a file path and infers the type.
+    _MORPH_BY_EXTENSION = {
+        ".urdf": gs.morphs.URDF,
+        ".xacro": gs.morphs.URDF,
+        ".xml": gs.morphs.MJCF,
+        ".obj": gs.morphs.Mesh,
+        ".stl": gs.morphs.Mesh,
+        ".ply": gs.morphs.Mesh,
+        ".dae": gs.morphs.Mesh,
+        ".glb": gs.morphs.Mesh,
+        ".gltf": gs.morphs.Mesh,
+        ".usd": gs.morphs.USD,
+        ".usda": gs.morphs.USD,
+        ".usdc": gs.morphs.USD,
+        ".usdz": gs.morphs.USD,
     }
 
-    def _render_file_browser(self, morph_type):
+    def _render_file_browser(self):
         """Render a file browser popup for selecting asset files."""
         imgui = self._imgui
         if not self._file_browser_open:
@@ -747,7 +765,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             draw_separator(imgui)
 
             # List directory contents
-            valid_exts = self._FILE_EXTENSIONS.get(morph_type, set())
+            valid_exts = set(self._MORPH_BY_EXTENSION)
             try:
                 entries = sorted(os.listdir(self._file_browser_dir))
             except OSError:
@@ -828,7 +846,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             morph_name = type(morph).__name__
             file_name = morph.file if isinstance(morph, gs.morphs.FileMorph) else ""
 
-            imgui.text(f"{name} ({morph_name}): {file_name or '(builtin)'}")
+            imgui.text_wrapped(f"{name} ({morph_name}): {file_name or '(builtin)'}")
 
             if isinstance(morph, gs.morphs.FileMorph):
                 scale = morph.scale
@@ -856,25 +874,28 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             del self._pending_entities_kwargs[to_remove]
             self._pending_dirty = True
 
-        # Add entity section
+        # Add entity / stage section
         imgui.begin_disabled(add_disabled)
-        add_header_open = imgui.collapsing_header("Add Entity##add_entity")
+        add_header_open = imgui.collapsing_header("Add Entity / Stage##add_entity")
         imgui.end_disabled()
         self._maybe_show_disabled_tooltip(add_disabled)
         if add_header_open:
             imgui.indent()
             imgui.begin_disabled(add_disabled)
-            changed_type, self._add_entity_morph_type = imgui.combo(
-                "Type##add_type", self._add_entity_morph_type, _MORPH_TYPES
-            )
 
-            morph_type = _MORPH_TYPES[self._add_entity_morph_type]
-            # Default fixed=True for Plane when type changes
+            changed_type, self._add_entity_morph_type = imgui.combo(
+                "Type##add_type", self._add_entity_morph_type, _ADD_ENTITY_TYPES
+            )
+            morph_type = _ADD_ENTITY_TYPES[self._add_entity_morph_type]
+            is_file = morph_type == "File"
+            # Default fixed=True for Plane when the type changes (a Plane is always grounded).
             if changed_type and morph_type == "Plane":
                 self._add_entity_fixed = True
 
-            # File path for file-based morphs
-            if morph_type in ("URDF", "MJCF", "Mesh"):
+            # The "File" entry takes only a path; the concrete morph (URDF / MJCF / Mesh / USD) is deduced from the
+            # extension, exactly as `gs launch` selects a morph from the filename it is given.
+            morph_cls = None
+            if is_file:
                 _, self._add_entity_file = imgui.input_text("File##add_file", self._add_entity_file, 256)
                 imgui.same_line()
                 if imgui.button("Browse##add_browse") and not add_disabled:
@@ -885,15 +906,16 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                         parent = os.path.dirname(self._add_entity_file)
                         if os.path.isdir(parent):
                             self._file_browser_dir = parent
+                self._render_file_browser()
 
-                self._render_file_browser(morph_type)
+                morph_cls = self._MORPH_BY_EXTENSION.get(os.path.splitext(self._add_entity_file)[1].lower())
+                if self._add_entity_file and morph_cls is None:
+                    imgui.text_colored((1.0, 0.4, 0.4, 1.0), "Unsupported file type")
 
                 _, self._add_entity_scale = imgui.drag_float(
                     "Scale##add_scale", self._add_entity_scale, 0.01, 0.01, 100.0, "%.3f"
                 )
-
-            # Type-specific geometry params
-            if morph_type == "Box":
+            elif morph_type == "Box":
                 _, self._add_box_size = imgui.drag_float3(
                     "Size##add_box_size", self._add_box_size, 0.01, 0.01, 100.0, "%.3f"
                 )
@@ -909,37 +931,65 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     "Height##add_cyl_h", self._add_cylinder_height, 0.01, 0.01, 100.0, "%.3f"
                 )
 
-            # Position (all types except Plane)
+            # Position (all types except Plane, which is always at the origin).
             if morph_type != "Plane":
                 _, self._add_entity_pos = imgui.drag_float3(
                     "Position##add_pos", self._add_entity_pos, 0.05, -100.0, 100.0, "%.2f"
                 )
 
-            # Fixed checkbox
+            # Fixed checkbox. An MJCF defines its own base joint (free or welded), so the toggle has no effect and is
+            # greyed out for it. The collision-mesh processing toggles sit alongside for file morphs: convexify
+            # replaces collision meshes with their convex hull and decimate reduces their face count (both default on).
+            fixed_disabled = morph_cls is gs.morphs.MJCF
+            imgui.begin_disabled(fixed_disabled)
             _, self._add_entity_fixed = imgui.checkbox("Fixed##add_fixed", self._add_entity_fixed)
+            imgui.end_disabled()
+            if fixed_disabled and imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
+                imgui.set_tooltip("An MJCF defines its own base joint")
+            if is_file:
+                imgui.same_line()
+                _, self._add_convexify = imgui.checkbox("Convexify##add_convexify", self._add_convexify)
+                imgui.same_line()
+                _, self._add_decimate = imgui.checkbox("Decimate##add_decimate", self._add_decimate)
 
+            # A File type stays un-addable until its path resolves to a known morph.
+            add_invalid = is_file and morph_cls is None
+            imgui.begin_disabled(add_invalid)
             add_clicked = imgui.button("Add##add_btn")
             imgui.end_disabled()
+            imgui.end_disabled()
             self._maybe_show_disabled_tooltip(add_disabled)
-            if add_clicked and not add_disabled:
+            if add_clicked and not add_disabled and not add_invalid:
                 pos = tuple(self._add_entity_pos)
-                scale = self._add_entity_scale
                 fixed = self._add_entity_fixed
-                box_size = tuple(self._add_box_size)
-                morph_cls_map = {
-                    "URDF": lambda: gs.morphs.URDF(file=self._add_entity_file, pos=pos, scale=scale, fixed=fixed),
-                    "MJCF": lambda: gs.morphs.MJCF(file=self._add_entity_file, pos=pos, scale=scale, fixed=fixed),
-                    "Mesh": lambda: gs.morphs.Mesh(file=self._add_entity_file, pos=pos, scale=scale, fixed=fixed),
-                    "Box": lambda: gs.morphs.Box(pos=pos, size=box_size, fixed=fixed),
-                    "Sphere": lambda: gs.morphs.Sphere(pos=pos, radius=self._add_sphere_radius, fixed=fixed),
-                    "Cylinder": lambda: gs.morphs.Cylinder(
+                if is_file:
+                    morph_kwargs = dict(
+                        file=self._add_entity_file,
+                        pos=pos,
+                        scale=self._add_entity_scale,
+                        convexify=self._add_convexify,
+                        decimate=self._add_decimate,
+                    )
+                    # MJCF has no 'fixed' parameter; its base joint comes from the file.
+                    if morph_cls is not gs.morphs.MJCF:
+                        morph_kwargs["fixed"] = fixed
+                    new_morph = morph_cls(**morph_kwargs)
+                    base_name = morph_cls.__name__
+                elif morph_type == "Box":
+                    new_morph = gs.morphs.Box(pos=pos, size=tuple(self._add_box_size), fixed=fixed)
+                    base_name = "Box"
+                elif morph_type == "Sphere":
+                    new_morph = gs.morphs.Sphere(pos=pos, radius=self._add_sphere_radius, fixed=fixed)
+                    base_name = "Sphere"
+                elif morph_type == "Cylinder":
+                    new_morph = gs.morphs.Cylinder(
                         pos=pos, radius=self._add_cylinder_radius, height=self._add_cylinder_height, fixed=fixed
-                    ),
-                    "Plane": lambda: gs.morphs.Plane(),
-                }
-                new_morph = morph_cls_map[morph_type]()
+                    )
+                    base_name = "Cylinder"
+                else:
+                    new_morph = gs.morphs.Plane()
+                    base_name = "Plane"
                 # Generate a unique name based on the morph type.
-                base_name = morph_type
                 suffix = 0
                 name = base_name
                 while name in self._pending_entities_kwargs:
@@ -992,18 +1042,21 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             # DOF count display
             imgui.text(f"DOFs: {data.n_dofs}")
 
-            # Vis mode combo. Kinematic entities are visual-only (no collision geoms), so the control is disabled for
-            # them; a disabled combo cannot change, so collision mode is never applied to a kinematic entity.
-            vis_modes = ["visual", "collision"]
+            # Vis mode combo. The collision item is greyed out unless the entity has collision geometry (kinematic
+            # entities have none, and rigid entities can be loaded without it), so an empty mode is never selectable.
+            has_collision = is_rigid and len(entity.geoms) > 0
             current_mode = entity.surface.vis_mode
-            current_mode_idx = vis_modes.index(current_mode) if current_mode in vis_modes else 0
-            imgui.begin_disabled(not is_rigid)
-            changed_mode, new_mode_idx = imgui.combo(f"Vis Mode##vis_{entity_idx}", current_mode_idx, vis_modes)
-            imgui.end_disabled()
-            if not is_rigid and imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
-                imgui.set_tooltip("Only available for rigid entities")
-            if changed_mode:
-                self._apply_entity_vis_mode(entity, vis_modes[new_mode_idx])
+            if imgui.begin_combo(f"Vis Mode##vis_{entity_idx}", current_mode):
+                for mode in ("visual", "collision"):
+                    disabled = mode == "collision" and not has_collision
+                    imgui.begin_disabled(disabled)
+                    clicked = imgui.selectable(mode, current_mode == mode)[0]
+                    imgui.end_disabled()
+                    if disabled and imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
+                        imgui.set_tooltip("No collision geometry available for this entity")
+                    if clicked and mode != current_mode:
+                        self._apply_entity_vis_mode(entity, mode)
+                imgui.end_combo()
 
             # Per-entity wireframe toggle. Material lives on render primitives, so we walk the active geom set (vgeoms
             # for visual mode, geoms otherwise) and flip the flag on each.
