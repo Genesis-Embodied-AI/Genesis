@@ -30,7 +30,8 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-class _SolverBVH(NamedTuple):
+@dataclass
+class _SolverBVH:
     """
     One BVH built against a solver's mesh.
 
@@ -42,6 +43,19 @@ class _SolverBVH(NamedTuple):
     bvh: LBVH
     aabb: AABB
     raycast_mask: np.ndarray | None
+
+    # True when no link in the solver has a DOF the physics can move, so its geometry only ever changes through an
+    # explicit user set_pos/set_quat. Full BVH rebuilds (the dominant per-step cost for static-terrain raycasting) are
+    # then skipped while the link poses are unchanged since the last build; a set_pos is detected via the pose cache
+    # below and triggers a rebuild. Collision-only: visual BVHs stay always-rebuilt because set_vverts can change their
+    # vverts without moving any link.
+    maybe_static: bool = False
+    # Whether build() has already run for this entry (reset() clears it to force one rebuild).
+    built: bool = False
+    # Snapshot of all link poses at the last build, used to detect a set_pos on an otherwise-static solver. Only
+    # populated for maybe_static entries.
+    cached_link_pos: torch.Tensor | None = None
+    cached_link_quat: torch.Tensor | None = None
 
 
 @dataclass
@@ -105,8 +119,22 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
 
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
-        """Rebuild every BVH from current geometry in the scene."""
+        """Rebuild every BVH from current geometry in the scene.
+
+        For a maybe_static entry (no link the physics can move) the rebuild is skipped while the link poses are
+        byte-identical to the snapshot from the last build, since the tree would come out unchanged. A user set_pos on
+        such a (fixed) link shows up as a pose difference and forces a rebuild, so correctness is preserved while the
+        common static-terrain case avoids the per-step rebuild entirely — the dominant cost on that path.
+        """
         for entry in shared_metadata.solver_bvhs:
+            if (
+                entry.maybe_static
+                and entry.built
+                and entry.cached_link_pos is not None
+                and torch.equal(entry.solver.get_links_pos(), entry.cached_link_pos)
+                and torch.equal(entry.solver.get_links_quat(), entry.cached_link_quat)
+            ):
+                continue
             if entry.raycast_mask is None:
                 kernel_update_verts_and_aabbs(
                     geoms_info=entry.solver.geoms_info,
@@ -135,6 +163,11 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                     aabb_state=entry.aabb,
                 )
                 entry.bvh.build()
+            entry.built = True
+            # Snapshot the post-build link poses so the next call can detect a set_pos and rebuild only if needed.
+            if entry.maybe_static:
+                entry.cached_link_pos = entry.solver.get_links_pos()
+                entry.cached_link_quat = entry.solver.get_links_quat()
 
     def build(self):
         super().build()
@@ -157,7 +190,14 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                     n_faces = solver.faces_info.geom_idx.shape[0]
                     aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
                     bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                    self._shared_metadata.solver_bvhs.append(_SolverBVH(solver, bvh, aabb, None))
+                    # The collision BVH is a rebuild-skip candidate when no link has a DOF the physics can move: its
+                    # geometry then only changes through an explicit set_pos, which _update_bvh detects via the pose
+                    # cache. Keyed off link.is_fixed rather than "no free verts" because a fixed link whose verts are
+                    # batched (_batch_fixed_verts) counts toward n_free_verts yet never moves on its own.
+                    maybe_static = all(link.is_fixed for link in solver.links)
+                    self._shared_metadata.solver_bvhs.append(
+                        _SolverBVH(solver, bvh, aabb, None, maybe_static=maybe_static)
+                    )
                 n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
                 if n_vfaces > 0:
                     mask = self._compute_visual_raycast_mask(solver)
@@ -224,6 +264,10 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
     @classmethod
     def reset(cls, shared_metadata: RaycasterSharedMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
         super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
+        # A reset may change otherwise-static geometry (e.g. re-randomized terrain), so force every entry to rebuild
+        # once here; static entries then resume being skipped on subsequent steps.
+        for entry in shared_metadata.solver_bvhs:
+            entry.built = False
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
