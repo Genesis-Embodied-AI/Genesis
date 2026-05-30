@@ -535,11 +535,15 @@ def kernel_cast_rays(
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: float,
     is_merge: qd.template(),
+    shared_bvh: qd.template(),
 ):
     """Cast rays against a collision-mesh BVH, accelerated by a BVH. See write_ray_hit for `is_merge` semantics.
 
     The result `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each
     sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
+
+    `shared_bvh` is a compile-time flag set when the geometry is identical across envs, so a single BVH copy (batch 0)
+    serves every env and the per-env node loads coalesce instead of scattering over n_env identical trees.
     """
     n_points = ray_starts.shape[0]
     for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
@@ -556,11 +560,17 @@ def kernel_cast_rays(
         ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
+        i_b_bvh = i_b
+        if shared_bvh:
+            # All envs share one BVH copy (identical geometry); reading batch 0 coalesces the node loads across the
+            # warp's envs instead of scattering them over n_envs identical trees.
+            i_b_bvh = 0
+
         hit_face, hit_distance, _hit_normal = bvh_ray_cast(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_ranges[i_s],
-            i_b=i_b,
+            i_b=i_b_bvh,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
             faces_info=faces_info,
@@ -614,8 +624,9 @@ def kernel_cast_rays_visual(
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
+    shared_bvh: qd.template(),
 ):
-    """Visual-mesh variant of kernel_cast_rays."""
+    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for `shared_bvh`."""
     n_points = ray_starts.shape[0]
     for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
         i_s = points_to_sensor_idx[i_p]
@@ -631,11 +642,15 @@ def kernel_cast_rays_visual(
         ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
+        i_b_bvh = i_b
+        if shared_bvh:
+            i_b_bvh = 0
+
         hit_face, hit_distance, _hit_normal = bvh_ray_cast_visual(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_ranges[i_s],
-            i_b=i_b,
+            i_b=i_b_bvh,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
             vverts_info=vverts_info,

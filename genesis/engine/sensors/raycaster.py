@@ -56,6 +56,9 @@ class _SolverBVH:
     # populated for maybe_static entries.
     cached_link_pos: torch.Tensor | None = None
     cached_link_quat: torch.Tensor | None = None
+    # True when every env's link poses match, so the BVH is identical across envs and the cast reads one shared copy
+    # (batch 0) with coalesced node loads instead of scattering over n_env identical trees. Recomputed each build.
+    shared_across_envs: bool = False
 
 
 @dataclass
@@ -164,10 +167,22 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                 )
                 entry.bvh.build()
             entry.built = True
-            # Snapshot the post-build link poses so the next call can detect a set_pos and rebuild only if needed.
+            # Snapshot the post-build link poses so the next call can detect a set_pos and rebuild only if needed, and
+            # decide whether one shared BVH copy can serve all envs (see shared_across_envs).
             if entry.maybe_static:
-                entry.cached_link_pos = entry.solver.get_links_pos()
-                entry.cached_link_quat = entry.solver.get_links_quat()
+                pos = entry.solver.get_links_pos()
+                quat = entry.solver.get_links_quat()
+                entry.cached_link_pos = pos
+                entry.cached_link_quat = quat
+                # Identical link poses across envs <=> identical world geometry in every env, so the per-env trees are
+                # bit-identical and the cast can read a single copy (batch 0) with coalesced loads. get_links_pos
+                # returns (n_envs, n_links, 3) for a batched solver; a single-env solver gains nothing from sharing.
+                entry.shared_across_envs = bool(
+                    pos.ndim == 3
+                    and pos.shape[0] > 1
+                    and torch.equal(pos, pos[:1].expand_as(pos))
+                    and torch.equal(quat, quat[:1].expand_as(quat))
+                )
 
     def build(self):
         super().build()
@@ -329,6 +344,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                 raw_data_T,
                 gs.EPS,
                 i > 0,
+                entry.shared_across_envs,
             )
             if entry.raycast_mask is None:
                 kernel_cast_rays(
