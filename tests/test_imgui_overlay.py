@@ -74,6 +74,23 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "_init_imgui", _init_imgui_deterministic)
 
+    # The Scene tab prints each FileMorph's resolved path, an absolute machine-specific location, via text_wrapped.
+    # Reduce it to its basename for two reasons: the captured frame must be reproducible across the snapshot host and
+    # CI runners, and the panel auto-resizes its height to fit the wrapped path - so a long path (two wrapped lines)
+    # makes the panel taller than the basename (one line). The substitution must happen before the panel first
+    # renders, otherwise build() lays out the long path and the auto-resized window stays one frame behind when
+    # captured, giving a taller, non-reproducible frame. Hook the plugin's entity capture to apply it up front.
+    orig_capture = ImGuiOverlayPlugin._capture_pending_entities_kwargs
+
+    def _capture_pending_entities_basename(self):
+        orig_capture(self)
+        for entity_kwargs in self._pending_entities_kwargs.values():
+            morph = entity_kwargs["morph"]
+            if isinstance(morph, gs.morphs.FileMorph):
+                morph.file = os.path.basename(morph.file)
+
+    monkeypatch.setattr(ImGuiOverlayPlugin, "_capture_pending_entities_kwargs", _capture_pending_entities_basename)
+
 
 def _build_default_scene(*, enable_gui):
     scene = gs.Scene(
@@ -179,13 +196,6 @@ def test_editing_controls(png_snapshot, monkeypatch):
     plugin._active_tab = "Scene"
 
     scene.build()
-
-    # The Scene tab prints each FileMorph's resolved path, which is an absolute machine-specific location. Reduce it
-    # to its basename so the captured frame is reproducible across the snapshot host and CI runners.
-    for entity_kwargs in plugin._pending_entities_kwargs.values():
-        morph = entity_kwargs["morph"]
-        if isinstance(morph, gs.morphs.FileMorph):
-            morph.file = os.path.basename(morph.file)
 
     pyrender_viewer = scene.viewer._pyrender_viewer
     pyrender_viewer.switch_to()
