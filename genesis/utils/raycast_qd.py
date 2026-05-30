@@ -542,11 +542,25 @@ def kernel_cast_rays(
     The result `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each
     sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
 
-    `shared_bvh` is a compile-time flag set when the geometry is identical across envs, so a single BVH copy (batch 0)
-    serves every env and the per-env node loads coalesce instead of scattering over n_env identical trees.
+    `shared_bvh` is a compile-time flag set when the geometry is identical across envs. It selects both which BVH copy
+    is read and how threads are mapped to (ray, env) pairs (see the loop comment), so the homogeneous and heterogeneous
+    cases each get their optimal GPU access pattern from the same kernel.
     """
     n_points = ray_starts.shape[0]
-    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
+    n_envs = output_hits.shape[-1]
+    # One flat parallel loop whose thread -> (ray, env) decomposition is chosen at compile time from shared_bvh:
+    #  - shared (homogeneous geometry): env is the fastest-varying index, so a warp's threads span consecutive envs and
+    #    all read the same batch-0 node -> a coalesced broadcast.
+    #  - not shared (heterogeneous): the ray is the fastest-varying index, so a warp stays within one env's distinct
+    #    tree and rides ray coherence instead of diverging across n_env different trees.
+    for i_flat in range(n_points * n_envs):
+        # env is the fastest index by default; the compile-time override below flips ray to fastest when not shared.
+        i_p = i_flat // n_envs
+        i_b = i_flat % n_envs
+        if not shared_bvh:
+            i_b = i_flat // n_points
+            i_p = i_flat % n_points
+
         i_s = points_to_sensor_idx[i_p]
 
         link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
@@ -560,10 +574,9 @@ def kernel_cast_rays(
         ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
+        # Reading batch 0 (valid only when shared_bvh) is what makes the coalesced broadcast above possible.
         i_b_bvh = i_b
         if shared_bvh:
-            # All envs share one BVH copy (identical geometry); reading batch 0 coalesces the node loads across the
-            # warp's envs instead of scattering them over n_envs identical trees.
             i_b_bvh = 0
 
         hit_face, hit_distance, _hit_normal = bvh_ray_cast(
@@ -626,9 +639,16 @@ def kernel_cast_rays_visual(
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
-    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for `shared_bvh`."""
+    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for `shared_bvh` and the thread mapping."""
     n_points = ray_starts.shape[0]
-    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
+    n_envs = output_hits.shape[-1]
+    for i_flat in range(n_points * n_envs):
+        i_p = i_flat // n_envs
+        i_b = i_flat % n_envs
+        if not shared_bvh:
+            i_b = i_flat // n_points
+            i_p = i_flat % n_points
+
         i_s = points_to_sensor_idx[i_p]
 
         link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
