@@ -2127,19 +2127,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
-    # The per-entity tiled mass-matrix factor keeps the whole entity mass submatrix in shared memory, so
-    # ``enable_tiled_cholesky_mass_matrix`` is capped at ``max_n_dofs_per_entity <= max_n_threads``. Above that
-    # cap this flag selects a cooperative LDL^T that factors the entity submatrix in-place in global memory,
-    # snapshotting only the current pivot row into a small shared vector (O(n_dofs) shared, not O(n_dofs^2)),
-    # so it has no DOF cap. Replaces the scalar one-thread-per-(entity,env) fallback for high-DOF entities.
     enable_tiled_cholesky_mass_matrix_large: bool = False
     enable_tiled_cholesky_hessian: bool = False
-    # The shared-memory tiled paths (fused factor+solve and the tiled triangular solve) keep the whole
-    # Cholesky factor L resident in shared memory, so ``enable_tiled_cholesky_hessian`` is capped at
-    # ``n_dofs <= max_n_threads`` (~96-128). The *standalone* factor ``func_cholesky_factor_direct_tiled``
-    # streams TxT tiles through registers and has no shared-memory residency requirement, hence no DOF
-    # limit. This flag enables that register-streaming factor for ``n_dofs > max_n_threads``, replacing the
-    # scalar one-thread-per-env fallback; the triangular solve then stays on the scalar batch path.
     enable_tiled_cholesky_hessian_large: bool = False
     # Register-tile width for the Hessian Cholesky kernels: 16 (Tile16x16) or 32 (Tile32x32). Selected at build time
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
@@ -2155,8 +2144,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
     constraint_layout_transposed: bool = False
     tiled_n_dofs_per_entity: int = -1
-    # Shared-vector length (>= max_n_dofs_per_entity, multiple of 32) for the pivot-row snapshot used by the
-    # uncapped cooperative mass factor selected by ``enable_tiled_cholesky_mass_matrix_large``.
     tiled_n_dofs_per_entity_large: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

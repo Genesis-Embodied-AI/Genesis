@@ -469,19 +469,16 @@ class RigidSolver(KinematicSolver):
                 max_n_threads = max_n_warps * 32
 
                 enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
-                # Above the per-entity shared-memory cap, factor the entity mass submatrix with the uncapped
-                # cooperative LDL^T (in-place in global memory, only an O(n_dofs) pivot-row snapshot in shared
-                # memory) instead of the scalar one-thread-per-(entity,env) fallback.
-                enable_tiled_cholesky_mass_matrix_large = max_n_dofs_per_entity > max_n_threads and self.n_envs <= 16384
+                # No tiled mass factor exists above the per-entity shared-memory cap, so use the uncapped cooperative
+                # LDL^T (factors in-place in global memory with only an O(n_dofs) shared pivot-row snapshot). No n_envs
+                # guard: the alternative is the O(n_dofs^3) serial scalar factor, so this helps at any env count.
+                enable_tiled_cholesky_mass_matrix_large = max_n_dofs_per_entity > max_n_threads
                 tiled_n_dofs_per_entity_large = max(math.ceil(max_n_dofs_per_entity / 32), 1) * 32
                 enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
-                # Above the shared-memory cap, the standalone register-streaming tiled factor
-                # (func_cholesky_factor_direct_tiled) has no DOF limit and replaces the scalar
-                # one-thread-per-env Cholesky fallback. Not used for sparse_solve (its incremental
-                # update assumes a different jac layout) -- that path keeps the scalar direct rebuild.
-                enable_tiled_cholesky_hessian_large = (
-                    self.n_dofs > max_n_threads and self.n_envs <= 16384 and not self._options.sparse_solve
-                )
+                # Above the cap, route the Hessian factor to the uncapped register-streaming tiled kernel rather than
+                # the scalar O(n_dofs^3) per-env factor (the triangular solve stays scalar). Excluded for sparse_solve,
+                # whose per-iteration path rebuilds via the scalar direct factor. No n_envs guard, as for the mass case.
+                enable_tiled_cholesky_hessian_large = self.n_dofs > max_n_threads and not self._options.sparse_solve
 
                 # n_dofs-based dispatch between Tile16x16 and Tile32x32 Cholesky kernels (Hessian only).
                 # Derived from a padded-volume + sub-warp utilization model:

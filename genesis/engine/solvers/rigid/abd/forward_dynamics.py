@@ -493,12 +493,11 @@ def func_factor_mass(
         _B = dofs_state.ctrl_mode.shape[1]
 
         if qd.static(static_rigid_sim_config.enable_tiled_cholesky_mass_matrix_large):
-            # Uncapped cooperative per-entity LDL^T (max_n_dofs_per_entity > max_n_threads). Factors the entity
-            # mass submatrix in-place in global memory (mass_mat_L), cooperatively over a block of BLOCK_DIM
-            # threads. Each elimination step snapshots the pivot row into a small shared vector (O(n_dofs), not
-            # O(n_dofs^2)) BEFORE updating the trailing submatrix, so the parallel row updates only ever READ
-            # the pivot row (from shared) -- race-free regardless of thread scheduling. Numerically identical to
-            # the scalar branch below; only the parallelization (and lack of an O(n_dofs^2) shared array) differs.
+            # Uncapped cooperative per-entity LDL^T (max_n_dofs_per_entity > max_n_threads): factors the entity mass
+            # submatrix in-place in global memory (mass_mat_L) over a block of BLOCK_DIM threads. Each elimination step
+            # snapshots the pivot row into a small shared vector (O(n_dofs), not O(n_dofs^2)) before updating the
+            # trailing submatrix, so the parallel per-row updates only READ the pivot row (from shared) -- race-free
+            # regardless of scheduling. Numerically identical to the scalar branch below; only parallelization differs.
             BLOCK_DIM = qd.static(32)
             MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity_large)
 
