@@ -1144,7 +1144,9 @@ def test_raycaster_static_dynamic_bvh_split(show_viewer, n_envs):
     scene.add_entity(gs.morphs.Plane())  # static (fixed)
     # A single downward ray from a fixed mount at height HEIGHT over the origin. collision=False so the
     # mount carries no collision faces and the ray doesn't immediately hit its own mount geometry.
-    mount = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, HEIGHT), fixed=True, collision=False))
+    mount = scene.add_entity(
+        gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, HEIGHT), fixed=True, collision=False)
+    )
     box = scene.add_entity(gs.morphs.Box(size=(BOX, BOX, BOX), pos=(5.0, 5.0, 0.5 * BOX)))  # dynamic (movable)
     sensor = scene.add_sensor(
         gs.sensors.Raycaster(
