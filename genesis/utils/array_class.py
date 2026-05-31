@@ -437,6 +437,10 @@ class ConstraintState:
     # prior coupled cone block (Jaref is overwritten by the linesearch apply). Empty for the pyramidal cone.
     cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
+    # ComFree-only constraint scalars: signed constraint position (efc_dist) and constraint-space
+    # effective mass (efc_mass). Allocated for all solvers but only populated/read by ComFreeSolver.
+    efc_dist: qd.Tensor
+    efc_mass: qd.Tensor
     # Frictionloss rows store their friction loss; elliptic-cone head (normal) rows reuse the field to carry the
     # contact sliding friction coefficient read by the cone solver, and with torsional friction the spin row carries
     # the torsional coefficient the same way (the tangent rows hold 0).
@@ -649,6 +653,8 @@ def get_constraint_state(constraint_solver, solver, collider):
         efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
+        efc_dist=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
+        efc_mass=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
         jac_dofs_idx=V(

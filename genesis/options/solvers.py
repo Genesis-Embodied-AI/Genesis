@@ -440,8 +440,15 @@ class RigidOptions(Options):
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
     constraint_solver : gs.constraint_solver, optional
-        Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
-        and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.
+        Constraint solver type. Supported solvers are 'gs.constraint_solver.CG' (conjugate gradient),
+        'gs.constraint_solver.Newton' (Newton's method), and 'gs.constraint_solver.ComFree' (complementarity-free
+        analytical solver, arXiv:2603.12185). Defaults to 'Newton'.
+    comfree_stiffness : float, optional
+        Global stiffness parameter (k_user) for the ComFree solver. Only used when
+        `constraint_solver=gs.constraint_solver.ComFree`. Defaults to 0.2.
+    comfree_damping : float, optional
+        Global damping parameter (d_user) for the ComFree solver. Only used when
+        `constraint_solver=gs.constraint_solver.ComFree`. Defaults to 0.001.
     iterations : int, optional
         Maximum number of iterations for the constraint solver; the solve exits early once its convergence tolerance
         is met, so this bound only binds on hard steps. Defaults to 50.
@@ -560,6 +567,9 @@ class RigidOptions(Options):
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
     constraint_timeconst: PositiveFloat = 0.01
+    # ComFree analytical solver parameters (only used when constraint_solver == ComFree)
+    comfree_stiffness: PositiveFloat = 0.2
+    comfree_damping: PositiveFloat = 0.001
     use_contact_island: StrictBool = True
     box_box_detection: StrictBool = False
 
