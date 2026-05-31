@@ -56,10 +56,17 @@ def bvh_ray_cast(
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
+    face_ids: qd.types.ndarray(ndim=1),
     eps: float,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
+
+    `face_ids` maps a BVH leaf slot (0..n_leaves-1) to the global face index it
+    was built from. The BVH may be built over a compacted face subset (static
+    terrain faces vs dynamic robot faces — see RaycasterSensor.build), so the
+    leaf index the morton codes carry is subset-local; this array remaps it back
+    to the solver-global face. For a single full-mesh BVH it is the identity map.
 
     Returns
     -------
@@ -70,7 +77,9 @@ def bvh_ray_cast(
     hit_normal : qd.math.vec3
         normal vector at hit point (zero vector if no hit)
     """
-    n_triangles = faces_info.verts_idx.shape[0]
+    # Leaf count = this BVH's AABB count, NOT the solver's global face count: the
+    # BVH may cover a compacted face subset. morton_codes is (n_batch, n_leaves).
+    n_triangles = bvh_morton_codes.shape[1]
 
     hit_face = -1
     closest_distance = gs.qd_float(max_range)
@@ -94,7 +103,8 @@ def bvh_ray_cast(
             if node.left == -1:  # Leaf node
                 # Get original triangle/face index
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
-                i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
+                # morton code carries the subset-local leaf slot; remap to global face.
+                i_f = qd.cast(face_ids[qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)], gs.qd_int)
 
                 # Get triangle vertices
                 tri_vertices = get_triangle_vertices(
@@ -232,23 +242,29 @@ def update_aabbs(
     fixed_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    face_ids: qd.types.ndarray(ndim=1),
     aabb_state: qd.template(),
 ):
-    for i_b, i_f in qd.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
-        aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
+    # AABB slot k holds the bounding box of the global face face_ids[k]. The BVH
+    # is built over this compacted subset, so the rebuild cost scales with the
+    # subset size (e.g. only the moving robot's faces) rather than every face in
+    # the solver. For a full-mesh BVH face_ids is the identity map.
+    for i_b, k in qd.ndrange(free_verts_state.pos.shape[1], face_ids.shape[0]):
+        i_f = face_ids[k]
+        aabb_state.aabbs[i_b, k].min.fill(qd.math.inf)
+        aabb_state.aabbs[i_b, k].max.fill(-qd.math.inf)
 
         for i in qd.static(range(3)):
             i_v = faces_info.verts_idx[i_f][i]
             i_fv = verts_info.verts_state_idx[i_v]
             if verts_info.is_fixed[i_v]:
                 pos_v = fixed_verts_state.pos[i_fv]
-                aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                aabb_state.aabbs[i_b, k].min = qd.min(aabb_state.aabbs[i_b, k].min, pos_v)
+                aabb_state.aabbs[i_b, k].max = qd.max(aabb_state.aabbs[i_b, k].max, pos_v)
             else:
                 pos_v = free_verts_state.pos[i_fv, i_b]
-                aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                aabb_state.aabbs[i_b, k].min = qd.min(aabb_state.aabbs[i_b, k].min, pos_v)
+                aabb_state.aabbs[i_b, k].max = qd.max(aabb_state.aabbs[i_b, k].max, pos_v)
 
 
 @qd.kernel
@@ -260,12 +276,13 @@ def kernel_update_verts_and_aabbs(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     static_rigid_sim_config: qd.template(),
+    face_ids: qd.types.ndarray(ndim=1),
     aabb_state: qd.template(),
 ):
     func_update_all_verts(
         geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
-    update_aabbs(free_verts_state, fixed_verts_state, verts_info, faces_info, aabb_state)
+    update_aabbs(free_verts_state, fixed_verts_state, verts_info, faces_info, face_ids, aabb_state)
 
 
 # =========================================== Visual Mesh Raycasting ===========================================
@@ -519,6 +536,7 @@ def kernel_cast_rays(
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    face_ids: qd.types.ndarray(ndim=1),  # maps BVH leaf slot -> global face index (identity for a full-mesh BVH)
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
     links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
@@ -590,6 +608,7 @@ def kernel_cast_rays(
             verts_info=verts_info,
             fixed_verts_state=fixed_verts_state,
             free_verts_state=free_verts_state,
+            face_ids=face_ids,
             eps=eps,
         )
 

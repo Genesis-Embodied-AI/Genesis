@@ -59,6 +59,14 @@ class _SolverBVH:
     # True when every env's link poses match, so the BVH is identical across envs and the cast reads one shared copy
     # (batch 0) with coalesced node loads instead of scattering over n_env identical trees. Recomputed each build.
     shared_across_envs: bool = False
+    # Compacted face subset this BVH covers: ``face_ids[k]`` is the global face index at BVH leaf slot ``k``. Static
+    # (fixed-link) and dynamic (movable-link) collision faces get separate subsets so the static tree is built once
+    # while only the small dynamic subset rebuilds. A 1-D int32 device tensor; ``None`` for visual BVH entries.
+    face_ids: torch.Tensor | None = None
+    # Global link indices whose faces are in this subset. The rebuild-skip pose check + shared-across-envs test read
+    # only these links (via get_links_pos(links_idx=link_ids)), so a static subset stays static and shared even while
+    # the robot's links move. ``None`` for visual BVH entries (which never skip).
+    link_ids: torch.Tensor | None = None
 
 
 @dataclass
@@ -104,6 +112,32 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
     @staticmethod
+    def _partition_collision_faces(solver: "RigidSolver") -> list[tuple[torch.Tensor, torch.Tensor, bool]]:
+        """Partition the solver's collision faces into static (fixed-link) and dynamic (movable-link) subsets.
+
+        Returns a list of ``(face_ids, link_ids, maybe_static)`` — one entry per non-empty subset, where
+        ``face_ids`` are global face indices and ``link_ids`` the global indices of the links owning them.
+        A pure-static or pure-dynamic solver yields a single entry (equivalent to one full-mesh BVH); a mixed
+        scene (robot on terrain) yields two, so the static terrain tree can be built once and shared while only
+        the robot subset rebuilds per step.
+        """
+        face_geom = qd_to_numpy(solver.faces_info.geom_idx).reshape(-1)  # (n_faces,) global geom per face
+        geom_link = qd_to_numpy(solver.geoms_info.link_idx).reshape(-1)  # (n_geoms,) global link per geom
+        link_fixed = np.array([bool(link.is_fixed) for link in solver.links], dtype=bool)  # (n_links,)
+        face_link = geom_link[face_geom]  # (n_faces,) global link per face
+        face_static = link_fixed[face_link]  # (n_faces,) is this face on a fixed link?
+
+        out: list[tuple[torch.Tensor, torch.Tensor, bool]] = []
+        for is_static in (True, False):
+            sel = np.nonzero(face_static == is_static)[0]
+            if sel.size == 0:
+                continue
+            face_ids = torch.as_tensor(sel, dtype=gs.tc_int, device=gs.device)
+            link_ids = torch.as_tensor(np.unique(face_link[sel]), dtype=gs.tc_int, device=gs.device)
+            out.append((face_ids, link_ids, bool(is_static)))
+        return out
+
+    @staticmethod
     def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
         """Build a per-vface mask (int8, shape (n_vfaces,)) selecting vfaces opted into visual raycasting.
         A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
@@ -130,12 +164,16 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
         common static-terrain case avoids the per-step rebuild entirely — the dominant cost on that path.
         """
         for entry in shared_metadata.solver_bvhs:
+            # The pose check reads only this subset's links (link_ids), so a static-terrain subset stays
+            # skippable even while the robot's links move in the same solver; a set_pos on a fixed terrain
+            # link still shows up here and forces a rebuild. link_ids is None only for visual entries, which
+            # never set maybe_static, so the short-circuit never reaches the get_links_pos call for them.
             if (
                 entry.maybe_static
                 and entry.built
                 and entry.cached_link_pos is not None
-                and torch.equal(entry.solver.get_links_pos(), entry.cached_link_pos)
-                and torch.equal(entry.solver.get_links_quat(), entry.cached_link_quat)
+                and torch.equal(entry.solver.get_links_pos(links_idx=entry.link_ids), entry.cached_link_pos)
+                and torch.equal(entry.solver.get_links_quat(links_idx=entry.link_ids), entry.cached_link_quat)
             ):
                 continue
             if entry.raycast_mask is None:
@@ -147,6 +185,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                     free_verts_state=entry.solver.free_verts_state,
                     fixed_verts_state=entry.solver.fixed_verts_state,
                     static_rigid_sim_config=entry.solver._static_rigid_sim_config,
+                    face_ids=entry.face_ids,
                     aabb_state=entry.aabb,
                 )
                 entry.bvh.build()
@@ -170,8 +209,8 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
             # Snapshot the post-build link poses so the next call can detect a set_pos and rebuild only if needed, and
             # decide whether one shared BVH copy can serve all envs (see shared_across_envs).
             if entry.maybe_static:
-                pos = entry.solver.get_links_pos()
-                quat = entry.solver.get_links_quat()
+                pos = entry.solver.get_links_pos(links_idx=entry.link_ids)
+                quat = entry.solver.get_links_quat(links_idx=entry.link_ids)
                 entry.cached_link_pos = pos
                 entry.cached_link_quat = quat
                 # Identical link poses across envs <=> identical world geometry in every env, so the per-env trees are
@@ -202,17 +241,29 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                     continue
                 n_envs = solver._B
                 if isinstance(solver, RigidSolver):
-                    n_faces = solver.faces_info.geom_idx.shape[0]
-                    aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
-                    bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                    # The collision BVH is a rebuild-skip candidate when no link has a DOF the physics can move: its
-                    # geometry then only changes through an explicit set_pos, which _update_bvh detects via the pose
-                    # cache. Keyed off link.is_fixed rather than "no free verts" because a fixed link whose verts are
-                    # batched (_batch_fixed_verts) counts toward n_free_verts yet never moves on its own.
-                    maybe_static = all(link.is_fixed for link in solver.links)
-                    self._shared_metadata.solver_bvhs.append(
-                        _SolverBVH(solver, bvh, aabb, None, maybe_static=maybe_static)
-                    )
+                    # Split the solver's collision faces into a static subset (faces whose owning link is
+                    # fixed — terrain, walls) and a dynamic subset (faces on links the physics can move —
+                    # the robot). Each gets its own compacted BVH so (a) the static subset's tree is built
+                    # once then skipped + shared across envs (the dominant per-step cost for one robot on a
+                    # big static terrain), and (b) the dynamic rebuild scales with the robot's face count,
+                    # not the whole scene. The cast kernels merge the two via is_merge, so the result is
+                    # identical to one combined BVH. This is the RPL "multi-depth" decomposition
+                    # (arXiv:2602.03002): cast dynamic robot + static terrain meshes separately, then merge.
+                    for face_ids, link_ids, maybe_static in self._partition_collision_faces(solver):
+                        n_sub = int(face_ids.shape[0])
+                        aabb = AABB(n_batches=n_envs, n_aabbs=n_sub)
+                        bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+                        self._shared_metadata.solver_bvhs.append(
+                            _SolverBVH(
+                                solver,
+                                bvh,
+                                aabb,
+                                None,
+                                maybe_static=maybe_static,
+                                face_ids=face_ids,
+                                link_ids=link_ids,
+                            )
+                        )
                 n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
                 if n_vfaces > 0:
                     mask = self._compute_visual_raycast_mask(solver)
@@ -352,6 +403,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                     solver.free_verts_state,
                     solver.verts_info,
                     solver.faces_info,
+                    entry.face_ids,
                     *args_common,
                 )
             else:
