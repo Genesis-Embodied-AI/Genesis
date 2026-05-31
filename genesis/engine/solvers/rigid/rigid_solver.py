@@ -469,6 +469,11 @@ class RigidSolver(KinematicSolver):
                 max_n_threads = max_n_warps * 32
 
                 enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
+                # Above the per-entity shared-memory cap, factor the entity mass submatrix with the uncapped
+                # cooperative LDL^T (in-place in global memory, only an O(n_dofs) pivot-row snapshot in shared
+                # memory) instead of the scalar one-thread-per-(entity,env) fallback.
+                enable_tiled_cholesky_mass_matrix_large = max_n_dofs_per_entity > max_n_threads and self.n_envs <= 16384
+                tiled_n_dofs_per_entity_large = max(math.ceil(max_n_dofs_per_entity / 32), 1) * 32
                 enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
                 # Above the shared-memory cap, the standalone register-streaming tiled factor
                 # (func_cholesky_factor_direct_tiled) has no DOF limit and replaces the scalar
@@ -502,11 +507,13 @@ class RigidSolver(KinematicSolver):
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
+                    enable_tiled_cholesky_mass_matrix_large=enable_tiled_cholesky_mass_matrix_large,
                     enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
                     enable_tiled_cholesky_hessian_large=enable_tiled_cholesky_hessian_large,
                     cholesky_tile_size=cholesky_tile_size,
                     enable_fused_factor_solve_init=enable_fused_factor_solve_init,
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
+                    tiled_n_dofs_per_entity_large=tiled_n_dofs_per_entity_large,
                     tiled_n_dofs=tiled_n_dofs,
                 )
 

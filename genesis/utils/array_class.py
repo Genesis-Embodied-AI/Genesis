@@ -2127,6 +2127,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
+    # The per-entity tiled mass-matrix factor keeps the whole entity mass submatrix in shared memory, so
+    # ``enable_tiled_cholesky_mass_matrix`` is capped at ``max_n_dofs_per_entity <= max_n_threads``. Above that
+    # cap this flag selects a cooperative LDL^T that factors the entity submatrix in-place in global memory,
+    # snapshotting only the current pivot row into a small shared vector (O(n_dofs) shared, not O(n_dofs^2)),
+    # so it has no DOF cap. Replaces the scalar one-thread-per-(entity,env) fallback for high-DOF entities.
+    enable_tiled_cholesky_mass_matrix_large: bool = False
     enable_tiled_cholesky_hessian: bool = False
     # The shared-memory tiled paths (fused factor+solve and the tiled triangular solve) keep the whole
     # Cholesky factor L resident in shared memory, so ``enable_tiled_cholesky_hessian`` is capped at
@@ -2149,6 +2155,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
     constraint_layout_transposed: bool = False
     tiled_n_dofs_per_entity: int = -1
+    # Shared-vector length (>= max_n_dofs_per_entity, multiple of 32) for the pivot-row snapshot used by the
+    # uncapped cooperative mass factor selected by ``enable_tiled_cholesky_mass_matrix_large``.
+    tiled_n_dofs_per_entity_large: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
