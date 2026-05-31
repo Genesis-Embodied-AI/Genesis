@@ -2193,6 +2193,15 @@ def func_hessian_and_cholesky_factor_direct(
             # ``func_update_gradient_tiled`` below); skipping the standalone factor here avoids doing the work twice.
             if qd.static(not static_rigid_sim_config.enable_fused_factor_solve_init):
                 func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
+        elif qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian_large):
+            # n_dofs > max_n_threads: the shared-memory tiled solve/fused kernels don't fit, but the
+            # standalone register-streaming tiled factor has no DOF limit. Use it instead of the scalar
+            # one-thread-per-env Cholesky (O(n_dofs**3) serial). The triangular solve stays on the scalar
+            # batch path (func_update_gradient_batch) since enable_tiled_cholesky_hessian is False here, and
+            # the per-iteration incremental rank-1 update remains scalar -- both read L from nt_H, which the
+            # tiled factor writes back. This removes the dominant serial factorization cost for high-DOF
+            # scenes (multi-humanoid, dexterous hands) while leaving low-DOF dispatch unchanged.
+            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
             qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):

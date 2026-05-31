@@ -470,6 +470,13 @@ class RigidSolver(KinematicSolver):
 
                 enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
                 enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
+                # Above the shared-memory cap, the standalone register-streaming tiled factor
+                # (func_cholesky_factor_direct_tiled) has no DOF limit and replaces the scalar
+                # one-thread-per-env Cholesky fallback. Not used for sparse_solve (its incremental
+                # update assumes a different jac layout) -- that path keeps the scalar direct rebuild.
+                enable_tiled_cholesky_hessian_large = (
+                    self.n_dofs > max_n_threads and self.n_envs <= 16384 and not self._options.sparse_solve
+                )
 
                 # n_dofs-based dispatch between Tile16x16 and Tile32x32 Cholesky kernels (Hessian only).
                 # Derived from a padded-volume + sub-warp utilization model:
@@ -496,6 +503,7 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
                     enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
+                    enable_tiled_cholesky_hessian_large=enable_tiled_cholesky_hessian_large,
                     cholesky_tile_size=cholesky_tile_size,
                     enable_fused_factor_solve_init=enable_fused_factor_solve_init,
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,

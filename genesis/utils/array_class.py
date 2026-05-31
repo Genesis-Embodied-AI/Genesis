@@ -2128,6 +2128,13 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
+    # The shared-memory tiled paths (fused factor+solve and the tiled triangular solve) keep the whole
+    # Cholesky factor L resident in shared memory, so ``enable_tiled_cholesky_hessian`` is capped at
+    # ``n_dofs <= max_n_threads`` (~96-128). The *standalone* factor ``func_cholesky_factor_direct_tiled``
+    # streams TxT tiles through registers and has no shared-memory residency requirement, hence no DOF
+    # limit. This flag enables that register-streaming factor for ``n_dofs > max_n_threads``, replacing the
+    # scalar one-thread-per-env fallback; the triangular solve then stays on the scalar batch path.
+    enable_tiled_cholesky_hessian_large: bool = False
     # Register-tile width for the Hessian Cholesky kernels: 16 (Tile16x16) or 32 (Tile32x32). Selected at build time
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
