@@ -20,7 +20,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 
-from ..abd import func_solve_mass_batch
+from ..abd import func_solve_mass
 from ..collider.contact_island import ContactIsland
 
 if TYPE_CHECKING:
@@ -211,6 +211,45 @@ def _comfree_solver_kernel_clear(
         constraint_state.qd_n_equalities[i_b] = rigid_global_info.n_equalities[None]
 
 
+@qd.func
+def _comfree_efc_force_body(
+    i_c,
+    i_b,
+    n_dofs,
+    substep_dt,
+    stiffness,
+    damping,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+):
+    """Analytical one-sided force for a single constraint row (reference forward.py:67-85).
+
+    efc_vel = J_c @ (v + acc_smooth * dt)
+    force   = max(efc_mass * (-d*efc_vel - k*(efc_vel*dt + efc_dist)), 0)
+    """
+    efc_vel = gs.qd_float(0.0)
+    for i_d in range(n_dofs):
+        v_pred = dofs_state.vel[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b] * substep_dt
+        efc_vel += constraint_state.jac[i_c, i_d, i_b] * v_pred
+
+    efc_penetration = efc_vel * substep_dt + constraint_state.efc_dist[i_c, i_b]
+    efc_acc = -damping * efc_vel - stiffness * efc_penetration
+    constraint_state.efc_force[i_c, i_b] = qd.max(constraint_state.efc_mass[i_c, i_b] * efc_acc, 0.0)
+
+
+@qd.func
+def _comfree_qfrc_body(
+    i_d,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+):
+    """Accumulate the generalized constraint force for one DoF: qfrc_constraint[i_d] = (J^T @ force)[i_d]."""
+    qfrc = gs.qd_float(0.0)
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+    constraint_state.qfrc_constraint[i_d, i_b] = qfrc
+
+
 @qd.kernel(fastcache=True)
 def _comfree_resolve(
     comfree_stiffness: qd.template(),
@@ -224,76 +263,90 @@ def _comfree_resolve(
 ):
     """Single-pass analytical constraint resolution (reference forward.py:43-97 + solve_m).
 
-    1. Predict smooth velocity ``v_pred = v + acc_smooth * dt``.
-    2. For each active constraint compute its analytical force and accumulate ``qfrc_constraint``.
-    3. Solve ``M @ qacc = qf_smooth + qfrc_constraint`` with the pre-factored mass matrix.
+    Unlike Newton/CG this needs no iteration, so the whole resolution is a fixed sequence of
+    fully data-parallel passes (rather than one serial thread per env, which leaves the GPU idle):
+
+    1. ``efc_force``       : per-constraint analytical force, parallel over (constraint, env).
+    2. ``qfrc_constraint`` : J^T @ efc_force, parallel over (dof, env).
+    3. ``force``           : qf_smooth + qfrc_constraint, parallel over (dof, env).
+    4. ``qacc``            : M^{-1} @ force via the pre-factored mass matrix, parallel over (entity, env).
+    5. publish + warmstart : parallel over (dof, env) / (env,).
+
+    The no-constraint case needs no special handling: with zero constraint force step 4 reduces to
+    ``qacc = M^{-1} qf_smooth = acc_smooth`` (the same ``func_solve_mass`` that produced acc_smooth).
     """
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
+    len_constraints = constraint_state.efc_force.shape[0]
     substep_dt = rigid_global_info.substep_dt[None]
 
     # Stiffness / damping scaled by 1/dt (reference forward.py:72-73).
     stiffness = qd.static(comfree_stiffness) / substep_dt
     damping = qd.static(comfree_damping) / substep_dt
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b in range(_B):
-        n_c = constraint_state.n_constraints[i_b]
+    # --- 1. Per-constraint analytical force, parallel over (constraint, env). ---
+    # The jac flip makes i_c the stride-1 axis under the transposed layout; pick the ndrange order so adjacent
+    # lanes vary along the coalesced axis (i_c when flipped, i_b otherwise), mirroring _initialize_Jaref_parallel.
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b, i_c in qd.ndrange(_B, len_constraints):
+            if i_c < constraint_state.n_constraints[i_b]:
+                _comfree_efc_force_body(i_c, i_b, n_dofs, substep_dt, stiffness, damping, dofs_state, constraint_state)
+    else:
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_c, i_b in qd.ndrange(len_constraints, _B):
+            if i_c < constraint_state.n_constraints[i_b]:
+                _comfree_efc_force_body(i_c, i_b, n_dofs, substep_dt, stiffness, damping, dofs_state, constraint_state)
 
-        for i_d in range(n_dofs):
-            constraint_state.qfrc_constraint[i_d, i_b] = 0.0
+    # --- 2. qfrc_constraint = J^T @ efc_force, parallel over (dof, env). ---
+    # qfrc_constraint is a dof-vec tensor (i_d stride-1 when flipped); keep i_d innermost under the transposed layout.
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b, i_d in qd.ndrange(_B, n_dofs):
+            _comfree_qfrc_body(i_d, i_b, constraint_state)
+    else:
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_d, i_b in qd.ndrange(n_dofs, _B):
+            _comfree_qfrc_body(i_d, i_b, constraint_state)
 
-        if n_c == 0:
-            # No constraints: the constrained acceleration is just the smooth acceleration.
-            for i_d in range(n_dofs):
-                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
-        else:
-            for i_c in range(n_c):
-                # efc_vel = J_c @ (v + acc_smooth * dt)
-                efc_vel = gs.qd_float(0.0)
-                for i_d in range(n_dofs):
-                    v_pred = dofs_state.vel[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b] * substep_dt
-                    efc_vel += constraint_state.jac[i_c, i_d, i_b] * v_pred
+    # --- 3. qfrc_total = qf_smooth + qfrc_constraint, parallel over (dof, env). ---
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b, i_d in qd.ndrange(_B, n_dofs):
+            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+    else:
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_d, i_b in qd.ndrange(n_dofs, _B):
+            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
 
-                efc_dist = constraint_state.efc_dist[i_c, i_b]
-                efc_mass = constraint_state.efc_mass[i_c, i_b]
+    # --- 4. qacc = M^{-1} @ qfrc_total, parallel over (entity, env). ---
+    func_solve_mass(
+        vec=dofs_state.force,
+        out=constraint_state.qacc,
+        out_bw=None,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=False,
+    )
 
-                # Predictive penetration and analytical, one-sided constraint force.
-                efc_penetration = efc_vel * substep_dt + efc_dist
-                efc_acc = -damping * efc_vel - stiffness * efc_penetration
-                efc_frc = qd.max(efc_mass * efc_acc, 0.0)
-
-                constraint_state.efc_force[i_c, i_b] = efc_frc
-
-                # qfrc_constraint += J_c^T * force
-                for i_d in range(n_dofs):
-                    constraint_state.qfrc_constraint[i_d, i_b] += constraint_state.jac[i_c, i_d, i_b] * efc_frc
-
-            # qfrc_total = qf_smooth + qfrc_constraint
-            for i_d in range(n_dofs):
-                dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-
-            # qacc = M^{-1} @ qfrc_total
-            func_solve_mass_batch(
-                i_b,
-                dofs_state.force,
-                constraint_state.qacc,
-                None,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                is_backward=False,
-            )
-
-    # Publish results back to dofs_state (mirrors func_update_qacc).
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_d, i_b in qd.ndrange(n_dofs, _B):
-        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
+    # --- 5. Publish results back to dofs_state (mirrors func_update_qacc), parallel over (dof, env). ---
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_b, i_d in qd.ndrange(_B, n_dofs):
+            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
+    else:
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_d, i_b in qd.ndrange(n_dofs, _B):
+            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
