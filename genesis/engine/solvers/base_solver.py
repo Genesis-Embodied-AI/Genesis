@@ -1,4 +1,7 @@
-from typing import TYPE_CHECKING
+import enum
+import functools
+import inspect
+from typing import TYPE_CHECKING, Callable
 
 import quadrants as qd
 import numpy as np
@@ -15,6 +18,71 @@ from genesis.repr_base import RBC
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
+
+
+class StateChange(enum.Enum):
+    """Category of solver state mutation broadcast to subscribers (see `Solver.subscribe`).
+
+    Deliberately solver-agnostic: it names what kind of state changed, never an index space (links, dofs, particles,
+    ...), which differs from one solver to the next. GEOMETRY covers anything that moves or deforms the world surface a
+    solver exposes (a rigid link teleport, a particle reset, ...); DYNAMICS covers mass / inertia / material / gains.
+    """
+
+    GEOMETRY = enum.auto()
+    DYNAMICS = enum.auto()
+
+
+def mutates(change: StateChange):
+    """Tag a solver state-mutating method so its subscribers are notified once it has run.
+
+    The wrapped method's `envs_idx` argument (None meaning all envs) is forwarded to each subscriber as-is. Untagged
+    methods, reads included, never notify, so a subscriber only ever wakes on a genuine mutation.
+    """
+
+    def decorator(method):
+        signature = inspect.signature(method)
+
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            result = method(self, *args, **kwargs)
+            if self._subscribers:
+                envs_idx = signature.bind(self, *args, **kwargs).arguments.get("envs_idx")
+                for subscriber in self._subscribers:
+                    if change in subscriber.to:
+                        if subscriber.callback is None:
+                            subscriber._pending.add(change)
+                        else:
+                            subscriber.callback(change, envs_idx)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+class Subscriber:
+    """A unique handle for the solver state changes whose category is in `to`.
+
+    A consumer constructs a Subscriber and registers it with a solver via Solver.subscribe. The mode is fixed at
+    construction by whether a callback is given:
+      - eager (callback given): each matching change immediately calls callback(change, envs_idx);
+      - lazy (no callback): matching changes accumulate into `pending` until the owner calls clear() - e.g. a sensor
+        that rebuilds a cache on its next update rather than on every set_pos.
+    """
+
+    def __init__(self, to: frozenset[StateChange], callback: Callable[[StateChange, object], None] | None = None):
+        self.to = to
+        self.callback = callback
+        self._pending: set[StateChange] = set()
+
+    @property
+    def pending(self) -> frozenset[StateChange]:
+        """Categories accumulated since the last clear() (always empty in eager mode)."""
+        return frozenset(self._pending)
+
+    def clear(self):
+        """Drop the accumulated changes, once they have been handled."""
+        self._pending.clear()
 
 
 class Solver(RBC):
@@ -39,8 +107,15 @@ class Solver(RBC):
         # force fields
         self._ffs = list()
 
+        # Registered Subscribers, notified after @mutates-tagged methods run; see subscribe().
+        self._subscribers: set[Subscriber] = set()
+
     def _add_force_field(self, force_field):
         self._ffs.append(force_field)
+
+    def subscribe(self, subscriber: Subscriber):
+        """Register a Subscriber to be notified after any @mutates-tagged method whose change is in its filter."""
+        self._subscribers.add(subscriber)
 
     def build(self):
         self._B = self._sim._B
