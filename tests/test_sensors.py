@@ -1228,12 +1228,21 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable
     assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
+    # Every entity is fixed, so each visual BVH is static (maybe_static) and rebuilt only when a GEOMETRY change is
+    # pending; nothing is pending after the baseline step, so an idle step would rebuild none of them.
+    visual_entries = [entry for entry in cam_kin._shared_metadata.solver_bvhs if entry.raycast_mask is not None]
+    assert visual_entries and all(entry.maybe_static for entry in visual_entries)
+    assert all(not sub.pending for sub in cam_kin._shared_metadata.geometry_subscribers.values())
+
     # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
     # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. Scaling perturbs each vvert by a
     # different amount, so only the correct vvert-to-state mapping yields 0.6. cam_rigid is unaffected.
     fk_vverts = tensor_to_array(kin_sphere.get_vverts())
     center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
     kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
+    if kin_raycastable:
+        # set_vverts is a GEOMETRY change, so the otherwise-skipped static visual BVH is flagged for rebuild.
+        assert cam_kin._shared_metadata.geometry_subscribers[scene.sim.kinematic_solver].pending
     scene.step()
     assert_allclose(cam_kin.read_image()[..., 15, 20], kin_scaled, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
