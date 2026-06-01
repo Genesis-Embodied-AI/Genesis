@@ -115,6 +115,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                     faces_info=entry.solver.faces_info,
                     free_verts_state=entry.solver.free_verts_state,
                     fixed_verts_state=entry.solver.fixed_verts_state,
+                    links_info=entry.solver.links_info,
                     static_rigid_sim_config=entry.solver._static_rigid_sim_config,
                     aabb_state=entry.aabb,
                 )
