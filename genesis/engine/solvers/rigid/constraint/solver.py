@@ -2189,19 +2189,14 @@ def func_hessian_and_cholesky_factor_direct(
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
 
         if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
-            # When the fused warm-start dispatch is on, the factor is folded into the fused kernel (called from
-            # ``func_update_gradient_tiled`` below); skipping the standalone factor here avoids doing the work twice.
+            # The register-streaming tiled factor has no shared-memory DOF cap, so it replaces the scalar one-thread-
+            # per-env Cholesky (O(n_dofs^3) serial) for any n_dofs >= 16. Above the shared cap (hessian_fits_shared is
+            # False) the triangular solve falls back to the scalar batch path and the per-iteration incremental rank-1
+            # update stays scalar, both reading L back from nt_H. When the fused warm-start dispatch is on, the factor
+            # is folded into the fused kernel (called from func_update_gradient_tiled below), so the standalone factor
+            # is skipped to avoid doing it twice.
             if qd.static(not static_rigid_sim_config.enable_fused_factor_solve_init):
                 func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
-        elif qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian_large):
-            # n_dofs > max_n_threads: the shared-memory tiled solve/fused kernels don't fit, but the
-            # standalone register-streaming tiled factor has no DOF limit. Use it instead of the scalar
-            # one-thread-per-env Cholesky (O(n_dofs**3) serial). The triangular solve stays on the scalar
-            # batch path (func_update_gradient_batch) since enable_tiled_cholesky_hessian is False here, and
-            # the per-iteration incremental rank-1 update remains scalar -- both read L from nt_H, which the
-            # tiled factor writes back. This removes the dominant serial factorization cost for high-DOF
-            # scenes (multi-humanoid, dexterous hands) while leaving low-DOF dispatch unchanged.
-            func_cholesky_factor_direct_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
             qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
@@ -3614,13 +3609,14 @@ def func_update_gradient(
     Note that the tiled cholesky factorization and solving is not systematically enabled because it is not always
     superior in terms of performance and does not support arbitrary matrix sizes. More specifically, tiling gets more
     beneficial as n_dofs increases, but n_dofs>=96 is not supported for now. It is the responsibility of the calling
-    code to configure the static global flag `enable_tiled_cholesky_hessian` accordingly. Failing to do so will cause
-    the requested shared memory allocation to exceed 48kB and raise an exception.
+    code to configure the static global flag `hessian_fits_shared` accordingly. Failing to do so will cause the
+    requested shared memory allocation to exceed 48kB and raise an exception.
     """
     _B = constraint_state.jac.shape[2]
 
     if qd.static(
-        not static_rigid_sim_config.enable_tiled_cholesky_hessian or static_rigid_sim_config.backend == gs.cpu
+        not (static_rigid_sim_config.enable_tiled_cholesky_hessian and static_rigid_sim_config.hessian_fits_shared)
+        or static_rigid_sim_config.backend == gs.cpu
     ):
         # CPU
         qd.loop_config(

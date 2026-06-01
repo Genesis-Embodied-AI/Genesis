@@ -2127,9 +2127,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
-    enable_tiled_cholesky_mass_matrix_large: bool = False
+    mass_matrix_fits_shared: bool = False
     enable_tiled_cholesky_hessian: bool = False
-    enable_tiled_cholesky_hessian_large: bool = False
+    hessian_fits_shared: bool = False
     # Register-tile width for the Hessian Cholesky kernels: 16 (Tile16x16) or 32 (Tile32x32). Selected at build time
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
@@ -2144,7 +2144,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
     constraint_layout_transposed: bool = False
     tiled_n_dofs_per_entity: int = -1
-    tiled_n_dofs_per_entity_large: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1

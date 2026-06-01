@@ -22,6 +22,8 @@ from genesis.utils.misc import (
     broadcast_tensor,
     sanitize_indexed_tensor,
     assign_indexed_tensor,
+    get_gpu_core_count,
+    fits_in_gpu_shared_memory,
 )
 from genesis.utils.sdf import SDF
 
@@ -379,29 +381,6 @@ class RigidSolver(KinematicSolver):
             return gs.broadphase_traversal.SAP
         return gs.broadphase_traversal.ALL_VS_ALL
 
-    def _should_use_parallel_init(self):
-        """Use parallel init (ndrange over constraints+envs) when envs alone don't saturate the GPU.
-
-        Uses hardware-derived GPU core count to determine saturation threshold, following the same
-        multi-backend pattern as collider.py (line 219).
-        """
-        if gs.backend == gs.cpu or self.sim.options.requires_grad:
-            return False
-        import torch
-
-        if torch.cuda.is_available():
-            gpu_props = torch.cuda.get_device_properties(torch.cuda.current_device())
-            # NVIDIA: 128 CUDA cores per SM. AMD/ROCm: 64 stream processors per CU.
-            cores_per_unit = 64 if torch.version.hip else 128
-            gpu_cores = gpu_props.multi_processor_count * cores_per_unit
-        elif gs.backend == gs.metal:
-            # Upper-bound estimate for Apple Silicon: 40 GPU cores * 128 ALUs
-            gpu_cores = 5120
-        else:
-            # Fallback for other GPU backends (e.g. Vulkan)
-            gpu_cores = 16384
-        return self.n_envs <= gpu_cores
-
     def _should_transpose_constraint_layout(self) -> bool:
         """Decide whether to allocate the layout-flippable constraint-state with layout=(1, 0).
 
@@ -448,7 +427,10 @@ class RigidSolver(KinematicSolver):
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
             broadphase_traversal=self._resolve_broadphase_traversal(),
-            parallel_init=self._should_use_parallel_init(),
+            # Parallelize init over (constraints, envs) when envs alone don't saturate the GPU.
+            parallel_init=(
+                gs.backend != gs.cpu and not self.sim.options.requires_grad and self.n_envs <= get_gpu_core_count()
+            ),
             constraint_layout_transposed=self._should_transpose_constraint_layout(),
         )
 
@@ -457,28 +439,15 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config["prefer_decomposed_solver"] = 0
 
         if self.is_active:
-            # TODO: These alternative tiled algorithms are designed to reduce the impact of latency. However, naive
-            # implementation scales slightly better asymptotically than shared memory-based implementation because the
-            # scheduler of modern GPUs is able to hides latency by swapping warps if the workload is sufficient. The
-            # crossover threshold is both hardware and kernel-dependent. As a result, the optimal implementation should
-            # be selected based on dynamic timer-based profiling instead of hard-coded heuristic.
+            # The tiled and cooperative Cholesky kernels trade per-env serial work for cross-lane parallelism, so they
+            # only help while envs alone do not already saturate the GPU. Above that env count one-thread-per-env keeps
+            # every core busy and the scalar path wins; below it the parallel kernels hide latency by swapping warps.
+            # The crossover is also hardware- and kernel-dependent, so the env threshold (GPU core count) is a heuristic
+            # and a dynamic timer-based selection would be more accurate still.
             max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
             if gs.backend != gs.cpu:
-                max_shared_bytes = qd.lang.impl.get_max_shared_memory_bytes(is_lowerbound_ok=True)
-                max_n_warps = int(math.sqrt(max_shared_bytes / (4 if gs.qd_float == qd.f32 else 8))) // 32
-                max_n_threads = max_n_warps * 32
-
-                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
-                # No tiled mass factor exists above the per-entity shared-memory cap, so use the uncapped cooperative
-                # LDL^T (factors in-place in global memory with only an O(n_dofs) shared pivot-row snapshot). No n_envs
-                # guard: the alternative is the O(n_dofs^3) serial scalar factor, so this helps at any env count.
-                enable_tiled_cholesky_mass_matrix_large = max_n_dofs_per_entity > max_n_threads
-                tiled_n_dofs_per_entity_large = max(math.ceil(max_n_dofs_per_entity / 32), 1) * 32
-                enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
-                # Above the cap, route the Hessian factor to the uncapped register-streaming tiled kernel rather than
-                # the scalar O(n_dofs^3) per-env factor (the triangular solve stays scalar). Excluded for sparse_solve,
-                # whose per-iteration path rebuilds via the scalar direct factor. No n_envs guard, as for the mass case.
-                enable_tiled_cholesky_hessian_large = self.n_dofs > max_n_threads and not self._options.sparse_solve
+                max_tiled_envs = get_gpu_core_count()
+                envs_undersaturate = self.n_envs <= max_tiled_envs
 
                 # n_dofs-based dispatch between Tile16x16 and Tile32x32 Cholesky kernels (Hessian only).
                 # Derived from a padded-volume + sub-warp utilization model:
@@ -488,29 +457,44 @@ class RigidSolver(KinematicSolver):
                 #   n_dofs in [49..]     -> T=32 (lane utilization wins, T=16 needs many sequential tiles)
                 # Confirmed by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
                 cholesky_tile_size = 16 if (self.n_dofs <= 16 or 32 < self.n_dofs <= 48) else 32
-                tiled_n_dofs = min(
-                    max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size,
-                    max_n_warps * 32,
-                )
-                tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
+                tiled_n_dofs = max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size
+                tiled_n_dofs_per_entity = max(math.ceil(max_n_dofs_per_entity / 32), 1) * 32
 
-                # Route the per-step warm-start factor+solve through the fused kernel whenever the tiled cholesky path
-                # is available. The monolith body's incremental rank-1 update needs L in nt_H, so the fused kernel
-                # also writes L back via the ``write_L_to_nt_H`` argument; see ``func_update_gradient_tiled``.
-                # Disabled for ``sparse_solve`` because the sparse path runs the per-env factor inside
-                # ``func_hessian_and_cholesky_factor_direct_batch`` (leaving nt_H = L); routing the warm-start through
-                # the fused kernel would then re-factor L as if it were H.
-                enable_fused_factor_solve_init = enable_tiled_cholesky_hessian and not self._options.sparse_solve
+                # enable_tiled_cholesky_hessian selects the register-streaming tiled factor (no shared-memory cap):
+                # worth tiling from n_dofs >= 16, and below the shared cap only when envs undersaturate (above it the
+                # scalar O(n_dofs^3) per-env factor is always worse). hessian_fits_shared additionally gates the
+                # shared-memory tiled triangular solve and fused factor+solve, which stage the full L tile in shared.
+                hessian_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs, tiled_n_dofs + 1)
+                enable_tiled_cholesky_hessian = self.n_dofs >= 16 and (not hessian_fits_shared or envs_undersaturate)
+
+                # The cooperative in-place LDL^T has no cap; the shared-memory tile is faster but capped. Same env logic
+                # as the Hessian: tile from n_dofs_per_entity >= 8, drop the env guard above the cap where the scalar
+                # O(n_dofs^3) per-(entity, env) factor is always worse.
+                mass_matrix_fits_shared = fits_in_gpu_shared_memory(
+                    tiled_n_dofs_per_entity, tiled_n_dofs_per_entity + 1
+                )
+                enable_tiled_cholesky_mass_matrix = max_n_dofs_per_entity >= 8 and (
+                    not mass_matrix_fits_shared or envs_undersaturate
+                )
+
+                # Route the per-step warm-start factor+solve through the fused kernel whenever the shared tiled solve is
+                # available (factor tiled and L fits shared). The monolith body's incremental rank-1 update needs L in
+                # nt_H, so the fused kernel also writes L back via the ``write_L_to_nt_H`` argument; see
+                # ``func_update_gradient_tiled``. Disabled for ``sparse_solve`` because the sparse path runs the per-env
+                # factor inside ``func_hessian_and_cholesky_factor_direct_batch`` (leaving nt_H = L); routing the
+                # warm-start through the fused kernel would then re-factor L as if it were H.
+                enable_fused_factor_solve_init = (
+                    enable_tiled_cholesky_hessian and hessian_fits_shared and not self._options.sparse_solve
+                )
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
-                    enable_tiled_cholesky_mass_matrix_large=enable_tiled_cholesky_mass_matrix_large,
+                    mass_matrix_fits_shared=mass_matrix_fits_shared,
                     enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
-                    enable_tiled_cholesky_hessian_large=enable_tiled_cholesky_hessian_large,
+                    hessian_fits_shared=hessian_fits_shared,
                     cholesky_tile_size=cholesky_tile_size,
                     enable_fused_factor_solve_init=enable_fused_factor_solve_init,
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
-                    tiled_n_dofs_per_entity_large=tiled_n_dofs_per_entity_large,
                     tiled_n_dofs=tiled_n_dofs,
                 )
 

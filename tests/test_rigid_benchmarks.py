@@ -551,25 +551,20 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
 
 
 def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
-    """Two SMPL-X humanoids (159 DOFs each) dropped onto a plane with random per-DOF torques.
-
-    A high-DOF, multi-humanoid stress test for the rigid constraint solver: each entity has 159 DOFs
-    (> the per-entity tiled-Cholesky shared-memory cap), and the two-entity environment has 318 DOFs
-    (> the constraint-Hessian cap), so this exercises both the mass-matrix and Hessian factorizations on
-    high-DOF problems. Mirrors :func:`make_g1_fall`; adapted from @hughperkins' ``hp/double-smpl-benchmark``.
-    Self-collision is disabled (the SMPL-X hands carry many finger geoms) to keep the cost dominated by the
-    solver rather than self-collision broad-phase. The MJCF is fetched from the ``Kashu7100/eden_assets``
-    HuggingFace dataset (the SMPL-X humanoid tracked by the Eden project, https://github.com/Kashu7100/Eden).
-    """
-    step_dt = 0.005
+    # Two 159-DOF SMPL-X humanoids dropped on a plane with random per-DOF torques: the 318-DOF environment exceeds the
+    # constraint-Hessian shared-memory cap and each entity exceeds the per-entity mass-matrix cap, so both
+    # factorizations exercise their uncapped paths.
+    STEP_DT = 0.005
+    INIT_POSS = ((0.0, -0.5, 1.4), (0.0, 0.5, 1.4))  # pelvis dropped 1.4 m above the plane, offset in y
+    INIT_EULER = (90.0, 0.0, 0.0)  # SMPL-X canonical frame is Y-up; rotate to stand upright in Genesis (Z-up)
+    MAX_FORCE = 500.0
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
-            dt=step_dt,
-            iterations=10,
-            tolerance=1e-5,
-            ls_iterations=20,
-            enable_self_collision=False,
+            dt=STEP_DT,
+            # Cap the reserved contacts so the self-colliding 318-DOF Jacobian (n_constraints * n_dofs * n_envs) stays
+            # within int32 at n_envs=4096.
+            max_collision_pairs=40,
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
@@ -577,40 +572,30 @@ def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
     scene.add_entity(gs.morphs.Plane())
-    asset_path = get_hf_dataset(pattern="humanoids/smplx_humanoid/*", repo_name="eden_assets")
-    smplx_xml = f"{asset_path}/humanoids/smplx_humanoid/smplx_humanoid.xml"
-
-    init_z = 1.2  # drop height for the pelvis above the plane
-    y_offsets = (-0.5, 0.5)
-    robots = []
-    for y in y_offsets:
-        robot = scene.add_entity(
+    asset_path = get_hf_dataset(pattern="smplx_humanoid/*")
+    smplx_xml = f"{asset_path}/smplx_humanoid/smplx_humanoid.xml"
+    robots = [
+        scene.add_entity(
             gs.morphs.MJCF(
                 **get_file_morph_options(
                     file=smplx_xml,
-                    pos=(0.0, y, init_z),
+                    pos=pos,
+                    euler=INIT_EULER,
                 )
             ),
             vis_mode="collision",
         )
-        robots.append(robot)
+        for pos in INIT_POSS
+    ]
     time_start = time.time()
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    for robot, y in zip(robots, y_offsets):
-        init_qpos = torch.zeros((robot.n_qs,), dtype=gs.tc_float, device=gs.device)
-        init_qpos[1] = y  # y position
-        init_qpos[2] = init_z  # z position
-        init_qpos[3] = 1.0  # quaternion w component
-        robot.set_qpos(init_qpos)
-
     random_forces = [torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device) for robot in robots]
-    max_force = 50.0
 
     def step():
         for robot, forces in zip(robots, random_forces):
-            forces.uniform_(-max_force, max_force)
+            forces.uniform_(-MAX_FORCE, MAX_FORCE)
             robot.control_dofs_force(forces)
         scene.step()
 
@@ -619,7 +604,7 @@ def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
         step,
         SceneMeta(
             compile_time=compile_time,
-            step_dt=step_dt,
+            step_dt=STEP_DT,
             duration_warmup=20.0,
             duration_record=5.0,
         ),

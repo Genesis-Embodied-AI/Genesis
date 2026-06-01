@@ -1021,6 +1021,7 @@ def _kernel_solve_graph(
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_tiled_cholesky_hessian
+            and static_rigid_sim_config.hessian_fits_shared
         ):
             # Fused path: H patching + fused Cholesky+Solve (L in shmem, H preserved in nt_H)
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
