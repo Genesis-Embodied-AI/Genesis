@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 from typing_extensions import override
 
 import genesis as gs
@@ -51,6 +52,9 @@ class Raycaster:
             max_n_query_result_per_aabb=0,  # Not used for ray queries
             n_radix_sort_groups=min(64, n_faces),
         )
+        # The viewer casts one BVH over the full mesh, so the leaf-slot -> global-face map the kernels take is the
+        # identity. (Sensors build compacted per-subset BVHs with a real map; see RaycastContext.)
+        self.face_ids = torch.arange(n_faces, dtype=gs.tc_int, device=gs.device)
         self.result = array_class.get_raycast_result(n_envs_max)
 
         self.update()
@@ -72,6 +76,7 @@ class Raycaster:
             free_verts_state=self.solver.free_verts_state,
             fixed_verts_state=self.solver.fixed_verts_state,
             links_info=self.solver.links_info,
+            face_ids=self.face_ids,
             static_rigid_sim_config=self.solver._static_rigid_sim_config,
             aabb_state=self.aabb,
         )
@@ -105,6 +110,7 @@ class Raycaster:
             self.solver.free_verts_state,
             self.solver.verts_info,
             self.solver.faces_info,
+            self.face_ids,
             self.bvh.nodes,
             self.bvh.morton_codes,
             np.ascontiguousarray(ray_origin, dtype=gs.np_float),

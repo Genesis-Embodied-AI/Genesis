@@ -985,11 +985,12 @@ def test_shared_context(show_viewer):
     assert len(contexts) == 1
     assert isinstance(contexts[0], RaycastContext)
     # Both raycast-casting sensor types resolve to that single instance, so they cast against the very same BVH list
-    # (one collision BVH, not one built per sensor type).
+    # (shared across sensor types, not one built per sensor type). The plane+box scene is a mixed static/dynamic
+    # solver, so its collision mesh is split into a static (plane) and a dynamic (box) BVH - two entries, not one.
     assert raycaster._shared_context is contexts[0]
     assert depth_camera._shared_context is contexts[0]
     assert raycaster._shared_context.bvh_contexts is depth_camera._shared_context.bvh_contexts
-    assert len(raycaster._shared_context.bvh_contexts) == 1
+    assert len(raycaster._shared_context.bvh_contexts) == 2
     # A sensor type that declares no context resolves to None.
     assert imu._shared_context is None
 
@@ -1173,6 +1174,116 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_raycaster_static_dynamic_bvh_split(show_viewer, n_envs):
+    """A rigid solver's collision mesh is split into a static (fixed-link) BVH and a dynamic (movable-link) BVH,
+    cast separately and merged. Asserts: (a) the split structure (one static + one dynamic collision entry, static
+    shared across envs); (b) the merge reports the closer of static / dynamic as a movable box enters / leaves a
+    ray's path; (c) the static entry is genuinely skipped across a dynamic move (stays needs_rebuild=False).
+    """
+    HEIGHT = 1.0
+    BOX = 0.2  # movable box edge
+
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())  # static (fixed)
+    # A single downward ray from a fixed mount over the origin. collision=False so the mount carries no collision
+    # faces and the ray doesn't immediately hit its own mount geometry.
+    mount = scene.add_entity(
+        gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, HEIGHT), fixed=True, collision=False)
+    )
+    box = scene.add_entity(gs.morphs.Box(size=(BOX, BOX, BOX), pos=(5.0, 5.0, 0.5 * BOX)))  # dynamic (movable)
+    sensor = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
+            entity_idx=mount.idx,
+            return_world_frame=False,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    # (a) Split structure: exactly two collision BVH entries (raycast_mask is None), one static + one dynamic; the
+    # static one is shared across envs when batched (identical fixed geometry in every env).
+    collision_bvhs = [e for e in sensor._shared_context.bvh_contexts if e.raycast_mask is None]
+    assert len(collision_bvhs) == 2, f"expected static+dynamic split, got {len(collision_bvhs)} collision BVHs"
+    static_entries = [e for e in collision_bvhs if e.maybe_static]
+    dynamic_entries = [e for e in collision_bvhs if not e.maybe_static]
+    assert len(static_entries) == 1 and len(dynamic_entries) == 1
+    if n_envs > 0:
+        assert static_entries[0].shared_across_envs, "static terrain BVH should be shared across envs"
+        assert not dynamic_entries[0].shared_across_envs, "dynamic (movable) BVH must stay per-env"
+
+    # (b1) Box parked far away -> the ray falls through to the static ground at distance HEIGHT.
+    scene.sim._sensor_manager.step()
+    assert_allclose(sensor.read().distances.reshape(batch_shape), HEIGHT, tol=gs.EPS)
+
+    # (b2) Move the box directly under the ray -> the merge must now report the closer hit (box top).
+    box.set_pos(np.tile((0.0, 0.0, 0.5 * BOX), (*batch_shape, 1)))
+    scene.sim._sensor_manager.step()
+    assert_allclose(sensor.read().distances.reshape(batch_shape), HEIGHT - BOX, tol=gs.EPS)
+
+    # (c) The static (terrain) BVH stayed skipped across the dynamic move: it never re-flagged for rebuild.
+    assert not static_entries[0].needs_rebuild, "static BVH was flagged for rebuild by a dynamic-only move"
+
+    # (b3) Move the box back out -> ray returns to the static ground distance (dynamic BVH tracked the motion).
+    box.set_pos(np.tile((5.0, 5.0, 0.5 * BOX), (*batch_shape, 1)))
+    scene.sim._sensor_manager.step()
+    assert_allclose(sensor.read().distances.reshape(batch_shape), HEIGHT, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_raycaster_split_merge_no_hit_value_below_max_range(show_viewer, n_envs):
+    """The static/dynamic split casts the static BVH first, so a ray can miss it and hit the dynamic BVH on a later
+    pass. The merge must report that hit even when no_hit_value < max_range: the miss seeds an out-of-range sentinel
+    (not no_hit_value) so a real hit always wins, and no_hit_value is stamped only where every pass missed. A cast
+    that let the static miss's no_hit_value into the distance comparison would instead report no_hit_value here.
+    """
+    MOUNT_Z = 3.0
+    BOX_TOP = 0.4  # dynamic box (edge 0.4) centered at z=0.2
+    NO_HIT = -1.0  # < max_range on purpose - the case the sentinel protects
+    MAX_RANGE = 10.0
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    # Finite static terrain off to the side (fixed) so the downward ray over the origin misses it entirely, forcing
+    # the miss-static-then-hit-dynamic ordering. A Plane would be hit by every downward ray.
+    scene.add_entity(gs.morphs.Box(size=(1.0, 1.0, 1.0), pos=(5.0, 0.0, 0.5), fixed=True))
+    mount = scene.add_entity(
+        gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, MOUNT_Z), fixed=True, collision=False)
+    )
+    box = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.2)))  # dynamic (movable)
+    sensor = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
+            entity_idx=mount.idx,
+            return_world_frame=False,
+            max_range=MAX_RANGE,
+            no_hit_value=NO_HIT,
+        )
+    )
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    # Split present and no_hit_value < max_range accepted (the old merge-correctness guard is gone; the sentinel makes
+    # it correct instead).
+    collision_bvhs = [e for e in sensor._shared_context.bvh_contexts if e.raycast_mask is None]
+    assert len(collision_bvhs) == 2
+
+    # Ray misses the static terrain (off at x=5) but hits the dynamic box top -> the merge reports the real hit.
+    scene.sim._sensor_manager.step()
+    assert_allclose(sensor.read().distances.reshape(batch_shape), MOUNT_Z - BOX_TOP, tol=gs.EPS)
+
+    # Move the box away -> the ray now misses both BVHs -> falls back to no_hit_value.
+    box.set_pos(np.tile((5.0, 5.0, 0.2), (*batch_shape, 1)))
+    scene.sim._sensor_manager.step()
+    assert_allclose(sensor.read().distances.reshape(batch_shape), NO_HIT, tol=gs.EPS)
 
 
 @pytest.mark.required

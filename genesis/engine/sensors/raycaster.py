@@ -63,6 +63,10 @@ class BVHContext:
     # True when the geometry is bit-identical across envs, so the cast reads one shared copy (batch 0) with coalesced
     # node loads instead of scattering over n_env identical trees. Recomputed on every rebuild.
     shared_across_envs: bool = False
+    # Compacted face subset this collision BVH covers: face_ids[k] is the global face index at leaf slot k (1-D int
+    # device tensor). Identity arange(n_faces) for a single full-mesh BVH; None for visual entries (their kernels take
+    # no face_ids). Splitting into static/dynamic subsets is what lets the static tree stay skipped - see activate().
+    face_ids: torch.Tensor | None = None
 
 
 class RaycastContext(SharedSensorContext):
@@ -83,6 +87,25 @@ class RaycastContext(SharedSensorContext):
         if not self._active:
             raise gs.GenesisException("RaycastContext queried before activation; no sensor declared a raycast need.")
         return self._bvh_contexts
+
+    @staticmethod
+    def _partition_collision_faces(solver: "RigidSolver") -> list[tuple[torch.Tensor, bool]]:
+        """Partition the solver's collision faces into static (fixed-link) and dynamic (movable-link) subsets,
+        returning ``(face_ids, maybe_static)`` per non-empty subset. A pure static/dynamic solver yields one entry
+        (a single full-mesh BVH); a mixed scene (robot on terrain) yields two. See :meth:`activate`.
+        """
+        face_geom = qd_to_numpy(solver.faces_info.geom_idx).reshape(-1)  # (n_faces,) global geom per face
+        geom_link = qd_to_numpy(solver.geoms_info.link_idx).reshape(-1)  # (n_geoms,) global link per geom
+        link_fixed = np.array([bool(link.is_fixed) for link in solver.links], dtype=bool)  # (n_links,)
+        face_static = link_fixed[geom_link[face_geom]]  # (n_faces,) is this face on a fixed link?
+
+        out: list[tuple[torch.Tensor, bool]] = []
+        for is_static in (True, False):
+            sel = np.nonzero(face_static == is_static)[0]
+            if sel.size == 0:
+                continue
+            out.append((torch.as_tensor(sel, dtype=gs.tc_int, device=gs.device), bool(is_static)))
+        return out
 
     @staticmethod
     def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
@@ -119,10 +142,14 @@ class RaycastContext(SharedSensorContext):
             # Applies to both the collision and the visual BVH.
             maybe_static = all(link.is_fixed for link in solver.links)
             if isinstance(solver, RigidSolver):
-                n_faces = solver.faces_info.geom_idx.shape[0]
-                aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
-                bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                self._bvh_contexts.append(BVHContext(solver, bvh, aabb, None, maybe_static))
+                # Static (fixed-link) faces get a BVH built once + skipped + shared across envs; dynamic (movable-link)
+                # faces get one that rebuilds each step. Cast separately, merged (is_merge) into one identical result.
+                # RPL "multi-depth" decomposition (arXiv:2602.03002); a pure static/dynamic solver is a single subset.
+                for face_ids, subset_static in self._partition_collision_faces(solver):
+                    n_sub = int(face_ids.shape[0])
+                    aabb = AABB(n_batches=n_envs, n_aabbs=n_sub)
+                    bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+                    self._bvh_contexts.append(BVHContext(solver, bvh, aabb, None, subset_static, face_ids=face_ids))
             n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
             if n_vfaces > 0:
                 mask = self._compute_visual_raycast_mask(solver)
@@ -168,6 +195,7 @@ class RaycastContext(SharedSensorContext):
                     free_verts_state=entry.solver.free_verts_state,
                     fixed_verts_state=entry.solver.fixed_verts_state,
                     links_info=entry.solver.links_info,
+                    face_ids=entry.face_ids,
                     static_rigid_sim_config=entry.solver._static_rigid_sim_config,
                     aabb_state=entry.aabb,
                 )
@@ -323,14 +351,6 @@ class RaycasterSensor(
             self._shared_metadata.no_hit_values, self._options.no_hit_value
         )
 
-        # Multi-BVH merge passes use raw distance comparison to pick the closer hit; this only works if no_hit_value >=
-        # max_range. The negated form also rejects NaN (every IEEE 754 comparison with NaN is False).
-        if len(self._shared_context.bvh_contexts) > 1 and not (self._options.no_hit_value >= self._options.max_range):
-            gs.raise_exception(
-                f"no_hit_value ({self._options.no_hit_value}) must be >= max_range ({self._options.max_range}) "
-                f"when multiple BVHs are active (the merge step compares raw distances)."
-            )
-
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.return_shape
         return ((*shape, 3), shape)
@@ -372,8 +392,9 @@ class RaycasterSensor(
             links_pos[:, group.sensor_cols, :] = pos
             links_quat[:, group.sensor_cols, :] = quat
 
-        # First entry initializes the cache (is_merge=False, writes a hit or no_hit_value into every slot). Each
-        # subsequent entry merges in place (is_merge=True, writes only where it found a closer hit).
+        # Chain the entries into one output buffer: first initializes (is_merge=False), the rest merge closer hits
+        # (is_merge=True), the last (is_last) finalizes misses to no_hit_value - see write_ray_hit.
+        n_entries = len(bvh_contexts)
         for i, entry in enumerate(bvh_contexts):
             solver = entry.solver
             args_common = (
@@ -393,6 +414,7 @@ class RaycasterSensor(
                 raw_data_T,
                 gs.EPS,
                 i > 0,
+                i == n_entries - 1,
                 entry.shared_across_envs,
             )
             if entry.raycast_mask is None:
@@ -401,6 +423,7 @@ class RaycasterSensor(
                     solver.free_verts_state,
                     solver.verts_info,
                     solver.faces_info,
+                    entry.face_ids,
                     *args_common,
                 )
             else:

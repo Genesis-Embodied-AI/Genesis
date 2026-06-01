@@ -56,6 +56,7 @@ def bvh_ray_cast(
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
+    face_ids: qd.types.ndarray(ndim=1),
     eps: float,
 ):
     """
@@ -70,7 +71,9 @@ def bvh_ray_cast(
     hit_normal : qd.math.vec3
         normal vector at hit point (zero vector if no hit)
     """
-    n_triangles = faces_info.verts_idx.shape[0]
+    # This BVH's leaf count, which is its morton-code count - NOT the solver's global face count: the BVH may cover a
+    # compacted face subset, so face_ids[leaf] remaps a subset-local leaf back to the global face below.
+    n_triangles = bvh_morton_codes.shape[1]
 
     hit_face = -1
     closest_distance = gs.qd_float(max_range)
@@ -92,9 +95,9 @@ def bvh_ray_cast(
 
         if aabb_t >= 0.0 and aabb_t < closest_distance:
             if node.left == -1:  # Leaf node
-                # Get original triangle/face index
+                # The morton code carries the subset-local leaf; face_ids remaps it to the global face.
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
-                i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
+                i_f = qd.cast(face_ids[qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)], gs.qd_int)
 
                 # Get triangle vertices
                 tri_vertices = get_triangle_vertices(
@@ -237,10 +240,14 @@ def update_aabbs(
     faces_info: array_class.FacesInfo,
     geoms_info: array_class.GeomsInfo,
     links_info: array_class.LinksInfo,
+    face_ids: qd.types.ndarray(ndim=1),
     static_rigid_sim_config: qd.template(),
     aabb_state: qd.template(),
 ):
     """Update per-face collision AABBs from current vertex positions.
+
+    AABB slot k holds the bounding box of the global face face_ids[k]; iterating this compacted subset scales the
+    rebuild + radix sort with the subset size, not every face in the solver (identity face_ids for a full-mesh BVH).
 
     A face contributes to env i_b only if its geom lies in that env's active geom range (links_info.geom_start /
     geom_end); otherwise its AABB is left inverted (unhittable) and skipped by ray queries. For a homogeneous solver
@@ -248,9 +255,10 @@ def update_aabbs(
     one vertex buffer but activate different per-env geom ranges, it makes each env cast against only its own variant
     instead of the union of every variant.
     """
-    for i_b, i_f in qd.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
-        aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
+    for i_b, k in qd.ndrange(free_verts_state.pos.shape[1], face_ids.shape[0]):
+        i_f = face_ids[k]
+        aabb_state.aabbs[i_b, k].min.fill(qd.math.inf)
+        aabb_state.aabbs[i_b, k].max.fill(-qd.math.inf)
 
         i_g = faces_info.geom_idx[i_f]
         i_l = geoms_info.link_idx[i_g]
@@ -261,12 +269,12 @@ def update_aabbs(
                 i_fv = verts_info.verts_state_idx[i_v]
                 if verts_info.is_fixed[i_v]:
                     pos_v = fixed_verts_state.pos[i_fv]
-                    aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                    aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                    aabb_state.aabbs[i_b, k].min = qd.min(aabb_state.aabbs[i_b, k].min, pos_v)
+                    aabb_state.aabbs[i_b, k].max = qd.max(aabb_state.aabbs[i_b, k].max, pos_v)
                 else:
                     pos_v = free_verts_state.pos[i_fv, i_b]
-                    aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                    aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                    aabb_state.aabbs[i_b, k].min = qd.min(aabb_state.aabbs[i_b, k].min, pos_v)
+                    aabb_state.aabbs[i_b, k].max = qd.max(aabb_state.aabbs[i_b, k].max, pos_v)
 
 
 @qd.kernel
@@ -278,6 +286,7 @@ def kernel_update_verts_and_aabbs(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     links_info: array_class.LinksInfo,
+    face_ids: qd.types.ndarray(ndim=1),
     static_rigid_sim_config: qd.template(),
     aabb_state: qd.template(),
 ):
@@ -291,6 +300,7 @@ def kernel_update_verts_and_aabbs(
         faces_info,
         geoms_info,
         links_info,
+        face_ids,
         static_rigid_sim_config,
         aabb_state,
     )
@@ -445,6 +455,7 @@ def kernel_cast_ray(
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    face_ids: qd.types.ndarray(ndim=1),  # maps BVH leaf slot -> global face index (identity for a full-mesh BVH)
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     ray_start: qd.types.ndarray(ndim=1),  # (3,)
@@ -485,6 +496,7 @@ def kernel_cast_ray(
             verts_info=verts_info,
             fixed_verts_state=fixed_verts_state,
             free_verts_state=free_verts_state,
+            face_ids=face_ids,
             eps=eps,
         )
         if cur_hit_face >= 0:
@@ -507,17 +519,20 @@ def write_ray_hit(
     i_p_offset: int,
     i_p_dist: int,
     is_world_frame: qd.types.ndarray(ndim=1),
+    max_ranges: qd.types.ndarray(ndim=1),
     no_hit_values: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
+    is_last: qd.template(),
 ):
     """Common post-BVH write block for both collision and visual cast kernels.
 
-    `is_merge` is a compile-time flag. When False the function writes a value into every output slot (hit or
-    no_hit_value), initializing the cache. When True the function only writes when it found a closer hit than what
-    is already in the cache, so multiple BVH casts can be composed by chaining calls (first with is_merge=False,
-    subsequent with is_merge=True) into the same output buffer with no scratch storage.
+    `is_merge` / `is_last` mark a cast's position in a chain of BVH passes sharing one output buffer (first
+    is_merge=False, rest is_merge=True, final is_last). A miss must not beat a real hit from another pass for any
+    ``no_hit_value`` (which may be < max_range): an intermediate miss seeds the slot with ``max_range`` - a hit is
+    always strictly below it, so it loses the distance comparison - and ``no_hit_value`` is stamped only on the final
+    pass, over any slot still at the sentinel.
     """
     if hit_face >= 0 and (not is_merge or hit_distance < output_hits[i_p_dist, i_b]):
         # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
@@ -534,11 +549,18 @@ def write_ray_hit(
         output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
         output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
     elif not is_merge:
-        # No hit
+        # First-pass miss: zero the point; seed no_hit_value if single-BVH (also last), else the max_range sentinel.
         output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
         output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
         output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
-        output_hits[i_p_dist, i_b] = no_hit_values[i_s]
+        if is_last:
+            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
+        else:
+            output_hits[i_p_dist, i_b] = max_ranges[i_s]
+    elif is_last:
+        # Final-pass miss: a slot still at the sentinel means every pass missed -> stamp no_hit_value.
+        if output_hits[i_p_dist, i_b] >= max_ranges[i_s]:
+            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
 
 
 @qd.kernel
@@ -547,6 +569,7 @@ def kernel_cast_rays(
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
+    face_ids: qd.types.ndarray(ndim=1),  # maps BVH leaf slot -> global face index (identity for a full-mesh BVH)
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
     links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
@@ -563,6 +586,7 @@ def kernel_cast_rays(
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: float,
     is_merge: qd.template(),
+    is_last: qd.template(),
     shared_bvh: qd.template(),
 ):
     """Cast rays against a collision-mesh BVH, accelerated by a BVH. See write_ray_hit for `is_merge` semantics.
@@ -613,6 +637,7 @@ def kernel_cast_rays(
             verts_info=verts_info,
             fixed_verts_state=fixed_verts_state,
             free_verts_state=free_verts_state,
+            face_ids=face_ids,
             eps=eps,
         )
 
@@ -631,10 +656,12 @@ def kernel_cast_rays(
             i_p_offset,
             i_p_dist,
             is_world_frame,
+            max_ranges,
             no_hit_values,
             output_hits,
             eps,
             is_merge,
+            is_last,
         )
 
 
@@ -660,6 +687,7 @@ def kernel_cast_rays_visual(
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
+    is_last: qd.template(),
     shared_bvh: qd.template(),
 ):
     """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for shared_bvh and the thread mapping."""
@@ -715,8 +743,10 @@ def kernel_cast_rays_visual(
             i_p_offset,
             i_p_dist,
             is_world_frame,
+            max_ranges,
             no_hit_values,
             output_hits,
             eps,
             is_merge,
+            is_last,
         )
