@@ -12,7 +12,7 @@ from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 from genesis.options.sensors import Raycaster as RaycasterOptions
 from genesis.options.sensors import RaycastPattern
 from genesis.utils.geom import transform_by_quat, transform_by_trans_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy, qd_to_torch
 from genesis.utils.raycast_qd import (
     kernel_cast_rays,
     kernel_cast_rays_visual,
@@ -172,6 +172,19 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                 )
                 entry.bvh.build()
             entry.needs_rebuild = False
+            # The per-env trees are bit-identical - so the cast can read one shared copy (batch 0) - exactly when the
+            # per-face AABBs they are built from match across envs. Comparing that build input directly (rather than a
+            # proxy like link poses or raw verts) captures per-env pose, batched verts, and any per-env geometry
+            # selection at once - so it stays correct whatever feeds the AABBs. A single-env solver gains nothing.
+            if entry.maybe_static and entry.aabb.n_batches > 1:
+                aabb_min = qd_to_torch(entry.aabb.aabbs.min)
+                aabb_max = qd_to_torch(entry.aabb.aabbs.max)
+                entry.shared_across_envs = bool(
+                    torch.equal(aabb_min, aabb_min[:1].expand_as(aabb_min))
+                    and torch.equal(aabb_max, aabb_max[:1].expand_as(aabb_max))
+                )
+            else:
+                entry.shared_across_envs = False
 
     def build(self):
         super().build()
@@ -342,6 +355,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                 raw_data_T,
                 gs.EPS,
                 i > 0,
+                entry.shared_across_envs,
             )
             if entry.raycast_mask is None:
                 kernel_cast_rays(

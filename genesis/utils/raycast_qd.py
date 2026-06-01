@@ -560,11 +560,15 @@ def kernel_cast_rays(
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: float,
     is_merge: qd.template(),
+    shared_bvh: qd.template(),
 ):
     """Cast rays against a collision-mesh BVH, accelerated by a BVH. See write_ray_hit for `is_merge` semantics.
 
     The result `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each
     sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
+
+    shared_bvh is a compile-time flag set when the collision geometry is identical across envs; the cast then reads a
+    single BVH copy (batch 0) for every env instead of one bit-identical copy per env.
     """
     n_points = ray_starts.shape[0]
     for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
@@ -585,7 +589,8 @@ def kernel_cast_rays(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_ranges[i_s],
-            i_b=i_b,
+            # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
+            i_b=0 if shared_bvh else i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
             faces_info=faces_info,
@@ -639,8 +644,9 @@ def kernel_cast_rays_visual(
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
+    shared_bvh: qd.template(),
 ):
-    """Visual-mesh variant of kernel_cast_rays."""
+    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for shared_bvh."""
     n_points = ray_starts.shape[0]
     for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
         i_s = points_to_sensor_idx[i_p]
@@ -660,7 +666,8 @@ def kernel_cast_rays_visual(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_ranges[i_s],
-            i_b=i_b,
+            # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
+            i_b=0 if shared_bvh else i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
             vverts_info=vverts_info,
