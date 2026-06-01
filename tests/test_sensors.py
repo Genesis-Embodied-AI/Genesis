@@ -1379,6 +1379,43 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
         assert (sensor_data.points.abs() > gs.EPS).any()
 
 
+@pytest.mark.required
+def test_raycaster_heterogeneous_object(show_viewer, tol):
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    sensor_mount = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            collision=False,
+        )
+    )
+    # Without per-env geom masking an env casts against the union of all variants (they share one vertex buffer). The
+    # variants overlap (same pose) so env 0's inactive variant is the nearer hit there - that is what makes a missing
+    # mask observable: env 0 would shadow its own box with env 1's closer sphere.
+    scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(1.0, 0.0, 0.5), fixed=True),
+            gs.morphs.Sphere(radius=0.2, pos=(1.0, 0.0, 0.5), fixed=True),
+        ),
+    )
+    lidar = scene.add_sensor(
+        gs.sensors.Lidar(
+            entity_idx=sensor_mount.idx,
+            pattern=gs.options.sensors.SphericalPattern(n_points=(1, 1), fov=(0.0, 0.0)),
+            max_range=5.0,
+            draw_debug=show_viewer,
+        )
+    )
+
+    scene.build(n_envs=2)
+    scene.step()
+
+    distances = lidar.read().distances[:, 0, 0]
+    assert_allclose(distances, (0.9, 0.8), tol=5e-3)
+
+
 # ------------------------------------------------------------------------------------------
 # -------------------------------------- Kinematic Tactile Sensors ---------------------------------------
 # ------------------------------------------------------------------------------------------
