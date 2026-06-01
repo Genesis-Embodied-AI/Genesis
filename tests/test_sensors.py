@@ -1232,7 +1232,7 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable
     # pending; nothing is pending after the baseline step, so an idle step would rebuild none of them.
     visual_entries = [entry for entry in cam_kin._shared_metadata.solver_bvhs if entry.raycast_mask is not None]
     assert visual_entries and all(entry.maybe_static for entry in visual_entries)
-    assert all(not sub.pending for sub in cam_kin._shared_metadata.geometry_subscribers.values())
+    assert all(not entry.rebuild_subscriber.pending for entry in visual_entries)
 
     # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
     # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. Scaling perturbs each vvert by a
@@ -1242,7 +1242,8 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable
     kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
     if kin_raycastable:
         # set_vverts is a GEOMETRY change, so the otherwise-skipped static visual BVH is flagged for rebuild.
-        assert cam_kin._shared_metadata.geometry_subscribers[scene.sim.kinematic_solver].pending
+        kin_visual = next(entry for entry in visual_entries if entry.solver is scene.sim.kinematic_solver)
+        assert kin_visual.rebuild_subscriber.pending
     scene.step()
     assert_allclose(cam_kin.read_image()[..., 15, 20], kin_scaled, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
@@ -1455,7 +1456,7 @@ def test_raycaster_heterogeneous_object(show_viewer, tol):
 
     # The static BVH is rebuilt only when its geometry actually changes - exactly what is necessary, nothing more: an
     # idle step records no change (rebuild skipped), while a set_pos records a pending change (rebuild scheduled).
-    subscriber = lidar._shared_metadata.geometry_subscribers[scene.sim.rigid_solver]
+    subscriber = collision_bvh.rebuild_subscriber
     scene.step()
     assert not subscriber.pending
     het_obstacle.set_pos((1.0, 0.0, 0.5))
