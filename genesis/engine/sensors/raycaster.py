@@ -48,10 +48,11 @@ class BVHContext:
     # which visual faces contribute.
     raycast_mask: np.ndarray | None = None
 
-    # True when no link in the solver can be moved by the physics (all links fixed), so its geometry only ever changes
-    # through an explicit set_pos/set_quat (collision) or set_vverts (visual) - all GEOMETRY mutations the subscription
-    # catches. Such an entry skips the per-step rebuild - the dominant cost for static raycasting - and rebuilds only
-    # when flagged.
+    # True when the physics cannot move any of the geometry this BVH covers (every covered collision face sits on a
+    # fixed link; for a visual BVH, all links in the solver are fixed), so that geometry only ever changes through an
+    # explicit set_pos/set_quat (collision) or set_vverts (visual) - all GEOMETRY mutations the subscription catches.
+    # Such an entry skips the per-step rebuild - the dominant cost for static raycasting - and rebuilds only when
+    # flagged.
     maybe_static: bool = False
     # Lazy GEOMETRY subscriber for a static entry, registered on its solver; None for a movable entry (which rebuilds
     # every step regardless). RaycastContext.update polls it: a pending set_pos/set_quat/set_vverts flags for rebuild.
@@ -63,22 +64,29 @@ class BVHContext:
     # True when the geometry is bit-identical across envs, so the cast reads one shared copy (batch 0) with coalesced
     # node loads instead of scattering over n_env identical trees. Recomputed on every rebuild.
     shared_across_envs: bool = False
+    # Leaf-slot -> global-face map for a collision BVH over a compacted face subset (face_ids[k] is the global face
+    # index at leaf slot k), with is_remapped=True. A collision BVH covering every face in order needs no map:
+    # is_remapped=False and face_ids is a placeholder the kernels compile out. None for visual entries (their kernels
+    # take no face_ids). See RaycastContext.activate for the static/dynamic face split.
+    face_ids: torch.Tensor | None = None
+    is_remapped: bool = False
 
 
 class RaycastContext(SharedSensorContext):
     """
     Per-simulator collision/visual raycast BVHs, shared across sensor types that cast rays.
 
-    Holds one ``BVHContext`` per (active solver, mesh type): a collision BVH over a rigid solver's faces and a visual
-    BVH over the vfaces opted into ``material.use_visual_raycasting``.
+    Holds one ``BVHContext`` per (active solver, mesh type): one or two collision BVHs over a rigid solver's faces
+    (see ``activate`` for the static/dynamic face split) and a visual BVH over the vfaces opted into
+    ``material.use_visual_raycasting``.
     """
 
     def __init__(self, sim):
         super().__init__(sim)
         self._bvh_contexts: list[BVHContext] = []
-        # The rigid collision BVH context -- the single entry with no per-vface raycast mask (raycast_mask is None).
-        # Resolved once in ``activate`` (the entry list is fixed after that); ``None`` until then / if no rigid solver.
-        self.collision_bvh_context: BVHContext | None = None
+        # The rigid collision BVH entry over every collision face; see the collision_bvh_context property.
+        self._collision_bvh_context: BVHContext | None = None
+        self._is_combined_collision_bvh_required = False
 
     @property
     def bvh_contexts(self) -> list[BVHContext]:
@@ -89,6 +97,34 @@ class RaycastContext(SharedSensorContext):
         if not self._active:
             raise gs.GenesisException("RaycastContext queried before activation; no sensor declared a raycast need.")
         return self._bvh_contexts
+
+    def require_combined_collision_bvh(self):
+        """Force the rigid solver's collision faces into one BVH covering every face instead of the static/dynamic
+        split.
+
+        Consumers whose kernels walk a single tree over every collision face (see collision_bvh_context) must call
+        this before the context is activated, i.e. at sensor construction time: contexts activate during sensor
+        build, whose order across sensor types follows registration order.
+        """
+        if self._active:
+            raise gs.GenesisException(
+                "require_combined_collision_bvh() called after RaycastContext activation; the BVHs are already built."
+            )
+        self._is_combined_collision_bvh_required = True
+
+    @property
+    def collision_bvh_context(self) -> BVHContext | None:
+        """The single collision BVH entry covering every face of the rigid solver; None if no rigid solver is active.
+
+        Only readable when a consumer called require_combined_collision_bvh() before activation; otherwise the
+        collision faces may be split over two BVHs and no single-tree entry exists, so reading raises.
+        """
+        if not self._is_combined_collision_bvh_required:
+            raise gs.GenesisException(
+                "collision_bvh_context is only available to consumers that called require_combined_collision_bvh() "
+                "before RaycastContext activation."
+            )
+        return self._collision_bvh_context
 
     @staticmethod
     def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
@@ -112,9 +148,16 @@ class RaycastContext(SharedSensorContext):
         """
         Build the per-(solver, mesh-type) BVHs on first activation; idempotent.
 
-        Rigid solvers get a collision BVH covering all collision faces; any solver with entities opting in via
-        ``material.use_visual_raycasting`` gets a visual BVH masked to those vfaces. Collision and visual entries
-        coexist (the cast kernels merge in place).
+        Rigid solvers get collision BVHs over their collision faces, partitioned by owning-link fixedness: faces on
+        fixed links move only on an explicit set_pos/set_quat while faces on movable links move on every step, so
+        giving each group its own tree keeps the static-rebuild skip (and the shared read across envs) available even
+        when movable links share the solver, and scales the per-step rebuild with the movable face count alone. The
+        subsets are cast separately and merged in place, giving the same result as one combined tree. A solver whose
+        faces are all static or all movable keeps a single tree, as does one whose consumers require the combined BVH
+        (see require_combined_collision_bvh).
+
+        Any solver with entities opting in via ``material.use_visual_raycasting`` gets a visual BVH masked to those
+        vfaces. Collision and visual entries coexist (the cast kernels merge in place).
         """
         if self._active:
             return
@@ -123,15 +166,46 @@ class RaycastContext(SharedSensorContext):
             if not solver.is_active:
                 continue
             n_envs = solver._B
-            # A solver's geometry is static when no link can be moved by the physics (all links fixed); it then changes
-            # only through an explicit set_pos/set_quat/set_vverts, all GEOMETRY mutations the subscription catches.
-            # Applies to both the collision and the visual BVH.
+            # A solver's visual geometry is static when no link can be moved by the physics (all links fixed); it then
+            # changes only through an explicit set_pos/set_quat/set_vverts, all GEOMETRY mutations the subscription
+            # catches. Collision entries refine this to a per-face criterion below.
             maybe_static = all(link.is_fixed for link in solver.links)
             if isinstance(solver, RigidSolver):
                 n_faces = solver.dyn_info.faces.geom_idx.shape[0]
-                aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
-                bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                self._bvh_contexts.append(BVHContext(solver, bvh, aabb, None, maybe_static))
+                # Fixedness per face, from its owning link. A movable link without collision geoms leaves the tree
+                # unaffected, so a per-face criterion catches static collision meshes the per-link one misses.
+                faces_geom_idx = qd_to_numpy(solver.dyn_info.faces.geom_idx)
+                geoms_link_idx = qd_to_numpy(solver.dyn_info.geoms.link_idx)
+                links_is_fixed = np.array([link.is_fixed for link in solver.links])
+                faces_is_static = links_is_fixed[geoms_link_idx[faces_geom_idx]]
+                # Each subset is (faces_idx, is_static), with faces_idx None when the subset covers every face in
+                # order (leaf slot == face index, so the kernels skip the remap).
+                if self._is_combined_collision_bvh_required or faces_is_static.all() or not faces_is_static.any():
+                    subsets = [(None, faces_is_static.all())]
+                else:
+                    subsets = [
+                        (np.nonzero(faces_is_static)[0], True),
+                        (np.nonzero(~faces_is_static)[0], False),
+                    ]
+                for subset_faces_idx, is_subset_static in subsets:
+                    is_remapped = subset_faces_idx is not None
+                    aabb = AABB(n_batches=n_envs, n_aabbs=subset_faces_idx.shape[0] if is_remapped else n_faces)
+                    bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+                    if is_remapped:
+                        face_ids = torch.as_tensor(subset_faces_idx, dtype=gs.tc_int, device=gs.device)
+                    else:
+                        face_ids = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+                    self._bvh_contexts.append(
+                        BVHContext(
+                            solver,
+                            bvh,
+                            aabb,
+                            raycast_mask=None,
+                            maybe_static=is_subset_static,
+                            face_ids=face_ids,
+                            is_remapped=is_remapped,
+                        )
+                    )
             n_vfaces = solver.dyn_info.vfaces.vgeom_idx.shape[0]
             if n_vfaces > 0:
                 mask = self._compute_visual_raycast_mask(solver)
@@ -140,7 +214,8 @@ class RaycastContext(SharedSensorContext):
                     bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
                     self._bvh_contexts.append(BVHContext(solver, bvh, aabb, mask, maybe_static))
 
-        self.collision_bvh_context = next((c for c in self._bvh_contexts if c.raycast_mask is None), None)
+        if self._is_combined_collision_bvh_required:
+            self._collision_bvh_context = next((c for c in self._bvh_contexts if c.raycast_mask is None), None)
 
         # Lazily watch each static BVH (collision or visual) for GEOMETRY changes. ``update`` polls its
         # rebuild_subscriber so an explicit set_pos / set_quat / set_vverts on the otherwise-immovable geometry forces
@@ -172,7 +247,12 @@ class RaycastContext(SharedSensorContext):
                 continue
             if entry.raycast_mask is None:
                 kernel_update_verts_and_aabbs(
-                    entry.solver.dyn_state, entry.aabb, entry.solver.dyn_info, entry.solver.rigid_config
+                    entry.face_ids,
+                    entry.solver.dyn_state,
+                    entry.aabb,
+                    entry.solver.dyn_info,
+                    entry.solver.rigid_config,
+                    is_remapped=entry.is_remapped,
                 )
                 entry.bvh.build()
             else:
@@ -216,8 +296,8 @@ class RaycastContext(SharedSensorContext):
 @dataclass
 class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata):
     # The BVHs cast against each frame live on the shared ``RaycastContext`` (one per active solver per mesh type),
-    # so a Raycaster and a DepthCamera share one set of trees. The first cast entry initializes the output cache
-    # (is_merge=False), the rest merge in closer hits. Per-sensor link poses are gathered via
+    # so a Raycaster and a DepthCamera share one set of trees. The cast entries chain into the output cache; see
+    # write_ray_hit in raycast_qd.py for the merge scheme. Per-sensor link poses are gathered via
     # KinematicSensorMetadataMixin.solver_groups, independent of which BVH is being cast.
 
     # Per-step scratch tensors for sensor link poses, lazily allocated on the first cast (B and n_sensors known).
@@ -321,14 +401,6 @@ class RaycasterSensor(
             self._shared_metadata.no_hit_values, self._options.no_hit_value
         )
 
-        # Multi-BVH merge passes use raw distance comparison to pick the closer hit; this only works if no_hit_value >=
-        # max_range. The negated form also rejects NaN (every IEEE 754 comparison with NaN is False).
-        if len(self._shared_context.bvh_contexts) > 1 and not (self._options.no_hit_value >= self._options.max_range):
-            gs.raise_exception(
-                f"no_hit_value ({self._options.no_hit_value}) must be >= max_range ({self._options.max_range}) "
-                f"when multiple BVHs are active (the merge step compares raw distances)."
-            )
-
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.return_shape
         # Distances-only: drop the (*shape, 3) points field so the cache holds just the distances.
@@ -381,8 +453,8 @@ class RaycasterSensor(
             links_pos[:, group.sensor_cols, :] = pos
             links_quat[:, group.sensor_cols, :] = quat
 
-        # First entry initializes the cache (is_merge=False, writes a hit or no_hit_value into every slot). Each
-        # subsequent entry merges in place (is_merge=True, writes only where it found a closer hit).
+        # The entries chain into one output buffer: the first initializes every slot (is_merge=False), each subsequent
+        # one merges in closer hits, and the final one (is_last) settles misses to no_hit_value - see write_ray_hit.
         for i, entry in enumerate(bvh_contexts):
             solver = entry.solver
             args_common = (
@@ -405,10 +477,13 @@ class RaycasterSensor(
             if entry.raycast_mask is None:
                 kernel_cast_rays(
                     *args_common,
+                    entry.face_ids,
                     solver.dyn_state,
                     solver.dyn_info,
                     eps=gs.EPS,
                     is_merge=i > 0,
+                    is_last=i == len(bvh_contexts) - 1,
+                    is_remapped=entry.is_remapped,
                     shared_bvh=entry.shared_across_envs,
                 )
             else:
@@ -418,6 +493,7 @@ class RaycasterSensor(
                     solver.dyn_info,
                     eps=gs.EPS,
                     is_merge=i > 0,
+                    is_last=i == len(bvh_contexts) - 1,
                     shared_bvh=entry.shared_across_envs,
                 )
 
@@ -443,11 +519,12 @@ class RaycasterSensor(
             if not self._options.return_world_frame:
                 points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
         else:
-            # Reconstruct the local-frame hit points as distance * unit ray_dir. Missed rays carry no_hit_value as
-            # distance and collapse onto the ray start, matching the (0, 0, 0) stored for them when points are enabled.
+            # Reconstruct the local-frame hit points as distance * unit ray_dir. Missed rays carry exactly
+            # no_hit_value as distance (which may lie below max_range, so an ordering test cannot discriminate) and
+            # collapse onto the ray start, matching the (0, 0, 0) stored for them when points are enabled.
             distances = data.distances.reshape((-1, 1))
             hit_points_local = torch.where(
-                distances < self._options.no_hit_value, distances * normalize(self.ray_dirs), 0.0
+                distances != self._options.no_hit_value, distances * normalize(self.ray_dirs), 0.0
             )
             points = transform_by_trans_quat(hit_points_local + self.ray_starts, pos, quat)
 

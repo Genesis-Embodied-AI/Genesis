@@ -581,11 +581,13 @@ def test_shared_context(show_viewer):
     assert len(contexts) == 1
     assert isinstance(contexts[0], RaycastContext)
     # Both raycast-casting sensor types resolve to that single instance, so they cast against the very same BVH list
-    # (one collision BVH, not one built per sensor type).
+    # instead of one built per sensor type.
     assert raycaster._shared_context is contexts[0]
     assert depth_camera._shared_context is contexts[0]
     assert raycaster._shared_context.bvh_contexts is depth_camera._shared_context.bvh_contexts
-    assert len(raycaster._shared_context.bvh_contexts) == 1
+    # The plane+box scene mixes static and dynamic collision faces, so the shared collision mesh is split into a
+    # static and a dynamic BVH - two entries, both shared by the two sensor types.
+    assert len(raycaster._shared_context.bvh_contexts) == 2
     # A sensor type that declares no context resolves to None.
     assert imu._shared_context is None
 

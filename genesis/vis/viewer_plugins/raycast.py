@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 from typing_extensions import override
 
 import genesis as gs
@@ -51,6 +52,10 @@ class Raycaster:
             max_n_query_result_per_aabb=0,  # Not used for ray queries
             n_radix_sort_groups=min(64, n_faces),
         )
+        # The viewer BVH covers every face in order, so the leaf-slot -> face map the kernels take reduces to a
+        # placeholder they compile out (is_remapped=False). Sensors may build per-subset BVHs with a real map; see
+        # RaycastContext.activate.
+        self.face_ids = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
         self.result = array_class.get_raycast_result(n_envs_max)
 
         self.update()
@@ -64,7 +69,14 @@ class Raycaster:
             return
         from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs
 
-        kernel_update_verts_and_aabbs(self.solver.dyn_state, self.aabb, self.solver.dyn_info, self.solver.rigid_config)
+        kernel_update_verts_and_aabbs(
+            self.face_ids,
+            self.solver.dyn_state,
+            self.aabb,
+            self.solver.dyn_info,
+            self.solver.rigid_config,
+            is_remapped=False,
+        )
         self.bvh.build()
 
     def cast(
@@ -92,6 +104,7 @@ class Raycaster:
             self.bvh.nodes,
             self.bvh.morton_codes,
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
+            self.face_ids,
             self.solver.dyn_state,
             self.result,
             self.solver.dyn_info,
