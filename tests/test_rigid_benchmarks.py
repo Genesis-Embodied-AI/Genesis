@@ -550,6 +550,82 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
+def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
+    """Two SMPL-X humanoids (159 DOFs each) dropped onto a plane with random per-DOF torques.
+
+    A high-DOF, multi-humanoid stress test for the rigid constraint solver: each entity has 159 DOFs
+    (> the per-entity tiled-Cholesky shared-memory cap), and the two-entity environment has 318 DOFs
+    (> the constraint-Hessian cap), so this exercises both the mass-matrix and Hessian factorizations on
+    high-DOF problems. Mirrors :func:`make_g1_fall`; adapted from @hughperkins' ``hp/double-smpl-benchmark``.
+    Self-collision is disabled (the SMPL-X hands carry many finger geoms) to keep the cost dominated by the
+    solver rather than self-collision broad-phase. The MJCF is fetched from the ``Kashu7100/eden_assets``
+    HuggingFace dataset (the SMPL-X humanoid tracked by the Eden project, https://github.com/Kashu7100/Eden).
+    """
+    step_dt = 0.005
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=step_dt,
+            iterations=10,
+            tolerance=1e-5,
+            ls_iterations=20,
+            enable_self_collision=False,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+    asset_path = get_hf_dataset(pattern="humanoids/smplx_humanoid/*", repo_name="eden_assets")
+    smplx_xml = f"{asset_path}/humanoids/smplx_humanoid/smplx_humanoid.xml"
+
+    init_z = 1.2  # drop height for the pelvis above the plane
+    y_offsets = (-0.5, 0.5)
+    robots = []
+    for y in y_offsets:
+        robot = scene.add_entity(
+            gs.morphs.MJCF(
+                **get_file_morph_options(
+                    file=smplx_xml,
+                    pos=(0.0, y, init_z),
+                )
+            ),
+            vis_mode="collision",
+        )
+        robots.append(robot)
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    for robot, y in zip(robots, y_offsets):
+        init_qpos = torch.zeros((robot.n_qs,), dtype=gs.tc_float, device=gs.device)
+        init_qpos[1] = y  # y position
+        init_qpos[2] = init_z  # z position
+        init_qpos[3] = 1.0  # quaternion w component
+        robot.set_qpos(init_qpos)
+
+    random_forces = [torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device) for robot in robots]
+    max_force = 50.0
+
+    def step():
+        for robot, forces in zip(robots, random_forces):
+            forces.uniform_(-max_force, max_force)
+            robot.control_dofs_force(forces)
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=step_dt,
+            duration_warmup=20.0,
+            duration_record=5.0,
+        ),
+    )
+
+
 def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **scene_kwargs):
     _STEP_DT = 1.0 / 30
     TABLE_Z = 0.762
@@ -971,6 +1047,12 @@ def g1_fall(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def double_smplx(solver, n_envs, gjk):
+    _, step_fn, meta = make_double_smplx(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def shadow_hand_cubes(solver, n_envs, gjk):
     _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1025,6 +1107,7 @@ def dex_hand(solver, n_envs, gjk):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+        ("double_smplx", gs.constraint_solver.Newton, None, 4096, gs.gpu),
         ("shadow_hand_cubes", None, None, 0, gs.cpu),
         ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
         ("dex_hand", None, None, 4096, gs.gpu),

@@ -39,6 +39,7 @@ DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "8ae68c5236abf310367345dfb6dd6e6e8affe3c6"
 HUGGINGFACE_SNAPSHOT_REVISION = "fe84ed8bdef4866078b9e18456be025008bfafe9"
+HUGGINGFACE_EDEN_ASSETS_REVISION = "6326d763de4e5e7f78a0a18bf3e03efa37da8192"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -190,9 +191,16 @@ def get_hf_dataset(
     assert num_retry >= 1
 
     if repo_name == "assets":
+        repo_id = "Genesis-Intelligence/assets"
         revision = HUGGINGFACE_ASSETS_REVISION
     elif repo_name == "snapshots":
+        repo_id = "Genesis-Intelligence/snapshots"
         revision = HUGGINGFACE_SNAPSHOT_REVISION
+    elif repo_name == "eden_assets":
+        # Eden's robot assets (https://huggingface.co/datasets/Kashu7100/eden_assets), used by benchmarks
+        # that load high-DOF robots tracked by the Eden project (e.g. the SMPL-X humanoid).
+        repo_id = "Kashu7100/eden_assets"
+        revision = HUGGINGFACE_EDEN_ASSETS_REVISION
     else:
         raise ValueError(f"Unsupported repository '{repo_name}'")
 
@@ -201,7 +209,7 @@ def get_hf_dataset(
             # Try downloading the assets
             asset_path = snapshot_download(
                 repo_type="dataset",
-                repo_id=f"Genesis-Intelligence/{repo_name}",
+                repo_id=repo_id,
                 revision=revision,
                 allow_patterns=pattern,
                 max_workers=1,
