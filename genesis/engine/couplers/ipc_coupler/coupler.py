@@ -208,8 +208,10 @@ class IPCCoupler(RBC):
                 continue
             coup_type = entity.material.coup_type
             if coup_type is None:
-                # Auto-select based on entity type
-                if entity.n_joints > 0:
+                # Auto-select based on entity type.
+                # Use n_dofs (not n_joints) so that fixed entities with zero DOFs (e.g. Plane, fixed Box)
+                # get 'ipc_only' rather than 'external_articulation'.
+                if entity.n_dofs > 0:
                     coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
                 else:
                     coup_type = "ipc_only"
