@@ -17,7 +17,7 @@ from genesis.utils.misc import (
     assign_indexed_tensor,
 )
 
-from .base_solver import Solver
+from .base_solver import Solver, StateChange, mutates
 from .rigid.abd.misc import (
     kernel_init_dof_fields,
     kernel_init_link_fields,
@@ -597,6 +597,7 @@ class KinematicSolver(Solver):
             state = None
         return state
 
+    @mutates(StateChange.GEOMETRY, StateChange.DYNAMICS)
     def set_state(self, f, state, envs_idx=None, *, partial: bool = False) -> None:
         if not self.is_active:
             return
@@ -700,6 +701,7 @@ class KinematicSolver(Solver):
 
         return tensor_, inputs_idx_, envs_idx_
 
+    @mutates(StateChange.GEOMETRY)
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -758,6 +760,7 @@ class KinematicSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
+    @mutates(StateChange.GEOMETRY)
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -817,6 +820,7 @@ class KinematicSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
+    @mutates(StateChange.GEOMETRY)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
@@ -873,6 +877,7 @@ class KinematicSolver(Solver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
+    @mutates(StateChange.DYNAMICS)
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             vel = qd_to_torch(self.dofs_state.vel, transpose=True, copy=False)
@@ -951,6 +956,7 @@ class KinematicSolver(Solver):
             velocity_grad_, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config
         )
 
+    @mutates(StateChange.GEOMETRY)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
@@ -1087,6 +1093,7 @@ class KinematicSolver(Solver):
             self._static_rigid_sim_config,
         )
 
+    @mutates(StateChange.GEOMETRY)
     def set_vverts(self, custom_vvert_start, custom_vvert_end, vgeoms_idx, vverts, envs_idx=None):
         """Write the slice [custom_vvert_start:custom_vvert_end] of vverts_state.pos.
 
