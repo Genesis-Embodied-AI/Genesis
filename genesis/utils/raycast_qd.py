@@ -568,10 +568,23 @@ def kernel_cast_rays(
     sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
 
     shared_bvh is a compile-time flag set when the collision geometry is identical across envs; the cast then reads a
-    single BVH copy (batch 0) for every env instead of one bit-identical copy per env.
+    single BVH copy (batch 0) for every env. It also selects the thread -> (ray, env) mapping below, so the homogeneous
+    and heterogeneous cases each get their optimal GPU access pattern.
     """
     n_points = ray_starts.shape[0]
-    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
+    n_envs = output_hits.shape[-1]
+    # One flat parallel loop whose thread -> (ray, env) split is chosen at compile time from shared_bvh:
+    #  - shared (homogeneous geometry): env is the fastest-varying index, so a warp spans consecutive envs all reading
+    #    the same batch-0 node -> a coalesced broadcast.
+    #  - not shared (heterogeneous): the ray is the fastest-varying index, so a warp stays within one env's distinct
+    #    tree and rides ray coherence instead of diverging across n_env different trees.
+    for i_flat in range(n_points * n_envs):
+        i_p = i_flat // n_envs
+        i_b = i_flat % n_envs
+        if not shared_bvh:
+            i_b = i_flat // n_points
+            i_p = i_flat % n_points
+
         i_s = points_to_sensor_idx[i_p]
 
         link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
@@ -646,9 +659,16 @@ def kernel_cast_rays_visual(
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
-    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for shared_bvh."""
+    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for shared_bvh and the thread mapping."""
     n_points = ray_starts.shape[0]
-    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
+    n_envs = output_hits.shape[-1]
+    for i_flat in range(n_points * n_envs):
+        i_p = i_flat // n_envs
+        i_b = i_flat % n_envs
+        if not shared_bvh:
+            i_b = i_flat // n_points
+            i_p = i_flat % n_points
+
         i_s = points_to_sensor_idx[i_p]
 
         link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
