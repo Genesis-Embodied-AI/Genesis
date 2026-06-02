@@ -147,8 +147,8 @@ def _func_decomp_linesearch_p0(
             while i_c < n_con:
                 jv_val = gs.qd_float(0.0)
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                        i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                    for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                         jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
                 else:
                     for i_d in range(n_dofs):
@@ -867,7 +867,10 @@ def _func_newton_only_nt_hessian_and_cholesky(
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_cholesky_factor_direct_batch(
-                    i_b=i_b, constraint_state=constraint_state, rigid_global_info=rigid_global_info
+                    i_b=i_b,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
                 )
 
 

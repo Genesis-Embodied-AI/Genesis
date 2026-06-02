@@ -626,17 +626,23 @@ def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
 
 @pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
+    CUBE_POS = (0.65, 0.0, 0.02)
+
     scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(5.5, 0.0, 2.5),
+            camera_lookat=(1.0, 0.0, 0.0),
+        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
+            pos=CUBE_POS,
         ),
         surface=gs.surfaces.Default(
             color=(1, 0, 0),
@@ -678,19 +684,20 @@ def test_dynamic_weld(show_viewer, tol):
     # add weld constraint and move back up
     scene.sim.rigid_solver.add_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1, 2))
     robot.control_dofs_position(qpos_up)
-    for i in range(60):
+    for _ in range(60):
         scene.step()
-    cubes_pos, cubes_quat = cube.get_pos(), cube.get_quat()
-    assert_allclose(torch.diff(cubes_quat, dim=0), 0.0, tol=1e-3)
+    cubes_pos, cubes_quat = cube.get_pos(), tensor_to_array(cube.get_quat())
+    assert_allclose(gu.quat_to_rotvec(cubes_quat), 0.0, tol=1e-3)
     assert_allclose(torch.diff(cubes_pos[[0, 1, 2]], dim=0), 0.0, tol=tol)
+    assert_allclose(cubes_pos[3], CUBE_POS, tol=1e-3)
     assert_allclose(cubes_pos[-1] - cubes_pos[0], ee_pos_down - ee_pos_up, tol=1e-2)
 
     # drop
     scene.sim.rigid_solver.delete_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1))
-    for i in range(110):
+    for _ in range(110):
         scene.step()
-    cubes_pos, cubes_quat = cube.get_pos(), cube.get_quat()
-    assert_allclose(torch.diff(cubes_quat, dim=0), 0.0, tol=1e-3)
+    cubes_pos, cubes_quat = cube.get_pos(), tensor_to_array(cube.get_quat())
+    assert_allclose(gu.quat_to_rotvec(cubes_quat), 0.0, tol=1e-3)
     assert_allclose(torch.diff(cubes_pos[[0, 1, 3]], dim=0), 0.0, tol=1e-2)
     assert_allclose(cubes_pos[2] - cubes_pos[0], ee_pos_up - ee_pos_down, tol=1e-3)
 

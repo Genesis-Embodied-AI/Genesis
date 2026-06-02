@@ -26,18 +26,18 @@ def _sort_relevant_dofs_descending(
     n: qd.int32,
     i_b: qd.int32,
 ):
-    """Insertion sort jac_relevant_dofs[i_con, :n, i_b] in descending order.
+    """Insertion sort jac_dofs_idx[i_con, :n, i_b] in descending order.
 
     Called after populating relevant DOFs for a constraint that may involve multiple entities.
     The array is typically <= 14 elements, so O(n^2) is fine.
     """
     for i in range(1, n):
-        key = constraint_state.jac_relevant_dofs[i_con, i, i_b]
+        key = constraint_state.jac_dofs_idx[i_con, i, i_b]
         j = i - 1
-        while j >= 0 and constraint_state.jac_relevant_dofs[i_con, j, i_b] < key:
-            constraint_state.jac_relevant_dofs[i_con, j + 1, i_b] = constraint_state.jac_relevant_dofs[i_con, j, i_b]
+        while j >= 0 and constraint_state.jac_dofs_idx[i_con, j, i_b] < key:
+            constraint_state.jac_dofs_idx[i_con, j + 1, i_b] = constraint_state.jac_dofs_idx[i_con, j, i_b]
             j -= 1
-        constraint_state.jac_relevant_dofs[i_con, j + 1, i_b] = key
+        constraint_state.jac_dofs_idx[i_con, j + 1, i_b] = key
 
 
 if TYPE_CHECKING:
@@ -61,7 +61,8 @@ class ConstraintSolver:
         self.tolerance = rigid_solver._options.tolerance
         self.ls_iterations = rigid_solver._options.ls_iterations
         self.ls_tolerance = rigid_solver._options.ls_tolerance
-        self.sparse_solve = rigid_solver._options.sparse_solve
+        # Effective (CPU-gated) sparsity flag, resolved in the static config; the raw option may differ on GPU.
+        self.sparse_solve = rigid_solver._static_rigid_sim_config.sparse_solve
 
         # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
         # * 4 constraints per contact
@@ -88,8 +89,8 @@ class ConstraintSolver:
         self.jac = cs.jac
         self.diag = cs.diag
         self.aref = cs.aref
-        self.jac_n_relevant_dofs = cs.jac_n_relevant_dofs
-        self.jac_relevant_dofs = cs.jac_relevant_dofs
+        self.jac_n_dofs = cs.jac_n_dofs
+        self.jac_dofs_idx = cs.jac_dofs_idx
         self.n_constraints = cs.n_constraints
         self.n_constraints_equality = cs.n_constraints_equality
         self.n_constraints_frictionloss = cs.n_constraints_frictionloss
@@ -137,6 +138,19 @@ class ConstraintSolver:
         # Creating a dummy ContactIsland, needed as param for some functions,
         # and not used when hibernation is not enabled.
         self.contact_island = ContactIsland(self._collider)
+
+        # Fill-reducing DOF permutation for the skyline Cholesky: a structural choice fixed once from the initial
+        # body layout (forward kinematics has already run at this point), never recomputed in the step loop. The
+        # reorder (COM sort) only kicks in for the CPU envelope; otherwise this initializes the identity permutation,
+        # which the sparse Hessian assembly still indexes through (including the explicit GPU sparse path).
+        if self.sparse_solve:
+            func_compute_dof_perm(
+                self._solver.dofs_info,
+                self._solver.entities_info,
+                self._solver.links_state,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
 
     def reset(self, envs_idx=None):
         self._eq_const_info_cache.clear()
@@ -562,7 +576,7 @@ def func_clear_constraint_at_env(
         constraint_state.jac[i_c, i_d, i_b] = 0.0
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(len_constraints):
-            constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+            constraint_state.jac_n_dofs[i_c, i_b] = 0
 
 
 @qd.kernel(fastcache=True)
@@ -648,14 +662,14 @@ def _add_friction_constraint(
 
     n_con = collision_con_start + i_col_ * 4 + i_friction
     if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-            i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+        for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+            i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
             constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
     else:
         for i_d in range(n_dofs):
             constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
-    con_n_relevant_dofs = 0
+    con_n_dofs = 0
     jac_qvel = gs.qd_float(0.0)
     for i_ab in range(2):
         sign = gs.qd_float(-1.0)
@@ -667,7 +681,7 @@ def _add_friction_constraint(
         while link > -1:
             link_maybe_batch = [link, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link
 
-            # reverse order to make sure dofs in each row of self.jac_relevant_dofs are strictly descending
+            # reverse order to make sure dofs in each row of self.jac_dofs_idx are strictly descending
             for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                 i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
@@ -684,14 +698,14 @@ def _add_friction_constraint(
                 constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                    con_n_relevant_dofs = con_n_relevant_dofs + 1
+                    constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                    con_n_dofs = con_n_dofs + 1
 
             link = links_info.parent_idx[link_maybe_batch]
 
     if qd.static(static_rigid_sim_config.sparse_solve):
-        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+        constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
     imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
 
     diag = invweight + contact_data_friction * contact_data_friction * invweight
@@ -793,14 +807,14 @@ def _add_collision_constraints_per_contact(
 
                 n_con = collision_con_start + i_col_ * 4 + i_friction
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                        i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+                    for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
                         constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
                 else:
                     for i_d in range(n_dofs):
                         constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
-                con_n_relevant_dofs = 0
+                con_n_dofs = 0
                 jac_qvel = gs.qd_float(0.0)
                 for i_ab in range(2):
                     sign = gs.qd_float(-1.0)
@@ -812,7 +826,7 @@ def _add_collision_constraints_per_contact(
                     while link > -1:
                         link_maybe_batch = [link, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link
 
-                        # reverse order to make sure dofs in each row of self.jac_relevant_dofs are strictly descending
+                        # reverse order to make sure dofs in each row of self.jac_dofs_idx are strictly descending
                         for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                             i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
@@ -829,14 +843,14 @@ def _add_collision_constraints_per_contact(
                             constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                             if qd.static(static_rigid_sim_config.sparse_solve):
-                                constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                                con_n_relevant_dofs = con_n_relevant_dofs + 1
+                                constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                                con_n_dofs = con_n_dofs + 1
 
                         link = links_info.parent_idx[link_maybe_batch]
 
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-                    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+                    constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+                    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
                 imp, aref = gu.imp_aref(
                     contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                 )
@@ -941,11 +955,11 @@ def func_equality_connect(
     for i_3 in range(3):
         n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
         qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
-        con_n_relevant_dofs = 0
+        con_n_dofs = 0
 
         if qd.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+            for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+                i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
         else:
             for i_d in range(n_dofs):
@@ -980,16 +994,16 @@ def func_equality_connect(
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                     if qd.static(static_rigid_sim_config.sparse_solve):
-                        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                        con_n_relevant_dofs = con_n_relevant_dofs + 1
+                        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                        con_n_dofs = con_n_dofs + 1
 
                 link = links_info.parent_idx[link_maybe_batch]
 
         if qd.static(static_rigid_sim_config.sparse_solve):
-            constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
             # Sort needed: DOFs from two entities are only descending within each
             # entity. Incremental Cholesky requires globally descending order.
-            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
 
         pos_diff = global_anchor1 - global_anchor2
         penetration = pos_diff.norm()
@@ -1042,8 +1056,8 @@ def func_equality_joint(
     qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
 
     if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-            i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+        for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+            i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
             constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
     else:
         for i_d in range(n_dofs):
@@ -1082,18 +1096,18 @@ def func_equality_joint(
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
-    # Populate jac_relevant_dofs for this joint-equality constraint.
+    # Populate jac_dofs_idx for this joint-equality constraint.
     # Without this, sparse iterations see 0 relevant DOFs and produce
     # zero forces, leading to NaN in the solver.
     if qd.static(static_rigid_sim_config.sparse_solve):
-        con_n_relevant_dofs = 0
-        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof1
-        con_n_relevant_dofs += 1
+        con_n_dofs = 0
+        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof1
+        con_n_dofs += 1
         if i_dof2 != i_dof1:
-            constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof2
-            con_n_relevant_dofs += 1
-        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+            constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof2
+            con_n_dofs += 1
+        constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
 
 
 @qd.kernel(fastcache=True)
@@ -1215,7 +1229,6 @@ def func_equality_weld(
 
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
-    # TODO: sparse mode
     # Get equality info for this constraint
     link1_idx = equalities_info.eq_obj1id[i_e, i_b]
     link2_idx = equalities_info.eq_obj2id[i_e, i_b]
@@ -1286,11 +1299,11 @@ def func_equality_weld(
     for i in range(3):
         n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
         qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
-        con_n_relevant_dofs = 0
+        con_n_dofs = 0
 
         if qd.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
+            for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+                i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
         else:
             for i_d in range(n_dofs):
@@ -1321,13 +1334,13 @@ def func_equality_weld(
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
                     if qd.static(static_rigid_sim_config.sparse_solve):
-                        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                        con_n_relevant_dofs = con_n_relevant_dofs + 1
+                        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                        con_n_dofs = con_n_dofs + 1
                 link = links_info.parent_idx[link_maybe_batch]
 
         if qd.static(static_rigid_sim_config.sparse_solve):
-            constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
-            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
+            constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
         diag = qd.max(invweight[0] * (1 - imp) / imp, EPS)
@@ -1339,7 +1352,7 @@ def func_equality_weld(
     # --- Orientation part (next 3 constraints) ---
     n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 3)
     qd.atomic_add(constraint_state.n_constraints_equality[i_b], 3)
-    con_n_relevant_dofs = 0
+    con_n_dofs = 0
     for i_con in range(n_con, n_con + 3):
         for i_d in range(n_dofs):
             constraint_state.jac[i_con, i_d, i_b] = gs.qd_float(0.0)
@@ -1358,6 +1371,13 @@ def func_equality_weld(
 
                 for i_con in range(n_con, n_con + 3):
                     constraint_state.jac[i_con, i_d, i_b] = constraint_state.jac[i_con, i_d, i_b] + jac[i_con - n_con]
+
+                # The 3 orientation constraints share the same support (the DOFs along both kinematic chains); record
+                # it so sparse assembly does not drop them. (The position part above does the same per constraint.)
+                if qd.static(static_rigid_sim_config.sparse_solve):
+                    for i_con in range(n_con, n_con + 3):
+                        constraint_state.jac_dofs_idx[i_con, con_n_dofs, i_b] = i_d
+                    con_n_dofs = con_n_dofs + 1
             link = links_info.parent_idx[link_maybe_batch]
 
     jac_qvel = qd.Vector([0.0, 0.0, 0.0])
@@ -1382,8 +1402,8 @@ def func_equality_weld(
 
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_con in range(n_con, n_con + 3):
-            constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
-            _sort_relevant_dofs_descending(constraint_state, i_con, con_n_relevant_dofs, i_b)
+            constraint_state.jac_n_dofs[i_con, i_b] = con_n_dofs
+            _sort_relevant_dofs_descending(constraint_state, i_con, con_n_dofs, i_b)
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
@@ -1441,8 +1461,8 @@ def add_joint_limit_constraints(
                         constraint_state.efc_D[n_con, i_b] = 1 / diag
 
                         if qd.static(static_rigid_sim_config.sparse_solve):
-                            for i_d2_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
-                                i_d2 = constraint_state.jac_relevant_dofs[n_con, i_d2_, i_b]
+                            for i_d2_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+                                i_d2 = constraint_state.jac_dofs_idx[n_con, i_d2_, i_b]
                                 constraint_state.jac[n_con, i_d2, i_b] = gs.qd_float(0.0)
                         else:
                             for i_d2 in range(n_dofs):
@@ -1450,8 +1470,8 @@ def add_joint_limit_constraints(
                         constraint_state.jac[n_con, i_d, i_b] = jac
 
                         if qd.static(static_rigid_sim_config.sparse_solve):
-                            constraint_state.jac_n_relevant_dofs[n_con, i_b] = 1
-                            constraint_state.jac_relevant_dofs[n_con, 0, i_b] = i_d
+                            constraint_state.jac_n_dofs[n_con, i_b] = 1
+                            constraint_state.jac_dofs_idx[n_con, 0, i_b] = i_d
 
 
 @qd.func
@@ -1507,8 +1527,8 @@ def add_frictionloss_constraints(
                         constraint_state.jac[i_con, i_d, i_b] = jac
 
                         if qd.static(static_rigid_sim_config.sparse_solve):
-                            constraint_state.jac_relevant_dofs[i_con, 0, i_b] = i_d
-                            constraint_state.jac_n_relevant_dofs[i_con, i_b] = 1
+                            constraint_state.jac_dofs_idx[i_con, 0, i_b] = i_d
+                            constraint_state.jac_n_dofs[i_con, i_b] = 1
 
 
 # ====================================== Runtime User-Specified Weld Constraints ======================================
@@ -1616,6 +1636,109 @@ def linear_to_lower_tri(i_pair: qd.i32):
     return i_d1, i_d2
 
 
+@qd.kernel
+def func_compute_dof_perm(
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    links_state: array_class.LinksState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute a fill-reducing DOF permutation by sorting DOFs on their body's COM (gravity axis first).
+
+    Coupling in `H = M + J.T @ D @ J` is between spatially-near bodies (contacts) and within a body (M). Ordering DOFs
+    by body position therefore keeps coupled DOFs index-adjacent, which bounds the skyline band regardless of the
+    order bodies were added in. Each DOF keys on its entity's COM, so a whole entity's DOFs share a key and stay
+    contiguous (ties broken by original index). The factorization runs in this permuted order; grad/Mgrad are mapped
+    through dof_perm at the solve boundary so the rest of the solver is unchanged. Computed once from the initial
+    layout, so the per-env insertion sort runs a single time and never in the step loop.
+    """
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    qd.loop_config(name="compute_dof_perm", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        for i_d in range(n_dofs):
+            constraint_state.dof_perm[i_b, i_d] = i_d
+
+        # Reorder only when the envelope is active and not under MuJoCo compatibility (which needs the natural DOF
+        # order); otherwise the permutation stays identity and everything downstream reduces to natural order.
+        if qd.static(
+            static_rigid_sim_config.sparse_envelope and not static_rigid_sim_config.enable_mujoco_compatibility
+        ):
+            for i_d in range(n_dofs):
+                I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                i_l = entities_info.link_start[dofs_info.entity_idx[I_d]]
+                com = links_state.pos[i_l, i_b]
+                constraint_state.dof_sort_key[i_b, i_d] = com[2] * 1.0e6 + com[1] * 1.0e3 + com[0]
+
+            # Insertion sort dof_perm ascending by (key, original index); same-entity DOFs (equal key) keep order.
+            for a in range(1, n_dofs):
+                d = constraint_state.dof_perm[i_b, a]
+                ka = constraint_state.dof_sort_key[i_b, d]
+                j = a - 1
+                while j >= 0:
+                    dj = constraint_state.dof_perm[i_b, j]
+                    kj = constraint_state.dof_sort_key[i_b, dj]
+                    if kj < ka or (kj == ka and dj < d):
+                        break
+                    constraint_state.dof_perm[i_b, j + 1] = dj
+                    j = j - 1
+                constraint_state.dof_perm[i_b, j + 1] = d
+
+        for p in range(n_dofs):
+            constraint_state.dof_iperm[i_b, constraint_state.dof_perm[i_b, p]] = p
+
+
+@qd.func
+def func_compute_sparsity_pattern(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Compute the skyline envelope start of each Hessian row analytically, without inspecting the assembled matrix.
+
+    `nt_H_env_start[i_b, i_d]` is the smallest column index that can be structurally nonzero in row `i_d` of
+    `H = M + J.T @ D @ J`. It is determined by the two sources of coupling, both known a priori:
+    - the kinematic tree (`mass_parent_mask`): `M` couples two DOFs only if one supports the other (same branch);
+    - the constraint supports (`jac_dofs_idx`): a constraint couples all DOFs it depends on, so its smallest
+      relevant DOF bounds the envelope of all the others.
+
+    Cholesky fill-in stays within this envelope, so the factor and solve only ever visit `[env_start, i_d]`. The
+    pattern is structural (independent of which constraints are active), so it is recomputed once per step. All
+    coupling is mapped through dof_iperm to permuted positions (identity when reordering is off). This is a device
+    function so it can run inside func_solve_init's launch rather than as a separate kernel dispatch per step.
+    """
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    for p in range(n_dofs):
+        constraint_state.nt_H_env_start[i_b, p] = p
+
+    # M part: kinematic-tree coupling (same branch), scatter-min onto the permuted positions.
+    for i_d in range(n_dofs):
+        for j_d in range(n_dofs):
+            if rigid_global_info.mass_parent_mask[i_d, j_d] > 0.5:
+                p_i = constraint_state.dof_iperm[i_b, i_d]
+                p_j = constraint_state.dof_iperm[i_b, j_d]
+                row = qd.max(p_i, p_j)
+                col = qd.min(p_i, p_j)
+                if col < constraint_state.nt_H_env_start[i_b, row]:
+                    constraint_state.nt_H_env_start[i_b, row] = col
+
+    # J.T @ D @ J part: each constraint couples all DOFs in its support; the smallest permuted index bounds the rest.
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        n_rel = constraint_state.jac_n_dofs[i_c, i_b]
+        col_min = n_dofs
+        for k in range(n_rel):
+            p = constraint_state.dof_iperm[i_b, constraint_state.jac_dofs_idx[i_c, k, i_b]]
+            if p < col_min:
+                col_min = p
+        for k in range(n_rel):
+            p = constraint_state.dof_iperm[i_b, constraint_state.jac_dofs_idx[i_c, k, i_b]]
+            if col_min < constraint_state.nt_H_env_start[i_b, p]:
+                constraint_state.nt_H_env_start[i_b, p] = col_min
+
+
 @qd.func
 def func_hessian_direct_batch(
     i_b,
@@ -1643,20 +1766,22 @@ def func_hessian_direct_batch(
     # Compute `H += J.T @ D @ J` using either dense or sparse implementation
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(constraint_state.n_constraints[i_b]):
-            jac_n_relevant_dofs = constraint_state.jac_n_relevant_dofs[i_c, i_b]
-            for i_d1_ in range(jac_n_relevant_dofs):
-                i_d1 = constraint_state.jac_relevant_dofs[i_c, i_d1_, i_b]
+            jac_n_dofs = constraint_state.jac_n_dofs[i_c, i_b]
+            for i_d1_ in range(jac_n_dofs):
+                i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
                 if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
-                    for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
-                        i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]
-                        # Ensure lower triangle: row >= col. jac_relevant_dofs is descending within
-                        # each entity but can have cross-entity pairs where i_d2 > i_d1.
-                        row = qd.max(i_d1, i_d2)
-                        col = qd.min(i_d1, i_d2)
+                    for i_d2_ in range(i_d1_, jac_n_dofs):
+                        i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                        # Write to permuted positions (identity when reordering is off). jac/efc_D are read in natural
+                        # DOF order; only the Hessian storage position is permuted.
+                        p1 = constraint_state.dof_iperm[i_b, i_d1]
+                        p2 = constraint_state.dof_iperm[i_b, i_d2]
+                        row = qd.max(p1, p2)
+                        col = qd.min(p1, p2)
                         constraint_state.nt_H[i_b, row, col] = (
                             constraint_state.nt_H[i_b, row, col]
-                            + constraint_state.jac[i_c, col, i_b]
-                            * constraint_state.jac[i_c, row, i_b]
+                            + constraint_state.jac[i_c, i_d1, i_b]
+                            * constraint_state.jac[i_c, i_d2, i_b]
                             * constraint_state.efc_D[i_c, i_b]
                             * constraint_state.active[i_c, i_b]
                         )
@@ -1672,13 +1797,23 @@ def func_hessian_direct_batch(
                         * constraint_state.active[i_c, i_b]
                     )
 
-    # Compute `H += M`
+    # Compute `H += M`. With sparse_solve the storage position is permuted via dof_iperm; otherwise it is natural
+    # (dof_iperm is only populated on the sparse path).
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             for i_d2 in range(entities_info.dof_start[i_e], i_d1 + 1):
-                constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                    constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                )
+                if qd.static(static_rigid_sim_config.sparse_solve):
+                    p1 = constraint_state.dof_iperm[i_b, i_d1]
+                    p2 = constraint_state.dof_iperm[i_b, i_d2]
+                    row = qd.max(p1, p2)
+                    col = qd.min(p1, p2)
+                    constraint_state.nt_H[i_b, row, col] = (
+                        constraint_state.nt_H[i_b, row, col] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                    )
+                else:
+                    constraint_state.nt_H[i_b, i_d1, i_d2] = (
+                        constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                    )
 
 
 @qd.func
@@ -1832,30 +1967,52 @@ def func_cholesky_factor_direct_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for all environments at once.
 
     Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+
+    With the skyline envelope, the factorization is restricted to each row's envelope (nt_H_env_start). Cholesky
+    fill-in is confined to the envelope, so this is exact while skipping the dense triangle of zeros that dominates
+    the cost when the Hessian is sparse (free bodies with diagonal inertia couple only through contacts).
     """
     EPS = rigid_global_info.EPS[None]
 
     n_dofs = constraint_state.nt_H.shape[1]
 
     # In-place factorization on nt_H (batch path never uses H patching)
-    for i_d in range(n_dofs):
-        tmp = constraint_state.nt_H[i_b, i_d, i_d]
-        for j_d in range(i_d):
-            tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
-        constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+    if qd.static(static_rigid_sim_config.sparse_envelope):
+        for i_d in range(n_dofs):
+            i_start = constraint_state.nt_H_env_start[i_b, i_d]
+            tmp = constraint_state.nt_H[i_b, i_d, i_d]
+            for k_d in range(i_start, i_d):
+                tmp = tmp - constraint_state.nt_H[i_b, i_d, k_d] ** 2
+            constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
 
-        tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
-        for j_d in range(i_d + 1, n_dofs):
-            dot = gs.qd_float(0.0)
-            for k_d in range(i_d):
-                dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
-            constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
+            tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
+            for j_d in range(i_d + 1, n_dofs):
+                j_start = constraint_state.nt_H_env_start[i_b, j_d]
+                if j_start <= i_d:
+                    dot = gs.qd_float(0.0)
+                    for k_d in range(qd.max(i_start, j_start), i_d):
+                        dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+                    constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
+    else:
+        for i_d in range(n_dofs):
+            tmp = constraint_state.nt_H[i_b, i_d, i_d]
+            for j_d in range(i_d):
+                tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
+            constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+
+            tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
+            for j_d in range(i_d + 1, n_dofs):
+                dot = gs.qd_float(0.0)
+                for k_d in range(i_d):
+                    dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+                constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
 @qd.func
@@ -1936,7 +2093,7 @@ def _cholesky_factor_direct_tiled_impl(
                 L_ik = TileCls.zeros(dtype=gs.qd_float)
                 L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
-                # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
+                # Subtract prior-column contributions L[i,j] @ L[k,j]^T
                 for jb in range(kb):
                     j0 = jb * T
                     for t in range(T):
@@ -2147,7 +2304,7 @@ def func_hessian_and_cholesky_factor_direct_batch(
     static_rigid_sim_config: qd.template(),
 ):
     func_hessian_direct_batch(i_b, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config)
-    func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info)
+    func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
 @qd.func
@@ -2164,12 +2321,11 @@ def func_hessian_and_cholesky_factor_direct(
     The tiled optimization is only supported on GPU backend and specifically optimized for it, falling back to the
     classical batched implementation when running on CPU backend.
 
-    Note that the sparse implementation has not been optimized using tiling for now, mainly it is largely designed to
-    target CPU rather than GPU backend. In any event, its advantage over the dense implementation is still not clear.
+    Note that the sparse skyline-envelope factor is CPU-only and runs through the batched path.
     """
     _B = constraint_state.jac.shape[2]
 
-    if qd.static(static_rigid_sim_config.backend == gs.cpu or static_rigid_sim_config.sparse_solve):
+    if qd.static(static_rigid_sim_config.backend == gs.cpu):
         # CPU
         qd.loop_config(
             name="hess_cholesky_factor_direct",
@@ -2200,7 +2356,7 @@ def func_hessian_and_cholesky_factor_direct(
         else:
             qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
-                func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info)
+                func_cholesky_factor_direct_batch(i_b, constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
 @qd.func
@@ -2279,12 +2435,12 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
         sign = 1.0 if constraint_state.active[i_c, i_b] else -1.0
         efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
 
-        for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-            i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
             constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-        for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-            k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
+        for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            k = constraint_state.jac_dofs_idx[i_c, k_, i_b]
             Lkk = constraint_state.nt_H[i_b, k, k]
             tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
             if tmp < EPS:
@@ -2296,13 +2452,13 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
             s = constraint_state.nt_vec[k, i_b] / Lkk
             constraint_state.nt_H[i_b, k, k] = r
             for i_ in range(k_):
-                i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                i = constraint_state.jac_dofs_idx[i_c, i_, i_b]  # i is strictly > k
                 constraint_state.nt_H[i_b, i, k] = (
                     constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                 ) * cinv
 
             for i_ in range(k_):
-                i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                i = constraint_state.jac_dofs_idx[i_c, i_, i_b]  # i is strictly > k
                 constraint_state.nt_vec[i, i_b] = (
                     constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                 )
@@ -2336,22 +2492,45 @@ def func_hessian_and_cholesky_factor_incremental_batch(
 def func_cholesky_solve_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
 ):
     n_dofs = constraint_state.Mgrad.shape[0]
 
-    # Batch path: L is in nt_H (in-place factorization)
-    for i_d in range(n_dofs):
-        curr_out = constraint_state.grad[i_d, i_b]
-        for j_d in range(i_d):
-            curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
-        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+    # Batch path: L is in nt_H (in-place factorization). With the skyline envelope, the triangular solves visit only
+    # the envelope of L (its nonzeros match the factorization's), matching func_cholesky_factor_direct_batch.
+    if qd.static(static_rigid_sim_config.sparse_envelope):
+        # i_d / j_d index permuted positions; grad/Mgrad are stored in natural DOF order, so map through dof_perm
+        # (identity when reordering is off).
+        for i_d in range(n_dofs):
+            d_i = constraint_state.dof_perm[i_b, i_d]
+            curr_out = constraint_state.grad[d_i, i_b]
+            for j_d in range(constraint_state.nt_H_env_start[i_b, i_d], i_d):
+                d_j = constraint_state.dof_perm[i_b, j_d]
+                curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[d_j, i_b]
+            constraint_state.Mgrad[d_i, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
-    for i_d_ in range(n_dofs):
-        i_d = n_dofs - 1 - i_d_
-        curr_out = constraint_state.Mgrad[i_d, i_b]
-        for j_d in range(i_d + 1, n_dofs):
-            curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
-        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            d_i = constraint_state.dof_perm[i_b, i_d]
+            curr_out = constraint_state.Mgrad[d_i, i_b]
+            for j_d in range(i_d + 1, n_dofs):
+                if constraint_state.nt_H_env_start[i_b, j_d] <= i_d:
+                    d_j = constraint_state.dof_perm[i_b, j_d]
+                    curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[d_j, i_b]
+            constraint_state.Mgrad[d_i, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+    else:
+        for i_d in range(n_dofs):
+            curr_out = constraint_state.grad[i_d, i_b]
+            for j_d in range(i_d):
+                curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
+            constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            curr_out = constraint_state.Mgrad[i_d, i_b]
+            for j_d in range(i_d + 1, n_dofs):
+                curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
+            constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
 
 @qd.func
@@ -2510,8 +2689,8 @@ def func_ls_init_and_eval_p0(
     for i_c in range(n_con):
         jv = gs.qd_float(0.0)
         if qd.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                 jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         else:
             for i_d in range(n_dofs):
@@ -3249,8 +3428,8 @@ def func_update_constraint_batch(
         for i_d in range(n_dofs):
             constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
         for i_c in range(constraint_state.n_constraints[i_b]):
-            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                 constraint_state.qfrc_constraint[i_d, i_b] = (
                     constraint_state.qfrc_constraint[i_d, i_b]
                     + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
@@ -3534,7 +3713,9 @@ def func_update_gradient_batch(
         )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        func_cholesky_solve_batch(i_b, constraint_state=constraint_state)
+        func_cholesky_solve_batch(
+            i_b, constraint_state=constraint_state, static_rigid_sim_config=static_rigid_sim_config
+        )
 
 
 @qd.func
@@ -3720,8 +3901,8 @@ def _initialize_Jaref_body(
 ):
     Jaref = -constraint_state.aref[i_c, i_b]
     if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-            i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
             Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
     else:
         for i_d in range(n_dofs):
@@ -3818,6 +3999,13 @@ def func_solve_init(
 ):
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
+
+    # Skyline envelope for the CPU sparse Cholesky, recomputed each step (the fill-reducing DOF permutation it builds
+    # on is fixed at build time). Folded here rather than a standalone kernel to avoid a per-step launch.
+    if qd.static(static_rigid_sim_config.sparse_envelope):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            func_compute_sparsity_pattern(i_b, constraint_state, rigid_global_info)
 
     if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
         # Compute cost for warmstart state (i.e. acceleration at previous timestep)
@@ -4002,7 +4190,7 @@ def func_solve_iter(
             func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
             if qd.static(static_rigid_sim_config.sparse_solve):
                 # Bypass incremental Cholesky when sparse_solve=True. The incremental rank-1 update
-                # assumes globally descending DOF order in jac_relevant_dofs, which doesn't hold
+                # assumes globally descending DOF order in jac_dofs_idx, which doesn't hold
                 # for cross-entity constraints. Always use direct Hessian rebuild which has the max/min fix.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,

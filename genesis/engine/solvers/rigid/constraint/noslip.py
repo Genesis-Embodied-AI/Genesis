@@ -33,8 +33,8 @@ def kernel_build_efc_AR_b(
                 # Sparse: zero buffer, copy only relevant DOFs
                 for i_d in range(n_dofs):
                     constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_row, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_row, i_d_, i_b]
+                for i_d_ in range(constraint_state.jac_n_dofs[i_row, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_row, i_d_, i_b]
                     constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
             else:
                 for i_d in range(n_dofs):
@@ -57,8 +57,8 @@ def kernel_build_efc_AR_b(
             for i_col in range(i_row + 1):
                 s = gs.qd_float(0.0)
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_col, i_b]):
-                        i_d = constraint_state.jac_relevant_dofs[i_col, i_d_, i_b]
+                    for i_d_ in range(constraint_state.jac_n_dofs[i_col, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[i_col, i_d_, i_b]
                         s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
                 else:
                     for i_d in range(n_dofs):
@@ -70,8 +70,8 @@ def kernel_build_efc_AR_b(
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
             if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                     v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
@@ -436,8 +436,8 @@ def compute_A_diag(
             # Ai = Ji * tmp
             aii = gs.qd_float(0.0)
             if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                     aii += constraint_state.jac[i_c, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
             else:
                 for i_d in range(n_dofs):

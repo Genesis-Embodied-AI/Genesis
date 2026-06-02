@@ -398,7 +398,7 @@ class RigidSolver(KinematicSolver):
         """
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             return False
-        # Sparse solve relies on jac_relevant_dofs / jac_n_relevant_dofs to skip irrelevant dofs in the constraint
+        # Sparse solve relies on jac_dofs_idx / jac_n_dofs to skip irrelevant dofs in the constraint
         # update. The cooperative qfrc kernel that pairs with the flipped layout is dense-only, and several other
         # kernels that read jac under the flipped layout (e.g. the refinement-phase _func_update_qfrc_constraint_per_dof)
         # would also need sparse-aware rewrites.
@@ -409,6 +409,32 @@ class RigidSolver(KinematicSolver):
         return n_envs <= 8192 and n_dofs >= 16
 
     def _build_static_config(self):
+        # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene
+        # has block structure (several DOF-carrying bodies or free joints keep the Hessian band much tighter than
+        # n_dofs), whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An explicit
+        # value overrides this. On GPU the envelope factorization is dropped (the dense tiled path is faster there);
+        # an explicit True still enables the assembly-level sparsity, with a warning.
+        if self._options.sparse_solve is None:
+            n_dof_entities = sum(entity.n_dofs > 0 for entity in self.entities)
+            n_free_joints = sum(joint.type == gs.JOINT_TYPE.FREE for joint in self.joints)
+            sparse_solve = (
+                gs.backend == gs.cpu
+                and not self._enable_mujoco_compatibility
+                and (n_dof_entities >= 2 or n_free_joints >= 2)
+            )
+        else:
+            sparse_solve = self._options.sparse_solve
+            if sparse_solve and gs.backend != gs.cpu:
+                gs.logger.warning(
+                    "Enabling 'sparse_solve' on the GPU backend likely impedes performance; the dense tiled "
+                    "factorization is faster there. Use with caution."
+                )
+
+        # The skyline-envelope factorization and its DOF reorder are CPU-only and incompatible with the differentiable
+        # adjoint solve (which reuses nt_H with natural, dense indexing). Under requires_grad only the assembly-level
+        # sparsity applies, matching the pre-existing behaviour.
+        sparse_envelope = sparse_solve and gs.backend == gs.cpu and not self.sim.options.requires_grad
+
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -423,7 +449,8 @@ class RigidSolver(KinematicSolver):
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
             box_box_detection=self._box_box_detection,
-            sparse_solve=self._options.sparse_solve,
+            sparse_solve=sparse_solve,
+            sparse_envelope=sparse_envelope,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
             broadphase_traversal=self._resolve_broadphase_traversal(),
@@ -484,7 +511,7 @@ class RigidSolver(KinematicSolver):
                 # factor inside ``func_hessian_and_cholesky_factor_direct_batch`` (leaving nt_H = L); routing the
                 # warm-start through the fused kernel would then re-factor L as if it were H.
                 enable_fused_factor_solve_init = (
-                    enable_tiled_cholesky_hessian and hessian_fits_shared and not self._options.sparse_solve
+                    enable_tiled_cholesky_hessian and hessian_fits_shared and not sparse_solve
                 )
 
                 static_rigid_sim_config.update(
