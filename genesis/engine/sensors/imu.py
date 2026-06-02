@@ -64,21 +64,28 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata):
     mag_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
 
-class IMUData(NamedTuple):
+class IMUReturnType(NamedTuple):
     lin_acc: torch.Tensor
     ang_vel: torch.Tensor
     mag: torch.Tensor  # added magnetometer to complete 9-axis IMU
 
 
-class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, IMUSharedMetadata, IMUData]):
-    def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
+class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, None, IMUSharedMetadata, IMUReturnType]):
+    def __init__(
+        self,
+        options: IMUOptions,
+        idx: int,
+        shared_context,
+        shared_metadata: IMUSharedMetadata,
+        manager: "SensorManager",
+    ):
         # FIXME: Resolution should be made private in mixin, so that it cannot be set by the user directly.
         options.resolution = options.acc_resolution + options.gyro_resolution + options.mag_resolution
         options.bias = options.acc_bias + options.gyro_bias + options.mag_bias
         options.random_walk = options.acc_random_walk + options.gyro_random_walk + options.mag_random_walk
         options.noise = options.acc_noise + options.gyro_noise + options.mag_noise
 
-        super().__init__(options, shared_metadata, manager)
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
 
         self.debug_objects: list["Mesh"] = []
         self.quat_offset: torch.Tensor
@@ -144,7 +151,7 @@ class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, IM
         return gs.tc_float
 
     @classmethod
-    def _update_raw_data(cls, shared_metadata: IMUSharedMetadata, raw_data_T: torch.Tensor):
+    def _update_raw_data(cls, shared_context: None, shared_metadata: IMUSharedMetadata, raw_data_T: torch.Tensor):
         assert shared_metadata.solver is not None
         # Extract acceleration and gravity in world frame.
         gravity = shared_metadata.solver.get_gravity()

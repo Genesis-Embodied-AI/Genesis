@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 # ========================== Data Class ==========================
 
 
-class CameraData(NamedTuple):
+class CameraReturnType(NamedTuple):
     """Camera sensor return data."""
 
     rgb: torch.Tensor
@@ -214,7 +214,7 @@ class BatchRendererCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSens
 # ========================== Base Camera Sensor ==========================
 
 
-class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
+class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensorMetadata, CameraReturnType]):
     """
     Base class for camera sensors that render RGB images into an internal image_cache.
 
@@ -227,9 +227,16 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
 
     uses_ring_pipeline: ClassVar[bool] = False
 
-    def __init__(self, options: "SensorOptions", idx: int, manager: "SensorManager"):
+    def __init__(
+        self,
+        options: "SensorOptions",
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
         # `uses_ring_pipeline = False` triggers the generic delay / jitter / history rejection in `Sensor.__init__`.
-        super().__init__(options, idx, manager)
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._stale: bool = True
 
     # ========================== Cache Integration (shared) ==========================
@@ -245,6 +252,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
     @classmethod
     def _update_shared_cache(
         cls,
+        shared_context: None,
         shared_metadata: SharedSensorMetadata,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",
@@ -339,7 +347,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
         return np.asarray(envs_idx)
 
     @gs.assert_built
-    def read(self, envs_idx=None) -> CameraData:
+    def read(self, envs_idx=None) -> CameraReturnType:
         """Render if needed, then read the cached image from the backend-specific cache."""
         self._ensure_rendered_for_current_state()
         cached_image = self._get_image_cache_entry()
@@ -347,9 +355,9 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
 
 
 # ========================== Camera Sensor Helpers ==========================
-def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: bool) -> CameraData:
+def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: bool) -> CameraReturnType:
     """
-    Shared helper to convert a cached RGB image array into CameraData with correct env handling.
+    Shared helper to convert a cached RGB image array into CameraReturnType with correct env handling.
 
     Parameters
     ----------
@@ -377,7 +385,7 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
 
 
 class RasterizerCameraSensor(
-    BaseCameraSensor, Sensor[RasterizerCameraOptions, RasterizerCameraSharedMetadata, CameraData]
+    BaseCameraSensor, Sensor[RasterizerCameraOptions, None, RasterizerCameraSharedMetadata, CameraReturnType]
 ):
     """
     Rasterizer camera sensor using OpenGL-based rendering.
@@ -386,8 +394,15 @@ class RasterizerCameraSensor(
     visualizer.
     """
 
-    def __init__(self, options: RasterizerCameraOptions, idx: int, manager: "SensorManager"):
-        super().__init__(options, idx, manager)
+    def __init__(
+        self,
+        options: RasterizerCameraOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._options: RasterizerCameraOptions
         self._camera_node = None
         self._camera_target = None
@@ -571,14 +586,21 @@ class RasterizerCameraSensor(
 
 # ========================== Raytracer Camera Sensor ==========================
 class RaytracerCameraSensor(
-    BaseCameraSensor, Sensor[RaytracerCameraOptions, RaytracerCameraSharedMetadata, CameraData]
+    BaseCameraSensor, Sensor[RaytracerCameraOptions, None, RaytracerCameraSharedMetadata, CameraReturnType]
 ):
     """
     Raytracer camera sensor using LuisaRender path tracing.
     """
 
-    def __init__(self, options: RaytracerCameraOptions, idx: int, manager: "SensorManager"):
-        super().__init__(options, idx, manager)
+    def __init__(
+        self,
+        options: RaytracerCameraOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._options: RaytracerCameraOptions
         self._camera_obj = None
 
@@ -721,7 +743,7 @@ class RaytracerCameraSensor(
 
 
 class BatchRendererCameraSensor(
-    BaseCameraSensor, Sensor[BatchRendererCameraOptions, BatchRendererCameraSharedMetadata, CameraData]
+    BaseCameraSensor, Sensor[BatchRendererCameraOptions, None, BatchRendererCameraSharedMetadata, CameraReturnType]
 ):
     """
     Batch renderer camera sensor using Madrona GPU batch rendering.
@@ -729,8 +751,15 @@ class BatchRendererCameraSensor(
     Note: All batch renderer cameras must have the same resolution.
     """
 
-    def __init__(self, options: BatchRendererCameraOptions, idx: int, manager: "SensorManager"):
-        super().__init__(options, idx, manager)
+    def __init__(
+        self,
+        options: BatchRendererCameraOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._options: BatchRendererCameraOptions
         self._camera_obj = None
 
