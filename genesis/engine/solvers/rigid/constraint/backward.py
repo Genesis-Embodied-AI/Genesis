@@ -327,13 +327,16 @@ def kernel_accumulate_constraint_solver_grads(
 # accumulates into its own differentiable inputs.
 #
 # n_con row layout: the forward adds constraints in the order equality -> frictionloss -> collision -> joint-limit
-# (see add_equality_constraints / add_inequality_constraints in solver.py). Equality is rejected host-side (not yet
-# differentiated); the manual reverses cover the last three groups and re-walk the same forward loops
-# deterministically to recover their own n_con (no atomic_add, no n_constraints reset):
-#   const_start = constraint_state.n_constraints_frictionloss[i_b]
-#   frictionloss : seed counter at 0
-#   collision    : n_con = const_start + i_col_ * 4 + i, with i_col_ the logical (sorted) contact index
-#   joint-limit  : seed counter at const_start (+ 4 * n_contacts if collision on)
+# (see add_equality_constraints / add_inequality_constraints in solver.py). Equality sub-types CONNECT and WELD are
+# rejected host-side (not yet differentiated); JOINT is differentiated by
+# kernel_manual_add_equality_constraints_bw. The manual reverses re-walk the same forward loops deterministically to
+# recover their own n_con (no atomic_add, no n_constraints reset):
+#   n_eq   = constraint_state.n_constraints_equality[i_b]
+#   n_fric = constraint_state.n_constraints_frictionloss[i_b]
+#   equality (JOINT) : seed counter at 0
+#   frictionloss     : seed counter at n_eq
+#   collision        : n_con = n_eq + n_fric + i_col_ * 4 + i, with i_col_ the logical (sorted) contact index
+#   joint-limit      : seed counter at n_eq + n_fric (+ 4 * n_contacts if collision on)
 # ---------------------------------------------------------------------------
 @qd.kernel(fastcache=True)
 def kernel_manual_add_joint_limit_constraints_bw(
@@ -386,10 +389,12 @@ def kernel_manual_add_joint_limit_constraints_bw(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
     )
     for i_b in range(_B):
-        # Forward row layout: (equality ->) frictionloss -> collision -> joint-limit.
-        # Equality is rejected host-side; the others are differentiated. Seed the
-        # joint-limit counter past frictionloss (always) and collision (when on).
-        n_con_counter = gs.qd_int(constraint_state.n_constraints_frictionloss[i_b])
+        # Forward row layout: equality -> frictionloss -> collision -> joint-limit.
+        # Seed the joint-limit counter past equality + frictionloss (always)
+        # and collision (when on).
+        n_con_counter = gs.qd_int(
+            constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+        )
         if qd.static(enable_collision):
             n_con_counter = n_con_counter + gs.qd_int(collider_state.n_contacts[i_b] * 4)
 
@@ -611,10 +616,11 @@ def kernel_manual_add_collision_constraints_bw(
             g_d1 = gs.qd_vec3(0.0, 0.0, 0.0)
             g_d2 = gs.qd_vec3(0.0, 0.0, 0.0)
 
-            # Forward row layout: (equality ->) frictionloss -> collision -> joint-limit.
-            # Equality is rejected host-side; offset past frictionloss (always present
-            # whenever there is any dof with `frictionloss > EPS`).
-            const_start = constraint_state.n_constraints_frictionloss[i_b]
+            # Forward row layout: equality -> frictionloss -> collision -> joint-limit.
+            # Offset past equality + frictionloss.
+            const_start = (
+                constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+            )
             for i in range(4):
                 s_i = gs.qd_float(2 * (i % 2) - 1)
                 d = s_i * d1 if i < 2 else s_i * d2
@@ -739,9 +745,10 @@ def kernel_manual_add_frictionloss_constraints_bw(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL and rigid_config.backend != gs.metal),
     )
     for i_b in range(_B):
-        # Frictionloss is the first inequality group (after equality, which is
-        # rejected host-side) so its row counter starts at 0.
-        n_con_counter = gs.qd_int(0)
+        # Forward row layout: equality -> frictionloss -> collision -> joint-limit.
+        # Frictionloss row counter starts past the equality block (which may be
+        # nonzero when JOINT-type equalities are present).
+        n_con_counter = gs.qd_int(constraint_state.n_constraints_equality[i_b])
 
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
@@ -762,3 +769,177 @@ def kernel_manual_add_frictionloss_constraints_bw(
                         ga = constraint_state.dL_daref[n_con, i_b]
                         # jac = 1.0 constant => dL/d_vel = dL/d_jac_qvel.
                         dyn_state.dofs.vel.grad[i_d, i_b] += ga * (-b_coef)
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_add_equality_constraints_bw(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Manual reverse of `add_equality_constraints` (JOINT sub-type only).
+
+    Covers `EQUALITY_TYPE.JOINT`, which couples two scalar dofs via a quartic polynomial.
+
+    Accumulates into kinematic-state grads only (conservative):
+        rigid_info.qpos.grad[i_qpos1], qpos.grad[i_qpos2]
+        dyn_state.dofs.vel.grad[i_dof1], vel.grad[i_dof2]
+    Model parameters (`sol_params`, `eq_data`, `dyn_info.dofs.invweight`) are not
+    differentiated.
+
+    Forward recap (per equality of type JOINT):
+        diff = qpos[i_qpos2] - qpos0[i_qpos2]
+        pos_poly = a0 + a1 * diff + a2 * diff^2 + a3 * diff^3 + a4 * diff^4
+        pos = qpos[i_qpos1] - qpos0[i_qpos1] - pos_poly
+        deriv = d(pos_poly)/d(diff) = a1 + 2 * a2 * diff + 3 * a3 * diff^2 + 4 * a4 * diff^3
+        jac[n_con, i_dof1] = 1.0
+        jac[n_con, i_dof2] = -deriv
+        jac_qvel = vel[i_dof1] - deriv  *  vel[i_dof2]
+        imp, aref = imp_aref(sol_params, -|pos|, jac_qvel, pos)
+            aref = -b  *  jac_qvel - k  *  imp  *  pos
+        diag = max(invweight  *  (1 - imp) / imp, EPS); efc_D = 1/diag
+    """
+    EPS = rigid_info.EPS[None]
+    _B = constraint_state.jac.shape[2]
+
+    qd.loop_config(
+        name="kernel_manual_add_equality_constraints_bw",
+        serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
+    )
+    for i_b in range(_B):
+        # Equality is the first constraint group; row counter starts at 0.
+        n_con_counter = gs.qd_int(0)
+
+        for i_e in range(constraint_state.qd_n_equalities[i_b]):
+            if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
+                n_con = n_con_counter
+                n_con_counter = n_con_counter + 1
+
+                # ---- Replay forward intermediates ----
+                I_joint1 = (
+                    [dyn_info.equalities.eq_obj1id[i_e, i_b], i_b]
+                    if qd.static(rigid_config.batch_joints_info)
+                    else dyn_info.equalities.eq_obj1id[i_e, i_b]
+                )
+                I_joint2 = (
+                    [dyn_info.equalities.eq_obj2id[i_e, i_b], i_b]
+                    if qd.static(rigid_config.batch_joints_info)
+                    else dyn_info.equalities.eq_obj2id[i_e, i_b]
+                )
+                i_qpos1 = dyn_info.joints.q_start[I_joint1]
+                i_qpos2 = dyn_info.joints.q_start[I_joint2]
+                i_dof1 = dyn_info.joints.dof_start[I_joint1]
+                i_dof2 = dyn_info.joints.dof_start[I_joint2]
+                I_dof1 = [i_dof1, i_b] if qd.static(rigid_config.batch_dofs_info) else i_dof1
+                I_dof2 = [i_dof2, i_b] if qd.static(rigid_config.batch_dofs_info) else i_dof2
+
+                pos1 = rigid_info.qpos[i_qpos1, i_b]
+                pos2 = rigid_info.qpos[i_qpos2, i_b]
+                ref1 = rigid_info.qpos0[i_qpos1, i_b]
+                ref2 = rigid_info.qpos0[i_qpos2, i_b]
+
+                a0 = dyn_info.equalities.eq_data[i_e, i_b][0]
+                a1 = dyn_info.equalities.eq_data[i_e, i_b][1]
+                a2 = dyn_info.equalities.eq_data[i_e, i_b][2]
+                a3 = dyn_info.equalities.eq_data[i_e, i_b][3]
+                a4 = dyn_info.equalities.eq_data[i_e, i_b][4]
+
+                diff = pos2 - ref2
+                diff2 = diff * diff
+                diff3 = diff2 * diff
+                diff4 = diff3 * diff
+                pos = pos1 - ref1 - a0 - a1 * diff - a2 * diff2 - a3 * diff3 - a4 * diff4
+                deriv = a1 + 2.0 * a2 * diff + 3.0 * a3 * diff2 + 4.0 * a4 * diff3
+                d_deriv_d_diff = 2.0 * a2 + 6.0 * a3 * diff + 12.0 * a4 * diff2
+
+                jac1 = gs.qd_float(1.0)
+                jac2 = -deriv
+                vel1 = dyn_state.dofs.vel[i_dof1, i_b]
+                vel2 = dyn_state.dofs.vel[i_dof2, i_b]
+                jac_qvel = jac1 * vel1 + jac2 * vel2
+                invweight = dyn_info.dofs.invweight[I_dof1] + dyn_info.dofs.invweight[I_dof2]
+
+                sol_params = dyn_info.equalities.sol_params[i_e, i_b]
+                timeconst = sol_params[0]
+                dampratio = sol_params[1]
+                dmin = sol_params[2]
+                dmax = sol_params[3]
+                width = sol_params[4]
+                mid = sol_params[5]
+                power = sol_params[6]
+
+                # imp_x = |pos_delta_arg| / width = |-|pos|| / width = |pos|/width
+                imp_x = qd.abs(pos) / width
+                imp_a_coef = 1.0 / mid ** (power - 1.0)
+                imp_b_coef = 1.0 / (1.0 - mid) ** (power - 1.0)
+                imp_a = imp_a_coef * imp_x**power
+                imp_b = 1.0 - imp_b_coef * (1.0 - imp_x) ** power
+                imp_y = imp_a if imp_x < mid else imp_b
+                imp_raw = dmin + imp_y * (dmax - dmin)
+                imp_clamped = qd.math.clamp(imp_raw, dmin, dmax)
+                imp = dmax if imp_x > 1.0 else imp_clamped
+
+                b_coef = 2.0 / (dmax * timeconst)
+                k_coef = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
+
+                diag_raw = invweight * (1.0 - imp) / imp
+                diag = qd.max(diag_raw, EPS)
+
+                # ---- Upstream grads ----
+                ga = constraint_state.dL_daref[n_con, i_b]
+                gD = constraint_state.dL_defc_D[n_con, i_b]
+                # jac[dof1] = 1.0 (constant) => no chain through dL_djac[n_con, i_dof1].
+                gjac2 = constraint_state.dL_djac[n_con, i_dof2, i_b]
+
+                # ---- Partials ----
+                # aref = -b  *  jac_qvel - k  *  imp  *  pos
+                d_aref_d_jac_qvel = -b_coef
+                d_aref_d_pos_direct = -k_coef * imp
+                d_aref_d_imp = -k_coef * pos
+
+                # diag = max(diag_raw, EPS); efc_D = 1/diag
+                d_diag_d_imp = gs.qd_float(0.0)
+                if diag_raw > EPS:
+                    d_diag_d_imp = -invweight / (imp * imp)
+                d_efc_D_d_imp = -d_diag_d_imp / (diag * diag)
+
+                # d(imp)/d(imp_x) active only inside the smooth clamp band.
+                within_clamp = (imp_raw > dmin) and (imp_raw < dmax) and (imp_x <= 1.0)
+                d_imp_y_d_imp_x = gs.qd_float(0.0)
+                if imp_x < mid:
+                    d_imp_y_d_imp_x = power * imp_a_coef * imp_x ** (power - 1.0)
+                else:
+                    d_imp_y_d_imp_x = power * imp_b_coef * (1.0 - imp_x) ** (power - 1.0)
+                d_imp_d_imp_x = gs.qd_float(0.0)
+                if within_clamp:
+                    d_imp_d_imp_x = (dmax - dmin) * d_imp_y_d_imp_x
+
+                # imp_x = |pos|/width  =>  d_imp_x/d_pos = sign(pos) / width
+                sign_pos_f = gs.qd_float(1.0)
+                if pos < 0.0:
+                    sign_pos_f = gs.qd_float(-1.0)
+                d_imp_d_pos = d_imp_d_imp_x * sign_pos_f / width
+
+                # ---- Combine ----
+                dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
+                dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+                dL_d_pos = ga * d_aref_d_pos_direct + dL_d_imp * d_imp_d_pos
+                # deriv enters via (jac_qvel through jac2 = -deriv) and (jac[dof2] = -deriv).
+                dL_d_deriv = dL_d_jac_qvel * (-vel2) + gjac2 * (-1.0)
+
+                # ---- Propagate ----
+                dyn_state.dofs.vel.grad[i_dof1, i_b] += dL_d_jac_qvel * jac1
+                dyn_state.dofs.vel.grad[i_dof2, i_b] += dL_d_jac_qvel * jac2
+                # qpos1 enters only via pos (d_pos/d_pos1 = 1).
+                rigid_info.qpos.grad[i_qpos1, i_b] += dL_d_pos
+                # qpos2 enters via pos (d_pos/d_pos2 = -deriv) and deriv (d_deriv/d_diff).
+                rigid_info.qpos.grad[i_qpos2, i_b] += dL_d_pos * (-deriv) + dL_d_deriv * d_deriv_d_diff
+            elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
+                # Not yet implemented; advance counter so any trailing JOINT rows
+                # land at the right offset. Host-side raise blocks this case.
+                n_con_counter = n_con_counter + 3
+            else:
+                # WELD: forward adds 6 rows (translation 3 + rotation 3); host-side raise blocks.
+                n_con_counter = n_con_counter + 6

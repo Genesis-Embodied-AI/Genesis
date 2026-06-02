@@ -35,6 +35,7 @@ from .constraint import ConstraintSolver
 from .constraint.backward import (
     kernel_manual_add_collision_constraints_bw,
     kernel_manual_add_frictionloss_constraints_bw,
+    kernel_manual_add_equality_constraints_bw,
     kernel_accumulate_constraint_solver_grads,
     kernel_load_dL_dqacc_from_acc_grad,
     kernel_manual_add_joint_limit_constraints_bw,
@@ -1596,14 +1597,21 @@ class RigidSolver(KinematicSolver):
         has_frictionloss = n_fric_max > 0
         has_equality = n_eq_max > 0
         if has_collision or has_joint_limit or has_frictionloss or has_equality:
-            # Reject equality constraints: manual reverse not yet implemented (frictionloss / collision / joint-limit
-            # are differentiated below). TODO: implement manual reverse for equality rows so they can participate in
-            # differentiable scenes.
+            # Equality has three sub-types: JOINT (differentiated below), CONNECT and WELD (not yet differentiated --
+            # reject host-side). Inspect only the active range qd_n_equalities[i_b] so unused slots (whose eq_type
+            # defaults to CONNECT=0) don't false-positive. TODO: implement manual reverses for CONNECT and WELD.
             if has_equality:
-                gs.raise_exception(
-                    "Differentiable rigid backward does not yet support equality constraints "
-                    f"(found n_constraints_equality={n_eq_max})."
-                )
+                eq_types = qd_to_numpy(self.dyn_info.equalities.eq_type)
+                n_eq_per_env = qd_to_numpy(constraint_state.qd_n_equalities)
+                for i_b in range(eq_types.shape[1]):
+                    active_types = eq_types[: n_eq_per_env[i_b], i_b]
+                    if (
+                        (active_types == int(gs.EQUALITY_TYPE.CONNECT)) | (active_types == int(gs.EQUALITY_TYPE.WELD))
+                    ).any():
+                        gs.raise_exception(
+                            "Differentiable rigid backward does not yet support CONNECT or WELD "
+                            "equality constraints (only JOINT). Disable them in a differentiable scene."
+                        )
 
             kernel_load_dL_dqacc_from_acc_grad(
                 self.dyn_state, self.constraint_solver.constraint_state, self.rigid_config
@@ -1613,8 +1621,18 @@ class RigidSolver(KinematicSolver):
                 self.dyn_state, self.constraint_solver.constraint_state, self.rigid_info, self.rigid_config
             )
 
+            if has_equality:
+                # Equality (JOINT only at this phase) is the first row group.
+                kernel_manual_add_equality_constraints_bw(
+                    self.dyn_state,
+                    self.constraint_solver.constraint_state,
+                    self.dyn_info,
+                    self.rigid_info,
+                    self.rigid_config,
+                )
+
             if has_frictionloss:
-                # Frictionloss is the first inequality group; the reverse re-walks the same per-dof loop the forward
+                # Frictionloss is the second inequality group; the reverse re-walks the same per-dof loop the forward
                 # uses.
                 kernel_manual_add_frictionloss_constraints_bw(
                     self.dyn_state,
