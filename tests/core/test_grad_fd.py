@@ -1556,21 +1556,7 @@ def _run_fd_per_step_force(build_fn, rest_dofs, *, base_force, n_settle, n_steps
 
 @pytest.mark.required
 @pytest.mark.precision("64")
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        pytest.param(
-            gs.gpu,
-            marks=pytest.mark.skip(
-                reason="General convex-convex (box-box) differentiable contact is not supported on GPU: the "
-                "GPU split (multicontact) narrow phase drops contacts under requires_grad=True (n_contacts=0). "
-                "Only plane-convex is GPU-differentiable (see test_diff_contact_fd_plane_convex). "
-                "Revisit when the split path's diff-contact handling is fixed."
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact_fd_per_step_force(show_viewer):
     # Box rests on the ground top (z=0.2) at center z=0.40; settle to a stable
     # multi-contact manifold, then a short grad window with a per-step push.
