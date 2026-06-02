@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, TypeVar, get_args, get_origin
@@ -95,36 +96,56 @@ class SimpleSensorMetadata(SharedSensorMetadata):
     has_any_resolution: bool = False
 
 
-class SharedSensorContext:
+class SharedSensorContext(ABC):
     """
-    Resource shared across *different* sensor types, owned by ``SensorManager``.
+    Abstract base for a resource shared across *different* sensor types, owned by ``SensorManager``. A sensor type
+    declares the context it consumes as the second ``Sensor[Options, Context, Metadata, Data]`` parameter (``None``
+    when it has none); every type declaring the same context class resolves to the one instance the manager owns.
 
-    Distinct from ``SharedSensorMetadata``: metadata aggregates the per-sensor state of all sensors of a *single*
-    type so one kernel can run over them (a batching optimization that grows with the number of sensors); a context
-    is a *single* resource (e.g. one collision BVH for the simulator) read by *several* sensor types, O(1) in the
-    number of sensors (a sharing optimization). A sensor type declares the context it consumes as the second
-    ``Sensor[Options, Context, Metadata, Data]`` parameter (``None`` when it has none); every type declaring the same
-    context class resolves to the one instance the manager owns.
+    Distinct from ``SharedSensorMetadata``: metadata aggregates the per-sensor state of all sensors of a *single* type
+    so one kernel can run over them (a batching optimization that grows with the number of sensors); a context is a
+    *single* resource read by *several* sensor types, O(1) in the number of sensors (a sharing optimization). A context
+    is purely an optimization: a sensor must produce identical results whether or not it is shared, so consistency stays
+    ``SensorManager``'s responsibility, never the context's.
 
-    A context is purely an optimization (runtime speed or memory): a sensor must produce identical results whether
-    or not the context is shared, so it is always safe to rebuild or duplicate it. Cross-sensor consistency remains
-    the responsibility of ``SensorManager``, never of the context.
+    The manager constructs the context with the sim at sensor-creation time, since the context must already exist to be
+    handed to consuming sensors, but it stays an empty shell until a consumer activates it.
 
-    The whole lifecycle is driven by ``SensorManager``: ``build`` once after the scene geometry exists, ``update``
-    once per step before the per-type update loop reads it, ``reset`` on ``scene.reset()``, ``destroy`` on teardown.
+    - ``activate`` - a consuming sensor calls this from its own ``build`` (must be idempotent). The first call
+      constructs the resource on the spot; the scene geometry is available by then. Inactive contexts stay empty shells
+      and pay nothing. There is no separate manager-driven build: activation does the construction.
+    - ``update`` - the manager calls this once per step before the per-type update loop; a no-op when inactive.
+    - ``reset`` / ``destroy`` - manager-driven on ``scene.reset()`` and teardown.
+
+    Querying an inactive context (e.g. reading its resource) must raise: only consumers that activated it may read it.
+    Subclasses must implement every lifecycle method; ``update`` / ``reset`` / ``destroy`` guard themselves on
+    ``is_active``.
     """
 
-    def build(self, sim):
-        """Build the shared resource from the scene; called once after every sensor is built."""
+    def __init__(self, sim):
+        self._sim = sim
+        self._active = False
 
-    def update(self):
-        """Refresh the shared resource for the current step; called once before sensors read it."""
+    @property
+    def is_active(self) -> bool:
+        return self._active
 
-    def reset(self, envs_idx):
-        """Reset the shared resource for the given environments."""
+    @abstractmethod
+    def activate(self) -> None:
+        """Declare the context active (a consumer needs it) and construct the resource; must be idempotent. Called from
+        a consuming sensor's ``build``, when the scene geometry is available."""
 
-    def destroy(self):
-        """Release any resources held by the context."""
+    @abstractmethod
+    def update(self) -> None:
+        """Refresh the resource for the current step; manager-driven once per step. Must no-op when inactive."""
+
+    @abstractmethod
+    def reset(self, envs_idx) -> None:
+        """Reset the resource; manager-driven on ``scene.reset()``. Must no-op when inactive."""
+
+    @abstractmethod
+    def destroy(self) -> None:
+        """Release any resources held by the context; manager-driven on teardown."""
 
 
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)

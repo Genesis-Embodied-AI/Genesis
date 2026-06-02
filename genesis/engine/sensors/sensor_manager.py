@@ -63,11 +63,11 @@ class SensorManager:
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:
             self._sensors_metadata[sensor_cls] = sensor_cls._metadata_cls()
-        # Lazily create the cross-type shared context (one instance per context class, shared by every sensor type
-        # declaring it). ``NoneType`` marks "no context"; the sensor then receives ``None``.
+        # Create the shared context before the sensor, so the instance exists to hand to it. ``NoneType`` marks
+        # "no context"; the sensor then receives ``None``.
         context_cls = sensor_cls._shared_context_cls
         if context_cls is not type(None) and context_cls not in self._shared_contexts:
-            self._shared_contexts[context_cls] = context_cls()
+            self._shared_contexts[context_cls] = context_cls(self._sim)
         sensor = sensor_cls(
             sensor_options,
             len(self._sensors_by_type[sensor_cls]),
@@ -256,11 +256,6 @@ class SensorManager:
                 ].T
             if cls_max_history > 0:
                 self._hist_idx_by_class[sensor_cls] = torch.arange(cls_max_history, device=gs.device, dtype=torch.int32)
-
-        # Build shared contexts before any sensor, so a sensor's ``build()`` reads a ready context (e.g. the raycaster
-        # validating it has geometry to cast against).
-        for context in self._shared_contexts.values():
-            context.build(self._sim)
 
         for sensor_cls, sensors in self._sensors_by_type.items():
             for sensor in sensors:

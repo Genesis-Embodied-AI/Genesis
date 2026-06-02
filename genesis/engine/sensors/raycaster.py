@@ -70,13 +70,19 @@ class RaycastContext(SharedSensorContext):
     Per-simulator collision/visual raycast BVHs, shared across sensor types that cast rays.
 
     Holds one ``BVHContext`` per (active solver, mesh type): a collision BVH over a rigid solver's faces and a visual
-    BVH over the vfaces opted into ``material.use_visual_raycasting``. ``SensorManager`` builds it once after the scene
-    geometry exists and refreshes it once per step, so a ``Raycaster`` and a ``DepthCamera`` (or future raycast
-    consumers) share one set of trees instead of rebuilding identical ones per sensor type.
+    BVH over the vfaces opted into ``material.use_visual_raycasting``.
     """
 
-    def __init__(self):
-        self.bvh_contexts: list[BVHContext] = []
+    def __init__(self, sim):
+        super().__init__(sim)
+        self._bvh_contexts: list[BVHContext] = []
+
+    @property
+    def bvh_contexts(self) -> list[BVHContext]:
+        """The per-(solver, mesh-type) BVHs. Raises if inactive: only a consumer that activated it may read them."""
+        if not self._active:
+            raise gs.GenesisException("RaycastContext queried before activation; no sensor declared a raycast need.")
+        return self._bvh_contexts
 
     @staticmethod
     def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
@@ -95,13 +101,16 @@ class RaycastContext(SharedSensorContext):
         vface_vgeom_idx = qd_to_numpy(solver.vfaces_info.vgeom_idx)
         return vgeom_enabled[vface_vgeom_idx].astype(np.int8)
 
-    def build(self, sim):
+    def activate(self):
         """
-        Build the per-(solver, mesh-type) BVHs once. Rigid solvers get a collision BVH covering all collision faces;
-        any solver with entities opting in via ``material.use_visual_raycasting`` gets a visual BVH masked to those
-        entities' vfaces. Collision and visual entries coexist transparently because the cast kernels merge in place.
+        Build the per-(solver, mesh-type) BVHs on first activation; idempotent. Rigid solvers get a collision BVH
+        covering all collision faces; any solver with entities opting in via ``material.use_visual_raycasting`` gets a
+        visual BVH masked to those vfaces. Collision and visual entries coexist (the cast kernels merge in place).
         """
-        for solver in (sim.rigid_solver, sim.kinematic_solver):
+        if self._active:
+            return
+        self._active = True
+        for solver in (self._sim.rigid_solver, self._sim.kinematic_solver):
             if not solver.is_active:
                 continue
             n_envs = solver._B
@@ -113,19 +122,19 @@ class RaycastContext(SharedSensorContext):
                 n_faces = solver.faces_info.geom_idx.shape[0]
                 aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
                 bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                self.bvh_contexts.append(BVHContext(solver, bvh, aabb, None, maybe_static))
+                self._bvh_contexts.append(BVHContext(solver, bvh, aabb, None, maybe_static))
             n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
             if n_vfaces > 0:
                 mask = self._compute_visual_raycast_mask(solver)
                 if mask.any():
                     aabb = AABB(n_batches=n_envs, n_aabbs=n_vfaces)
                     bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                    self.bvh_contexts.append(BVHContext(solver, bvh, aabb, mask, maybe_static))
+                    self._bvh_contexts.append(BVHContext(solver, bvh, aabb, mask, maybe_static))
 
         # Lazily watch each static BVH (collision or visual) for GEOMETRY changes. ``update`` polls its
         # rebuild_subscriber so an explicit set_pos / set_quat / set_vverts on the otherwise-immovable geometry forces
         # the (normally skipped) rebuild before the next cast.
-        for entry in self.bvh_contexts:
+        for entry in self._bvh_contexts:
             if entry.maybe_static:
                 entry.rebuild_subscriber = Subscriber(to=frozenset({StateChange.GEOMETRY}))
                 entry.solver.subscribe(entry.rebuild_subscriber)
@@ -140,7 +149,9 @@ class RaycastContext(SharedSensorContext):
         set_pos/set_quat/set_vverts, and ``reset`` flags every entry, so a re-randomized terrain or teleported obstacle
         still rebuilds. Movable entries are never static, so they rebuild on every call.
         """
-        for entry in self.bvh_contexts:
+        if not self._active:
+            return
+        for entry in self._bvh_contexts:
             # A pending GEOMETRY change means a set_pos/set_quat/set_vverts hit this otherwise-static geometry since the
             # last build; flag it for rebuild and clear the subscriber so the next idle update skips again.
             if entry.rebuild_subscriber is not None and entry.rebuild_subscriber.pending:
@@ -195,13 +206,13 @@ class RaycastContext(SharedSensorContext):
     def reset(self, envs_idx):
         # A reset may change otherwise-static geometry (re-randomized terrain, teleported obstacles), so force every
         # entry to rebuild once; static entries resume skipping on subsequent steps. The BVHs are geometry-global, not
-        # per-env, so ``envs_idx`` is unused.
-        for entry in self.bvh_contexts:
+        # per-env, so ``envs_idx`` is unused. No-op when inactive (``_bvh_contexts`` is empty).
+        for entry in self._bvh_contexts:
             entry.needs_rebuild = True
         self.update()
 
     def destroy(self):
-        self.bvh_contexts.clear()
+        self._bvh_contexts.clear()
 
 
 @dataclass
@@ -259,9 +270,10 @@ class RaycasterSensor(
     def build(self):
         super().build()
 
-        # The BVHs are built and owned by the shared ``RaycastContext`` (already built by SensorManager before any
-        # sensor). The first sensor of this class pushes the initial cache offset; every sensor validates there is
-        # geometry to cast against.
+        # A raycaster always casts, so activate the shared ``RaycastContext`` now: the first consumer's activation
+        # builds the BVHs. Every raycaster then validates there is geometry to cast against.
+        self._shared_context.activate()
+        # The first raycaster seeds the leading boundary (0) of the per-sensor offsets into the shared cache tensor.
         if self._idx == 0:
             self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
                 self._shared_metadata.sensor_cache_offsets, 0
