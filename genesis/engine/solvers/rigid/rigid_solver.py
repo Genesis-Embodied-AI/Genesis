@@ -34,6 +34,7 @@ from .collider import Collider
 from .constraint import ConstraintSolver
 from .constraint.backward import (
     kernel_manual_add_collision_constraints_bw,
+    kernel_manual_add_frictionloss_constraints_bw,
     kernel_accumulate_constraint_solver_grads,
     kernel_load_dL_dqacc_from_acc_grad,
     kernel_manual_add_joint_limit_constraints_bw,
@@ -1584,24 +1585,24 @@ class RigidSolver(KinematicSolver):
         # Two backward paths for force -> acc:
         #   (A) Unconstrained: kernel_manual_compute_qacc_bw does the implicit function theorem (IFT) through M
         #       (writes force.grad + mass_mat.grad).
-        #   (B) Constrained (active joint limits / collision): the constraint solve overwrites acc, so the IFT
-        #       through M alone is wrong. Instead drive constraint_solver.backward (adjoint KKT ->
+        #   (B) Constrained (active joint limits / collision / frictionloss): the constraint solve overwrites
+        #       acc, so the IFT through M alone is wrong. Instead drive constraint_solver.backward (adjoint KKT ->
         #       dL_dM / djac / daref / defc_D / dforce) + the per-constraint manual reverses below.
+        constraint_state = self.constraint_solver.constraint_state
+        n_fric_max = int(qd_to_numpy(constraint_state.n_constraints_frictionloss).max())
+        n_eq_max = int(qd_to_numpy(constraint_state.n_constraints_equality).max())
         has_collision = not self._disable_constraint and self._enable_collision
         has_joint_limit = not self._disable_constraint and self._options.enable_joint_limit
-        if has_collision or has_joint_limit:
-            # Reject equality / frictionloss constraints: the forward orders rows as equality -> frictionloss ->
-            # collision -> joint-limit, but the manual reverses below only re-walk the last two groups.
-            # TODO: implement manual reverses for equality and frictionloss rows so they can participate in
-            # differentiable scenes; until then reject host-side instead of producing a wrong gradient.
-            constraint_state = self.constraint_solver.constraint_state
-            n_eq_max = int(qd_to_numpy(constraint_state.n_constraints_equality).max())
-            n_fric_max = int(qd_to_numpy(constraint_state.n_constraints_frictionloss).max())
-            if n_eq_max > 0 or n_fric_max > 0:
+        has_frictionloss = n_fric_max > 0
+        has_equality = n_eq_max > 0
+        if has_collision or has_joint_limit or has_frictionloss or has_equality:
+            # Reject equality constraints: manual reverse not yet implemented (frictionloss / collision / joint-limit
+            # are differentiated below). TODO: implement manual reverse for equality rows so they can participate in
+            # differentiable scenes.
+            if has_equality:
                 gs.raise_exception(
-                    "Differentiable rigid backward does not support equality or frictionloss "
-                    f"constraints (found n_constraints_equality={n_eq_max}, "
-                    f"n_constraints_frictionloss={n_fric_max}). Disable them in a differentiable scene."
+                    "Differentiable rigid backward does not yet support equality constraints "
+                    f"(found n_constraints_equality={n_eq_max})."
                 )
 
             kernel_load_dL_dqacc_from_acc_grad(
@@ -1611,6 +1612,17 @@ class RigidSolver(KinematicSolver):
             kernel_accumulate_constraint_solver_grads(
                 self.dyn_state, self.constraint_solver.constraint_state, self.rigid_info, self.rigid_config
             )
+
+            if has_frictionloss:
+                # Frictionloss is the first inequality group; the reverse re-walks the same per-dof loop the forward
+                # uses.
+                kernel_manual_add_frictionloss_constraints_bw(
+                    self.dyn_state,
+                    self.constraint_solver.constraint_state,
+                    self.dyn_info,
+                    self.rigid_info,
+                    self.rigid_config,
+                )
 
             if has_collision:
                 # Manual reverse of the collision constraint rows -> contact-data grads, then differentiate the

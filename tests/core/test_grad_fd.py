@@ -1415,6 +1415,122 @@ def test_diff_joint_limit_backward_fd_per_step_force_hopper(show_viewer, n_steps
 
 
 # ===========================================================================
+# Frictionloss constraint FD  (dof `frictionloss > 0` -> constraint row added)
+# ===========================================================================
+
+
+def _build_frictionloss(mjcf_path: str, *, requires_grad: bool):
+    """Frictionloss is activated by `dofs_info.frictionloss > 0` in the model;
+    no flag in `RigidOptions`. The forward emits a row whenever a dof has it,
+    so we just keep the constraint solver enabled (joint-limit off, collision
+    off) and load an MJCF whose joint has `frictionloss`."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=4,
+            gravity=(0.0, 0.0, 0.0),
+            requires_grad=requires_grad,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_self_collision=False,
+            enable_joint_limit=False,
+            disable_constraint=False,
+            use_hibernation=False,
+            use_contact_island=False,
+        ),
+        show_viewer=False,
+    )
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    scene.build(n_envs=0)
+    return scene, robot
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_frictionloss_forward_emits_row(show_viewer):
+    """Sanity: an MJCF dof with `frictionloss="0.5"` actually triggers the
+    forward to emit exactly one frictionloss row. This pins the upstream
+    invariant that the manual reverse seeds its row counter from
+    `n_constraints_frictionloss`."""
+    scene, _robot = _build_frictionloss("xml/grad/revolute_frictionloss.xml", requires_grad=False)
+    scene.reset()
+    scene.step()
+    cs = scene.rigid_solver.constraint_solver.constraint_state
+    n_fric = int(qd_to_torch(cs.n_constraints_frictionloss)[0])
+    assert n_fric == 1, f"expected 1 frictionloss row, got {n_fric}"
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("init_vel", [0.5, 2.0, 5.0])
+def test_diff_frictionloss_backward_fd_one_step(show_viewer, init_vel):
+    """FD vs analytical gradient through `add_frictionloss_constraints`.
+    The constraint solver adds a friction row that damps `vel`; the gradient
+    of `qpos**2` w.r.t. the initial `vel` must match central FD."""
+    mjcf_path = "xml/grad/revolute_frictionloss.xml"
+    eps = 1e-5
+
+    scene_ana, robot_ana = _build_frictionloss(mjcf_path, requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    scene_ana.step()
+    loss = (_rigid_state(scene_ana).qpos[0, 0]) ** 2
+    loss.backward()
+    ana = float(v.grad[0])
+
+    scene_fd, robot_fd = _build_frictionloss(mjcf_path, requires_grad=False)
+
+    def loss_at(val: float) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor([val], dtype=gs.tc_float))
+        scene_fd.step()
+        return float((_rigid_state(scene_fd).qpos[0, 0]) ** 2)
+
+    fd = (loss_at(init_vel + eps) - loss_at(init_vel - eps)) / (2 * eps)
+
+    assert_allclose(ana, fd, rtol=1e-3, atol=1e-6)
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("n_steps", [1, 4, 10])
+def test_diff_frictionloss_backward_fd_multistep(show_viewer, n_steps):
+    """FD vs analytical over multiple steps — exercises the per-step BPTT
+    chain through the frictionloss constraint row."""
+    mjcf_path = "xml/grad/revolute_frictionloss.xml"
+    init_vel = 2.0
+    eps = 1e-5
+
+    scene_ana, robot_ana = _build_frictionloss(mjcf_path, requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    for _ in range(n_steps):
+        scene_ana.step()
+    loss = (_rigid_state(scene_ana).qpos[0, 0]) ** 2
+    loss.backward()
+    ana = float(v.grad[0])
+
+    scene_fd, robot_fd = _build_frictionloss(mjcf_path, requires_grad=False)
+
+    def loss_at(val: float) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor([val], dtype=gs.tc_float))
+        for _ in range(n_steps):
+            scene_fd.step()
+        return float((_rigid_state(scene_fd).qpos[0, 0]) ** 2)
+
+    fd = (loss_at(init_vel + eps) - loss_at(init_vel - eps)) / (2 * eps)
+
+    assert_allclose(ana, fd, rtol=2e-3, atol=1e-6)
+
+
+# ===========================================================================
 # Collision / diff-GJK contact FD  (enable_collision=True -> constraints ON)
 # ===========================================================================
 

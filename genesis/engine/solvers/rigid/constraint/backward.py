@@ -310,8 +310,8 @@ def kernel_accumulate_constraint_solver_grads(
 
 
 # ---------------------------------------------------------------------------
-# Manual reverses of the constraint-force inequality constraints (collision,
-# joint-limit). Shared conventions for the two kernels below.
+# Manual reverses of the inequality constraints (frictionloss, collision,
+# joint-limit). Shared conventions for the kernels below.
 #
 # Why manual (not autograd): the constraint rows are built inside the forward
 # solver with a data-dependent count and ordering -- `n_con` is assigned by
@@ -321,23 +321,19 @@ def kernel_accumulate_constraint_solver_grads(
 # Upstream grads: `kernel_compute_gradients` populates, per constraint row
 # `n_con`, `constraint_state.dL_daref[n_con]` (dL/d aref), `dL_defc_D[n_con]`
 # (dL/d efc_D), and `dL_djac[n_con, i_d]` (dL/d jac). The collision reverse uses
-# `dL_djac`; the joint-limit reverse ignores it (its jac entries are piecewise-
-# constant +-1, so the sub-gradient is 0). Each kernel consumes these and
+# `dL_djac`; the frictionloss and joint-limit reverses ignore it (their jac
+# entries are constants -- frictionloss is 1.0, joint-limit is piecewise +-1 --
+# so the sub-gradient w.r.t. jac is 0). Each kernel consumes these and
 # accumulates into its own differentiable inputs.
 #
-# n_con row layout: the forward adds constraints in the order frictionloss ->
-# collision -> joint-limit (see add_inequality_constraints). So with collision
-# on, the collision group occupies rows [0, 4 * n_contacts) (4 friction-pyramid
-# rows per contact) in logical (sorted) contact order, and joint-limit rows
-# follow it. Each reverse re-walks the same forward loop deterministically to
-# recover its own n_con (no atomic_add, no n_constraints reset): collision uses
-# n_con = i_col_ * 4 + i with i_col_ the sorted contact index; joint-limit
-# seeds its counter at 4 * n_contacts.
-#
-# TODO: only collision + joint-limit are handled. If other constraint groups
-# (equality, frictionloss) are ever added to a differentiable scene, the `n_con`
-# offset in each reverse must be updated to account for them -- they are
-# currently assumed absent (not offset).
+# n_con row layout: the forward adds constraints in the order equality -> frictionloss -> collision -> joint-limit
+# (see add_equality_constraints / add_inequality_constraints in solver.py). Equality is rejected host-side (not yet
+# differentiated); the manual reverses cover the last three groups and re-walk the same forward loops
+# deterministically to recover their own n_con (no atomic_add, no n_constraints reset):
+#   const_start = constraint_state.n_constraints_frictionloss[i_b]
+#   frictionloss : seed counter at 0
+#   collision    : n_con = const_start + i_col_ * 4 + i, with i_col_ the logical (sorted) contact index
+#   joint-limit  : seed counter at const_start (+ 4 * n_contacts if collision on)
 # ---------------------------------------------------------------------------
 @qd.kernel(fastcache=True)
 def kernel_manual_add_joint_limit_constraints_bw(
@@ -390,12 +386,12 @@ def kernel_manual_add_joint_limit_constraints_bw(
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL),
     )
     for i_b in range(_B):
-        # Collision constraints (4 rows per contact) are added before joint
-        # limits in `add_inequality_constraints`, so offset the joint-limit row
-        # counter past them when collision is on.
-        n_con_counter = gs.qd_int(0)
+        # Forward row layout: (equality ->) frictionloss -> collision -> joint-limit.
+        # Equality is rejected host-side; the others are differentiated. Seed the
+        # joint-limit counter past frictionloss (always) and collision (when on).
+        n_con_counter = gs.qd_int(constraint_state.n_constraints_frictionloss[i_b])
         if qd.static(enable_collision):
-            n_con_counter = gs.qd_int(collider_state.n_contacts[i_b] * 4)
+            n_con_counter = n_con_counter + gs.qd_int(collider_state.n_contacts[i_b] * 4)
 
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
@@ -615,11 +611,15 @@ def kernel_manual_add_collision_constraints_bw(
             g_d1 = gs.qd_vec3(0.0, 0.0, 0.0)
             g_d2 = gs.qd_vec3(0.0, 0.0, 0.0)
 
+            # Forward row layout: (equality ->) frictionloss -> collision -> joint-limit.
+            # Equality is rejected host-side; offset past frictionloss (always present
+            # whenever there is any dof with `frictionloss > EPS`).
+            const_start = constraint_state.n_constraints_frictionloss[i_b]
             for i in range(4):
                 s_i = gs.qd_float(2 * (i % 2) - 1)
                 d = s_i * d1 if i < 2 else s_i * d2
                 n = d * friction - normal
-                n_con = i_col_ * 4 + i
+                n_con = const_start + i_col_ * 4 + i
 
                 ga = constraint_state.dL_daref[n_con, i_b]
                 gD = constraint_state.dL_defc_D[n_con, i_b]
@@ -698,3 +698,67 @@ def kernel_manual_add_collision_constraints_bw(
                 collider_state.contact_data.pos.grad[i_col, i_b][j] = g_pos[j]
                 collider_state.contact_data.normal.grad[i_col, i_b][j] = g_normal[j]
             collider_state.contact_data.penetration.grad[i_col, i_b] = g_pen
+
+
+@qd.kernel(fastcache=True)
+def kernel_manual_add_frictionloss_constraints_bw(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """Manual reverse of `add_frictionloss_constraints`. See the section header
+    above for the shared `n_con` layout and upstream-grad conventions.
+
+    Accumulates into dyn_state.dofs.vel.grad[i_d] only (the conservative, kinematic-
+    state-only target). Model parameters (frictionloss, sol_params, invweight)
+    are not differentiated.
+
+    Forward recap (per dof with `frictionloss[I_d] > EPS`, `pos_delta = 0`):
+        jac[n_con, i_d] = 1.0
+        jac_qvel = jac * vel[i_d] = vel[i_d]
+        imp, aref = imp_aref(sol_params, 0, jac_qvel, 0)
+        diag = max(invweight * (1 - imp) / imp, EPS); efc_D = 1/diag
+
+    Reverse: pos_delta = 0 kills both the `imp  *  pos_delta` term in `aref`
+    and the entire `imp` sensitivity to anything (imp_x = 0 => within_clamp
+    is False => d_imp / d_anything = 0). What survives is the direct
+    `aref = -b_coef  *  jac_qvel` term, so
+
+        dL/d_vel[i_d] += dL_daref[n_con]  *  (-b_coef)
+    """
+    EPS = rigid_info.EPS[None]
+    _B = constraint_state.jac.shape[2]
+    n_links = dyn_info.links.root_idx.shape[0]
+
+    qd.loop_config(
+        name="kernel_manual_add_frictionloss_constraints_bw",
+        # Mirror the forward's serialize condition (frictionloss forward has a
+        # Metal-specific quirk; keep parity to make the loop walk identical).
+        serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL and rigid_config.backend != gs.metal),
+    )
+    for i_b in range(_B):
+        # Frictionloss is the first inequality group (after equality, which is
+        # rejected host-side) so its row counter starts at 0.
+        n_con_counter = gs.qd_int(0)
+
+        for i_l in range(n_links):
+            I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+            for i_j in range(dyn_info.links.joint_start[I_l], dyn_info.links.joint_end[I_l]):
+                I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
+                for i_d in range(dyn_info.joints.dof_start[I_j], dyn_info.joints.dof_end[I_j]):
+                    I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
+
+                    if dyn_info.dofs.frictionloss[I_d] > EPS:
+                        n_con = n_con_counter
+                        n_con_counter = n_con_counter + 1
+
+                        sol_params = dyn_info.joints.sol_params[I_j]
+                        timeconst = sol_params[0]
+                        dmax = sol_params[3]
+                        b_coef = 2.0 / (dmax * timeconst)
+
+                        ga = constraint_state.dL_daref[n_con, i_b]
+                        # jac = 1.0 constant => dL/d_vel = dL/d_jac_qvel.
+                        dyn_state.dofs.vel.grad[i_d, i_b] += ga * (-b_coef)
