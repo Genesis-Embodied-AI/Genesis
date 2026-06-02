@@ -697,6 +697,78 @@ def test_mjcf_parse_material(material_mjcf, tol):
     check_gs_textures(box2_surface.opacity_texture, None, 1.0, "box2", "opacity")
 
 
+@pytest.fixture
+def normals_mjcf(tmp_path):
+    # MuJoCo packs vertices and normals in separately-addressed blocks. The first mesh has a different number of
+    # vertices than normals (a flat-shaded bipyramid: shared positions, per-face normals), which shifts the second
+    # mesh's normal block away from its vertex block. The second mesh (a smooth icosphere, whose normals are exactly
+    # radial) is the one whose normals must be read at the correct offset and routed through the per-face normal
+    # indices, so it is the comparison target.
+    n_sides = 24
+    radius, half_height = 0.3, 0.4
+    angles = 2.0 * np.pi * np.arange(n_sides) / n_sides
+    ring = np.stack([radius * np.cos(angles), radius * np.sin(angles), np.zeros(n_sides)], axis=1)
+    bipyr_verts = np.vstack([ring, (0.0, 0.0, half_height), (0.0, 0.0, -half_height)])
+    top_idx, bot_idx = n_sides, n_sides + 1
+    bipyr_faces = []
+    for k in range(n_sides):
+        a, b = k, (k + 1) % n_sides
+        bipyr_faces.append((a, b, top_idx))
+        bipyr_faces.append((b, a, bot_idx))
+    bipyr_normals = []
+    for a, b, c in bipyr_faces:
+        normal = np.cross(bipyr_verts[b] - bipyr_verts[a], bipyr_verts[c] - bipyr_verts[a])
+        bipyr_normals.append(normal / np.linalg.norm(normal))
+    obj_lines = [f"v {v[0]} {v[1]} {v[2]}" for v in bipyr_verts]
+    obj_lines += [f"vn {n[0]} {n[1]} {n[2]}" for n in bipyr_normals]
+    for i, (a, b, c) in enumerate(bipyr_faces):
+        obj_lines.append(f"f {a + 1}//{i + 1} {b + 1}//{i + 1} {c + 1}//{i + 1}")
+    bipyr_path = tmp_path / "bipyr.obj"
+    bipyr_path.write_text("\n".join(obj_lines) + "\n")
+
+    ico_path = tmp_path / "ico.obj"
+    trimesh.creation.icosphere(radius=0.3, subdivisions=3).export(str(ico_path), include_normals=True)
+
+    mjcf = ET.Element("mujoco", model="normals")
+    asset = ET.SubElement(mjcf, "asset")
+    ET.SubElement(asset, "mesh", name="bipyr", file=str(bipyr_path))
+    ET.SubElement(asset, "mesh", name="ico", file=str(ico_path))
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="/worldbody/obj")
+    ET.SubElement(body, "freejoint")
+    ET.SubElement(body, "geom", type="mesh", mesh="bipyr", contype="0", conaffinity="0")
+    ET.SubElement(body, "geom", type="mesh", mesh="ico", contype="0", conaffinity="0")
+
+    file_path = str(tmp_path / "normals_mjcf.xml")
+    ET.ElementTree(mjcf).write(file_path, encoding="utf-8", xml_declaration=True)
+    return file_path, str(ico_path)
+
+
+def test_mjcf_parse_mesh_normals(normals_mjcf):
+    mjcf_path, ico_path = normals_mjcf
+
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=mjcf_path,
+            convexify=False,
+        ),
+    )
+    scene.build()
+
+    # The icosphere is the second geom, so its normal block starts at a different offset than its vertex block.
+    ico_vgeom = entity.links[0].vgeoms[1]
+    parsed = ico_vgeom.vmesh.trimesh
+    raw = trimesh.load(ico_path, process=False)
+
+    # MuJoCo reorders and splits vertices, so sort both meshes into a canonical order before comparing.
+    parsed_order = np.lexsort((parsed.vertices[:, 2], parsed.vertices[:, 1], parsed.vertices[:, 0]))
+    raw_order = np.lexsort((raw.vertices[:, 2], raw.vertices[:, 1], raw.vertices[:, 0]))
+
+    assert_allclose(parsed.vertices[parsed_order], raw.vertices[raw_order], atol=1e-4)
+    assert_allclose(parsed.vertex_normals[parsed_order], raw.vertex_normals[raw_order], atol=1e-3)
+
+
 @pytest.mark.required
 def test_2_channels_luminance_alpha_textures(show_viewer):
     scene = gs.Scene(
