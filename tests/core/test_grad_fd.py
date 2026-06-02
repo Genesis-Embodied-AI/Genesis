@@ -1672,6 +1672,132 @@ def test_diff_equality_joint_backward_fd_multistep(show_viewer, n_steps):
 
 
 # ===========================================================================
+# Equality CONNECT constraint FD  (<equality><connect .../></equality> -> 3 rows)
+# ===========================================================================
+
+
+def _build_equality_connect(mjcf_path: str, *, requires_grad: bool):
+    """Same boilerplate as `_build_equality_joint`; the CONNECT rows are added
+    by the forward whenever the MJCF has `<equality><connect/></equality>`."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=4,
+            gravity=(0.0, 0.0, 0.0),
+            requires_grad=requires_grad,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_self_collision=False,
+            enable_joint_limit=False,
+            disable_constraint=False,
+            use_hibernation=False,
+            use_contact_island=False,
+        ),
+        show_viewer=False,
+    )
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    scene.build(n_envs=0)
+    return scene, robot
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_equality_connect_forward_emits_rows(show_viewer):
+    """Sanity: an MJCF with a CONNECT equality emits exactly 3 equality rows."""
+    scene, _ = _build_equality_connect("xml/grad/connect_loop.xml", requires_grad=False)
+    scene.reset()
+    scene.step()
+    cs = scene.rigid_solver.constraint_solver.constraint_state
+    n_eq = int(qd_to_torch(cs.n_constraints_equality)[0])
+    assert n_eq == 3, f"expected 3 equality rows for CONNECT, got {n_eq}"
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_equality_connect_backward_fd_one_step(show_viewer):
+    """FD vs analytical gradient through the CONNECT equality reverse."""
+    mjcf_path = "xml/grad/connect_loop.xml"
+    eps = 1e-5
+
+    scene_ana, robot_ana = _build_equality_connect(mjcf_path, requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor([1.0, -0.5], dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    scene_ana.step()
+    qpos = _rigid_state(scene_ana).qpos[0]
+    loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
+    loss.backward()
+    ana = v.grad.detach().cpu().numpy().copy()
+
+    scene_fd, robot_fd = _build_equality_connect(mjcf_path, requires_grad=False)
+
+    def loss_at(val_array) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor(val_array, dtype=gs.tc_float))
+        scene_fd.step()
+        qp = _rigid_state(scene_fd).qpos[0]
+        return float(qp[0] ** 2 + 0.7 * qp[1] ** 2)
+
+    fd = np.zeros_like(ana)
+    base = np.array([1.0, -0.5], dtype=np.float64)
+    for d in range(2):
+        plus = base.copy()
+        plus[d] += eps
+        minus = base.copy()
+        minus[d] -= eps
+        fd[d] = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+
+    for d in range(2):
+        assert_allclose(ana[d], fd[d], rtol=1e-3, atol=1e-6, err_msg=f"dof {d}: ana={ana[d]} fd={fd[d]}")
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("n_steps", [1, 4, 10])
+def test_diff_equality_connect_backward_fd_multistep(show_viewer, n_steps):
+    """FD vs analytical for multistep BPTT through the CONNECT equality."""
+    mjcf_path = "xml/grad/connect_loop.xml"
+    eps = 1e-5
+
+    scene_ana, robot_ana = _build_equality_connect(mjcf_path, requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor([0.8, -0.3], dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    for _ in range(n_steps):
+        scene_ana.step()
+    qpos = _rigid_state(scene_ana).qpos[0]
+    loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
+    loss.backward()
+    ana = v.grad.detach().cpu().numpy().copy()
+
+    scene_fd, robot_fd = _build_equality_connect(mjcf_path, requires_grad=False)
+
+    def loss_at(val_array) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor(val_array, dtype=gs.tc_float))
+        for _ in range(n_steps):
+            scene_fd.step()
+        qp = _rigid_state(scene_fd).qpos[0]
+        return float(qp[0] ** 2 + 0.7 * qp[1] ** 2)
+
+    fd = np.zeros_like(ana)
+    base = np.array([0.8, -0.3], dtype=np.float64)
+    for d in range(2):
+        plus = base.copy()
+        plus[d] += eps
+        minus = base.copy()
+        minus[d] -= eps
+        fd[d] = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+
+    for d in range(2):
+        assert_allclose(ana[d], fd[d], rtol=2e-3, atol=1e-6, err_msg=f"dof {d}: ana={ana[d]} fd={fd[d]}")
+
+
+# ===========================================================================
 # Collision / diff-GJK contact FD  (enable_collision=True -> constraints ON)
 # ===========================================================================
 

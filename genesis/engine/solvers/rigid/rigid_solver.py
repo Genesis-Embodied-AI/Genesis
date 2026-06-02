@@ -1597,20 +1597,19 @@ class RigidSolver(KinematicSolver):
         has_frictionloss = n_fric_max > 0
         has_equality = n_eq_max > 0
         if has_collision or has_joint_limit or has_frictionloss or has_equality:
-            # Equality has three sub-types: JOINT (differentiated below), CONNECT and WELD (not yet differentiated --
-            # reject host-side). Inspect only the active range qd_n_equalities[i_b] so unused slots (whose eq_type
-            # defaults to CONNECT=0) don't false-positive. TODO: implement manual reverses for CONNECT and WELD.
+            # Equality has three sub-types: JOINT and CONNECT are differentiated below; WELD is not yet (reject
+            # host-side). Inspect only the active range qd_n_equalities[i_b] so unused slots (whose eq_type defaults
+            # to CONNECT=0) don't false-positive. TODO: implement manual reverse for the WELD sub-type.
             if has_equality:
                 eq_types = qd_to_numpy(self.dyn_info.equalities.eq_type)
                 n_eq_per_env = qd_to_numpy(constraint_state.qd_n_equalities)
                 for i_b in range(eq_types.shape[1]):
                     active_types = eq_types[: n_eq_per_env[i_b], i_b]
-                    if (
-                        (active_types == int(gs.EQUALITY_TYPE.CONNECT)) | (active_types == int(gs.EQUALITY_TYPE.WELD))
-                    ).any():
+                    if (active_types == int(gs.EQUALITY_TYPE.WELD)).any():
                         gs.raise_exception(
-                            "Differentiable rigid backward does not yet support CONNECT or WELD "
-                            "equality constraints (only JOINT). Disable them in a differentiable scene."
+                            "Differentiable rigid backward does not yet support WELD equality "
+                            "constraints (JOINT and CONNECT are supported). Disable WELD in a "
+                            "differentiable scene."
                         )
 
             kernel_load_dL_dqacc_from_acc_grad(
@@ -1622,7 +1621,7 @@ class RigidSolver(KinematicSolver):
             )
 
             if has_equality:
-                # Equality (JOINT only at this phase) is the first row group.
+                # Equality (JOINT + CONNECT) is the first row group.
                 kernel_manual_add_equality_constraints_bw(
                     self.dyn_state,
                     self.constraint_solver.constraint_state,

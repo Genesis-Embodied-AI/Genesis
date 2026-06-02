@@ -6,6 +6,46 @@ import genesis.utils.geom as gu
 
 
 @qd.func
+def _bw_transform_by_trans_quat_const_local(
+    g_out: qd.types.vector(3, dtype=gs.qd_float),
+    v: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
+):
+    """Adjoint of `r = trans + R(quat)  *  v`, with `v` held constant.
+
+    Returns `(g_trans, g_quat)`. Used by the CONNECT equality reverse to
+    propagate `dL/d(global_anchor)` back to `dL/d(dyn_state.links.pos[link])`
+    and `dL/d(dyn_state.links.quat[link])`; the local anchor `v = eq_data[0:3]`
+    is a model parameter and is not differentiated.
+
+    R(q)  *  v expansion (Hamilton convention, q = (w, u_x, u_y, u_z)):
+        c1 = u x v + w  *  v
+        c2 = u x c1
+        R(q)  *  v = v + 2  *  c2
+    """
+    g_trans = g_out
+
+    u = gs.qd_vec3(quat[1], quat[2], quat[3])
+    w = quat[0]
+
+    c1 = u.cross(v) + w * v
+    # R(q) v = v + 2  *  c2; v is constant => all of g_r flows into c2.
+    g_c2 = 2.0 * g_out
+    # Convention (matches the cross-product adjoints used elsewhere in this
+    # module, e.g. the collision reverse): for `f = a x b`,
+    #     g_a = b x g_f,   g_b = g_f x a.
+    # c2 = u x c1:
+    g_u_a = c1.cross(g_c2)
+    g_c1 = g_c2.cross(u)
+    # c1 = u x v + w  *  v:
+    g_u_b = v.cross(g_c1)
+    g_w = g_c1.dot(v)
+    g_u = g_u_a + g_u_b
+    g_quat = qd.Vector([g_w, g_u[0], g_u[1], g_u[2]], dt=gs.qd_float)
+    return g_trans, g_quat
+
+
+@qd.func
 def func_matvec_Ap(
     i_b,
     constraint_state: array_class.ConstraintState,
@@ -779,15 +819,22 @@ def kernel_manual_add_equality_constraints_bw(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Manual reverse of `add_equality_constraints` (JOINT sub-type only).
+    """Manual reverse of `add_equality_constraints` (JOINT + CONNECT sub-types).
 
-    Covers `EQUALITY_TYPE.JOINT`, which couples two scalar dofs via a quartic polynomial.
+    * JOINT   - couples two scalar dofs via a quartic polynomial.
+    * CONNECT - 3 rows pinning `global_anchor1` to `global_anchor2` in world.
+    WELD is still rejected host-side; reaching it in this kernel only advances
+    the row counter past it so any trailing rows land at the right offset.
 
     Accumulates into kinematic-state grads only (conservative):
-        rigid_info.qpos.grad[i_qpos1], qpos.grad[i_qpos2]
-        dyn_state.dofs.vel.grad[i_dof1], vel.grad[i_dof2]
-    Model parameters (`sol_params`, `eq_data`, `dyn_info.dofs.invweight`) are not
-    differentiated.
+        JOINT:
+            rigid_info.qpos.grad[i_qpos1], qpos.grad[i_qpos2]
+            dyn_state.dofs.vel.grad[i_dof1], vel.grad[i_dof2]
+        CONNECT:
+            dyn_state.links.{pos, quat, root_COM}.grad[link1 / link2]
+            dyn_state.dofs.{cdof_ang, cdof_vel, vel}.grad over each link chain
+    Model parameters (`sol_params`, `eq_data`, `dyn_info.dofs.invweight`,
+    `dyn_info.links.invweight`) are not differentiated.
 
     Forward recap (per equality of type JOINT):
         diff = qpos[i_qpos2] - qpos0[i_qpos2]
@@ -937,9 +984,180 @@ def kernel_manual_add_equality_constraints_bw(
                 # qpos2 enters via pos (d_pos/d_pos2 = -deriv) and deriv (d_deriv/d_diff).
                 rigid_info.qpos.grad[i_qpos2, i_b] += dL_d_pos * (-deriv) + dL_d_deriv * d_deriv_d_diff
             elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
-                # Not yet implemented; advance counter so any trailing JOINT rows
-                # land at the right offset. Host-side raise blocks this case.
-                n_con_counter = n_con_counter + 3
+                # ----------------------------------------------------------
+                # CONNECT: 3 rows pin global_anchor1 == global_anchor2.
+                #
+                # Forward recap (per row i_3 in {0,1,2}):
+                #   ga1 = trans(dyn_state.links.pos[link1], dyn_state.links.quat[link1])  *  eq_data[0:3]
+                #   ga2 = trans(dyn_state.links.pos[link2], dyn_state.links.quat[link2])  *  eq_data[3:6]
+                #   For each link in (link1, link2) chain, for each dof on that link:
+                #       t_pos = ga_link - root_COM[link]
+                #       vel_motion = cdof_vel - t_pos x cdof_ang
+                #       jac_i3 = sign  *  vel_motion[i_3]   (sign = +1 for link1, -1 for link2)
+                #       jac[n_con, i_d] += jac_i3
+                #       jac_qvel       += jac_i3  *  vel[i_d]
+                #   pos_diff   = ga1 - ga2
+                #   penetration = ||pos_diff||
+                #   imp, aref = imp_aref(sol_params, -penetration, jac_qvel, pos_diff[i_3])
+                #       aref = -b  *  jac_qvel - k  *  imp  *  pos_diff[i_3]
+                #   diag = max(invweight  *  (1 - imp) / imp, EPS); efc_D = 1/diag
+                # ----------------------------------------------------------
+                link1_idx = dyn_info.equalities.eq_obj1id[i_e, i_b]
+                link2_idx = dyn_info.equalities.eq_obj2id[i_e, i_b]
+                link1_mb = [link1_idx, i_b] if qd.static(rigid_config.batch_links_info) else link1_idx
+                link2_mb = [link2_idx, i_b] if qd.static(rigid_config.batch_links_info) else link2_idx
+
+                anchor1_local = gs.qd_vec3(
+                    dyn_info.equalities.eq_data[i_e, i_b][0],
+                    dyn_info.equalities.eq_data[i_e, i_b][1],
+                    dyn_info.equalities.eq_data[i_e, i_b][2],
+                )
+                anchor2_local = gs.qd_vec3(
+                    dyn_info.equalities.eq_data[i_e, i_b][3],
+                    dyn_info.equalities.eq_data[i_e, i_b][4],
+                    dyn_info.equalities.eq_data[i_e, i_b][5],
+                )
+
+                quat1 = dyn_state.links.quat[link1_idx, i_b]
+                quat2 = dyn_state.links.quat[link2_idx, i_b]
+                trans1 = dyn_state.links.pos[link1_idx, i_b]
+                trans2 = dyn_state.links.pos[link2_idx, i_b]
+                ga1 = gu.qd_transform_by_trans_quat(pos=anchor1_local, trans=trans1, quat=quat1)
+                ga2 = gu.qd_transform_by_trans_quat(pos=anchor2_local, trans=trans2, quat=quat2)
+                pos_diff = ga1 - ga2
+                penetration = pos_diff.norm()
+
+                invweight = dyn_info.links.invweight[link1_mb][0] + dyn_info.links.invweight[link2_mb][0]
+
+                sol_params = dyn_info.equalities.sol_params[i_e, i_b]
+                timeconst = sol_params[0]
+                dampratio = sol_params[1]
+                dmin = sol_params[2]
+                dmax = sol_params[3]
+                width = sol_params[4]
+                mid = sol_params[5]
+                power = sol_params[6]
+
+                # imp_x = |-penetration| / width = penetration / width
+                imp_x = penetration / width
+                imp_a_coef = 1.0 / mid ** (power - 1.0)
+                imp_b_coef = 1.0 / (1.0 - mid) ** (power - 1.0)
+                imp_a = imp_a_coef * imp_x**power
+                imp_b = 1.0 - imp_b_coef * (1.0 - imp_x) ** power
+                imp_y = imp_a if imp_x < mid else imp_b
+                imp_raw = dmin + imp_y * (dmax - dmin)
+                imp_clamped = qd.math.clamp(imp_raw, dmin, dmax)
+                imp = dmax if imp_x > 1.0 else imp_clamped
+
+                b_coef = 2.0 / (dmax * timeconst)
+                k_coef = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
+
+                diag_raw = invweight * (1.0 - imp) / imp
+                diag = qd.max(diag_raw, EPS)
+
+                # All 3 rows share imp / penetration / pos_diff. Per-row partials
+                # only differ in which axis pos_diff[i_3] is used as ref_arg.
+                d_diag_d_imp = gs.qd_float(0.0)
+                if diag_raw > EPS:
+                    d_diag_d_imp = -invweight / (imp * imp)
+                d_efc_D_d_imp = -d_diag_d_imp / (diag * diag)
+
+                within_clamp = (imp_raw > dmin) and (imp_raw < dmax) and (imp_x <= 1.0)
+                d_imp_y_d_imp_x = gs.qd_float(0.0)
+                if imp_x < mid:
+                    d_imp_y_d_imp_x = power * imp_a_coef * imp_x ** (power - 1.0)
+                else:
+                    d_imp_y_d_imp_x = power * imp_b_coef * (1.0 - imp_x) ** (power - 1.0)
+                d_imp_d_imp_x = gs.qd_float(0.0)
+                if within_clamp:
+                    d_imp_d_imp_x = (dmax - dmin) * d_imp_y_d_imp_x
+
+                # Accumulate dL/d_ga over the 3 rows so we propagate to
+                # dyn_state.links.{pos,quat} only once per anchor.
+                g_ga1 = gs.qd_vec3(0.0, 0.0, 0.0)
+                g_ga2 = gs.qd_vec3(0.0, 0.0, 0.0)
+
+                for i_3 in range(3):
+                    n_con = n_con_counter
+                    n_con_counter = n_con_counter + 1
+
+                    ga = constraint_state.dL_daref[n_con, i_b]
+                    gD = constraint_state.dL_defc_D[n_con, i_b]
+
+                    d_aref_d_jac_qvel = -b_coef
+                    d_aref_d_pos_diff_i3_direct = -k_coef * imp
+                    d_aref_d_imp = -k_coef * pos_diff[i_3]
+
+                    dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
+                    dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+
+                    # dL/d_pos_diff: (a) direct axis-i_3 term, (b) via penetration / imp.
+                    g_pos_diff = gs.qd_vec3(0.0, 0.0, 0.0)
+                    g_pos_diff[i_3] = ga * d_aref_d_pos_diff_i3_direct
+                    if penetration > EPS:
+                        coef_pen = dL_d_imp * d_imp_d_imp_x / (width * penetration)
+                        for j in qd.static(range(3)):
+                            g_pos_diff[j] = g_pos_diff[j] + coef_pen * pos_diff[j]
+
+                    # Walk both chains, accumulating cdof / vel / root_COM grads
+                    # and the anchor portion that flows back through t_pos.
+                    g_anchor1_row = gs.qd_vec3(0.0, 0.0, 0.0)
+                    g_anchor2_row = gs.qd_vec3(0.0, 0.0, 0.0)
+                    for i_ab in range(2):
+                        sign = gs.qd_float(1.0)
+                        link = link1_idx
+                        anchor_pos = ga1
+                        if i_ab == 1:
+                            sign = gs.qd_float(-1.0)
+                            link = link2_idx
+                            anchor_pos = ga2
+
+                        while link > -1:
+                            link_mb = [link, i_b] if qd.static(rigid_config.batch_links_info) else link
+                            for i_d_ in range(dyn_info.links.n_dofs[link_mb]):
+                                i_d = dyn_info.links.dof_end[link_mb] - 1 - i_d_
+
+                                cdof_ang = dyn_state.dofs.cdof_ang[i_d, i_b]
+                                cdof_vel = dyn_state.dofs.cdof_vel[i_d, i_b]
+                                t_pos = anchor_pos - dyn_state.links.root_COM[link, i_b]
+
+                                # jac_i3 = sign  *  vel_motion[i_3]
+                                # upstream: dL_djac[n_con, i_d] + dL_d_jac_qvel  *  vel[i_d]
+                                jac_stored = constraint_state.jac[n_con, i_d, i_b]
+                                g_jac_i3 = (
+                                    constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                                )
+                                dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel * jac_stored
+
+                                # dL/d_vel_motion (only component i_3)
+                                g_vm = gs.qd_vec3(0.0, 0.0, 0.0)
+                                g_vm[i_3] = g_jac_i3 * sign
+
+                                # vel_motion = cdof_vel - t_pos x cdof_ang
+                                dyn_state.dofs.cdof_vel.grad[i_d, i_b] += g_vm
+                                dyn_state.dofs.cdof_ang.grad[i_d, i_b] += t_pos.cross(g_vm)
+                                dt = -(cdof_ang.cross(g_vm))
+                                # t_pos = anchor_pos - root_COM[link]
+                                if i_ab == 0:
+                                    g_anchor1_row = g_anchor1_row + dt
+                                else:
+                                    g_anchor2_row = g_anchor2_row + dt
+                                dyn_state.links.root_COM.grad[link, i_b] += -dt
+
+                            link = dyn_info.links.parent_idx[link_mb]
+
+                    # pos_diff = ga1 - ga2 => g_ga1 += g_pos_diff, g_ga2 += -g_pos_diff.
+                    g_ga1 = g_ga1 + g_pos_diff + g_anchor1_row
+                    g_ga2 = g_ga2 - g_pos_diff + g_anchor2_row
+
+                # Propagate accumulated ga grads back to dyn_state.links.{pos, quat}.
+                # ga = trans + R(quat)  *  anchor_local; anchor_local is model param.
+                g_trans1, g_quat1 = _bw_transform_by_trans_quat_const_local(g_ga1, anchor1_local, quat1)
+                g_trans2, g_quat2 = _bw_transform_by_trans_quat_const_local(g_ga2, anchor2_local, quat2)
+                dyn_state.links.pos.grad[link1_idx, i_b] += g_trans1
+                dyn_state.links.pos.grad[link2_idx, i_b] += g_trans2
+                dyn_state.links.quat.grad[link1_idx, i_b] += g_quat1
+                dyn_state.links.quat.grad[link2_idx, i_b] += g_quat2
             else:
                 # WELD: forward adds 6 rows (translation 3 + rotation 3); host-side raise blocks.
                 n_con_counter = n_con_counter + 6

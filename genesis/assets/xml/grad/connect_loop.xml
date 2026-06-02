@@ -1,0 +1,17 @@
+<mujoco model="connect_loop">
+  <worldbody>
+    <body name="arm1" pos="0 0 0">
+      <joint name="j1" type="hinge" axis="0 1 0"/>
+      <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
+      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
+    </body>
+    <body name="arm2" pos="0 0.3 0">
+      <joint name="j2" type="hinge" axis="0 1 0"/>
+      <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
+      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+  <equality>
+    <connect body1="arm1" body2="arm2" anchor="0.2 0 0" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+  </equality>
+</mujoco>
