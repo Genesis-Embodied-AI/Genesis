@@ -89,10 +89,10 @@ def func_apply_smooth_refinement(
     Reconstruct the contact position analytically from the smooth side when one of the geoms is a smooth primitive.
 
     Idempotent on analytical contact paths; on MPR/GJK paths it removes the position-dependent bias that drives
-    spurious torque and drift on static smooth-vs-polytope contacts. Must be invoked right after collision detection
-    and before any post-processing (deduplication, perturbation reversal, etc.), so downstream stages see contact
-    positions in the same canonical frame the constraint solver will store. The pose inputs must match the pose CCD
-    or the analytical formula actually saw - the perturbed pose under multi-contact, not the unperturbed state.
+    spurious torque and drift on static smooth-vs-polytope contacts. The pose inputs (ga_*/gb_*) must be in the same
+    frame as contact_pos and normal: the detection pose for a directly-added contact, or the unperturbed pose for a
+    multi-contact perturbed contact, which is refined only after the perturbation is reverted so the result lands in
+    the canonical frame the constraint solver stores.
     """
     if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
         # Geom pairs are sorted by ascending type, so smooth primitives (SPHERE/ELLIPSOID/CAPSULE) always sit on the

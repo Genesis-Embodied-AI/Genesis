@@ -1018,6 +1018,7 @@ def func_recompute_perturbed_contact(
     gb_quat_original: qd.types.vector(4),
     used_gjk,
     geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     collider_info: array_class.ColliderInfo,
     mpr_state: array_class.MPRState,
     gjk_state: array_class.GJKState,
@@ -1034,13 +1035,12 @@ def func_recompute_perturbed_contact(
     resulting Minkowski triangle gives the exact contact normal, with the penetration as the portal's distance to the
     Minkowski origin. The position is reconstructed analytically on the smooth side.
     """
-    contact_point_a = (
-        gu.qd_transform_by_quat((contact_pos - 0.5 * penetration * normal) - contact_pos_0, gu.qd_inv_quat(qrot))
-        + contact_pos_0
-    )
-    contact_point_b = (
-        gu.qd_transform_by_quat((contact_pos + 0.5 * penetration * normal) - contact_pos_0, qrot) + contact_pos_0
-    )
+    # qrot is applied to geom A and its inverse to geom B; precompute the rotation matrix once (R for qrot, its
+    # transpose for the inverse) and reuse it for every un-rotation below instead of re-deriving it per call.
+    R = gu.qd_quat_to_R(qrot, rigid_global_info.EPS[None])
+    R_inv = R.transpose()
+    contact_point_a = R_inv @ ((contact_pos - 0.5 * penetration * normal) - contact_pos_0) + contact_pos_0
+    contact_point_b = R @ ((contact_pos + 0.5 * penetration * normal) - contact_pos_0) + contact_pos_0
     contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
     # The unperturbed contact normal is recovered per detection method, using only the data that method exposes. The
@@ -1057,35 +1057,23 @@ def func_recompute_perturbed_contact(
     # first-order value. The caller uses it to pick the contact-acceptance threshold: an exact penetration can be
     # discarded as soon as it is non-positive (fictitious contact), while an approximate one keeps a negative tolerance.
     is_exact = False
-    inv_qrot = gu.qd_inv_quat(qrot)
+    needs_twist = False
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
-        normal = gu.qd_transform_by_quat(normal, inv_qrot)
+        normal = R_inv @ normal
         penetration = normal.dot(contact_point_b - contact_point_a)
         is_exact = True
     elif geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-        twist_rotvec = qd.math.clamp(
-            normal.cross(normal_0),
-            -collider_info.mc_perturbation[None],
-            collider_info.mc_perturbation[None],
-        )
-        normal = normal + twist_rotvec.cross(normal)
-        penetration = normal.dot(contact_point_b - contact_point_a)
+        # Analytic closest-segment contact: no portal or witness pair (and its portal_valid / nearest_face are stale,
+        # since it runs neither MPR nor GJK), so the only correction available is the first-order twist.
+        needs_twist = True
     elif used_gjk and gjk_state.nearest_face[i_scratch] < 0:
-        # Shallow GJK contact (no EPA polytope was built), so there is no support face to reconstruct from. The
-        # perturbed witness delta is the perturbed normal by construction, so keep it; the +/- symmetry keeps the
-        # contact set unbiased in aggregate.
-        penetration = normal.dot(contact_point_b - contact_point_a)
+        # Shallow GJK contact (no EPA polytope was built): no support face, but the perturbed witness delta is the
+        # perturbed normal by construction, so keep it; the +/- symmetry keeps the contact set unbiased in aggregate.
+        pass
     elif not used_gjk and not mpr_state.portal_valid[i_scratch]:
         # MPR resolved the contact through a degenerate touch/segment path, so simplex_support holds no refined
-        # contact-face portal. Reconstructing from it would yield a spurious edge/corner normal, so fall back to the
-        # first-order twist of the perturbed normal towards the unperturbed one.
-        twist_rotvec = qd.math.clamp(
-            normal.cross(normal_0),
-            -collider_info.mc_perturbation[None],
-            collider_info.mc_perturbation[None],
-        )
-        normal = normal + twist_rotvec.cross(normal)
-        penetration = normal.dot(contact_point_b - contact_point_a)
+        # contact-face portal; reconstructing from it would yield a spurious edge/corner normal.
+        needs_twist = True
     else:
         # Support pairs of the contact face: the MPR portal (indices 1-3), or the GJK EPA face nearest to the origin.
         a1 = mpr_state.simplex_support.v1[1, i_scratch]
@@ -1105,31 +1093,36 @@ def func_recompute_perturbed_contact(
             b2 = gjk_state.polytope_verts.obj2[i_scratch, iv2]
             a3 = gjk_state.polytope_verts.obj1[i_scratch, iv3]
             b3 = gjk_state.polytope_verts.obj2[i_scratch, iv3]
-        m1 = gu.qd_transform_by_quat(a1 - contact_pos_0, inv_qrot) - gu.qd_transform_by_quat(b1 - contact_pos_0, qrot)
-        m2 = gu.qd_transform_by_quat(a2 - contact_pos_0, inv_qrot) - gu.qd_transform_by_quat(b2 - contact_pos_0, qrot)
-        m3 = gu.qd_transform_by_quat(a3 - contact_pos_0, inv_qrot) - gu.qd_transform_by_quat(b3 - contact_pos_0, qrot)
-        edge1 = m2 - m1
-        edge2 = m3 - m1
+        # contact_pos_0 cancels in the edge differences, so the face normal needs only support-point deltas.
+        edge1 = R_inv @ (a2 - a1) - R @ (b2 - b1)
+        edge2 = R_inv @ (a3 - a1) - R @ (b3 - b1)
         portal_normal = edge1.cross(edge2)
-        portal_norm = portal_normal.norm()
-        # The face normal is reliable only when the support triangle is well-conditioned. For a nearly coplanar contact
-        # (e.g. flat box-on-box) the support points can be almost collinear, making the face normal numerically
-        # unstable; fall back to the first-order twist there.
-        if portal_norm > 0.1 * edge1.norm() * edge2.norm():
-            normal = portal_normal / portal_norm
+        portal_norm_sqr = portal_normal.norm_sqr()
+        # The face normal is reliable only when the support triangle is well-conditioned. For a nearly coplanar
+        # contact (e.g. flat box-on-box) the support points can be almost collinear, making the face normal
+        # numerically unstable; fall back to the twist there. Compared squared to avoid the edge-length square roots.
+        if portal_norm_sqr > 0.01 * edge1.norm_sqr() * edge2.norm_sqr():
+            normal = portal_normal / qd.sqrt(portal_norm_sqr)
             if normal.dot(normal_0) < 0.0:
                 normal = -normal
+            # m1 (one un-rotated Minkowski support point on the face) is only needed for the exact penetration depth.
+            m1 = R_inv @ (a1 - contact_pos_0) - R @ (b1 - contact_pos_0)
             penetration = -normal.dot(m1)
             is_exact = True
         else:
-            twist_rotvec = qd.math.clamp(
-                normal.cross(normal_0),
-                -collider_info.mc_perturbation[None],
-                collider_info.mc_perturbation[None],
-            )
-            normal = normal + twist_rotvec.cross(normal)
-            penetration = normal.dot(contact_point_b - contact_point_a)
+            needs_twist = True
 
+    # Single first-order fallback for every case that could not recover an exact normal (analytic capsule-capsule,
+    # degenerate MPR, near-collinear portal). Computed once, and only when actually needed.
+    if needs_twist:
+        mc_perturbation = collider_info.mc_perturbation[None]
+        twist_rotvec = qd.math.clamp(normal.cross(normal_0), -mc_perturbation, mc_perturbation)
+        normal = normal + twist_rotvec.cross(normal)
+    if not is_exact:
+        penetration = normal.dot(contact_point_b - contact_point_a)
+
+    # Apply the smooth-primitive position reconstruction here, after the perturbation has been reverted, so it uses the
+    # final (corrected) normal and the unperturbed pose - the canonical state the solver stores.
     contact_pos = func_apply_smooth_refinement(
         i_ga,
         i_gb,
@@ -1499,7 +1492,9 @@ def func_convex_convex_contact(
                                         contact_pos = gjk_state.contact_pos[i_b, 0]
                                         normal = gjk_state.normal[i_b, 0]
 
-            if is_col:
+            # Refine the unperturbed (i_detection == 0) contact here; perturbed contacts are refined inside
+            # func_recompute_perturbed_contact after the perturbation is reverted, on the canonical (unperturbed) pose.
+            if is_col and i_detection == 0:
                 contact_pos = func_apply_smooth_refinement(
                     i_ga,
                     i_gb,
@@ -1581,6 +1576,7 @@ def func_convex_convex_contact(
                         gb_quat_original,
                         _used_gjk,
                         geoms_info,
+                        rigid_global_info,
                         collider_info,
                         mpr_state,
                         gjk_state,
@@ -1910,20 +1906,8 @@ def _func_multicontact_mpr(
                         needs_gjk_upgrade = True
 
             if is_col and not needs_gjk_upgrade:
-                contact_pos = func_apply_smooth_refinement(
-                    i_ga,
-                    i_gb,
-                    normal,
-                    penetration,
-                    contact_pos,
-                    ga_pos_current,
-                    ga_quat_current,
-                    gb_pos_current,
-                    gb_quat_current,
-                    geoms_info,
-                    static_rigid_sim_config,
-                )
-
+                # The perturbed contact is refined inside func_recompute_perturbed_contact (after the perturbation is
+                # reverted, on the canonical pose); no pre-reversal refinement is needed here.
                 is_exact = False
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
@@ -1944,6 +1928,7 @@ def _func_multicontact_mpr(
                         gb_quat_original,
                         _used_gjk,
                         geoms_info,
+                        rigid_global_info,
                         collider_info,
                         mpr_state,
                         gjk_state,
@@ -2207,20 +2192,8 @@ def _func_multicontact_gjk_full(
                 else:
                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
             elif not gjk_multi_done and multi_contact and is_col:
-                contact_pos = func_apply_smooth_refinement(
-                    i_ga,
-                    i_gb,
-                    normal,
-                    penetration,
-                    contact_pos,
-                    ga_pos_current,
-                    ga_quat_current,
-                    gb_pos_current,
-                    gb_quat_current,
-                    geoms_info,
-                    static_rigid_sim_config,
-                )
-
+                # The perturbed contact is refined inside func_recompute_perturbed_contact (after the perturbation is
+                # reverted, on the canonical pose); no pre-reversal refinement is needed here.
                 is_exact = False
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
@@ -2241,6 +2214,7 @@ def _func_multicontact_gjk_full(
                         gb_quat_original,
                         _used_gjk,
                         geoms_info,
+                        rigid_global_info,
                         collider_info,
                         mpr_state,
                         gjk_state,
