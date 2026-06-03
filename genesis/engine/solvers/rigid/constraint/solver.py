@@ -1495,7 +1495,9 @@ def add_frictionloss_constraints(
     # if `serialize=True`...
     qd.loop_config(
         name="add_frictionloss_constraints",
-        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and gs.backend != gs.metal),
+        serialize=qd.static(
+            static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and static_rigid_sim_config.backend != gs.metal
+        ),
     )
     for i_b in range(_B):
         constraint_state.n_constraints_frictionloss[i_b] = 0

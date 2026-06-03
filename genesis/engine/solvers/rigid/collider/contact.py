@@ -514,10 +514,10 @@ def func_contact_orthogonals(
 
 @qd.func
 def func_rotate_frame(
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
-    contact_pos: qd.types.vector(3, dtype=gs.qd_float),
-    qrot: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
+    contact_pos: qd.types.vector(3),
+    qrot: qd.types.vector(4),
 ) -> tuple[
     qd.types.vector(3, dtype=gs.qd_float),
     qd.types.vector(4, dtype=gs.qd_float),
