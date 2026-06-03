@@ -559,7 +559,7 @@ def func_clamp_prune_and_sort_contacts(
       with geom-pair groups treated as units (provides spatial locality for downstream constraint-solver reads).
 
     The pruning logic groups contacts by canonical (min(link_a, link_b), max(link_a, link_b)) and, for each bucket
-    of >= 5 contacts whose positions lie in a single plane (perpendicular to the bucket's folded mean normal),
+    of >= 3 contacts whose positions lie in a single plane (perpendicular to the bucket's folded mean normal),
     keeps only the 2D convex hull vertices of the projected positions. Buckets whose positions are not single-plane
     (e.g. multi-wall corner with contacts on perpendicular surfaces) are left untouched. The normal direction of
     each surviving contact is preserved verbatim; the bucket's mean normal is used only as the projection direction.
@@ -570,7 +570,7 @@ def func_clamp_prune_and_sort_contacts(
     Phases (per env, scratch sized to max_contact_pairs):
     1. Group by canonical link-pair: insertion-sort ``contact_sort_idx`` by (min_link, max_link) key, reading link
        data through the current index permutation.
-    2. Per bucket of >= 5 contacts: compute mean normal (folded to a common hemisphere). Check depth coplanarity of
+    2. Per bucket of >= 3 contacts: compute mean normal (folded to a common hemisphere). Check depth coplanarity of
        contact positions. If they share a plane, project to (u, v), Andrew's monotone chain. Mark survivors in
        contact_keep[] (indexed by bucket-logical position).
     3. Compact: squeeze dropped slots out of ``contact_sort_idx`` and update ``n_contacts``.
@@ -599,7 +599,7 @@ def func_clamp_prune_and_sort_contacts(
         # scene has multi-geom links / nonconvex / terrain, and not in autodiff mode. Skipped at runtime
         # when contact_pruning_tolerance is 0.
         if qd.static(collider_static_config.has_prunable_contacts and not static_rigid_sim_config.requires_grad):
-            if n_con >= 5 and tol > gs.qd_float(0.0):
+            if n_con >= 3 and tol > gs.qd_float(0.0):
                 # Phase 1: insertion-sort contact_sort_idx by canonical (min_link, max_link) key. The sort_idx
                 # already holds the identity from the unconditional init above, so the initial key read is direct.
                 for i in range(n_con):
@@ -649,7 +649,7 @@ def func_clamp_prune_and_sort_contacts(
                         b_end += 1
                     b_size = b_end - b_start
 
-                    if b_size >= 5:
+                    if b_size >= 3:
                         # Mean normal (folded to the hemisphere of contact at b_start) and centroid.
                         ref_n = collider_state.contact_data.normal[phys0, i_b]
                         rnx = ref_n[0]
@@ -966,7 +966,7 @@ def func_clamp_prune_and_sort_contacts_coop(
             collider_state.contact_sort_idx[ii, i_b] = ii
             ii += _K
 
-        if n_con >= 5:
+        if n_con >= 3:
             # PARALLEL: phase 1a key init, 32 lanes stride. contact_sort_idx identity was already written in the
             # unconditional init block above so the phase-1a sort can read+sort it in place.
             ii = tid
@@ -1048,7 +1048,7 @@ def func_clamp_prune_and_sort_contacts_coop(
                     b_end += 1
                 b_size = b_end - b_start
 
-                if b_size >= 5:
+                if b_size >= 3:
                     ref_src = collider_state.contact_sort_idx[b_start, i_b]
                     ref_n = collider_state.contact_data.normal[ref_src, i_b]
                     rnx = ref_n[0]
