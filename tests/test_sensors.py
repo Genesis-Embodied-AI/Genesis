@@ -1471,12 +1471,13 @@ def test_raycaster_heterogeneous_object(show_viewer, tol):
         )
     )
     # Without per-env geom masking an env casts against the union of all variants (they share one vertex buffer). The
-    # variants overlap (same pose) so env 0's inactive variant is the nearer hit there - that is what makes a missing
-    # mask observable: env 0 would shadow its own box with env 1's closer sphere.
+    # variants are concentric obstacles of decreasing near-face distance, so each env's own variant is the farthest
+    # hit. A missing mask is then observable as an env shadowing its variant with a nearer one belonging to another env.
     het_obstacle = scene.add_entity(
         morph=(
             gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(1.0, 0.0, 0.5), fixed=True),
             gs.morphs.Sphere(radius=0.2, pos=(1.0, 0.0, 0.5), fixed=True),
+            gs.morphs.Box(size=(0.6, 0.6, 0.6), pos=(1.0, 0.0, 0.5), fixed=True),
         ),
     )
     lidar = scene.add_sensor(
@@ -1488,11 +1489,11 @@ def test_raycaster_heterogeneous_object(show_viewer, tol):
         )
     )
 
-    scene.build(n_envs=2)
+    scene.build(n_envs=3)
     scene.step()
 
     distances = lidar.read().distances[:, 0, 0]
-    assert_allclose(distances, (0.9, 0.8), tol=5e-3)
+    assert_allclose(distances, (0.9, 0.8, 0.7), tol=5e-3)
 
     # The per-env trees differ (each masks the other variant), so the cast must not share one tree across envs.
     collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)

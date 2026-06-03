@@ -219,8 +219,11 @@ def ray_aabb_intersection(
     t_near = qd.max(tmin.x, tmin.y, tmin.z, gs.qd_float(0.0))
     t_far = qd.min(tmax.x, tmax.y, tmax.z)
 
-    # Check if ray intersects AABB
-    if t_near <= t_far:
+    # A masked-out face leaves an inverted AABB (min=+inf, max=-inf) as an "unhittable" sentinel. The slab test alone
+    # treats that as covering all space (t_near=0 <= t_far=+inf), so the box must be checked non-empty for the sentinel
+    # to be a definitive miss regardless of platform NaN/inf comparison behavior.
+    is_non_empty = aabb_min.x <= aabb_max.x and aabb_min.y <= aabb_max.y and aabb_min.z <= aabb_max.z
+    if is_non_empty and t_near <= t_far:
         result = t_near
 
     return result
