@@ -1347,6 +1347,47 @@ class RigidSolver(KinematicSolver):
             self.constraint_solver.add_inequality_constraints()
             self.constraint_solver.resolve()
 
+    def _constraint_force_grad(self):
+        # Backward pass for the constraint solver.
+        kernel_load_dL_dqacc_from_acc_grad(self.dyn_state, self.constraint_solver.constraint_state, self.rigid_config)
+        self.constraint_solver.backward()
+        kernel_accumulate_constraint_solver_grads(
+            self.dyn_state, self.constraint_solver.constraint_state, self.rigid_info, self.rigid_config
+        )
+
+        kernel_manual_add_equality_constraints_bw(
+            self.dyn_state, self.constraint_solver.constraint_state, self.dyn_info, self.rigid_info, self.rigid_config
+        )
+        kernel_manual_add_frictionloss_constraints_bw(
+            self.dyn_state, self.constraint_solver.constraint_state, self.dyn_info, self.rigid_info, self.rigid_config
+        )
+
+        if self._enable_collision:
+            collider_state = self.collider._collider_state
+            collider_state.contact_data.pos.grad.fill(0.0)
+            collider_state.contact_data.normal.grad.fill(0.0)
+            collider_state.contact_data.penetration.grad.fill(0.0)
+            kernel_manual_add_collision_constraints_bw(
+                self.dyn_state,
+                collider_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+            )
+            self.collider.backward_narrowphase()
+
+        if self._options.enable_joint_limit:
+            kernel_manual_add_joint_limit_constraints_bw(
+                self.dyn_state,
+                self.collider._collider_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+                enable_collision=self._enable_collision,
+            )
+
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
             self.dyn_state, self.constraint_solver.constraint_state, self.dyn_info, self.rigid_info, self.rigid_config
@@ -1583,92 +1624,13 @@ class RigidSolver(KinematicSolver):
             errno=self._errno,
         )
 
-        # Two backward paths for force -> acc:
-        #   (A) Unconstrained: kernel_manual_compute_qacc_bw does the implicit function theorem (IFT) through M
-        #       (writes force.grad + mass_mat.grad).
-        #   (B) Constrained (active joint limits / collision / frictionloss): the constraint solve overwrites
-        #       acc, so the IFT through M alone is wrong. Instead drive constraint_solver.backward (adjoint KKT ->
-        #       dL_dM / djac / daref / defc_D / dforce) + the per-constraint manual reverses below.
-        constraint_state = self.constraint_solver.constraint_state
-        n_fric_max = int(qd_to_numpy(constraint_state.n_constraints_frictionloss).max())
-        n_eq_max = int(qd_to_numpy(constraint_state.n_constraints_equality).max())
-        has_collision = not self._disable_constraint and self._enable_collision
-        has_joint_limit = not self._disable_constraint and self._options.enable_joint_limit
-        has_frictionloss = n_fric_max > 0
-        has_equality = n_eq_max > 0
-        if has_collision or has_joint_limit or has_frictionloss or has_equality:
-            # Equality has three sub-types: JOINT and CONNECT are differentiated below; WELD is not yet (reject
-            # host-side). Inspect only the active range qd_n_equalities[i_b] so unused slots (whose eq_type defaults
-            # to CONNECT=0) don't false-positive. TODO: implement manual reverse for the WELD sub-type.
-            if has_equality:
-                eq_types = qd_to_numpy(self.dyn_info.equalities.eq_type)
-                n_eq_per_env = qd_to_numpy(constraint_state.qd_n_equalities)
-                for i_b in range(eq_types.shape[1]):
-                    active_types = eq_types[: n_eq_per_env[i_b], i_b]
-                    if (active_types == int(gs.EQUALITY_TYPE.WELD)).any():
-                        gs.raise_exception(
-                            "Differentiable rigid backward does not yet support WELD equality "
-                            "constraints (JOINT and CONNECT are supported). Disable WELD in a "
-                            "differentiable scene."
-                        )
-
-            kernel_load_dL_dqacc_from_acc_grad(
-                self.dyn_state, self.constraint_solver.constraint_state, self.rigid_config
-            )
-            self.constraint_solver.backward()
-            kernel_accumulate_constraint_solver_grads(
-                self.dyn_state, self.constraint_solver.constraint_state, self.rigid_info, self.rigid_config
-            )
-
-            if has_equality:
-                # Equality (JOINT + CONNECT) is the first row group.
-                kernel_manual_add_equality_constraints_bw(
-                    self.dyn_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                )
-
-            if has_frictionloss:
-                # Frictionloss is the second inequality group; the reverse re-walks the same per-dof loop the forward
-                # uses.
-                kernel_manual_add_frictionloss_constraints_bw(
-                    self.dyn_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                )
-
-            if has_collision:
-                # Manual reverse of the collision constraint rows -> contact-data grads, then differentiate the
-                # narrow-phase (diff GJK) through collider.backward_narrowphase into geom pose grads.
-                collider_state = self.collider._collider_state
-                collider_state.contact_data.pos.grad.fill(0.0)
-                collider_state.contact_data.normal.grad.fill(0.0)
-                collider_state.contact_data.penetration.grad.fill(0.0)
-                kernel_manual_add_collision_constraints_bw(
-                    self.dyn_state,
-                    collider_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                )
-                # The contact-data grads are written directly above, so only the narrow-phase reverse runs.
-                self.collider.backward_narrowphase()
-
-            if has_joint_limit:
-                kernel_manual_add_joint_limit_constraints_bw(
-                    self.dyn_state,
-                    self.collider._collider_state,
-                    self.constraint_solver.constraint_state,
-                    self.dyn_info,
-                    self.rigid_info,
-                    self.rigid_config,
-                    enable_collision=has_collision,
-                )
+        # Mirror the forward branch in _func_constraint_force:
+        #   (A) _disable_constraint=True: the forward never calls the constraint solver; acc is the smooth-dynamics
+        #       result. Reverse via kernel_manual_compute_qacc_bw (implicit function theorem through M).
+        #   (B) _disable_constraint=False: the forward always calls constraint_solver.resolve. Reverse via
+        #       _constraint_force_grad.
+        if not self._disable_constraint:
+            self._constraint_force_grad()
         else:
             # Manual backward for func_compute_qacc via the implicit function theorem.
             kernel_manual_compute_qacc_bw(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)

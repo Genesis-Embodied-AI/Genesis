@@ -1798,6 +1798,243 @@ def test_diff_equality_connect_backward_fd_multistep(show_viewer, n_steps):
 
 
 # ===========================================================================
+# Equality WELD constraint FD  (<equality><weld .../></equality> -> 6 rows)
+# ===========================================================================
+
+
+def _build_equality_weld(mjcf_path: str, *, requires_grad: bool):
+    """Same boilerplate as CONNECT; the WELD forward emits 6 rows whenever
+    the MJCF declares `<equality><weld/></equality>`."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=4,
+            gravity=(0.0, 0.0, 0.0),
+            requires_grad=requires_grad,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_self_collision=False,
+            enable_joint_limit=False,
+            disable_constraint=False,
+            use_hibernation=False,
+            use_contact_island=False,
+        ),
+        show_viewer=False,
+    )
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    scene.build(n_envs=0)
+    return scene, robot
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_equality_weld_forward_emits_rows(show_viewer):
+    """Sanity: an MJCF with a WELD equality emits exactly 6 equality rows."""
+    scene, _ = _build_equality_weld("xml/grad/weld_pair.xml", requires_grad=False)
+    scene.reset()
+    scene.step()
+    cs = scene.rigid_solver.constraint_solver.constraint_state
+    n_eq = int(qd_to_torch(cs.n_constraints_equality)[0])
+    assert n_eq == 6, f"expected 6 equality rows for WELD, got {n_eq}"
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_equality_weld_backward_fd_one_step(show_viewer):
+    """FD vs analytical gradient through the WELD equality reverse (6 rows)."""
+    mjcf_path = "xml/grad/weld_pair.xml"
+    eps = 1e-5
+
+    scene_ana, robot_ana = _build_equality_weld(mjcf_path, requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor([1.0, -0.5], dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    scene_ana.step()
+    qpos = _rigid_state(scene_ana).qpos[0]
+    loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
+    loss.backward()
+    ana = v.grad.detach().cpu().numpy().copy()
+
+    scene_fd, robot_fd = _build_equality_weld(mjcf_path, requires_grad=False)
+
+    def loss_at(val_array) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor(val_array, dtype=gs.tc_float))
+        scene_fd.step()
+        qp = _rigid_state(scene_fd).qpos[0]
+        return float(qp[0] ** 2 + 0.7 * qp[1] ** 2)
+
+    fd = np.zeros_like(ana)
+    base = np.array([1.0, -0.5], dtype=np.float64)
+    for d in range(2):
+        plus = base.copy()
+        plus[d] += eps
+        minus = base.copy()
+        minus[d] -= eps
+        fd[d] = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+
+    for d in range(2):
+        assert_allclose(ana[d], fd[d], rtol=1e-3, atol=1e-6, err_msg=f"dof {d}: ana={ana[d]} fd={fd[d]}")
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("n_steps", [1, 4, 10])
+def test_diff_equality_weld_backward_fd_multistep(show_viewer, n_steps):
+    """FD vs analytical for multistep BPTT through the WELD equality."""
+    mjcf_path = "xml/grad/weld_pair.xml"
+    eps = 1e-5
+
+    scene_ana, robot_ana = _build_equality_weld(mjcf_path, requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor([0.8, -0.3], dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    for _ in range(n_steps):
+        scene_ana.step()
+    qpos = _rigid_state(scene_ana).qpos[0]
+    loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
+    loss.backward()
+    ana = v.grad.detach().cpu().numpy().copy()
+
+    scene_fd, robot_fd = _build_equality_weld(mjcf_path, requires_grad=False)
+
+    def loss_at(val_array) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor(val_array, dtype=gs.tc_float))
+        for _ in range(n_steps):
+            scene_fd.step()
+        qp = _rigid_state(scene_fd).qpos[0]
+        return float(qp[0] ** 2 + 0.7 * qp[1] ** 2)
+
+    fd = np.zeros_like(ana)
+    base = np.array([0.8, -0.3], dtype=np.float64)
+    for d in range(2):
+        plus = base.copy()
+        plus[d] += eps
+        minus = base.copy()
+        minus[d] -= eps
+        fd[d] = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+
+    for d in range(2):
+        assert_allclose(ana[d], fd[d], rtol=2e-3, atol=1e-6, err_msg=f"dof {d}: ana={ana[d]} fd={fd[d]}")
+
+
+# ===========================================================================
+# Integration: all differentiated constraint groups in one scene
+# (equality JOINT + CONNECT + WELD + inequality frictionloss)
+# ===========================================================================
+
+
+def _build_all_eq_fric(*, requires_grad: bool):
+    """6-body scene wiring every group `kernel_manual_add_equality_constraints_bw`
+    + `kernel_manual_add_frictionloss_constraints_bw` cover:
+        j1 has frictionloss; (j1, j2) coupled by JOINT;
+        arm3 <-> arm4 by CONNECT (3 rows);
+        arm5 <-> arm6 by WELD (6 rows).
+    Disjoint pairs → constraint solver is well-conditioned per pair, so the
+    integration test reflects reverse correctness across all groups
+    simultaneously rather than just stiff-solver behavior.
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=4,
+            gravity=(0.0, 0.0, 0.0),
+            requires_grad=requires_grad,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_self_collision=False,
+            enable_joint_limit=False,
+            disable_constraint=False,
+            use_hibernation=False,
+            use_contact_island=False,
+        ),
+        show_viewer=False,
+    )
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/grad/all_eq_fric.xml"))
+    scene.build(n_envs=0)
+    return scene, robot
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_all_constraints_forward_row_counts(show_viewer):
+    """Sanity: forward emits 1 frictionloss row + (1 JOINT + 3 CONNECT + 6 WELD) = 10 equality rows."""
+    scene, _ = _build_all_eq_fric(requires_grad=False)
+    scene.reset()
+    scene.step()
+    cs = scene.rigid_solver.constraint_solver.constraint_state
+    n_eq = int(qd_to_torch(cs.n_constraints_equality)[0])
+    n_fric = int(qd_to_torch(cs.n_constraints_frictionloss)[0])
+    assert n_eq == 10, f"expected 10 equality rows (1+3+6), got {n_eq}"
+    assert n_fric == 1, f"expected 1 frictionloss row, got {n_fric}"
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("n_steps", [1, 4, 10])
+def test_diff_all_constraints_backward_fd(show_viewer, n_steps):
+    """FD vs analytical with all four differentiated groups co-active. Verifies
+    that the row-offset bookkeeping across `equality (JOINT+CONNECT+WELD) →
+    frictionloss` is correct end-to-end."""
+    eps = 1e-5
+    n_dofs = 6
+    init = np.array([0.8, -0.3, 0.5, -0.2, 0.4, -0.6], dtype=np.float64)
+    weights = np.array([1.0, 0.7, 1.3, 0.5, 0.9, 1.1], dtype=np.float64)
+
+    def loss_from_qpos(qp):
+        # Mix all 6 dofs so each gradient component is exercised.
+        out = 0.0
+        for d in range(n_dofs):
+            out = out + weights[d] * qp[d] ** 2
+        return out
+
+    scene_ana, robot_ana = _build_all_eq_fric(requires_grad=True)
+    scene_ana.reset()
+    v = gs.tensor(init, dtype=gs.tc_float, requires_grad=True)
+    robot_ana.set_dofs_velocity(v)
+    for _ in range(n_steps):
+        scene_ana.step()
+    qpos = _rigid_state(scene_ana).qpos[0]
+    loss = loss_from_qpos(qpos)
+    loss.backward()
+    ana = v.grad.detach().cpu().numpy().copy()
+
+    scene_fd, robot_fd = _build_all_eq_fric(requires_grad=False)
+
+    def loss_at(val_array) -> float:
+        scene_fd.reset()
+        robot_fd.set_dofs_velocity(gs.tensor(val_array, dtype=gs.tc_float))
+        for _ in range(n_steps):
+            scene_fd.step()
+        qp = _rigid_state(scene_fd).qpos[0]
+        return float(loss_from_qpos(qp))
+
+    fd = np.zeros_like(ana)
+    for d in range(n_dofs):
+        plus = init.copy()
+        plus[d] += eps
+        minus = init.copy()
+        minus[d] -= eps
+        fd[d] = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+
+    # Looser rtol than the per-group tests: this scene is mildly over-constrained
+    # (11 active rows on 6 dofs across 3 disjoint pairs) so the constraint
+    # solver's LDLT accumulates a small CPU/GPU divergence over a long horizon.
+    # The per-group tests already pin the reverse formulas; this integration
+    # test just guards row-offset bookkeeping across all groups.
+    for d in range(n_dofs):
+        assert_allclose(ana[d], fd[d], rtol=2e-2, atol=1e-6, err_msg=f"dof {d}: ana={ana[d]} fd={fd[d]}")
+
+
+# ===========================================================================
 # Collision / diff-GJK contact FD  (enable_collision=True -> constraints ON)
 # ===========================================================================
 

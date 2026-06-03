@@ -46,6 +46,46 @@ def _bw_transform_by_trans_quat_const_local(
 
 
 @qd.func
+def _bw_quat_mul(
+    g_out: qd.types.vector(4, dtype=gs.qd_float),
+    u: qd.types.vector(4, dtype=gs.qd_float),
+    v: qd.types.vector(4, dtype=gs.qd_float),
+):
+    """Adjoint of Hamilton quat product `out = qd_quat_mul(u, v)`. Returns
+    `(g_u, g_v)`. Verified component-wise against torch autograd.
+
+    Forward (Genesis (w, x, y, z) order):
+        f[0] = u_w v_w - u_x v_x - u_y v_y - u_z v_z
+        f[1] = u_w v_x + u_x v_w + u_y v_z - u_z v_y
+        f[2] = u_w v_y - u_x v_z + u_y v_w + u_z v_x
+        f[3] = u_w v_z + u_x v_y - u_y v_x + u_z v_w
+    """
+    g0 = g_out[0]
+    g1 = g_out[1]
+    g2 = g_out[2]
+    g3 = g_out[3]
+    g_u = qd.Vector(
+        [
+            +g0 * v[0] + g1 * v[1] + g2 * v[2] + g3 * v[3],
+            -g0 * v[1] + g1 * v[0] - g2 * v[3] + g3 * v[2],
+            -g0 * v[2] + g1 * v[3] + g2 * v[0] - g3 * v[1],
+            -g0 * v[3] - g1 * v[2] + g2 * v[1] + g3 * v[0],
+        ],
+        dt=gs.qd_float,
+    )
+    g_v = qd.Vector(
+        [
+            +g0 * u[0] + g1 * u[1] + g2 * u[2] + g3 * u[3],
+            -g0 * u[1] + g1 * u[0] + g2 * u[3] - g3 * u[2],
+            -g0 * u[2] - g1 * u[3] + g2 * u[0] + g3 * u[1],
+            -g0 * u[3] + g1 * u[2] - g2 * u[1] + g3 * u[0],
+        ],
+        dt=gs.qd_float,
+    )
+    return g_u, g_v
+
+
+@qd.func
 def func_matvec_Ap(
     i_b,
     constraint_state: array_class.ConstraintState,
@@ -819,12 +859,12 @@ def kernel_manual_add_equality_constraints_bw(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Manual reverse of `add_equality_constraints` (JOINT + CONNECT sub-types).
+    """Manual reverse of `add_equality_constraints` (JOINT + CONNECT + WELD).
 
-    * JOINT   - couples two scalar dofs via a quartic polynomial.
+    * JOINT   - couples two scalar dofs via a quartic polynomial (1 row).
     * CONNECT - 3 rows pinning `global_anchor1` to `global_anchor2` in world.
-    WELD is still rejected host-side; reaching it in this kernel only advances
-    the row counter past it so any trailing rows land at the right offset.
+    * WELD    - 6 rows: 3 position + 3 orientation, all sharing a single
+                combined `pos_imp = ||all_error||` (6D).
 
     Accumulates into kinematic-state grads only (conservative):
         JOINT:
@@ -1159,5 +1199,313 @@ def kernel_manual_add_equality_constraints_bw(
                 dyn_state.links.quat.grad[link1_idx, i_b] += g_quat1
                 dyn_state.links.quat.grad[link2_idx, i_b] += g_quat2
             else:
-                # WELD: forward adds 6 rows (translation 3 + rotation 3); host-side raise blocks.
-                n_con_counter = n_con_counter + 6
+                # ----------------------------------------------------------
+                # WELD: 6 rows -- 3 position + 3 orientation, all sharing
+                # a single combined `pos_imp = ||all_error||` (6D).
+                #
+                # Forward recap:
+                #   ga1 = trans(dyn_state.links.pos[link1], dyn_state.links.quat[link1])  *  eq_data[3:6]
+                #   ga2 = trans(dyn_state.links.pos[link2], dyn_state.links.quat[link2])  *  eq_data[0:3]
+                #   pos_error = ga1 - ga2
+                #   inv_q2 = inv_quat(dyn_state.links.quat[link2])
+                #   q       = quat_mul(dyn_state.links.quat[link1], relpose)
+                #   error_quat = quat_mul(inv_q2, q)
+                #   rot_error  = error_quat.xyz  *  torquescale
+                #   all_error  = (pos_error, rot_error);  pos_imp = ||all_error||
+                #
+                # Position rows (i_3 = 0..2): same chain structure as CONNECT
+                # with invweight[0]; ref_arg = pos_error[i_3].
+                # Orientation rows (i_3 = 0..2): jac_phase1 = sign  *  cdof_ang[i_d]
+                # then quat post-process
+                #   quat2_d = qd_quat_mul_axis(inv_q2, jac_phase1[i_d])
+                #   quat3_d = qd_quat_mul(quat2_d, q)
+                #   jac[n_con+3+i_3, i_d] = 0.5  *  torquescale  *  quat3_d[i_3+1]
+                # ----------------------------------------------------------
+                link1_idx = dyn_info.equalities.eq_obj1id[i_e, i_b]
+                link2_idx = dyn_info.equalities.eq_obj2id[i_e, i_b]
+                link1_mb = [link1_idx, i_b] if qd.static(rigid_config.batch_links_info) else link1_idx
+                link2_mb = [link2_idx, i_b] if qd.static(rigid_config.batch_links_info) else link2_idx
+
+                # WELD eq_data layout (per forward comment):
+                # [0:3] anchor2 (local), [3:6] anchor1 (local), [6:10] relpose, [10] torquescale
+                anchor1_local = gs.qd_vec3(
+                    dyn_info.equalities.eq_data[i_e, i_b][3],
+                    dyn_info.equalities.eq_data[i_e, i_b][4],
+                    dyn_info.equalities.eq_data[i_e, i_b][5],
+                )
+                anchor2_local = gs.qd_vec3(
+                    dyn_info.equalities.eq_data[i_e, i_b][0],
+                    dyn_info.equalities.eq_data[i_e, i_b][1],
+                    dyn_info.equalities.eq_data[i_e, i_b][2],
+                )
+                relpose = qd.Vector(
+                    [
+                        dyn_info.equalities.eq_data[i_e, i_b][6],
+                        dyn_info.equalities.eq_data[i_e, i_b][7],
+                        dyn_info.equalities.eq_data[i_e, i_b][8],
+                        dyn_info.equalities.eq_data[i_e, i_b][9],
+                    ],
+                    dt=gs.qd_float,
+                )
+                torquescale = dyn_info.equalities.eq_data[i_e, i_b][10]
+
+                quat_body1 = dyn_state.links.quat[link1_idx, i_b]
+                quat_body2 = dyn_state.links.quat[link2_idx, i_b]
+                trans1 = dyn_state.links.pos[link1_idx, i_b]
+                trans2 = dyn_state.links.pos[link2_idx, i_b]
+                ga1 = gu.qd_transform_by_trans_quat(pos=anchor1_local, trans=trans1, quat=quat_body1)
+                ga2 = gu.qd_transform_by_trans_quat(pos=anchor2_local, trans=trans2, quat=quat_body2)
+                pos_error = ga1 - ga2
+
+                inv_q2 = gu.qd_inv_quat(quat_body2)
+                q_var = gu.qd_quat_mul(quat_body1, relpose)
+                error_quat = gu.qd_quat_mul(inv_q2, q_var)
+                rot_error = gs.qd_vec3(error_quat[1], error_quat[2], error_quat[3]) * torquescale
+
+                # all_error = (pos_error, rot_error) ; pos_imp = ||all_error||
+                pos_imp = qd.sqrt(
+                    pos_error[0] * pos_error[0]
+                    + pos_error[1] * pos_error[1]
+                    + pos_error[2] * pos_error[2]
+                    + rot_error[0] * rot_error[0]
+                    + rot_error[1] * rot_error[1]
+                    + rot_error[2] * rot_error[2]
+                )
+
+                invweight_pos = dyn_info.links.invweight[link1_mb][0] + dyn_info.links.invweight[link2_mb][0]
+                invweight_rot = dyn_info.links.invweight[link1_mb][1] + dyn_info.links.invweight[link2_mb][1]
+
+                sol_params = dyn_info.equalities.sol_params[i_e, i_b]
+                timeconst = sol_params[0]
+                dampratio = sol_params[1]
+                dmin = sol_params[2]
+                dmax = sol_params[3]
+                width = sol_params[4]
+                mid = sol_params[5]
+                power = sol_params[6]
+
+                # imp_x = |-pos_imp| / width = pos_imp/width  (all rows share)
+                imp_x = pos_imp / width
+                imp_a_coef = 1.0 / mid ** (power - 1.0)
+                imp_b_coef = 1.0 / (1.0 - mid) ** (power - 1.0)
+                imp_a = imp_a_coef * imp_x**power
+                imp_b = 1.0 - imp_b_coef * (1.0 - imp_x) ** power
+                imp_y = imp_a if imp_x < mid else imp_b
+                imp_raw = dmin + imp_y * (dmax - dmin)
+                imp_clamped = qd.math.clamp(imp_raw, dmin, dmax)
+                imp = dmax if imp_x > 1.0 else imp_clamped
+
+                b_coef = 2.0 / (dmax * timeconst)
+                k_coef = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
+
+                # Per-group diag/efc_D depend on invweight; same imp.
+                diag_raw_pos = invweight_pos * (1.0 - imp) / imp
+                diag_pos = qd.max(diag_raw_pos, EPS)
+                d_diag_d_imp_pos = gs.qd_float(0.0)
+                if diag_raw_pos > EPS:
+                    d_diag_d_imp_pos = -invweight_pos / (imp * imp)
+                d_efc_D_d_imp_pos = -d_diag_d_imp_pos / (diag_pos * diag_pos)
+
+                diag_raw_rot = invweight_rot * (1.0 - imp) / imp
+                diag_rot = qd.max(diag_raw_rot, EPS)
+                d_diag_d_imp_rot = gs.qd_float(0.0)
+                if diag_raw_rot > EPS:
+                    d_diag_d_imp_rot = -invweight_rot / (imp * imp)
+                d_efc_D_d_imp_rot = -d_diag_d_imp_rot / (diag_rot * diag_rot)
+
+                within_clamp = (imp_raw > dmin) and (imp_raw < dmax) and (imp_x <= 1.0)
+                d_imp_y_d_imp_x = gs.qd_float(0.0)
+                if imp_x < mid:
+                    d_imp_y_d_imp_x = power * imp_a_coef * imp_x ** (power - 1.0)
+                else:
+                    d_imp_y_d_imp_x = power * imp_b_coef * (1.0 - imp_x) ** (power - 1.0)
+                d_imp_d_imp_x = gs.qd_float(0.0)
+                if within_clamp:
+                    d_imp_d_imp_x = (dmax - dmin) * d_imp_y_d_imp_x
+
+                # Accumulators across all 6 rows.
+                g_ga1 = gs.qd_vec3(0.0, 0.0, 0.0)
+                g_ga2 = gs.qd_vec3(0.0, 0.0, 0.0)
+                g_rot_error = gs.qd_vec3(0.0, 0.0, 0.0)
+                dL_d_imp_total = gs.qd_float(0.0)
+                # Per-row jac_qvel grad (for the orientation chain walk below).
+                dL_d_jac_qvel_orient = gs.qd_vec3(0.0, 0.0, 0.0)
+
+                # ---- Position rows (3) -- mirrors CONNECT structure ----
+                n_con_orient_base = n_con_counter + 3  # rotation rows start here
+                for i_3 in range(3):
+                    n_con = n_con_counter
+                    n_con_counter = n_con_counter + 1
+
+                    ga = constraint_state.dL_daref[n_con, i_b]
+                    gD = constraint_state.dL_defc_D[n_con, i_b]
+
+                    d_aref_d_jac_qvel = -b_coef
+                    d_aref_d_ref_direct = -k_coef * imp
+                    d_aref_d_imp = -k_coef * pos_error[i_3]
+
+                    dL_d_imp_total = dL_d_imp_total + ga * d_aref_d_imp + gD * d_efc_D_d_imp_pos
+                    dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+                    # Direct ref-axis contribution (pos_error[i_3]):
+                    g_pos_error_direct = ga * d_aref_d_ref_direct
+
+                    # Chain walk (same shape as CONNECT pos chain):
+                    g_anchor1_row = gs.qd_vec3(0.0, 0.0, 0.0)
+                    g_anchor2_row = gs.qd_vec3(0.0, 0.0, 0.0)
+                    for i_ab in range(2):
+                        sign = gs.qd_float(1.0)
+                        link = link1_idx
+                        anchor_pos = ga1
+                        if i_ab == 1:
+                            sign = gs.qd_float(-1.0)
+                            link = link2_idx
+                            anchor_pos = ga2
+
+                        while link > -1:
+                            link_mb = [link, i_b] if qd.static(rigid_config.batch_links_info) else link
+                            for i_d_ in range(dyn_info.links.n_dofs[link_mb]):
+                                i_d = dyn_info.links.dof_end[link_mb] - 1 - i_d_
+
+                                cdof_ang = dyn_state.dofs.cdof_ang[i_d, i_b]
+                                cdof_vel = dyn_state.dofs.cdof_vel[i_d, i_b]
+                                t_pos = anchor_pos - dyn_state.links.root_COM[link, i_b]
+
+                                jac_stored = constraint_state.jac[n_con, i_d, i_b]
+                                g_jac_i3 = (
+                                    constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                                )
+                                dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel * jac_stored
+
+                                g_vm = gs.qd_vec3(0.0, 0.0, 0.0)
+                                g_vm[i_3] = g_jac_i3 * sign
+
+                                dyn_state.dofs.cdof_vel.grad[i_d, i_b] += g_vm
+                                dyn_state.dofs.cdof_ang.grad[i_d, i_b] += t_pos.cross(g_vm)
+                                dt = -(cdof_ang.cross(g_vm))
+                                if i_ab == 0:
+                                    g_anchor1_row = g_anchor1_row + dt
+                                else:
+                                    g_anchor2_row = g_anchor2_row + dt
+                                dyn_state.links.root_COM.grad[link, i_b] += -dt
+
+                            link = dyn_info.links.parent_idx[link_mb]
+
+                    # pos_error = ga1 - ga2 => direct g splits to g_ga1, g_ga2 oppositely.
+                    g_ga1[i_3] = g_ga1[i_3] + g_pos_error_direct
+                    g_ga2[i_3] = g_ga2[i_3] - g_pos_error_direct
+                    g_ga1 = g_ga1 + g_anchor1_row
+                    g_ga2 = g_ga2 + g_anchor2_row
+
+                # ---- Orientation rows (3) ----
+                # Direct contributions: rot_error[i_3] via ref, dL_d_imp via imp.
+                for i_3 in range(3):
+                    n_con = n_con_counter
+                    n_con_counter = n_con_counter + 1
+                    ga = constraint_state.dL_daref[n_con, i_b]
+                    gD = constraint_state.dL_defc_D[n_con, i_b]
+
+                    d_aref_d_jac_qvel = -b_coef
+                    d_aref_d_ref_direct = -k_coef * imp
+                    d_aref_d_imp = -k_coef * rot_error[i_3]
+
+                    dL_d_imp_total = dL_d_imp_total + ga * d_aref_d_imp + gD * d_efc_D_d_imp_rot
+                    dL_d_jac_qvel_orient[i_3] = ga * d_aref_d_jac_qvel
+                    g_rot_error[i_3] = g_rot_error[i_3] + ga * d_aref_d_ref_direct
+
+                # Orientation chain walk: per i_d on chain, build g_quat3_d from
+                # the 3 orient rows, then back-prop through quat_mul/quat_mul_axis.
+                g_inv_q2 = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
+                g_q = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
+                for i_ab in range(2):
+                    sign_chain = gs.qd_float(1.0)
+                    link = link1_idx
+                    if i_ab == 1:
+                        sign_chain = gs.qd_float(-1.0)
+                        link = link2_idx
+
+                    while link > -1:
+                        link_mb = [link, i_b] if qd.static(rigid_config.batch_links_info) else link
+                        for i_d_ in range(dyn_info.links.n_dofs[link_mb]):
+                            i_d = dyn_info.links.dof_end[link_mb] - 1 - i_d_
+
+                            # Build g_quat3_d (only xyz components feed jac).
+                            g_quat3_d = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
+                            for i_3 in qd.static(range(3)):
+                                row = n_con_orient_base + i_3
+                                jac_stored = constraint_state.jac[row, i_d, i_b]
+                                gjac = (
+                                    constraint_state.dL_djac[row, i_d, i_b]
+                                    + dL_d_jac_qvel_orient[i_3] * dyn_state.dofs.vel[i_d, i_b]
+                                )
+                                dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel_orient[i_3] * jac_stored
+                                # jac[row, i_d] = 0.5  *  torquescale  *  quat3_d[i_3+1]
+                                g_quat3_d[i_3 + 1] = g_quat3_d[i_3 + 1] + gjac * 0.5 * torquescale
+
+                            # Replay quat3_d, quat2_d, jac_diff_r_d
+                            cdof_ang = dyn_state.dofs.cdof_ang[i_d, i_b]
+                            jac_diff_r_d = sign_chain * cdof_ang
+                            quat2_d = gu.qd_quat_mul_axis(inv_q2, jac_diff_r_d)
+
+                            # quat3_d = quat_mul(quat2_d, q_var)
+                            g_quat2_d, g_q_contrib = _bw_quat_mul(g_quat3_d, quat2_d, q_var)
+                            g_q = g_q + g_q_contrib
+
+                            # quat2_d = quat_mul_axis(inv_q2, jac_diff_r_d)
+                            #        = quat_mul(inv_q2, [0, jac_diff_r_d])
+                            v_padded = qd.Vector(
+                                [0.0, jac_diff_r_d[0], jac_diff_r_d[1], jac_diff_r_d[2]],
+                                dt=gs.qd_float,
+                            )
+                            g_inv_q2_contrib, g_v_padded = _bw_quat_mul(g_quat2_d, inv_q2, v_padded)
+                            g_inv_q2 = g_inv_q2 + g_inv_q2_contrib
+                            g_jac_diff_r_d = gs.qd_vec3(g_v_padded[1], g_v_padded[2], g_v_padded[3])
+
+                            # jac_diff_r_d = sign_chain  *  cdof_ang[i_d]
+                            dyn_state.dofs.cdof_ang.grad[i_d, i_b] += sign_chain * g_jac_diff_r_d
+
+                        link = dyn_info.links.parent_idx[link_mb]
+
+                # Via-penetration contribution (shared across all 6 rows).
+                if pos_imp > EPS:
+                    coef_pen = dL_d_imp_total * d_imp_d_imp_x / (width * pos_imp)
+                    # pos_error part
+                    for j in qd.static(range(3)):
+                        g_pos_error_via_pen = coef_pen * pos_error[j]
+                        g_ga1[j] = g_ga1[j] + g_pos_error_via_pen
+                        g_ga2[j] = g_ga2[j] - g_pos_error_via_pen
+                    # rot_error part
+                    g_rot_error = g_rot_error + coef_pen * rot_error
+
+                # rot_error = error_quat.xyz  *  torquescale
+                # => g_error_quat = (0, g_rot_error * torquescale)
+                g_error_quat = qd.Vector(
+                    [
+                        0.0,
+                        g_rot_error[0] * torquescale,
+                        g_rot_error[1] * torquescale,
+                        g_rot_error[2] * torquescale,
+                    ],
+                    dt=gs.qd_float,
+                )
+                g_inv_q2_eq, g_q_eq = _bw_quat_mul(g_error_quat, inv_q2, q_var)
+                g_inv_q2 = g_inv_q2 + g_inv_q2_eq
+                g_q = g_q + g_q_eq
+
+                # inv_q2 = inv_quat(quat_body2): (w, x, y, z) -> (w, -x, -y, -z)
+                # => g_quat_body2 (from inv_q2 chain) = (g_inv_q2[0], -g_inv_q2[1], -g_inv_q2[2], -g_inv_q2[3])
+                g_quat2_from_inv = qd.Vector(
+                    [g_inv_q2[0], -g_inv_q2[1], -g_inv_q2[2], -g_inv_q2[3]],
+                    dt=gs.qd_float,
+                )
+
+                # q_var = quat_mul(quat_body1, relpose); relpose const => drop g_v.
+                g_quat1_from_q, _ = _bw_quat_mul(g_q, quat_body1, relpose)
+
+                # Anchor chain ga1, ga2 -> dyn_state.links.{pos, quat}.
+                g_trans1, g_quat1_anchor = _bw_transform_by_trans_quat_const_local(g_ga1, anchor1_local, quat_body1)
+                g_trans2, g_quat2_anchor = _bw_transform_by_trans_quat_const_local(g_ga2, anchor2_local, quat_body2)
+
+                dyn_state.links.pos.grad[link1_idx, i_b] += g_trans1
+                dyn_state.links.pos.grad[link2_idx, i_b] += g_trans2
+                dyn_state.links.quat.grad[link1_idx, i_b] += g_quat1_anchor + g_quat1_from_q
+                dyn_state.links.quat.grad[link2_idx, i_b] += g_quat2_anchor + g_quat2_from_inv
