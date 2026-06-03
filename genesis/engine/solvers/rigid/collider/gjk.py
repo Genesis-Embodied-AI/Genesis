@@ -202,6 +202,9 @@ def func_gjk_contact(
     # Clear the cache to prepare for this GJK-EPA run
     clear_cache(gjk_state, i_b)
 
+    # No EPA penetration face yet; set to the nearest face index below if EPA runs.
+    gjk_state.nearest_face[i_b] = -1
+
     # We use MuJoCo's GJK implementation when the compatibility mode is enabled
     if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
         # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives,
@@ -345,6 +348,7 @@ def func_gjk_contact(
                         quat_b,
                         i_b,
                     )
+                    gjk_state.nearest_face[i_b] = i_f
 
                     if qd.static(gjk_static_config.enable_mujoco_multi_contact):
                         # To use MuJoCo's multi-contact detection algorithm,
@@ -398,7 +402,7 @@ def func_gjk_contact(
             func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             # Run EPA from the polytope
-            func_safe_epa(
+            gjk_state.nearest_face[i_b] = func_safe_epa(
                 geoms_info,
                 verts_info,
                 rigid_global_info,

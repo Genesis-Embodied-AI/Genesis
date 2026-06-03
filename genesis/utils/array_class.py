@@ -901,12 +901,17 @@ def get_mpr_simplex_support(B_):
 class MPRState:
     simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
+    # True iff the last contact came from the refined portal (res==0 -> refine -> find_penetration), so
+    # simplex_support[1..3] holds the contact-face portal. False for the degenerate touch/segment paths, where the
+    # multi-contact perturbation must not reconstruct from the (unrefined) simplex.
+    portal_valid: qd.Tensor
 
 
 def get_mpr_state(B_):
     return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
+        portal_valid=V(dtype=gs.qd_bool, shape=(B_,)),
     )
 
 
@@ -1148,6 +1153,9 @@ class GJKState:
     is_col: qd.Tensor
     penetration: qd.Tensor
     distance: qd.Tensor
+    # Index of the EPA polytope face nearest to the origin (the penetration face), or -1 when EPA did not run. Lets the
+    # multi-contact perturbation reconstruct the exact unperturbed normal from that face's un-rotated support simplex.
+    nearest_face: qd.Tensor
     # Differentiable contact detection
     diff_contact_input: DiffContactInput
     n_diff_contact_input: qd.Tensor
@@ -1193,6 +1201,7 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
         is_col=V(dtype=gs.qd_bool, shape=(_B,)),
         penetration=V(dtype=gs.qd_float, shape=(_B,)),
         distance=V(dtype=gs.qd_float, shape=(_B,)),
+        nearest_face=V(dtype=gs.qd_int, shape=(_B,)),
         diff_contact_input=get_diff_contact_input(_B, max(max_contacts_per_pair, 1), is_active, requires_grad),
         n_diff_contact_input=V(dtype=gs.qd_int, shape=(_B,)),
         diff_penetration=V(dtype=gs.qd_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
@@ -1247,6 +1256,7 @@ def get_gjk_state_contact_only(_B):
         is_col=V(dtype=gs.qd_bool, shape=(1,)),
         penetration=V(dtype=gs.qd_float, shape=(1,)),
         distance=V(dtype=gs.qd_float, shape=(_B,)),
+        nearest_face=V(dtype=gs.qd_int, shape=(_B,)),
         diff_contact_input=get_diff_contact_input(_dummy_B, 1, is_active=False),
         n_diff_contact_input=V(dtype=gs.qd_int, shape=(1,)),
         diff_penetration=V(dtype=gs.qd_float, shape=()),

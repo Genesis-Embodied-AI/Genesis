@@ -725,6 +725,10 @@ def func_mpr_contact_from_centers(
     normal = gs.qd_vec3([0.0, 0.0, 0.0])
     penetration = gs.qd_float(0.0)
 
+    # Only the refined-portal path below leaves a usable contact-face portal in simplex_support; the degenerate
+    # touch/segment paths do not.
+    mpr_state.portal_valid[i_b] = False
+
     if res == 1:
         is_col, normal, penetration, pos = mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
     elif res == 2:
@@ -746,6 +750,7 @@ def func_mpr_contact_from_centers(
             quat_b,
         )
         if res >= 0:
+            mpr_state.portal_valid[i_b] = True
             is_col, normal, penetration, pos = mpr_find_penetration(
                 geoms_info,
                 static_rigid_sim_config,
