@@ -93,7 +93,9 @@ class Collider:
 
         self._init_static_config()
         self._use_split_narrowphase = (
-            self._collider_static_config.has_non_box_plane_convex_convex and gs.backend != gs.cpu
+            self._collider_static_config.has_non_box_plane_convex_convex
+            and gs.backend != gs.cpu
+            and not self._solver._requires_grad
         )
         self._init_collision_fields()
 
@@ -198,10 +200,16 @@ class Collider:
                         ):
                             has_prunable_contacts = True
 
-        # Spatial sort by x-position only runs on GPU when the split narrowphase produced contacts that could
-        # benefit from locality. Disabled when use_contact_island is True for the same reason as pruning.
+        # Spatial sort by x-position only runs on GPU for convex-convex scenes whose contacts could benefit from
+        # locality. Disabled when use_contact_island is True for the same reason as pruning. Also disabled in
+        # autodiff mode: the sort permutes the logical contact order via contact_sort_idx, get_contacts applies that
+        # permutation, but func_set_upstream_grad writes upstream gradients back by physical index, so a non-identity
+        # permutation would attach gradients to the wrong contacts.
         spatial_sort_supported = (
-            has_non_box_plane_convex_convex and gs.backend != gs.cpu and not self._solver._options.use_contact_island
+            has_non_box_plane_convex_convex
+            and gs.backend != gs.cpu
+            and not self._solver._options.use_contact_island
+            and not self._solver._requires_grad
         )
 
         # Hibernation (func_collision_clear / func_collider_clear_env in this module's siblings) advects carried
@@ -519,6 +527,20 @@ class Collider:
             if self._solver._options.box_box_detection:
                 specialized = specialized | (is_box_a & is_box_b)
             has_non_box_plane_convex_convex = bool(np.any(both_convex & ~specialized))
+
+            # Differentiable contact detection (diff_gjk) reconstructs each contact from a triangular face of the
+            # Minkowski difference. A sphere or ellipsoid has no flat facet, so a pair of them yields an everywhere
+            # smoothly curved Minkowski boundary on which EPA never converges, and no contact is ever generated -
+            # the bodies silently tunnel. Faceted partners (box, mesh) and the analytical plane branch are unaffected.
+            if self._solver._requires_grad:
+                is_smooth_a = (valid_type_a == gs.GEOM_TYPE.SPHERE) | (valid_type_a == gs.GEOM_TYPE.ELLIPSOID)
+                is_smooth_b = (valid_type_b == gs.GEOM_TYPE.SPHERE) | (valid_type_b == gs.GEOM_TYPE.ELLIPSOID)
+                if np.any(both_convex & ~specialized & is_smooth_a & is_smooth_b):
+                    gs.raise_exception(
+                        "Differentiable contact detection is not supported for sphere-sphere, sphere-ellipsoid or "
+                        "ellipsoid-ellipsoid collision pairs (requires_grad=True). Approximate them with a faceted "
+                        "geometry (e.g. a convex mesh) or disable requires_grad."
+                    )
         else:
             has_non_box_plane_convex_convex = False
 

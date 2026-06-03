@@ -1,4 +1,7 @@
-from typing import TYPE_CHECKING
+import enum
+import functools
+import inspect
+from typing import TYPE_CHECKING, Any, Callable
 
 import quadrants as qd
 import numpy as np
@@ -15,6 +18,86 @@ from genesis.repr_base import RBC
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
+
+
+class StateChange(enum.Enum):
+    """Category of solver scene-state mutation broadcast to subscribers (see `Solver.subscribe`).
+
+    Solver-agnostic: it names what kind of state changed, never an index space (links, dofs, particles, ...), which
+    differs from one solver to the next. GEOMETRY is the kinematic configuration that places or deforms the world
+    surface (link poses, qpos, vertices); DYNAMICS is the velocity state. Model parameters (mass, inertia, friction,
+    gains, limits) are not scene state and are never broadcast.
+    """
+
+    GEOMETRY = enum.auto()
+    DYNAMICS = enum.auto()
+
+
+def mutates(*changes: StateChange) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Tag a solver state-mutating method with the StateChange categories it produces (one method may produce several,
+    e.g. set_state changes both GEOMETRY and DYNAMICS).
+
+    Notification is deferred to the outermost tagged call: a setter that internally calls other tagged setters fires a
+    single notification per StateChange that occurred, when the outermost call returns, rather than one per nested
+    call. The outermost call's `envs_idx` (None meaning all envs) is forwarded. Untagged methods, reads included, never
+    notify, so a subscriber only ever wakes on a genuine mutation.
+    """
+    triggered = frozenset(changes)
+
+    def decorator(method: Callable[..., Any]) -> Callable[..., Any]:
+        signature = inspect.signature(method)
+
+        @functools.wraps(method)
+        def wrapper(self: "Solver", *args: Any, **kwargs: Any) -> Any:
+            if not self._subscribers:
+                return method(self, *args, **kwargs)
+            if self._is_mutating:
+                # Nested tagged call: record the changes, let the outermost call do the single notification.
+                self._mutation_changes |= triggered
+                return method(self, *args, **kwargs)
+            self._is_mutating = True
+            self._mutation_changes = set(triggered)
+            try:
+                result = method(self, *args, **kwargs)
+            finally:
+                self._is_mutating = False
+            envs_idx = signature.bind(self, *args, **kwargs).arguments.get("envs_idx")
+            for subscriber in self._subscribers:
+                for changed in self._mutation_changes & subscriber.to:
+                    if subscriber.callback is None:
+                        subscriber._pending.add(changed)
+                    else:
+                        subscriber.callback(changed, envs_idx)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+class Subscriber:
+    """A unique handle for the solver state changes whose category is in `to`.
+
+    A consumer constructs a Subscriber and registers it with a solver via Solver.subscribe. The mode is fixed at
+    construction by whether a callback is given:
+      - eager (callback given): each matching change immediately calls callback(change, envs_idx);
+      - lazy (no callback): matching changes accumulate into `pending` until the owner calls clear() - e.g. a sensor
+        that rebuilds a cache on its next update rather than on every set_pos.
+    """
+
+    def __init__(self, to: frozenset[StateChange], callback: Callable[[StateChange, object], None] | None = None):
+        self.to = to
+        self.callback = callback
+        self._pending: set[StateChange] = set()
+
+    @property
+    def pending(self) -> frozenset[StateChange]:
+        """Categories accumulated since the last clear() (always empty in eager mode)."""
+        return frozenset(self._pending)
+
+    def clear(self):
+        """Drop the accumulated changes, once they have been handled."""
+        self._pending.clear()
 
 
 class Solver(RBC):
@@ -39,8 +122,19 @@ class Solver(RBC):
         # force fields
         self._ffs = list()
 
+        # Registered Subscribers, notified after @mutates-tagged methods run; see subscribe(). The re-entrancy guard
+        # below defers notification to the outermost tagged call, accumulating every change that occurred in between,
+        # so a setter calling other tagged setters notifies once rather than per nested call.
+        self._subscribers: set[Subscriber] = set()
+        self._is_mutating = False
+        self._mutation_changes: set[StateChange] = set()
+
     def _add_force_field(self, force_field):
         self._ffs.append(force_field)
+
+    def subscribe(self, subscriber: Subscriber):
+        """Register a Subscriber to be notified after any @mutates-tagged method whose change is in its filter."""
+        self._subscribers.add(subscriber)
 
     def build(self):
         self._B = self._sim._B

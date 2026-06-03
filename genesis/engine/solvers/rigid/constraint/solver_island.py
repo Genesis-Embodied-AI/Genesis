@@ -45,8 +45,8 @@ class ConstraintSolverIsland:
         self.aref = qd.field(dtype=gs.qd_float, shape=(self.len_constraints_, self._B))
 
         if self.sparse_solve:
-            self.jac_relevant_dofs = qd.field(gs.qd_int, shape=(self.len_constraints_, self._solver.n_dofs_, self._B))
-            self.jac_n_relevant_dofs = qd.field(gs.qd_int, shape=(self.len_constraints_, self._B))
+            self.jac_dofs_idx = qd.field(gs.qd_int, shape=(self.len_constraints_, self._solver.n_dofs_, self._B))
+            self.jac_n_dofs = qd.field(gs.qd_int, shape=(self.len_constraints_, self._B))
 
         self.n_constraints = qd.field(gs.qd_int, shape=(self._B,))
         self.improved = qd.field(gs.qd_bool, shape=(self._B,))
@@ -157,14 +157,14 @@ class ConstraintSolverIsland:
 
                 n_con = qd.atomic_add(self.n_constraints[i_b], 1)
                 if qd.static(self.sparse_solve):
-                    for i_d_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
-                        i_d = self.jac_relevant_dofs[n_con, i_d_, i_b]
+                    for i_d_ in range(self.jac_n_dofs[n_con, i_b]):
+                        i_d = self.jac_dofs_idx[n_con, i_d_, i_b]
                         self.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
                 else:
                     for i_d in range(self._solver.n_dofs):
                         self.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
-                con_n_relevant_dofs = 0
+                con_n_dofs = 0
                 jac_qvel = gs.qd_float(0.0)
                 for i_ab in range(2):
                     sign = gs.qd_float(-1.0)
@@ -176,7 +176,7 @@ class ConstraintSolverIsland:
                     while link > -1:
                         link_maybe_batch = [link, i_b] if qd.static(self._solver._options.batch_links_info) else link
 
-                        # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                        # reverse order to make sure dofs in each row of self.jac_dofs_idx is strictly descending
                         for i_d_ in range(self._solver.links_info.n_dofs[link]):
                             i_d = self._solver.links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
@@ -193,13 +193,13 @@ class ConstraintSolverIsland:
                             jac_qvel = jac_qvel + jac * self._solver.dofs_state.vel[i_d, i_b]
                             self.jac[n_con, i_d, i_b] = self.jac[n_con, i_d, i_b] + jac
                             if qd.static(self.sparse_solve):
-                                self.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                                con_n_relevant_dofs += 1
+                                self.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                                con_n_dofs += 1
 
                         link = self._solver.links_info.parent_idx[link_maybe_batch]
 
                 if qd.static(self.sparse_solve):
-                    self.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                    self.jac_n_dofs[n_con, i_b] = con_n_dofs
 
                 contact_sol_params = self._collider._collider_state.contact_data.sol_params[i_col, i_b]
                 contact_penetration = self._collider._collider_state.contact_data.penetration[i_col, i_b]
@@ -275,8 +275,8 @@ class ConstraintSolverIsland:
                             self.efc_D[n_con, i_b] = 1 / diag
 
                             if qd.static(self.sparse_solve):
-                                for i_d2_ in range(self.jac_n_relevant_dofs[n_con, i_b]):
-                                    i_d2 = self.jac_relevant_dofs[n_con, i_d2_, i_b]
+                                for i_d2_ in range(self.jac_n_dofs[n_con, i_b]):
+                                    i_d2 = self.jac_dofs_idx[n_con, i_d2_, i_b]
                                     self.jac[n_con, i_d2, i_b] = gs.qd_float(0.0)
                             else:
                                 for i_d2 in range(self._solver.n_dofs):
@@ -284,8 +284,8 @@ class ConstraintSolverIsland:
                             self.jac[n_con, i_d, i_b] = jac
 
                             if qd.static(self.sparse_solve):
-                                self.jac_n_relevant_dofs[n_con, i_b] = 1
-                                self.jac_relevant_dofs[n_con, 0, i_b] = i_d
+                                self.jac_n_dofs[n_con, i_b] = 1
+                                self.jac_dofs_idx[n_con, 0, i_b] = i_d
 
     @qd.func
     def _func_nt_hessian_incremental(self, island, i_b):
@@ -304,13 +304,13 @@ class ConstraintSolverIsland:
 
                 if qd.static(self.sparse_solve):
                     if flag_update != -1:
-                        for i_d_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                            i_d = self.jac_relevant_dofs[i_c, i_d_, i_b]
+                        for i_d_ in range(self.jac_n_dofs[i_c, i_b]):
+                            i_d = self.jac_dofs_idx[i_c, i_d_, i_b]
                             self.nt_vec[i_d, i_b] = self.jac[i_c, i_d, i_b] * qd.sqrt(self.efc_D[i_c, i_b])
 
                         rank = self._solver.n_dofs
-                        for k_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                            k = self.jac_relevant_dofs[i_c, k_, i_b]
+                        for k_ in range(self.jac_n_dofs[i_c, i_b]):
+                            k = self.jac_dofs_idx[i_c, k_, i_b]
                             Lkk = self.nt_H[i_b, k, k]
                             tmp = Lkk * Lkk + self.nt_vec[k, i_b] * self.nt_vec[k, i_b] * (flag_update * 2 - 1)
                             if tmp < gs.EPS:
@@ -322,13 +322,13 @@ class ConstraintSolverIsland:
                             s = self.nt_vec[k, i_b] / Lkk
                             self.nt_H[i_b, k, k] = r
                             for i_ in range(k_):
-                                i = self.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                                i = self.jac_dofs_idx[i_c, i_, i_b]  # i is strictly > k
                                 self.nt_H[i_b, i, k] = (
                                     self.nt_H[i_b, i, k] + s * self.nt_vec[i, i_b] * (flag_update * 2 - 1)
                                 ) * cinv
 
                             for i_ in range(k_):
-                                i = self.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                                i = self.jac_dofs_idx[i_c, i_, i_b]  # i is strictly > k
                                 self.nt_vec[i, i_b] = self.nt_vec[i, i_b] * c - s * self.nt_H[i_b, i, k]
 
                         if rank < self._solver.n_dofs:
@@ -378,14 +378,12 @@ class ConstraintSolverIsland:
                         self.nt_H[i_b, i_d1, i_d2] = gs.qd_float(0.0)
 
         for i_c in range(self.n_constraints[i_b]):
-            jac_n_relevant_dofs = self.jac_n_relevant_dofs[i_c, i_b]
-            for i_d1_ in range(jac_n_relevant_dofs):
-                i_d1 = self.jac_relevant_dofs[i_c, jac_n_relevant_dofs - 1 - i_d1_, i_b]
+            jac_n_dofs = self.jac_n_dofs[i_c, i_b]
+            for i_d1_ in range(jac_n_dofs):
+                i_d1 = self.jac_dofs_idx[i_c, jac_n_dofs - 1 - i_d1_, i_b]
                 if qd.abs(self.jac[i_c, i_d1, i_b]) > gs.EPS:
                     for i_d2_ in range(i_d1_ + 1):
-                        i_d2 = self.jac_relevant_dofs[
-                            i_c, jac_n_relevant_dofs - 1 - i_d2_, i_b
-                        ]  # i_d2 is strictly <= i_d1
+                        i_d2 = self.jac_dofs_idx[i_c, jac_n_dofs - 1 - i_d2_, i_b]  # i_d2 is strictly <= i_d1
 
                         d1 = qd.max(i_d1, i_d2)
                         d2 = qd.min(i_d1, i_d2)
@@ -511,7 +509,7 @@ class ConstraintSolverIsland:
                     self.jac[i_c, i_d, i_b] = 0
             if qd.static(self.sparse_solve):
                 for i_c in range(self.len_constraints_):
-                    self.jac_n_relevant_dofs[i_c, i_b] = 0
+                    self.jac_n_dofs[i_c, i_b] = 0
 
     @qd.func
     def _func_update_contact_force(self, i_island: int, i_b: int):
@@ -603,8 +601,8 @@ class ConstraintSolverIsland:
         for i_c in range(self.n_constraints[i_b]):
             jv = gs.qd_float(0.0)
             if qd.static(self.sparse_solve):
-                for i_d_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = self.jac_relevant_dofs[i_c, i_d_, i_b]
+                for i_d_ in range(self.jac_n_dofs[i_c, i_b]):
+                    i_d = self.jac_dofs_idx[i_c, i_d_, i_b]
                     jv += self.jac[i_c, i_d, i_b] * self.search[i_d, i_b]
             else:
                 for i_island_entity in range(self.contact_island.island_entity.n[island, i_b]):
@@ -934,8 +932,8 @@ class ConstraintSolverIsland:
                 for i_d in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                     self.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
             for i_c in range(self.n_constraints[i_b]):
-                for i_d_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = self.jac_relevant_dofs[i_c, i_d_, i_b]
+                for i_d_ in range(self.jac_n_dofs[i_c, i_b]):
+                    i_d = self.jac_dofs_idx[i_c, i_d_, i_b]
                     self.qfrc_constraint[i_d, i_b] = (
                         self.qfrc_constraint[i_d, i_b] + self.jac[i_c, i_d, i_b] * self.efc_force[i_c, i_b]
                     )
@@ -1003,8 +1001,8 @@ class ConstraintSolverIsland:
         for i_c in range(self.n_constraints[i_b]):
             Jaref = -self.aref[i_c, i_b]
             if qd.static(self.sparse_solve):
-                for i_d_ in range(self.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = self.jac_relevant_dofs[i_c, i_d_, i_b]
+                for i_d_ in range(self.jac_n_dofs[i_c, i_b]):
+                    i_d = self.jac_dofs_idx[i_c, i_d_, i_b]
                     Jaref += self.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
             else:
                 for i_d in range(self._solver.n_dofs):

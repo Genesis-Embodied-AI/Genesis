@@ -34,8 +34,8 @@ def func_matvec_Ap(
     for i_c in range(constraint_state.n_constraints[i_b]):
         jv = gs.qd_float(0.0)
         if qd.static(static_rigid_sim_config.sparse_solve):
-            for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
+            for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                 jv += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_p[i_d, i_b]
         else:
             for i_d in range(n_dofs):
@@ -44,8 +44,8 @@ def func_matvec_Ap(
         jv *= constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         # out += J^T (D * J v)
         if qd.static(static_rigid_sim_config.sparse_solve):
-            for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
+            for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                 constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_c, i_d, i_b] * jv
         else:
             for i_d in range(n_dofs):
@@ -190,8 +190,8 @@ def kernel_compute_gradients(
         for i_c in range(constraint_state.n_constraints[i_b]):
             s = gs.qd_float(0.0)
             if qd.static(static_rigid_sim_config.sparse_solve):
-                for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
+                for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                     s += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_u[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
@@ -203,8 +203,8 @@ def kernel_compute_gradients(
         for i_c in range(constraint_state.n_constraints[i_b]):
             t = gs.qd_float(0.0)
             if qd.static(static_rigid_sim_config.sparse_solve):
-                for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
+                for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                     t += constraint_state.jac[i_c, i_d, i_b] * constraint_state.qacc[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
@@ -237,8 +237,8 @@ def kernel_compute_gradients(
                 y_i = constraint_state.bw_y[i_c, i_b]
 
                 if qd.static(static_rigid_sim_config.sparse_solve):
-                    for k in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                        i_d = constraint_state.jac_relevant_dofs[i_c, k, i_b]
+                    for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                         constraint_state.dL_djac[i_c, i_d, i_b] += -(
                             constraint_state.bw_u[i_d, i_b] * y_i + constraint_state.qacc[i_d, i_b] * DJu_i
                         )

@@ -341,9 +341,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
 
     # Confirm the raycaster picked the expected env
     if target_env_idx is not None:
-        plugin = next(
-            p for p in scene.viewer._viewer_plugins if isinstance(p, gs.vis.viewer_plugins.MouseInteractionPlugin)
-        )
+        plugin = next(p for p in scene.viewer.plugins if isinstance(p, gs.vis.viewer_plugins.MouseInteractionPlugin))
         assert plugin._interact_env_idx == target_env_idx, (
             f"Expected mouse to pick env {target_env_idx}, got env {plugin._interact_env_idx}"
         )

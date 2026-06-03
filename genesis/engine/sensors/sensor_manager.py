@@ -10,7 +10,7 @@ from genesis.options.sensors import types as _sensor_types_namespace
 from genesis.options.sensors.options import SensorOptions
 from genesis.utils.ring_buffer import TensorRingBuffer
 
-from .base_sensor import Sensor, SharedSensorMetadata
+from .base_sensor import Sensor, SharedSensorContext, SharedSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -24,6 +24,9 @@ class SensorManager:
         self._sim = sim
         self._sensors_by_type: dict[type["Sensor"], list["Sensor"]] = {}
         self._sensors_metadata: dict[type["Sensor"], SharedSensorMetadata | None] = {}
+        # Cross-type shared contexts, keyed by context class so every sensor type declaring the same context resolves
+        # to one instance. Built/updated/reset/destroyed by this manager; see ``SharedSensorContext``.
+        self._shared_contexts: dict[type, SharedSensorContext] = {}
         # Per-dtype intermediate caches: pre-`_post_process` storage in intermediate space. The transposed GT cache is
         # `(cols, B)` for C-contiguous per-class row slices required by kernel writes.
         self._ground_truth_intermediate_cache: dict[type[torch.dtype], torch.Tensor] = {}
@@ -60,7 +63,18 @@ class SensorManager:
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:
             self._sensors_metadata[sensor_cls] = sensor_cls._metadata_cls()
-        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
+        # Create the shared context before the sensor, so the instance exists to hand to it. ``NoneType`` marks
+        # "no context"; the sensor then receives ``None``.
+        context_cls = sensor_cls._shared_context_cls
+        if context_cls is not type(None) and context_cls not in self._shared_contexts:
+            self._shared_contexts[context_cls] = context_cls(self._sim)
+        sensor = sensor_cls(
+            sensor_options,
+            len(self._sensors_by_type[sensor_cls]),
+            self._shared_contexts.get(context_cls),
+            self._sensors_metadata[sensor_cls],
+            self,
+        )
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
 
@@ -249,6 +263,9 @@ class SensorManager:
                 sensor._is_built = True
 
     def destroy(self):
+        for context in self._shared_contexts.values():
+            context.destroy()
+        self._shared_contexts.clear()
         for sensors_metadata in self._sensors_metadata.values():
             if sensors_metadata is not None:
                 sensors_metadata.destroy()
@@ -280,6 +297,11 @@ class SensorManager:
         for ring in self._measured_return_timeline_ring.values():
             ring.buffer[:, envs_idx] = 0
 
+        # Reset shared contexts before the per-type sensor reset (a reset may change otherwise-static geometry, so the
+        # context must rebuild before any sensor reads it again).
+        for context in self._shared_contexts.values():
+            context.reset(envs_idx)
+
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_intermediate_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
@@ -296,6 +318,11 @@ class SensorManager:
         for ring in self._measured_timeline_ring.values():
             ring.rotate()
 
+        # Refresh each shared context once per step, before the per-type loop reads it, so multiple consuming sensor
+        # types (e.g. Raycaster + DepthCamera) rebuild the shared resource at most once rather than once each.
+        for context in self._shared_contexts.values():
+            context.update()
+
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_intermediate_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
@@ -311,7 +338,12 @@ class SensorManager:
             )
             metadata = self._sensors_metadata[sensor_cls]
             sensor_cls._update_shared_cache(
-                metadata, ground_truth_slice, ground_truth_data_timeline, measured_data_timeline, intermediate
+                self._shared_contexts.get(sensor_cls._shared_context_cls),
+                metadata,
+                ground_truth_slice,
+                ground_truth_data_timeline,
+                measured_data_timeline,
+                intermediate,
             )
 
             gt_return_ring = self._ground_truth_return_timeline_ring.get(sensor_cls)

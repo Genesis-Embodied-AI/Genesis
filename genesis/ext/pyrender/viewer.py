@@ -1323,8 +1323,10 @@ class Viewer(pyglet.window.Window):
                 self._offscreen_event.clear()
 
         self.switch_to()
-        pyglet.clock.tick()
 
+        # Dispatch input events before drawing, so the frame (and the ImGui overlay / gizmo it renders) reacts to the
+        # current mouse and keyboard state. Drawing first and dispatching afterwards leaves interactive controls one
+        # frame behind the cursor, which makes dragging the gizmo feel stuttery.
         if sys.platform == "win32":
             # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
             # this is a workaround on Windows. not sure if it's correct
@@ -1335,6 +1337,9 @@ class Viewer(pyglet.window.Window):
         self.dispatch_pending_events()
         if self._is_active:
             self.dispatch_events()
+
+        pyglet.clock.tick()
+
         if self._is_active:
             self.flip()
 

@@ -277,6 +277,9 @@ def change_scene(args: list[str]):
             camera_pos=(1, 1, 0.5),
             camera_lookat=(0.0, 0.0, 0.0),
         ),
+        rigid_options=gs.options.RigidOptions(
+            sparse_solve=False,
+        ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),

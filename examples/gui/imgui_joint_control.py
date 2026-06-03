@@ -47,7 +47,7 @@ scene.add_entity(
 scene.build()
 
 # Grab the auto-attached overlay to register a custom panel.
-plugin = next(p for p in scene.viewer._viewer_plugins if isinstance(p, ImGuiOverlayPlugin))
+plugin = next(p for p in scene.viewer.plugins if isinstance(p, ImGuiOverlayPlugin))
 
 
 def custom_panel(imgui):

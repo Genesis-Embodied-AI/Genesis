@@ -2284,7 +2284,7 @@ class RigidContactHandler(BaseContactHandler):
             i_b = self.contact_pairs[i_p].batch_idx
             while link > -1:
                 link_maybe_batch = [link, i_b] if qd.static(self.rigid_solver._options.batch_links_info) else link
-                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                # reverse order to make sure dofs in each row of self.jac_dofs_idx is strictly descending
                 for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                     i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
@@ -2392,7 +2392,7 @@ class RigidRigidContactHandler(RigidContactHandler):
             link = pairs[i_p].link_idx0
             while link > -1:
                 link_maybe_batch = [link, i_b] if qd.static(self.rigid_solver._options.batch_links_info) else link
-                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                # reverse order to make sure dofs in each row of self.jac_dofs_idx is strictly descending
                 for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                     i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
@@ -2408,7 +2408,7 @@ class RigidRigidContactHandler(RigidContactHandler):
             link = pairs[i_p].link_idx1
             while link > -1:
                 link_maybe_batch = [link, i_b] if qd.static(self.rigid_solver._options.batch_links_info) else link
-                # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                # reverse order to make sure dofs in each row of self.jac_dofs_idx is strictly descending
                 for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
                     i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
