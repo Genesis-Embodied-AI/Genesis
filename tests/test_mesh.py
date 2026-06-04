@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import trimesh
+from PIL import Image
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -597,6 +598,54 @@ def test_glb_parse_material(glb_file):
                 material_name,
                 "emissive",
             )
+
+
+@pytest.mark.required
+def test_glb_shared_texture_not_duplicated(tmp_path):
+    n_submeshes = 16
+    texture_size = 64
+
+    yy, xx = np.mgrid[0:texture_size, 0:texture_size]
+    checker = (((xx // 8) % 2) ^ ((yy // 8) % 2)).astype(np.uint8) * 255
+    texture = Image.fromarray(np.stack([checker, checker, checker], axis=-1))
+    mesh = trimesh.Trimesh(
+        vertices=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        faces=[[0, 1, 2]],
+        visual=trimesh.visual.TextureVisuals(
+            uv=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            material=trimesh.visual.material.PBRMaterial(baseColorTexture=texture, doubleSided=True),
+        ),
+        process=False,
+    )
+
+    # Many nodes referencing a single shared geometry/material - the case that used to blow up host memory.
+    tm_scene = trimesh.Scene()
+    for i in range(n_submeshes):
+        transform = np.eye(4)
+        transform[:3, 3] = (2.0 * i, 0.0, 0.0)
+        tm_scene.add_geometry(mesh, node_name=f"instance_{i:02d}", geom_name="shared_mesh", transform=transform)
+    glb_path = tmp_path / "shared_texture.glb"
+    tm_scene.export(glb_path)
+
+    scene = gs.Scene(show_viewer=False)
+    entity = scene.add_entity(
+        gs.morphs.Mesh(
+            file=str(glb_path),
+            collision=False,
+            fixed=True,
+            file_meshes_are_zup=False,
+        ),
+    )
+
+    # Submeshes are kept separate (group_by_material defaults to False to preserve baked convex decompositions), but
+    # they share one Surface whose resolved RGBA texture is memoized, so a single image array backs all of them rather
+    # than one full-resolution copy per submesh.
+    vgeoms = entity.vgeoms
+    assert len(vgeoms) == n_submeshes
+    assert len({id(geom.surface) for geom in vgeoms}) == 1
+    # Hold every array alive before counting so that ids cannot be recycled by the garbage collector.
+    rgba_arrays = [geom.surface.get_rgba().image_array for geom in vgeoms]
+    assert len({id(array) for array in rgba_arrays}) == 1
 
 
 @pytest.fixture

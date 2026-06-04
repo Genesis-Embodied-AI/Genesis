@@ -417,6 +417,10 @@ class RasterizerContext:
             yield self.sim.kinematic_solver
 
     def on_rigid(self):
+        # Reuse a single pyrender material per genesis surface so that geoms sharing one surface (e.g. the many
+        # textured submeshes of a GLB, which are kept separate to preserve baked convex decompositions) expose the
+        # same Texture instances. The renderer then keeps a single host copy and GPU upload instead of one per geom.
+        vis_materials = {}
         for solver in self._rigid_solvers():
             # TODO: support dynamic switching in GUI later
             for entity in solver.entities:
@@ -453,19 +457,20 @@ class RasterizerContext:
                             geom_T = geom_T[:1]
                             env_shared = True
 
-                    self.add_rigid_node(
-                        geom,
-                        pyrender.Mesh.from_trimesh(
-                            mesh=mesh,
-                            poses=geom_T,
-                            smooth=geom.surface.smooth if "collision" not in entity.surface.vis_mode else False,
-                            double_sided=(
-                                geom.surface.double_sided if "collision" not in entity.surface.vis_mode else False
-                            ),
-                            is_floor=isinstance(entity._morph, gs.morphs.Plane),
-                            env_shared=env_shared,
+                    surface_key = id(geom.surface)
+                    mesh_node = pyrender.Mesh.from_trimesh(
+                        mesh=mesh,
+                        poses=geom_T,
+                        smooth=geom.surface.smooth if "collision" not in entity.surface.vis_mode else False,
+                        double_sided=(
+                            geom.surface.double_sided if "collision" not in entity.surface.vis_mode else False
                         ),
+                        is_floor=isinstance(entity._morph, gs.morphs.Plane),
+                        env_shared=env_shared,
+                        material=vis_materials.get(surface_key),
                     )
+                    vis_materials.setdefault(surface_key, mesh_node.primitives[0].material)
+                    self.add_rigid_node(geom, mesh_node)
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
