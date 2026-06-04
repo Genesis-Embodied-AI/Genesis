@@ -493,6 +493,88 @@ def func_factor_mass(
         _B = dofs_state.ctrl_mode.shape[1]
 
         if qd.static(
+            static_rigid_sim_config.enable_tiled_cholesky_mass_matrix
+            and not static_rigid_sim_config.mass_matrix_fits_shared
+        ):
+            # Uncapped cooperative per-entity LDL^T (entity submatrix does not fit shared memory): factors the entity
+            # mass submatrix in-place in global memory (mass_mat_L) over a block of BLOCK_DIM threads. Each elimination
+            # step snapshots the pivot row into a small shared vector (O(n_dofs), not O(n_dofs^2)) before updating the
+            # trailing submatrix, so the parallel per-row updates only READ the pivot row (from shared) -- race-free
+            # regardless of scheduling. Numerically identical to the scalar branch below; only parallelization differs.
+            BLOCK_DIM = qd.static(32)
+            MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
+
+            qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
+            for i in range(n_entities * _B * BLOCK_DIM):
+                tid = i % BLOCK_DIM
+                i_e = (i // BLOCK_DIM) % n_entities
+                i_b = i // (BLOCK_DIM * n_entities)
+                if i_b >= _B:
+                    continue
+
+                if rigid_global_info.mass_mat_mask[i_e, i_b]:
+                    entity_dof_start = entities_info.dof_start[i_e]
+                    entity_dof_end = entities_info.dof_end[i_e]
+                    n_dofs = entities_info.n_dofs[i_e]
+
+                    pivot_row = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY,), gs.qd_float)
+
+                    # Copy the lower triangle of M into mass_mat_L (+ implicit damping on the diagonal), cooperatively.
+                    i_d_ = tid
+                    while i_d_ < n_dofs:
+                        i_d = entity_dof_start + i_d_
+                        for j_d in range(entity_dof_start, i_d + 1):
+                            rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
+                        if qd.static(implicit_damping):
+                            I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+                            )
+                            if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
+                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
+                                    rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                        rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                        - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
+                                    )
+                        i_d_ = i_d_ + BLOCK_DIM
+                    qd.simt.block.sync()
+
+                    # In-place LDL^T, eliminating dofs from last to first (matches the scalar branch).
+                    for j in range(n_dofs):
+                        i_d_ = n_dofs - j - 1
+                        i_d = entity_dof_end - j - 1
+                        D_inv = 1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                        if tid == 0:
+                            rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
+
+                        # Phase A: snapshot the (Schur-updated) pivot-row entries below the diagonal into shared.
+                        j_d_ = tid
+                        while j_d_ < i_d_:
+                            pivot_row[j_d_] = rigid_global_info.mass_mat_L[i_d, entity_dof_start + j_d_, i_b]
+                            j_d_ = j_d_ + BLOCK_DIM
+                        qd.simt.block.sync()
+
+                        # Phase B: each lane eliminates one column j_d, updating its own row j_d of the trailing
+                        # submatrix from the read-only snapshot. Distinct rows per lane => no write conflicts, and
+                        # the pivot row is only read (from shared) => no read/write race on row i_d.
+                        j_d_ = tid
+                        while j_d_ < i_d_:
+                            a = pivot_row[j_d_] * D_inv
+                            j_d = entity_dof_start + j_d_
+                            for k_d_ in range(j_d_ + 1):
+                                rigid_global_info.mass_mat_L[j_d, entity_dof_start + k_d_, i_b] = (
+                                    rigid_global_info.mass_mat_L[j_d, entity_dof_start + k_d_, i_b]
+                                    - a * pivot_row[k_d_]
+                                )
+                            rigid_global_info.mass_mat_L[i_d, j_d, i_b] = a
+                            j_d_ = j_d_ + BLOCK_DIM
+                        qd.simt.block.sync()
+
+                        # Diagonal coeffs of L are ignored downstream (see scalar branch) but set to 1.0 to match.
+                        if tid == 0:
+                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
+        elif qd.static(
             not static_rigid_sim_config.enable_tiled_cholesky_mass_matrix or static_rigid_sim_config.backend == gs.cpu
         ):
             qd.loop_config(name="factor_mass", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)

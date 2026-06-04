@@ -122,8 +122,8 @@ def _func_support_world(
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
 ):
     """
     support position for a world direction
@@ -185,8 +185,8 @@ def _func_support_sphere(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
     shrink,
 ):
     sphere_center = pos
@@ -211,8 +211,8 @@ def _func_support_ellipsoid(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
 ):
     a = geoms_info.data[i_g][0]
     b = geoms_info.data[i_g][1]
@@ -236,8 +236,8 @@ def _func_support_capsule(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
     shrink,
 ):
     """
@@ -290,8 +290,8 @@ def _func_support_box(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
 ):
     d_box = gu.qd_inv_transform_by_quat(d, quat)
 
@@ -314,7 +314,7 @@ def _func_count_supports_world(
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    quat: qd.types.vector(4),
 ):
     """
     Count the number of valid support points for the given world direction.
@@ -399,7 +399,7 @@ def _func_count_supports_mesh(
 @qd.func
 def _func_count_supports_box(
     d,
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    quat: qd.types.vector(4),
 ):
     """
     Count the number of valid support points for a box in the given direction.

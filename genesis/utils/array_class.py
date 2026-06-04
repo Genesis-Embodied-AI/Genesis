@@ -240,8 +240,8 @@ class ConstraintState:
     jac: qd.Tensor
     diag: qd.Tensor
     aref: qd.Tensor
-    jac_relevant_dofs: qd.Tensor
-    jac_n_relevant_dofs: qd.Tensor
+    jac_dofs_idx: qd.Tensor
+    jac_n_dofs: qd.Tensor
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
     improved: qd.Tensor
@@ -290,6 +290,18 @@ class ConstraintState:
     # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: qd.Tensor
+    # Skyline envelope: nt_H_env_start[i_b, i_d] is the first (smallest) column index with a structural
+    # nonzero in row i_d of the Hessian. Cholesky fill-in stays within this envelope, so the factor and
+    # solve loops only need to visit columns [nt_H_env_start[i_d], i_d]. Only meaningful with sparse_solve.
+    nt_H_env_start: qd.Tensor
+    # Fill-reducing DOF reordering (sparse_solve). dof_perm[i_b, p] = original DOF at permuted position p;
+    # dof_iperm[i_b, d] = permuted position of original DOF d. The Hessian is assembled, factored and solved in
+    # permuted order (a spatial sort of bodies that keeps coupled DOFs index-adjacent), making the skyline band
+    # insensitive to insertion order; grad/Mgrad are indexed through dof_perm at the solve boundary so the rest of
+    # the solver stays in natural order. dof_sort_key is per-DOF scratch for the spatial sort.
+    dof_perm: qd.Tensor
+    dof_iperm: qd.Tensor
+    dof_sort_key: qd.Tensor
     nt_vec: qd.Tensor
     # Compacted list of constraints whose active state changed, used by incremental Cholesky update
     # to reduce GPU thread divergence by iterating only over constraints that need processing.
@@ -345,8 +357,9 @@ def get_constraint_state(constraint_solver, solver):
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
-    jac_relevant_dofs_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
-    jac_n_relevant_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
+    jac_dofs_idx_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
+    jac_n_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
+    sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
 
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
         gs.raise_exception(
@@ -397,6 +410,10 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_H=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
+        nt_H_env_start=V(dtype=gs.qd_int, shape=sparse_dof_shape),
+        dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
+        dof_iperm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
+        dof_sort_key=V(dtype=gs.qd_float, shape=sparse_dof_shape),
         incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B)),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
@@ -414,12 +431,12 @@ def get_constraint_state(constraint_solver, solver):
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
-        jac_relevant_dofs=V(
+        jac_dofs_idx=V(
             dtype=gs.qd_int,
-            shape=jac_relevant_dofs_shape,
+            shape=jac_dofs_idx_shape,
             layout=jac_layout if constraint_solver.sparse_solve else None,
         ),
-        jac_n_relevant_dofs=V(dtype=gs.qd_int, shape=jac_n_relevant_dofs_shape),
+        jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
@@ -884,12 +901,17 @@ def get_mpr_simplex_support(B_):
 class MPRState:
     simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
+    # True iff the last contact came from the refined portal (res==0 -> refine -> find_penetration), so
+    # simplex_support[1..3] holds the contact-face portal. False for the degenerate touch/segment paths, where the
+    # multi-contact perturbation must not reconstruct from the (unrefined) simplex.
+    portal_valid: qd.Tensor
 
 
 def get_mpr_state(B_):
     return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
+        portal_valid=V(dtype=gs.qd_bool, shape=(B_,)),
     )
 
 
@@ -1131,6 +1153,9 @@ class GJKState:
     is_col: qd.Tensor
     penetration: qd.Tensor
     distance: qd.Tensor
+    # Index of the EPA polytope face nearest to the origin (the penetration face), or -1 when EPA did not run. Lets the
+    # multi-contact perturbation reconstruct the exact unperturbed normal from that face's un-rotated support simplex.
+    nearest_face: qd.Tensor
     # Differentiable contact detection
     diff_contact_input: DiffContactInput
     n_diff_contact_input: qd.Tensor
@@ -1176,6 +1201,7 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
         is_col=V(dtype=gs.qd_bool, shape=(_B,)),
         penetration=V(dtype=gs.qd_float, shape=(_B,)),
         distance=V(dtype=gs.qd_float, shape=(_B,)),
+        nearest_face=V(dtype=gs.qd_int, shape=(_B,)),
         diff_contact_input=get_diff_contact_input(_B, max(max_contacts_per_pair, 1), is_active, requires_grad),
         n_diff_contact_input=V(dtype=gs.qd_int, shape=(_B,)),
         diff_penetration=V(dtype=gs.qd_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
@@ -1230,6 +1256,7 @@ def get_gjk_state_contact_only(_B):
         is_col=V(dtype=gs.qd_bool, shape=(1,)),
         penetration=V(dtype=gs.qd_float, shape=(1,)),
         distance=V(dtype=gs.qd_float, shape=(_B,)),
+        nearest_face=V(dtype=gs.qd_int, shape=(_B,)),
         diff_contact_input=get_diff_contact_input(_dummy_B, 1, is_active=False),
         n_diff_contact_input=V(dtype=gs.qd_int, shape=(1,)),
         diff_penetration=V(dtype=gs.qd_float, shape=()),
@@ -2120,6 +2147,10 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     enable_joint_limit: bool
     box_box_detection: bool
     sparse_solve: bool
+    # Whether the CPU skyline-envelope Cholesky (and its DOF reorder) is active. Set by the solver to sparse_solve
+    # and CPU backend and not requires_grad: the differentiable adjoint solve reuses nt_H with natural, dense
+    # indexing, so it cannot follow the envelope/permutation; assembly-level sparsity still applies under grad.
+    sparse_envelope: bool
     integrator: int
     solver_type: int
     requires_grad: bool
@@ -2127,7 +2158,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
+    mass_matrix_fits_shared: bool = False
     enable_tiled_cholesky_hessian: bool = False
+    hessian_fits_shared: bool = False
     # Register-tile width for the Hessian Cholesky kernels: 16 (Tile16x16) or 32 (Tile32x32). Selected at build time
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).

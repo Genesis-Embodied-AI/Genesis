@@ -183,10 +183,10 @@ def func_gjk_contact(
     i_ga,
     i_gb,
     i_b,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    pos_a: qd.types.vector(3),
+    quat_a: qd.types.vector(4),
+    pos_b: qd.types.vector(3),
+    quat_b: qd.types.vector(4),
 ):
     """
     Detect (possibly multiple) contact between two geometries using GJK and EPA algorithms.
@@ -201,6 +201,9 @@ def func_gjk_contact(
     """
     # Clear the cache to prepare for this GJK-EPA run
     clear_cache(gjk_state, i_b)
+
+    # No EPA penetration face yet; set to the nearest face index below if EPA runs.
+    gjk_state.nearest_face[i_b] = -1
 
     # We use MuJoCo's GJK implementation when the compatibility mode is enabled
     if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
@@ -345,6 +348,7 @@ def func_gjk_contact(
                         quat_b,
                         i_b,
                     )
+                    gjk_state.nearest_face[i_b] = i_f
 
                     if qd.static(gjk_static_config.enable_mujoco_multi_contact):
                         # To use MuJoCo's multi-contact detection algorithm,
@@ -398,7 +402,7 @@ def func_gjk_contact(
             func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             # Run EPA from the polytope
-            func_safe_epa(
+            gjk_state.nearest_face[i_b] = func_safe_epa(
                 geoms_info,
                 verts_info,
                 rigid_global_info,
@@ -459,10 +463,10 @@ def func_gjk(
     i_ga,
     i_gb,
     i_b,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    pos_a: qd.types.vector(3),
+    quat_a: qd.types.vector(4),
+    pos_b: qd.types.vector(3),
+    quat_b: qd.types.vector(4),
     shrink_sphere,
 ):
     """
@@ -703,10 +707,10 @@ def func_gjk_intersect(
     i_ga,
     i_gb,
     i_b,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    pos_a: qd.types.vector(3),
+    quat_a: qd.types.vector(4),
+    pos_b: qd.types.vector(3),
+    quat_b: qd.types.vector(4),
 ):
     """
     Check if the two objects intersect using the GJK algorithm.
@@ -1218,10 +1222,10 @@ def func_safe_gjk(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    pos_a: qd.types.vector(3),
+    quat_a: qd.types.vector(4),
+    pos_b: qd.types.vector(3),
+    quat_b: qd.types.vector(4),
     i_b,
 ):
     """
@@ -1561,10 +1565,10 @@ def func_search_valid_simplex_vertex(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    pos_a: qd.types.vector(3),
+    quat_a: qd.types.vector(4),
+    pos_b: qd.types.vector(3),
+    quat_b: qd.types.vector(4),
     i_b,
 ):
     """
@@ -1676,8 +1680,8 @@ def func_get_discrete_geom_vertex(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     i_g,
-    pos: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
     i_v,
 ):
     """
@@ -1755,10 +1759,10 @@ def func_safe_gjk_support(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    pos_a: qd.types.vector(3),
+    quat_a: qd.types.vector(4),
+    pos_b: qd.types.vector(3),
+    quat_b: qd.types.vector(4),
     i_b,
     dir,
 ):
@@ -1868,7 +1872,7 @@ def count_support_driver(
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    quat: qd.types.vector(4),
 ):
     """
     Count the number of possible support points in the given direction,
@@ -1894,8 +1898,8 @@ def func_count_support(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
-    quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    quat_b: qd.types.vector(4, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4),
+    quat_b: qd.types.vector(4),
     dir,
 ):
     """

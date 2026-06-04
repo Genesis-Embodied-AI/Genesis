@@ -209,12 +209,19 @@ class SurfaceDistanceProbeMetadata(
 class SurfaceDistanceProbeSensor(
     ProbeSensorMixin[SurfaceDistanceProbeMetadata],
     RigidSensorMixin[SurfaceDistanceProbeMetadata],
-    SimpleSensor[SurfaceDistanceProbeOptions, SurfaceDistanceProbeMetadata, tuple],
+    SimpleSensor[SurfaceDistanceProbeOptions, None, SurfaceDistanceProbeMetadata, tuple],
 ):
     """Surface distance probe: distance and nearest point from probe positions to tracked mesh surfaces."""
 
-    def __init__(self, sensor_options: SurfaceDistanceProbeOptions, sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
+    def __init__(
+        self,
+        options: SurfaceDistanceProbeOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._debug_objects: list = []
         self._nearest_points_slice: slice | None = None
 
@@ -266,6 +273,7 @@ class SurfaceDistanceProbeSensor(
     @classmethod
     def _update_current_timestep_data(
         cls,
+        shared_context: None,
         shared_metadata: SurfaceDistanceProbeMetadata,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",

@@ -1,3 +1,4 @@
+import functools
 import math
 from typing import Any, ClassVar, Literal
 from typing_extensions import Self
@@ -144,7 +145,7 @@ class Surface(Options):
         return False
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        return self._make_rgba(self.texture, None, batch)
+        return _make_rgba(self.texture, None, batch)
 
     def update_texture(
         self,
@@ -205,66 +206,73 @@ class Surface(Options):
                 opacity = tex
         return opacity
 
-    @staticmethod
-    def _make_rgba(
-        color_texture: Texture | None, opacity_texture: Texture | None, batch: bool
-    ) -> BatchTexture | Texture:
-        all_textures = []
-        for texture in (color_texture, opacity_texture):
-            textures = texture.textures if isinstance(texture, BatchTexture) else [texture]
-            all_textures.append(textures if batch else textures[:1])
-        color_textures, opacity_textures = all_textures
 
-        rgba_textures = []
-        num_colors = len(color_textures)
-        num_opacities = len(opacity_textures)
-        num_rgba = num_colors * num_opacities // math.gcd(num_colors, num_opacities)
+@functools.lru_cache(maxsize=128)
+def _make_rgba(color_texture: Texture | None, opacity_texture: Texture | None, batch: bool) -> "BatchTexture | Texture":
+    # Resolve a surface's color and opacity textures into a single RGBA texture. The result is memoized on the input
+    # texture instances: surfaces sharing the same textures (e.g. all textured submeshes of a GLB) then reuse a single
+    # merged array instead of allocating one full-resolution copy each. A texture update swaps in a new instance, which
+    # is a natural cache miss, so no explicit invalidation is needed.
+    all_textures = []
+    for texture in (color_texture, opacity_texture):
+        textures = texture.textures if isinstance(texture, BatchTexture) else [texture]
+        all_textures.append(textures if batch else textures[:1])
+    color_textures, opacity_textures = all_textures
 
-        for i in range(num_rgba):
-            color_texture = color_textures[i % num_colors]
-            opacity_texture = opacity_textures[i % num_opacities]
+    rgba_textures = []
+    num_colors = len(color_textures)
+    num_opacities = len(opacity_textures)
+    num_rgba = num_colors * num_opacities // math.gcd(num_colors, num_opacities)
 
-            if isinstance(color_texture, ColorTexture):
-                if isinstance(opacity_texture, ColorTexture):
-                    rgba_texture = ColorTexture(color=(*color_texture.color, *opacity_texture.color))
-                elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                    rgb_color = mu.color_f32_to_u8(color_texture.color)
-                    rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
-                    rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
-                    rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
-                    rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
-                else:
-                    rgba_texture = ColorTexture(color=(*color_texture.color, 1.0))
+    for i in range(num_rgba):
+        color_texture = color_textures[i % num_colors]
+        opacity_texture = opacity_textures[i % num_opacities]
 
-            elif isinstance(color_texture, ImageTexture) and color_texture.image_array is not None:
-                if isinstance(opacity_texture, ColorTexture):
-                    a_color = mu.color_f32_to_u8(opacity_texture.color)
-                    a_array = np.full((*color_texture.image_array.shape[:2],), a_color, dtype=np.uint8)
-                    rgba_array = np.dstack((color_texture.image_array, a_array))
-                    rgba_scale = (*color_texture.image_color, 1.0)
-                elif (
-                    isinstance(opacity_texture, ImageTexture)
-                    and opacity_texture.image_array is not None
-                    and opacity_texture.image_array.shape[:2] == color_texture.image_array.shape[:2]
-                ):
-                    rgba_array = np.dstack((color_texture.image_array, opacity_texture.image_array))
-                    rgba_scale = (*color_texture.image_color, *opacity_texture.image_color)
-                else:
-                    if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                        gs.logger.warning(
-                            "Color and opacity image shapes do not match. Fall back to fully opaque texture."
-                        )
-                    a_array = np.full(color_texture.image_array.shape[:2], 255, dtype=np.uint8)
-                    rgba_array = np.dstack((color_texture.image_array, a_array))
-                    rgba_scale = (*color_texture.image_color, 1.0)
+        if isinstance(color_texture, ColorTexture):
+            if isinstance(opacity_texture, ColorTexture):
+                rgba_texture = ColorTexture(color=(*color_texture.color, *opacity_texture.color))
+            elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
+                rgb_color = mu.color_f32_to_u8(color_texture.color)
+                rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
+                rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
+                rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
                 rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
-
             else:
-                rgba_texture = ColorTexture(color=(1.0, 1.0, 1.0, 1.0))
+                rgba_texture = ColorTexture(color=(*color_texture.color, 1.0))
 
-            rgba_textures.append(rgba_texture)
+        elif isinstance(color_texture, ImageTexture) and color_texture.image_array is not None:
+            if isinstance(opacity_texture, ColorTexture):
+                a_color = mu.color_f32_to_u8(opacity_texture.color)
+                a_array = np.full((*color_texture.image_array.shape[:2],), a_color, dtype=np.uint8)
+                rgba_array = np.dstack((color_texture.image_array, a_array))
+                rgba_scale = (*color_texture.image_color, 1.0)
+            elif (
+                isinstance(opacity_texture, ImageTexture)
+                and opacity_texture.image_array is not None
+                and opacity_texture.image_array.shape[:2] == color_texture.image_array.shape[:2]
+            ):
+                rgba_array = np.dstack((color_texture.image_array, opacity_texture.image_array))
+                rgba_scale = (*color_texture.image_color, *opacity_texture.image_color)
+            else:
+                if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
+                    gs.logger.warning("Color and opacity image shapes do not match. Fall back to fully opaque texture.")
+                a_array = np.full(color_texture.image_array.shape[:2], 255, dtype=np.uint8)
+                rgba_array = np.dstack((color_texture.image_array, a_array))
+                rgba_scale = (*color_texture.image_color, 1.0)
+            rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
 
-        return BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
+        else:
+            rgba_texture = ColorTexture(color=(1.0, 1.0, 1.0, 1.0))
+
+        rgba_textures.append(rgba_texture)
+
+    return BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
+
+
+def clear_rgba_cache() -> None:
+    # Drop the memoized RGBA textures, releasing the strong references their large image arrays would otherwise keep
+    # alive. Called on genesis destroy so textures from gone scenes do not stay resident.
+    _make_rgba.cache_clear()
 
 
 ############################ Surface types ############################
@@ -356,7 +364,7 @@ class Glass(Surface):
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
         color = self.emissive_texture if self.emissive_texture is not None else self.specular_texture
-        return self._make_rgba(color, None, batch)
+        return _make_rgba(color, None, batch)
 
     def update_texture(
         self,
@@ -434,7 +442,7 @@ class Metal(Surface):
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
         color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return self._make_rgba(color, self.opacity_texture, batch)
+        return _make_rgba(color, self.opacity_texture, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
@@ -525,7 +533,7 @@ class Plastic(Surface):
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
         color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return self._make_rgba(color, self.opacity_texture, batch)
+        return _make_rgba(color, self.opacity_texture, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
@@ -622,7 +630,7 @@ class BSDF(Surface):
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
         color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return self._make_rgba(color, self.opacity_texture, batch)
+        return _make_rgba(color, self.opacity_texture, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
@@ -690,7 +698,7 @@ class Emission(Surface):
         return self.emissive_texture is not None and self.emissive_texture.requires_uv
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        return self._make_rgba(self.emissive_texture, None, batch)
+        return _make_rgba(self.emissive_texture, None, batch)
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:

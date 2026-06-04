@@ -26,6 +26,12 @@ class Texture(Options):
     This class should *not* be instantiated directly.
     """
 
+    # Pydantic disables hashing for models with a field-based __eq__; its only opt-in (model_config frozen=True) also
+    # forbids the in-place edits done during setup (apply_cutoff, check_dim reassign image_array/color). Restore
+    # identity hashing instead: textures are shared by reference and stable once a surface is built, so their identity
+    # is a valid key for caches such as the get_rgba lru_cache.
+    __hash__ = object.__hash__
+
     def __init__(self, **data):
         super().__init__(**data)
 

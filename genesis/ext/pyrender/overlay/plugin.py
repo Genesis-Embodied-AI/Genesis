@@ -25,7 +25,9 @@ if TYPE_CHECKING:
     from genesis.ext.pyrender.viewer import Viewer
 
 _FPS_HISTORY_SIZE = 30
-_MORPH_TYPES = ["URDF", "MJCF", "Mesh", "Box", "Sphere", "Cylinder", "Plane"]
+# Add Entity / Stage dropdown. The "File" entry covers every file-based morph (URDF / MJCF / Mesh / USD); its
+# concrete type is deduced from the file extension. The others are primitive morphs built from their own params.
+_ADD_ENTITY_TYPES = ["File", "Box", "Sphere", "Cylinder", "Plane"]
 
 
 def button_size_with_min(imgui, label: str, min_width: float) -> tuple[float, float]:
@@ -91,9 +93,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             )
 
         super().__init__()
-        # InteractiveScene wrapping the current scene, created and owned by this plugin in build(). It backs
-        # the scene-editing controls (feature gating + rebuild) so the user never instantiates one manually.
-        self._interactive_scene = None
+        # InteractiveScene wrapping the current scene, created and owned by this plugin in build(). It backs the
+        # scene-editing controls (feature gating + rebuild) so the user never instantiates one manually.
+        self.interactive_scene = None
         self._controlled_env_idx = controlled_env_idx
         self._free_joint_pos_limit = free_joint_pos_limit
         self._panel_width = panel_width
@@ -113,15 +115,19 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # Name of the tab to force-select on the next frame, then cleared. None leaves the user's selection.
         self._active_tab = None
 
-        # The Scene editor panel mutates this local mirror of the live entities; on "Rebuild Scene" it is
-        # submitted to the InteractiveScene, which applies it on the stepping thread.
+        # The Scene editor panel mutates this local mirror of the live entities; on "Rebuild Scene" it is submitted to
+        # the InteractiveScene, which applies it on the stepping thread.
         self._pending_dirty = False
         self._pending_entities_kwargs: dict[str, dict] = {}
+        self._add_entity_morph_type = 0  # index into _ADD_ENTITY_TYPES
         self._add_entity_file = ""
-        self._add_entity_morph_type = 0  # index into _MORPH_TYPES
         self._add_entity_pos = [0.0, 0.0, 0.0]
         self._add_entity_scale = 1.0
-        # Type-specific geometry params
+        # Collision-mesh processing for file morphs (convexify replaces collision meshes with their convex hull,
+        # decimate reduces their face count).
+        self._add_convexify = True
+        self._add_decimate = True
+        # Primitive geometry params
         self._add_box_size = [0.2, 0.2, 0.2]
         self._add_sphere_radius = 0.1
         self._add_cylinder_radius = 0.05
@@ -135,8 +141,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         self._gizmo = None  # imguizmo.im_guizmo module (lazy loaded)
         self._gizmo_operation = None  # gizmo.OPERATION.translate
         self._gizmo_mode = None  # gizmo.MODE.world
-        self._gizmo_entity_idx = -1  # which free-joint entity is selected for gizmo
-        self._gizmo_cached_matrix = None  # cached 4x4 object matrix while dragging (avoids qpos round-trip jitter)
+        self._gizmo_entity_idx = -1  # which entity is selected for gizmo manipulation
         # Per-entity euler/quat mode: entity_idx -> "euler" or "quat"
         self._rotation_mode = {}
         # Per-entity wireframe state: entity_idx -> bool
@@ -157,19 +162,18 @@ class ImGuiOverlayPlugin(ViewerPlugin):
     def build(self, viewer: "Viewer", camera, scene: "Scene"):
         """Store references; ImGui initialization is deferred to on_draw (viewer thread)."""
         super().build(viewer, camera, scene)
-        # Reset ImGui state so it re-initializes in the new viewer thread
-        # (needed after scene rebuild creates a new viewer/OpenGL context)
-        # Don't destroy the old context here, it belonged to the old viewer
-        # thread and is already invalid after scene.destroy().
+        # Reset ImGui state so it re-initializes in the new viewer thread (needed after scene rebuild creates a new
+        # viewer/OpenGL context). Don't destroy the old context here, it belonged to the old viewer thread and is
+        # already invalid after scene.destroy().
         if self._init_attempted:
             self._impl = None
             self._io = None
             self._available = False
             self._init_attempted = False
             self._last_time = None
-        # Non-batched scenes (n_envs == 0) expect envs_idx=None on entity setters and return 1D qpos
-        # tensors. Collapse the controlled index to None so downstream code can pass it through
-        # unconditionally without branching on the batched/non-batched shape.
+        # Non-batched scenes (n_envs == 0) expect envs_idx=None on entity setters and return 1D qpos tensors. Collapse
+        # the controlled index to None so downstream code can pass it through unconditionally without branching on the
+        # batched/non-batched shape.
         if scene.n_envs == 0:
             self._controlled_env_idx = None
         elif self._controlled_env_idx is not None and not (0 <= self._controlled_env_idx < scene.n_envs):
@@ -179,26 +183,31 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # Cache entity data now (doesn't require OpenGL)
         self._cache_entity_data()
         self._capture_pending_entities_kwargs()
-        # Wrap the scene on first build. The InteractiveScene is the controller (it owns play/pause, stepping
-        # and rebuild); this overlay is just a view that reads and toggles its state. On a rebuild the plugin is
-        # re-attached to the reconstructed scene (same object), so the existing wrapper still applies.
-        if self._interactive_scene is None:
-            self._interactive_scene = InteractiveScene(scene)
+        # Wrap the scene on first build. The InteractiveScene is the controller (it owns play/pause, stepping and
+        # rebuild); this overlay is just a view that reads and toggles its state. On a rebuild the plugin is re-attached
+        # to the reconstructed scene (same object), so the existing wrapper still applies.
+        if self.interactive_scene is None:
+            self.interactive_scene = InteractiveScene(scene)
 
     @property
     def _supported_features(self) -> frozenset[InteractiveFeature]:
         """Editing features advertised by the plugin's InteractiveScene for the current simulator mode,
         queried live. Each scene-editing control gates on its own feature and renders disabled when absent."""
-        return self._interactive_scene.supported_features
+        return self.interactive_scene.supported_features
 
     def _refresh_visuals(self):
-        """Refresh render transforms after a GUI-driven mutation. Caller must hold the render lock."""
+        """Refresh render transforms after a GUI-driven mutation.
+
+        Caller must hold the render lock. Covers both the rigid and kinematic solvers, since both manage
+        KinematicEntity-based entities the browser can pose."""
         rigid_solver = self.scene.rigid_solver
-        if not rigid_solver.is_active:
-            return
-        rigid_solver.update_geoms_render_T()
-        rigid_solver.update_vgeoms()
-        rigid_solver.update_vgeoms_render_T()
+        # Collision-geom transforms only exist on the rigid solver; visual-geom transforms apply to both.
+        if rigid_solver.is_active:
+            rigid_solver.update_geoms_render_T()
+        for solver in (rigid_solver, self.scene.kinematic_solver):
+            if solver.is_active:
+                solver.update_vgeoms()
+                solver.update_vgeoms_render_T()
         ctx = self.viewer.gs_context
         ctx.update_link_frame()
         ctx.update_rigid()
@@ -217,7 +226,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
         with self.viewer.render_lock:
             ctx = self.viewer.gs_context
-            rigid_solver = self.scene.rigid_solver
+            solver = entity.solver
 
             old_geoms = entity.vgeoms if old_mode == "visual" else entity.geoms
             for geom in old_geoms:
@@ -230,9 +239,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
             is_collision = mode == "collision"
             geoms, geoms_T = (
-                (entity.vgeoms, rigid_solver._vgeoms_render_T)
-                if mode == "visual"
-                else (entity.geoms, rigid_solver._geoms_render_T)
+                (entity.vgeoms, solver._vgeoms_render_T) if mode == "visual" else (entity.geoms, solver._geoms_render_T)
             )
             for geom in geoms:
                 geom_envs_idx = ctx._get_geom_active_envs_idx(geom, ctx.rendered_envs_idx)
@@ -273,16 +280,15 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             self._impl._window = self.viewer
             self._io = imgui.get_io()
             self._io.set_ini_filename("")  # Don't persist window positions
-            # Render the first frame as if the window is unfocused so ImGui's keyboard nav does not auto-pick
-            # the first focusable widget and draw a nav highlight on top of it. Pyglet's Win32 backend reports
-            # the window as focused at startup, which would otherwise leave the first entity header with a
-            # visible highlight until the user interacts. Subsequent focus events from pyglet (mouse click,
-            # key press, etc.) restore normal focus behavior on demand.
+            # Render the first frame as if the window is unfocused so ImGui's keyboard nav does not auto-pick the first
+            # focusable widget and draw a nav highlight on top of it. Pyglet's Win32 backend reports the window as
+            # focused at startup, which would otherwise leave the first entity header with a visible highlight until the
+            # user interacts. Subsequent focus events from pyglet (mouse click, key press, etc.) restore normal focus
+            # behavior on demand.
             self._io.add_focus_event(False)
-            # Set up clipboard (pyglet backend doesn't do this by default)
-            # Pyglet caches _clipboard_str and only clears it on SelectionClear
-            # events, which may not be dispatched in time. Invalidate the cache
-            # before each read so we always get fresh system clipboard content.
+            # Set up clipboard (pyglet backend doesn't do this by default). Pyglet caches _clipboard_str and only clears
+            # it on SelectionClear events, which may not be dispatched in time. Invalidate the cache before each read so
+            # we always get fresh system clipboard content.
             window_ref = self.viewer
 
             def _get_clipboard(_ctx):
@@ -322,9 +328,14 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             print(f"ImGuiOverlayPlugin: Failed to initialize ImGui: {e}")
 
     def _cache_entity_data(self):
-        """Cache static joint metadata from all rigid entities."""
+        """Cache static joint metadata from all rigid and kinematic entities.
+
+        RigidEntity derives from KinematicEntity and both expose the same joint API, so the entity browser controls
+        them uniformly."""
         self._entity_cache.clear()
-        for entity in self.scene.rigid_solver.entities:
+        for entity in self.scene.entities:
+            if not isinstance(entity, gs.engine.entities.KinematicEntity):
+                continue
             if entity.n_dofs == 0:
                 # Still include for vis_mode toggle, but no joint data
                 self._entity_cache[entity.idx] = EntityCacheEntry(
@@ -359,10 +370,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         self._pending_entities_kwargs = {}
         for entity in self.scene.entities:
             kwargs: dict[str, Any] = {"morph": entity.morph}
-            if isinstance(entity, gs.engine.entities.RigidEntity):
+            # Carry the material and surface so a rebuild preserves the entity's solver (e.g. a Kinematic entity must
+            # not silently become Rigid, the add_entity default). visualize_contact is rigid-only.
+            if isinstance(entity, gs.engine.entities.KinematicEntity):
                 kwargs["material"] = entity.material
                 kwargs["surface"] = entity.surface
-                kwargs["visualize_contact"] = entity.visualize_contact
+                if isinstance(entity, gs.engine.entities.RigidEntity):
+                    kwargs["visualize_contact"] = entity.visualize_contact
             self._pending_entities_kwargs[entity.name] = kwargs
 
     def _is_capturing(self) -> bool:
@@ -501,7 +515,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
     def _render_sim_controls(self):
         """Render simulation control buttons, time display, and FPS."""
         imgui = self._imgui
-        interactive = self._interactive_scene
+        interactive = self.interactive_scene
 
         # State label
         if interactive.paused:
@@ -509,8 +523,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         else:
             imgui.text_colored((0.4, 0.9, 0.4, 1.0), "Running")
 
-        # Play/Pause and Reset (always visible), Step (only when paused). Auto-fit the label but with a 60-px
-        # floor so single-word verbs share a consistent baseline width and never get truncated.
+        # Play/Pause and Reset (always visible), Step (only when paused). Auto-fit the label but with a 60-px floor so
+        # single-word verbs share a consistent baseline width and never get truncated.
         play_pause = "Pause" if not interactive.paused else "Play"
         if imgui.button(play_pause, size=button_size_with_min(imgui, play_pause, 60.0)):
             interactive.resume() if interactive.paused else interactive.pause()
@@ -520,10 +534,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 interactive.step(self._step_count)
         imgui.same_line()
         if imgui.button("Reset", size=button_size_with_min(imgui, "Reset", 60.0)):
-            with self.viewer.render_lock:
-                self.scene.reset()
-                self.viewer.gs_context.clear_dynamic_nodes(only_outdated=False)
-                self._refresh_visuals()
+            interactive.reset()
 
         # Time display (frame count * dt = simulation time)
         sim_time = self.scene.t * self.scene.sim.dt
@@ -602,54 +613,51 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 self.viewer._camera_node.camera = self.viewer._default_persp_cam
 
     def _render_gizmo(self):
-        """Render 3D manipulation gizmo for the selected free-joint entity."""
+        """Render the 3D manipulation gizmo for the selected entity, translating/rotating its base link.
+
+        Works for fixed and floating base alike, applying ImGuizmo's resulting absolute pose via set_pos / set_quat.
+        The gizmo must be fed a projection with a finite far plane: with the renderer's infinite far plane ImGuizmo's
+        mouse-ray unprojection is ill-conditioned for an off-axis camera, quantizing the drag to a coarse grid."""
         gizmo = self._gizmo
         Matrix16 = gizmo.Matrix16
 
         data = self._entity_cache.get(self._gizmo_entity_idx)
-        if data is None or not data.joint_data.has_free_joint:
+        if data is None:
             return
 
         entity = data.entity
-        qs = data.joint_data.free_joint_q_start
 
-        # While actively dragging, use the cached matrix to avoid qpos round-trip jitter.
-        # Only read from qpos when not dragging (to pick up external changes).
-        if gizmo.is_using() and self._gizmo_cached_matrix is not None:
-            obj_mat = self._gizmo_cached_matrix
-        else:
-            # Get current qpos
-            qpos = tensor_to_array(entity.get_qpos())
-            if self._controlled_env_idx is not None:
-                qpos = qpos[self._controlled_env_idx]
+        pos = tensor_to_array(entity.get_pos())
+        quat_wxyz = tensor_to_array(entity.get_quat())
+        if self._controlled_env_idx is not None:
+            pos = pos[self._controlled_env_idx]
+            quat_wxyz = quat_wxyz[self._controlled_env_idx]
+        rot = R.from_quat([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])  # scipy uses x,y,z,w
 
-            # Extract position and quaternion from qpos
-            pos = qpos[qs : qs + 3]
-            quat_wxyz = qpos[qs + 3 : qs + 7]  # w, x, y, z
-
-            rot = R.from_quat([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])  # scipy uses x,y,z,w
-
-            obj_mat = np.eye(4)
-            obj_mat[:3, :3] = rot.as_matrix()
-            obj_mat[:3, 3] = pos
-
+        obj_mat = np.eye(4)
+        obj_mat[:3, :3] = rot.as_matrix()
+        obj_mat[:3, 3] = pos
         # ImGuizmo expects column-major (transpose for row-major numpy)
         object_matrix = Matrix16(obj_mat.T.flatten().tolist())
 
-        # Get view matrix (inverse of camera pose)
         cam_pose = self.viewer._trackball._n_pose.copy()
-        view_mat = np.linalg.inv(cam_pose)
-        camera_view = Matrix16(view_mat.T.flatten().tolist())
+        camera_view = Matrix16(np.linalg.inv(cam_pose).T.flatten().tolist())
 
-        # Get projection matrix
         w, h = int(self._io.display_size.x), int(self._io.display_size.y)
-        if w > 0 and h > 0:
-            proj = self.camera.camera.get_projection_matrix(width=w, height=h)
-            camera_proj = Matrix16(proj.T.flatten().tolist())
-        else:
+        if w <= 0 or h <= 0:
             return
+        # A perspective camera (proj[3, 3] == 0) renders with an infinite far plane (proj[2, 2] == -1), which makes
+        # ImGuizmo's mouse-ray unprojection ill-conditioned for an off-axis camera and snaps the drag to a coarse grid;
+        # substitute a finite far plane (fov, aspect and near are preserved). An orthographic camera has parallel rays
+        # (no such issue) and a different matrix layout, so leave its projection untouched.
+        proj = self.camera.camera.get_projection_matrix(width=w, height=h).copy()
+        if proj[3, 3] == 0.0:
+            near = proj[2, 3] / (proj[2, 2] - 1.0)
+            far = 1000.0
+            proj[2, 2] = -(far + near) / (far - near)
+            proj[2, 3] = -2.0 * far * near / (far - near)
+        camera_proj = Matrix16(proj.T.flatten().tolist())
 
-        # Draw gizmo
         modified = gizmo.manipulate(
             camera_view,
             camera_proj,
@@ -657,36 +665,21 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             self._gizmo_mode,
             object_matrix,
         )
+        if not modified:
+            return
 
-        if modified:
-            # Extract new transform from modified matrix (column-major -> row-major)
-            new_mat = np.array(object_matrix.values).reshape(4, 4).T
-            # Cache the matrix for next frame to avoid qpos round-trip jitter
-            self._gizmo_cached_matrix = new_mat.copy()
-
-            new_pos = new_mat[:3, 3]
-            new_rot = R.from_matrix(new_mat[:3, :3])
-            new_quat_xyzw = new_rot.as_quat()  # scipy: x,y,z,w
-            new_quat_wxyz = [new_quat_xyzw[3], new_quat_xyzw[0], new_quat_xyzw[1], new_quat_xyzw[2]]
-
-            # Read current qpos for non-free-joint DOFs
-            qpos = tensor_to_array(entity.get_qpos())
-            if self._controlled_env_idx is not None:
-                qpos = qpos[self._controlled_env_idx]
-
-            # Update only the free-joint DOFs
-            new_qpos = list(qpos)
-            new_qpos[qs : qs + 3] = new_pos.tolist()
-            new_qpos[qs + 3 : qs + 7] = new_quat_wxyz
-
-            # Auto-pause on gizmo edit
-            self._interactive_scene.pause()
-            with self.viewer.render_lock:
-                entity.set_qpos(new_qpos, envs_idx=self._controlled_env_idx)
-                self._refresh_visuals()
-        elif not gizmo.is_using():
-            # Clear cache when drag ends so next interaction reads fresh qpos
-            self._gizmo_cached_matrix = None
+        # ImGuizmo wrote the new absolute pose into object_matrix.
+        new_mat = np.array(object_matrix.values).reshape(4, 4).T
+        self.interactive_scene.pause()
+        with self.viewer.render_lock:
+            if self._gizmo_operation == gizmo.OPERATION.rotate:
+                quat_xyzw = R.from_matrix(new_mat[:3, :3]).as_quat()  # scipy: x,y,z,w
+                new_quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+                # set_quat must be absolute (relative=False), since the KinematicEntity default is relative.
+                entity.set_quat(new_quat_wxyz, envs_idx=self._controlled_env_idx, relative=False)
+            else:
+                entity.set_pos(new_mat[:3, 3], envs_idx=self._controlled_env_idx)
+            self._refresh_visuals()
 
     def _is_gizmo_active(self):
         """Check if the gizmo is being used (for input blocking)."""
@@ -734,13 +727,25 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         if imgui.button("Reset Camera", size=(120, 0)):
             self.viewer._reset_view()
 
-    _FILE_EXTENSIONS = {
-        "URDF": {".urdf"},
-        "MJCF": {".xml"},
-        "Mesh": {".obj", ".stl", ".ply", ".dae", ".glb", ".gltf"},
+    # Asset file extensions accepted by Add Entity, each mapped to the morph class deduced from it (matching how
+    # `gs launch` selects a morph from the filename). The Add Entity menu takes only a file path and infers the type.
+    _MORPH_BY_EXTENSION = {
+        ".urdf": gs.morphs.URDF,
+        ".xacro": gs.morphs.URDF,
+        ".xml": gs.morphs.MJCF,
+        ".obj": gs.morphs.Mesh,
+        ".stl": gs.morphs.Mesh,
+        ".ply": gs.morphs.Mesh,
+        ".dae": gs.morphs.Mesh,
+        ".glb": gs.morphs.Mesh,
+        ".gltf": gs.morphs.Mesh,
+        ".usd": gs.morphs.USD,
+        ".usda": gs.morphs.USD,
+        ".usdc": gs.morphs.USD,
+        ".usdz": gs.morphs.USD,
     }
 
-    def _render_file_browser(self, morph_type):
+    def _render_file_browser(self):
         """Render a file browser popup for selecting asset files."""
         imgui = self._imgui
         if not self._file_browser_open:
@@ -760,7 +765,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             draw_separator(imgui)
 
             # List directory contents
-            valid_exts = self._FILE_EXTENSIONS.get(morph_type, set())
+            valid_exts = set(self._MORPH_BY_EXTENSION)
             try:
                 entries = sorted(os.listdir(self._file_browser_dir))
             except OSError:
@@ -841,7 +846,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             morph_name = type(morph).__name__
             file_name = morph.file if isinstance(morph, gs.morphs.FileMorph) else ""
 
-            imgui.text(f"{name} ({morph_name}): {file_name or '(builtin)'}")
+            imgui.text_wrapped(f"{name} ({morph_name}): {file_name or '(builtin)'}")
 
             if isinstance(morph, gs.morphs.FileMorph):
                 scale = morph.scale
@@ -869,25 +874,28 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             del self._pending_entities_kwargs[to_remove]
             self._pending_dirty = True
 
-        # Add entity section
+        # Add entity / stage section
         imgui.begin_disabled(add_disabled)
-        add_header_open = imgui.collapsing_header("Add Entity##add_entity")
+        add_header_open = imgui.collapsing_header("Add Entity / Stage##add_entity")
         imgui.end_disabled()
         self._maybe_show_disabled_tooltip(add_disabled)
         if add_header_open:
             imgui.indent()
             imgui.begin_disabled(add_disabled)
-            changed_type, self._add_entity_morph_type = imgui.combo(
-                "Type##add_type", self._add_entity_morph_type, _MORPH_TYPES
-            )
 
-            morph_type = _MORPH_TYPES[self._add_entity_morph_type]
-            # Default fixed=True for Plane when type changes
+            changed_type, self._add_entity_morph_type = imgui.combo(
+                "Type##add_type", self._add_entity_morph_type, _ADD_ENTITY_TYPES
+            )
+            morph_type = _ADD_ENTITY_TYPES[self._add_entity_morph_type]
+            is_file = morph_type == "File"
+            # Default fixed=True for Plane when the type changes (a Plane is always grounded).
             if changed_type and morph_type == "Plane":
                 self._add_entity_fixed = True
 
-            # File path for file-based morphs
-            if morph_type in ("URDF", "MJCF", "Mesh"):
+            # The "File" entry takes only a path; the concrete morph (URDF / MJCF / Mesh / USD) is deduced from the
+            # extension, exactly as `gs launch` selects a morph from the filename it is given.
+            morph_cls = None
+            if is_file:
                 _, self._add_entity_file = imgui.input_text("File##add_file", self._add_entity_file, 256)
                 imgui.same_line()
                 if imgui.button("Browse##add_browse") and not add_disabled:
@@ -898,15 +906,16 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                         parent = os.path.dirname(self._add_entity_file)
                         if os.path.isdir(parent):
                             self._file_browser_dir = parent
+                self._render_file_browser()
 
-                self._render_file_browser(morph_type)
+                morph_cls = self._MORPH_BY_EXTENSION.get(os.path.splitext(self._add_entity_file)[1].lower())
+                if self._add_entity_file and morph_cls is None:
+                    imgui.text_colored((1.0, 0.4, 0.4, 1.0), "Unsupported file type")
 
                 _, self._add_entity_scale = imgui.drag_float(
                     "Scale##add_scale", self._add_entity_scale, 0.01, 0.01, 100.0, "%.3f"
                 )
-
-            # Type-specific geometry params
-            if morph_type == "Box":
+            elif morph_type == "Box":
                 _, self._add_box_size = imgui.drag_float3(
                     "Size##add_box_size", self._add_box_size, 0.01, 0.01, 100.0, "%.3f"
                 )
@@ -922,37 +931,65 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     "Height##add_cyl_h", self._add_cylinder_height, 0.01, 0.01, 100.0, "%.3f"
                 )
 
-            # Position (all types except Plane)
+            # Position (all types except Plane, which is always at the origin).
             if morph_type != "Plane":
                 _, self._add_entity_pos = imgui.drag_float3(
                     "Position##add_pos", self._add_entity_pos, 0.05, -100.0, 100.0, "%.2f"
                 )
 
-            # Fixed checkbox
+            # Fixed checkbox. An MJCF defines its own base joint (free or welded), so the toggle has no effect and is
+            # greyed out for it. The collision-mesh processing toggles sit alongside for file morphs: convexify
+            # replaces collision meshes with their convex hull and decimate reduces their face count (both default on).
+            fixed_disabled = morph_cls is gs.morphs.MJCF
+            imgui.begin_disabled(fixed_disabled)
             _, self._add_entity_fixed = imgui.checkbox("Fixed##add_fixed", self._add_entity_fixed)
+            imgui.end_disabled()
+            if fixed_disabled and imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
+                imgui.set_tooltip("An MJCF defines its own base joint")
+            if is_file:
+                imgui.same_line()
+                _, self._add_convexify = imgui.checkbox("Convexify##add_convexify", self._add_convexify)
+                imgui.same_line()
+                _, self._add_decimate = imgui.checkbox("Decimate##add_decimate", self._add_decimate)
 
+            # A File type stays un-addable until its path resolves to a known morph.
+            add_invalid = is_file and morph_cls is None
+            imgui.begin_disabled(add_invalid)
             add_clicked = imgui.button("Add##add_btn")
             imgui.end_disabled()
+            imgui.end_disabled()
             self._maybe_show_disabled_tooltip(add_disabled)
-            if add_clicked and not add_disabled:
+            if add_clicked and not add_disabled and not add_invalid:
                 pos = tuple(self._add_entity_pos)
-                scale = self._add_entity_scale
                 fixed = self._add_entity_fixed
-                box_size = tuple(self._add_box_size)
-                morph_cls_map = {
-                    "URDF": lambda: gs.morphs.URDF(file=self._add_entity_file, pos=pos, scale=scale, fixed=fixed),
-                    "MJCF": lambda: gs.morphs.MJCF(file=self._add_entity_file, pos=pos, scale=scale, fixed=fixed),
-                    "Mesh": lambda: gs.morphs.Mesh(file=self._add_entity_file, pos=pos, scale=scale, fixed=fixed),
-                    "Box": lambda: gs.morphs.Box(pos=pos, size=box_size, fixed=fixed),
-                    "Sphere": lambda: gs.morphs.Sphere(pos=pos, radius=self._add_sphere_radius, fixed=fixed),
-                    "Cylinder": lambda: gs.morphs.Cylinder(
+                if is_file:
+                    morph_kwargs = dict(
+                        file=self._add_entity_file,
+                        pos=pos,
+                        scale=self._add_entity_scale,
+                        convexify=self._add_convexify,
+                        decimate=self._add_decimate,
+                    )
+                    # MJCF has no 'fixed' parameter; its base joint comes from the file.
+                    if morph_cls is not gs.morphs.MJCF:
+                        morph_kwargs["fixed"] = fixed
+                    new_morph = morph_cls(**morph_kwargs)
+                    base_name = morph_cls.__name__
+                elif morph_type == "Box":
+                    new_morph = gs.morphs.Box(pos=pos, size=tuple(self._add_box_size), fixed=fixed)
+                    base_name = "Box"
+                elif morph_type == "Sphere":
+                    new_morph = gs.morphs.Sphere(pos=pos, radius=self._add_sphere_radius, fixed=fixed)
+                    base_name = "Sphere"
+                elif morph_type == "Cylinder":
+                    new_morph = gs.morphs.Cylinder(
                         pos=pos, radius=self._add_cylinder_radius, height=self._add_cylinder_height, fixed=fixed
-                    ),
-                    "Plane": lambda: gs.morphs.Plane(),
-                }
-                new_morph = morph_cls_map[morph_type]()
+                    )
+                    base_name = "Cylinder"
+                else:
+                    new_morph = gs.morphs.Plane()
+                    base_name = "Plane"
                 # Generate a unique name based on the morph type.
-                base_name = morph_type
                 suffix = 0
                 name = base_name
                 while name in self._pending_entities_kwargs:
@@ -967,8 +1004,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 self._pending_dirty = True
             imgui.unindent()
 
-        # Rebuild button. The InteractiveScene performs the actual rebuild on the stepping thread; doing it
-        # here on the viewer thread would destroy the OpenGL context we are rendering from.
+        # Rebuild button. The InteractiveScene performs the actual rebuild on the stepping thread; doing it here on the
+        # viewer thread would destroy the OpenGL context we are rendering from.
         if self._pending_dirty:
             imgui.text_colored((1.0, 0.7, 0.0, 1.0), "Changes pending")
         imgui.begin_disabled(rebuild_disabled)
@@ -976,7 +1013,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         imgui.end_disabled()
         self._maybe_show_disabled_tooltip(rebuild_disabled)
         if rebuild_clicked and not rebuild_disabled:
-            self._interactive_scene.rebuild(entities_kwargs=self._pending_entities_kwargs)
+            self.interactive_scene.rebuild(entities_kwargs=self._pending_entities_kwargs)
             self._pending_dirty = False
 
     def _render_entity_browser(self):
@@ -989,8 +1026,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
         for entity_idx, data in self._entity_cache.items():
             entity = data.entity
+            # Tag each entry with the entity class (e.g. <RigidEntity>, <KinematicEntity>) so the type is visible,
+            # matching the <ClassName> style used by the option reprs. Controls unavailable for kinematic entities are
+            # disabled rather than removed, keeping the panel layout consistent across entity types.
+            is_rigid = isinstance(entity, gs.engine.entities.RigidEntity)
             expanded = imgui.collapsing_header(
-                f"{data.name}##entity_{entity_idx}", flags=imgui.TreeNodeFlags_.default_open
+                f"{data.name}  <{type(entity).__name__}>##entity_{entity_idx}",
+                flags=imgui.TreeNodeFlags_.default_open,
             )
             if not expanded:
                 continue
@@ -1000,16 +1042,24 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             # DOF count display
             imgui.text(f"DOFs: {data.n_dofs}")
 
-            # Vis mode combo
-            vis_modes = ["visual", "collision"]
+            # Vis mode combo. The collision item is greyed out unless the entity has collision geometry (kinematic
+            # entities have none, and rigid entities can be loaded without it), so an empty mode is never selectable.
+            has_collision = is_rigid and len(entity.geoms) > 0
             current_mode = entity.surface.vis_mode
-            current_mode_idx = vis_modes.index(current_mode) if current_mode in vis_modes else 0
-            changed_mode, new_mode_idx = imgui.combo(f"Vis Mode##vis_{entity_idx}", current_mode_idx, vis_modes)
-            if changed_mode:
-                self._apply_entity_vis_mode(entity, vis_modes[new_mode_idx])
+            if imgui.begin_combo(f"Vis Mode##vis_{entity_idx}", current_mode):
+                for mode in ("visual", "collision"):
+                    disabled = mode == "collision" and not has_collision
+                    imgui.begin_disabled(disabled)
+                    clicked = imgui.selectable(mode, current_mode == mode)[0]
+                    imgui.end_disabled()
+                    if disabled and imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
+                        imgui.set_tooltip("No collision geometry available for this entity")
+                    if clicked and mode != current_mode:
+                        self._apply_entity_vis_mode(entity, mode)
+                imgui.end_combo()
 
-            # Per-entity wireframe toggle. Material lives on render primitives, so we walk the
-            # active geom set (vgeoms for visual mode, geoms otherwise) and flip the flag on each.
+            # Per-entity wireframe toggle. Material lives on render primitives, so we walk the active geom set (vgeoms
+            # for visual mode, geoms otherwise) and flip the flag on each.
             is_wireframe = self._wireframe_state.get(entity_idx, False)
             changed_wf, new_wf = imgui.checkbox(f"Wireframe##wf_{entity_idx}", is_wireframe)
             if changed_wf:
@@ -1025,16 +1075,21 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                             primitive.material.wireframe = new_wf
                 ctx._scene._meshes_updated = True
 
-            # Visualize contact toggle
-            show_contact = entity.visualize_contact
+            # Visualize contact toggle. Contacts only exist for dynamically simulated rigid entities; for kinematic
+            # entities the control is disabled and reads False, since they carry no visualize_contact state.
+            show_contact = entity.visualize_contact if is_rigid else False
+            imgui.begin_disabled(not is_rigid)
             changed_contact, new_contact = imgui.checkbox(f"Show Contacts##contact_{entity_idx}", show_contact)
+            imgui.end_disabled()
+            if not is_rigid and imgui.is_item_hovered(imgui.HoveredFlags_.allow_when_disabled.value):
+                imgui.set_tooltip("Only available for rigid entities")
             if changed_contact:
                 entity._visualize_contact = new_contact
                 for link in entity.links:
                     link._visualize_contact = new_contact
 
-            # Gizmo toggle for free-joint entities
-            if data.joint_data.has_free_joint and self._gizmo is not None:
+            # Gizmo toggle to translate/rotate the entity's base link (fixed or floating base).
+            if self._gizmo is not None:
                 gizmo_active = self._gizmo_entity_idx == entity_idx
                 changed_gizmo, new_gizmo = imgui.checkbox(f"Gizmo##gizmo_{entity_idx}", gizmo_active)
                 if changed_gizmo:
@@ -1100,7 +1155,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
                 if changed_any:
                     # Auto-pause when user edits joints
-                    self._interactive_scene.pause()
+                    self.interactive_scene.pause()
                     if not (data.joint_data.has_free_joint and self._rotation_mode.get(entity_idx) == "euler"):
                         # Normalize any edited quaternion groups (quat mode only)
                         for qstart, qend in data.joint_data.quat_groups:
@@ -1150,7 +1205,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         )
 
         if changed_pos or changed_rot:
-            self._interactive_scene.pause()
+            self.interactive_scene.pause()
             new_dofs = list(dofs)
             if changed_pos:
                 new_dofs[0], new_dofs[1], new_dofs[2] = new_pos
@@ -1198,8 +1253,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         and scene teardown, so guard against a second call once the context is already destroyed."""
         if self._ctx is None:
             return
-        # Make our context current before tearing it down; the backend shutdown and destroy_context both
-        # operate on the current ImGui context.
+        # Make our context current before tearing it down; the backend shutdown and destroy_context both operate on the
+        # current ImGui context.
         self._imgui.set_current_context(self._ctx)
         if self._available and self._impl is not None:
             self._impl.shutdown()

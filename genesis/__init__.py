@@ -382,6 +382,9 @@ def destroy():
         assert scene is not None
         scene.destroy()
 
+    # Release cached RGBA textures so large image arrays from destroyed scenes are not retained globally.
+    surfaces.clear_rgba_cache()
+
     # Destroy all externally registered modules
     for _init_fun, destroy_fun in _module_registry:
         destroy_fun()

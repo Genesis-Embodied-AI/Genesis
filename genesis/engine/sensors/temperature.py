@@ -508,10 +508,17 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, SimpleSensorMetada
 
 class TemperatureGridSensor(
     RigidSensorMixin[TemperatureGridSensorMetadata],
-    SimpleSensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
+    SimpleSensor[TemperatureGridOptions, None, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
-    def __init__(self, sensor_options: TemperatureGridOptions, sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
+    def __init__(
+        self,
+        options: TemperatureGridOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
 
         self._link: "RigidLink | None" = None
         self._debug_objects: list = []
@@ -689,7 +696,9 @@ class TemperatureGridSensor(
             shared_metadata.link_temps[envs_idx, :] = base_T_per_link.unsqueeze(0).expand(n_envs, -1)
 
     @classmethod
-    def _update_raw_data(cls, shared_metadata: TemperatureGridSensorMetadata, raw_data_T: torch.Tensor):
+    def _update_raw_data(
+        cls, shared_context: None, shared_metadata: TemperatureGridSensorMetadata, raw_data_T: torch.Tensor
+    ):
         solver = shared_metadata.solver
         dt = solver._sim.dt
         props = shared_metadata.link_material_properties
