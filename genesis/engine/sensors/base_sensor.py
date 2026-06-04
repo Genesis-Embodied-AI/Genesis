@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, TypeVar, get_args, get_origin
@@ -95,21 +96,76 @@ class SimpleSensorMetadata(SharedSensorMetadata):
     has_any_resolution: bool = False
 
 
+class SharedSensorContext(ABC):
+    """
+    Abstract base for a resource shared across *different* sensor types, owned by ``SensorManager``. A sensor type
+    declares the context it consumes as the second ``Sensor[Options, Context, Metadata, Data]`` parameter (``None``
+    when it has none); every type declaring the same context class resolves to the one instance the manager owns.
+
+    Distinct from ``SharedSensorMetadata``: metadata aggregates the per-sensor state of all sensors of a *single* type
+    so one kernel can run over them (a batching optimization that grows with the number of sensors); a context is a
+    *single* resource read by *several* sensor types, O(1) in the number of sensors (a sharing optimization). A context
+    is purely an optimization: a sensor must produce identical results whether or not it is shared, so consistency stays
+    ``SensorManager``'s responsibility, never the context's.
+
+    The manager constructs the context with the sim at sensor-creation time, since the context must already exist to be
+    handed to consuming sensors, but it stays an empty shell until a consumer activates it.
+
+    - ``activate`` - a consuming sensor calls this from its own ``build`` (must be idempotent). The first call
+      constructs the resource on the spot; the scene geometry is available by then. Inactive contexts stay empty shells
+      and pay nothing. There is no separate manager-driven build: activation does the construction.
+    - ``update`` - the manager calls this once per step before the per-type update loop; a no-op when inactive.
+    - ``reset`` / ``destroy`` - manager-driven on ``scene.reset()`` and teardown.
+
+    Querying an inactive context (e.g. reading its resource) must raise: only consumers that activated it may read it.
+    Subclasses must implement every lifecycle method; ``update`` / ``reset`` / ``destroy`` guard themselves on
+    ``is_active``.
+    """
+
+    def __init__(self, sim):
+        self._sim = sim
+        self._active = False
+
+    @property
+    def is_active(self) -> bool:
+        return self._active
+
+    @abstractmethod
+    def activate(self) -> None:
+        """Declare the context active (a consumer needs it) and construct the resource; must be idempotent. Called from
+        a consuming sensor's ``build``, when the scene geometry is available."""
+
+    @abstractmethod
+    def update(self) -> None:
+        """Refresh the resource for the current step; manager-driven once per step. Must no-op when inactive."""
+
+    @abstractmethod
+    def reset(self, envs_idx) -> None:
+        """Reset the resource; manager-driven on ``scene.reset()``. Must no-op when inactive."""
+
+    @abstractmethod
+    def destroy(self) -> None:
+        """Release any resources held by the context; manager-driven on teardown."""
+
+
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
 OptionsT = TypeVar("OptionsT", bound="SensorOptions")
 DataT = TypeVarWithDefault("DataT", default=tuple, covariant=True)
+# Second ``Sensor[...]`` parameter: the cross-type shared context. No default - declare ``None`` explicitly when the
+# sensor type has no shared context (``SensorManager`` then passes ``None`` to the per-step hooks for that type).
+SharedSensorContextT = TypeVar("SharedSensorContextT")
 
 
-class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
+class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT, DataT]):
     """
     Base class for all types of sensors.
 
-    To create a sensor, prefer using `scene.add_sensor(sensor_options)` instead of instantiating this class directly.
+    To create a sensor, prefer using `scene.add_sensor(options)` instead of instantiating this class directly.
 
     Each concrete sensor class declares its associated options, metadata, and data types via Generic type parameters::
 
-        class MySensor(Sensor[MyOptions, MyMetadata, MyData]):
-            ...  # DataT defaults to tuple; specify explicitly for NamedTuple returns
+        class MySensor(Sensor[MyOptions, MyContext, MyMetadata, MyData]):
+            ...  # 2nd param is the shared context (use ``None`` if none); DataT defaults to tuple
 
     Note
     -----
@@ -122,6 +178,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     _options_cls: ClassVar[type]
     _metadata_cls: ClassVar[type]
     _return_data_class: ClassVar[type] = tuple
+    # Cross-type shared context class declared as the second ``Sensor[...]`` parameter; ``NoneType`` (declared as
+    # ``None``) means this sensor type consumes no shared context.
+    _shared_context_cls: ClassVar[type] = type(None)
     # Whether instances of this class participate in the ring-based per-step pipeline (delay sampling, transform
     # recurrence, history snapshots). Drives allocation of the GT + measured timeline rings in `SensorManager.build`.
     # Subclasses whose `_update_shared_cache` bypasses the rings (e.g. cameras handling rendering lazily) explicitly set
@@ -137,9 +196,11 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
                 if len(args) >= 1 and not isinstance(args[0], TypeVar):
                     cls._options_cls = args[0]
                 if len(args) >= 2 and not isinstance(args[1], TypeVar):
-                    cls._metadata_cls = args[1]
+                    cls._shared_context_cls = args[1]
                 if len(args) >= 3 and not isinstance(args[2], TypeVar):
-                    cls._return_data_class = args[2]
+                    cls._metadata_cls = args[2]
+                if len(args) >= 4 and not isinstance(args[3], TypeVar):
+                    cls._return_data_class = args[3]
                 break
         # Strict contract: overriding `_post_process` requires overriding `_get_intermediate_format` and/or
         # `_get_intermediate_dtype`. The intermediate buffer must be a distinct buffer regardless of whether its
@@ -158,32 +219,43 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         # specify the metadata type parameter.
         if "_options_cls" in cls.__dict__:
             if "_metadata_cls" not in cls.__dict__:
-                raise TypeError(f"{cls.__name__} must specify Sensor[OptionsT, MetadataT, DataT=tuple].")
+                raise TypeError(f"{cls.__name__} must specify Sensor[OptionsT, ContextT, MetadataT, DataT=tuple].")
             from .sensor_manager import SensorManager
 
             SensorManager.SENSOR_TYPES_MAP[cls._options_cls] = cls
 
-    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
-        self._options: "SensorOptions" = sensor_options
-        self._idx: int = sensor_idx
-        self._manager: "SensorManager" = sensor_manager
-        self._shared_metadata: SharedSensorMetadataT = sensor_manager._sensors_metadata[type(self)]
+    def __init__(
+        self,
+        options: "SensorOptions",
+        idx: int,
+        shared_context: SharedSensorContextT,
+        shared_metadata: SharedSensorMetadataT,
+        manager: "SensorManager",
+    ):
+        self._options: "SensorOptions" = options
+        self._idx: int = idx
+        # The per-type metadata and cross-type context a sensor needs are passed in explicitly so sensors never
+        # introspect the manager's registries. The manager itself comes last as it is only a backdoor for debug / fast
+        # prototyping (and so it can be dropped from the signature later).
+        self._manager: "SensorManager" = manager
+        # The cross-type shared context instance, or ``None`` when this sensor type declares no context. Reachable from
+        # instance methods (build / debug); the per-step classmethod hooks receive it as the ``shared_context`` argument.
+        self._shared_context: SharedSensorContextT = shared_context
+        self._shared_metadata: SharedSensorMetadataT = shared_metadata
         self._is_built = False
 
         # Classes that opt out of the ring pipeline (e.g. cameras handling rendering lazily on read) cannot honor delay
         # / jitter / history because those features depend on the per-class return-space ring. Reject the inputs at
         # construction so the user picks a different sensor or drops the option rather than silently getting no-ops.
         if not self.uses_ring_pipeline:
-            if sensor_options.delay > 0.0:
-                gs.raise_exception(f"{type(self).__name__} does not support `delay`; got delay={sensor_options.delay}.")
-            if sensor_options.jitter > 0.0:
-                gs.raise_exception(
-                    f"{type(self).__name__} does not support `jitter`; got jitter={sensor_options.jitter}."
-                )
-            if sensor_options.history_length > 0:
+            if options.delay > 0.0:
+                gs.raise_exception(f"{type(self).__name__} does not support `delay`; got delay={options.delay}.")
+            if options.jitter > 0.0:
+                gs.raise_exception(f"{type(self).__name__} does not support `jitter`; got jitter={options.jitter}.")
+            if options.history_length > 0:
                 gs.raise_exception(
                     f"{type(self).__name__} does not support `history_length`; got "
-                    f"history_length={sensor_options.history_length}."
+                    f"history_length={options.history_length}."
                 )
 
         self._dt = self._manager._sim.dt
@@ -296,6 +368,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     @classmethod
     def _update_shared_cache(
         cls,
+        shared_context: SharedSensorContextT,
         shared_metadata: SharedSensorMetadataT,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",
@@ -601,7 +674,7 @@ class KinematicSensorMixin(_LinkAttachedSensorMixin, Generic[KinematicSensorMeta
             )
 
 
-class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
+class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT, DataT]):
     """
     Base class for sensors that use the standard per-step pipeline.
 
@@ -726,6 +799,7 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
     @classmethod
     def _update_shared_cache(
         cls,
+        shared_context: SharedSensorContextT,
         shared_metadata: SharedSensorMetadata,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",
@@ -739,7 +813,7 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
         if measured_data_timeline is None:
             # No measured pipeline for this dtype (only non-SimpleSensor classes); shouldn't happen for SimpleSensor
             # instances but keep the path correct: raw GT -> intermediate cache.
-            cls._update_raw_data(shared_metadata, current_ground_truth_data_T)
+            cls._update_raw_data(shared_context, shared_metadata, current_ground_truth_data_T)
             intermediate_cache.copy_(current_ground_truth_data_T.T)
         else:
             gt_slot_0 = ground_truth_data_timeline.at(0, copy=False)
@@ -750,7 +824,11 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
             # in place on the measured ring slot only - GT keeps the raw simulated phenomenon, measured carries the
             # noised value.
             cls._update_current_timestep_data(
-                shared_metadata, current_ground_truth_data_T, ground_truth_data_timeline, measured_data_timeline
+                shared_context,
+                shared_metadata,
+                current_ground_truth_data_T,
+                ground_truth_data_timeline,
+                measured_data_timeline,
             )
 
             # GT branch transform. `is_measured=False` lets sensor-element-specific effects (RC filter, mechanical
@@ -777,6 +855,7 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
     @classmethod
     def _update_current_timestep_data(
         cls,
+        shared_context: SharedSensorContextT,
         shared_metadata: SharedSensorMetadata,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",
@@ -792,7 +871,7 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
         ``current_ground_truth_data_T`` and to the GT ring slot, and write the noised value directly to the measured
         ring slot.
         """
-        cls._update_raw_data(shared_metadata, current_ground_truth_data_T)
+        cls._update_raw_data(shared_context, shared_metadata, current_ground_truth_data_T)
         if ground_truth_data_timeline is not None:
             ground_truth_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
         measured_slot_0 = measured_data_timeline.at(0, copy=False)
@@ -819,7 +898,9 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
         """
 
     @classmethod
-    def _update_raw_data(cls, shared_metadata: SharedSensorMetadata, raw_data_T: torch.Tensor):
+    def _update_raw_data(
+        cls, shared_context: SharedSensorContextT, shared_metadata: SharedSensorMetadata, raw_data_T: torch.Tensor
+    ):
         """Sensor-specific kernel computing raw data into ``raw_data_T`` (shape ``(cols, B)``)."""
         raise NotImplementedError(f"{cls.__name__} has not implemented `_update_raw_data()`.")
 

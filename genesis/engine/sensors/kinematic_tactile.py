@@ -354,8 +354,15 @@ def _kernel_contact_depth_probe(
 
 
 class KinematicTactileSensorMixin(ProbeSensorMixin[ProbesWithNormalSensorSharedMetadataT]):
-    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
+    def __init__(
+        self,
+        options: "SensorOptions",
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
         self._debug_objects: list = []
 
     def build(self):
@@ -391,7 +398,7 @@ class ContactDepthProbeMetadata(ProbeSensorMetadataMixin, RigidSensorMetadataMix
 class ContactDepthProbeSensor(
     KinematicTactileSensorMixin[ContactDepthProbeMetadata],
     RigidSensorMixin[ContactDepthProbeMetadata],
-    SimpleSensor[ContactDepthProbeOptions, ContactDepthProbeMetadata, tuple],
+    SimpleSensor[ContactDepthProbeOptions, None, ContactDepthProbeMetadata, tuple],
 ):
     """Returns contact depth in meters per probe."""
 
@@ -405,6 +412,7 @@ class ContactDepthProbeSensor(
     @classmethod
     def _update_current_timestep_data(
         cls,
+        shared_context: None,
         shared_metadata: ContactDepthProbeMetadata,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",
@@ -450,7 +458,7 @@ class ContactProbeMetadata(ContactDepthProbeMetadata):
     threshold_row: torch.Tensor = make_tensor_field((0,))
 
 
-class ContactProbeSensor(ContactDepthProbeSensor, SimpleSensor[ContactProbeOptions, ContactProbeMetadata, tuple]):
+class ContactProbeSensor(ContactDepthProbeSensor, SimpleSensor[ContactProbeOptions, None, ContactProbeMetadata, tuple]):
     """Returns boolean contact per probe (depth > threshold). Shares the depth-probe kernel."""
 
     def build(self):
@@ -494,7 +502,7 @@ class ContactProbeSensor(ContactDepthProbeSensor, SimpleSensor[ContactProbeOptio
         self._draw_debug_probes(context, lambda data: data)
 
 
-class KinematicTaxelData(NamedTuple):
+class KinematicTaxelReturnType(NamedTuple):
     """
     Parameters
     ----------
@@ -520,12 +528,19 @@ class KinematicTaxelSensor(
     KinematicTactileSensorMixin[KinematicTaxelMetadata],
     ProbesWithNormalSensorMixin[KinematicTaxelMetadata],
     RigidSensorMixin[KinematicTaxelMetadata],
-    SimpleSensor[KinematicTaxelOptions, KinematicTaxelMetadata, KinematicTaxelData],
+    SimpleSensor[KinematicTaxelOptions, None, KinematicTaxelMetadata, KinematicTaxelReturnType],
 ):
     """Kinematic taxels: spring-damper force and torque per probe from contact geometry and relative motion."""
 
-    def __init__(self, sensor_options: KinematicTaxelOptions, sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
+    def __init__(
+        self,
+        options: KinematicTaxelOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
 
     def build(self):
         super().build()
@@ -556,6 +571,7 @@ class KinematicTaxelSensor(
     @classmethod
     def _update_current_timestep_data(
         cls,
+        shared_context: None,
         shared_metadata: KinematicTaxelMetadata,
         current_ground_truth_data_T: torch.Tensor,
         ground_truth_data_timeline: "TensorRingBuffer | None",

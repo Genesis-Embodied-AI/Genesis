@@ -550,6 +550,67 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
+def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
+    # Two 159-DOF SMPL-X humanoids dropped on a plane with random per-DOF torques: the 318-DOF environment exceeds the
+    # constraint-Hessian shared-memory cap and each entity exceeds the per-entity mass-matrix cap, so both
+    # factorizations exercise their uncapped paths.
+    STEP_DT = 0.005
+    INIT_POSS = ((0.0, -0.5, 1.4), (0.0, 0.5, 1.4))  # pelvis dropped 1.4 m above the plane, offset in y
+    INIT_EULER = (90.0, 0.0, 0.0)  # SMPL-X canonical frame is Y-up; rotate to stand upright in Genesis (Z-up)
+    MAX_FORCE = 500.0
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=STEP_DT,
+            # Cap the reserved contacts so the self-colliding 318-DOF Jacobian (n_constraints * n_dofs * n_envs) stays
+            # within int32 at n_envs=4096.
+            max_collision_pairs=40,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+    asset_path = get_hf_dataset(pattern="smplx_humanoid/*")
+    smplx_xml = f"{asset_path}/smplx_humanoid/smplx_humanoid.xml"
+    robots = [
+        scene.add_entity(
+            gs.morphs.MJCF(
+                **get_file_morph_options(
+                    file=smplx_xml,
+                    pos=pos,
+                    euler=INIT_EULER,
+                )
+            ),
+            vis_mode="collision",
+        )
+        for pos in INIT_POSS
+    ]
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    random_forces = [torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device) for robot in robots]
+
+    def step():
+        for robot, forces in zip(robots, random_forces):
+            forces.uniform_(-MAX_FORCE, MAX_FORCE)
+            robot.control_dofs_force(forces)
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=STEP_DT,
+            duration_warmup=20.0,
+            duration_record=5.0,
+        ),
+    )
+
+
 def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **scene_kwargs):
     _STEP_DT = 1.0 / 30
     TABLE_Z = 0.762
@@ -971,6 +1032,12 @@ def g1_fall(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def double_smplx(solver, n_envs, gjk):
+    _, step_fn, meta = make_double_smplx(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def shadow_hand_cubes(solver, n_envs, gjk):
     _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1025,6 +1092,7 @@ def dex_hand(solver, n_envs, gjk):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+        ("double_smplx", gs.constraint_solver.Newton, None, 4096, gs.gpu),
         ("shadow_hand_cubes", None, None, 0, gs.cpu),
         ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
         ("dex_hand", None, None, 4096, gs.gpu),

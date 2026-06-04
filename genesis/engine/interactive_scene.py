@@ -44,11 +44,12 @@ class InteractiveScene:
         self._paused: bool = False
         self._pending_steps: int = 0
         self._rebuild_pending: bool = False
+        self._reset_pending: bool = False
         self._entities_kwargs: dict[str, dict[str, Any]] = {}
         self._sensors_kwargs: list["SensorOptions"] = []
         scene.register_pre_step_callback(self._pre_step)
-        # Capture the wrapped scene's construction so rebuild() can reconstruct it identically. The
-        # stored option objects are already merged with sim_options; re-passing them is idempotent.
+        # Capture the wrapped scene's construction so rebuild() can reconstruct it identically. The stored option
+        # objects are already merged with sim_options; re-passing them is idempotent.
         self._scene_kwargs: dict[str, Any] = dict(
             sim_options=scene.sim_options,
             coupler_options=scene.coupler_options,
@@ -99,11 +100,17 @@ class InteractiveScene:
         self._pending_steps += n
 
     def _pre_step(self) -> bool:
-        """Scene pre-step callback (runs on the stepping thread). Applies the queued intent and returns True to
-        skip the advance this frame: after performing a pending rebuild, or while paused with no queued steps."""
+        """Scene pre-step callback that runs on the stepping thread.
+
+        Applies the queued intent and returns True to skip the advance this frame: after performing a pending
+        rebuild or reset, or while paused with no queued steps."""
         if self._rebuild_pending:
             self._rebuild_pending = False
             self._apply_rebuild()
+            return True
+        if self._reset_pending:
+            self._reset_pending = False
+            self._apply_reset()
             return True
         if self._pending_steps > 0:
             self._pending_steps -= 1
@@ -144,7 +151,7 @@ class InteractiveScene:
 
     @property
     def _lock(self):
-        return self.scene.viewer.render_lock
+        return self.scene.viewer.lock
 
     @property
     def _ctx(self):
@@ -166,9 +173,19 @@ class InteractiveScene:
         ctx.update_link_frame()
         ctx.update_rigid()
 
-    @with_lock
     def reset(self):
-        """Reset the scene and refresh visuals. Clears contact arrows and other transient render nodes."""
+        """Queue a reset of the wrapped scene to its initial state.
+
+        Asynchronous: it is applied at the start of the next underlying step(), on the stepping thread, so it is
+        safe to call from a viewer-thread GUI callback. Applying it directly would re-enter the viewer refresh (and
+        thus the ImGui frame) from within the current frame."""
+        self._reset_pending = True
+
+    @with_lock
+    def _apply_reset(self):
+        """Reset the wrapped scene and refresh visuals, on the stepping thread.
+
+        Clears contact arrows and other transient render nodes."""
         self.scene.reset()
         self._ctx.clear_dynamic_nodes(only_outdated=False)
         self._refresh_visual_transforms_unlocked()
@@ -282,17 +299,17 @@ class InteractiveScene:
 
         if scene.viewer is not None:
             viewer = scene.viewer
-            # Capture the full 4x4 camera pose (position, lookat and roll/up), not just pos + lookat, so the
-            # user's current viewpoint is restored exactly across the rebuild instead of resetting the roll.
+            # Capture the full 4x4 camera pose (position, lookat and roll/up), not just pos + lookat, so the user's
+            # current viewpoint is restored exactly across the rebuild instead of resetting the roll.
             cam_pose = viewer.camera_pose.copy()
             # Skip default plugins; the rebuilt viewer recreates them based on its ViewerOptions.
-            plugins_to_reattach = [p for p in viewer._viewer_plugins if not isinstance(p, DefaultControlsPlugin)]
+            plugins_to_reattach = [p for p in viewer.plugins if not isinstance(p, DefaultControlsPlugin)]
             # Preserve the live window/GL context so the rebuild does not close and reopen it.
             pyrender_window = viewer._pyrender_viewer
 
-        # Serialize against a threaded render loop (run_in_thread=True): holding the preserved window's
-        # render_lock blocks on_draw so it never draws the scene while it is being torn down, rebuilt and
-        # re-pointed. No-op when there is no window (headless) or the viewer runs on the main thread.
+        # Serialize against a threaded render loop (run_in_thread=True): holding the preserved window's render_lock
+        # blocks on_draw so it never draws the scene while it is being torn down, rebuilt and re-pointed. No-op when
+        # there is no window (headless) or the viewer runs on the main thread.
         with pyrender_window.render_lock if pyrender_window is not None else contextlib.nullcontext():
             if pyrender_window is not None:
                 # Detach so scene.destroy() does not close the preserved window.
@@ -303,7 +320,12 @@ class InteractiveScene:
             # Re-register the pre-step callback: the in-place re-init cleared Scene's callback list.
             scene.register_pre_step_callback(self._pre_step)
             for name, kwargs in self._entities_kwargs.items():
-                scene.add_entity(name=name, **kwargs)
+                # A USD morph describes a whole stage (potentially many bodies); add_stage parses and adds them and
+                # takes no name. Every other morph is a single entity added by name.
+                if isinstance(kwargs["morph"], gs.morphs.USD):
+                    scene.add_stage(**kwargs)
+                else:
+                    scene.add_entity(name=name, **kwargs)
             for sensor_opts in self._sensors_kwargs:
                 scene.add_sensor(sensor_opts)
             # Hand the preserved window to the new viewer so build() reuses it instead of opening a new one.
@@ -313,18 +335,12 @@ class InteractiveScene:
 
             new_viewer = scene.viewer
             if new_viewer is not None:
-                # A scene built with enable_gui=True auto-attaches its own ImGui overlay. When re-attaching the
-                # previous overlay (which carries user state - panel width, custom panels, pending edits), drop the
-                # fresh auto-attached one of the same type so the viewer does not end up with two overlays. The plugin
-                # must be cleared from both the wrapper staging list (_viewer_plugins) and pyrender's live list
-                # (plugins), since build() already copied it into the live render loop.
+                # A scene built with enable_gui=True auto-attaches its own ImGui overlay. When re-attaching the previous
+                # overlay (which carries user state - panel width, custom panels, pending edits), drop the fresh
+                # auto-attached one of the same type so the viewer does not end up with two overlays.
                 reattach_types = {type(p) for p in plugins_to_reattach}
-                pyrender_viewer = new_viewer._pyrender_viewer
-                for plugin in [p for p in new_viewer._viewer_plugins if type(p) in reattach_types]:
-                    new_viewer._viewer_plugins.remove(plugin)
-                    if pyrender_viewer is not None and plugin in pyrender_viewer.plugins:
-                        pyrender_viewer.plugins.remove(plugin)
-                        pyrender_viewer.remove_handlers(plugin)
+                for plugin in [p for p in new_viewer.plugins if type(p) in reattach_types]:
+                    new_viewer.remove_plugin(plugin)
 
                 for plugin in plugins_to_reattach:
                     new_viewer.add_plugin(plugin)

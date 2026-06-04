@@ -71,6 +71,7 @@ class Raycaster:
             faces_info=self.solver.faces_info,
             free_verts_state=self.solver.free_verts_state,
             fixed_verts_state=self.solver.fixed_verts_state,
+            links_info=self.solver.links_info,
             static_rigid_sim_config=self.solver._static_rigid_sim_config,
             aabb_state=self.aabb,
         )

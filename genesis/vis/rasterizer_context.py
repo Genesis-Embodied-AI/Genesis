@@ -306,19 +306,20 @@ class RasterizerContext:
             self.world_frame_node = None
             self.world_frame_shown = False
 
+    def _link_frame_T(self, solver):
+        """World-space 4x4 transforms for every (env, link) of solver, flattened in env-major, link-minor order."""
+        pos = qd_to_numpy(solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True)
+        quat = qd_to_numpy(solver.links_state.quat, self.rendered_envs_idx, transpose=True)
+        pos += self.scene.envs_offset[self.rendered_envs_idx, None]
+        return gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
+
     def on_link_frame(self):
         if not self.link_frame_shown:
-            if self.sim.rigid_solver.is_active:
-                pos = qd_to_numpy(
-                    self.sim.rigid_solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True
-                )
-                quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, self.rendered_envs_idx, transpose=True)
-                pos += self.scene.envs_offset[self.rendered_envs_idx, None]
-                all_T = gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
-
-                if self.env_separate_rigid:
-                    n_links = len(self.sim.rigid_solver.links)
-                    for i, link in enumerate(self.sim.rigid_solver.links):
+            if self.env_separate_rigid:
+                for solver in self._rigid_solvers():
+                    all_T = self._link_frame_T(solver)
+                    n_links = len(solver.links)
+                    for i, link in enumerate(solver.links):
                         mesh = pyrender.Mesh.from_trimesh(
                             mesh=self.link_frame_mesh,
                             poses=all_T[i::n_links],
@@ -326,10 +327,12 @@ class RasterizerContext:
                             is_marker=True,
                         )
                         self.link_frame_nodes[link.uid] = self.add_node(mesh)
-                else:
+            else:
+                all_T_parts = [self._link_frame_T(solver) for solver in self._rigid_solvers()]
+                if all_T_parts:
                     mesh = pyrender.Mesh.from_trimesh(
                         mesh=self.link_frame_mesh,
-                        poses=all_T,
+                        poses=np.concatenate(all_T_parts, axis=0),
                         is_marker=True,
                     )
                     self.link_frame_node = self.add_node(mesh)
@@ -341,35 +344,30 @@ class RasterizerContext:
                 for node in self.link_frame_nodes.values():
                     self.remove_node(node)
                 self.link_frame_nodes.clear()
-            else:
+            elif self.link_frame_node is not None:
                 self.remove_node(self.link_frame_node)
                 self.link_frame_node = None
             self.link_frame_shown = False
 
     def update_link_frame(self):
         if self.link_frame_shown:
-            if self.sim.rigid_solver.is_active:
-                pos = qd_to_numpy(
-                    self.sim.rigid_solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True
-                )
-                quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, self.rendered_envs_idx, transpose=True)
-                pos += self.scene.envs_offset[self.rendered_envs_idx, None]
-                all_T = gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
-
-                if self.env_separate_rigid:
-                    n_links = len(self.sim.rigid_solver.links)
-                    for i, link in enumerate(self.sim.rigid_solver.links):
+            if self.env_separate_rigid:
+                for solver in self._rigid_solvers():
+                    all_T = self._link_frame_T(solver)
+                    n_links = len(solver.links)
+                    for i, link in enumerate(solver.links):
                         link_T = all_T[i::n_links]
                         node = self.link_frame_nodes[link.uid]
                         node.mesh.primitives[0].poses = link_T
                         buf_id = self._scene.get_buffer_id(node, "model")
                         if buf_id >= 0:
                             self.jit.update_buffer(buf_id, link_T.transpose((0, 2, 1)))
-                else:
-                    self.link_frame_node.mesh.primitives[0].poses = all_T
-                    buf_id = self._scene.get_buffer_id(self.link_frame_node, "model")
-                    if buf_id >= 0:
-                        self.jit.update_buffer(buf_id, all_T.transpose((0, 2, 1)))
+            elif self.link_frame_node is not None:
+                all_T = np.concatenate([self._link_frame_T(solver) for solver in self._rigid_solvers()], axis=0)
+                self.link_frame_node.mesh.primitives[0].poses = all_T
+                buf_id = self._scene.get_buffer_id(self.link_frame_node, "model")
+                if buf_id >= 0:
+                    self.jit.update_buffer(buf_id, all_T.transpose((0, 2, 1)))
 
     def on_tool(self):
         if self.sim.tool_solver.is_active:
@@ -419,6 +417,10 @@ class RasterizerContext:
             yield self.sim.kinematic_solver
 
     def on_rigid(self):
+        # Reuse a single pyrender material per genesis surface so that geoms sharing one surface (e.g. the many
+        # textured submeshes of a GLB, which are kept separate to preserve baked convex decompositions) expose the
+        # same Texture instances. The renderer then keeps a single host copy and GPU upload instead of one per geom.
+        vis_materials = {}
         for solver in self._rigid_solvers():
             # TODO: support dynamic switching in GUI later
             for entity in solver.entities:
@@ -455,19 +457,20 @@ class RasterizerContext:
                             geom_T = geom_T[:1]
                             env_shared = True
 
-                    self.add_rigid_node(
-                        geom,
-                        pyrender.Mesh.from_trimesh(
-                            mesh=mesh,
-                            poses=geom_T,
-                            smooth=geom.surface.smooth if "collision" not in entity.surface.vis_mode else False,
-                            double_sided=(
-                                geom.surface.double_sided if "collision" not in entity.surface.vis_mode else False
-                            ),
-                            is_floor=isinstance(entity._morph, gs.morphs.Plane),
-                            env_shared=env_shared,
+                    surface_key = id(geom.surface)
+                    mesh_node = pyrender.Mesh.from_trimesh(
+                        mesh=mesh,
+                        poses=geom_T,
+                        smooth=geom.surface.smooth if "collision" not in entity.surface.vis_mode else False,
+                        double_sided=(
+                            geom.surface.double_sided if "collision" not in entity.surface.vis_mode else False
                         ),
+                        is_floor=isinstance(entity._morph, gs.morphs.Plane),
+                        env_shared=env_shared,
+                        material=vis_materials.get(surface_key),
                     )
+                    vis_materials.setdefault(surface_key, mesh_node.primitives[0].material)
+                    self.add_rigid_node(geom, mesh_node)
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
