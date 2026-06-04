@@ -372,6 +372,10 @@ def make_franka(
     dofs_stiffness = franka.get_dofs_stiffness()
     dofs_damping = franka.get_dofs_damping()
 
+    # Per-selected-env base pose subset exercising the bool-mask zero-copy 'masked_scatter_' path
+    base_pos0 = franka.get_pos(reset_envs_mask)
+    base_quat0 = franka.get_quat(reset_envs_mask)
+
     def step():
         scene.step()
         if accessors:
@@ -392,6 +396,8 @@ def make_franka(
             franka.set_dofs_damping(dofs_damping)
             franka.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
             franka.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
+            franka.set_pos(base_pos0, envs_idx=reset_envs_mask, skip_forward=True)
+            franka.set_quat(base_quat0, envs_idx=reset_envs_mask, relative=False, skip_forward=True)
 
     return scene, step, SceneMeta(compile_time=compile_time)
 
