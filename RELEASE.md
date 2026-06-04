@@ -1,5 +1,26 @@
 # Genesis Release Note
 
+## 1.1.0
+
+This release focuses on performance improvement and numerical stability of rigid solver. Genesis speed should drop less aggressively as the complexity of the scene increases, notably the number of decomposed convex geoms, floating-base entities, and dofs.
+
+### Bug Fixes
+
+* Fix contact tunnelling when enabling grad. (@duburcqa) (#2873)
+* Fix raycast sensor for heterogeneous entities. (@duburcqa) (#2876, #2891)
+* Fix loading of MJCF mesh normals. (@duburcqa) (#2883)
+* Fix biased convex-convex multi-contact causing drift and inefficiency. (@duburcqa) (#2889)
+
+### Miscellaneous
+
+* Scale contact arrow radius with object size. (@duburcqa) (#2852)
+* Improve ImGui overlay plugin. (@duburcqa) (#2850, #2851, #2859, #2862, #2863, #2866)
+* Add interactive scene launcher 'gs launch' to replace now deprecated 'gs view'. (@duburcqa) (#2864)
+* Speedup rigid solver for large dofs count (> ~128). (@Kashu7100) (#2869)
+* Speedup raycaster sensor by skipping static BVH rebuilds and share BVH across env-identical geometries. (@Kashu7100, @duburcqa) (#2867, #2875)
+* Speedup rigid solver using CPU skyline-envelope sparse Cholesky. (@duburcqa) (#2879)
+* Speedup raycaster-related sensors using cross-sensor shared context. (@duburcqa) (#2882, #2885)
+
 ## 1.0.0
 
 This release adds full support of non-convex multi-contact collision detection. Besides, many components of the simulation have been sped up, incl the rigid solver that should now be up to 35% for contact-reach scenes with about 64 dofs.
