@@ -1772,8 +1772,11 @@ class RigidSolver(KinematicSolver):
             else:
                 data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
                 target = data[:, link.q_start : link.q_start + 3]
-            pos = broadcast_tensor(pos, gs.tc_float, target.shape)
-            torch.where(envs_idx[:, None], pos, target, out=target)
+            if pos.ndim == 2 and len(pos) not in (1, len(target)):
+                target.masked_scatter_(envs_idx[:, None], pos.view_as(pos))
+            else:
+                pos = broadcast_tensor(pos, gs.tc_float, target.shape)
+                torch.where(envs_idx[:, None], pos, target, out=target)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
@@ -1872,8 +1875,11 @@ class RigidSolver(KinematicSolver):
             else:
                 data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
                 target = data[:, link.q_start + 3 : link.q_start + 7]
-            quat = broadcast_tensor(quat, gs.tc_float, target.shape)
-            torch.where(envs_idx[:, None], quat, target, out=target)
+            if quat.ndim == 2 and len(quat) not in (1, len(target)):
+                target.masked_scatter_(envs_idx[:, None], quat.view_as(quat))
+            else:
+                quat = broadcast_tensor(quat, gs.tc_float, target.shape)
+                torch.where(envs_idx[:, None], quat, target, out=target)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
