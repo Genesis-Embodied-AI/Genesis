@@ -432,6 +432,7 @@ class AnalyticalVsGJKSceneCreator:
             assert (errno_val & ERRNO_CALLED_GJK_K2) != 0, "GJK scene should use GJK for contact generation."
 
 
+@pytest.mark.slow("gpu")  # gpu ~400s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
@@ -670,6 +671,7 @@ def scene_add_box(tmp_path: Path, scene: gs.Scene, size) -> "RigidEntity":
     return cast("RigidEntity", entity_box)
 
 
+@pytest.mark.slow("gpu")  # gpu ~400s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
@@ -802,6 +804,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             ) from e
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_box_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:

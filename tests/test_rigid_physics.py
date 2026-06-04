@@ -624,6 +624,7 @@ def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
     )
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
     CUBE_POS = (0.65, 0.0, 0.02)
@@ -702,6 +703,7 @@ def test_dynamic_weld(show_viewer, tol):
     assert_allclose(cubes_pos[2] - cubes_pos[0], ee_pos_up - ee_pos_down, tol=1e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_dynamic_weld_scene_reset():
     scene = gs.Scene(
@@ -726,6 +728,7 @@ def test_dynamic_weld_scene_reset():
     assert solver.constraint_solver.constraint_state.qd_n_equalities[1] == n_eq_base + 1
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_reset(show_viewer):
     BOOL_MASK = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
@@ -1371,6 +1374,7 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
     assert_allclose(pos_local[..., :2], smooth_xy_local, atol=1e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.xfail(reason="De-duplication of repeated contact points is currently too naive for this test to pass...")
 @pytest.mark.parametrize("surface_kind", ["primitive_box", "primitive_plane", "vertex_box", "flat_terrain"])
@@ -1557,6 +1561,7 @@ def test_contact_pruning(gjk_collision, show_viewer):
     assert_allclose(box.get_pos(), 0.0, atol=2e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize(
     "model_name",
@@ -1631,7 +1636,6 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
     assert_allclose(entity.get_pos()[..., :2], smooth_xy, atol=1e-3)
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.parametrize(
     "box_box_detection, gjk_collision, dynamics",
@@ -1819,6 +1823,7 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
     assert_allclose(qf_passive, 0.0, tol=tol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_robot_scaling_primitive_collision(show_viewer):
     scene = gs.Scene(
@@ -1850,6 +1855,7 @@ def test_robot_scaling_primitive_collision(show_viewer):
     assert_allclose(robot_min_corner[2], 0.0, tol=1e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_filter_neutral_self_collisions(show_viewer):
     scene = gs.Scene(
@@ -1936,6 +1942,7 @@ def test_filter_neutral_self_collisions(show_viewer):
         scene.step()
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(
@@ -2060,6 +2067,7 @@ def test_position_control(show_viewer):
         assert_allclose(pos_target, robot.get_dofs_position(envs_idx=1), tol=1e-2)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_fixed_verts", [False, True])
 @pytest.mark.parametrize("relative", [False, True])
@@ -2183,6 +2191,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             assert_allclose(quat, quat_ref, tol=tol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_normalized_quat(show_viewer, tol):
     scene = gs.Scene(
@@ -2236,6 +2245,7 @@ def test_normalized_quat(show_viewer, tol):
     assert_allclose(torch.linalg.norm(scene.rigid_solver.get_geoms_quat(), dim=-1), 1.0, tol=tol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs, batched", [(0, False), (3, True)])
 def test_set_sol_params(n_envs, batched, tol):
@@ -2311,6 +2321,7 @@ def test_stickman(gs_sim, mj_sim, tol):
     np.testing.assert_array_less(0, body_z + gs.EPS)
 
 
+@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_multilink(show_viewer, tol):
@@ -2367,6 +2378,7 @@ def test_inverse_kinematics_multilink(show_viewer, tol):
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=tol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
@@ -2454,6 +2466,7 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
         scene.visualizer.update()
 
 
+@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
@@ -2513,6 +2526,7 @@ def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
         assert_allclose(actual_point_pos, target, tol=tol)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_multi_robot_inverse_kinematics(show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -2553,7 +2567,7 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
         assert_allclose(target_pos, ee_pos, atol=tol)
 
 
-@pytest.mark.slow  # ~180s
+@pytest.mark.slow("gpu")  # gpu ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -2706,6 +2720,7 @@ def test_all_fixed(show_viewer):
     assert_allclose(scene.rigid_solver.get_links_acc(), 0, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("backend", [gs.gpu])
@@ -2806,6 +2821,7 @@ def test_contact_forces(show_viewer):
     assert np.percentile(all_errors, 95) < 2e-4
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["double_ball_pendulum"])
 def test_apply_external_forces(xml_path, show_viewer):
@@ -2896,6 +2912,7 @@ def test_apply_external_forces(xml_path, show_viewer):
         )
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_mass_mat(show_viewer, tol):
     # Create and build the scene
@@ -2978,6 +2995,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     np.testing.assert_array_less(tol, slide_friction_effect)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_frictionloss_advanced(show_viewer, tol):
     scene = gs.Scene(
@@ -3521,7 +3539,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     assert_allclose(obj.geoms[0].get_pos()[:2], init_pos[:2], atol=2e-3)
 
 
-@pytest.mark.slow  # ~160s
+@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
@@ -3628,6 +3646,7 @@ def test_convexify(euler, show_viewer, gjk_collision):
             assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
 
 
+@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_num_contact_overflow(show_viewer):
@@ -3670,6 +3689,7 @@ def test_collision_edge_cases(gs_sim, mode):
     assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=atol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_collision_plane_convex(show_viewer, tol):
@@ -4126,6 +4146,7 @@ def test_jacobian_compound_joints(xml_path, tol):
         assert_allclose(robot.get_jacobian(end_link), np.concatenate([jacp, jacr]), tol=tol)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_mjcf_parsing_with_include():
     scene = gs.Scene()
@@ -4137,6 +4158,7 @@ def test_mjcf_parsing_with_include():
     assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
@@ -4242,6 +4264,7 @@ def test_urdf_parsing(show_viewer, tol):
     _check_entity_positions(relative=True, tol=2e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["undefined_inertia"])
 def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
@@ -4268,6 +4291,7 @@ def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
     assert_allclose(entity.get_pos(), (0, 0, 0.03), tol=1e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("urdf_path", ["chain.urdf", "dual_arms_glb/dual_arms_glb.urdf", "dual_arms_primitives.urdf"])
 @pytest.mark.parametrize("fixed", [False, True])
@@ -4386,6 +4410,7 @@ def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
     assert_allclose(robot.get_quat(), QUAT, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
@@ -4645,6 +4670,7 @@ def freeflyer_urdf():
     return robot
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["freeflyer_mjcf", "freeflyer_urdf"])
 def test_default_armature_freeflyer(xml_path):
@@ -4702,7 +4728,7 @@ def test_gravity(show_viewer, tol):
     )
 
 
-@pytest.mark.slow  # ~110s
+@pytest.mark.slow  # ~350s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_scene_saver_franka(tmp_path, show_viewer, tol):
@@ -4870,6 +4896,7 @@ def test_drone_advanced(show_viewer):
     assert abs(quat_1[2] - quat_2[2]) < tol
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_get_constraints_api(show_viewer, tol):
     scene = gs.Scene(
@@ -4899,7 +4926,7 @@ def test_get_constraints_api(show_viewer, tol):
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
 
 
-@pytest.mark.slow  # ~200s
+@pytest.mark.slow  # ~500s
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
@@ -4954,6 +4981,7 @@ def test_cholesky_tiling(monkeypatch, tol):
     assert_allclose(*values, tol=5e-4)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("backend", [gs.cuda])
 def test_cholesky_tiling_large_shared_memory(show_viewer):
@@ -4998,7 +5026,7 @@ def test_cholesky_tiling_large_shared_memory(show_viewer):
     assert not scene.rigid_solver.get_error_envs_mask().any()
 
 
-@pytest.mark.slow  # ~100s
+@pytest.mark.slow  # ~200s
 @pytest.mark.parametrize(
     "n_envs, batched, backend",
     [
@@ -5414,6 +5442,7 @@ def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
         assert_allclose(dof_pos[:3], pos, atol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_extended_broadcasting():
     scene = gs.Scene(
@@ -5476,6 +5505,7 @@ def test_geom_pos_quat(n_envs, show_viewer):
             assert_allclose(geom_quat, vgeom_quat, atol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_contype_conaffinity(show_viewer, tol):
     GRAVITY = (0.0, 0.0, -10.0)
@@ -5549,6 +5579,7 @@ def test_contype_conaffinity(show_viewer, tol):
     assert_allclose(scene.rigid_solver.get_links_acc(slice(box4.link_start, box4.link_end)), GRAVITY, atol=tol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_mesh_primitive_COM(show_viewer):
     scene = gs.Scene(
@@ -5597,7 +5628,7 @@ def test_mesh_primitive_COM(show_viewer):
     assert_allclose(cube_COM[2], 0.25, atol=2e-3)
 
 
-@pytest.mark.slow  # ~110s
+@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [0.04, 1.0])
 @pytest.mark.parametrize("friction", [0.5, 2.0])
@@ -5693,6 +5724,7 @@ def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_
         assert box_z < -scale
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 3])
 def test_axis_aligned_bounding_boxes(n_envs):
@@ -5779,6 +5811,7 @@ def test_axis_aligned_bounding_boxes(n_envs):
     assert_allclose(robot_vaabb, robot_aabb, atol=1e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["ellipsoid"])
 def test_ellipsoid(xml_path, show_viewer):
@@ -5822,6 +5855,7 @@ def test_ellipsoid(xml_path, show_viewer):
     assert_allclose((roll, pitch), (0.0, 0.0), tol=5e-3)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_mesh_align(show_viewer, tol):
     INIT_POS = (0.0, 0.0, 0.8)
@@ -5887,6 +5921,7 @@ def test_mesh_align(show_viewer, tol):
     assert (-0.005 < mango.get_AABB()[0, 2] < 0.0).all()
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_align(show_viewer, tol):
     INIT_POS = (0.0, 0.0, 0.7)
@@ -6006,6 +6041,7 @@ def xacro_robot(tmp_path):
     return file_path
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_xacro_loading(xacro_robot, show_viewer, tol):
     """Test that .urdf.xacro files are preprocessed and loaded with correct structure and properties."""
@@ -6057,7 +6093,7 @@ def test_xacro_loading(xacro_robot, show_viewer, tol):
     assert_allclose(heavy.get_mass(), 15.0, tol=tol)
 
 
-@pytest.mark.slow  # ~150s
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_links_info", [False, True])
 @pytest.mark.parametrize("batch_joints_info", [False, True])
@@ -6113,6 +6149,7 @@ def test_reset_control(robot_path, tol):
     assert_allclose(new_control_force, 0, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_joint_get_anchor_pos_and_axis(n_envs):
@@ -6232,7 +6269,7 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~200s
+@pytest.mark.slow  # ~450s
 @pytest.mark.required
 def test_heterogeneous_simulation(show_viewer, tol):
     """Test heterogeneous simulation by comparing against independent homogeneous simulations.
@@ -6341,6 +6378,7 @@ def test_heterogeneous_invalid_material_raises():
         )
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_heterogeneous_fewer_envs_than_variants():
     """Test that having fewer environments than variants works correctly.
@@ -6421,6 +6459,7 @@ def test_non_batched_mass_setters(tol):
         link.set_mass((1.0, 2.0, 3.0, 4.0))
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_heterogeneous_aabb(tol):
     """Test that get_AABB and get_vAABB work correctly with heterogeneous simulation."""
@@ -6478,6 +6517,7 @@ def test_heterogeneous_aabb(tol):
 
 
 # 30s
+@pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
 def test_pick_heterogenous_objects(show_viewer):
     """Test heterogeneous simulation: CoM at rest, lifting, and gripper width differ per variant."""
@@ -6624,6 +6664,7 @@ def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, lin
     return urdfpy.URDF._from_xml(robot, robot, get_assets_dir())
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_heterogeneous_robots(show_viewer, tol):
     """Test heterogeneous articulated simulation with vertex-based and primitive collision geometries.

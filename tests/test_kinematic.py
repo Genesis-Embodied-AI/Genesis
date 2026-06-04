@@ -58,6 +58,7 @@ def test_setters(show_viewer, tol):
     assert_allclose([tensor_to_array(entity.get_vAABB()) for entity in scene.entities], frozen_vaabb, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_track_rigid(show_viewer, tol):
     scene = gs.Scene(

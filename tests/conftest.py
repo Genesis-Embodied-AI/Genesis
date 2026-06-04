@@ -406,12 +406,33 @@ def pytest_xdist_auto_num_workers(config):
     return int(num_workers)
 
 
-@pytest.hookimpl(trylast=True)
+@pytest.hookimpl(hookwrapper=True)
 def pytest_collection_modifyitems(config, items):
-    # Run slow tests first
+    # Resolve backend-conditional 'slow' markers before pytest applies '-m' selection.
+    # '@pytest.mark.slow' without argument means slow on every backend, whereas
+    # '@pytest.mark.slow("gpu")' (any subset of backend names) means slow only on those backends.
+    # The marker is dropped from items running on a non-matching backend, so '-m "not slow"' keeps
+    # them and the slow-first scheduling below treats them as fast.
+    default_backend = config.getoption("--backend") or "cpu"
+    for item in items:
+        mark = item.get_closest_marker("slow")
+        if mark is None or not mark.args:
+            continue
+        # 'callspec' only exists on parametrized items; fall back to the session backend otherwise.
+        callspec = getattr(item, "callspec", None)
+        if callspec is not None and "backend" in callspec.params:
+            value = callspec.params["backend"]
+            backend = value.name if isinstance(value, Enum) else str(value)
+        else:
+            backend = default_backend
+        if backend not in mark.args:
+            item.own_markers = [own for own in item.own_markers if own.name != "slow"]
 
-    slow = [item for item in items if "slow" in item.keywords]
-    fast = [item for item in items if "slow" not in item.keywords]
+    yield
+
+    # Run slow tests first
+    slow = [item for item in items if item.get_closest_marker("slow") is not None]
+    fast = [item for item in items if item.get_closest_marker("slow") is None]
 
     max_workers = config.option.numprocesses
     if max_workers is None:

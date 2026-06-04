@@ -13,6 +13,7 @@ from .utils import assert_allclose
 
 # This test cannot be flagged as required because it takes 500s + 250s to run on CPU.
 # @pytest.mark.required
+@pytest.mark.slow("cpu")  # cpu ~500s
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("muscle_material", [gs.materials.MPM.Muscle, gs.materials.FEM.Muscle])
 def test_muscle(n_envs, muscle_material, show_viewer):
@@ -104,7 +105,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
         scene.step()
 
 
-@pytest.mark.slow  # ~150s
+@pytest.mark.slow  # ~200s
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])

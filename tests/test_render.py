@@ -156,6 +156,7 @@ def test_render_api(show_viewer, renderer_type, renderer):
         raise
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
@@ -677,18 +678,21 @@ def _test_madrona_scene(
         assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
+@pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
 def test_madrona_lights(show_viewer, renderer, png_snapshot):
     _test_madrona_scene(show_viewer, renderer, png_snapshot, use_directional_light=True)
 
 
+@pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
 def test_madrona_batch_texture(show_viewer, renderer, png_snapshot):
     _test_madrona_scene(show_viewer, renderer, png_snapshot, use_batch_texture=True, n_envs=3)
 
 
+@pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
 def test_madrona_fisheye_camera(show_viewer, renderer, png_snapshot):
@@ -799,6 +803,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         assert_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
@@ -1070,7 +1075,7 @@ def test_draw_debug(renderer, show_viewer):
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~150s
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
@@ -1448,7 +1453,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
             assert f.read() == png_snapshot
 
 
-@pytest.mark.slow  # ~500s
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
@@ -1764,6 +1769,7 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
     assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.parametrize("force_show_viewer", [False, True])

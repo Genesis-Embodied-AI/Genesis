@@ -10,6 +10,7 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
+@pytest.mark.slow  # ~350s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(show_viewer):
@@ -585,6 +586,7 @@ def test_differentiable_rigid(show_viewer):
     assert_allclose(loss, 0.0, atol=1e-2)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_sim_vs_solver_state_grad_parity(show_viewer):

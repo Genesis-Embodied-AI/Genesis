@@ -85,6 +85,7 @@ def get_ipc_rigid_links_idx(scene, env_idx):
     return links_idx
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("enable_rigid_rigid_contact", [False, True])
 def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     from genesis.engine.entities import RigidEntity
@@ -247,6 +248,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     assert (np.diff(final_positions[..., ::-1, 0], axis=-1) > 0.2).all()
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -374,7 +376,7 @@ def test_link_filter_strict():
     assert base_link not in coupler._abd_slots_by_link
 
 
-@pytest.mark.slow  # ~150s
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize(
@@ -917,6 +919,7 @@ def test_objects_colliding(n_envs, show_viewer):
         assert (obj_p_history[..., 2].max(axis=-1) < cloth_p_history[..., 2].max(axis=-1)).all()
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_fem(coup_type, show_viewer):
@@ -1058,6 +1061,7 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     assert (gs_positions_f[..., 2] - finger_aabb[..., 0, 2] > 0).any()
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_momentum_conservation(n_envs, show_viewer):
@@ -1191,6 +1195,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert_allclose(total_p_history, momentum_0, tol=0.001)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
 @pytest.mark.parametrize("coup_type", ["ipc_only", "two_way_soft_constraint"])
@@ -1306,7 +1311,7 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
 
 
-@pytest.mark.slow  # ~200s
+@pytest.mark.slow  # ~400s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_cloth_corner_drag(n_envs, show_viewer):

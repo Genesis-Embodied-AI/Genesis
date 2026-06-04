@@ -154,6 +154,7 @@ def _build_default_scene(*, enable_gui):
     return scene
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
@@ -179,6 +180,7 @@ def test_control_panel(png_snapshot, monkeypatch):
     assert rgb_array_to_png_bytes(rgb) == png_snapshot
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
@@ -204,6 +206,7 @@ def test_editing_controls(png_snapshot, monkeypatch):
     assert rgb_array_to_png_bytes(rgb) == png_snapshot
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")

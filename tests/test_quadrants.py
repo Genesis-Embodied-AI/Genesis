@@ -131,7 +131,6 @@ def gs_static_child(args: list[str]):
     sys.exit(RET_SUCCESS)
 
 
-@pytest.mark.slow  # ~170s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
@@ -217,7 +216,6 @@ def gs_num_envs_child(args: list[str]):
     sys.exit(RET_SUCCESS)
 
 
-@pytest.mark.slow  # ~230s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
@@ -319,7 +317,7 @@ def change_scene(args: list[str]):
     sys.exit(RET_SUCCESS)
 
 
-@pytest.mark.slow  # ~120s
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 # Note that, on GPU, PARA_LEVEL is changing between batched and non-batched simulation

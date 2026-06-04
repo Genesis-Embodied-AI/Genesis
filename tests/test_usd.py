@@ -505,6 +505,7 @@ def all_primitives_usd(asset_tmp_path, all_primitives_mjcf: ET.ElementTree):
     return usd_file
 
 
+@pytest.mark.slow  # ~450s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_primitives_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
@@ -785,6 +786,7 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
     return usd_file
 
 
+@pytest.mark.slow  # ~350s
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_joints_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
@@ -836,7 +838,7 @@ def test_usd_parse_nodegraph(usd_file):
     assert_allclose(texture1.color, (0.2, 0.6, 0.9), rtol=USD_COLOR_TOL)
 
 
-@pytest.mark.slow  # ~150s
+@pytest.mark.slow  # ~400s
 @pytest.mark.required
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
@@ -1115,6 +1117,7 @@ def test_ur10_visual_fallback():
             assert link.n_vgeoms > 0, f"Link {link.name} has collision but no visual geometry (missing fallback)."
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_humanoid_generic_joint_detection():
     asset_path = get_hf_dataset(pattern="usd/Humanoid/*")
@@ -1154,6 +1157,7 @@ def oriented_capsule_usd(asset_tmp_path):
     return usd_file
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):
     scene = gs.Scene(
@@ -1192,6 +1196,7 @@ def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):
     assert -5e-4 < capsule_aabb_min_z < 0.0
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_ant_capsule_axis_collision(show_viewer):
     scene = gs.Scene(

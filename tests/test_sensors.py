@@ -421,6 +421,7 @@ def test_pipeline_contract_uint8_delay(tol):
     assert_equal(observed, expected)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_add_and_read_all_registered_sensors():
     """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
@@ -732,6 +733,7 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
 # ------------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
@@ -894,6 +896,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_contact_sensor_filter_link_idx(show_viewer):
     """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
@@ -1695,6 +1698,7 @@ def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
     assert_allclose(torch.mean(sensor2.read()), link_temps[..., cold_link_idx], tol=2e-2)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
@@ -1822,6 +1826,7 @@ def _as_env_batch(data, n_envs: int) -> torch.Tensor:
 # ------------------------------------------------------------------------------------------
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
@@ -2186,6 +2191,7 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     assert_equal(combined_sensor.read_ground_truth(), 0.0, err_msg="ElastomerTaxel should be zero in air.")
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):

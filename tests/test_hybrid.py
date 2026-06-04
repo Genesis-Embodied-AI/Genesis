@@ -11,6 +11,7 @@ from genesis.utils.misc import tensor_to_array
 from .utils import assert_allclose, get_hf_dataset
 
 
+@pytest.mark.slow  # ~300s
 @pytest.mark.required
 def test_rigid_mpm_muscle(show_viewer):
     BALL_POS_INIT = (0.8, 0.6, 0.12)
@@ -82,7 +83,7 @@ def test_rigid_mpm_muscle(show_viewer):
     assert_allclose(ball_pos_delta[..., 2], 0.0, tol=1e-3)
 
 
-@pytest.mark.slow  # ~700s
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.skipif(
     sys.platform == "linux" and platform.machine() == "aarch64",
@@ -249,6 +250,7 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
     assert robot_2_max_corner[2] > robot_1_max_corner[2] + 0.05
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["64"])
 def test_sap_fem_vs_robot(show_viewer):

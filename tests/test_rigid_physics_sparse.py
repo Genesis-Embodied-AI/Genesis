@@ -5,6 +5,7 @@ import pytest
 from genesis.utils.misc import tensor_to_array
 
 
+@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sparse_solve_no_nan(backend, precision):

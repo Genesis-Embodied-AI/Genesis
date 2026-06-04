@@ -202,7 +202,12 @@ markers = [
     "examples: example scripts.",
     "benchmarks: benchmarks for profiling and monitoring.",
     "required: minimal test set that must pass systematically on any environment before merging.",
-    "slow: tests that are slow to run (> 100s).",
+    # A test is flagged 'slow' when its baseline run time is >= 150s. The baseline is the worst case over the standard
+    # parallel CI runs (field and ndarray backends) of the per-test average across its parametrizations.
+    # '@pytest.mark.slow' with no argument means slow on every backend; passing one or more backend names, e.g.
+    # '@pytest.mark.slow("gpu")' or '@pytest.mark.slow("cpu", "gpu")', restricts the flag to those backends only
+    # (resolved per item in tests/conftest.py against the parametrized or session backend).
+    "slow: tests that are slow to run (>= 150s); optional args restrict it to specific backends.",
 ]
 log_cli_level = "WARNING"
 
