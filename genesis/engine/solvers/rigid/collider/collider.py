@@ -200,11 +200,16 @@ class Collider:
                         ):
                             has_prunable_contacts = True
 
-        # Spatial sort by x-position only runs on GPU for convex-convex scenes whose contacts could benefit from
-        # locality. Disabled when use_contact_island is True for the same reason as pruning. Also disabled in
-        # autodiff mode: the sort permutes the logical contact order via contact_sort_idx, get_contacts applies that
-        # permutation, but func_set_upstream_grad writes upstream gradients back by physical index, so a non-identity
-        # permutation would attach gradients to the wrong contacts.
+        # Spatial sort by x-position (with a geom-pair tie-break) only runs on GPU for convex-convex scenes whose
+        # contacts could benefit from locality. Disabled when use_contact_island is True for the same reason as
+        # pruning. Also disabled in autodiff mode: the sort permutes the logical contact order via contact_sort_idx,
+        # get_contacts applies that permutation, but func_set_upstream_grad writes upstream gradients back by physical
+        # index, so a non-identity permutation would attach gradients to the wrong contacts.
+        #
+        # FIXME: this sort is also what makes the contact order run-independent on GPU, where the narrowphase reserves
+        # contact slots via atomic_add and so produces a non-deterministic physical layout. When it is disabled (under
+        # autodiff, or with use_contact_island, which reads contact_data in physical order and ignores the
+        # contact_sort_idx permutation), bit-reproducible simulation is not guaranteed.
         spatial_sort_supported = (
             has_non_box_plane_convex_convex
             and gs.backend != gs.cpu

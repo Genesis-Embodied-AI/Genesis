@@ -556,7 +556,8 @@ def func_clamp_prune_and_sort_contacts(
       contact-patch plane (skipped at runtime when ``contact_pruning_tolerance`` is 0). Drops are realised by
       compacting ``contact_sort_idx`` rather than ``contact_data``.
     - If ``has_non_box_plane_convex_convex and backend != cpu``: spatial sort the index permutation by x-position
-      with geom-pair groups treated as units (provides spatial locality for downstream constraint-solver reads).
+      with geom-pair groups treated as units (provides spatial locality for downstream constraint-solver reads), with
+      a (geom_a, geom_b) tie-break so groups sharing the same x sort deterministically regardless of physical layout.
 
     The pruning logic groups contacts by canonical (min(link_a, link_b), max(link_a, link_b)) and, for each bucket
     of >= 3 contacts whose positions lie in a single plane (perpendicular to the bucket's folded mean normal),
@@ -904,18 +905,27 @@ def func_clamp_prune_and_sort_contacts(
                     group_key = collider_state.contact_data.pos[phys, i_b][0]
                 collider_state.contact_sort_key[i, i_b] = group_key
 
-            # Insertion-sort contact_sort_idx by sort_key. (key, idx) swap together; no contact_data writes.
+            # Insertion-sort contact_sort_idx by (sort_key, geom_a, geom_b); (key, idx) swap together, no contact_data
+            # writes. The geom-pair tie-break makes the logical order independent of the non-deterministic physical
+            # contact layout (atomic_add slot reservation in the narrowphase) when several geom-pair groups share the
+            # same x sort_key, which is required for bit-reproducible simulation.
             for i in range(1, n_con):
                 curr_key = collider_state.contact_sort_key[i, i_b]
-                if collider_state.contact_sort_key[i - 1, i_b] <= curr_key:
-                    continue
                 curr_idx = collider_state.contact_sort_idx[i, i_b]
+                cga = collider_state.contact_data.geom_a[curr_idx, i_b]
+                cgb = collider_state.contact_data.geom_b[curr_idx, i_b]
                 j = i - 1
                 while j >= 0:
-                    if collider_state.contact_sort_key[j, i_b] <= curr_key:
+                    pj = collider_state.contact_sort_idx[j, i_b]
+                    pk = collider_state.contact_sort_key[j, i_b]
+                    pga = collider_state.contact_data.geom_a[pj, i_b]
+                    if pk < curr_key or (
+                        pk == curr_key
+                        and (pga < cga or (pga == cga and collider_state.contact_data.geom_b[pj, i_b] <= cgb))
+                    ):
                         break
-                    collider_state.contact_sort_key[j + 1, i_b] = collider_state.contact_sort_key[j, i_b]
-                    collider_state.contact_sort_idx[j + 1, i_b] = collider_state.contact_sort_idx[j, i_b]
+                    collider_state.contact_sort_key[j + 1, i_b] = pk
+                    collider_state.contact_sort_idx[j + 1, i_b] = pj
                     j = j - 1
                 collider_state.contact_sort_key[j + 1, i_b] = curr_key
                 collider_state.contact_sort_idx[j + 1, i_b] = curr_idx
@@ -1292,17 +1302,27 @@ def func_clamp_prune_and_sort_contacts_coop(
                         collider_state.contact_sort_key[i, i_b] = SENTINEL_BIG
                     collider_state.contact_sort_idx[i, i_b] = i
 
+                # Insertion sort by (sort_key, geom_a, geom_b). The geom-pair tie-break makes the logical order
+                # independent of the non-deterministic physical contact layout (atomic_add slot reservation in the
+                # narrowphase) when several geom-pair groups share the same x sort_key, which is required for
+                # bit-reproducible simulation. Dropped slots carry SENTINEL_BIG and sort to the tail.
                 for i in range(1, n_con):
                     ck = collider_state.contact_sort_key[i, i_b]
-                    if collider_state.contact_sort_key[i - 1, i_b] <= ck:
-                        continue
                     ci = collider_state.contact_sort_idx[i, i_b]
+                    cga = collider_state.contact_data.geom_a[ci, i_b]
+                    cgb = collider_state.contact_data.geom_b[ci, i_b]
                     j = i - 1
                     while j >= 0:
-                        if collider_state.contact_sort_key[j, i_b] <= ck:
+                        pj = collider_state.contact_sort_idx[j, i_b]
+                        pk = collider_state.contact_sort_key[j, i_b]
+                        pga = collider_state.contact_data.geom_a[pj, i_b]
+                        if pk < ck or (
+                            pk == ck
+                            and (pga < cga or (pga == cga and collider_state.contact_data.geom_b[pj, i_b] <= cgb))
+                        ):
                             break
-                        collider_state.contact_sort_key[j + 1, i_b] = collider_state.contact_sort_key[j, i_b]
-                        collider_state.contact_sort_idx[j + 1, i_b] = collider_state.contact_sort_idx[j, i_b]
+                        collider_state.contact_sort_key[j + 1, i_b] = pk
+                        collider_state.contact_sort_idx[j + 1, i_b] = pj
                         j = j - 1
                     collider_state.contact_sort_key[j + 1, i_b] = ck
                     collider_state.contact_sort_idx[j + 1, i_b] = ci
