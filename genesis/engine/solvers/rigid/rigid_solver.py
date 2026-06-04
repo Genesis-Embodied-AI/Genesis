@@ -1757,14 +1757,9 @@ class RigidSolver(KinematicSolver):
         if links_idx is None:
             links_idx = self._base_links_idx
 
-        # Zero-copy fast path: single base link, bool mask, non-relative
-        if (
-            gs.use_zerocopy
-            and not relative
-            and isinstance(links_idx, int)
-            and isinstance(envs_idx, torch.Tensor)
-            and envs_idx.dtype == torch.bool
-        ):
+        # Zero-copy fast path: single base link, non-relative. Write the position buffer in place instead of
+        # launching a kernel. The kernel path below handles relative or multi-link updates.
+        if gs.use_zerocopy and not relative and isinstance(links_idx, int):
             link = self.links[links_idx]
             if link.is_fixed:
                 data = qd_to_torch(self.links_state.pos, transpose=True, copy=False)
@@ -1772,8 +1767,32 @@ class RigidSolver(KinematicSolver):
             else:
                 data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
                 target = data[:, link.q_start : link.q_start + 3]
-            pos = broadcast_tensor(pos, gs.tc_float, target.shape)
-            torch.where(envs_idx[:, None], pos, target, out=target)
+            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                if pos.ndim == 2 and len(pos) not in (1, len(target)):
+                    # A fresh source view is needed because masked_scatter_ may reshape it in-place. Metal
+                    # mis-scatters a stride-0 broadcast mask, so it must be materialized to a dense mask there.
+                    envs_mask = envs_idx[:, None]
+                    if gs.backend == gs.metal:
+                        envs_mask = envs_mask.expand_as(target).contiguous()
+                    target.masked_scatter_(envs_mask, pos.view_as(pos))
+                else:
+                    pos = broadcast_tensor(pos, gs.tc_float, target.shape)
+                    torch.where(envs_idx[:, None], pos, target, out=target)
+            else:
+                # Fixed links with at least one geom and non-batched vertices cannot take env-specific positions
+                if link.is_fixed and link.geoms and not link.entity._batch_fixed_verts:
+                    pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device)
+                    same_pos = pos.ndim < 2 or len(pos) == 1 or (torch.diff(pos, dim=0).abs() < gs.EPS).all()
+                    set_all_envs = envs_idx is None or torch.equal(
+                        torch.sort(self._scene._sanitize_envs_idx(envs_idx)).values, self._scene._envs_idx
+                    )
+                    if not (set_all_envs and same_pos):
+                        gs.raise_exception(
+                            "Specifying env-specific pos for fixed links with at least one geometry requires "
+                            "setting morph option 'batch_fixed_verts=True'."
+                        )
+                mask = (0,) if self.n_envs == 0 else indices_to_mask(envs_idx)
+                assign_indexed_tensor(target, mask, pos)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
@@ -1857,14 +1876,9 @@ class RigidSolver(KinematicSolver):
         if links_idx is None:
             links_idx = self._base_links_idx
 
-        # Zero-copy fast path: single base link, bool mask, non-relative
-        if (
-            gs.use_zerocopy
-            and not relative
-            and isinstance(links_idx, int)
-            and isinstance(envs_idx, torch.Tensor)
-            and envs_idx.dtype == torch.bool
-        ):
+        # Zero-copy fast path: single base link, non-relative. Write the quaternion buffer in place instead of
+        # launching a kernel. The kernel path below handles relative or multi-link updates.
+        if gs.use_zerocopy and not relative and isinstance(links_idx, int):
             link = self.links[links_idx]
             if link.is_fixed:
                 data = qd_to_torch(self.links_state.quat, transpose=True, copy=False)
@@ -1872,8 +1886,31 @@ class RigidSolver(KinematicSolver):
             else:
                 data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
                 target = data[:, link.q_start + 3 : link.q_start + 7]
-            quat = broadcast_tensor(quat, gs.tc_float, target.shape)
-            torch.where(envs_idx[:, None], quat, target, out=target)
+            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                if quat.ndim == 2 and len(quat) not in (1, len(target)):
+                    # A fresh source view is needed because masked_scatter_ may reshape it in-place. Metal
+                    # mis-scatters a stride-0 broadcast mask, so it must be materialized to a dense mask there.
+                    envs_mask = envs_idx[:, None]
+                    if gs.backend == gs.metal:
+                        envs_mask = envs_mask.expand_as(target).contiguous()
+                    target.masked_scatter_(envs_mask, quat.view_as(quat))
+                else:
+                    quat = broadcast_tensor(quat, gs.tc_float, target.shape)
+                    torch.where(envs_idx[:, None], quat, target, out=target)
+            else:
+                # Fixed links with at least one geom and non-batched vertices cannot take env-specific orientations
+                if link.is_fixed and link.geoms and not link.entity._batch_fixed_verts:
+                    quat = torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device)
+                    same_quat = quat.ndim < 2 or len(quat) == 1 or (torch.diff(quat, dim=0).abs() < gs.EPS).all()
+                    set_all_envs = envs_idx is None or torch.equal(
+                        torch.sort(self._scene._sanitize_envs_idx(envs_idx)).values, self._scene._envs_idx
+                    )
+                    if not (set_all_envs and same_quat):
+                        gs.raise_exception(
+                            "Impossible to set env-specific quat for fixed links with at least one geometry."
+                        )
+                mask = (0,) if self.n_envs == 0 else indices_to_mask(envs_idx)
+                assign_indexed_tensor(target, mask, quat)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
@@ -2038,9 +2075,13 @@ class RigidSolver(KinematicSolver):
                 and envs_idx.dtype == torch.bool
             ):
                 qs_data = data[(slice(None), *qs_mask)]
-                if qpos.ndim == 2 and len(qpos) != len(qs_data):
-                    # Note that it is necessary to create a new temporary view because it will be reshaped in-place
-                    qs_data.masked_scatter_(envs_idx[:, None], qpos.view_as(qpos))
+                if qpos.ndim == 2 and len(qpos) not in (1, len(qs_data)):
+                    # A fresh source view is needed because masked_scatter_ may reshape it in-place. Metal mis-scatters
+                    # a stride-0 broadcast mask, so it must be materialized to a dense full-shape mask there.
+                    envs_mask = envs_idx[:, None]
+                    if gs.backend == gs.metal:
+                        envs_mask = envs_mask.expand_as(qs_data).contiguous()
+                    qs_data.masked_scatter_(envs_mask, qpos.view_as(qpos))
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)

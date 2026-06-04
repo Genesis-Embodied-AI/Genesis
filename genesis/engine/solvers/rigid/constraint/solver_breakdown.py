@@ -562,14 +562,11 @@ def _func_update_constraint_forces(
     _B = constraint_state.grad.shape[1]
 
     qd.loop_config(name="update_constraint_forces")
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        for i_b, i_c in qd.ndrange(_B, len_constraints):
-            if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-                _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
-    else:
-        for i_c, i_b in qd.ndrange(len_constraints, _B):
-            if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-                _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+    for i_c, i_b in qd.ndrange(
+        len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+    ):
+        if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
+            _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -586,24 +583,16 @@ def _func_update_qfrc_constraint_per_dof(
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        qd.loop_config(name="update_constraint_qfrc")
-        for i_b, i_d in qd.ndrange(_B, n_dofs):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                n_con = constraint_state.n_constraints[i_b]
-                qfrc = gs.qd_float(0.0)
-                for i_c in range(n_con):
-                    qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                constraint_state.qfrc_constraint[i_d, i_b] = qfrc
-    else:
-        qd.loop_config(name="update_constraint_qfrc")
-        for i_d, i_b in qd.ndrange(n_dofs, _B):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                n_con = constraint_state.n_constraints[i_b]
-                qfrc = gs.qd_float(0.0)
-                for i_c in range(n_con):
-                    qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                constraint_state.qfrc_constraint[i_d, i_b] = qfrc
+    qd.loop_config(name="update_constraint_qfrc")
+    for i_d, i_b in qd.ndrange(
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+    ):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            n_con = constraint_state.n_constraints[i_b]
+            qfrc = gs.qd_float(0.0)
+            for i_c in range(n_con):
+                qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 
 
 @qd.func
@@ -914,28 +903,14 @@ def _func_update_gradient_no_solve(
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        qd.loop_config(
-            name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
-        )
-        for i_b, i_d in qd.ndrange(_B, n_dofs):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                constraint_state.grad[i_d, i_b] = (
-                    constraint_state.Ma[i_d, i_b]
-                    - dofs_state.force[i_d, i_b]
-                    - constraint_state.qfrc_constraint[i_d, i_b]
-                )
-    else:
-        qd.loop_config(
-            name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
-        )
-        for i_d, i_b in qd.ndrange(n_dofs, _B):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                constraint_state.grad[i_d, i_b] = (
-                    constraint_state.Ma[i_d, i_b]
-                    - dofs_state.force[i_d, i_b]
-                    - constraint_state.qfrc_constraint[i_d, i_b]
-                )
+    qd.loop_config(name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+    ):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            )
 
 
 @qd.func

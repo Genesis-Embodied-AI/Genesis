@@ -2284,6 +2284,16 @@ def test_stickman(gs_sim, mj_sim, tol):
     # Initialize the simulation
     init_simulators(gs_sim)
 
+    # Make sure that the simulation is deterministic
+    (gs_robot,) = gs_sim.entities
+    gs_sim.scene.reset()
+    gs_sim.scene.step()
+    dofs_vel = gs_robot.get_dofs_velocity()
+    for _ in range(50):
+        gs_sim.scene.reset()
+        gs_sim.scene.step()
+        assert_allclose(gs_robot.get_dofs_velocity(), dofs_vel, tol=0.0)
+
     # Run the simulation for a while
     qvel_norminf_all = []
     for i in range(750):
@@ -3462,7 +3472,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
         show_FPS=False,
     )
     asset_path = get_hf_dataset(pattern="work_table.glb")
-    table = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
@@ -3474,8 +3484,8 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     obj = scene.add_entity(
         gs.morphs.Mesh(
             file=f"{asset_path}/spoon.glb",
-            pos=(0.3, 0, 0.007),
-            euler=(0.0, -2.5, 0.0),
+            pos=(0.3, 0, 0.009),
+            euler=(0.0, -2.5 if convexify else 0.0, 0.0),
             convexify=convexify,
             scale=1.0,
         ),
@@ -3486,7 +3496,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 
     if show_viewer:
         obj_com = obj.get_links_pos(ref="link_com")[0]
-        debug_sphere = scene.draw_debug_sphere(pos=obj_com, radius=0.003, color=(1, 1, 1, 1))
+        scene.draw_debug_sphere(pos=obj_com, radius=0.003, color=(1, 1, 1, 1))
         scene.visualizer.update(force=True)
 
     for geom in obj.geoms:
@@ -3501,9 +3511,9 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     tol_pos = 0.05 if is_mpr else 0.005
     tol_rot = 1.25 if is_mpr else 0.5
     init_pos = obj.geoms[0].get_pos()
-    for i in range(50):
+    for _ in range(50):
         scene.step()
-    for i in range(100):
+    for _ in range(100):
         scene.step()
         qvel = obj.get_dofs_velocity()
         assert_allclose(qvel[:3], 0, atol=tol_pos)
