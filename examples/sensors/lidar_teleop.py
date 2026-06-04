@@ -37,7 +37,6 @@ def main():
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-6.0, 0.0, 4.0),
             camera_lookat=(0.0, 0.0, 0.5),
-            max_FPS=60,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

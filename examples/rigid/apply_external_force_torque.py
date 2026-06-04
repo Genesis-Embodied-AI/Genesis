@@ -16,7 +16,6 @@ def main():
             camera_pos=(0, -3.5, 2.5),
             camera_lookat=(0.0, 0.0, 1.0),
             camera_fov=40,
-            max_FPS=60,
         ),
         sim_options=gs.options.SimOptions(
             dt=0.01,

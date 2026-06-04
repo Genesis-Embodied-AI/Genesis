@@ -1,7 +1,5 @@
-import os
 from typing import TYPE_CHECKING
 
-import genesis as gs
 from genesis.vis.keybindings import Key, Keybind
 
 from ..base import ViewerPlugin
@@ -103,20 +101,7 @@ class DefaultControlsPlugin(ViewerPlugin):
             self.viewer.set_message_text("Vert Normals Off")
 
     def _toggle_record_video(self):
-        if self.viewer.viewer_flags["record"]:
-            self.viewer.save_video()
-            self.viewer.set_caption(self.viewer.viewer_flags["window_title"])
-        else:
-            # Importing moviepy is very slow and not used very often. Let's delay import.
-            from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
-
-            self.viewer._video_recorder = FFMPEG_VideoWriter(
-                filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
-                fps=self.viewer.viewer_flags["refresh_rate"],
-                size=self.viewer.viewport_size,
-            )
-            self.viewer.set_caption("{} (RECORDING)".format(self.viewer.viewer_flags["window_title"]))
-        self.viewer.viewer_flags["record"] = not self.viewer.viewer_flags["record"]
+        self.viewer.toggle_recording()
 
     def _save_image(self):
         self.viewer._save_image()

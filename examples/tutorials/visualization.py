@@ -10,7 +10,6 @@ scene = gs.Scene(
         camera_pos=(3.5, 0.0, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
         camera_fov=40,
-        max_FPS=60,
     ),
     vis_options=gs.options.VisOptions(
         show_world_frame=True,

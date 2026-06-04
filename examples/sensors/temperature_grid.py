@@ -51,7 +51,6 @@ def main():
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-SANDBOX_SIZE * 2, 0.0, PLATFORM_HEIGHT + 2.5),
             camera_lookat=(0.0, 0.0, PLATFORM_HEIGHT),
-            max_FPS=60,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

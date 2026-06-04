@@ -36,7 +36,6 @@ def main():
             camera_pos=(5.5, 6.5, 3.2),
             camera_lookat=(0.5, 1.5, 1.5),
             camera_fov=35,
-            max_FPS=120,
         ),
         vis_options=gs.options.VisOptions(
             rendered_envs_idx=[0],

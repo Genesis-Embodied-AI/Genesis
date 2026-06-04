@@ -466,7 +466,6 @@ def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
                 camera_pos=(0.0, -3.5, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=30,
-                max_FPS=60,
             ),
             "show_viewer": False,
             "show_FPS": False,

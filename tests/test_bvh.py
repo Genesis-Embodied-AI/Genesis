@@ -24,7 +24,7 @@ def lbvh(n_aabbs, n_batches):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1)])
+@pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1), (1, 1), (1, 3)])
 def test_morton_code(lbvh):
     morton_codes = lbvh.morton_codes.to_numpy()
 
@@ -72,7 +72,7 @@ def test_expand_bits():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1)])
+@pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1), (1, 1), (1, 3)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_build_tree(lbvh):
     nodes = lbvh.nodes.to_numpy()
@@ -121,7 +121,7 @@ def test_build_tree(lbvh):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1)])
+@pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1), (1, 1), (1, 3)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
     import quadrants as qd

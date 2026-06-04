@@ -41,7 +41,6 @@ class HoverEnv:
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(dt=self.dt, substeps=2),
             viewer_options=gs.options.ViewerOptions(
-                max_FPS=env_cfg["max_visualize_FPS"],
                 camera_pos=(3.0, 0.0, 3.0),
                 camera_lookat=(0.0, 0.0, 1.0),
                 camera_fov=40,

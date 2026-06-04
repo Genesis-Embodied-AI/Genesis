@@ -10,12 +10,11 @@ Demonstrates:
 """
 
 import os
-import time
 
 import genesis as gs
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
-gs.init()
+gs.init(backend=gs.cpu)
 
 # enable_gui attaches the ImGui overlay and lets it manage scene editing internally, so no manual
 # InteractiveScene is needed: a plain Scene is the whole setup, and Rebuild Scene is handled inside step().
@@ -60,11 +59,11 @@ plugin.register_panel(custom_panel)
 is_test = "PYTEST_VERSION" in os.environ
 horizon = 5 if is_test else None
 
-# step() honors the GUI: it advances only while playing, and applies a pending Rebuild Scene first.
+# step() honors the GUI: it advances only while playing, and applies a pending Rebuild Scene first. The viewer
+# paces the loop to real time (ViewerOptions.realtime_factor), so no manual sleep is needed here.
 frame = 0
 while scene.viewer.is_alive():
     scene.step()
     frame += 1
     if horizon is not None and frame >= horizon:
         break
-    time.sleep(0.01)

@@ -12,7 +12,6 @@ scene = gs.Scene(
         camera_pos=(3, -1, 1.5),
         camera_lookat=(0.0, 0.0, 0.5),
         camera_fov=30,
-        max_FPS=60,
     ),
     sim_options=gs.options.SimOptions(
         dt=0.01,

@@ -49,7 +49,6 @@ class Go2Env:
                 camera_pos=(2.0, 0.0, 2.5),
                 camera_lookat=(0.0, 0.0, 0.5),
                 camera_fov=40,
-                max_FPS=int(1.0 / self.dt),
             ),
             vis_options=gs.options.VisOptions(rendered_envs_idx=[0]),
             show_viewer=show_viewer,

@@ -2,12 +2,14 @@ import importlib
 import os
 import sys
 import threading
+import time
 from traceback import TracebackException
 from typing import TYPE_CHECKING
 
 import numpy as np
 import OpenGL.error
 import OpenGL.platform
+import pyglet
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -41,7 +43,7 @@ class Viewer(RBC):
         self._res = options.res
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
-        self._max_FPS = options.max_FPS
+        self._realtime_factor = options.realtime_factor
         self._camera_init_pos = np.asarray(options.camera_pos, dtype=gs.np_float)
         self._camera_init_lookat = np.asarray(options.camera_lookat, dtype=gs.np_float)
         self._camera_up = np.asarray(options.camera_up, dtype=gs.np_float)
@@ -60,6 +62,7 @@ class Viewer(RBC):
 
         self._pyrender_viewer = None
         self.context = context
+        self.scene = None
 
         self._followed_entity = None
         self._follow_fixed_axis = None
@@ -67,11 +70,19 @@ class Viewer(RBC):
         self._follow_fix_orientation = None
         self._follow_lookat = None
 
-        if self._max_FPS is not None:
-            self.rate = Rate(self._max_FPS)
+        # Wall-clock time of the last on-screen redraw, used to cap single-thread redraws at refresh_rate (the
+        # background-thread viewer paces its own redraws). Real-time pacing waits until the scene is built so the
+        # physics dt is known.
+        self._last_refresh_time = None
+        self._realtime_pacer = None
 
     def build(self, scene):
         self.scene = scene
+
+        # When the viewer is shown, hold the stepping loop to realtime_factor x wall-clock real time: each step advances
+        # dt seconds of simulation, so it should take dt / realtime_factor seconds of wall time. Rate skips sleeping
+        # when already behind, so a sim that cannot keep up simply runs as fast as it can.
+        self._realtime_pacer = None if self._realtime_factor is None else Rate(self._realtime_factor / scene.sim.dt)
 
         # set viewer camera
         self.setup_camera()
@@ -91,8 +102,14 @@ class Viewer(RBC):
             if sys.platform == "win32":
                 all_opengl_platforms = ("wgl",)  # same as "native"
             elif sys.platform == "linux":
-                # "native" is platform-specific ("egl" or "glx")
-                all_opengl_platforms = ("native", "egl", "glx", "osmesa")
+                if pyglet.options.get("headless"):
+                    # pyglet's headless windowing creates an EGL pbuffer context, so only the matching PyOpenGL EGL
+                    # platform can share it; native/glx/osmesa query a different context and fail with "no valid
+                    # context", churning GL state on the way out.
+                    all_opengl_platforms = ("egl",)
+                else:
+                    # "native" is platform-specific ("egl" or "glx")
+                    all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
                 all_opengl_platforms = ("native",)
         else:
@@ -148,7 +165,14 @@ class Viewer(RBC):
 
         self.lock = ViewerLock(self._pyrender_viewer)
 
-        gs.logger.info(f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, max_FPS: ~<{self._max_FPS}>~.")
+        dt = self.scene.sim.dt
+        # Real-time target step rate the pacer aims for; compare against the reported "Running at X FPS" to tell
+        # whether the loop is real-time-bounded (X ~ target) or compute-bounded (X < target).
+        target = "uncapped" if self._realtime_factor is None else f"{self._realtime_factor / dt:.1f} FPS"
+        gs.logger.info(
+            f"Viewer created. Resolution: ~<{self._res[0]}×{self._res[1]}>~, refresh_rate: ~<{self._refresh_rate}>~, "
+            f"dt: ~<{dt}>~s, realtime_factor: ~<{self._realtime_factor}>~ (real-time target: ~<{target}>~)."
+        )
 
         self._is_built = True
 
@@ -197,12 +221,19 @@ class Viewer(RBC):
                 viewer_thread = self._pyrender_viewer._thread or threading.main_thread()
                 auto_refresh = viewer_thread == threading.current_thread()
 
+            # Redraw at most refresh_rate times per second, independently of how often the simulation steps, so
+            # the refresh rate stays unrelated to the physics timestep.
             if auto_refresh and not self._pyrender_viewer.run_in_thread:
-                self._pyrender_viewer.refresh()
+                now = time.perf_counter()
+                if self._last_refresh_time is None or now - self._last_refresh_time >= 1.0 / self._refresh_rate:
+                    self._last_refresh_time = now
+                    self._pyrender_viewer.refresh()
 
-        # lock FPS
-        if self._max_FPS is not None:
-            self.rate.sleep()
+        # Pace the stepping loop to real time when a factor is set (no effect once the sim falls behind). Read the
+        # pacer once: the realtime_factor setter may swap it from the viewer thread between the check and the call.
+        realtime_pacer = self._realtime_pacer
+        if realtime_pacer is not None:
+            realtime_pacer.sleep()
 
     def close_offscreen(self, render_target):
         return self._pyrender_viewer.close_offscreen(render_target)
@@ -375,9 +406,14 @@ class Viewer(RBC):
         plugin : ViewerPlugin
             The viewer plugin to add.
         """
-        self._plugins.append(plugin)
+        # Register first so a failure in the plugin's build() leaves the viewer's plugin set unchanged; the plugin
+        # is only recorded once it has successfully attached. The render lock serializes the attach with the viewer
+        # thread when running in a thread; it is reentrant, so this is a no-op when called from a render callback
+        # (e.g. the overlay Plugins tab) that already holds it.
         if self.is_built:
-            self._pyrender_viewer.register_plugin(plugin)
+            with self._pyrender_viewer.render_lock:
+                self._pyrender_viewer.register_plugin(plugin)
+        self._plugins.append(plugin)
         return plugin
 
     def remove_plugin(self, plugin: "ViewerPlugin") -> None:
@@ -392,12 +428,30 @@ class Viewer(RBC):
         if plugin in self._plugins:
             self._plugins.remove(plugin)
         if self.is_built and plugin in self._pyrender_viewer.plugins:
-            self._pyrender_viewer.plugins.remove(plugin)
-            self._pyrender_viewer.remove_handlers(plugin)
+            # Hold the (reentrant) render lock so the detach is serialized with the viewer thread, then drop the
+            # plugin via copy-on-write so a dispatch loop already iterating self.plugins finishes on its snapshot.
+            with self._pyrender_viewer.render_lock:
+                self._pyrender_viewer.plugins = [p for p in self._pyrender_viewer.plugins if p is not plugin]
+                self._pyrender_viewer.remove_handlers(plugin)
+                plugin.on_close()
+
+    @gs.assert_built
+    def toggle_recording(self) -> bool:
+        """
+        Start or stop recording the on-screen viewer to a video file, returning the resulting record state.
+
+        Stopping prompts for a destination file. This is the same on-screen capture toggled by the 'R' shortcut.
+        """
+        return self._pyrender_viewer.toggle_recording()
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def recording(self) -> bool:
+        """Whether the viewer is currently recording its on-screen output to a video file."""
+        return self._pyrender_viewer.viewer_flags["record"]
 
     @property
     def plugins(self):
@@ -417,8 +471,18 @@ class Viewer(RBC):
         return self._refresh_rate
 
     @property
-    def max_FPS(self):
-        return self._max_FPS
+    def realtime_factor(self):
+        return self._realtime_factor
+
+    @realtime_factor.setter
+    def realtime_factor(self, value):
+        # Rebuild the pacer for the new factor (None -> uncapped). Reassigning the pacer reference is atomic, so
+        # update() reading it on the stepping thread always sees a consistent object.
+        self._realtime_factor = value
+        if value is None or self.scene is None:
+            self._realtime_pacer = None
+        else:
+            self._realtime_pacer = Rate(value / self.scene.sim.dt)
 
     @property
     def camera_pos(self):

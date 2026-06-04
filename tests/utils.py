@@ -38,7 +38,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "13b6270d302730ca7ca77f7d40b2b2dc897978fb"
-HUGGINGFACE_SNAPSHOT_REVISION = "4ace8de77a0bc3ad054ba83193b575677d95e913"
+HUGGINGFACE_SNAPSHOT_REVISION = "c5f9b0b2e898564d8c25d3b057a47297755af30a"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -559,7 +559,6 @@ def build_genesis_sim(
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=30,
             res=(960, 640),
-            max_FPS=60,
         ),
         sim_options=gs.options.SimOptions(
             dt=mj_sim.model.opt.timestep,

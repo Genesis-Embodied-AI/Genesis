@@ -17,7 +17,7 @@ from genesis.engine.interactive_scene import InteractiveFeature, InteractiveScen
 from genesis.ext.pyrender.overlay.style import apply_dark_theme
 from genesis.ext.pyrender.overlay.types import build_entity_joint_data, EntityCacheEntry, EntityJointData
 from genesis.utils.misc import tensor_to_array
-from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
+from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, MouseInteractionPlugin, ViewerPlugin
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidEntity
@@ -28,6 +28,10 @@ _FPS_HISTORY_SIZE = 30
 # Add Entity / Stage dropdown. The "File" entry covers every file-based morph (URDF / MJCF / Mesh / USD); its
 # concrete type is deduced from the file extension. The others are primitive morphs built from their own params.
 _ADD_ENTITY_TYPES = ["File", "Box", "Sphere", "Cylinder", "Plane"]
+# Optional viewer plugins the user may attach/detach at runtime from the Plugins tab, as (label, class) pairs. Only
+# plugins that are safe to build and tear down on a live viewer belong here; the always-on plugins (default keybinds,
+# this overlay itself) are deliberately excluded so they can never be toggled off from their own panel.
+TOGGLEABLE_PLUGINS: tuple[tuple[str, type[ViewerPlugin]], ...] = (("Mouse Interaction", MouseInteractionPlugin),)
 
 
 def button_size_with_min(imgui, label: str, min_width: float) -> tuple[float, float]:
@@ -491,6 +495,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 ("Visualization", self._render_visualization),
                 ("Camera", self._render_camera_controls),
                 ("Scene", self._render_scene_editor),
+                ("Plugins", self._render_plugins),
             ):
                 # Force the requested tab selected for this frame; otherwise honor the user's selection.
                 flags = imgui.TabItemFlags_.set_selected.value if self._active_tab == name else 0
@@ -536,6 +541,20 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         if imgui.button("Reset", size=button_size_with_min(imgui, "Reset", 60.0)):
             interactive.reset()
 
+        # Record toggle. Drives the same on-screen video capture as the 'R' keybind; tinted red while recording so
+        # its active state is obvious, and stopping prompts for a destination file.
+        imgui.same_line()
+        recording = interactive.recording
+        record_label = "Stop Rec" if recording else "Record"
+        if recording:
+            imgui.push_style_color(imgui.Col_.button.value, (0.70, 0.16, 0.16, 0.90))
+            imgui.push_style_color(imgui.Col_.button_hovered.value, (0.82, 0.22, 0.22, 0.95))
+            imgui.push_style_color(imgui.Col_.button_active.value, (0.62, 0.12, 0.12, 1.0))
+        if imgui.button(record_label, size=button_size_with_min(imgui, record_label, 60.0)):
+            interactive.toggle_recording()
+        if recording:
+            imgui.pop_style_color(3)
+
         # Time display (frame count * dt = simulation time)
         sim_time = self.scene.t * self.scene.sim.dt
         imgui.text(f"Time: {sim_time:.3f}s  Step: {self.scene.t}")
@@ -545,6 +564,22 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             avg_fps = sum(self._fps_history) / len(self._fps_history)
             imgui.same_line()
             imgui.text(f"  FPS: {avg_fps:.0f}")
+
+        # Realtime pacing control. "Uncapped" runs the sim as fast as compute allows; otherwise the slider sets
+        # how many times real time it is paced to (1.0 = real time).
+        viewer = self.scene.viewer
+        uncapped = viewer.realtime_factor is None
+        changed_uncapped, new_uncapped = imgui.checkbox("Uncapped##realtime", uncapped)
+        if changed_uncapped:
+            viewer.realtime_factor = None if new_uncapped else 1.0
+            uncapped = new_uncapped
+        imgui.same_line()
+        imgui.begin_disabled(uncapped)
+        factor = 1.0 if viewer.realtime_factor is None else viewer.realtime_factor
+        changed_factor, new_factor = imgui.slider_float("Realtime##realtime_factor", factor, 0.1, 4.0, "%.2fx")
+        imgui.end_disabled()
+        if changed_factor and not uncapped:
+            viewer.realtime_factor = new_factor
 
         if self.scene.n_envs > 1:
             imgui.text_colored(
@@ -611,6 +646,25 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 self.viewer._camera_node.camera = self.viewer._default_orth_cam
             else:
                 self.viewer._camera_node.camera = self.viewer._default_persp_cam
+
+    def _render_plugins(self):
+        """Render checkboxes to attach/detach the whitelisted optional viewer plugins at runtime.
+
+        Each checkbox reflects whether an instance of that plugin class is currently registered on the viewer:
+        ticking it builds and registers a fresh instance, unticking it detaches the live one. Toggling goes through
+        the Genesis viewer so the registered set stays consistent across an InteractiveScene rebuild."""
+        imgui = self._imgui
+        viewer = self.scene.viewer
+        registered = self.viewer.plugins
+        for label, plugin_cls in TOGGLEABLE_PLUGINS:
+            instance = next((plugin for plugin in registered if isinstance(plugin, plugin_cls)), None)
+            changed, enabled = imgui.checkbox(f"{label}##plugin_{plugin_cls.__name__}", instance is not None)
+            if not changed:
+                continue
+            if enabled:
+                viewer.add_plugin(plugin_cls())
+            else:
+                viewer.remove_plugin(instance)
 
     def _render_gizmo(self):
         """Render the 3D manipulation gizmo for the selected entity, translating/rotating its base link.

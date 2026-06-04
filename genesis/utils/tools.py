@@ -163,67 +163,73 @@ def create_timer(name=None, new=False, level=0, qd_sync=False, skip_first_call=F
 
 
 class Rate:
+    """Fixed-frequency loop limiter: call ``sleep`` once per iteration to hold the loop at ``rate`` Hz.
+
+    Each wake-up is scheduled against an ideal clock advanced by exactly one period per tick, rather than from the
+    actual (over-slept) wake time, so ``time.sleep`` overshoot does not accumulate and the average rate stays on target.
+    When an iteration runs longer than one period the limiter does not sleep and resets its schedule from the current
+    time, so a loop that cannot keep up simply runs as fast as it can without building a sleep debt to burn off
+    afterwards.
+    """
+
     def __init__(self, rate):
         self.rate = rate
-        self.last_time = time.perf_counter()
+        self.period = 1.0 / rate
+        self.next_time = time.perf_counter() + self.period
 
     def sleep(self):
-        current_time = time.perf_counter()
-        sleep_duration = 1.0 / self.rate - (current_time - self.last_time)
+        now = time.perf_counter()
+        sleep_duration = self.next_time - now
         if sleep_duration > 0:
             time.sleep(sleep_duration)
-        self.last_time = time.perf_counter()
+            self.next_time += self.period
+        else:
+            self.next_time = now + self.period
 
 
 class FPSTracker:
-    def __init__(
-        self, n_envs, alpha=0.95, minimum_interval_seconds: float | None = 0.05, outlier_threshold: float = 1.5
-    ):
-        self.last_time = None
+    """Estimates and logs the achieved step rate over fixed wall-clock windows.
+
+    The per-window rate is the actual step count divided by the actual window duration (so it is phase-stable, unlike
+    dividing a raw count by a smoothed time), then lightly EMA-smoothed for readability.
+    """
+
+    def __init__(self, n_envs, alpha=0.95, minimum_interval_seconds: float | None = 0.05):
         self.n_envs = n_envs
-        self.dt_ema = None
         self.alpha = alpha
         self.minimum_interval_seconds = minimum_interval_seconds
-        self.outlier_threshold = outlier_threshold
+        self.window_start = None
         self.steps_since_last_print: int = 0
+        self.fps_ema = None
         self.total_fps = 0.0
 
     def step(self, current_time: float | None = None) -> float | None:
         if not current_time:
             current_time = time.perf_counter()
 
-        if self.last_time:
-            dt = current_time - self.last_time
-        else:
-            self.last_time = current_time
+        if self.window_start is None:
+            self.window_start = current_time
             return None
 
         self.steps_since_last_print += 1
 
-        # Skip if update is too soon
-        if self.minimum_interval_seconds and current_time - self.last_time < self.minimum_interval_seconds:
+        # Accumulate until the window is long enough to give a stable estimate.
+        window_dt = current_time - self.window_start
+        if self.minimum_interval_seconds and window_dt < self.minimum_interval_seconds:
             return None
 
-        # Outlier rejection
-        if self.dt_ema is not None:
-            if dt > self.dt_ema * self.outlier_threshold or dt * self.outlier_threshold < self.dt_ema:
-                self.dt_ema = dt
+        window_fps = self.steps_since_last_print / window_dt
+        self.fps_ema = window_fps if self.fps_ema is None else self.alpha * self.fps_ema + (1 - self.alpha) * window_fps
 
-        # EMA update
-        if self.dt_ema:
-            self.dt_ema = self.alpha * self.dt_ema + (1 - self.alpha) * dt
-        else:
-            self.dt_ema = dt
-
-        fps = 1 / self.dt_ema * self.steps_since_last_print
         if self.n_envs > 0:
-            self.total_fps = fps * self.n_envs
+            self.total_fps = self.fps_ema * self.n_envs
             gs.logger.info(
-                f"Running at ~<{self.total_fps:,.2f}>~ FPS (~<{fps:.2f}>~ FPS per env, ~<{self.n_envs}>~ envs)."
+                f"Running at ~<{self.total_fps:,.2f}>~ FPS (~<{self.fps_ema:.2f}>~ FPS per env, ~<{self.n_envs}>~ envs)."
             )
         else:
-            self.total_fps = fps
-            gs.logger.info(f"Running at ~<{fps:.2f}>~ FPS.")
-        self.last_time = current_time
+            self.total_fps = self.fps_ema
+            gs.logger.info(f"Running at ~<{self.fps_ema:.2f}>~ FPS.")
+
+        self.window_start = current_time
         self.steps_since_last_print = 0
         return self.total_fps

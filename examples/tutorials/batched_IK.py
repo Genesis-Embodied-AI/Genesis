@@ -11,7 +11,6 @@ scene = gs.Scene(
         camera_pos=(0.0, -2, 1.5),
         camera_lookat=(0.0, 0.0, 0.5),
         camera_fov=40,
-        max_FPS=200,
     ),
     rigid_options=gs.options.RigidOptions(
         enable_joint_limit=False,

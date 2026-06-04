@@ -239,7 +239,6 @@ def test_franka_panda_grasp_fem_entity(primitive_type, show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.3, 0.0, 0.15),
             camera_lookat=(0.65, 0.0, 0.15),
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,

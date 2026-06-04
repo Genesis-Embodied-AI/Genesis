@@ -41,6 +41,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
         self._lock: Lock = Lock()
         self._held_link: "RigidLink | None" = None
+        # The plugin is active only while the simulation advances (scene.t increases). _last_step_t is the step
+        # counter seen at the previous sim-step callback; _sim_running caches whether it advanced so on_draw and the
+        # mouse handlers, which run off the step loop, share the same paused/running verdict.
+        self._last_step_t: int = 0
+        self._sim_running: bool = False
         self._interact_env_idx: int | None = None
         self._env_offset: np.ndarray = np.zeros(3, dtype=gs.np_float)
         self._held_point_local: np.ndarray | None = None
@@ -58,6 +63,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
     def build(self, viewer, camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
+        self._last_step_t = self.scene.t
         self._prev_mouse_screen_pos = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)
 
         self._unit_cylinder_mesh = create_cylinder(radius=0.005, height=1.0, color=self.color)
@@ -88,6 +94,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     @with_lock
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
+        if not self._sim_running:  # no grabbing while the simulation is paused
+            return
         if button == MouseButton.LEFT:  # left mouse button
             ray = self._screen_position_to_ray(x, y)
             ray_hit = self._raycaster.cast(ray[0], ray[1])
@@ -146,6 +154,15 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     @with_lock
     @override
     def update_on_sim_step(self) -> None:
+        # Active only while the simulation advances: a grabbed body is dragged through physics, so when the step did
+        # not advance scene.t (paused) the plugin releases its grip and applies no force or motion. on_draw reads
+        # _sim_running to drop its hover/drag visuals too.
+        self._sim_running = self.scene.t > self._last_step_t
+        self._last_step_t = self.scene.t
+        if not self._sim_running:
+            self._held_link = None
+            return
+
         super().update_on_sim_step()
 
         if self._held_link:
@@ -174,6 +191,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     @override
     def on_draw(self) -> None:
         if self.scene._visualizer is None or not self.scene._visualizer.is_built:
+            return
+        # When detached at runtime, copy-on-write removal already dropped this plugin from viewer.plugins, but an
+        # in-flight dispatch loop may still walk its pre-removal snapshot and call us once more. Skip drawing so we
+        # do not re-create the debug nodes on_close just cleared.
+        if self not in self.viewer.plugins:
             return
 
         mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
@@ -227,7 +249,12 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             # Hover arrow: only show for pickable (non-fixed, sufficient mass) entities
             closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
             link = closest_hit.geom.link if closest_hit is not None and closest_hit.geom is not None else None
-            is_pickable = link is not None and not link.is_fixed and float(link.get_mass()) >= MIN_PICKABLE_MASS
+            is_pickable = (
+                self._sim_running
+                and link is not None
+                and not link.is_fixed
+                and float(link.get_mass()) >= MIN_PICKABLE_MASS
+            )
             if is_pickable:
                 arrow_T = gu.trans_R_to_T(closest_hit.position, gu.z_up_to_R(closest_hit.normal))
                 if self._debug_normal_node is None:
@@ -239,6 +266,20 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             elif self._debug_normal_node is not None:
                 self.scene.clear_debug_object(self._debug_normal_node)
                 self._debug_normal_node = None
+
+    @with_lock
+    @override
+    def on_close(self) -> None:
+        # Release any held link and drop the debug visuals so detaching the plugin (or viewer teardown) leaves no
+        # orphaned hover arrow or drag-plane nodes behind.
+        self._held_link = None
+        if self.scene._visualizer is not None and self.scene._visualizer.is_built:
+            for node in self._debug_interact_nodes:
+                self.scene.clear_debug_object(node)
+            if self._debug_normal_node is not None:
+                self.scene.clear_debug_object(self._debug_normal_node)
+        self._debug_interact_nodes.clear()
+        self._debug_normal_node = None
 
     def _compute_line_T(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
         """Compute transform for unit cylinder (height=1, centered at z=0) from start to end."""

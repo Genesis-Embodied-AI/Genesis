@@ -136,8 +136,8 @@ class LBVH(RBC):
         n_radix_sort_groups: int = 256,
         max_stack_depth: int = STACK_SIZE,
     ):
-        if aabb.n_aabbs < 2:
-            gs.raise_exception("The number of AABBs must be larger than 2.")
+        if aabb.n_aabbs < 1:
+            gs.raise_exception("The number of AABBs must be at least 1.")
         n_radix_sort_groups = min(aabb.n_aabbs, n_radix_sort_groups)
 
         self.aabbs = aabb.aabbs
@@ -189,9 +189,12 @@ class LBVH(RBC):
 
         # Nodes of the BVH, first n_aabbs - 1 are internal nodes, last n_aabbs are leaf nodes
         self.nodes = self.Node.field(shape=(self.n_batches, self.n_aabbs * 2 - 1))
-        # Whether an internal node has been visited during traversal
-        self.internal_node_active = qd.field(gs.qd_bool, shape=(self.n_batches, self.n_aabbs - 1))
-        self.internal_node_ready = qd.field(gs.qd_bool, shape=(self.n_batches, self.n_aabbs - 1))
+        # Whether an internal node has been visited during traversal. A single-leaf tree (n_aabbs == 1) has no
+        # internal nodes; allocate at least one slot so the field is never zero-sized. The build and bounds kernels
+        # range over n_aabbs - 1, so the padding slot stays unused.
+        n_internal_nodes = max(1, self.n_aabbs - 1)
+        self.internal_node_active = qd.field(gs.qd_bool, shape=(self.n_batches, n_internal_nodes))
+        self.internal_node_ready = qd.field(gs.qd_bool, shape=(self.n_batches, n_internal_nodes))
 
         # Query results, vec3 of batch id, self id, query id
         self.query_result = qd.field(gs.qd_ivec3, shape=(self.max_query_results,))

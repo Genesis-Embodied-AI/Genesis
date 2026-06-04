@@ -185,7 +185,6 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.2, 0.0, 0.0),
             camera_lookat=(0.0, 0.0, 0.0),
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -274,7 +273,6 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.6, 0.6, 0.45),
             camera_lookat=(0.0, 0.0, 0.15),
-            max_FPS=60,
         ),
         show_viewer=show_viewer,
         show_FPS=False,

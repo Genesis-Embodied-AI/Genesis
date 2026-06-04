@@ -217,6 +217,9 @@ class Viewer(pyglet.window.Window):
         self._offscreen_result = None
 
         self._video_recorder = None
+        # Step counter of the last frame written to the video, so a paused (non-advancing) simulation does not fill
+        # the recording with duplicate frozen frames.
+        self._last_recorded_t = -1
 
         self._default_render_flags = {
             "flip_wireframe": False,
@@ -525,10 +528,12 @@ class Viewer(pyglet.window.Window):
         plugin : :class:`.ViewerPlugin`
             The viewer plugin to add.
         """
-        self.plugins.append(plugin)
         plugin.build(self, self._camera_node, self.gs_context.scene)
         # Register pyglet.window event handlers from the plugin
         self.push_handlers(plugin)
+        # Append via copy-on-write so a dispatch loop already iterating self.plugins (on_draw / sim-step) keeps walking
+        # its own snapshot. This lets a plugin register another one from inside its on_draw callback.
+        self.plugins = self.plugins + [plugin]
 
     def register_keybinds(self, /, *keybinds: Keybind, overwrite: bool = False) -> None:
         """
@@ -623,6 +628,29 @@ class Viewer(pyglet.window.Window):
             os.remove(self._video_recorder.filename)
         else:
             shutil.move(self._video_recorder.filename, filename)
+
+    def toggle_recording(self) -> bool:
+        """Start or stop recording the on-screen viewer to a video file, returning the resulting record state.
+
+        Starting opens a fresh video writer and marks the window title; stopping closes it and prompts (via
+        save_video) for a destination. Both the 'R' keybind and the overlay record button drive this one path."""
+        if self.viewer_flags["record"]:
+            self.save_video()
+            self.set_caption(self.viewer_flags["window_title"])
+        else:
+            # Importing moviepy is very slow and rarely needed, so defer it to the first recording.
+            from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
+
+            self._video_recorder = FFMPEG_VideoWriter(
+                filename=os.path.join(gs.utils.misc.get_cache_dir(), "tmp_video.mp4"),
+                fps=self.viewer_flags["refresh_rate"],
+                size=self.viewport_size,
+            )
+            # Sentinel so the first frame is always captured regardless of the current step counter.
+            self._last_recorded_t = -1
+            self.set_caption("{} (RECORDING)".format(self.viewer_flags["window_title"]))
+        self.viewer_flags["record"] = not self.viewer_flags["record"]
+        return self.viewer_flags["record"]
 
     def on_close(self):
         """Exit the event loop when the window is closed."""
@@ -803,6 +831,11 @@ class Viewer(pyglet.window.Window):
             self.clear()
             self._render()
 
+        # Capture the recording frame right after the scene render, before any on-screen overlay (captions, help
+        # text, and the plugins' ImGui panel / gizmo) is drawn, so the video shows only the rendered scene.
+        if self.viewer_flags["record"]:
+            self._record()
+
         if self.viewer_flags["caption"] is not None:
             for caption in self.viewer_flags["caption"]:
                 xpos, ypos = self._location_to_x_y(caption["location"])
@@ -820,8 +853,12 @@ class Viewer(pyglet.window.Window):
         # Render help text
         self._render_help_text()
 
-        for plugin in self.plugins:
-            plugin.on_draw()
+        # Drive plugins only once the viewer is committed and initialized. start() renders the scene to probe GL
+        # configs before that point, and a rejected config must not leave a plugin's GL/ImGui state dangling for the
+        # next attempt (e.g. an ImGui frame opened but never ended). _initialized_event is set at the end of start().
+        if self._initialized_event.is_set():
+            for plugin in self.plugins:
+                plugin.on_draw()
 
     def on_resize(self, width: int, height: int) -> EVENT_HANDLE_STATE:
         """Resize the camera and trackball when the window is resized."""
@@ -923,8 +960,6 @@ class Viewer(pyglet.window.Window):
         if not self._is_active:
             return
 
-        if self.viewer_flags["record"]:
-            self._record()
         if self.viewer_flags["rotate"] and not self.viewer_flags["mouse_pressed"]:
             self._rotate()
 
@@ -993,7 +1028,12 @@ class Viewer(pyglet.window.Window):
             cv2.imwrite(filename, np.flip(data, axis=-1))
 
     def _record(self):
-        """Save another frame for the GIF."""
+        """Append the current frame to the video, unless the simulation has not advanced since the last recorded
+        frame (e.g. while paused) so the recording does not accumulate duplicate frozen frames."""
+        t = self.gs_context.scene.t
+        if t == self._last_recorded_t:
+            return
+        self._last_recorded_t = t
         data = self._renderer.jit.read_color_buf(*self._viewport_size, rgba=False)
         if not np.all(data == 0.0):
             self._video_recorder.write_frame(data)
@@ -1187,6 +1227,16 @@ class Viewer(pyglet.window.Window):
                 super().close()
             except Exception:
                 pass
+            # pyglet's headless backend leaves self._egl_surface set after close(), so re-__init__-ing this window for
+            # the next GL config skips HeadlessWindow._create's context.attach() and the new context crashes in
+            # switch_to() with no surface. Reset it (like the platform_event_loop reset above) so each retry attaches
+            # its own; harmless on other backends, where the attribute is unused. When headless, destroy the orphaned
+            # pbuffer first (close() does not, and pyglet created it) to avoid leaking one per retry.
+            if pyglet.options.get("headless") and self._egl_surface is not None:
+                from pyglet.libs.egl import egl
+
+                egl.eglDestroySurface(self._egl_display_connection, self._egl_surface)
+            self._egl_surface = None
 
             try:
                 # Keep the window invisible for now. It will be displayed only if everything is working fine.
@@ -1199,6 +1249,11 @@ class Viewer(pyglet.window.Window):
                         resizable=True,
                         width=self._viewport_size[0],
                         height=self._viewport_size[1],
+                        # Enable vsync only when the viewer owns a render thread. In main-thread mode (e.g. macOS),
+                        # a vsync-locked flip() would block the simulation loop for up to a display frame on every
+                        # redraw, periodically overrunning the step budget and stuttering; redraws are already
+                        # capped by the refresh_rate gate, so vsync is unnecessary there.
+                        vsync=bool(self._run_in_thread),
                     )
                 except xlib_exceptions as e:
                     # Trying again without UTF8 support as a fallback.

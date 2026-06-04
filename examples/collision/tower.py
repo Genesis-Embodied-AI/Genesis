@@ -25,7 +25,6 @@ def main():
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(20, -20, 20),
             camera_lookat=(0.0, 0.0, 5.0),
-            max_FPS=50,
         ),
         show_viewer=args.vis,
     )

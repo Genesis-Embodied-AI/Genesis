@@ -99,6 +99,18 @@ class InteractiveScene:
         underlying steps rather than executed here."""
         self._pending_steps += n
 
+    @property
+    def recording(self) -> bool:
+        """Whether the viewer is currently recording its on-screen output to a video file."""
+        return self.viewer.recording
+
+    def toggle_recording(self) -> bool:
+        """Start or stop recording the viewer's on-screen output, returning the resulting record state.
+
+        Unlike pause/step/reset this takes effect immediately (it is a viewer-thread action, not a queued step
+        intent); stopping prompts for a destination file."""
+        return self.viewer.toggle_recording()
+
     def _pre_step(self) -> bool:
         """Scene pre-step callback that runs on the stepping thread.
 

@@ -38,7 +38,6 @@ def main():
             camera_pos=(3.0, -3.0, 2.0),
             camera_lookat=(0.0, 0.0, 0.3),
             camera_fov=45,
-            max_FPS=60,
         ),
         show_viewer=args.vis,
     )

@@ -66,7 +66,6 @@ class GraspEnv:
                 camera_pos=(2.5, -1.0, 2.5),
                 camera_lookat=(0.5, -0.3, 0.1),
                 camera_fov=55,
-                max_FPS=int(0.5 / self.ctrl_dt),
             ),
             profiling_options=gs.options.ProfilingOptions(show_FPS=False),
             show_viewer=show_viewer,

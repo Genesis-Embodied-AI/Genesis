@@ -45,7 +45,6 @@ if __name__ == "__main__":
             camera_pos=(1.5, 0.0, 0.7),
             camera_lookat=(0.2, 0.0, 0.1),
             camera_fov=50,
-            max_FPS=60,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

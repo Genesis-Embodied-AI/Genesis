@@ -15,7 +15,6 @@ scene = gs.Scene(
     viewer_options=gs.options.ViewerOptions(
         camera_fov=30,
         res=(1280, 720),
-        max_FPS=60,
     ),
     show_viewer=True,
 )

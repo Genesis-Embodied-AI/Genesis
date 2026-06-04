@@ -20,7 +20,6 @@ def launch(filename=None, collision=False, rotate=False, scale=1.0, show_link_fr
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
-            max_FPS=FPS,
             enable_gui=True,
         ),
         vis_options=gs.options.VisOptions(

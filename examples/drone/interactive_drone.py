@@ -46,7 +46,6 @@ def main():
             camera_pos=(0.0, -2.0, 1.0),
             camera_lookat=(0.0, 0.0, 0.3),
             camera_fov=45,
-            max_FPS=60,
         ),
         vis_options=gs.options.VisOptions(
             show_world_frame=False,

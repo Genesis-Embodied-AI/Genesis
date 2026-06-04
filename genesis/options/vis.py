@@ -32,10 +32,12 @@ class ViewerOptions(Options):
         Whether to run the viewer in a background thread. This option is not supported on MacOS. True by default if
         available.
     refresh_rate : int
-        The refresh rate of the viewer.
-    max_FPS : int | None
-        The FPS (frames per second) the viewer will be capped at. Note that this will also synchronize the simulation
-        speed. If not set, the viewer will render at maximum speed.
+        The rate (in frames per second) at which the viewer repaints on screen, and the framerate the recorded
+        video is encoded at. Independent of the physics timestep.
+    realtime_factor : float | None
+        When the viewer is shown, the simulation is paced to this multiple of wall-clock real time (1.0 is real
+        time, 2.0 is twice as fast), falling behind gracefully when it cannot keep up. Set to None to run as fast
+        as possible. Has no effect without a viewer. Defaults to 1.0.
     camera_pos : tuple of float, shape (3,)
         The position of the viewer's camera.
     camera_lookat : tuple of float, shape (3,)
@@ -60,7 +62,7 @@ class ViewerOptions(Options):
     res: PositiveVec2IType | None = None
     run_in_thread: StrictBool | None = None
     refresh_rate: PositiveInt = 60
-    max_FPS: PositiveInt | None = 60
+    realtime_factor: PositiveFloat | None = 1.0
     camera_pos: Vec3FType = (3.5, 0.5, 2.5)
     camera_lookat: Vec3FType = (0.0, 0.0, 0.5)
     camera_up: Vec3FType = (0.0, 0.0, 1.0)
@@ -68,9 +70,18 @@ class ViewerOptions(Options):
     enable_help_text: StrictBool = True
     enable_default_keybinds: StrictBool = True
     enable_gui: StrictBool = False
+    # Deprecated alias for refresh_rate, resolved in model_post_init.
+    max_FPS: PositiveInt | None = None
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
+        # 'max_FPS' is deprecated in favor of 'refresh_rate'; map it over when set, but refuse to guess which the user
+        # meant when they also set 'refresh_rate' explicitly.
+        if self.max_FPS is not None:
+            if "refresh_rate" in self.model_fields_set:
+                gs.raise_exception("'max_FPS' is deprecated and replaced by 'refresh_rate'; set only one of them.")
+            gs.logger.warning("'max_FPS' is deprecated and will be removed; it now maps to 'refresh_rate'.")
+            self.refresh_rate = self.max_FPS
         if not self.enable_gui:
             return
         # The GUI overlay renders its own controls and captures keyboard input, so the help-text overlay and default

@@ -207,6 +207,91 @@ def test_editing_controls(png_snapshot, monkeypatch):
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
+def test_runtime_plugin_toggle_and_pause():
+    from genesis.ext.pyrender.overlay.plugin import TOGGLEABLE_PLUGINS
+    from genesis.vis.viewer_plugins import MouseInteractionPlugin, ViewerPlugin
+
+    class DrawRecorder(ViewerPlugin):
+        # Counts on_draw calls so the test can check the dispatch loop is not truncated by a mid-loop plugin removal.
+        def __init__(self):
+            super().__init__()
+            self.draw_count = 0
+
+        def on_draw(self):
+            self.draw_count += 1
+
+    class DrawTimeRemover(ViewerPlugin):
+        # Detaches a target plugin from inside the on_draw dispatch loop, mirroring how the overlay's Plugins-tab
+        # checkbox toggles a plugin while the viewer iterates its plugin list.
+        def __init__(self, target):
+            super().__init__()
+            self.target = target
+            self.removed = False
+
+        def on_draw(self):
+            if not self.removed:
+                self.removed = True
+                self.scene.viewer.remove_plugin(self.target)
+
+    scene = _build_default_scene(enable_gui=True)
+    scene.build()
+    viewer = scene.viewer
+    pyrender_viewer = viewer._pyrender_viewer
+    pyrender_viewer.switch_to()
+    overlay = next(plugin for plugin in viewer.plugins if isinstance(plugin, ImGuiOverlayPlugin))
+
+    # The Plugins tab attaches and detaches whitelisted optional plugins on a live viewer through scene.viewer
+    # add_plugin / remove_plugin; the whitelisted mouse-interaction plugin starts detached.
+    assert MouseInteractionPlugin in (cls for _, cls in TOGGLEABLE_PLUGINS)
+    assert not any(isinstance(plugin, MouseInteractionPlugin) for plugin in viewer.plugins)
+
+    # Enabling attaches a fresh instance, visible to the live dispatch loop.
+    mouse = viewer.add_plugin(MouseInteractionPlugin())
+    assert mouse in viewer.plugins
+    assert mouse in pyrender_viewer.plugins
+    pyrender_viewer.on_draw()
+
+    # The plugin acts on bodies through physics, so it is active only while the simulation advances scene.t: advancing
+    # steps mark it running, while steps vetoed by an overlay pause mark it inactive and drop any held link.
+    scene.step()
+    scene.step()
+    assert mouse._sim_running
+    overlay.interactive_scene.pause()
+    scene.step()
+    scene.step()
+    assert not mouse._sim_running
+    assert mouse._held_link is None
+    overlay.interactive_scene.resume()
+    scene.step()
+    assert mouse._sim_running
+
+    # Disabling detaches it and tears down its interaction state and debug visuals.
+    viewer.remove_plugin(mouse)
+    assert mouse not in viewer.plugins
+    assert mouse not in pyrender_viewer.plugins
+    assert mouse._held_link is None
+    assert not mouse._debug_interact_nodes
+    assert mouse._debug_normal_node is None
+    pyrender_viewer.on_draw()
+
+    # Removing a plugin from inside the on_draw dispatch loop must not corrupt iteration: the plugin queued after the
+    # mutator still receives on_draw and the target ends up detached, with no exception raised.
+    target = MouseInteractionPlugin()
+    remover = DrawTimeRemover(target)
+    recorder = DrawRecorder()
+    viewer.add_plugin(remover)
+    viewer.add_plugin(target)
+    viewer.add_plugin(recorder)
+    pyrender_viewer.on_draw()
+    assert recorder.draw_count == 1
+    assert target not in viewer.plugins
+    viewer.remove_plugin(remover)
+    viewer.remove_plugin(recorder)
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
 @pytest.mark.parametrize("performance_mode", [False])
 def test_scene_rebuild():
     # enable_gui makes the overlay own an InteractiveScene and rebuild the scene in place: the same Scene
