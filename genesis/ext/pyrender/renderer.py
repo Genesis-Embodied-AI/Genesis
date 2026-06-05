@@ -849,6 +849,8 @@ class Renderer(object):
         elif flags & RenderFlags.FLAT:
             vertex_shader = "flat.vert"
             fragment_shader = "flat.frag"
+            if primitive.double_sided:
+                defines["DOUBLE_SIDED"] = 1
         elif flags & RenderFlags.SEG:
             vertex_shader = "segmentation.vert"
             fragment_shader = "segmentation.frag"

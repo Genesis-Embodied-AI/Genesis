@@ -91,16 +91,16 @@ class Base(Material["FEMEntity"]):
 
     @qd.func
     def _update_stress_noop(self, mu, lam, J, F, actu, m_dir):
-        raise NotImplementedError
+        return qd.Matrix.zero(gs.qd_float, 3, 3)
 
     @qd.func
     def _compute_energy_gradient_hessian_noop(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
-        raise NotImplementedError
+        pass
 
     @qd.func
     def _compute_energy_gradient_noop(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
-        raise NotImplementedError
+        pass
 
     @qd.func
     def _compute_energy_noop(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
-        raise NotImplementedError
+        pass

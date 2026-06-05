@@ -887,6 +887,10 @@ class RasterizerContext:
                         uvs=uvs if uvs is not None else np.zeros((n_render_verts, 2), dtype=gs.np_float),
                         n_verts=n_render_verts,
                     )
+                    if self.segmentation_level == "geom":
+                        seg_key = (fem_entity.idx, sub_idx)
+                    else:
+                        seg_key = fem_entity.idx
                     for idx in self.rendered_envs_idx:
                         render_verts = sim_verts_all_envs[:, idx][svm]
                         mesh = trimesh.Trimesh(render_verts, faces, process=False)
@@ -896,7 +900,7 @@ class RasterizerContext:
                         )
                         static_node = self.add_node(node)
                         self.static_nodes[(idx, fem_entity.uid, sub_idx)] = static_node
-                        self.create_node_seg(fem_entity.idx, static_node)
+                        self.create_node_seg(seg_key, static_node)
 
     def update_fem(self):
         if self.sim.fem_solver.is_active:

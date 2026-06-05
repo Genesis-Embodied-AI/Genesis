@@ -204,16 +204,22 @@ class OffscreenRenderer(object):
 
             class CustomShaderCache:
                 def __init__(self):
-                    self.program = None
+                    self.programs = {}
 
                 def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
-                    if self.program is None:
-                        self.program = ShaderProgram(
+                    is_double_sided = bool((defines or {}).get("DOUBLE_SIDED"))
+                    if is_double_sided not in self.programs:
+                        self.programs[is_double_sided] = ShaderProgram(
                             os.path.join(MODULE_DIR, "shaders/mesh_normal.vert"),
                             os.path.join(MODULE_DIR, "shaders/mesh_normal.frag"),
+                            geometry_shader=(
+                                os.path.join(MODULE_DIR, "shaders/mesh_normal_double_sided.geom")
+                                if is_double_sided
+                                else None
+                            ),
                             defines=defines,
                         )
-                    return self.program
+                    return self.programs[is_double_sided]
 
             old_cache = renderer._program_cache
             renderer._program_cache = CustomShaderCache()

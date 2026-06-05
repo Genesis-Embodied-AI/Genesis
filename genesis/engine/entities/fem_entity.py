@@ -74,6 +74,7 @@ class FEMEntity(Entity):
         self._sim_vert_maps = None
         self.sample()
 
+        # Check if this is cloth (elements are already triangles)
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
@@ -86,6 +87,7 @@ class FEMEntity(Entity):
                 self._n_surface_vertices = len(np.unique(self._surface_tri_np))
             else:
                 self._n_surface_vertices = 0
+            # For cloth, each triangle is its own "element"
             self._surface_el_np = np.arange(self.elems.shape[0], dtype=gs.np_int)
         else:
             # For volumetric FEM, extract surface triangles from tetrahedral elements
@@ -103,6 +105,7 @@ class FEMEntity(Entity):
 
             self._surface_tri_np = surface_tri
             self._n_surfaces = len(self._surface_tri_np)
+
             if self._n_surfaces > 0:
                 self._n_surface_vertices = len(np.unique(self._surface_tri_np))
             else:
@@ -366,6 +369,7 @@ class FEMEntity(Entity):
         verts = verts.astype(gs.np_float, copy=False)
         elems = elems.astype(gs.np_int, copy=False)
 
+        # rotate and translate
         R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
         p = np.array(self.morph.pos, dtype=gs.np_float)
         verts_translated = verts + p
@@ -468,6 +472,7 @@ class FEMEntity(Entity):
                 f"Entity {self.uid} added. class: {self.__class__.__name__}, morph: {self.morph.__class__.__name__}, size: ({self.n_elements}, {self.n_vertices}), material: {self.material}."
             )
 
+        # Convert to appropriate numpy array types
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
 
         if is_cloth:

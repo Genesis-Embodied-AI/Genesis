@@ -118,6 +118,45 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
 
 
 @pytest.mark.required
+def test_multi_geom_fem_render_meshes(show_viewer):
+    """
+    A FEM entity loaded from a multi-geometry GLB should produce one render
+    mesh per sub-geometry, with `sim_vert_maps` correctly indexing into the
+    merged sim vertex array, and one rasterizer static_node per sub-mesh.
+
+    `meshes/Trashbag_rope.glb` has 2 sub-meshes: 'bag' and 'channel'. Cloth
+    material is used so the entity is render-only (no FEM stress kernel runs).
+    """
+    scene = gs.Scene(show_viewer=show_viewer)
+    fem = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/Trashbag_rope.glb",
+            pos=(0.0, 0.0, 1.0),
+            scale=0.3,
+            group_by_material=True,
+        ),
+        material=gs.materials.FEM.Cloth(),
+    )
+    scene.build()
+
+    assert len(fem.render_meshes) == 2, f"Expected 2 render meshes, got {len(fem.render_meshes)}"
+    assert len(fem.sim_vert_maps) == 2
+    for i, (rmesh, svm) in enumerate(zip(fem.render_meshes, fem.sim_vert_maps)):
+        assert svm.shape == (len(rmesh.verts),), (
+            f"sub-mesh {i}: sim_vert_maps size {svm.shape} != render-mesh vert count {len(rmesh.verts)}"
+        )
+        assert svm.min() >= 0 and svm.max() < fem.n_vertices, (
+            f"sub-mesh {i}: sim_vert_maps indices outside [0, {fem.n_vertices})"
+        )
+        assert rmesh.faces.shape[1] == 3
+
+    # Rasterizer must register one static_node per sub-mesh, keyed by (env, uid, sub_idx).
+    static_nodes = scene.visualizer.context.static_nodes
+    sub_ids = sorted(k[2] for k in static_nodes if len(k) == 3 and k[1] == fem.uid)
+    assert sub_ids == [0, 1], f"Expected static_node sub_ids [0, 1], got {sub_ids}"
+
+
+@pytest.mark.required
 def test_maxvolume(box_obj_path, show_viewer):
     """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
