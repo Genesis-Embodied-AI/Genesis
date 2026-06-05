@@ -1561,6 +1561,127 @@ def test_contact_pruning(gjk_collision, show_viewer):
     assert_allclose(box.get_pos(), 0.0, atol=2e-3)
 
 
+@pytest.mark.required
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("gjk_collision", [False, True])
+def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
+    # A central pole carries six concentric rings, capped by a ball seated in the top ring's hole. Each ring collision
+    # mesh is pre-decomposed into N_WEDGES convex slices, so stacked pieces touch face-to-face along the vertical axis.
+    # Physically only vertical contacts are valid between stacked rings; any lateral contact is a spurious cross-sector
+    # overlap of the convex decomposition. The ball rests on the curved hole surface, so it legitimately produces angled
+    # normals and is exempt from the vertical-normal and one-per-slice checks.
+    N_WEDGES = 16
+    BASE_HEIGHT = 0.020
+    RING_HEIGHT = 0.020
+    BALL_HEIGHT = 0.019
+    RINGS_ORDER = (0, 1, 2, 3, 5, 4)
+
+    MAX_GJK_TRIALS = 10
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=gjk_collision,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.4, 0.0, 0.3),
+            camera_lookat=(0.0, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    pole = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="tower/base_pole.urdf",
+            pos=(0.0, 0.0, BASE_HEIGHT / 2),
+            file_meshes_are_zup=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
+        vis_mode="collision",
+    )
+    rings = []
+    height = BASE_HEIGHT
+    for ring_idx in RINGS_ORDER:
+        ring = scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=f"tower/ring_{ring_idx + 1:02d}.urdf",
+                pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
+                file_meshes_are_zup=True,
+            ),
+            material=gs.materials.Rigid(
+                rho=600.0,
+            ),
+            vis_mode="collision",
+            visualize_contact=True,
+        )
+        rings.append(ring)
+        height += RING_HEIGHT - 1e-4
+    ball = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="tower/ball.urdf",
+            pos=(0.0, 0.0, height + BALL_HEIGHT),
+            file_meshes_are_zup=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
+        vis_mode="collision",
+    )
+    scene.build()
+
+    geom_owner = {geom.idx: entity for entity in (plane, pole, *rings, ball) for geom in entity.geoms}
+    ring_geoms = {geom.idx for ring in rings for geom in ring.geoms}
+    ball_geoms = {geom.idx for geom in ball.geoms}
+
+    qpos_init = scene.rigid_solver.get_qpos()
+    for _ in range(40):
+        scene.step()
+
+    # Check that the tower stay in place (3mm tol is necessary because of the ball)
+    assert_allclose(scene.rigid_solver.get_qpos(), qpos_init, atol=2e-3)
+    assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=0.05)
+
+    # A contact step is "ideal" when both invariants hold across all stacked interfaces (the ball seats on a curved
+    # hole and is exempt from both):
+    #   - normals are vertical: only axial contacts are physical between stacked rings; a lateral normal is a spurious
+    #     cross-sector overlap of the convex decomposition,
+    #   - pruning collapses each wedge-pair manifold to one contact per slice, so every pole-ring / ring-ring interface
+    #     carries exactly N_WEDGES contacts (without pruning each manifold would emit many more).
+    # Both invariants fail together on a bad step (a spurious lateral overlap also inflates the slice count). MPR keeps
+    # the sub-resolution overlaps below the rejection floor on every step; GJK's tighter penetration estimates let one
+    # spike above it occasionally in fp32, so it only has to be ideal on at least one of the ten steps.
+    ideal_steps = 0
+    for _ in range(MAX_GJK_TRIALS):
+        scene.step()
+        contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
+        geom_a, geom_b = contacts["geom_a"], contacts["geom_b"]
+        penetration = contacts["penetration"]
+        normal_z = contacts["normal"][:, 2]
+        interface_counts = {}
+        is_vertical = True
+        for i in range(len(geom_a)):
+            if penetration[i] <= 0.0:
+                continue
+            a, b = int(geom_a[i]), int(geom_b[i])
+            if a in ball_geoms or b in ball_geoms:
+                continue
+            if abs(normal_z[i]) < 0.5:
+                is_vertical = False
+            if a in ring_geoms or b in ring_geoms:
+                key = frozenset((geom_owner[a], geom_owner[b]))
+                interface_counts[key] = interface_counts.get(key, 0) + 1
+        # pole-ring0 plus each ring-ring interface up the stack
+        is_pruned = len(interface_counts) == len(rings) and all(
+            count == N_WEDGES for count in interface_counts.values()
+        )
+        ideal_steps += is_vertical and is_pruned
+    if gjk_collision:
+        assert ideal_steps >= 1
+    else:
+        assert ideal_steps == MAX_GJK_TRIALS
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize(
