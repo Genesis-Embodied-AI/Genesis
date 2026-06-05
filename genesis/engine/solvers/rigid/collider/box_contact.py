@@ -16,7 +16,7 @@ from . import support_field
 
 from .contact import (
     func_add_contact,
-    func_compute_tolerance,
+    func_compute_geom_pair_scale,
     rotaxis,
     rotmatx,
 )
@@ -161,8 +161,8 @@ def func_plane_box_contact(
         if qd.static(static_rigid_sim_config.enable_multi_contact):
             n_con = 1
             contact_pos_0 = contact_pos
-            tolerance = func_compute_tolerance(
-                i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+            tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(
+                i_ga, i_gb, geoms_info, geoms_init_AABB
             )
             for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
                 # Plane-box pairs are sized with the convex cap (they are not in the large-contact mask), so the
