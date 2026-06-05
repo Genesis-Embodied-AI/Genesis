@@ -861,21 +861,22 @@ def func_factor_mass(
                             # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
                             rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
 
-                        # Cache original pivot row values before modification
+                        # Cache original pivot row values before modification.
+                        # wave64: all threads in lockstep, no explicit sync needed.
                         if tid < i_d_:
                             sh_pivot[tid] = mass_mat[i_d_, tid]
-                        # wave64: all threads in lockstep, no explicit sync needed
 
-                        # Balanced rank-1 update: flatten (row, col) pairs across all threads
-                        _n_updates = i_d_ * (i_d_ + 1) // 2
-                        _upd = tid
-                        while _upd < _n_updates:
-                            _r = qd.cast((qd.sqrt(8.0 * qd.cast(_upd, gs.qd_float) + 1.0) - 1.0) * 0.5, qd.i32)
-                            if _r * (_r + 1) // 2 > _upd:
-                                _r = _r - 1
-                            _c = _upd - _r * (_r + 1) // 2
-                            mass_mat[_r, _c] = mass_mat[_r, _c] - sh_pivot[_r] * D_inv * sh_pivot[_c]
-                            _upd = _upd + BLOCK_DIM
+                        # Row-major rank-1 update: each thread owns rows [tid, tid+BLOCK_DIM, ...].
+                        # Eliminates the per-update sqrt needed by the flat-index decode, and keeps
+                        # sh_pivot[_r] in a VGPR register across the inner column loop.
+                        _r = tid
+                        while _r < i_d_:
+                            piv_r = sh_pivot[_r] * D_inv
+                            _c = 0
+                            while _c <= _r:
+                                mass_mat[_r, _c] = mass_mat[_r, _c] - piv_r * sh_pivot[_c]
+                                _c = _c + 1
+                            _r = _r + BLOCK_DIM
 
                         # Write L factors to pivot row
                         if tid < i_d_:

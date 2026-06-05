@@ -137,7 +137,7 @@ def func_collision_clear(
         else:
             collider_state.n_contacts[i_b] = 0
 
-MAX_GEOMS_IN_LDS = 46
+MAX_GEOMS_IN_LDS = 60
 
 @qd.func
 def func_broad_phase_lds(

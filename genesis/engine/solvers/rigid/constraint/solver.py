@@ -10,6 +10,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.engine.solvers.rigid.abd.forward_dynamics import func_solve_mass_entity
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
 from ..collider.contact_island import ContactIsland
@@ -3100,6 +3101,7 @@ def func_update_constraint_batch(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
+    defer_dense_qfrc: qd.template(),
 ):
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     ne = constraint_state.n_constraints_equality[i_b]
@@ -3151,6 +3153,8 @@ def func_update_constraint_batch(
         constraint_state.efc_force[i_c, i_b] = floss_force + (-Jaref_c * efc_D_c * active_c)
 
     if qd.static(static_rigid_sim_config.sparse_solve):
+        # Sparse scatter is kept inside the 1D-per-env loop since 2D-fy
+        # would race on `qfrc_constraint[i_d, i_b]` without atomic-add.
         for i_d in range(n_dofs):
             constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -3162,7 +3166,15 @@ def func_update_constraint_batch(
                     constraint_state.qfrc_constraint[i_d, i_b]
                     + constraint_state.jac_compact_values[i_c, i_d_, i_b] * constraint_state.efc_force[i_c, i_b]
                 )
-    else:
+    elif qd.static(not defer_dense_qfrc):
+        # Dense gather. Only the `func_update_constraint` init caller
+        # sets defer_dense_qfrc=True and follows up with the 2D
+        # `func_update_qfrc_constraint_dense` kernel — that's the
+        # un-starved init path. The per-iter solver callers
+        # (func_solve_iter, func_solve_iter_post_linesearch) keep the
+        # gather inline here because they execute inside a per-env
+        # loop with no follow-up 2D dispatch site; deferring there
+        # would leave qfrc_constraint stale and gradient NaN-s out.
         for i_d in range(n_dofs):
             qfrc_constraint = gs.qd_float(0.0)
             for i_c in range(constraint_state.n_constraints[i_b]):
@@ -3191,6 +3203,36 @@ def func_update_constraint_batch(
 
 
 @qd.func
+def func_update_qfrc_constraint_dense(
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Dense `qfrc_constraint = J^T @ efc_force` gather, parallelized
+    over (n_dofs, _B). Extracted from `func_update_constraint_batch`
+    to un-starve the dense qfrc work: the per-env batch loop launched
+    only _B threads, which under-utilizes the GPU at typical env counts;
+    this 2D form widens to n_dofs * _B threads, matching the
+    initialize_Jaref / kernel_8 2D-fy pattern.
+
+    Each (i_d, i_b) thread reads jac[i_c, i_d, i_b] for
+    i_c in range(n_constraints[i_b]) and writes only its own
+    qfrc_constraint[i_d, i_b], so there is no write race. Must run
+    AFTER `func_update_constraint_batch` populates efc_force.
+    """
+    _B = static_rigid_sim_config.n_envs
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        qfrc_constraint = gs.qd_float(0.0)
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            qfrc_constraint = (
+                qfrc_constraint + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            )
+        constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
+
+
+@qd.func
 def func_update_constraint(
     qacc: array_class.V_ANNOTATION,
     Ma: array_class.V_ANNOTATION,
@@ -3209,6 +3251,17 @@ def func_update_constraint(
             Ma=Ma,
             cost=cost,
             dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+            defer_dense_qfrc=True,
+        )
+
+    # Dense qfrc gather lifted out of the per-env batch into a 2D ndrange
+    # so the `qfrc_constraint = J^T @ efc_force` work is no longer
+    # pinned to a _B-thread launch. Sparse path still scatters inside
+    # the 1D batch (atomic-free).
+    if qd.static(not static_rigid_sim_config.sparse_solve):
+        func_update_qfrc_constraint_dense(
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
@@ -3265,18 +3318,40 @@ def func_update_gradient_tiled(
         )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-        for i_b in range(_B):
-            func_solve_mass_batch(
-                i_b,
-                constraint_state.grad,
-                constraint_state.Mgrad,
-                array_class.PLACEHOLDER,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                is_backward=False,
-            )
+        # The previous `for i_b in range(_B)` launched only _B threads,
+        # under-utilizing the GPU. When hibernation is disabled, n_awake_entities
+        # is compile-time-known as `n_entities_`, so the inner entity loop is
+        # promoted into a 2D (n_entities_, _B) ndrange by calling
+        # func_solve_mass_entity directly. Zero-DOF entities (e.g. Plane) hit
+        # the mass_mat_mask guard and become near-no-op threads — same total
+        # work, n_entities_-wider dispatch.
+        if qd.static(not static_rigid_sim_config.use_hibernation):
+            qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            for i_e, i_b in qd.ndrange(static_rigid_sim_config.n_entities_, _B):
+                func_solve_mass_entity(
+                    i_e,
+                    i_b,
+                    constraint_state.grad,
+                    constraint_state.Mgrad,
+                    array_class.PLACEHOLDER,
+                    entities_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    False,
+                )
+        else:
+            qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            for i_b in range(_B):
+                func_solve_mass_batch(
+                    i_b,
+                    constraint_state.grad,
+                    constraint_state.Mgrad,
+                    array_class.PLACEHOLDER,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    is_backward=False,
+                )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_cholesky_solve_tiled(constraint_state, static_rigid_sim_config)
@@ -3391,21 +3466,23 @@ def initialize_Jaref(
 ):
     _B = static_rigid_sim_config.n_envs
     n_dofs = constraint_state.jac.shape[1]
+    len_constraints = constraint_state.jac.shape[0]
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            Jaref = -constraint_state.aref[i_c, i_b]
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                # C4: read from compact storage; per-row working set is
-                # bounded by jac_n_relevant_dofs (≤ max_nz) instead of N_d.
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    Jaref = Jaref + constraint_state.jac_compact_values[i_c, i_d_, i_b] * qacc[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            constraint_state.Jaref[i_c, i_b] = Jaref
+    for i_c, i_b in qd.ndrange(len_constraints, _B):
+        if i_c >= constraint_state.n_constraints[i_b]:
+            continue
+        Jaref = -constraint_state.aref[i_c, i_b]
+        if qd.static(static_rigid_sim_config.sparse_solve):
+            # C4: read from compact storage; per-row working set is
+            # bounded by jac_n_relevant_dofs (≤ max_nz) instead of N_d.
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                Jaref = Jaref + constraint_state.jac_compact_values[i_c, i_d_, i_b] * qacc[i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+        constraint_state.Jaref[i_c, i_b] = Jaref
 
 
 @qd.func
@@ -3605,6 +3682,7 @@ def func_solve_iter(
             dofs_state=dofs_state,
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
+            defer_dense_qfrc=False,
         )
 
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
@@ -3680,6 +3758,7 @@ def func_solve_iter_post_linesearch(
         dofs_state=dofs_state,
         constraint_state=constraint_state,
         static_rigid_sim_config=static_rigid_sim_config,
+        defer_dense_qfrc=False,
     )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
