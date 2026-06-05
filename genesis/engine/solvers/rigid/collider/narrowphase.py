@@ -223,6 +223,9 @@ def func_add_polytope_vertex_contacts_sdf(
         # at A's center is ill-conditioned (it sits inside B, away from any surface), so per-vertex grads are trusted
         # directly rather than filtered against that unreliable reference normal.
         enclosed_axis = False
+        # Set when A and B are two concave shells resting on each other (nested cups/bowls). Both SDF-based normals
+        # are unreliable there, so the center-to-center line is used as the contact normal for the whole pair.
+        axis_normal = False
         if use_closing_dir:
             closing_dir = center_a_world - center_b_world
             if closing_dir.norm() > EPS:
@@ -249,7 +252,20 @@ def func_add_polytope_vertex_contacts_sdf(
                 sd_a_self = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_world, i_ga, ga_pos, ga_quat)
                 if sd_a_self > EPS:
                     use_closing_dir = False
-                    enclosed_axis = True
+                    if sd_center < 0.0:
+                        # B's material occupies A's center: B passes through A's cavity (a nut around a bolt shaft).
+                        # The grad at A's center is ill-conditioned (deep inside B), so trust each vertex's own grad,
+                        # which is radial around B and balances across the contact ring.
+                        enclosed_axis = True
+                    else:
+                        # A is hollow but its center sits OUTSIDE B: two concave shells resting on each other (nested
+                        # cups/bowls). BOTH SDF-based normals are unreliable here - the thin curved wall makes the
+                        # per-vertex grads point laterally, and A's center sits in a concave pocket where the grad
+                        # sampled at A's center can even be sign-flipped (pointing into the stack). The center-to-center
+                        # line is the stacking axis and the robust contact normal, so use it directly (b->a) for every
+                        # contact of the pair.
+                        normal_center = closing_normal
+                        axis_normal = True
                 else:
                     normal_center = closing_normal
                     center_proj = qd.abs((center_a_world - center_b_world).dot(closing_normal))
@@ -292,13 +308,30 @@ def func_add_polytope_vertex_contacts_sdf(
                 elif pen_v > 0.0:
                     pen_emit = synthetic_pen_max
                 normal_v = normal_center
-                if enclosed_axis:
-                    # The reference normal (grad at A's center) is unreliable here, so trust each vertex's local grad
-                    # when well-conditioned: it points out of B's surface at that vertex, keeping the normals diverse
-                    # across the contact patch so the net force balances instead of pushing A off to one side.
+                if enclosed_axis or axis_normal:
+                    # Two concave shells (nested cups/bowls) or B passing through A's cavity (nut on bolt): the
+                    # pair-level reference normal is unreliable (sign-flipped in a concave pocket, or vertical-only so
+                    # it cannot resist lateral shear). Orient the contact from A's own exact vertex surface normal
+                    # (precomputed): A's face at the contact points into B, so the b->a normal opposes A's outward
+                    # normal. On a tilted bowl wall that normal is correctly tilted - it carries both the vertical
+                    # support and the radial component that resists a nested stack shearing sideways. When B's grid grad
+                    # is well-conditioned, take its axis (it can resolve concave seams a single vertex normal cannot)
+                    # but fix its sign from A's normal (the grad's sign inverts once the vertex tunnels past B's thin
+                    # wall). When the grad is smoothed (coarse grid across the thin wall), use A's vertex normal
+                    # directly rather than the vertical reference, which is what was leaving the side walls unsupported.
+                    a_vnormal = gu.qd_normalize(gu.qd_transform_by_quat(verts_info.init_normal[i_v], ga_quat), EPS)
                     if grad_norm > 0.5:
                         normal_v = gu.qd_normalize(grad_v, EPS)
-                elif not use_closing_dir and grad_v.dot(normal_center) > 0.0:
+                        if normal_v.dot(a_vnormal) > 0.0:
+                            normal_v = -normal_v
+                    else:
+                        normal_v = -a_vnormal
+                elif not use_closing_dir and not axis_normal and grad_norm > 0.9 and grad_v.dot(normal_center) > 0.0:
+                    # Trust a per-vertex grad as the contact normal only in the clean band (the same |grad| > 0.9 band
+                    # where the kernel pen is trusted): this is what exposes both face normals for an A wedged at a
+                    # concave L-corner. In the edge/smoothed bands the per-vertex grad is a partially-interpolated
+                    # direction (a box corner straddling a B feature reads a grad tilted tens of degrees off the true
+                    # surface normal); there the reference normal sampled at A's center is the more reliable direction.
                     normal_v = gu.qd_normalize(grad_v, EPS)
                 # In the closing-direction regime, the SDF "distance to nearest surface" measured at a vertex on A's
                 # outer skin is the small radial gap to B's lateral, not the much larger approach depth along the

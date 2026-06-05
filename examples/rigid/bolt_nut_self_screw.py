@@ -42,7 +42,7 @@ def main():
             constraint_timeconst=4e-3,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.11, 0.075, 0.085),
+            camera_pos=(0.2, 0.1, 0.1),
             camera_lookat=(0.0, 0.0, 0.03),
             camera_fov=35,
         ),
@@ -94,7 +94,7 @@ def main():
     # holds the nut once released. Screwing down, the end is the seat: the nut center reaches z ~ 20 mm when its base
     # meets the head top (z = 11 mm), so release just above that to coast onto the head. Unscrewing up, the end is the
     # tip: the center reaches z ~ 48 mm when only a turn of thread is left gripping, so release there to spin off.
-    horizon = 700 if "PYTEST_VERSION" not in os.environ else 5
+    horizon = 800 if "PYTEST_VERSION" not in os.environ else 5
     drive_ratio = 1.0
     z0 = float(nut.get_pos()[2])
     for i in range(horizon):
@@ -104,7 +104,7 @@ def main():
             if nut_z < 0.0202:
                 drive_ratio = 0.0
         else:
-            drive_ratio = min(drive_ratio, 1.0 - min(max((nut_z - 0.04) / (0.05 - 0.04), 0.0), 1.0))
+            drive_ratio = min(drive_ratio, 1.0 - min(max((nut_z - 0.04) / (0.048 - 0.04), 0.0), 1.0))
         nut.control_dofs_force(args.torque * drive_ratio, dofs_idx_local=(5,))
         scene.step()
         if i % 50 == 0:

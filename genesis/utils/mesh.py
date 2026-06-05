@@ -603,12 +603,12 @@ def postprocess_collision_geoms(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
 
-        # Watertightening already runs its own feature-preserving QEM, so re-decimating with `fast_simplification`
-        # on the wrap output barely helps (the wrap's residual non-manifold edges block most collapses) and risks
-        # destroying the careful feature preservation.
-        already_decimated = mesh.metadata.get("watertightened", False)
-        must_decimate = (num_faces > decimate_face_num or tmesh.is_watertight) and not already_decimated
-        if not must_decimate and not already_decimated:
+        # Decimation is an independent step applied after watertightening (which runs its own internal QEM): when
+        # 'decimate' is requested it simplifies the collision mesh - including a watertighten wrap - down to
+        # 'decimate_face_num'. It is gated on the mesh being either above that target or watertight, since decimating
+        # a low-poly non-watertight mesh would be unreliable.
+        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
+        if not must_decimate:
             gs.logger.debug(
                 "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
             )

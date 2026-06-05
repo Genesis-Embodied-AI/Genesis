@@ -490,6 +490,11 @@ class Scene(RBC):
                 # Rigid entities will convexify geom by default
                 if morph_variant.convexify is None:
                     morph_variant.convexify = isinstance(material, gs.materials.Rigid)
+                # Decimation simplifies away the very surface detail that a non-convex collision mesh is kept for, so
+                # it defaults off when convexify is off and on otherwise. Only applies to meshes that skip
+                # watertightening (already-watertight inputs); watertighten does its own feature-preserving QEM.
+                if morph_variant.decimate is None:
+                    morph_variant.decimate = morph_variant.convexify
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
