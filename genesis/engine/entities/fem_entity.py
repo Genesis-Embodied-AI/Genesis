@@ -5,6 +5,7 @@ import igl
 import numpy as np
 import quadrants as qd
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.element as eu
@@ -69,12 +70,10 @@ class FEMEntity(Entity):
         self._el_start = el_start  # offset for element index
         self._s_start = s_start  # offset for surface triangles
         self._step_global_added = None
-
-        self._surface.update_texture()
-
+        self._render_meshes = []
+        self._sim_vert_maps = None
         self.sample()
 
-        # Check if this is cloth (elements are already triangles)
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
@@ -87,7 +86,6 @@ class FEMEntity(Entity):
                 self._n_surface_vertices = len(np.unique(self._surface_tri_np))
             else:
                 self._n_surface_vertices = 0
-            # For cloth, each triangle is its own "element"
             self._surface_el_np = np.arange(self.elems.shape[0], dtype=gs.np_int)
         else:
             # For volumetric FEM, extract surface triangles from tetrahedral elements
@@ -105,7 +103,6 @@ class FEMEntity(Entity):
 
             self._surface_tri_np = surface_tri
             self._n_surfaces = len(self._surface_tri_np)
-
             if self._n_surfaces > 0:
                 self._n_surface_vertices = len(np.unique(self._surface_tri_np))
             else:
@@ -369,10 +366,11 @@ class FEMEntity(Entity):
         verts = verts.astype(gs.np_float, copy=False)
         elems = elems.astype(gs.np_int, copy=False)
 
-        # rotate
         R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
-        verts_COM = verts.mean(axis=0)
-        init_positions = (verts - verts_COM) @ R.T + verts_COM
+        p = np.array(self.morph.pos, dtype=gs.np_float)
+        verts_translated = verts + p
+        verts_COM = verts_translated.mean(axis=0)
+        init_positions = (verts_translated - verts_COM) @ R.T + verts_COM
 
         if not init_positions.shape[0] > 0:
             gs.raise_exception("Entity has zero vertices.")
@@ -397,59 +395,67 @@ class FEMEntity(Entity):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
-        self._uvs = None
 
         if is_cloth:
-            # Cloth: load surface mesh directly (no tetrahedralization)
-            if isinstance(self.morph, gs.options.morphs.Mesh):
-                import trimesh
+            meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
+            self._render_meshes = list(meshes)
 
-                mesh = trimesh.load_mesh(self._morph.file)
-                verts = mesh.vertices * self._morph.scale + np.array(self._morph.pos)
-                faces = mesh.faces
-                # For cloth, we store faces as "elements" (treating them as surface elements)
-                self.instantiate(verts, faces)
+            mesh_verts = [mesh.verts for mesh in meshes]
+            mesh_faces = [mesh.faces for mesh in meshes]
+            verts, faces = self._merge_elements(mesh_verts, mesh_faces)
+            self.instantiate(verts, faces)
 
-                # Load UVs from mesh (1:1 mapping for cloth).
-                # UVs are not always available in 3D file, in case they are missing we set the entity UVs to None when UVs are None,
-                # the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions can be recomputed,
-                # thus texture mapping and anisotropic surfaces will not work properly.
-                self._uvs = None
-                if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
-                    self._uvs = mesh.visual.uv.astype(gs.np_float, copy=False)
-            else:
-                gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
         else:
-            # Regular FEM: tetrahedralize mesh
-            if isinstance(self.morph, gs.options.morphs.Sphere):
-                verts, elems = eu.sphere_to_elements(
-                    pos=self._morph.pos,
-                    radius=self._morph.radius,
-                    tet_cfg=self.tet_cfg,
-                )
-            elif isinstance(self.morph, gs.options.morphs.Box):
-                verts, elems = eu.box_to_elements(
-                    pos=self._morph.pos,
-                    size=self._morph.size,
-                    tet_cfg=self.tet_cfg,
-                )
-            elif isinstance(self.morph, gs.options.morphs.Cylinder):
-                verts, elems = eu.cylinder_to_elements()
-            elif isinstance(self.morph, gs.options.morphs.Mesh):
-                # We don't need to proces UVs here because the tetrahedralization process append new vertices
-                # and faces at the end of the vertex list, thus the original UVs are preserved at the beginning.
-                # We can't generate UVs for newly created internal vertices as it doesn't make sense but they're
-                # not used for rendering so it's fine.
-                verts, elems, self._uvs = eu.mesh_to_elements(
-                    file=self._morph.file,
-                    pos=self._morph.pos,
-                    scale=self._morph.scale,
-                    tet_cfg=self.tet_cfg,
-                )
-            else:
-                gs.raise_exception(f"Unsupported morph: {self.morph}.")
+            meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
+            self._render_meshes = list(meshes)
 
+            mesh_verts = [mesh.verts for mesh in meshes]
+            mesh_faces = [mesh.faces for mesh in meshes]
+            surface_verts, surface_faces = self._merge_elements(mesh_verts, mesh_faces)
+            surface_trimesh = trimesh.Trimesh(vertices=surface_verts, faces=surface_faces, process=False)
+            verts, elems = eu.mesh_to_elements(mesh=surface_trimesh, tet_cfg=self.tet_cfg)
             self.instantiate(*eu.split_all_surface_tets(verts, elems))
+
+    def _merge_elements(self, mesh_verts_list, mesh_elems_list):
+        """Merge multiple sub-meshes' vertices and elements, deduplicating shared vertices.
+
+        Concatenates all vertices, deduplicates by position, remaps element
+        indices, and builds ``_sim_vert_maps`` mapping each sub-mesh's local
+        vertex indices to the deduplicated sim vertex array.
+
+        Returns (combined_verts, combined_elems).
+        """
+        all_verts_list = []
+        all_elems_list = []
+        sub_mesh_ranges = []
+        offset = 0
+        for verts, elems in zip(mesh_verts_list, mesh_elems_list):
+            v = np.asarray(verts, dtype=np.float64)
+            e = np.asarray(elems, dtype=np.int32)
+            all_verts_list.append(v)
+            all_elems_list.append(e + offset)
+            sub_mesh_ranges.append((offset, len(v)))
+            offset += len(v)
+        all_verts = np.vstack(all_verts_list)
+        all_elems = np.vstack(all_elems_list)
+
+        # Deduplicate by quantizing positions
+        quantized = np.round(all_verts * 1e8).astype(np.int64)
+        _, unique_idx, remap = np.unique(quantized, axis=0, return_index=True, return_inverse=True)
+        sorted_order = np.argsort(unique_idx)
+        rank = np.empty_like(sorted_order)
+        rank[sorted_order] = np.arange(len(sorted_order))
+        global_remap = rank[remap]
+
+        verts = all_verts[np.sort(unique_idx)].astype(gs.np_float)
+        elems = global_remap[all_elems].astype(gs.np_int)
+
+        # Build per-sub-mesh sim_vert_maps
+        self._sim_vert_maps = []
+        for sub_offset, sub_n_verts in sub_mesh_ranges:
+            self._sim_vert_maps.append(global_remap[sub_offset : sub_offset + sub_n_verts].astype(gs.np_int))
+
+        return verts, elems
 
     def _add_to_solver(self, in_backward=False):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
@@ -462,26 +468,17 @@ class FEMEntity(Entity):
                 f"Entity {self.uid} added. class: {self.__class__.__name__}, morph: {self.morph.__class__.__name__}, size: ({self.n_elements}, {self.n_vertices}), material: {self.material}."
             )
 
-        # Convert to appropriate numpy array types
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
-        uvs_np = self._uvs if self._uvs is not None else np.zeros((0, 2), dtype=gs.np_float)
 
         if is_cloth:
-            # Cloth: add only vertices and surfaces for rendering (no physics computation)
-            gs.logger.info(
-                f"Entity {self.uid} is cloth - adding to FEM solver for rendering only (physics managed by IPC)"
-            )
-            self._solver._kernel_add_cloth_for_rendering(
+            gs.logger.info(f"Entity {self.uid} is cloth - adding to FEM solver for position tracking only")
+            self._solver._kernel_add_elements_render(
                 f=self._sim.cur_substep_local,
-                n_surfaces=self._n_surfaces,
                 v_start=self._v_start,
-                s_start=self._s_start,
                 verts=verts_numpy,
-                tri2v=self._surface_tri_np,
-                uvs=uvs_np,
             )
         else:
-            # Regular FEM: add vertices, elements, and surfaces for physics and rendering
+            # Regular FEM: add vertices, elements, and surfaces for physics
             elems_np = self.elems.astype(gs.np_int, copy=False)
             self._solver._kernel_add_elements(
                 f=self._sim.cur_substep_local,
@@ -498,7 +495,6 @@ class FEMEntity(Entity):
                 elems=elems_np,
                 tri2v=self._surface_tri_np,
                 tri2el=self._surface_el_np,
-                uvs=uvs_np,
             )
 
         self.active = True
@@ -1071,8 +1067,18 @@ class FEMEntity(Entity):
         return len(self.init_positions)
 
     @property
+    def render_meshes(self):
+        """Per-sub-mesh render meshes, decoupled from the sim mesh topology."""
+        return self._render_meshes
+
+    @property
+    def sim_vert_maps(self):
+        """Per-sub-mesh maps from render-vertex index to sim-vertex index."""
+        return self._sim_vert_maps
+
+    @property
     def n_elements(self):
-        """Number of tetrahedral elements in the FEM entity."""
+        """Number of elements (triangles for cloth, tets for volumetric)."""
         return len(self.elems)
 
     @property
@@ -1096,21 +1102,6 @@ class FEMEntity(Entity):
         return self._s_start
 
     @property
-    def morph(self):
-        """Morph specification used to generate the FEM mesh."""
-        return self._morph
-
-    @property
-    def material(self):
-        """Material properties of the FEM entity."""
-        return self._material
-
-    @property
-    def surface(self):
-        """Surface for rendering."""
-        return self._surface
-
-    @property
     def n_surface_vertices(self):
         """Number of unique vertices involved in surface triangles."""
         return self._n_surface_vertices
@@ -1119,11 +1110,6 @@ class FEMEntity(Entity):
     def surface_triangles(self):
         """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
-
-    @property
-    def uvs(self):
-        """UV coordinates for this entity's vertices, or None if not available."""
-        return self._uvs
 
     @property
     def tet_cfg(self):

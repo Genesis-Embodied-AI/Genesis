@@ -439,7 +439,7 @@ class Mesh(RBC):
         else:
             gs.raise_exception(f"Morph {morph} not supported by this method.")
 
-        return cls.from_trimesh(tmesh, surface=surface)
+        return [cls.from_trimesh(tmesh, surface=surface)]
 
     def set_color(self, color):
         """

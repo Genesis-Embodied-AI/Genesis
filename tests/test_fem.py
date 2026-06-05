@@ -87,38 +87,33 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
             f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
         )
 
-    # Verify whether surface faces in the visualizer mesh matches the surface faces of the FEM entity
+    # Verify that the visualizer mesh's vertices correctly track the FEM sim's
+    # surface vertices through `fem.sim_vert_maps`.  The visualizer mesh
+    # (`render_meshes[0]`) holds the *pre-tet-split* input surface (e.g. 12 box
+    # triangles), while `fem.surface_triangles` is computed from the *post-split*
+    # tetrahedral elements (with mid-edge Steiner subdivisions).  The two meshes
+    # differ in granularity *by design* — so comparing triangle sets is not the
+    # right invariant.  The correct invariant is that the renderer's per-vertex
+    # buffer updates from `sim_verts[svm]` produce vertex positions consistent
+    # with the sim state.
     static_nodes = scene.visualizer.context.static_nodes
-    fem_node_mesh = static_nodes[(0, fem.uid)].mesh
-
+    # FEM static_nodes are keyed by (env_idx, uid, sub_mesh_idx); single-rmesh uses sub_idx=0.
+    fem_node_mesh = static_nodes[(0, fem.uid, 0)].mesh
     (fem_node_primitive,) = fem_node_mesh.primitives
-    fem_node_vertices = fem_node_primitive.positions
-    fem_node_faces = fem_node_primitive.indices
-    if fem_node_faces is None:
-        fem_node_faces = np.arange(fem_node_vertices.shape[0]).reshape(-1, 3)
+    viz_verts = np.asarray(fem_node_primitive.positions)
 
-    def _make_triangle_set(verts, faces, tol=4):
-        """
-        Return a hashable, order-independent representation of a given set of triangle faces.
+    # `sim_vert_maps[i]` maps the i-th render-mesh vertex index → sim vertex index.
+    # Single-sub-mesh FEM entities expose one map.
+    svm = np.asarray(fem.sim_vert_maps[0])
+    assert svm.shape == (viz_verts.shape[0],), (
+        f"sim_vert_maps[0] size {svm.shape} does not match viz mesh vertex count {viz_verts.shape[0]}"
+    )
 
-        Rounds each vertex coordinate to the given tolerance, sorts vertices within each triangle,
-        and returns all triangles as a sorted tuple, eliminating any dependence on vertex or face order.
-        """
-        tri_set = set()
-        for tri in faces:
-            coords = [tuple(round(float(coord), tol) for coord in verts[i]) for i in tri]
-            tri_set.add(tuple(sorted(coords)))
-        return tuple(sorted(tri_set))
-
-    # Triangles of FEM entity
-    entity_tris = _make_triangle_set(vertices, fem.surface_triangles)
-
-    # Triangles of visualizer
-    viz_tris = _make_triangle_set(np.asarray(fem_node_vertices), np.asarray(fem_node_faces))
-
-    assert entity_tris == viz_tris, (
-        "FEM entity surface triangles and visualizer mesh triangles do not match.\n"
-        f"Differences: {set(entity_tris) ^ set(viz_tris)}"
+    # Each viz vertex should equal the sim vertex at its mapped index.
+    sim_verts_at_viz = vertices[svm]
+    assert np.allclose(viz_verts, sim_verts_at_viz, atol=1e-5), (
+        "Visualizer vertices do not match sim vertices via sim_vert_maps.\n"
+        f"Max diff: {np.abs(viz_verts - sim_verts_at_viz).max()}"
     )
 
 

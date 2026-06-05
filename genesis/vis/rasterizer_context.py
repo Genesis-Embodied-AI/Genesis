@@ -870,53 +870,50 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_qd, triangles_qd, uvs_qd = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = qd_to_numpy(vertices_qd)
-            triangles_all = qd_to_numpy(triangles_qd).reshape((-1, 3))
-            uvs_all = qd_to_numpy(uvs_qd)
+            vertices_all = qd_to_numpy(self.sim.fem_solver.get_state_render(self.sim.cur_substep_local))
 
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
-                    triangles = (
-                        triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
-                        - fem_entity.v_start
+                if fem_entity.surface.vis_mode != "visual":
+                    continue
+
+                sim_verts_all_envs = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
+
+                for sub_idx, (rmesh, svm) in enumerate(zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)):
+                    faces = rmesh.faces
+                    n_render_verts = len(svm)
+                    uvs = rmesh.uvs
+                    cached_visual = mu.surface_uvs_to_trimesh_visual(
+                        rmesh.surface,
+                        uvs=uvs if uvs is not None else np.zeros((n_render_verts, 2), dtype=gs.np_float),
+                        n_verts=n_render_verts,
                     )
                     for idx in self.rendered_envs_idx:
-                        vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices, idx]
-                        uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                        # Select only vertices used in surface triangles, then reindex triangles against the new vertex list
-                        surf_idx, inv = np.unique(triangles.flat, return_inverse=True)
-                        triangles_reindexed = inv.reshape(triangles.shape)
-                        vertices = vertices[surf_idx]
-                        uvs = uvs[surf_idx]
-
-                        mesh = trimesh.Trimesh(vertices, triangles_reindexed, process=False)
-                        mesh.visual = mu.surface_uvs_to_trimesh_visual(
-                            fem_entity.surface, uvs=uvs, n_verts=fem_entity.n_surface_vertices
+                        render_verts = sim_verts_all_envs[:, idx][svm]
+                        mesh = trimesh.Trimesh(render_verts, faces, process=False)
+                        mesh.visual = cached_visual
+                        node = pyrender.Mesh.from_trimesh(
+                            mesh, smooth=rmesh.surface.smooth, double_sided=rmesh.surface.double_sided
                         )
-                        self.add_static_node(
-                            fem_entity,
-                            pyrender.Mesh.from_trimesh(
-                                mesh,
-                                smooth=fem_entity.surface.smooth,
-                                double_sided=fem_entity.surface.double_sided,
-                            ),
-                            i_b=idx,
-                        )
+                        static_node = self.add_node(node)
+                        self.static_nodes[(idx, fem_entity.uid, sub_idx)] = static_node
+                        self.create_node_seg(fem_entity.idx, static_node)
 
     def update_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy(dtype=gs.np_float)
-            triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
 
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
-                    for idx in self.rendered_envs_idx:
-                        vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices, idx]
+                if fem_entity.surface.vis_mode != "visual":
+                    continue
 
-                        node = self.static_nodes[(idx, fem_entity.uid)]
-                        update_data = self._scene.reorder_vertices(node, vertices)
+                sim_verts_all_envs = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
+
+                for sub_idx, (rmesh, svm) in enumerate(zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)):
+                    for idx in self.rendered_envs_idx:
+                        render_verts = sim_verts_all_envs[:, idx][svm]
+                        node = self.static_nodes[(idx, fem_entity.uid, sub_idx)]
+                        update_data = self._scene.reorder_vertices(node, render_verts)
                         self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
                         normal_data = self.jit.update_normal(node, update_data)
                         if normal_data is not None:
