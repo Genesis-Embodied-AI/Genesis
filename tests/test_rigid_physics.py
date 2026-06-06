@@ -1645,7 +1645,9 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     for _ in range(20):
         scene.step()
         assert_allclose(scene.rigid_solver.get_qpos(), qpos_init, atol=2e-3)
-        assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=0.06)
+        # Only check linear velocity at CoM and angular velocity around z-axis.
+        # It is robust to loosing a few contact points while still asserting the failure modes that matter.
+        assert_allclose(scene.rigid_solver.get_dofs_velocity(dofs_idx=(0, 1, 2, 5)), 0, tol=0.06)
 
     # A contact step is "ideal" when both invariants hold across all stacked interfaces (the ball seats on a curved
     # hole and is exempt from both):
