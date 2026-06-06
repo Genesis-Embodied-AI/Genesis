@@ -43,7 +43,7 @@ from .contact import (
     func_add_contact,
     func_set_contact,
     func_add_diff_contact_input,
-    func_compute_tolerance,
+    func_compute_geom_pair_scale,
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
@@ -90,6 +90,9 @@ class Collider:
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
         self._prune_deep_penetration_ratio = 3.0
+        self._axis_bias_max_rel = 1e-4
+        self._axis_bias_max_abs = 3e-5
+        self._axis_bias_min_cos = 0.1
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -261,6 +264,9 @@ class Collider:
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
             prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
+            axis_bias_max_rel=self._axis_bias_max_rel,
+            axis_bias_max_abs=self._axis_bias_max_abs,
+            axis_bias_min_cos=self._axis_bias_min_cos,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()

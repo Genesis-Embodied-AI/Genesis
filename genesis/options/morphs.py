@@ -497,7 +497,9 @@ class FileMorph(Morph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Default to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
+        since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
+        RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
@@ -554,7 +556,7 @@ class FileMorph(Morph):
 
     file: Any = ""
     scale: Annotated[tuple[PositiveFloat, PositiveFloat, PositiveFloat], Field(strict=False)] | PositiveFloat = 1.0
-    decimate: StrictBool = True
+    decimate: StrictBool | None = None
     decimate_face_num: PositiveInt = 500
     decimate_aggressiveness: StrictInt = Field(default=2, ge=0, le=8)
     watertighten: StrictInt | None = Field(default=7, ge=0, le=8)
@@ -655,7 +657,9 @@ class Mesh(FileMorph, TetGenMixin):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
+        since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
+        RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
@@ -841,7 +845,9 @@ class MJCF(FileMorph):
         The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored.
         Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
+        since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
+        RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
@@ -954,7 +960,9 @@ class URDF(FileMorph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
+        since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
+        RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
@@ -1077,7 +1085,9 @@ class Drone(FileMorph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
+        since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
+        RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int
@@ -1414,7 +1424,9 @@ class USD(FileMorph):
     quat : tuple, shape (4,), optional
         The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Default to True. **This is only used for RigidEntity.**
+        Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
+        since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
+        RigidEntity.**
     decimate_face_num : int, optional
         The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
     decimate_aggressiveness : int

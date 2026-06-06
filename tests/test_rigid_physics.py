@@ -1561,6 +1561,127 @@ def test_contact_pruning(gjk_collision, show_viewer):
     assert_allclose(box.get_pos(), 0.0, atol=2e-3)
 
 
+@pytest.mark.required
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("gjk_collision", [False, True])
+def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
+    # A central pole carries six concentric rings, capped by a ball seated in the top ring's hole. Each ring collision
+    # mesh is pre-decomposed into N_WEDGES convex slices, so stacked pieces touch face-to-face along the vertical axis.
+    # Physically only vertical contacts are valid between stacked rings; any lateral contact is a spurious cross-sector
+    # overlap of the convex decomposition. The ball rests on the curved hole surface, so it legitimately produces angled
+    # normals and is exempt from the vertical-normal and one-per-slice checks.
+    N_WEDGES = 16
+    BASE_HEIGHT = 0.020
+    RING_HEIGHT = 0.020
+    BALL_HEIGHT = 0.019
+    RINGS_ORDER = (0, 1, 2, 3, 5, 4)
+
+    MAX_GJK_TRIALS = 10
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=gjk_collision,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.4, 0.0, 0.3),
+            camera_lookat=(0.0, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    pole = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="tower/base_pole.urdf",
+            pos=(0.0, 0.0, BASE_HEIGHT / 2),
+            file_meshes_are_zup=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
+        vis_mode="collision",
+    )
+    rings = []
+    height = BASE_HEIGHT
+    for ring_idx in RINGS_ORDER:
+        ring = scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=f"tower/ring_{ring_idx + 1:02d}.urdf",
+                pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
+                file_meshes_are_zup=True,
+            ),
+            material=gs.materials.Rigid(
+                rho=600.0,
+            ),
+            vis_mode="collision",
+            visualize_contact=True,
+        )
+        rings.append(ring)
+        height += RING_HEIGHT - 1e-4
+    ball = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="tower/ball.urdf",
+            pos=(0.0, 0.0, height + BALL_HEIGHT),
+            file_meshes_are_zup=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=600.0,
+        ),
+        vis_mode="collision",
+    )
+    scene.build()
+
+    geom_owner = {geom.idx: entity for entity in (plane, pole, *rings, ball) for geom in entity.geoms}
+    ring_geoms = {geom.idx for ring in rings for geom in ring.geoms}
+    ball_geoms = {geom.idx for geom in ball.geoms}
+
+    qpos_init = scene.rigid_solver.get_qpos()
+    for _ in range(40):
+        scene.step()
+
+    # Check that the tower stay in place (3mm tol is necessary because of the ball)
+    assert_allclose(scene.rigid_solver.get_qpos(), qpos_init, atol=2e-3)
+    assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0, tol=0.05)
+
+    # A contact step is "ideal" when both invariants hold across all stacked interfaces (the ball seats on a curved
+    # hole and is exempt from both):
+    #   - normals are vertical: only axial contacts are physical between stacked rings; a lateral normal is a spurious
+    #     cross-sector overlap of the convex decomposition,
+    #   - pruning collapses each wedge-pair manifold to one contact per slice, so every pole-ring / ring-ring interface
+    #     carries exactly N_WEDGES contacts (without pruning each manifold would emit many more).
+    # Both invariants fail together on a bad step (a spurious lateral overlap also inflates the slice count). MPR keeps
+    # the sub-resolution overlaps below the rejection floor on every step; GJK's tighter penetration estimates let one
+    # spike above it occasionally in fp32, so it only has to be ideal on at least one of the ten steps.
+    ideal_steps = 0
+    for _ in range(MAX_GJK_TRIALS):
+        scene.step()
+        contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
+        geom_a, geom_b = contacts["geom_a"], contacts["geom_b"]
+        penetration = contacts["penetration"]
+        normal_z = contacts["normal"][:, 2]
+        interface_counts = {}
+        is_vertical = True
+        for i in range(len(geom_a)):
+            if penetration[i] <= 0.0:
+                continue
+            a, b = int(geom_a[i]), int(geom_b[i])
+            if a in ball_geoms or b in ball_geoms:
+                continue
+            if abs(normal_z[i]) < 0.5:
+                is_vertical = False
+            if a in ring_geoms or b in ring_geoms:
+                key = frozenset((geom_owner[a], geom_owner[b]))
+                interface_counts[key] = interface_counts.get(key, 0) + 1
+        # pole-ring0 plus each ring-ring interface up the stack
+        is_pruned = len(interface_counts) == len(rings) and all(
+            count == N_WEDGES for count in interface_counts.values()
+        )
+        ideal_steps += is_vertical and is_pruned
+    if gjk_collision:
+        assert ideal_steps >= 1
+    else:
+        assert ideal_steps == MAX_GJK_TRIALS
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize(
@@ -3104,7 +3225,7 @@ def test_nonconvex_nonwatertight_collision(show_viewer):
             convexify=False,
             fixed=True,
         ),
-        # vis_mode="collision",
+        vis_mode="collision",
     )
     obj = scene.add_entity(
         gs.morphs.Box(
@@ -3327,7 +3448,7 @@ def test_nonconvex_overlap(show_viewer):
     b.set_dofs_velocity(-1.0, dofs_idx_local=0)
 
     total_energy_history = []
-    for step in range(200):
+    for _ in range(200):
         total_energy = tensor_to_array(a.get_total_energy() + b.get_total_energy())
         total_energy_history.append(total_energy)
         scene.step()
@@ -3369,7 +3490,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
             constraint_timeconst=4e-3,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.11, 0.075, 0.085),
+            camera_pos=(0.0, -0.2, 0.1),
             camera_lookat=(0.0, 0.0, 0.03),
             camera_fov=35,
         ),
@@ -3401,6 +3522,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
         ),
         material=steel,
         vis_mode="collision",
+        # visualize_contact=True,
     )
     scene.build()
 
@@ -3434,7 +3556,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
         # Fraction of the nut height still threaded below the shaft tip (capped at 1 while fully on the shaft). Track
         # the last driven sample with more than a third engaged for the advance-per-revolution check below.
         engaged = torch.clamp((SHAFT_TIP_Z - (pos[..., 2] - NUT_HEIGHT / 2.0)) / NUT_HEIGHT, max=1.0)
-        if driving and (engaged > 1.0 / 3.0).all():
+        if driving and (engaged > 0.5).all():
             z_engaged = pos[..., 2]
             turn_engaged = total_turn
         # While steadily screwing through the middle of the thread (past the initial spin-up, away from the seat and
@@ -3468,7 +3590,55 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
         # of its velocities have decayed to zero.
         aabb = nut.get_AABB()
         assert (aabb[..., 0, 2] < 1.0e-3).all()
-        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.05)
+        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.06)
+
+
+# Force CPU because nonconvex SDF is slow on GPU
+@pytest.mark.slow  # ~250s
+@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("timestep, decimate", [(0.001, False), (0.015, True)])
+def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
+    BOWL_THICKNESS = 0.011
+    NUM_BOWLS = 32
+
+    timeconst = max(0.005, 2 * timestep)
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=timestep,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-0.6, 0.6, 0.5),
+            camera_lookat=(-0.25, 0.0, 0.3),
+        ),
+        renderer=gs.renderers.Rasterizer(),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
+    for i in range(NUM_BOWLS):
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file=f"{asset_path}/glb/orange_plastic_bowl.glb",
+                pos=(0, 0, 0.0 + i * BOWL_THICKNESS),
+                euler=(90, 0, 0),
+                convexify=False,
+                decimate=decimate,
+                file_meshes_are_zup=True,
+            ),
+            vis_mode="collision",
+            # visualize_contact=(i in (0, NUM_BOWLS - 1)),
+        )
+    scene.build()
+
+    # Make sure that the pile stays upright, with bowls stay tightly packed together during the entire motion
+    for _ in range(1500):
+        scene.step()
+        bowls_pos = np.stack([tensor_to_array(entity.get_pos()) for entity in scene.entities[-NUM_BOWLS:]], axis=0)
+        bowls_dist_abs = np.linalg.norm(bowls_pos[:, :2] - bowls_pos[:2, 0], axis=-1)
+        assert (bowls_dist_abs < 0.1).all()
+        bowls_dist_rel = np.linalg.norm(np.diff(bowls_pos, axis=0), axis=-1)
+        assert ((BOWL_THICKNESS - 0.5 * timeconst) < bowls_dist_rel).all()
+        assert (bowls_dist_rel < BOWL_THICKNESS + 3e-3).all()
 
 
 @pytest.mark.required

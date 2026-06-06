@@ -415,39 +415,37 @@ def func_compute_geom_rbound(
 
 
 @qd.func
-def func_compute_tolerance(
+def func_compute_geom_pair_scale(
     i_ga,
     i_gb,
-    i_b,
-    tolerance,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
 ):
-    # Note that the original world-aligned bounding box is used to computed the absolute tolerance from the
-    # relative one. This way, it is a constant that does not depends on the orientation of the geometry, which
-    # makes sense since the scale of the geometries is an intrinsic property and not something that is supposed
-    # to change dynamically.
+    # Intrinsic length scale of a geom pair: half the smaller geom's world-aligned bounding-box diagonal. The
+    # original (rest-pose) AABB is used so the scale is a constant independent of the current orientation, which
+    # makes sense since the size of the geometries is an intrinsic property. Multiply by a relative tolerance to
+    # turn it into an absolute one.
     aabb_size_b = (geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]).norm()
     aabb_size = aabb_size_b
     if geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
         aabb_size_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]).norm()
         aabb_size = qd.min(aabb_size_a, aabb_size_b)
 
-    return 0.5 * tolerance * aabb_size
+    return 0.5 * aabb_size
 
 
 @qd.func
-def func_compute_mj_tolerance(
+def func_compute_geom_pair_scale_mj(
     i_ga,
     i_gb,
-    tolerance,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
 ):
-    """Compute tolerance matching MuJoCo's formula: relative_tolerance * min(rbound_g1, rbound_g2)."""
+    """Geom-pair length scale matching MuJoCo's formula: min(rbound_g1, rbound_g2). Multiply by a relative tolerance
+    to recover MuJoCo's absolute tolerance."""
     rbound_a = func_compute_geom_rbound(i_ga, geoms_info, geoms_init_AABB)
     rbound_b = func_compute_geom_rbound(i_gb, geoms_info, geoms_init_AABB)
-    return tolerance * qd.min(rbound_a, rbound_b)
+    return qd.min(rbound_a, rbound_b)
 
 
 @qd.func

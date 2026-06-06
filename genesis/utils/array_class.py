@@ -815,6 +815,13 @@ class ColliderInfo:
     # link-pair contact pruning
     contact_pruning_tolerance: qd.Tensor
     prune_deep_penetration_ratio: qd.Tensor
+    # Fictitious off-axis contact rejection. A convex-convex contact is considered shallow when its penetration is below
+    # max(axis_bias_max_rel * geom_pair_scale, axis_bias_max_abs) - a relative threshold (fraction of the geom size)
+    # with an absolute floor. A shallow contact has an unreliable normal; if that normal is also off the geom-origin
+    # axis (its |cos| with it is below axis_bias_min_cos) the contact is discarded as spurious.
+    axis_bias_max_rel: qd.Tensor
+    axis_bias_max_abs: qd.Tensor
+    axis_bias_min_cos: qd.Tensor
 
 
 def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_config, **kwargs):
@@ -847,6 +854,9 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
         contact_pruning_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_pruning_tolerance"]),
         prune_deep_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["prune_deep_penetration_ratio"]),
+        axis_bias_max_rel=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["axis_bias_max_rel"]),
+        axis_bias_max_abs=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["axis_bias_max_abs"]),
+        axis_bias_min_cos=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["axis_bias_min_cos"]),
     )
 
 

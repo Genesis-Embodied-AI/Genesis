@@ -24,8 +24,8 @@ from .contact import (
     func_add_contact,
     func_add_diff_contact_input,
     func_apply_smooth_refinement,
-    func_compute_mj_tolerance,
-    func_compute_tolerance,
+    func_compute_geom_pair_scale_mj,
+    func_compute_geom_pair_scale,
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_contact,
@@ -223,6 +223,9 @@ def func_add_polytope_vertex_contacts_sdf(
         # at A's center is ill-conditioned (it sits inside B, away from any surface), so per-vertex grads are trusted
         # directly rather than filtered against that unreliable reference normal.
         enclosed_axis = False
+        # Set when A and B are two concave shells resting on each other (nested cups/bowls). Both SDF-based normals
+        # are unreliable there, so the center-to-center line is used as the contact normal for the whole pair.
+        axis_normal = False
         if use_closing_dir:
             closing_dir = center_a_world - center_b_world
             if closing_dir.norm() > EPS:
@@ -249,7 +252,20 @@ def func_add_polytope_vertex_contacts_sdf(
                 sd_a_self = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_world, i_ga, ga_pos, ga_quat)
                 if sd_a_self > EPS:
                     use_closing_dir = False
-                    enclosed_axis = True
+                    if sd_center < 0.0:
+                        # B's material occupies A's center: B passes through A's cavity (a nut around a bolt shaft).
+                        # The grad at A's center is ill-conditioned (deep inside B), so trust each vertex's own grad,
+                        # which is radial around B and balances across the contact ring.
+                        enclosed_axis = True
+                    else:
+                        # A is hollow but its center sits OUTSIDE B: two concave shells resting on each other (nested
+                        # cups/bowls). BOTH SDF-based normals are unreliable here - the thin curved wall makes the
+                        # per-vertex grads point laterally, and A's center sits in a concave pocket where the grad
+                        # sampled at A's center can even be sign-flipped (pointing into the stack). The center-to-center
+                        # line is the stacking axis and the robust contact normal, so use it directly (b->a) for every
+                        # contact of the pair.
+                        normal_center = closing_normal
+                        axis_normal = True
                 else:
                     normal_center = closing_normal
                     center_proj = qd.abs((center_a_world - center_b_world).dot(closing_normal))
@@ -292,13 +308,30 @@ def func_add_polytope_vertex_contacts_sdf(
                 elif pen_v > 0.0:
                     pen_emit = synthetic_pen_max
                 normal_v = normal_center
-                if enclosed_axis:
-                    # The reference normal (grad at A's center) is unreliable here, so trust each vertex's local grad
-                    # when well-conditioned: it points out of B's surface at that vertex, keeping the normals diverse
-                    # across the contact patch so the net force balances instead of pushing A off to one side.
+                if enclosed_axis or axis_normal:
+                    # Two concave shells (nested cups/bowls) or B passing through A's cavity (nut on bolt): the
+                    # pair-level reference normal is unreliable (sign-flipped in a concave pocket, or vertical-only so
+                    # it cannot resist lateral shear). Orient the contact from A's own exact vertex surface normal
+                    # (precomputed): A's face at the contact points into B, so the b->a normal opposes A's outward
+                    # normal. On a tilted bowl wall that normal is correctly tilted - it carries both the vertical
+                    # support and the radial component that resists a nested stack shearing sideways. When B's grid grad
+                    # is well-conditioned, take its axis (it can resolve concave seams a single vertex normal cannot)
+                    # but fix its sign from A's normal (the grad's sign inverts once the vertex tunnels past B's thin
+                    # wall). When the grad is smoothed (coarse grid across the thin wall), use A's vertex normal
+                    # directly rather than the vertical reference, which is what was leaving the side walls unsupported.
+                    a_vnormal = gu.qd_normalize(gu.qd_transform_by_quat(verts_info.init_normal[i_v], ga_quat), EPS)
                     if grad_norm > 0.5:
                         normal_v = gu.qd_normalize(grad_v, EPS)
-                elif not use_closing_dir and grad_v.dot(normal_center) > 0.0:
+                        if normal_v.dot(a_vnormal) > 0.0:
+                            normal_v = -normal_v
+                    else:
+                        normal_v = -a_vnormal
+                elif not use_closing_dir and not axis_normal and grad_norm > 0.9 and grad_v.dot(normal_center) > 0.0:
+                    # Trust a per-vertex grad as the contact normal only in the clean band (the same |grad| > 0.9 band
+                    # where the kernel pen is trusted): this is what exposes both face normals for an A wedged at a
+                    # concave L-corner. In the edge/smoothed bands the per-vertex grad is a partially-interpolated
+                    # direction (a box corner straddling a B feature reads a grad tilted tens of degrees off the true
+                    # surface normal); there the reference normal sampled at A's center is the more reliable direction.
                     normal_v = gu.qd_normalize(grad_v, EPS)
                 # In the closing-direction regime, the SDF "distance to nearest surface" measured at a vertex on A's
                 # outer skin is the small radial gap to B's lateral, not the much larger approach depth along the
@@ -749,7 +782,7 @@ def func_contact_mpr_terrain(
     )
 
     is_return = False
-    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
+    tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
 
     if not is_return:
         # Transform to terrain's frame (using local variables, not modifying global state)
@@ -1140,6 +1173,51 @@ def func_recompute_perturbed_contact(
 
 
 @qd.func
+def func_is_offaxis_fictitious_contact(
+    i_ga,
+    i_gb,
+    i_b,
+    normal: qd.types.vector(3),
+    penetration,
+    geom_pair_scale,
+    geoms_state: array_class.GeomsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_info: array_class.ColliderInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """
+    Tell whether a convex-convex contact is a fictitious off-axis artifact that should be discarded.
+
+    MPR and GJK both return an unreliable normal for an overlap shallower than a small fraction of the geom size: the
+    refined portal / EPA face can settle on a grazing off-axis face - e.g. between two convex decomposition pieces
+    whose hulls touch near a shared edge - and report a normal nearly orthogonal to the true contact direction. The
+    line between the two geom origins is the physically meaningful contact axis, so such a sub-resolution contact
+    whose normal is also far from that axis is spurious. Deeper contacts and axis-aligned shallow contacts (genuine
+    resting contacts) are kept.
+
+    geom_pair_scale is the geom-pair length scale (func_compute_geom_pair_scale), passed in so it is computed once per
+    pair rather than per contact. A contact is shallow when its penetration is below the larger of a relative threshold
+    (axis_bias_max_rel * geom_pair_scale) and an absolute floor (axis_bias_max_abs).
+
+    This rejection is a no-op for differentiable contact (it would inject discontinuities into the gradient) and for
+    mujoco-compatible mode (which must reproduce MuJoCo's contact set exactly).
+    """
+    is_fictitious = False
+    if qd.static(not static_rigid_sim_config.requires_grad and not static_rigid_sim_config.enable_mujoco_compatibility):
+        axis = geoms_state.pos[i_ga, i_b] - geoms_state.pos[i_gb, i_b]
+        axis_norm_sq = axis.norm_sqr()
+        if axis_norm_sq > rigid_global_info.EPS[None] ** 2:
+            axis_dot = normal.dot(axis)
+            max_depth = qd.max(
+                collider_info.axis_bias_max_rel[None] * geom_pair_scale, collider_info.axis_bias_max_abs[None]
+            )
+            is_shallow = penetration < max_depth
+            is_off_axis = axis_dot**2 < collider_info.axis_bias_min_cos[None] ** 2 * axis_norm_sq
+            is_fictitious = is_shallow and is_off_axis
+    return is_fictitious
+
+
+@qd.func
 def func_convex_convex_contact(
     i_ga,
     i_gb,
@@ -1181,16 +1259,13 @@ def func_convex_convex_contact(
             and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
         )
 
-        tolerance = func_compute_tolerance(
-            i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
-        )
+        geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
+        tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
         if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
-            tolerance = func_compute_mj_tolerance(
-                i_ga, i_gb, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+            tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale_mj(
+                i_ga, i_gb, geoms_info, geoms_init_AABB
             )
-        diff_pos_tolerance = func_compute_tolerance(
-            i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
-        )
+        diff_pos_tolerance = collider_info.diff_pos_tolerance[None] * geom_pair_scale
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
         # Load original geometry state into thread-local variables
@@ -1453,10 +1528,23 @@ def func_convex_convex_contact(
                                 else:
                                     if gjk_state.multi_contact_flag[i_b]:
                                         # Since we already found multiple contact points, add the discovered contact
-                                        # points and stop multi-contact search.
+                                        # points and stop multi-contact search. The whole manifold is dropped when its
+                                        # first contact is a fictitious off-axis artifact of a sub-resolution overlap.
+                                        manifold_ok = not func_is_offaxis_fictitious_contact(
+                                            i_ga,
+                                            i_gb,
+                                            i_b,
+                                            gjk_state.normal[i_b, 0],
+                                            penetration,
+                                            geom_pair_scale,
+                                            geoms_state,
+                                            rigid_global_info,
+                                            collider_info,
+                                            static_rigid_sim_config,
+                                        )
                                         for i_c in range(n_contacts):
                                             # Ignore contact points if the number of contacts exceeds the limit.
-                                            if i_c < qd.static(collider_static_config.n_contacts_per_convex_pair):
+                                            if manifold_ok and i_c < collider_static_config.n_contacts_per_convex_pair:
                                                 contact_pos = gjk_state.contact_pos[i_b, i_c]
                                                 normal = gjk_state.normal[i_b, i_c]
                                                 contact_pos = func_apply_smooth_refinement(
@@ -1491,6 +1579,24 @@ def func_convex_convex_contact(
                                     else:
                                         contact_pos = gjk_state.contact_pos[i_b, 0]
                                         normal = gjk_state.normal[i_b, 0]
+
+            # Discard a fictitious off-axis contact whose unreliable sub-resolution normal points away from the
+            # geom-origin axis (e.g. grazing convex-decomposition pieces of stacked bodies). Applied to the
+            # unperturbed contact, before the perturbed multi-contact search which spreads this normal.
+            if is_col and i_detection == 0:
+                if func_is_offaxis_fictitious_contact(
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    normal,
+                    penetration,
+                    geom_pair_scale,
+                    geoms_state,
+                    rigid_global_info,
+                    collider_info,
+                    static_rigid_sim_config,
+                ):
+                    is_col = False
 
             # Refine the unperturbed (i_detection == 0) contact here; perturbed contacts are refined inside
             # func_recompute_perturbed_contact after the perturbation is reverted, on the canonical (unperturbed) pose.
@@ -1659,7 +1765,7 @@ def _func_multicontact_run_detection(
     normal = qd.Vector.zero(gs.qd_float, 3)
     contact_pos = qd.Vector.zero(gs.qd_float, 3)
     used_gjk = False
-    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
+    tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
 
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
@@ -1825,7 +1931,7 @@ def _func_multicontact_mpr(
     gb_pos_original = geoms_state.pos[i_gb, i_b]
     gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
+    tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
 
     axis_0, axis_1 = func_contact_orthogonals(
         i_ga,
@@ -2037,10 +2143,9 @@ def _func_multicontact_gjk_full(
         and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
     )
 
-    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
-    diff_pos_tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
-    )
+    geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
+    tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
+    diff_pos_tolerance = collider_info.diff_pos_tolerance[None] * geom_pair_scale
     diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
     ga_pos_original = geoms_state.pos[i_ga, i_b]
@@ -2119,8 +2224,21 @@ def _func_multicontact_gjk_full(
                 if is_col and _used_gjk:
                     n_contacts_gjk = gjk_state.n_contacts[i_scratch]
                     if gjk_state.multi_contact_flag[i_scratch]:
+                        # Drop whole manifold when its main contact is a fictitious off-axis sub-resolution artifact
+                        manifold_ok = not func_is_offaxis_fictitious_contact(
+                            i_ga,
+                            i_gb,
+                            i_b,
+                            gjk_state.normal[i_scratch, 0],
+                            penetration,
+                            geom_pair_scale,
+                            geoms_state,
+                            rigid_global_info,
+                            collider_info,
+                            static_rigid_sim_config,
+                        )
                         for i_c in range(n_contacts_gjk):
-                            if i_c < qd.static(collider_static_config.n_contacts_per_convex_pair):
+                            if manifold_ok and i_c < collider_static_config.n_contacts_per_convex_pair:
                                 gjk_contact_pos = gjk_state.contact_pos[i_scratch, i_c]
                                 gjk_normal = gjk_state.normal[i_scratch, i_c]
                                 gjk_contact_pos = func_apply_smooth_refinement(
@@ -2147,6 +2265,20 @@ def _func_multicontact_gjk_full(
                         gjk_multi_done = True
 
             if i_detection == 0 and not gjk_multi_done:
+                # Discard a fictitious off-axis primary contact before it seeds the perturbed multi-contact search.
+                if is_col and func_is_offaxis_fictitious_contact(
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    normal,
+                    penetration,
+                    geom_pair_scale,
+                    geoms_state,
+                    rigid_global_info,
+                    collider_info,
+                    static_rigid_sim_config,
+                ):
+                    is_col = False
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
                     contact_pos_0 = func_apply_smooth_refinement(
@@ -2508,9 +2640,8 @@ def _func_narrowphase_contact0(
                 and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
             )
 
-            tolerance = func_compute_tolerance(
-                i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
-            )
+            geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
+            tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
 
             ga_pos = geoms_state.pos[i_ga, i_b]
             ga_quat = geoms_state.quat[i_ga, i_b]
@@ -2650,6 +2781,24 @@ def _func_narrowphase_contact0(
                                 collider_info.mc_tolerance[None] * penetration
                                 >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                             )
+
+            # Discard a fictitious off-axis contact whose unreliable sub-resolution normal points away from the
+            # geom-origin axis (mirrors the monolithic path), before it seeds the cache and the multicontact search.
+            # Only the MPR path resolves the normal here; the GJK path defers it to the multicontact pass.
+            if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)):
+                if is_col and func_is_offaxis_fictitious_contact(
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    normal,
+                    penetration,
+                    geom_pair_scale,
+                    geoms_state,
+                    rigid_global_info,
+                    collider_info,
+                    static_rigid_sim_config,
+                ):
+                    is_col = False
 
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
@@ -3027,8 +3176,8 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         if diag_a_sq > diag_b_sq:
                             i_ga, i_gb = i_gb, i_ga
 
-                    tolerance = func_compute_tolerance(
-                        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+                    tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(
+                        i_ga, i_gb, geoms_info, geoms_init_AABB
                     )
 
                     # enable_multi_contact controls how many contacts the helper emits per pair (n_max=1 vs
