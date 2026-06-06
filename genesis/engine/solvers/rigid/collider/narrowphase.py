@@ -2735,6 +2735,12 @@ def _func_narrowphase_contact0(
                         shrink_sphere=False,
                     )
                     is_col = distance < gjk_info.collision_eps[None]
+                    if distance >= 0.5 * gjk_info.FLOAT_MAX[None]:
+                        # func_gjk (fp32 on GPU) can spuriously separate a pair that was genuinely in contact last
+                        # step. Trust temporal coherence: if the multicontact pass cached a contact normal for this
+                        # pair, re-enqueue so the robust pass re-decides, instead of dropping it on a marginal frame.
+                        normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
+                        is_col = normal_ws.dot(normal_ws) > 0.0
 
                 if qd.static(
                     collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
