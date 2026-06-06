@@ -649,6 +649,32 @@ def func_clamp_prune_and_sort_contacts(
                     b_size = b_end - b_start
 
                     if b_size >= 3:
+                        # Deterministic within-bucket order. Phase 1 only orders by the link-pair key, so contacts
+                        # sharing a key keep the non-deterministic physical layout (atomic_add slot reservation,
+                        # multi-pass narrowphase). The downstream (u, v) lex sort uses a non-transitive tolerance
+                        # comparison, so its result - and thus the kept hull-vertex set - depends on that input order.
+                        # Sorting the bucket by the contact's own position (a pure function of contact data) makes the
+                        # survivor set reproducible.
+                        for ps_i in range(b_start + 1, b_end):
+                            ps_cur = collider_state.contact_sort_idx[ps_i, i_b]
+                            ps_cp = collider_state.contact_data.pos[ps_cur, i_b]
+                            ps_j = ps_i - 1
+                            while ps_j >= b_start:
+                                ps_pj = collider_state.contact_sort_idx[ps_j, i_b]
+                                ps_pp = collider_state.contact_data.pos[ps_pj, i_b]
+                                ps_prec = ps_pp[0] < ps_cp[0]
+                                if not ps_prec and ps_pp[0] == ps_cp[0]:
+                                    if ps_pp[1] < ps_cp[1]:
+                                        ps_prec = True
+                                    elif ps_pp[1] == ps_cp[1]:
+                                        ps_prec = ps_pp[2] <= ps_cp[2]
+                                if ps_prec:
+                                    break
+                                collider_state.contact_sort_idx[ps_j + 1, i_b] = ps_pj
+                                ps_j -= 1
+                            collider_state.contact_sort_idx[ps_j + 1, i_b] = ps_cur
+                        phys0 = collider_state.contact_sort_idx[b_start, i_b]
+
                         # Mean normal (folded to the hemisphere of contact at b_start) and centroid.
                         ref_n = collider_state.contact_data.normal[phys0, i_b]
                         rnx = ref_n[0]
@@ -885,42 +911,45 @@ def func_clamp_prune_and_sort_contacts(
         # contact_sort_idx only; contact_data is never written.
         if qd.static(collider_static_config.spatial_sort_supported):
             n_con = collider_state.n_contacts[i_b]
-            # Build per-logical-position spatial keys, treating consecutive same-geom-pair contacts as one group.
-            group_key = gs.qd_float(0.0)
+            # Per-contact spatial key (own x-position). The key is a pure function of contact data, so the logical
+            # order is independent of the non-deterministic physical contact layout (atomic_add slot reservation in
+            # the narrowphase, plus the multi-pass narrowphase interleaving same-geom-pair contacts non-contiguously).
             for i in range(n_con):
                 phys = collider_state.contact_sort_idx[i, i_b]
-                ga = collider_state.contact_data.geom_a[phys, i_b]
-                gb = collider_state.contact_data.geom_b[phys, i_b]
-                new_group = i == 0
-                if i > 0:
-                    prev_phys = collider_state.contact_sort_idx[i - 1, i_b]
-                    if (
-                        ga != collider_state.contact_data.geom_a[prev_phys, i_b]
-                        or gb != collider_state.contact_data.geom_b[prev_phys, i_b]
-                    ):
-                        new_group = True
-                if new_group:
-                    group_key = collider_state.contact_data.pos[phys, i_b][0]
-                collider_state.contact_sort_key[i, i_b] = group_key
+                collider_state.contact_sort_key[i, i_b] = collider_state.contact_data.pos[phys, i_b][0]
 
-            # Insertion-sort contact_sort_idx by (sort_key, geom_a, geom_b); (key, idx) swap together, no contact_data
-            # writes. The geom-pair tie-break makes the logical order independent of the non-deterministic physical
-            # contact layout (atomic_add slot reservation in the narrowphase) when several geom-pair groups share the
-            # same x sort_key, which is required for bit-reproducible simulation.
+            # Insertion-sort contact_sort_idx by the total order (sort_key, geom_a, geom_b, pos_y, pos_z); (key, idx)
+            # swap together, no contact_data writes. The position tie-break fully disambiguates contacts that share an
+            # x sort_key (different geom pairs, or several contacts within one geom-pair manifold), which is required
+            # for bit-reproducible simulation.
             for i in range(1, n_con):
                 curr_key = collider_state.contact_sort_key[i, i_b]
                 curr_idx = collider_state.contact_sort_idx[i, i_b]
                 cga = collider_state.contact_data.geom_a[curr_idx, i_b]
                 cgb = collider_state.contact_data.geom_b[curr_idx, i_b]
+                cpos = collider_state.contact_data.pos[curr_idx, i_b]
+                cy = cpos[1]
+                cz = cpos[2]
                 j = i - 1
                 while j >= 0:
                     pj = collider_state.contact_sort_idx[j, i_b]
                     pk = collider_state.contact_sort_key[j, i_b]
-                    pga = collider_state.contact_data.geom_a[pj, i_b]
-                    if pk < curr_key or (
-                        pk == curr_key
-                        and (pga < cga or (pga == cga and collider_state.contact_data.geom_b[pj, i_b] <= cgb))
-                    ):
+                    precedes = pk < curr_key
+                    if not precedes and pk == curr_key:
+                        pga = collider_state.contact_data.geom_a[pj, i_b]
+                        if pga < cga:
+                            precedes = True
+                        elif pga == cga:
+                            pgb = collider_state.contact_data.geom_b[pj, i_b]
+                            if pgb < cgb:
+                                precedes = True
+                            elif pgb == cgb:
+                                ppos = collider_state.contact_data.pos[pj, i_b]
+                                if ppos[1] < cy:
+                                    precedes = True
+                                elif ppos[1] == cy:
+                                    precedes = ppos[2] <= cz
+                    if precedes:
                         break
                     collider_state.contact_sort_key[j + 1, i_b] = pk
                     collider_state.contact_sort_idx[j + 1, i_b] = pj
@@ -1038,6 +1067,33 @@ def func_clamp_prune_and_sort_contacts_coop(
                 b_size = b_end - b_start
 
                 if b_size >= 3:
+                    # Deterministic within-bucket order. Phase 1a only orders by the link-pair key, so contacts
+                    # sharing a key keep the non-deterministic physical layout (atomic_add slot reservation, multi-pass
+                    # narrowphase). The downstream (u, v) lex sort uses a non-transitive tolerance comparison, so its
+                    # result - and thus the kept hull-vertex set - depends on that input order. Sorting the bucket by
+                    # the contact's own position (a pure function of contact data) makes the survivor set reproducible.
+                    # Serial on lane 0; sync so the strided coop reductions below read the reordered indices.
+                    if tid == 0:
+                        for ps_i in range(b_start + 1, b_end):
+                            ps_cur = collider_state.contact_sort_idx[ps_i, i_b]
+                            ps_cp = collider_state.contact_data.pos[ps_cur, i_b]
+                            ps_j = ps_i - 1
+                            while ps_j >= b_start:
+                                ps_pj = collider_state.contact_sort_idx[ps_j, i_b]
+                                ps_pp = collider_state.contact_data.pos[ps_pj, i_b]
+                                ps_prec = ps_pp[0] < ps_cp[0]
+                                if not ps_prec and ps_pp[0] == ps_cp[0]:
+                                    if ps_pp[1] < ps_cp[1]:
+                                        ps_prec = True
+                                    elif ps_pp[1] == ps_cp[1]:
+                                        ps_prec = ps_pp[2] <= ps_cp[2]
+                                if ps_prec:
+                                    break
+                                collider_state.contact_sort_idx[ps_j + 1, i_b] = ps_pj
+                                ps_j -= 1
+                            collider_state.contact_sort_idx[ps_j + 1, i_b] = ps_cur
+                    qd.simt.subgroup.sync()
+
                     ref_src = collider_state.contact_sort_idx[b_start, i_b]
                     ref_n = collider_state.contact_data.normal[ref_src, i_b]
                     rnx = ref_n[0]
@@ -1261,22 +1317,16 @@ def func_clamp_prune_and_sort_contacts_coop(
         if tid == 0:
             if qd.static(collider_static_config.spatial_sort_supported):
                 # Phase 3 (with spatial sort): fused compact + spatial sort encoded entirely in contact_sort_idx.
-                # Sentinel +inf sort_key pushes dropped slots to the tail; kept slots get the geom-pair group's
-                # x-pos for spatial locality. Lock-step insertion sort on (sort_key, sort_idx) lands sort_idx as
-                # the final logical->physical permutation. n_contacts = count of non-sentinel slots.
+                # Sentinel +inf sort_key pushes dropped slots to the tail; kept slots get their own x-position. The
+                # key is a pure function of contact data, so the logical order is independent of the non-deterministic
+                # physical contact layout (atomic_add slot reservation in the narrowphase, plus the multi-pass
+                # narrowphase interleaving same-geom-pair contacts non-contiguously). Lock-step insertion sort on the
+                # total order (sort_key, geom_a, geom_b, pos_y, pos_z) lands sort_idx as the final logical->physical
+                # permutation. n_contacts = count of non-sentinel slots.
                 SENTINEL_BIG = gs.qd_float(1e30)
-                group_key = gs.qd_float(0.0)
-                prev_ga = -1
-                prev_gb = -1
                 for i in range(n_con):
                     if collider_state.contact_keep[i, i_b] != 0:
-                        ga = collider_state.contact_data.geom_a[i, i_b]
-                        gb = collider_state.contact_data.geom_b[i, i_b]
-                        if ga != prev_ga or gb != prev_gb:
-                            group_key = collider_state.contact_data.pos[i, i_b][0]
-                            prev_ga = ga
-                            prev_gb = gb
-                        collider_state.contact_sort_key[i, i_b] = group_key
+                        collider_state.contact_sort_key[i, i_b] = collider_state.contact_data.pos[i, i_b][0]
                     else:
                         collider_state.contact_sort_key[i, i_b] = SENTINEL_BIG
                     collider_state.contact_sort_idx[i, i_b] = i
@@ -1290,15 +1340,31 @@ def func_clamp_prune_and_sort_contacts_coop(
                     ci = collider_state.contact_sort_idx[i, i_b]
                     cga = collider_state.contact_data.geom_a[ci, i_b]
                     cgb = collider_state.contact_data.geom_b[ci, i_b]
+                    cpos = collider_state.contact_data.pos[ci, i_b]
+                    cy = cpos[1]
+                    cz = cpos[2]
                     j = i - 1
                     while j >= 0:
                         pj = collider_state.contact_sort_idx[j, i_b]
                         pk = collider_state.contact_sort_key[j, i_b]
-                        pga = collider_state.contact_data.geom_a[pj, i_b]
-                        if pk < ck or (
-                            pk == ck
-                            and (pga < cga or (pga == cga and collider_state.contact_data.geom_b[pj, i_b] <= cgb))
-                        ):
+                        # (sort_key, geom_a, geom_b, pos_y, pos_z) lexicographic: stop once the left neighbour
+                        # precedes-or-equals the current contact in this total order.
+                        precedes = pk < ck
+                        if not precedes and pk == ck:
+                            pga = collider_state.contact_data.geom_a[pj, i_b]
+                            if pga < cga:
+                                precedes = True
+                            elif pga == cga:
+                                pgb = collider_state.contact_data.geom_b[pj, i_b]
+                                if pgb < cgb:
+                                    precedes = True
+                                elif pgb == cgb:
+                                    ppos = collider_state.contact_data.pos[pj, i_b]
+                                    if ppos[1] < cy:
+                                        precedes = True
+                                    elif ppos[1] == cy:
+                                        precedes = ppos[2] <= cz
+                        if precedes:
                             break
                         collider_state.contact_sort_key[j + 1, i_b] = pk
                         collider_state.contact_sort_idx[j + 1, i_b] = pj

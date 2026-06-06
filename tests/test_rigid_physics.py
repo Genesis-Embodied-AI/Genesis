@@ -1685,6 +1685,110 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
         assert ideal_steps == NUM_CHECKS
 
 
+@pytest.mark.required
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("backend", [gs.gpu])
+@pytest.mark.parametrize("contact_pruning_tolerance", [0.02, None], ids=["prune", "noprune"])
+@pytest.mark.parametrize("prefer_decomposed_solver", [0, 1], ids=["monolith", "decomposed"])
+def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_tolerance, monkeypatch, show_viewer):
+    # Run-to-run reproducibility on GPU: from an identical initial state, every trial must reproduce a bit-identical
+    # trajectory. CPU is serialized and deterministic by construction, so this targets GPU parallel races only
+    # (atomic_add slot reservation, parallel reductions, scheduling). The two registered solve implementations are
+    # numerically distinct, so each is pinned via prefer_decomposed_solver (0 -> monolith, 1 -> decomposed) to bypass
+    # the perf-dispatch autotuner, whose timing-based choice between them is a separate nondeterminism source; this
+    # isolates physics-kernel determinism per variant.
+    #
+    # The authored-decomposition tower is the stress case: stacked rings pre-split into convex wedges produce many
+    # multi-contact manifolds per geom pair, exercising the narrowphase, contact pruning, the contact sort, and the
+    # contact-coupled solve. The per-step fingerprints are compared in pipeline order so the assertion names the
+    # earliest diverging stage, pinpointing the root:
+    #   - contact set    -> narrowphase / pruning
+    #   - contact order  -> contact sort
+    #   - dofs velocity  -> constraint solve
+    from genesis.utils.array_class import RigidSimStaticConfig
+
+    init_orig = RigidSimStaticConfig.__init__
+
+    def init_forced(self, *args, **kwargs):
+        kwargs["prefer_decomposed_solver"] = prefer_decomposed_solver
+        init_orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(RigidSimStaticConfig, "__init__", init_forced)
+
+    N_TRIALS = 8
+    N_STEPS = 25
+    BASE_HEIGHT = 0.020
+    RING_HEIGHT = 0.020
+    BALL_HEIGHT = 0.019
+    RINGS_ORDER = (0, 1, 2, 3, 5, 4)
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+            contact_pruning_tolerance=contact_pruning_tolerance,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="tower/base_pole.urdf",
+            pos=(0.0, 0.0, BASE_HEIGHT / 2),
+            file_meshes_are_zup=True,
+        ),
+        material=gs.materials.Rigid(rho=600.0),
+    )
+    height = BASE_HEIGHT
+    for ring_idx in RINGS_ORDER:
+        scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=f"tower/ring_{ring_idx + 1:02d}.urdf",
+                pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
+                file_meshes_are_zup=True,
+            ),
+            material=gs.materials.Rigid(rho=600.0),
+        )
+        height += RING_HEIGHT - 1e-4
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="tower/ball.urdf",
+            pos=(0.0, 0.0, height + BALL_HEIGHT),
+            file_meshes_are_zup=True,
+        ),
+        material=gs.materials.Rigid(rho=600.0),
+    )
+    scene.build()
+    solver = scene.rigid_solver
+
+    # trials[trial][step] = (contact_set, contact_order, dofs_velocity, dofs_position)
+    trials = []
+    for _ in range(N_TRIALS):
+        scene.reset()
+        steps = []
+        for _ in range(N_STEPS):
+            scene.step()
+            contacts = solver.collider.get_contacts(to_torch=False)
+            geom_a, geom_b = contacts["geom_a"], contacts["geom_b"]
+            position, normal, penetration = contacts["position"], contacts["normal"], contacts["penetration"]
+            contact_order = tuple(
+                (geom_a[i], geom_b[i], *position[i], *normal[i], penetration[i]) for i in range(len(geom_a))
+            )
+            dofs_velocity = tensor_to_array(solver.get_dofs_velocity()).copy()
+            dofs_position = tensor_to_array(solver.get_qpos()).copy()
+            steps.append((frozenset(contact_order), contact_order, dofs_velocity, dofs_position))
+        trials.append(steps)
+
+    ref = trials[0]
+    for trial in range(1, N_TRIALS):
+        for step in range(N_STEPS):
+            ref_set, ref_order, ref_vel, ref_pos = ref[step]
+            cur_set, cur_order, cur_vel, cur_pos = trials[trial][step]
+            assert cur_set == ref_set
+            assert cur_order == ref_order
+            assert_equal(cur_vel, ref_vel)
+            assert_equal(cur_pos, ref_pos)
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize(
@@ -2426,7 +2530,7 @@ def test_stickman(gs_sim, mj_sim, tol):
     for _ in range(50):
         gs_sim.scene.reset()
         gs_sim.scene.step()
-        assert_allclose(gs_robot.get_dofs_velocity(), dofs_vel, tol=0.0)
+        assert_equal(gs_robot.get_dofs_velocity(), dofs_vel)
 
     # Run the simulation for a while
     qvel_norminf_all = []
