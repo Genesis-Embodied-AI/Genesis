@@ -789,9 +789,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     # level; at "link" and "entity" they fall back to a plain int entity.idx.
     n_rigid_like = sum(isinstance(m, gs.materials.Kinematic) for m, _ in materials)
     n_fem_geom = (
-        sum(isinstance(m, gs.materials.FEM.Elastic) for m, _ in materials)
-        if segmentation_level == "geom"
-        else 0
+        sum(isinstance(m, gs.materials.FEM.Elastic) for m, _ in materials) if segmentation_level == "geom" else 0
     )
     seg_num = len(materials) + (2 if segmentation_level == "entity" else 3)
     idx_dict = scene.segmentation_idx_dict
@@ -858,9 +856,7 @@ def test_multi_geom_fem_render(renderer_type, renderer, show_viewer, png_snapsho
         rgb, *_ = cam.render(rgb=True, depth=False, segmentation=False, normal=False)
         assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
     else:
-        rgb, depth, seg, normal = cam.render(
-            rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
-        )
+        rgb, depth, seg, normal = cam.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
         assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
         depth_gray = as_grayscale_image(tensor_to_array(depth))
         assert rgb_array_to_png_bytes(depth_gray) == png_snapshot
