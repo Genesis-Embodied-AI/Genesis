@@ -32,8 +32,10 @@ def cylinder_to_elements():
 
 
 def mesh_to_elements(mesh, tet_cfg=dict()):
+    # compute file name via hashing for caching
     tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
 
+    # loading pre-computed cache if available
     is_cached_loaded = False
     if os.path.exists(tet_file_path):
         gs.logger.debug("Tetrahedra file (`.tet`) found in cache.")

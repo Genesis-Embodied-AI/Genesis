@@ -87,15 +87,12 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
             f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
         )
 
-    # Verify that the visualizer mesh's vertices correctly track the FEM sim's
-    # surface vertices through `fem.sim_vert_maps`.  The visualizer mesh
-    # (`render_meshes[0]`) holds the *pre-tet-split* input surface (e.g. 12 box
-    # triangles), while `fem.surface_triangles` is computed from the *post-split*
-    # tetrahedral elements (with mid-edge Steiner subdivisions).  The two meshes
-    # differ in granularity *by design* — so comparing triangle sets is not the
-    # right invariant.  The correct invariant is that the renderer's per-vertex
-    # buffer updates from `sim_verts[svm]` produce vertex positions consistent
-    # with the sim state.
+    # Verify that the visualizer mesh's vertices correctly track the FEM sim's surface vertices through
+    # `fem.sim_vert_maps`. The visualizer mesh (`render_meshes[0]`) holds the *pre-tet-split* input surface (e.g. 12
+    # box triangles), while `fem.surface_triangles` is computed from the *post-split* tetrahedral elements (with
+    # mid-edge Steiner subdivisions). The two meshes differ in granularity *by design* — so comparing triangle sets
+    # is not the right invariant. The correct invariant is that the renderer's per-vertex buffer updates from
+    # `sim_verts[svm]` produce vertex positions consistent with the sim state.
     static_nodes = scene.visualizer.context.static_nodes
     # FEM static_nodes are keyed by (env_idx, uid, sub_mesh_idx); single-rmesh uses sub_idx=0.
     fem_node_mesh = static_nodes[(0, fem.uid, 0)].mesh
