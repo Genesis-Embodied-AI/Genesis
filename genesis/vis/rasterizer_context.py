@@ -913,11 +913,16 @@ class RasterizerContext:
 
                 sim_verts_all_envs = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
 
-                for sub_idx, (rmesh, svm) in enumerate(zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)):
+                for sub_idx, svm in enumerate(fem_entity.sim_vert_maps):
                     for idx in self.rendered_envs_idx:
                         render_verts = sim_verts_all_envs[:, idx][svm]
                         node = self.static_nodes[(idx, fem_entity.uid, sub_idx)]
                         update_data = self._scene.reorder_vertices(node, render_verts)
+                        # Dual-write: prim.positions for frame-1 (set_primitive's first upload
+                        # when GL buffers don't yet exist), update_buffer for frame-2+ (direct
+                        # GPU write once _add_to_context has allocated valid buffer IDs).
+                        # Mirrors the upstream `update_rigid` idiom for the same latent issue.
+                        node.mesh.primitives[0].positions = update_data.astype(np.float32)
                         self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
                         normal_data = self.jit.update_normal(node, update_data)
                         if normal_data is not None:

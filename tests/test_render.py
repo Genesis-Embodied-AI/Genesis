@@ -812,11 +812,13 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_multi_geom_fem_render(renderer, show_viewer, png_snapshot):
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
+def test_multi_geom_fem_render(renderer_type, renderer, show_viewer, png_snapshot):
     """
     Render a multi-geom FEM entity (``meshes/Trashbag_rope.glb`` — bag + channel).
     """
+    # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
+    # without denoiser.
     CAM_RES = (256, 256)
 
     scene = gs.Scene(
@@ -837,25 +839,33 @@ def test_multi_geom_fem_render(renderer, show_viewer, png_snapshot):
     )
     cam = scene.add_camera(
         res=CAM_RES,
-        pos=(0.55, 0.55, 0.55),
+        pos=(0.6, 0.6, 0.55),
         lookat=(0.0, 0.0, 0.32),
         fov=45,
+        denoise=False,
         GUI=show_viewer,
     )
     scene.build()
 
     # Drive a small offset to exercise update_fem (sim_vert_maps re-read).
-    fem.set_position(torch.tensor([0.0, 0.0, 0.02]))
+    fem.set_position(torch.tensor([0.0, 0.0, 0.2]))
 
-    rgb, depth, seg, normal = cam.render(
-        rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
-    )
-
-    assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
-    depth_gray = as_grayscale_image(tensor_to_array(depth))
-    assert rgb_array_to_png_bytes(depth_gray) == png_snapshot
-    assert rgb_array_to_png_bytes(tensor_to_array(seg)) == png_snapshot
-    assert rgb_array_to_png_bytes(tensor_to_array(normal)) == png_snapshot
+    if renderer_type == RENDERER_TYPE.RAYTRACER:
+        png_snapshot.extension._std_err_threshold = 3.0
+        png_snapshot.extension._blurred_kernel_size = 3
+        # RayTracer only supports the RGB channel; the depth/seg/normal G-buffer
+        # outputs are rasterizer-only.
+        rgb, *_ = cam.render(rgb=True, depth=False, segmentation=False, normal=False)
+        assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
+    else:
+        rgb, depth, seg, normal = cam.render(
+            rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
+        )
+        assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
+        depth_gray = as_grayscale_image(tensor_to_array(depth))
+        assert rgb_array_to_png_bytes(depth_gray) == png_snapshot
+        assert rgb_array_to_png_bytes(tensor_to_array(seg)) == png_snapshot
+        assert rgb_array_to_png_bytes(tensor_to_array(normal)) == png_snapshot
 
 
 @pytest.mark.slow  # ~250s
