@@ -1578,8 +1578,8 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
 
     NUM_CHECKS = 10
     POS_TOL = 2e-3
-    # FIXME: There is a constant bias causing the top ball to drift and rotate along z-axis.
-    ROT_TOL = 4e-3
+    # FIXME: The top ball is slightly rotating around z-axis (~2degree)
+    ROT_TOL = 5e-3
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

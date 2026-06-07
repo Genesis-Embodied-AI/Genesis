@@ -91,7 +91,7 @@ class Collider:
         self._diff_normal_tolerance = 1e-2
         self._prune_deep_penetration_ratio = 3.0
         self._axis_bias_max_rel = 1e-4
-        self._axis_bias_max_abs = 2e-5
+        self._axis_bias_max_abs = 2.5e-5
         self._axis_bias_min_cos = 0.1
 
         self._init_static_config()
