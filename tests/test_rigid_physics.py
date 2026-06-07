@@ -1658,7 +1658,6 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     # Both invariants fail together on a bad step (a spurious lateral overlap also inflates the slice count). MPR keeps
     # the sub-resolution overlaps below the rejection floor on every step; GJK's tighter penetration estimates let one
     # spike above it occasionally in fp32, so it only has to be ideal at least once.
-    ideal_steps = 0
     for _ in range(NUM_CHECKS):
         scene.step()
         contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
@@ -1682,8 +1681,7 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
         is_pruned = len(interface_counts) == len(rings) and all(
             count <= N_WEDGES for count in interface_counts.values()
         )
-        ideal_steps += is_vertical and is_pruned
-    assert ideal_steps == NUM_CHECKS
+        assert is_vertical and is_pruned
 
 
 @pytest.mark.required

@@ -833,49 +833,52 @@ def func_clamp_prune_and_sort_contacts(
                             # Andrew's monotone chain. The (u, v) permutation lives in contact_keep; the hull stack
                             # lives in contact_hull_stack[b_start..b_start + k). Both store bucket-logical indices
                             # in [b_start, b_end).
+                            # Track the top two hull-stack entries in locals rather than re-reading the just-written
+                            # contact_hull_stack slots: on GPU a read of a slot written in the previous iteration can
+                            # return a stale value (a compiler bug; a fence between the passes is not a reliable fix),
+                            # leaving collinear points unpruned. Only the deeper entry is reloaded, on a pop.
                             k = 0
+                            hull_t = qd.i32(-1)
+                            hull_s = qd.i32(-1)
                             for i in range(b_start, b_end):
                                 ci = collider_state.contact_keep[i, i_b]
                                 cu = collider_state.contact_sort_key[ci, i_b]
                                 cv = collider_state.contact_proj_v[ci, i_b]
                                 while k >= 2:
-                                    idx_a = collider_state.contact_hull_stack[b_start + k - 2, i_b]
-                                    idx_b = collider_state.contact_hull_stack[b_start + k - 1, i_b]
-                                    au = collider_state.contact_sort_key[idx_a, i_b]
-                                    av = collider_state.contact_proj_v[idx_a, i_b]
-                                    bu = collider_state.contact_sort_key[idx_b, i_b]
-                                    bv = collider_state.contact_proj_v[idx_b, i_b]
+                                    au = collider_state.contact_sort_key[hull_s, i_b]
+                                    av = collider_state.contact_proj_v[hull_s, i_b]
+                                    bu = collider_state.contact_sort_key[hull_t, i_b]
+                                    bv = collider_state.contact_proj_v[hull_t, i_b]
                                     cross = (bu - au) * (cv - av) - (bv - av) * (cu - au)
                                     if cross <= hull_collinear_tol:
                                         k -= 1
+                                        hull_t = hull_s
+                                        if k >= 2:
+                                            hull_s = collider_state.contact_hull_stack[b_start + k - 2, i_b]
                                     else:
                                         break
                                 collider_state.contact_hull_stack[b_start + k, i_b] = ci
+                                hull_s = hull_t
+                                hull_t = ci
                                 k += 1
 
                             upper_start = k
-                            # Memory-fence for a Quadrants codegen issue on parallel envs (Metal backend, _B >= 2):
-                            # without an explicit barrier between the lower-hull and upper-hull passes, the upper-
-                            # hull pop-loop's reads of contact_hull_stack don't observe the writes from the lower
-                            # hull, so its cross-product / pop-check effectively runs on stale data and every
-                            # candidate is kept, producing a hull whose size equals the bucket size.
-                            if qd.static(static_rigid_sim_config.backend == gs.metal):
-                                qd.simt.block.sync()
                             for k_step in range(b_size - 1):
                                 ii = b_end - 2 - k_step
                                 ci = collider_state.contact_keep[ii, i_b]
                                 cu = collider_state.contact_sort_key[ci, i_b]
                                 cv = collider_state.contact_proj_v[ci, i_b]
                                 while k >= upper_start + 1:
-                                    idx_a = collider_state.contact_hull_stack[b_start + k - 2, i_b]
-                                    idx_b = collider_state.contact_hull_stack[b_start + k - 1, i_b]
-                                    au = collider_state.contact_sort_key[idx_a, i_b]
-                                    av = collider_state.contact_proj_v[idx_a, i_b]
-                                    bu = collider_state.contact_sort_key[idx_b, i_b]
-                                    bv = collider_state.contact_proj_v[idx_b, i_b]
+                                    au = collider_state.contact_sort_key[hull_s, i_b]
+                                    av = collider_state.contact_proj_v[hull_s, i_b]
+                                    bu = collider_state.contact_sort_key[hull_t, i_b]
+                                    bv = collider_state.contact_proj_v[hull_t, i_b]
                                     cross = (bu - au) * (cv - av) - (bv - av) * (cu - au)
                                     if cross <= hull_collinear_tol:
                                         k -= 1
+                                        hull_t = hull_s
+                                        if k >= upper_start + 1:
+                                            hull_s = collider_state.contact_hull_stack[b_start + k - 2, i_b]
                                     else:
                                         break
                                 # The closing iteration of the upper hull visits the leftmost point, which already sits
@@ -886,6 +889,8 @@ def func_clamp_prune_and_sort_contacts(
                                 # pass tries to push a duplicate of an already-kept lower-hull vertex).
                                 if ci != collider_state.contact_hull_stack[b_start, i_b] and k < b_size:
                                     collider_state.contact_hull_stack[b_start + k, i_b] = ci
+                                    hull_s = hull_t
+                                    hull_t = ci
                                     k += 1
 
                             # Overwrite contact_keep[b_start..b_end) (previously the (u, v) permutation scratch)
@@ -1296,50 +1301,58 @@ def func_clamp_prune_and_sort_contacts_coop(
 
                         hull_collinear_tol = tol * max_in_plane_r2
 
+                        # Track the top two hull-stack entries in locals rather than re-reading the just-written
+                        # contact_hull_stack slots: on GPU a read of a slot written in the previous iteration can
+                        # return a stale value (a compiler bug; a fence between the passes is not a reliable fix),
+                        # leaving collinear points unpruned. Only the deeper entry is reloaded, on a pop.
                         k = 0
+                        hull_t = qd.i32(-1)
+                        hull_s = qd.i32(-1)
                         for i in range(b_start, b_end):
                             ci = collider_state.contact_lex_idx[i, i_b]
                             cu = collider_state.contact_sort_key[ci, i_b]
                             cv = collider_state.contact_proj_v[ci, i_b]
                             while k >= 2:
-                                idx_a = collider_state.contact_hull_stack[b_start + k - 2, i_b]
-                                idx_b = collider_state.contact_hull_stack[b_start + k - 1, i_b]
-                                au = collider_state.contact_sort_key[idx_a, i_b]
-                                av = collider_state.contact_proj_v[idx_a, i_b]
-                                bu = collider_state.contact_sort_key[idx_b, i_b]
-                                bv = collider_state.contact_proj_v[idx_b, i_b]
+                                au = collider_state.contact_sort_key[hull_s, i_b]
+                                av = collider_state.contact_proj_v[hull_s, i_b]
+                                bu = collider_state.contact_sort_key[hull_t, i_b]
+                                bv = collider_state.contact_proj_v[hull_t, i_b]
                                 cross = (bu - au) * (cv - av) - (bv - av) * (cu - au)
                                 if cross <= hull_collinear_tol:
                                     k -= 1
+                                    hull_t = hull_s
+                                    if k >= 2:
+                                        hull_s = collider_state.contact_hull_stack[b_start + k - 2, i_b]
                                 else:
                                     break
                             collider_state.contact_hull_stack[b_start + k, i_b] = ci
+                            hull_s = hull_t
+                            hull_t = ci
                             k += 1
 
                         upper_start = k
-                        # Lane-0 variant of the lower/upper hull memory-fence workaround used in the serial kernel
-                        # (PR #2831): write to a non-overlapping scratch slot to force write-then-read ordering on
-                        # contact_hull_stack between the two hull passes.
-                        collider_state.contact_hull_stack[max_contact_pairs - 1, i_b] = 0
                         for k_step in range(b_size - 1):
                             ii_lex = b_end - 2 - k_step
                             ci = collider_state.contact_lex_idx[ii_lex, i_b]
                             cu = collider_state.contact_sort_key[ci, i_b]
                             cv = collider_state.contact_proj_v[ci, i_b]
                             while k >= upper_start + 1:
-                                idx_a = collider_state.contact_hull_stack[b_start + k - 2, i_b]
-                                idx_b = collider_state.contact_hull_stack[b_start + k - 1, i_b]
-                                au = collider_state.contact_sort_key[idx_a, i_b]
-                                av = collider_state.contact_proj_v[idx_a, i_b]
-                                bu = collider_state.contact_sort_key[idx_b, i_b]
-                                bv = collider_state.contact_proj_v[idx_b, i_b]
+                                au = collider_state.contact_sort_key[hull_s, i_b]
+                                av = collider_state.contact_proj_v[hull_s, i_b]
+                                bu = collider_state.contact_sort_key[hull_t, i_b]
+                                bv = collider_state.contact_proj_v[hull_t, i_b]
                                 cross = (bu - au) * (cv - av) - (bv - av) * (cu - au)
                                 if cross <= hull_collinear_tol:
                                     k -= 1
+                                    hull_t = hull_s
+                                    if k >= upper_start + 1:
+                                        hull_s = collider_state.contact_hull_stack[b_start + k - 2, i_b]
                                 else:
                                     break
                             if ci != collider_state.contact_hull_stack[b_start, i_b] and k < b_size:
                                 collider_state.contact_hull_stack[b_start + k, i_b] = ci
+                                hull_s = hull_t
+                                hull_t = ci
                                 k += 1
 
                         for hk in range(k):
