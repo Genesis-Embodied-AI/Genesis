@@ -658,16 +658,42 @@ def func_clamp_prune_and_sort_contacts(
                         for ps_i in range(b_start + 1, b_end):
                             ps_cur = collider_state.contact_sort_idx[ps_i, i_b]
                             ps_cp = collider_state.contact_data.pos[ps_cur, i_b]
+                            ps_cn = collider_state.contact_data.normal[ps_cur, i_b]
+                            ps_cga = collider_state.contact_data.geom_a[ps_cur, i_b]
+                            ps_cgb = collider_state.contact_data.geom_b[ps_cur, i_b]
+                            ps_cpen = collider_state.contact_data.penetration[ps_cur, i_b]
                             ps_j = ps_i - 1
                             while ps_j >= b_start:
                                 ps_pj = collider_state.contact_sort_idx[ps_j, i_b]
                                 ps_pp = collider_state.contact_data.pos[ps_pj, i_b]
-                                ps_prec = ps_pp[0] < ps_cp[0]
-                                if not ps_prec and ps_pp[0] == ps_cp[0]:
-                                    if ps_pp[1] < ps_cp[1]:
-                                        ps_prec = True
-                                    elif ps_pp[1] == ps_cp[1]:
-                                        ps_prec = ps_pp[2] <= ps_cp[2]
+                                # Total order over the contact's intrinsic data: position, then geom pair, then normal,
+                                # then penetration. Position alone leaves coincident contacts from different geoms (e.g.
+                                # adjacent ring wedges touching the pole at one shared point) tied, so they keep the
+                                # non-deterministic atomic-slot order and the downstream (u, v) hull dedup picks a
+                                # different survivor run-to-run.
+                                ps_prec = False
+                                if ps_pp[0] != ps_cp[0]:
+                                    ps_prec = ps_pp[0] < ps_cp[0]
+                                elif ps_pp[1] != ps_cp[1]:
+                                    ps_prec = ps_pp[1] < ps_cp[1]
+                                elif ps_pp[2] != ps_cp[2]:
+                                    ps_prec = ps_pp[2] < ps_cp[2]
+                                else:
+                                    ps_pga = collider_state.contact_data.geom_a[ps_pj, i_b]
+                                    ps_pgb = collider_state.contact_data.geom_b[ps_pj, i_b]
+                                    ps_pn = collider_state.contact_data.normal[ps_pj, i_b]
+                                    if ps_pga != ps_cga:
+                                        ps_prec = ps_pga < ps_cga
+                                    elif ps_pgb != ps_cgb:
+                                        ps_prec = ps_pgb < ps_cgb
+                                    elif ps_pn[0] != ps_cn[0]:
+                                        ps_prec = ps_pn[0] < ps_cn[0]
+                                    elif ps_pn[1] != ps_cn[1]:
+                                        ps_prec = ps_pn[1] < ps_cn[1]
+                                    elif ps_pn[2] != ps_cn[2]:
+                                        ps_prec = ps_pn[2] < ps_cn[2]
+                                    else:
+                                        ps_prec = collider_state.contact_data.penetration[ps_pj, i_b] <= ps_cpen
                                 if ps_prec:
                                     break
                                 collider_state.contact_sort_idx[ps_j + 1, i_b] = ps_pj
@@ -1077,16 +1103,42 @@ def func_clamp_prune_and_sort_contacts_coop(
                         for ps_i in range(b_start + 1, b_end):
                             ps_cur = collider_state.contact_sort_idx[ps_i, i_b]
                             ps_cp = collider_state.contact_data.pos[ps_cur, i_b]
+                            ps_cn = collider_state.contact_data.normal[ps_cur, i_b]
+                            ps_cga = collider_state.contact_data.geom_a[ps_cur, i_b]
+                            ps_cgb = collider_state.contact_data.geom_b[ps_cur, i_b]
+                            ps_cpen = collider_state.contact_data.penetration[ps_cur, i_b]
                             ps_j = ps_i - 1
                             while ps_j >= b_start:
                                 ps_pj = collider_state.contact_sort_idx[ps_j, i_b]
                                 ps_pp = collider_state.contact_data.pos[ps_pj, i_b]
-                                ps_prec = ps_pp[0] < ps_cp[0]
-                                if not ps_prec and ps_pp[0] == ps_cp[0]:
-                                    if ps_pp[1] < ps_cp[1]:
-                                        ps_prec = True
-                                    elif ps_pp[1] == ps_cp[1]:
-                                        ps_prec = ps_pp[2] <= ps_cp[2]
+                                # Total order over the contact's intrinsic data: position, then geom pair, then normal,
+                                # then penetration. Position alone leaves coincident contacts from different geoms (e.g.
+                                # adjacent ring wedges touching the pole at one shared point) tied, so they keep the
+                                # non-deterministic atomic-slot order and the downstream (u, v) hull dedup picks a
+                                # different survivor run-to-run.
+                                ps_prec = False
+                                if ps_pp[0] != ps_cp[0]:
+                                    ps_prec = ps_pp[0] < ps_cp[0]
+                                elif ps_pp[1] != ps_cp[1]:
+                                    ps_prec = ps_pp[1] < ps_cp[1]
+                                elif ps_pp[2] != ps_cp[2]:
+                                    ps_prec = ps_pp[2] < ps_cp[2]
+                                else:
+                                    ps_pga = collider_state.contact_data.geom_a[ps_pj, i_b]
+                                    ps_pgb = collider_state.contact_data.geom_b[ps_pj, i_b]
+                                    ps_pn = collider_state.contact_data.normal[ps_pj, i_b]
+                                    if ps_pga != ps_cga:
+                                        ps_prec = ps_pga < ps_cga
+                                    elif ps_pgb != ps_cgb:
+                                        ps_prec = ps_pgb < ps_cgb
+                                    elif ps_pn[0] != ps_cn[0]:
+                                        ps_prec = ps_pn[0] < ps_cn[0]
+                                    elif ps_pn[1] != ps_cn[1]:
+                                        ps_prec = ps_pn[1] < ps_cn[1]
+                                    elif ps_pn[2] != ps_cn[2]:
+                                        ps_prec = ps_pn[2] < ps_cn[2]
+                                    else:
+                                        ps_prec = collider_state.contact_data.penetration[ps_pj, i_b] <= ps_cpen
                                 if ps_prec:
                                     break
                                 collider_state.contact_sort_idx[ps_j + 1, i_b] = ps_pj
