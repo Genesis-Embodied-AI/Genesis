@@ -1577,6 +1577,9 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     RINGS_ORDER = (0, 1, 2, 3, 5, 4)
 
     NUM_CHECKS = 10
+    POS_TOL = 2e-3
+    # FIXME: There is a constant bias causing the top ball to drift and rotate along z-axis.
+    ROT_TOL = 4e-3
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -1634,17 +1637,20 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     ring_geoms = {geom.idx for ring in rings for geom in ring.geoms}
     ball_geoms = {geom.idx for geom in ball.geoms}
 
+    poss_init = [
+        qd_to_torch(scene.rigid_solver.links_info.pos, entity._idx_in_solver) for entity in (pole, *rings, ball)
+    ]
+
     # Tiny warm-up to deal with initial penetration (~5e-4)
-    qpos_init = scene.rigid_solver.get_qpos()
     for _ in range(2):
         scene.step()
 
-    # Check that the tower stay in place (3mm tol is necessary because of the ball)
-    # if gs.backend != gs.cpu and gjk_collision:
-    #     pytest.xfail("GJK is less accurate on GPU.")
+    # Check that the tower stay in place
     for _ in range(20):
         scene.step()
-        assert_allclose(scene.rigid_solver.get_qpos(), qpos_init, atol=3e-3)
+        for entity, pos_init in zip((pole, *rings, ball), poss_init):
+            assert_allclose(entity.get_pos(), pos_init, atol=POS_TOL)
+            assert_allclose(gu.quat_to_xyz(entity.get_quat()), 0.0, atol=ROT_TOL)
         # Only check linear velocity at CoM and angular velocity around z-axis.
         # It is robust to loosing a few contact points while still asserting the failure modes that matter.
         assert_allclose(scene.rigid_solver.get_dofs_velocity(dofs_idx=(0, 1, 2, 5)), 0, tol=0.06)
