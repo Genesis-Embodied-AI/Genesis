@@ -1177,6 +1177,46 @@ def test_raycaster_hits(show_viewer, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_raycaster_return_points_false(show_viewer, n_envs):
+    # A distances-only DepthCamera (return_points=False) must yield exactly the same hit distances as the default
+    # points+distances sensor, while skipping the per-ray hit-point storage so read().points is None. A points-on
+    # sensor sharing the scene must be unaffected, which exercises the cumulative cache-offset packing for two
+    # sensors of differing per-sensor cache sizes.
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5), fixed=True))
+
+    common = dict(pos_offset=(0.0, 0.0, 2.0))
+    cam_pts = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.raycaster.DepthCameraPattern(res=(8, 8)), return_points=True, **common
+        )
+    )
+    cam_nopts = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.raycaster.DepthCameraPattern(res=(8, 8)), return_points=False, **common
+        )
+    )
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    data_pts = cam_pts.read()
+    data_nopts = cam_nopts.read()
+
+    # distances-only keeps the RaycasterData NamedTuple but with points=None; distances stay finite.
+    assert data_nopts.points is None
+    assert data_pts.points is not None
+    assert torch.isfinite(data_nopts.distances).all()
+    # Storing points must not change the computed distances at all.
+    assert torch.equal(data_pts.distances, data_nopts.distances)
+    # The points-on sensor stays self-consistent (||hit_point|| == distance for rays that hit) even though a
+    # distances-only sensor is packed after it in the shared cache.
+    hit = data_pts.distances < cam_pts._options.max_range
+    assert_allclose(data_pts.points.norm(dim=-1)[hit], data_pts.distances[hit], tol=1e-4)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("kin_raycastable", [True, False])
 def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):
     # Two depth cameras, one per entity:

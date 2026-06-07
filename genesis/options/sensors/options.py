@@ -605,6 +605,12 @@ class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"], SimpleSensorOpti
         The value to return for no hit. Defaults to max_range if not specified.
     return_world_frame : bool, optional
         Whether to return points in the world frame. Defaults to False (local frame).
+    return_points : bool, optional
+        Whether to compute and store the per-ray hit points (the ``points`` field). Defaults to True.
+        Set False for a distances-only sensor (e.g. a depth image whose consumer reads only
+        ``.distances``): the output cache then holds just the ``H*W`` distances instead of
+        ``H*W*(3+1)``, cutting the cache memory and per-ray write bandwidth ~4x. ``read().points``
+        is ``None`` when disabled.
     debug_sphere_radius: float, optional
         The radius of each debug sphere drawn in the scene. Defaults to 0.02.
     debug_ray_start_color: array-like[float, float, float, float], optional
@@ -618,6 +624,7 @@ class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"], SimpleSensorOpti
     max_range: PositiveFloat = 20.0
     no_hit_value: float | None = None
     return_world_frame: StrictBool = False
+    return_points: StrictBool = True
 
     debug_sphere_radius: PositiveFloat = 0.02
     debug_ray_start_color: Vec4FType = (0.5, 0.5, 1.0, 1.0)

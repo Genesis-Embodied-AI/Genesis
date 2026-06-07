@@ -255,6 +255,12 @@ class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata
     sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    # Size (in cache slots) of each sensor's leading point region: num_rays*3 when return_points, else 0. The cast
+    # kernel adds this to the cache offset to locate the distance block, so a distances-only sensor packs distances
+    # at the front of its (4x smaller) cache block with no gap.
+    sensor_point_region: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    # 1 when the sensor stores per-ray hit points, 0 for distances-only. Gates the point writes in write_ray_hit.
+    sensor_return_points: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class RaycasterReturnType(NamedTuple):
@@ -310,15 +316,24 @@ class RaycasterSensor(
         num_rays = math.prod(self._options.pattern.return_shape)
         self._shared_metadata.sensors_ray_start_idx.append(self._shared_metadata.total_n_rays)
 
-        # These fields are used to properly index into the big cache tensor in kernel_cast_rays
+        # These fields are used to properly index into the big cache tensor in kernel_cast_rays. The offset of the
+        # next sensor's block is this sensor's start plus its own cache size — a running cumulative sum, so sensors
+        # with different cache sizes (e.g. a points lidar next to a distances-only depth camera) pack correctly.
+        prev_offset = int(self._shared_metadata.sensor_cache_offsets[-1].item())
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
-            self._shared_metadata.sensor_cache_offsets, self._cache_size * (self._idx + 1)
+            self._shared_metadata.sensor_cache_offsets, prev_offset + self._cache_size
         )
         self._shared_metadata.sensor_point_offsets = concat_with_tensor(
             self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays
         )
         self._shared_metadata.sensor_point_counts = concat_with_tensor(
             self._shared_metadata.sensor_point_counts, num_rays
+        )
+        self._shared_metadata.sensor_point_region = concat_with_tensor(
+            self._shared_metadata.sensor_point_region, num_rays * 3 if self._options.return_points else 0
+        )
+        self._shared_metadata.sensor_return_points = concat_with_tensor(
+            self._shared_metadata.sensor_return_points, int(self._options.return_points)
         )
         self._shared_metadata.total_n_rays += num_rays
 
@@ -344,7 +359,19 @@ class RaycasterSensor(
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.return_shape
+        # Distances-only: drop the (*shape, 3) points field so the cache holds just the distances.
+        if not self._options.return_points:
+            return (shape,)
         return ((*shape, 3), shape)
+
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None):
+        # Keep the RaycasterData(points, distances) NamedTuple contract regardless of return_points: when points are
+        # disabled the base class sees a single return field and would hand back a bare distances tensor, so re-wrap
+        # it with points=None. Consumers that only read .distances are unaffected.
+        data = super()._get_formatted_data(tensor, envs_idx)
+        if self._options.return_points:
+            return data
+        return RaycasterReturnType(points=None, distances=data)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
@@ -401,6 +428,8 @@ class RaycasterSensor(
                 shared_metadata.sensor_cache_offsets,
                 shared_metadata.sensor_point_offsets,
                 shared_metadata.sensor_point_counts,
+                shared_metadata.sensor_point_region,
+                shared_metadata.sensor_return_points,
                 raw_data_T,
                 gs.EPS,
                 i > 0,
