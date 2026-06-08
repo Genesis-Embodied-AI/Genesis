@@ -1176,6 +1176,90 @@ def test_raycaster_hits(show_viewer, n_envs):
 
 
 @pytest.mark.required
+def test_raycaster_shared_static_bvh(show_viewer):
+    # With RigidOptions.shared_static_raycast_bvh=True, env-identical static collision geometry is allocated as ONE
+    # shared BVH (n_batches=1) read by every env, instead of a per-env tree. Verify the allocation collapses, the
+    # cast is flagged shared, and the distances are finite and identical across envs (they must be, since every env
+    # sees the same geometry from the same sensor pose). The opt-in default (False) and its per-env-set_pos
+    # divergence path are covered by test_lidar_bvh_parallel_env.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(shared_static_raycast_bvh=True),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(1.0, 0.0, 0.2), fixed=True))
+    depth_camera = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.raycaster.DepthCameraPattern(res=(8, 8)),
+            pos_offset=(0.0, 0.0, 1.0),
+            euler_offset=(0.0, 40.0, 0.0),
+        )
+    )
+    scene.build(n_envs=4)
+    scene.step()
+
+    # The single rigid collision BVH collapsed to one shared tree and the cast reads batch 0 for every env.
+    (collision_bvh,) = depth_camera._shared_context.bvh_contexts
+    assert collision_bvh.aabb.n_batches == 1
+    assert collision_bvh.shared_across_envs is True
+
+    distances = depth_camera.read().distances  # (n_envs, H, W)
+    assert torch.isfinite(distances).all()
+    assert (distances < depth_camera._options.max_range).any()  # some rays hit the box/plane
+    # Identical geometry + identical sensor pose -> every env's depth image matches env 0's.
+    assert torch.equal(distances, distances[:1].expand_as(distances))
+
+
+@pytest.mark.required
+def test_raycaster_grouped_static_bvh(show_viewer):
+    # With shared_static_raycast_bvh=True and N distinct static variants spread across B envs (N << B), the
+    # collision BVH collapses from B per-env trees to N grouped trees (one per distinct geometry), and each env
+    # casts against its variant's tree. Verify the tree count, the env->group routing, and that the grouped result
+    # is identical to the per-env (flag-off) reference.
+    N, B = 3, 12
+    # Three concentric fixed boxes (variants differ by size -> near faces 0.9 / 0.8 / 0.7). Genesis' balanced
+    # variant mapping assigns them to B envs in contiguous blocks (4 envs each here).
+    variants = (
+        gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(1.0, 0.0, 0.5), fixed=True),
+        gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(1.0, 0.0, 0.5), fixed=True),
+        gs.morphs.Box(size=(0.6, 0.6, 0.6), pos=(1.0, 0.0, 0.5), fixed=True),
+    )
+
+    def build(shared):
+        scene = gs.Scene(
+            rigid_options=gs.options.RigidOptions(shared_static_raycast_bvh=shared),
+            show_viewer=show_viewer,
+        )
+        scene.add_entity(gs.morphs.Plane())
+        scene.add_entity(morph=variants)
+        mount = scene.add_entity(
+            gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, 0.5), fixed=True, collision=False)
+        )
+        lidar = scene.add_sensor(
+            gs.sensors.Lidar(
+                entity_idx=mount.idx,
+                pattern=gs.options.sensors.SphericalPattern(n_points=(1, 1), fov=(0.0, 0.0)),
+                max_range=5.0,
+            )
+        )
+        scene.build(n_envs=B)
+        scene.step()
+        return lidar
+
+    grouped = build(True)
+    collision_bvh = next(e for e in grouped._shared_context.bvh_contexts if e.raycast_mask is None)
+    assert collision_bvh.aabb.n_batches == N  # B per-env trees collapsed to N
+    # Contiguous balanced blocks: envs 0-3 -> variant 0, 4-7 -> 1, 8-11 -> 2.
+    assert collision_bvh.env_bvh_idx.tolist() == [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]
+    grouped_d = grouped.read().distances[:, 0, 0]
+
+    per_env_d = build(False).read().distances[:, 0, 0]
+    # Grouped trees give the exact per-env result, and each block sees its own variant's near face.
+    assert torch.equal(grouped_d, per_env_d)
+    assert_allclose(grouped_d[[0, 4, 8]], torch.tensor([0.9, 0.8, 0.7], device=grouped_d.device), tol=5e-3)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("kin_raycastable", [True, False])
 def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):

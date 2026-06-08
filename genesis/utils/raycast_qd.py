@@ -237,24 +237,29 @@ def update_aabbs(
     faces_info: array_class.FacesInfo,
     geoms_info: array_class.GeomsInfo,
     links_info: array_class.LinksInfo,
+    batch_repr_env: qd.types.ndarray(ndim=1),  # [n_batches] env whose geometry builds each tree slot
     static_rigid_sim_config: qd.template(),
     aabb_state: qd.template(),
 ):
     """Update per-face collision AABBs from current vertex positions.
 
-    A face contributes to env i_b only if its geom lies in that env's active geom range (links_info.geom_start /
+    A face contributes to env i_env only if its geom lies in that env's active geom range (links_info.geom_start /
     geom_end); otherwise its AABB is left inverted (unhittable) and skipped by ray queries. For a homogeneous solver
     every geom is always in range, so this never excludes anything. For a heterogeneous solver, where all envs share
     one vertex buffer but activate different per-env geom ranges, it makes each env cast against only its own variant
     instead of the union of every variant.
     """
-    for i_b, i_f in qd.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
+    # Iterate over the AABB's own batch (tree) dimension, not the solver's env count. ``batch_repr_env`` maps each
+    # tree slot to the env whose geometry it is built from: identity for a per-env BVH (n_batches=n_envs), [0] for a
+    # single shared tree, and one representative env per group for N grouped trees (N distinct geometries << n_envs).
+    for i_b, i_f in qd.ndrange(aabb_state.aabbs.shape[0], faces_info.verts_idx.shape[0]):
+        i_env = batch_repr_env[i_b]
         aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
 
         i_g = faces_info.geom_idx[i_f]
         i_l = geoms_info.link_idx[i_g]
-        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        I_l = [i_l, i_env] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         if links_info.geom_start[I_l] <= i_g and i_g < links_info.geom_end[I_l]:
             for i in qd.static(range(3)):
                 i_v = faces_info.verts_idx[i_f][i]
@@ -264,7 +269,7 @@ def update_aabbs(
                     aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                     aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
                 else:
-                    pos_v = free_verts_state.pos[i_fv, i_b]
+                    pos_v = free_verts_state.pos[i_fv, i_env]
                     aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                     aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
 
@@ -278,6 +283,7 @@ def kernel_update_verts_and_aabbs(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     links_info: array_class.LinksInfo,
+    batch_repr_env: qd.types.ndarray(ndim=1),
     static_rigid_sim_config: qd.template(),
     aabb_state: qd.template(),
 ):
@@ -291,6 +297,7 @@ def kernel_update_verts_and_aabbs(
         faces_info,
         geoms_info,
         links_info,
+        batch_repr_env,
         static_rigid_sim_config,
         aabb_state,
     )
@@ -560,31 +567,32 @@ def kernel_cast_rays(
     sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
+    env_bvh_idx: qd.types.ndarray(ndim=1),  # [n_env] - which BVH tree (batch) each env casts against
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: float,
     is_merge: qd.template(),
-    shared_bvh: qd.template(),
+    env_major: qd.template(),
 ):
     """Cast rays against a collision-mesh BVH, accelerated by a BVH. See write_ray_hit for `is_merge` semantics.
 
     The result `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each
     sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
 
-    shared_bvh is a compile-time flag set when the collision geometry is identical across envs; the cast then reads a
-    single BVH copy (batch 0) for every env. It also selects the thread -> (ray, env) mapping below, so the homogeneous
-    and heterogeneous cases each get their optimal GPU access pattern.
+    ``env_bvh_idx`` maps each env to the BVH tree (batch index) it casts against: identity for per-env trees, all-0
+    for one shared tree, or a group id for N grouped trees (N distinct geometries << n_env). ``env_major`` is a
+    compile-time flag selecting the thread -> (ray, env) mapping for the access pattern that tree layout wants.
     """
     n_points = ray_starts.shape[0]
     n_envs = output_hits.shape[-1]
-    # One flat parallel loop whose thread -> (ray, env) split is chosen at compile time from shared_bvh:
-    #  - shared (homogeneous geometry): env is the fastest-varying index, so a warp spans consecutive envs all reading
-    #    the same batch-0 node -> a coalesced broadcast.
-    #  - not shared (heterogeneous): the ray is the fastest-varying index, so a warp stays within one env's distinct
-    #    tree and rides ray coherence instead of diverging across n_env different trees.
+    # One flat parallel loop whose thread -> (ray, env) split is chosen at compile time from env_major:
+    #  - env_major (shared / grouped geometry, contiguous env blocks per tree): env is the fastest-varying index, so a
+    #    warp spans consecutive envs reading the same tree's nodes -> a coalesced broadcast.
+    #  - else (per-env distinct trees): the ray is the fastest-varying index, so a warp stays within one env's tree
+    #    and rides ray coherence instead of diverging across n_env different trees.
     for i_flat in range(n_points * n_envs):
         i_p = i_flat // n_envs
         i_b = i_flat % n_envs
-        if not shared_bvh:
+        if not env_major:
             i_b = i_flat // n_points
             i_p = i_flat % n_points
 
@@ -605,8 +613,8 @@ def kernel_cast_rays(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_ranges[i_s],
-            # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
-            i_b=0 if shared_bvh else i_b,
+            # env_bvh_idx routes this env to its tree: its own (per-env), batch 0 (shared), or its group (grouped).
+            i_b=env_bvh_idx[i_b],
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
             faces_info=faces_info,
@@ -657,18 +665,19 @@ def kernel_cast_rays_visual(
     sensor_cache_offsets: qd.types.ndarray(ndim=1),
     sensor_point_offsets: qd.types.ndarray(ndim=1),
     sensor_point_counts: qd.types.ndarray(ndim=1),
+    env_bvh_idx: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
-    shared_bvh: qd.template(),
+    env_major: qd.template(),
 ):
-    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for shared_bvh and the thread mapping."""
+    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for env_bvh_idx and the thread mapping."""
     n_points = ray_starts.shape[0]
     n_envs = output_hits.shape[-1]
     for i_flat in range(n_points * n_envs):
         i_p = i_flat // n_envs
         i_b = i_flat % n_envs
-        if not shared_bvh:
+        if not env_major:
             i_b = i_flat // n_points
             i_p = i_flat % n_points
 
@@ -689,8 +698,8 @@ def kernel_cast_rays_visual(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_ranges[i_s],
-            # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
-            i_b=0 if shared_bvh else i_b,
+            # env_bvh_idx routes this env to its tree: its own (per-env), batch 0 (shared), or its group (grouped).
+            i_b=env_bvh_idx[i_b],
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
             vverts_info=vverts_info,
