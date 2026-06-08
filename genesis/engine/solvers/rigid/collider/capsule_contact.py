@@ -81,9 +81,9 @@ def func_capsule_capsule_contact(
             # Segments are coincident, use arbitrary perpendicular direction
             # Try cross product with axis_a first
             normal_dir = axis_a_unit.cross(axis_b_unit)
-            normal_dir_len = normal_dir.dot(normal_dir)
-            if normal_dir_len > EPS:
-                normal_unit = normal_dir / normal_dir_len
+            normal_dir_len_sq = normal_dir.norm_sqr()
+            if normal_dir_len_sq > EPS:
+                normal_unit = normal_dir / qd.sqrt(normal_dir_len_sq)
             else:
                 # Axes are parallel, use any perpendicular
                 if qd.abs(axis_a_unit[0]) < 0.9:

@@ -522,59 +522,41 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
             _check_expected_values(contacts_gjk, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
 
-            # If both detected a collision, compare the contact details
+            # If both detected a collision, compare the full contact manifold. Each analytical contact is matched to
+            # its nearest GJK contact by position (order-independent), then position, penetration and normal are
+            # compared for every contact - not just the first - so multi-contact manifolds are fully validated.
             if has_collision_analytical and has_collision_gjk:
-                pen_analytical = contacts_analytical["penetration"][0]
-                pen_gjk = contacts_gjk["penetration"][0]
+                n_analytical = len(contacts_analytical["geom_a"])
+                n_gjk = len(contacts_gjk["geom_a"])
+                analytical_positions = np.array([contacts_analytical["position"][i] for i in range(n_analytical)])
+                gjk_positions = np.array([contacts_gjk["position"][j] for j in range(n_gjk)])
 
-                normal_analytical = np.array(contacts_analytical["normal"][0])
-                normal_gjk = np.array(contacts_gjk["normal"][0])
+                # Every analytical contact must have a matching GJK contact with agreeing position, penetration and
+                # normal - checked for all points, not just the first. GJK may emit a few extra near-duplicate
+                # manifold points, so contacts are matched by nearest position rather than requiring equal counts.
+                for i in range(n_analytical):
+                    j = int(np.argmin(np.linalg.norm(gjk_positions - analytical_positions[i], axis=1)))
+                    assert np.linalg.norm(analytical_positions[i] - gjk_positions[j]) < POS_TOL, "Position mismatch!"
+                    assert_allclose(
+                        contacts_analytical["penetration"][i],
+                        contacts_gjk["penetration"][j],
+                        atol=POS_TOL,
+                        rtol=0.1,
+                        err_msg="Penetration mismatch!",
+                    )
+                    normal_a = np.array(contacts_analytical["normal"][i])
+                    normal_g = np.array(contacts_gjk["normal"][j])
+                    assert abs(np.dot(normal_a, normal_g)) > 0.95, "Normal mismatch!"
 
-                pos_analytical = np.array(contacts_analytical["position"][0])
-                pos_gjk = np.array(contacts_gjk["position"][0])
-                assert_allclose(pen_analytical, pen_gjk, atol=POS_TOL, rtol=0.1, err_msg="Penetration mismatch!")
-
-                normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-                assert normal_agreement > 0.95, "Normal mismatch!"
-
+                # Parallel capsules produce a two-point manifold; verify both methods find it, and for the vertical
+                # configuration that every contact lies on the line midway between the axes.
                 if description in ["parallel_light", "parallel_deep"]:
-                    n_analytical = len(contacts_analytical["geom_a"])
-                    n_gjk = len(contacts_gjk["geom_a"])
-
-                    # When GJK has multicontact, verify analytical also generates sufficient contacts
-                    if n_gjk >= 2:
-                        assert n_analytical >= 2, (
-                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
-                            f"(expected at least 2)"
-                        )
-                        assert n_analytical >= (n_gjk - 1), (
-                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
-                            f"(expected at least {n_gjk - 1})"
-                        )
-
-                    if n_analytical >= 2 or n_gjk >= 2:
-                        all_analytical_positions = np.array(
-                            [contacts_analytical["position"][i] for i in range(n_analytical)]
-                        )
-                        all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
-
-                        for pos_a in all_analytical_positions:
-                            min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
-                            assert min_dist < POS_TOL
-
-                        # For parallel vertical capsules, verify contacts are on the line between axes
-                        if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):  # Both vertical
-                            expected_xy = np.array([pos1[0] / 2, 0.0])  # Midpoint between capsules
-                            for pos_a in all_analytical_positions:
-                                assert_allclose(pos_a[:2], expected_xy, tol=POS_TOL)
-                                assert_allclose(pos_a[2], 0.0, tol=0.26)
-                            for pos_g in all_gjk_positions:
-                                assert_allclose(pos_g[:2], expected_xy, tol=POS_TOL)
-                                assert -0.26 < pos_g[2] < 0.26
-                    else:
-                        assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
-                else:
-                    assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
+                    assert n_analytical >= 2, f"Expected >=2 analytical contacts for {description}, got {n_analytical}"
+                    if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):
+                        expected_xy = np.array([pos1[0] / 2, 0.0])  # Midpoint between capsules
+                        for pos in (*analytical_positions, *gjk_positions):
+                            assert_allclose(pos[:2], expected_xy, tol=POS_TOL)
+                            assert -0.26 < pos[2] < 0.26
         except AssertionError as e:
             raise AssertionError(
                 f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
