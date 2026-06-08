@@ -2618,6 +2618,19 @@ class RigidSolver(KinematicSolver):
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False):
+        """Return the joint-space mass matrix M (shape ``(n_envs, n_dofs, n_dofs)``, or ``(n_dofs, n_dofs)`` when
+        ``n_envs == 0``).
+
+        If ``decompose=True``, return ``(L, D_inv)`` of the per-entity factorization instead of M. Note the
+        convention is **LTDL** (reverse-pivot), i.e. ``L`` is **unit lower-triangular** and reconstructs M as::
+
+            M = L.mT @ diag(1.0 / D_inv) @ L          # NOT L @ diag(1/D_inv) @ L.mT
+
+        This is the form the internal mass solve consumes (eliminating DOFs last-to-first), and it differs from
+        the textbook ``M = L D L^T`` LDL^T: here it is ``M = L^T D L``. ``D_inv`` holds the reciprocals of the
+        diagonal D. ``L`` is block-diagonal across entities (one independent factor per articulated body); only
+        the strict-lower triangle of each block is meaningful (the unit diagonal and the upper triangle are not).
+        """
         tensor = qd_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, copy=True)
         if dofs_idx is not None:
             tensor = tensor[indices_to_mask(None, dofs_idx, dofs_idx)]
