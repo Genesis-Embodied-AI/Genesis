@@ -1,0 +1,189 @@
+warning: Error disabling address space randomization: Operation not permitted
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[Detaching after vfork from child process 773]
+[New Thread 0x7f75dabff6c0 (LWP 774)]
+[New Thread 0x7f75da3fe6c0 (LWP 775)]
+[New Thread 0x7f75d9bfd6c0 (LWP 776)]
+[New Thread 0x7f75d93fc6c0 (LWP 777)]
+[New Thread 0x7f75d8bfb6c0 (LWP 778)]
+[New Thread 0x7f75d83fa6c0 (LWP 779)]
+[New Thread 0x7f75d7bf96c0 (LWP 780)]
+[New Thread 0x7f75d73f86c0 (LWP 781)]
+[New Thread 0x7f75d6bf76c0 (LWP 782)]
+[New Thread 0x7f75d63f66c0 (LWP 783)]
+[New Thread 0x7f75d5bf56c0 (LWP 784)]
+[New Thread 0x7f75d53f46c0 (LWP 785)]
+[New Thread 0x7f75d4bf36c0 (LWP 786)]
+[New Thread 0x7f75d43f26c0 (LWP 787)]
+[New Thread 0x7f75d3bf16c0 (LWP 788)]
+[New Thread 0x7f75d33f06c0 (LWP 789)]
+[New Thread 0x7f75d2bef6c0 (LWP 790)]
+[New Thread 0x7f75d23ee6c0 (LWP 791)]
+[New Thread 0x7f75d1bed6c0 (LWP 792)]
+[New Thread 0x7f75d13ec6c0 (LWP 793)]
+[New Thread 0x7f75d0beb6c0 (LWP 794)]
+[New Thread 0x7f75d03ea6c0 (LWP 795)]
+[New Thread 0x7f75cfbe96c0 (LWP 796)]
+[New Thread 0x7f75cf3e86c0 (LWP 797)]
+[New Thread 0x7f75cebe76c0 (LWP 798)]
+[New Thread 0x7f75ce3e66c0 (LWP 799)]
+[New Thread 0x7f75cdbe56c0 (LWP 800)]
+[New Thread 0x7f75cd3e46c0 (LWP 801)]
+[New Thread 0x7f75ccbe36c0 (LWP 802)]
+[New Thread 0x7f75cc3e26c0 (LWP 803)]
+[New Thread 0x7f75cbbe16c0 (LWP 804)]
+[New Thread 0x7f75cb3e06c0 (LWP 805)]
+[New Thread 0x7f75cabdf6c0 (LWP 806)]
+[New Thread 0x7f75ca3de6c0 (LWP 807)]
+[New Thread 0x7f75c9bdd6c0 (LWP 808)]
+[New Thread 0x7f75c93dc6c0 (LWP 809)]
+[New Thread 0x7f75c8bdb6c0 (LWP 810)]
+[New Thread 0x7f75c83da6c0 (LWP 811)]
+[New Thread 0x7f75c7bd96c0 (LWP 812)]
+[New Thread 0x7f75c73d86c0 (LWP 813)]
+[New Thread 0x7f75c6bd76c0 (LWP 814)]
+[New Thread 0x7f75c63d66c0 (LWP 815)]
+[New Thread 0x7f75c5bd56c0 (LWP 816)]
+[New Thread 0x7f75c53d46c0 (LWP 817)]
+[New Thread 0x7f75c4bd36c0 (LWP 818)]
+[New Thread 0x7f75c43d26c0 (LWP 819)]
+[New Thread 0x7f75c3bd16c0 (LWP 820)]
+[New Thread 0x7f75c33d06c0 (LWP 821)]
+[New Thread 0x7f75c2bcf6c0 (LWP 822)]
+[New Thread 0x7f75c23ce6c0 (LWP 823)]
+[New Thread 0x7f75c1bcd6c0 (LWP 824)]
+[New Thread 0x7f75c13cc6c0 (LWP 825)]
+[New Thread 0x7f75c0bcb6c0 (LWP 826)]
+[New Thread 0x7f75c03ca6c0 (LWP 827)]
+[New Thread 0x7f75bfbc96c0 (LWP 828)]
+[New Thread 0x7f75bf3c86c0 (LWP 829)]
+[New Thread 0x7f75bebc76c0 (LWP 830)]
+[New Thread 0x7f75be3c66c0 (LWP 831)]
+[New Thread 0x7f75bdbc56c0 (LWP 832)]
+[New Thread 0x7f75bd3c46c0 (LWP 833)]
+[New Thread 0x7f75bcbc36c0 (LWP 834)]
+[New Thread 0x7f75bc3c26c0 (LWP 835)]
+[New Thread 0x7f75bbbc16c0 (LWP 836)]
+[Detaching after vfork from child process 837]
+[New Thread 0x7f74203ff6c0 (LWP 838)]
+[New Thread 0x7f741fbfe6c0 (LWP 839)]
+[New Thread 0x7f741f3fd6c0 (LWP 840)]
+[New Thread 0x7f741ebfc6c0 (LWP 841)]
+[New Thread 0x7f741e3fb6c0 (LWP 842)]
+[New Thread 0x7f741dbfa6c0 (LWP 843)]
+[New Thread 0x7f741d3f96c0 (LWP 844)]
+[New Thread 0x7f741cbf86c0 (LWP 845)]
+[New Thread 0x7f741c3f76c0 (LWP 846)]
+[New Thread 0x7f741bbf66c0 (LWP 847)]
+[New Thread 0x7f741b3f56c0 (LWP 848)]
+[New Thread 0x7f741abf46c0 (LWP 849)]
+[New Thread 0x7f741a3f36c0 (LWP 850)]
+[New Thread 0x7f7419bf26c0 (LWP 851)]
+[New Thread 0x7f74193f16c0 (LWP 852)]
+[New Thread 0x7f7418bf06c0 (LWP 853)]
+[New Thread 0x7f74183ef6c0 (LWP 854)]
+[New Thread 0x7f7417bee6c0 (LWP 855)]
+[New Thread 0x7f74173ed6c0 (LWP 856)]
+[New Thread 0x7f7416bec6c0 (LWP 857)]
+[New Thread 0x7f74163eb6c0 (LWP 858)]
+[New Thread 0x7f7415bea6c0 (LWP 859)]
+[New Thread 0x7f74153e96c0 (LWP 860)]
+[New Thread 0x7f7414be86c0 (LWP 861)]
+[New Thread 0x7f74143e76c0 (LWP 862)]
+[New Thread 0x7f7413be66c0 (LWP 863)]
+[New Thread 0x7f74133e56c0 (LWP 864)]
+[New Thread 0x7f7412be46c0 (LWP 865)]
+[New Thread 0x7f74123e36c0 (LWP 866)]
+[New Thread 0x7f7411be26c0 (LWP 867)]
+[New Thread 0x7f74113e16c0 (LWP 868)]
+[New Thread 0x7f7410be06c0 (LWP 869)]
+[New Thread 0x7f74103df6c0 (LWP 870)]
+[New Thread 0x7f740fbde6c0 (LWP 871)]
+[New Thread 0x7f740f3dd6c0 (LWP 872)]
+[New Thread 0x7f740ebdc6c0 (LWP 873)]
+[New Thread 0x7f740e3db6c0 (LWP 874)]
+[New Thread 0x7f740dbda6c0 (LWP 875)]
+[New Thread 0x7f740d3d96c0 (LWP 876)]
+[New Thread 0x7f740cbd86c0 (LWP 877)]
+[New Thread 0x7f740c3d76c0 (LWP 878)]
+[New Thread 0x7f740bbd66c0 (LWP 879)]
+[New Thread 0x7f740b3d56c0 (LWP 880)]
+[New Thread 0x7f740abd46c0 (LWP 881)]
+[New Thread 0x7f740a3d36c0 (LWP 882)]
+[New Thread 0x7f7409bd26c0 (LWP 883)]
+[New Thread 0x7f74093d16c0 (LWP 884)]
+[New Thread 0x7f7408bd06c0 (LWP 885)]
+[New Thread 0x7f74083cf6c0 (LWP 886)]
+[New Thread 0x7f7407bce6c0 (LWP 887)]
+[New Thread 0x7f74073cd6c0 (LWP 888)]
+[New Thread 0x7f7406bcc6c0 (LWP 889)]
+[New Thread 0x7f74063cb6c0 (LWP 890)]
+[New Thread 0x7f7405bca6c0 (LWP 891)]
+[New Thread 0x7f74053c96c0 (LWP 892)]
+[New Thread 0x7f7404bc86c0 (LWP 893)]
+[New Thread 0x7f74043c76c0 (LWP 894)]
+[New Thread 0x7f7403bc66c0 (LWP 895)]
+[New Thread 0x7f74033c56c0 (LWP 896)]
+[New Thread 0x7f7402bc46c0 (LWP 897)]
+[New Thread 0x7f74023c36c0 (LWP 898)]
+[New Thread 0x7f7401bc26c0 (LWP 899)]
+[New Thread 0x7f74013c16c0 (LWP 900)]
+[Detaching after vfork from child process 901]
+[Detaching after vfork from child process 902]
+[Detaching after vfork from child process 903]
+[Detaching after vfork from child process 904]
+[Detaching after vfork from child process 905]
+[Detaching after vfork from child process 906]
+[Detaching after vfork from child process 907]
+[Detaching after vfork from child process 908]
+[38;5;159m[Genesis] [03:20:29] [INFO] [38;5;121m╭───────────────────────────────────────────────╮[0m[38;5;159m[0m
+[38;5;159m[Genesis] [03:20:29] [INFO] [38;5;121m│┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈[0m[38;5;159m [38;5;121m[1m[3mGenesis[0m[38;5;159m [38;5;121m┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈┉┈│[0m[38;5;159m[0m
+[38;5;159m[Genesis] [03:20:29] [INFO] [38;5;121m╰───────────────────────────────────────────────╯[0m[38;5;159m[0m
+[New Thread 0x7f73ebbff6c0 (LWP 909)]
+[New Thread 0x7f73e8dff6c0 (LWP 910)]
+[New Thread 0x7f71dffff6c0 (LWP 911)]
+[New Thread 0x7f71df7fe6c0 (LWP 912)]
+[New Thread 0x7f71deffd6c0 (LWP 913)]
+[New Thread 0x7f71de7fc6c0 (LWP 914)]
+[New Thread 0x7f71dcdda6c0 (LWP 915)]
+[38;5;159m[Genesis] [03:20:30] [INFO] Running on [38;5;121m[4m[NVIDIA H20-3e][0m[38;5;159m with backend [38;5;121m[4mgs.cuda[0m[38;5;159m. Device memory: [38;5;121m[4m139.81[0m[38;5;159m GB.[0m
+[38;5;159m[Genesis] [03:20:30] [INFO] 🚀 Genesis initialized. 🔖 version: [38;5;121m[4m1.0.0[0m[38;5;159m, 🎨 theme: [38;5;121m[4mdark[0m[38;5;159m, 🌱 seed: [38;5;121m[4mNone[0m[38;5;159m, 🐛 debug: [38;5;121m[4mFalse[0m[38;5;159m, 📏 precision: [38;5;121m[4m32[0m[38;5;159m, 🔥 performance: [38;5;121m[4mFalse[0m[38;5;159m, 💬 verbose: [38;5;121m[4mINFO[0m[38;5;159m[0m
+[Detaching after vfork from child process 916]
+[38;5;159m[Genesis] [03:20:33] [INFO] Scene [38;5;121m[3m<27f7bd3>[0m[38;5;159m created.[0m
+[38;5;159m[Genesis] [03:20:33] [INFO] Adding [38;5;121m<gs.engine.entities.RigidEntity>[0m[38;5;159m. idx: [38;5;121m0[0m[38;5;159m, uid: [38;5;121m[3m<f1c63cc>[0m[38;5;159m, morph: [38;5;121m<gs.morphs.Plane>[0m[38;5;159m, material: [38;5;121m<gs.materials.Rigid>[0m[38;5;159m.[0m
+>>> before build
+[38;5;159m[Genesis] [03:20:33] [INFO] Building scene [38;5;121m[3m<27f7bd3>[0m[38;5;159m...[0m
+[New Thread 0x7f7174eff6c0 (LWP 917)]
+[New Thread 0x7f71746fe6c0 (LWP 918)]
+[New Thread 0x7f7173efd6c0 (LWP 919)]
+[New Thread 0x7f717357c6c0 (LWP 920)]
+[New Thread 0x7f7171ffb6c0 (LWP 921)]
+
+Thread 1 "python3" received signal SIGSEGV, Segmentation fault.
+0x00007f7176b658cf in ?? () from /usr/lib64/libnvidia-eglcore.so.570.133.20
+#0  0x00007f7176b658cf in ?? () from /usr/lib64/libnvidia-eglcore.so.570.133.20
+#1  0x00007f7176b181f2 in ?? () from /usr/lib64/libnvidia-eglcore.so.570.133.20
+#2  0x00007f73ef3c59fe in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#3  0x00007f73ef3c842e in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#4  0x00007f73ef3c89fb in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#5  0x00007f73ef3c8c44 in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#6  0x00007f73ef4584e0 in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#7  0x00007f73ef3dd9b4 in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#8  0x00007f73ef3dc94b in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#9  0x00007f73ef3d800e in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#10 0x00007f73ef3b7080 in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#11 0x00007f73ef3a3bb0 in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#12 0x00007f73ef3a5762 in ?? () from /usr/local/lib/python3.12/dist-packages/gs_nyx/nyx_py_renderer.abi3.so
+#13 0x0000000000549975 in PyObject_Vectorcall ()
+#14 0x00000000005d6f09 in _PyEval_EvalFrameDefault ()
+#15 0x00000000005d543b in PyEval_EvalCode ()
+#16 0x00000000006085d2 in ?? ()
+#17 0x00000000006b4d03 in ?? ()
+#18 0x00000000006b4a6a in _PyRun_SimpleFileObject ()
+#19 0x00000000006b489f in _PyRun_AnyFileObject ()
+#20 0x00000000006bc905 in Py_RunMain ()
+#21 0x00000000006bc3ed in Py_BytesMain ()
+#22 0x00007f766542a1ca in __libc_start_call_main (main=main@entry=0x518930, argc=argc@entry=2, argv=argv@entry=0x7ffc4d7d1c48) at ../sysdeps/nptl/libc_start_call_main.h:58
+#23 0x00007f766542a28b in __libc_start_main_impl (main=0x518930, argc=2, argv=0x7ffc4d7d1c48, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7ffc4d7d1c38) at ../csu/libc-start.c:360
+#24 0x00000000006576c5 in _start ()

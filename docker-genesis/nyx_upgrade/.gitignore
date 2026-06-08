@@ -1,0 +1,6 @@
+# The version-matched Nyx wheels are large binaries (gs-nyx ~77MB); do not
+# commit them. They are fetched from PyPI:
+#   gs-nyx==0.1.2 (cp312-abi3-manylinux_2_34)
+#   gs-nyx-plugin==0.1.3
+# The gdb backtraces (*.txt) ARE kept as bug-report evidence.
+*.whl
