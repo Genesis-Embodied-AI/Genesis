@@ -1564,7 +1564,7 @@ def test_contact_pruning(gjk_collision, show_viewer):
 @pytest.mark.required
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("gjk_collision", [False, True])
-def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
+def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
     # A central pole carries six concentric rings, capped by a ball seated in the top ring's hole. Each ring collision
     # mesh is pre-decomposed into N_WEDGES convex slices, so stacked pieces touch face-to-face along the vertical axis.
     # Physically only vertical contacts are valid between stacked rings; any lateral contact is a spurious cross-sector
@@ -1584,6 +1584,7 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=gjk_collision,
+            max_collision_pairs=1200,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.0, 0.3),
@@ -1605,11 +1606,13 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     )
     rings = []
     height = BASE_HEIGHT
-    for ring_idx in RINGS_ORDER:
+    for i, ring_idx in enumerate(RINGS_ORDER):
         ring = scene.add_entity(
             morph=gs.morphs.URDF(
                 file=f"tower/ring_{ring_idx + 1:02d}.urdf",
                 pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
+                # Alternate rotational offset along z-axis to avoid lateral contacts
+                euler=(0.0, 0.0, 180 / N_WEDGES * (i % 2)),
                 file_meshes_are_zup=True,
             ),
             material=gs.materials.Rigid(
@@ -1640,6 +1643,10 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     poss_init = [
         qd_to_torch(scene.rigid_solver.links_info.pos, entity._idx_in_solver) for entity in (pole, *rings, ball)
     ]
+    rpys_init = [
+        gu.quat_to_xyz(qd_to_torch(scene.rigid_solver.links_info.quat, entity._idx_in_solver), rpy=True)
+        for entity in (pole, *rings, ball)
+    ]
 
     # Tiny warm-up to deal with initial penetration (~5e-4)
     for _ in range(2):
@@ -1648,9 +1655,9 @@ def test_reject_offaxis_contact_on_authored_decomp(gjk_collision, show_viewer):
     # Check that the tower stay in place
     for _ in range(20):
         scene.step()
-        for entity, pos_init in zip((pole, *rings, ball), poss_init):
+        for entity, pos_init, rpy_init in zip((pole, *rings, ball), poss_init, rpys_init):
             assert_allclose(entity.get_pos(), pos_init, atol=POS_TOL)
-            assert_allclose(gu.quat_to_xyz(entity.get_quat()), 0.0, atol=ROT_TOL)
+            assert_allclose(gu.quat_to_xyz(entity.get_quat(), rpy=True), rpy_init, atol=ROT_TOL)
         # Only check linear velocity at CoM and angular velocity around z-axis.
         # It is robust to loosing a few contact points while still asserting the failure modes that matter.
         assert_allclose(scene.rigid_solver.get_dofs_velocity(dofs_idx=(0, 1, 2, 5)), 0, tol=0.06)
@@ -1722,6 +1729,7 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
 
     N_TRIALS = 8
     N_STEPS = 25
+    N_WEDGES = 16
     BASE_HEIGHT = 0.020
     RING_HEIGHT = 0.020
     BALL_HEIGHT = 0.019
@@ -1731,6 +1739,7 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=True,
             contact_pruning_tolerance=contact_pruning_tolerance,
+            max_collision_pairs=1200,
         ),
         show_viewer=show_viewer,
     )
@@ -1744,11 +1753,13 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
         material=gs.materials.Rigid(rho=600.0),
     )
     height = BASE_HEIGHT
-    for ring_idx in RINGS_ORDER:
+    for i, ring_idx in enumerate(RINGS_ORDER):
         scene.add_entity(
             morph=gs.morphs.URDF(
                 file=f"tower/ring_{ring_idx + 1:02d}.urdf",
                 pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
+                # Alternate rotational offset along z-axis to avoid lateral contacts
+                euler=(0.0, 0.0, 180 / N_WEDGES * (i % 2)),
                 file_meshes_are_zup=True,
             ),
             material=gs.materials.Rigid(rho=600.0),
