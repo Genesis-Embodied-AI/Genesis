@@ -68,6 +68,22 @@ def func_refine_smooth_contact_pos(
         t_clamped = qd.math.clamp(t_axial, -half_length, half_length)
         axis_point = geom_pos + t_clamped * axis_dir
         refined = axis_point - (radius - 0.5 * penetration) * normal
+    elif geom_type == gs.GEOM_TYPE.CYLINDER:
+        # Cylinder axis is along local +z. Barrel vs cap is decided from the normal, not the axial coordinate: a barrel
+        # (or barrel-edge) contact has a radial normal perpendicular to the axis, while a flat-cap contact has an axial
+        # normal. The axial coordinate alone is ambiguous for a side-resting cylinder, whose end contacts sit exactly at
+        # the rim (|t_axial| == half_length) yet are genuine barrel contacts that must be snapped. A barrel contact is
+        # identical to the capsule barrel: project onto the axis (clamped to the barrel extent so a rim contact lands at
+        # the cap plane) and offset by the radius along -normal, removing the CCD's radial position bias. A cap contact
+        # is on a flat end face with no curvature to refine, so the CCD position is kept.
+        radius = geom_data[0]
+        half_length = 0.5 * geom_data[1]
+        axis_dir = gu.qd_transform_by_quat_fast(qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float), geom_quat)
+        if qd.abs(normal.dot(axis_dir)) < 0.5:
+            t_axial = (ccd_contact_pos - geom_pos).dot(axis_dir)
+            t_clamped = qd.math.clamp(t_axial, -half_length, half_length)
+            axis_point = geom_pos + t_clamped * axis_dir
+            refined = axis_point - (radius - 0.5 * penetration) * normal
     return refined
 
 
@@ -100,11 +116,21 @@ def func_apply_smooth_refinement(
         # fast paths and never reach this helper, so at most one side ever needs refinement.
         type_a = geoms_info.type[i_ga]
         type_b = geoms_info.type[i_gb]
-        if type_a == gs.GEOM_TYPE.SPHERE or type_a == gs.GEOM_TYPE.ELLIPSOID or type_a == gs.GEOM_TYPE.CAPSULE:
+        if (
+            type_a == gs.GEOM_TYPE.SPHERE
+            or type_a == gs.GEOM_TYPE.ELLIPSOID
+            or type_a == gs.GEOM_TYPE.CAPSULE
+            or type_a == gs.GEOM_TYPE.CYLINDER
+        ):
             contact_pos = func_refine_smooth_contact_pos(
                 type_a, geoms_info.data[i_ga], ga_pos, ga_quat, normal, penetration, contact_pos
             )
-        elif type_b == gs.GEOM_TYPE.SPHERE or type_b == gs.GEOM_TYPE.ELLIPSOID or type_b == gs.GEOM_TYPE.CAPSULE:
+        elif (
+            type_b == gs.GEOM_TYPE.SPHERE
+            or type_b == gs.GEOM_TYPE.ELLIPSOID
+            or type_b == gs.GEOM_TYPE.CAPSULE
+            or type_b == gs.GEOM_TYPE.CYLINDER
+        ):
             contact_pos = func_refine_smooth_contact_pos(
                 type_b, geoms_info.data[i_gb], gb_pos, gb_quat, -normal, penetration, contact_pos
             )

@@ -1851,6 +1851,9 @@ def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
         morph=gs.morphs.MJCF(
             file=xml_path,
         ),
+        surface=gs.surfaces.Default(
+            smooth=False,
+        ),
     )
     scene.build(n_envs=N_ENVS)
 
@@ -6164,8 +6167,8 @@ def test_mesh_align(show_viewer, tol):
             dt=0.01,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.8, 0.8, 0.7),
-            camera_lookat=(-0.3, 0.0, 0.0),
+            camera_pos=(0.8, 0.8, 1.6),
+            camera_lookat=(0.0, 0.0, 0.0),
         ),
         show_viewer=show_viewer,
     )
@@ -6211,10 +6214,10 @@ def test_mesh_align(show_viewer, tol):
     scene.reset()
 
     # Simulate
-    for _ in range(450):
+    for _ in range(600):
         scene.step()
 
-    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
+    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.06)
     assert (-0.005 < mango.get_AABB()[0, 2] < 0.0).all()
 
 

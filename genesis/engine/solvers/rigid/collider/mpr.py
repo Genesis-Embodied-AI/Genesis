@@ -163,6 +163,8 @@ def support_driver(
         v = support_field._func_support_ellipsoid(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
         v = support_field._func_support_capsule(geoms_info, direction, i_g, pos, quat, False)
+    elif geom_type == gs.GEOM_TYPE.CYLINDER:
+        v = support_field._func_support_cylinder(geoms_info, direction, i_g, pos, quat, False)
     elif geom_type == gs.GEOM_TYPE.BOX:
         v, v_, vid = support_field._func_support_box(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:

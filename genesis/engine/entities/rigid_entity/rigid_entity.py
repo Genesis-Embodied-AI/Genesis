@@ -313,8 +313,8 @@ class KinematicEntity(Entity):
         elif isinstance(morph, gs.options.morphs.Cylinder):
             tmesh = mu.create_cylinder(radius=morph.radius, height=morph.height)
             cmesh = tmesh
-            geom_data = None
-            geom_type = gs.GEOM_TYPE.MESH
+            geom_data = np.array([morph.radius, morph.height])
+            geom_type = gs.GEOM_TYPE.CYLINDER
             link_name_prefix = "cylinder"
         elif isinstance(morph, gs.options.morphs.Plane):
             metadata["texture_path"] = mu.DEFAULT_PLANE_TEXTURE_PATH
