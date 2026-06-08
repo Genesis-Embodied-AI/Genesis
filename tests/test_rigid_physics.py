@@ -3839,7 +3839,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
     assert_allclose(obj.geoms[0].get_pos()[:2], init_pos[:2], atol=2e-3)
 
 
-@pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("euler", [(90, 0, 90), (74, 15, 90)])
 @pytest.mark.parametrize("gjk_collision", [True, False])
@@ -3848,15 +3847,18 @@ def test_convexify(euler, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
     OBJ_OFFSET_Y = 0.15
 
-    # The test check that the volume difference is under a given threshold and
-    # that convex decomposition is only used whenever it is necessary.
-    # Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
+    # The test check that the volume difference is under a given threshold and that convex decomposition is only used
+    # whenever it is necessary. Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.004,
         ),
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=gjk_collision,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, 0.5, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
         ),
         show_viewer=show_viewer,
         show_FPS=False,
@@ -3869,12 +3871,12 @@ def test_convexify(euler, show_viewer, gjk_collision):
         ),
         vis_mode="collision",
     )
-    tank = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
             scale=5.0,
             fixed=True,
-            pos=(0.05, -0.1, 0.0),
+            pos=(0.05, -0.05, 0.0),
             euler=euler,
             # coacd_options=gs.options.CoacdOptions(
             #     threshold=0.08,
@@ -3883,11 +3885,13 @@ def test_convexify(euler, show_viewer, gjk_collision):
         vis_mode="collision",
     )
     objs = []
-    for i, asset_name in enumerate(("mug_1", "donut_0", "cup_2", "apple_15")):
+    for i, (asset_name, xml_file) in enumerate(
+        (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
+    ):
         asset_path = get_hf_dataset(pattern=f"{asset_name}/*")
         obj = scene.add_entity(
             gs.morphs.MJCF(
-                file=f"{asset_path}/{asset_name}/output.xml",
+                file=f"{asset_path}/{asset_name}/{xml_file}",
                 pos=(OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5), 0.4),
             ),
             vis_mode="collision",
@@ -3912,38 +3916,36 @@ def test_convexify(euler, show_viewer, gjk_collision):
     # There should be only one geometry for the apple as it can be convexify without decomposition,
     # but for the others it is hard to tell... Let's use some reasonable guess.
     mug, donut, cup, apple = objs
-    assert len(apple.geoms) == 1
+    assert not any(geom.metadata.get("decomposed", False) for geom in apple.geoms)
+    assert not any(geom.metadata.get("decomposed", False) for geom in cup.geoms)
     assert all(geom.metadata["decomposed"] for geom in donut.geoms) and 5 <= len(donut.geoms) <= 10
-    assert all(geom.metadata["decomposed"] for geom in cup.geoms) and 5 <= len(cup.geoms) <= 20
     assert all(geom.metadata["decomposed"] for geom in mug.geoms) and 5 <= len(mug.geoms) <= 40
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
     # cam.start_recording()
     qvel_norminf_all = []
-    for i in range(1700):
+    for i in range(900):
         scene.step()
         # cam.render()
-        if i > 1600:
-            qvel = gs_sim.rigid_solver.get_dofs_velocity()
-            qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
+        if i > 800:
+            qvel = tensor_to_array(gs_sim.rigid_solver.get_dofs_velocity())
+            qvel_norminf = np.linalg.norm(qvel, ord=float("inf"))
             qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)).cpu(), 4.0)
+    np.testing.assert_array_less(np.median(np.stack(qvel_norminf_all, axis=0)), 0.1)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
-        qpos = obj.get_dofs_position().cpu()
-        np.testing.assert_array_less(-0.1, qpos[2])
-        np.testing.assert_array_less(qpos[2], 0.15)
-        np.testing.assert_array_less(torch.linalg.norm(qpos[:2]), 0.5)
+        obj_pos = tensor_to_array(obj.get_pos())
+        np.testing.assert_array_less(-0.1, obj_pos[2])
+        np.testing.assert_array_less(obj_pos[2], 0.15)
+        np.testing.assert_array_less(np.linalg.norm(obj_pos[:2]), 0.5)
 
-    # Check that the mug and donut are landing straight if the tank is horizontal.
-    # The cup is tipping because it does not land flat due to convex decomposition error.
+    # Check that the mug, donut and cup are landing straight if the tank is horizontal
     if euler == (90, 0, 90):
-        for i, obj in enumerate((mug, donut)):
-            qpos = obj.get_dofs_position()
-            assert_allclose(qpos[0], OBJ_OFFSET_X * (1.5 - i), atol=7e-3)
-            assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
+        for i, obj in enumerate((mug, donut, cup)):
+            obj_pos = obj.get_pos()
+            assert_allclose(obj_pos[:2], (OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5)), atol=7e-3)
 
 
 @pytest.mark.slow("gpu")  # gpu ~250s
