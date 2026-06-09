@@ -26,6 +26,13 @@ class Texture(Options):
     This class should *not* be instantiated directly.
     """
 
+    # Channel provenance set by `Surface._combine_textures`: maps channel name (e.g. "color",
+    # "opacity" for RGBA; "ao"/"roughness"/"metallic" for ARM) → True iff the user explicitly
+    # set that channel, False if it came from the default fill. Empty `{}` on textures the user
+    # constructs directly. Used by exporters (e.g. Nyx) to decide whether a `matOverride` texture
+    # slot should be cleared (when overriding a parent mesh's embedded texture with a flat color).
+    explicit_channels: dict[str, bool] = Field(default_factory=dict, exclude=True, repr=False)
+
     # Pydantic disables hashing for models with a field-based __eq__; its only opt-in (model_config frozen=True) also
     # forbids the in-place edits done during setup (apply_cutoff, check_dim reassign image_array/color). Restore
     # identity hashing instead: textures are shared by reference and stable once a surface is built, so their identity
@@ -50,6 +57,10 @@ class Texture(Options):
 
     @cached_property
     def requires_uv(self) -> bool:
+        raise NotImplementedError
+
+    @cached_property
+    def has_image(self) -> bool:
         raise NotImplementedError
 
 
@@ -89,6 +100,11 @@ class ColorTexture(Texture):
     @computed_field
     @cached_property
     def requires_uv(self) -> bool:
+        return False
+
+    @computed_field
+    @cached_property
+    def has_image(self) -> bool:
         return False
 
 
@@ -230,6 +246,11 @@ class ImageTexture(Texture):
             return np.ones(3, dtype=np.float16)
         return cast(np.ndarray, (np.mean(self.image_array, axis=(0, 1), dtype=np.float32) / 255).astype(np.float16))
 
+    @computed_field
+    @cached_property
+    def has_image(self) -> NDArrayType:
+        return self.image_array is not None
+
     def check_dim(self, dim: int) -> Texture | None:
         if self.image_array is not None:
             if self.channel > dim:
@@ -362,6 +383,11 @@ class BatchTexture(Texture):
     @cached_property
     def requires_uv(self) -> bool:
         return any(texture is not None and texture.requires_uv for texture in self.textures)
+
+    @computed_field
+    @cached_property
+    def has_image(self) -> NDArrayType:
+        return any(texture is not None and texture.has_image for texture in self.textures)
 
     def check_dim(self, dim: int) -> "BatchTexture":
         return BatchTexture(

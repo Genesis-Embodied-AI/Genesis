@@ -16,6 +16,17 @@ from .textures import Texture, ColorTexture, ImageTexture, BatchTexture
 
 MetalType = Literal["aluminium", "gold", "copper", "brass", "iron", "titanium", "vanadium", "lithium"]
 
+METAL_COLOR: dict[MetalType, tuple[float, float, float]] = {
+    "iron": (0.530, 0.513, 0.494),
+    "aluminium": (0.916, 0.923, 0.924),
+    "copper": (0.932, 0.623, 0.522),
+    "gold": (1.000, 0.773, 0.307),
+    "brass": (0.910, 0.778, 0.423),
+    "titanium": (0.441, 0.400, 0.361),
+    "vanadium": (0.534, 0.526, 0.546),
+    "lithium": (0.916, 0.890, 0.807),
+}
+
 
 ############################ Base ############################
 class Surface(Options):
@@ -137,7 +148,7 @@ class Surface(Options):
         raise NotImplementedError
 
     @property
-    def emission(self) -> Texture | None:
+    def emissive_tex(self) -> Texture | None:
         return None
 
     @property
@@ -344,7 +355,7 @@ class Glass(Surface):
         self.transmission_texture = value
 
     @property
-    def emission(self) -> Texture | None:
+    def emissive_tex(self) -> Texture | None:
         return self.emissive_texture
 
     @property
@@ -424,7 +435,7 @@ class Metal(Surface):
         self.diffuse_texture = value
 
     @property
-    def emission(self) -> Texture | None:
+    def emissive_tex(self) -> Texture | None:
         return self.emissive_texture
 
     @property
@@ -514,7 +525,7 @@ class Plastic(Surface):
         self.diffuse_texture = value
 
     @property
-    def emission(self) -> Texture | None:
+    def emissive_tex(self) -> Texture | None:
         return self.emissive_texture
 
     @property
@@ -611,7 +622,7 @@ class BSDF(Surface):
         self.diffuse_texture = value
 
     @property
-    def emission(self) -> Texture | None:
+    def emissive_tex(self) -> Texture | None:
         return self.emissive_texture
 
     @property
@@ -690,7 +701,7 @@ class Emission(Surface):
         self.emissive_texture = value
 
     @property
-    def emission(self) -> Texture | None:
+    def emissive_tex(self) -> Texture | None:
         return self.emissive_texture
 
     @property
