@@ -84,8 +84,13 @@ class Collider:
         self._solver = rigid_solver
 
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 2e-3
-        self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
+        self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
         self._mpr_to_gjk_overlap_ratio = 0.25
+        # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
+        # having resolved a deeper, non-minimal portal (then upgraded to GJK). At the gate the threshold is clamped
+        # into [tolerance, mpr_to_gjk_overlap_ratio * geom_scale], so a cold pair (cached penetration reset to 0)
+        # reduces to the original "penetration > tolerance" gate and a genuinely deep contact always upgrades.
+        self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
@@ -257,6 +262,7 @@ class Collider:
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
+            mpr_to_gjk_penetration_ratio=self._mpr_to_gjk_penetration_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
@@ -682,15 +688,21 @@ class Collider:
                     first_time[envs_idx] = True
 
             normal = qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
+            penetration = qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
             if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
                     normal.masked_fill_(envs_idx[None, :, None], 0.0)
+                    penetration.masked_fill_(envs_idx[None, :], 0.0)
                 else:
                     normal.scatter_(1, envs_idx[None, :, None].expand((normal.shape[0], -1, 3)), 0.0)
+                    penetration.scatter_(1, envs_idx[None, :].expand((normal.shape[0], -1)), 0.0)
             elif envs_idx is None:
                 normal.zero_()
+                penetration.zero_()
             else:
                 normal[:, envs_idx] = 0.0
+                penetration[:, envs_idx] = 0.0
+
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return

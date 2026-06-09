@@ -561,12 +561,15 @@ def get_sort_buffer(solver):
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactCache:
     normal: qd.Tensor
+    # Previous-step penetration per pair (reset to 0 when out of contact), the warm-start for the MPR->GJK gate.
+    penetration: qd.Tensor
 
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
     return ContactCache(
         normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
+        penetration=V(dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
     )
 
 
@@ -809,6 +812,7 @@ class ColliderInfo:
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
     mpr_to_gjk_overlap_ratio: qd.Tensor
+    mpr_to_gjk_penetration_ratio: qd.Tensor
     # differentiable contact tolerance
     diff_pos_tolerance: qd.Tensor
     diff_normal_tolerance: qd.Tensor
@@ -843,6 +847,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
         mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
+        mpr_to_gjk_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_penetration_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
         contact_pruning_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_pruning_tolerance"]),

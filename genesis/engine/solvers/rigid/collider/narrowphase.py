@@ -1385,15 +1385,18 @@ def func_convex_convex_contact(
                                 )
                                 is_mpr_updated = True
 
-                        # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
-                        # large, and either no collision direction was cached or the geometries have large overlap. This
-                        # contact information provided by MPR may be unreliable in these cases.
+                        # Fall back to GJK when the penetration exceeds a warm-start-aware threshold: the cached
+                        # penetration grew by more than mpr_to_gjk_penetration_ratio (a deeper, non-minimal portal),
+                        # clamped into [tolerance, mpr_to_gjk_overlap_ratio * geom_pair_scale]. A cold pair (cached
+                        # penetration reset to 0) clamps to tolerance - the original "fire as soon as penetration >
+                        # tolerance" gate; a genuinely deep contact always fires at the overlap cap.
                         if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                            if penetration > tolerance:
-                                prefer_gjk = not is_mpr_guess_direction_available or (
-                                    collider_info.mc_tolerance[None] * penetration
-                                    >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
-                                )
+                            prefer_gjk = penetration > qd.math.clamp(
+                                collider_info.mpr_to_gjk_penetration_ratio[None]
+                                * collider_state.contact_cache.penetration[i_pair, i_b],
+                                tolerance,
+                                collider_info.mpr_to_gjk_overlap_ratio[None] * geom_pair_scale,
+                            )
 
                     ### GJK, MJ_GJK
                     # TODO: Add support of smooth refinement to differentiable contact.
@@ -1577,9 +1580,12 @@ def func_convex_convex_contact(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
                     ):
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
+                        collider_state.contact_cache.penetration[i_pair, i_b] = penetration
                 else:
-                    # Clear collision normal cache if not in contact
+                    # Clear the cached normal AND penetration when not in contact, so a later re-contact is treated as
+                    # cold (warm-start penetration 0) instead of reading a stale penetration across the gap.
                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
             elif multi_contact and is_col:
                 # For perturbed iterations (i_detection > 0), recompute the contact from the deepest contact points
                 # discovered by the perturbed detection, evaluated on the unperturbed geometries. This applies to all
@@ -1855,7 +1861,8 @@ def _func_multicontact_mpr(
     gb_pos_original = geoms_state.pos[i_gb, i_b]
     gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-    tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
+    geom_pair_scale = func_compute_geom_pair_scale(i_ga, i_gb, geoms_info, geoms_init_AABB)
+    tolerance = collider_info.mc_tolerance[None] * geom_pair_scale
 
     axis_0, axis_1 = func_contact_orthogonals(
         i_ga,
@@ -1928,12 +1935,16 @@ def _func_multicontact_mpr(
             )
 
             if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                if is_col and penetration > tolerance:
-                    if (
-                        collider_info.mc_tolerance[None] * penetration
-                        >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
-                    ):
-                        needs_gjk_upgrade = True
+                if is_col:
+                    # Same warm-start-aware penetration clamp as the primary gate: upgrade to GJK when the perturbed
+                    # penetration exceeds mpr_to_gjk_penetration_ratio times the cached one, floored at tolerance and
+                    # capped at the overlap depth.
+                    needs_gjk_upgrade = needs_gjk_upgrade or penetration > qd.math.clamp(
+                        collider_info.mpr_to_gjk_penetration_ratio[None]
+                        * collider_state.contact_cache.penetration[i_pair, i_b],
+                        tolerance,
+                        collider_info.mpr_to_gjk_overlap_ratio[None] * geom_pair_scale,
+                    )
 
             if is_col and not needs_gjk_upgrade:
                 # The perturbed contact is refined inside func_recompute_perturbed_contact (after the perturbation is
@@ -2218,8 +2229,10 @@ def _func_multicontact_gjk_full(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
                     ):
                         collider_state.contact_cache.normal[i_pair, i_b] = normal
+                        collider_state.contact_cache.penetration[i_pair, i_b] = penetration
                 else:
                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
             elif not gjk_multi_done and multi_contact and is_col:
                 # The perturbed contact is refined inside func_recompute_perturbed_contact (after the perturbation is
                 # reverted, on the canonical pose); no pre-reversal refinement is needed here.
@@ -2676,18 +2689,20 @@ def _func_narrowphase_contact0(
                             is_mpr_updated = True
 
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                        if penetration > tolerance:
-                            # Contact 0's normal always provides a warmstart for
-                            # contacts 1-4, so only prefer GJK when penetration is
-                            # genuinely large — not merely because the cache is cold.
-                            prefer_gjk = (
-                                collider_info.mc_tolerance[None] * penetration
-                                >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
-                            )
+                        # Warm-start-aware penetration clamp (see the monolith gate): GJK when the penetration
+                        # exceeds mpr_to_gjk_penetration_ratio times the cached one, floored at tolerance (cold) and
+                        # capped at the overlap depth.
+                        prefer_gjk = penetration > qd.math.clamp(
+                            collider_info.mpr_to_gjk_penetration_ratio[None]
+                            * collider_state.contact_cache.penetration[i_pair, i_b],
+                            tolerance,
+                            collider_info.mpr_to_gjk_overlap_ratio[None] * geom_pair_scale,
+                        )
 
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
+                    collider_state.contact_cache.penetration[i_pair, i_b] = penetration
                 # Refine the contact position before enqueueing or storing it. The downstream multicontact functions
                 # store this as the initial contact (index 0 of local_contact_pos) without re-refining, so refinement
                 # must happen here to stay consistent with the monolithic path's consolidated refinement at the start
@@ -2752,6 +2767,7 @@ def _func_narrowphase_contact0(
                     )
             elif not is_col:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
 
 
 @qd.kernel(fastcache=True)
