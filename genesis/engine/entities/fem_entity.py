@@ -369,17 +369,10 @@ class FEMEntity(Entity):
         verts = verts.astype(gs.np_float, copy=False)
         elems = elems.astype(gs.np_int, copy=False)
 
-        # rotate and translate
+        # rotate around the centre of mass; ``morph.pos`` is already baked in by ``sample``
         R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
-        # Use the morph.pos default dtype (float64). Casting to gs.np_float (float32)
-        # here quantizes coords like 0.4 / -0.1 / 0.1 (not exactly representable in
-        # float32) and perturbs downstream values enough to shift borderline-tolerance
-        # tests on backends with tighter float precision (eg the macOS
-        # `linear_corotated` falling-sphere rest-state assertion).
-        p = np.array(self.morph.pos)
-        verts_translated = verts + p
-        verts_COM = verts_translated.mean(axis=0)
-        init_positions = (verts_translated - verts_COM) @ R.T + verts_COM
+        verts_COM = verts.mean(axis=0)
+        init_positions = (verts - verts_COM) @ R.T + verts_COM
 
         if not init_positions.shape[0] > 0:
             gs.raise_exception("Entity has zero vertices.")
@@ -405,6 +398,16 @@ class FEMEntity(Entity):
 
         is_cloth = isinstance(self.material, ClothMaterial)
 
+        # Apply ``morph.pos`` BEFORE tetrahedralization. Upstream's primitive paths
+        # (``sphere_to_elements`` / ``box_to_elements``) translated mesh verts before
+        # calling tetgen; tetgen's Steiner-point refinement is sensitive to absolute
+        # coords, so running it on centered geometry then translating after produces
+        # a different mesh than upstream did (verified: 960 vs 968 verts for a sphere
+        # at pos=(0.4, -0.1, 0.1)). The mesh-count delta cascades through 40 implicit
+        # FEM steps and pushes the macOS ``linear_corotated`` rest-state assertion
+        # over its 0.025 tolerance.
+        p = np.array(self._morph.pos)
+
         if is_cloth:
             meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
             self._render_meshes = list(meshes)
@@ -412,6 +415,7 @@ class FEMEntity(Entity):
             mesh_verts = [mesh.verts for mesh in meshes]
             mesh_faces = [mesh.faces for mesh in meshes]
             verts, faces = self._merge_elements(mesh_verts, mesh_faces)
+            verts = verts + p
             self.instantiate(verts, faces)
 
         else:
@@ -421,6 +425,7 @@ class FEMEntity(Entity):
             mesh_verts = [mesh.verts for mesh in meshes]
             mesh_faces = [mesh.faces for mesh in meshes]
             surface_verts, surface_faces = self._merge_elements(mesh_verts, mesh_faces)
+            surface_verts = surface_verts + p
             surface_trimesh = trimesh.Trimesh(vertices=surface_verts, faces=surface_faces, process=False)
             verts, elems = eu.mesh_to_elements(mesh=surface_trimesh, tet_cfg=self.tet_cfg)
             # ``split_all_surface_tets`` (for hydroelastic contact) was upstream applied
