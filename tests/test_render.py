@@ -820,7 +820,11 @@ def test_multi_geom_fem_render(renderer_type, renderer, show_viewer, png_snapsho
     CAM_RES = (256, 256)
 
     scene = gs.Scene(
-        vis_options=gs.options.VisOptions(segmentation_level="geom"),
+        vis_options=gs.options.VisOptions(
+            segmentation_level="geom",
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
         renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
