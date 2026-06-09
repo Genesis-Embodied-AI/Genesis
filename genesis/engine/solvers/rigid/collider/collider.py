@@ -317,19 +317,17 @@ class Collider:
             self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
             self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
 
-            if self._collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK):
-                self._multicontact_n_gjk_threads = gpu_cores
-            else:
-                # Heuristic to distribute the workflow between GJK and MPR
-                self._multicontact_n_gjk_threads = math.ceil((gpu_cores // 32) / 64) * 64
             self._multicontact_n_total_threads = gpu_cores
             self._multicontact_max_items_per_thread = cores_per_unit
             self._multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
 
     def _init_multicontact_gjk_state(self):
-        """Kernel 2 GJK state. Must be called after self._gjk is initialized."""
+        """Allocate the GJK scratch state for the multicontact pass.
+
+        Must be called after self._gjk is initialized. Sized to all multicontact threads because any thread may fall
+        back to GJK for its own contact."""
         self._multicontact_gjk_state = array_class.get_gjk_state(
-            self._multicontact_n_gjk_threads,
+            self._multicontact_n_total_threads,
             self._solver._static_rigid_sim_config,
             self._gjk._gjk_info,
             True,
@@ -777,7 +775,7 @@ class Collider:
         )
 
     def _call_multicontact(self):
-        narrowphase._func_narrowphase_multicontact_mixed(
+        narrowphase._func_narrowphase_multicontact(
             self._solver.links_state,
             self._solver.links_info,
             self._solver.geoms_state,
@@ -796,9 +794,7 @@ class Collider:
             self._gjk._gjk_info,
             self._gjk._gjk_static_config,
             self._support_field._support_field_info,
-            self._multicontact_gjk_state.diff_contact_input,
             self._solver._errno,
-            self._multicontact_n_gjk_threads,
             self._multicontact_n_total_threads,
             self._multicontact_max_items_per_thread,
         )
@@ -850,8 +846,6 @@ class Collider:
                 self._solver._B,
                 self._contact0_n_chunks,
             )
-            self._call_multicontact()
-            narrowphase._func_prepare_gjk_rerun(self._collider_state)
             self._call_multicontact()
         elif self._collider_static_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(

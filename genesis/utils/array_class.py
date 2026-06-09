@@ -649,18 +649,11 @@ class NarrowphaseWorkQueues:
     mpr_contact_pos_0: qd.Tensor
     mpr_normal_0: qd.Tensor
     mpr_penetration_0: qd.Tensor
-    gjk_i_b: qd.Tensor
-    gjk_i_ga: qd.Tensor
-    gjk_i_gb: qd.Tensor
-    gjk_i_pair: qd.Tensor
-    gjk_contact_pos_0: qd.Tensor
-    gjk_normal_0: qd.Tensor
-    gjk_penetration_0: qd.Tensor
+    # Whether contact0 preferred GJK (the per-pair MPR->GJK gate fired). The multicontact pass uses GJK for contact0
+    # when set, and otherwise tries MPR first and falls back to GJK per perturbed contact.
+    mpr_prefer_gjk: qd.Tensor
     mpr_queue_size: qd.Tensor
-    gjk_queue_size: qd.Tensor
-    gjk_queue_size_k2: qd.Tensor
     mpr_work_counter: qd.Tensor
-    gjk_work_counter: qd.Tensor
 
 
 def get_narrowphase_work_queues(max_entries):
@@ -672,18 +665,9 @@ def get_narrowphase_work_queues(max_entries):
         mpr_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
         mpr_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
         mpr_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
-        gjk_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
-        gjk_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
-        gjk_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_prefer_gjk=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_queue_size=V(dtype=gs.qd_int, shape=(1,)),
-        gjk_queue_size=V(dtype=gs.qd_int, shape=(1,)),
-        gjk_queue_size_k2=V(dtype=gs.qd_int, shape=(1,)),
         mpr_work_counter=V(dtype=gs.qd_int, shape=(1,)),
-        gjk_work_counter=V(dtype=gs.qd_int, shape=(1,)),
     )
 
 
