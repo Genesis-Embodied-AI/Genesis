@@ -371,7 +371,12 @@ class FEMEntity(Entity):
 
         # rotate and translate
         R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
-        p = np.array(self.morph.pos, dtype=gs.np_float)
+        # Use the morph.pos default dtype (float64). Casting to gs.np_float (float32)
+        # here quantizes coords like 0.4 / -0.1 / 0.1 (not exactly representable in
+        # float32) and perturbs downstream values enough to shift borderline-tolerance
+        # tests on backends with tighter float precision (eg the macOS
+        # `linear_corotated` falling-sphere rest-state assertion).
+        p = np.array(self.morph.pos)
         verts_translated = verts + p
         verts_COM = verts_translated.mean(axis=0)
         init_positions = (verts_translated - verts_COM) @ R.T + verts_COM
@@ -418,7 +423,11 @@ class FEMEntity(Entity):
             surface_verts, surface_faces = self._merge_elements(mesh_verts, mesh_faces)
             surface_trimesh = trimesh.Trimesh(vertices=surface_verts, faces=surface_faces, process=False)
             verts, elems = eu.mesh_to_elements(mesh=surface_trimesh, tet_cfg=self.tet_cfg)
-            self.instantiate(*eu.split_all_surface_tets(verts, elems))
+            # ``split_all_surface_tets`` (for hydroelastic contact) was upstream applied
+            # only to file-loaded Mesh morphs, not to Sphere/Box/Cylinder primitives.
+            if isinstance(self._morph, gs.options.morphs.Mesh):
+                verts, elems = eu.split_all_surface_tets(verts, elems)
+            self.instantiate(verts, elems)
 
     def _merge_elements(self, mesh_verts_list, mesh_elems_list):
         """Merge multiple sub-meshes' vertices and elements, deduplicating shared vertices.
@@ -451,7 +460,10 @@ class FEMEntity(Entity):
         rank[sorted_order] = np.arange(len(sorted_order))
         global_remap = rank[remap]
 
-        verts = all_verts[np.sort(unique_idx)].astype(gs.np_float)
+        # Preserve float64 — tetgen output is sensitive to vertex coord precision, and
+        # downcasting to gs.np_float (typically float32) here can change tetgen's mesh
+        # topology vs the upstream path that fed it float64 directly.
+        verts = all_verts[np.sort(unique_idx)]
         elems = global_remap[all_elems].astype(gs.np_int)
 
         # Build per-sub-mesh sim_vert_maps

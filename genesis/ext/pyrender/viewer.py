@@ -1127,6 +1127,8 @@ class Viewer(pyglet.window.Window):
 
                 def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
                     if self.program is None:
+                        if defines and "DOUBLE_SIDED" in defines:
+                            defines = {k: v for k, v in defines.items() if k != "DOUBLE_SIDED"}
                         self.program = ShaderProgram(
                             os.path.join(MODULE_DIR, "shaders/mesh_normal.vert"),
                             os.path.join(MODULE_DIR, "shaders/mesh_normal.frag"),
