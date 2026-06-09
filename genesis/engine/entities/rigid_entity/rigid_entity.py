@@ -128,13 +128,13 @@ class KinematicEntity(Entity):
     def _load_morph(self, morph: Morph):
         """Load a single morph into the entity."""
         if isinstance(morph, gs.morphs.Mesh):
-            self._load_mesh(morph, self._surface)
+            self._load_mesh(morph, self._surface_override)
         elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
-            self._load_scene(morph, self._surface)
+            self._load_scene(morph, self._surface_override)
         elif isinstance(morph, gs.morphs.Primitive):
-            self._load_primitive(morph, self._surface)
+            self._load_primitive(morph, self._surface_override)
         elif isinstance(morph, gs.morphs.Terrain):
-            self._load_terrain(morph, self._surface)
+            self._load_terrain(morph, self._surface_override)
         else:
             gs.raise_exception(f"Unsupported morph: {morph}.")
 
@@ -164,7 +164,7 @@ class KinematicEntity(Entity):
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
                 # Parse variant scene file
                 morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
-                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface)
+                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface_override)
 
                 # Validate that the variant has the same joint structure as the primary
                 if len(v_l_infos) != n_links:
@@ -215,9 +215,9 @@ class KinematicEntity(Entity):
 
             elif isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive)):
                 if isinstance(morph, gs.morphs.Mesh):
-                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                    g_infos = self._load_mesh(morph, self._surface_override, load_geom_only_for_heterogeneous=True)
                 else:
-                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                    g_infos = self._load_primitive(morph, self._surface_override, load_geom_only_for_heterogeneous=True)
                 if morph.fixed != self._morph.fixed:
                     gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
                 cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)

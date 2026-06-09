@@ -257,10 +257,6 @@ def parse_urdf(morph, surface):
                     metadata=metadata,
                 )
 
-                # Material color defined in URDF are not considered as visual overwrite
-                if is_urdf_material:
-                    mesh.metadata["is_visual_overwritten"] = False
-
                 geom_meshes.append(mesh)
 
             for mesh in geom_meshes:

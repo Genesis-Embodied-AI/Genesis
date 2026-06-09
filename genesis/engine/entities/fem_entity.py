@@ -70,7 +70,8 @@ class FEMEntity(Entity):
         self._s_start = s_start  # offset for surface triangles
         self._step_global_added = None
 
-        self._surface.update_texture()
+        self._surface = self.surface_override.model_copy()
+        self._surface.finalize_texture()
 
         self.sample()
 

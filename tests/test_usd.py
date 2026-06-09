@@ -830,8 +830,17 @@ def test_usd_parse_nodegraph(usd_file):
 
     usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
 
-    texture0 = usd_scene.entities[0].vgeoms[0].vmesh.surface.diffuse_texture
-    texture1 = usd_scene.entities[0].vgeoms[1].vmesh.surface.diffuse_texture
+    # Surface lifecycle: entity.surface_override is the user's un-finalized input;
+    # per-geom vmesh/mesh surfaces are finalized by Mesh.__init__.
+    entity = usd_scene.entities[0]
+    assert entity.surface_override._finalized is False
+    for vgeom in entity.vgeoms:
+        assert vgeom.vmesh._surface._finalized is True
+    for geom in entity.geoms:
+        assert geom.mesh._surface._finalized is True
+
+    texture0 = entity.vgeoms[0].vmesh.surface.diffuse_texture
+    texture1 = entity.vgeoms[1].vmesh.surface.diffuse_texture
     assert isinstance(texture0, gs.textures.ColorTexture)
     assert isinstance(texture1, gs.textures.ColorTexture)
     assert_allclose(texture0.color, (0.8, 0.2, 0.2), rtol=USD_COLOR_TOL)

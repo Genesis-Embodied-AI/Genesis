@@ -4837,13 +4837,11 @@ def test_color_overwrite(overwrite, show_viewer):
     if show_viewer:
         scene.build()
     for vgeom in box.vgeoms:
-        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
     for vgeom in chain.vgeoms:
-        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
@@ -4852,7 +4850,6 @@ def test_color_overwrite(overwrite, show_viewer):
         # FIXME: The original material is lost because the visuals are collision geometries that has been duplicated as
         # visual to circumvent the lack of dedicated visuals.
         is_true_visual = vgeom.vmesh.metadata["name"] == "nose"
-        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite or not is_true_visual
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
@@ -4865,7 +4862,6 @@ def test_color_overwrite(overwrite, show_viewer):
         else:
             assert_equal(color, (255, 0, 0, 255) if overwrite else (128, 128, 128, 255))
     for vgeom in axis.vgeoms:
-        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
@@ -4874,7 +4870,6 @@ def test_color_overwrite(overwrite, show_viewer):
         else:
             assert_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
     for vgeom in table.vgeoms:
-        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         if overwrite:
@@ -4882,7 +4877,6 @@ def test_color_overwrite(overwrite, show_viewer):
             assert_equal(color, (255, 0, 0, 255))
     for entity in scene.entities:
         for geom in entity.geoms:
-            assert geom.mesh.metadata["is_visual_overwritten"]
             visual = geom.mesh.trimesh.visual
             assert visual.defined
             color = np.unique(visual.vertex_colors, axis=0)

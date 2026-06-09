@@ -25,28 +25,38 @@ class Mesh(RBC):
 
     Parameters
     ----------
+    mesh : trimesh.Trimesh
+        The underlying triangle mesh. Wrapped (not copied) by this object; subsequent
+        in-place transforms on ``self._mesh`` (scale / axis swap below) mutate it.
     surface : genesis.Surface
-        The mesh's surface object.
-    uvs : np.ndarray
-        The mesh's uv coordinates.
+        The mesh's surface object. Finalized at construction.
+    uvs : np.ndarray, optional
+        Per-vertex UV coordinates, shape ``(n_verts, 2)``. If ``None`` and the surface
+        requires UVs, a warning is emitted.
+    scale : float or np.ndarray, optional
+        Uniform (float) or per-axis (3-vector) scale applied in-place to the mesh
+        after the optional Y-up → Z-up axis swap.
     convexify : bool
-        Whether to convexify the mesh.
+        Whether to convexify the mesh. Default to False.
     decimate : bool
-        Whether to decimate the mesh.
+        Whether to decimate the mesh. Default to False.
     decimate_face_num : int
         The target number of faces after decimation.
     decimate_aggressiveness : int
-        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
-        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters
-        the original geometry if necessary. 8 does what needs to be done at all costs. Default to 0.
-    metadata : dict
-        The metadata of the mesh.
+        How hard the decimation process will try to match the target number of faces, as an integer ranging from 0 to 8.
+        0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the
+        original geometry if necessary. 8 does what needs to be done at all costs. Default to 0.
+    metadata : dict, optional
+        Arbitrary metadata attached to the mesh (e.g. ``mesh_path`` for assets parsed from disk, etc.).
+    is_mesh_zup : bool
+        Whether the input ``mesh`` is in Z-up convention. If False, an Y-up → Z-up transform is applied in-place.
+        Default to True.
     """
 
     def __init__(
         self,
         mesh,
-        surface: Surface | None = None,
+        surface: Surface,
         uvs: "np.typing.NDArray | None" = None,
         scale: "np.typing.NDArray | float | None" = None,
         convexify=False,
@@ -59,22 +69,12 @@ class Mesh(RBC):
         self._uid = gs.UID()
         self._mesh = mesh  # .copy() FIXME: For some reason forcing copy is causing some tests to fails...
         self._surface = surface
-        if uvs is not None:
-            uvs = uvs.astype(gs.np_float, copy=False)
-        self._uvs = uvs
+        self._uvs = uvs.astype(gs.np_float, copy=False) if uvs is not None else None
         self._metadata: dict[str, Any] = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
 
-        # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False
-        self._metadata.setdefault("imported_as_zup", True)
-
-        # By default, all meshes are considered having their original visual
-        self._metadata.setdefault("is_visual_overwritten", False)
-
         if not is_mesh_zup:
-            if self._metadata["imported_as_zup"]:
-                self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
-            self._metadata["imported_as_zup"] = False
+            self._mesh.apply_transform(mu.Y_UP_TRANSFORM.T)
 
         if scale is not None:
             scale = np.atleast_1d(np.asarray(scale))
@@ -97,6 +97,12 @@ class Mesh(RBC):
 
         if decimate:
             self.decimate(decimate_face_num, decimate_aggressiveness)
+
+        has_overwrite_color = self._surface.texture is not None
+        self._surface.finalize_texture()
+        has_vertex_colors = self._metadata.get("has_vertex_colors", False)
+        if has_overwrite_color or not has_vertex_colors:
+            self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self._surface, self._uvs, len(self.verts))
 
     def convexify(self):
         """
@@ -232,7 +238,9 @@ class Mesh(RBC):
         Clear the mesh's visual attributes by resetting the surface to gs.surfaces.Default().
         """
         self._surface = gs.surfaces.Default()
-        self._surface.update_texture()
+        if "has_vertex_colors" in self._metadata:
+            self._metadata.pop("has_vertex_colors")
+        self._mesh.visual = None
 
     def get_unique_edges(self):
         """
@@ -251,13 +259,23 @@ class Mesh(RBC):
     def copy(self):
         """
         Copy the mesh.
+
+        Bypasses ``__init__`` (which finalizes the surface and rebuilds the visual) because the
+        source Mesh is already fully constructed — its surface is finalized and its trimesh
+        visual is built. ``trimesh.Trimesh.copy(include_cache=True)`` carries the visual over,
+        and ``surface.model_copy()`` preserves the ``_finalized`` state. The clone is
+        immediately usable without any re-initialization side-effects.
         """
-        return Mesh(
-            mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
-            surface=self._surface.model_copy(),
-            uvs=self._uvs.copy() if self._uvs is not None else None,
-            metadata=self._metadata.copy(),
+        new_mesh = object.__new__(Mesh)
+        new_mesh._uid = gs.UID()
+        new_mesh._mesh = self._mesh.copy(
+            **(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})
         )
+        new_mesh._surface = self._surface.model_copy()
+        new_mesh._uvs = self._uvs.copy() if self._uvs is not None else None
+        new_mesh._metadata = self._metadata.copy()
+        new_mesh._color = self._color.copy()
+        return new_mesh
 
     @classmethod
     def from_trimesh(
@@ -275,12 +293,7 @@ class Mesh(RBC):
         """
         Create a genesis.Mesh from a trimesh.Trimesh object.
         """
-        if surface is None:
-            surface = gs.surfaces.Default()
-            surface.update_texture()
-        else:
-            surface = surface.model_copy()
-
+        surface = gs.surfaces.Default() if surface is None else surface.model_copy()
         mesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
 
         # Always parse uvs if available because roughness and normal map also need uvs.
@@ -291,75 +304,78 @@ class Mesh(RBC):
             uvs = mesh.visual.uv.copy()
             uvs[:, 1] = 1.0 - uvs[:, 1]
 
-        metadata = metadata or {}
-        must_update_surface = True
+        metadata = dict(metadata) if metadata else {}
         roughness_factor = None
+        metallic_factor = None
         color_image = None
         color_factor = None
-        opacity = 1.0
+        metadata["has_vertex_colors"] = False
 
         visual = mesh.visual
         if isinstance(visual, trimesh.visual.texture.TextureVisuals) and visual.defined:
-            if visual.kind == "texture":
-                material = visual.material
+            material = visual.material
 
-                # TODO: Parsing PBR in obj or not
-                # trimesh from .obj file will never use PBR material, but that from .glb file will
-                if isinstance(material, trimesh.visual.material.PBRMaterial):
-                    if material.baseColorTexture is not None:
-                        color_image = mu.PIL_to_array(material.baseColorTexture)
-                    if material.baseColorFactor is not None:
-                        color_factor = tuple(np.array(material.baseColorFactor, dtype=np.float32) / 255.0)
+            # TODO: Parsing PBR in obj or not
+            # trimesh from .obj file will never use PBR material, but that from .glb file will
+            if isinstance(material, trimesh.visual.material.PBRMaterial):
+                if material.baseColorTexture is not None:
+                    color_image = mu.PIL_to_array(material.baseColorTexture)
+                if material.baseColorFactor is not None:
+                    color_factor = tuple(np.array(material.baseColorFactor, dtype=np.float32) / 255.0)
 
-                    if material.roughnessFactor is not None:
-                        roughness_factor = (material.roughnessFactor,)
+                if material.roughnessFactor is not None:
+                    roughness_factor = (material.roughnessFactor,)
 
-                elif isinstance(material, trimesh.visual.material.SimpleMaterial):
-                    if material.image is not None:
-                        color_image = mu.PIL_to_array(material.image)
-                    elif material.diffuse is not None:
-                        color_factor = tuple(np.array(material.diffuse, dtype=np.float32) / 255.0)
+                if material.metallicFactor is not None:
+                    metallic_factor = (material.metallicFactor,)
 
-                    if material.glossiness is not None:
-                        roughness_factor = (mu.glossiness_to_roughness(material.glossiness),)
+            elif isinstance(material, trimesh.visual.material.SimpleMaterial):
+                if material.image is not None:
+                    color_image = mu.PIL_to_array(material.image)
+                elif material.diffuse is not None:
+                    color_factor = tuple(np.array(material.diffuse, dtype=np.float32) / 255.0)
 
-                    opacity = float(material.kwargs.get("d", [1.0])[0])
-                    if opacity < 1.0:
-                        if color_factor is None:
-                            color_factor = (1.0, 1.0, 1.0, opacity)
-                        else:
-                            color_factor = (*color_factor[:3], color_factor[3] * opacity)
-                else:
-                    gs.raise_exception(f"Unsupported Trimesh material type '{type(material)}'.")
+                if material.glossiness is not None:
+                    roughness_factor = (mu.glossiness_to_roughness(material.glossiness),)
+
+                opacity = float(material.kwargs.get("d", [1.0])[0])
+                if opacity < 1.0:
+                    if color_factor is None:
+                        color_factor = (1.0, 1.0, 1.0, opacity)
+                    else:
+                        color_factor = (*color_factor[:3], color_factor[3] * opacity)
             else:
-                # TODO: support vertex/face colors in luisa
-                color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
-        elif isinstance(surface.texture, gs.textures.ColorTexture):
-            color_factor = surface.texture.color
-        elif (isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined) or (
-            isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0
-        ):
-            # Color is already vertex-based. It is not only necessary to create a new visual.
-            must_update_surface = False
+                gs.raise_exception(f"Unsupported Trimesh material type '{type(material)}'.")
+
         else:
-            # use white color as default
-            color_factor = (1.0, 1.0, 1.0, 1.0)
+            # TODO: support vertex/face colors in luisa
+            if isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined:
+                all_colors = visual.vertex_colors if visual.kind == "vertex" else visual.face_colors
+            elif isinstance(visual, trimesh.visual.color.VertexColor):
+                all_colors = visual.vertex_colors
+            else:
+                all_colors = None
 
-        if must_update_surface:
-            metadata["is_visual_overwritten"] = isinstance(surface.texture, gs.textures.ColorTexture)
+            if all_colors is not None:
+                if (all_colors == all_colors[0]).all():
+                    color_factor = tuple(np.array(all_colors[0], dtype=np.float32) / 255.0)
+                else:
+                    # Color is already vertex-based. It is not only necessary to create a new visual.
+                    metadata["has_vertex_colors"] = True
 
-            color_texture = mu.create_texture(color_image, color_factor, "srgb")
-            opacity_texture = None
-            if color_texture is not None:
-                opacity_texture = color_texture.check_dim(3)
-            roughness_texture = mu.create_texture(None, roughness_factor, "linear")
+        color_texture = mu.create_texture(color_image, color_factor, "srgb")
+        opacity_texture = None
+        if color_texture is not None:
+            opacity_texture = color_texture.check_dim(3)
+        roughness_texture = mu.create_texture(None, roughness_factor, "linear")
+        metallic_texture = mu.create_texture(None, metallic_factor, "linear")
 
-            surface.update_texture(
-                color_texture=color_texture,
-                opacity_texture=opacity_texture,
-                roughness_texture=roughness_texture,
-            )
-            mesh.visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(mesh.vertices))
+        surface.update_texture(
+            color_texture=color_texture,
+            opacity_texture=opacity_texture,
+            roughness_texture=roughness_texture,
+            metallic_texture=metallic_texture,
+        )
 
         return cls(
             mesh=mesh,
@@ -385,14 +401,11 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
 
         metadata = metadata or {}
-        metadata["is_visual_overwritten"] = metadata.get("is_visual_overwritten") or (surface.texture is not None)
-        visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts))
 
         tmesh = trimesh.Trimesh(
             vertices=verts,
             faces=faces,
             vertex_normals=normals,
-            visual=visual,
             process=False,
         )
 
@@ -439,16 +452,24 @@ class Mesh(RBC):
         else:
             gs.raise_exception(f"Morph {morph} not supported by this method.")
 
-        return cls.from_trimesh(tmesh, surface=surface)
+        return [cls.from_trimesh(tmesh, surface=surface)]
 
     def set_color(self, color):
         """
-        Set the mesh's color.
+        Override the mesh's color post-finalize.
+
+        ``Mesh.__init__`` already finalized this surface; ``set_color`` is the
+        deliberate late-stage override path (e.g. RigidEntity's per-collision-piece
+        randomization). Assigns the color/opacity texture fields directly to
+        sidestep the ``update_texture`` lifecycle gate, then rebuilds the trimesh
+        visual.
         """
         self._color = color
         color_texture = gs.textures.ColorTexture(color=tuple(color))
         opacity_texture = color_texture.check_dim(3)
-        self._surface.update_texture(color_texture=color_texture, opacity_texture=opacity_texture, force=True)
+        self._surface.texture = color_texture
+        if "opacity_texture" in self._surface.model_fields and opacity_texture is not None:
+            self._surface.opacity_texture = opacity_texture
         self.update_trimesh_visual()
 
     def update_trimesh_visual(self):
@@ -456,7 +477,6 @@ class Mesh(RBC):
         Update the trimesh obj's visual attributes using its surface and uvs.
         """
         self._mesh.visual = mu.surface_uvs_to_trimesh_visual(self.surface, self.uvs, len(self.verts))
-        self._metadata["is_visual_overwritten"] = True
 
     def apply_transform(self, T):
         """

@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Literal
 from typing_extensions import Self
 
 import numpy as np
-from pydantic import Field, StrictBool, model_validator
+from pydantic import Field, InstanceOf, PrivateAttr, StrictBool, model_validator
 
 import genesis as gs
 from genesis.typing import FArrayType, UnitInterval, ValidFloat
@@ -89,6 +89,10 @@ class Surface(Options):
 
     _color_target: ClassVar[str] = "diffuse_texture"
 
+    # Set True by `finalize_texture()`. Consumers that need fully-populated defaults (e.g.
+    # `surface_uvs_to_trimesh_visual`) should assert this is True before reading texture fields.
+    _finalized: StrictBool = PrivateAttr(default=False)
+
     # Shortcut fields — resolved to texture fields by _resolve_shortcuts, excluded from serialization.
     color: FArrayType | None = Field(default=None, exclude=True, repr=False)
     opacity: UnitInterval | None = Field(default=None, exclude=True, repr=False)
@@ -97,7 +101,10 @@ class Surface(Options):
     emissive: FArrayType | None = Field(default=None, exclude=True, repr=False)
 
     ior: float | None = None
+    default_ior: float = 1.0
     default_roughness: UnitInterval = 1.0
+    default_color: FArrayType = (1.0, 1.0, 1.0)
+    default_opacity: UnitInterval = 1.0
     vis_mode: Literal["visual", "collision", "particle", "sdf", "recon"] | None = None
     smooth: StrictBool = True
     double_sided: StrictBool | None = None
@@ -131,12 +138,6 @@ class Surface(Options):
                 gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
             data[texture_field] = ColorTexture(color=value)
 
-        # Mirror the roughness shortcut into default_roughness unless the user passed an explicit value.
-        if "default_roughness" not in data and "roughness" in cls.model_fields:
-            roughness = data.get("roughness", cls.model_fields["roughness"].default)
-            if roughness is not None:
-                data["default_roughness"] = float(roughness)
-
         return data
 
     @property
@@ -149,14 +150,38 @@ class Surface(Options):
 
     @property
     def emissive_tex(self) -> Texture | None:
-        return None
+        raise NotImplementedError
+
+    @property
+    def opacity_tex(self) -> Texture | None:
+        raise NotImplementedError
+
+    @property
+    def roughness_tex(self) -> Texture | None:
+        raise NotImplementedError
+
+    @property
+    def metallic_tex(self) -> Texture | None:
+        raise NotImplementedError
 
     @property
     def requires_uv(self) -> bool:
         return False
 
+    @model_validator(mode="after")
+    def _post_init(self) -> Self:
+        if len(self.default_color) > 3:
+            self.default_opacity = self.default_color[3]
+            self.default_color = self.default_color[:3]
+        return self
+
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        return _make_rgba(self.texture, None, batch)
+        return self._make_rgba(
+            self.emissive_tex if self.emissive_tex is not None else self.texture, self.opacity_tex, batch
+        )
+
+    def get_arm(self, batch: bool = False) -> BatchTexture | Texture:
+        return self._make_arm(self.roughness_tex, self.metallic_tex, batch)
 
     def update_texture(
         self,
@@ -164,44 +189,45 @@ class Surface(Options):
         color_texture: Texture | None = None,
         ior: float | None = None,
         double_sided: bool | None = None,
-        force: bool = False,
         **kwargs,
     ) -> None:
         """
-        Update the surface textures using given attributes.
+        Layer texture fields onto the surface: fill `None` fields ONLY from explicit values.
 
-        If the surface already contains corresponding textures, the existing ones have higher priority and won't be
-        overridden. Force overriding can be enabled by setting force=True.
+        Existing (already-set) fields are preserved. Fields with no provided value remain `None` so further
+        `update_texture` calls (e.g. asset material after user surface) can still fill them. Defaults are NOT
+        populated here — call `finalize_texture()` once when layering is complete.
+
+        Raises if the surface has already been finalized — layering after finalize is a programming error.
         """
-        # update primary texture
-        if self.texture is None or force:
-            if color_texture is not None:
-                self.texture = color_texture
-            elif not force:
-                self.texture = ColorTexture()
+        if self._finalized:
+            gs.raise_exception(
+                f"Cannot `update_texture` on a finalized {type(self).__name__}. "
+                "All layering must happen before `finalize_texture()`."
+            )
 
-        # update ior
-        if self.ior is None or force:
-            if ior is not None:
-                self.ior = ior
-            elif not force:
-                self.ior = 1.5
+        self.texture = self._default_if_none(self.texture, color_texture)
+        self.ior = self._default_if_none(self.ior, ior)
+        self.double_sided = self._default_if_none(self.double_sided, double_sided)
 
-        # update double sided
-        if self.double_sided is None or force:
-            if double_sided is not None:
-                self.double_sided = double_sided
+    def finalize_texture(self) -> None:
+        """
+        Populate any still-unset texture fields with class defaults and mark the surface finalized.
+
+        Call once when the surface is committed and no further layering will happen. Sets `_finalized = True`
+        so downstream consumers (e.g. `surface_uvs_to_trimesh_visual`) can guard against unfinalized surfaces.
+        Idempotent.
+        """
+        if self._finalized:
+            gs.raise_exception(f"Cannot `finalize_texture` on a finalized {type(self).__name__}. ")
+        self._finalized = True
+        self.texture = self._default_if_none(self.texture, ColorTexture(color=self.default_color))
+        self.ior = self._default_if_none(self.ior, self.default_ior)
+        self.roughness = self._default_if_none(self.roughness, self.default_roughness)
 
     @staticmethod
-    def _update_field(
-        current: Texture | None, new: Texture | None, default: Texture | None, force: bool
-    ) -> Texture | None:
-        if current is None or force:
-            if new is not None:
-                return new
-            elif not force and default is not None:
-                return default
-        return current
+    def _default_if_none(current, default):
+        return default if current is None else current
 
     @staticmethod
     def _extract_opacity_from(
@@ -217,73 +243,149 @@ class Surface(Options):
                 opacity = tex
         return opacity
 
+    @staticmethod
+    def _ref_shape(component_dict: dict) -> "tuple[int, int] | None":
+        """
+        Return the common 2D `(h, w)` shape of all `ImageTexture` inputs, or `None` if none are images.
 
-@functools.lru_cache(maxsize=128)
-def _make_rgba(color_texture: Texture | None, opacity_texture: Texture | None, batch: bool) -> "BatchTexture | Texture":
-    # Resolve a surface's color and opacity textures into a single RGBA texture. The result is memoized on the input
-    # texture instances: surfaces sharing the same textures (e.g. all textured submeshes of a GLB) then reuse a single
-    # merged array instead of allocating one full-resolution copy each. A texture update swaps in a new instance, which
-    # is a natural cache miss, so no explicit invalidation is needed.
-    all_textures = []
-    for texture in (color_texture, opacity_texture):
-        textures = texture.textures if isinstance(texture, BatchTexture) else [texture]
-        all_textures.append(textures if batch else textures[:1])
-    color_textures, opacity_textures = all_textures
+        Warns when shapes mismatch and returns the first image's shape; callers should re-check each
+        ImageTexture against the returned shape and treat mismatched ones as scalar fallback.
+        """
+        shape: tuple[int, int] | None = None
+        for name, component in component_dict.items():
+            if component[1]:  # has image
+                cur_shape = component[0].image_array.shape[:2]
+                if shape is None:
+                    shape = cur_shape
+                elif cur_shape != shape:
+                    gs.logger.warning(
+                        f"Texture `{name}` shapes do not match: {shape} vs {cur_shape}. "
+                        "It will fall back to scalar value."
+                    )
+                    component[1] = False
+        return shape
 
-    rgba_textures = []
-    num_colors = len(color_textures)
-    num_opacities = len(opacity_textures)
-    num_rgba = num_colors * num_opacities // math.gcd(num_colors, num_opacities)
+    @staticmethod
+    @functools.lru_cache(maxsize=128)
+    def _combine_textures(input_specs, batch: bool) -> "BatchTexture | Texture":
+        """
+        Pack channel-grouped components into a single output Texture.
 
-    for i in range(num_rgba):
-        color_texture = color_textures[i % num_colors]
-        opacity_texture = opacity_textures[i % num_opacities]
+        ``input_specs`` is a tuple of ``(name, texture, default_scale, default_fill)`` tuples; each
+        tuple contributes its channels to the output in order. Used by both `_make_rgba` (color RGB
+        + opacity A) and `_make_arm` (AO + roughness + metallic).
 
-        if isinstance(color_texture, ColorTexture):
-            if isinstance(opacity_texture, ColorTexture):
-                rgba_texture = ColorTexture(color=(*color_texture.color, *opacity_texture.color))
-            elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                rgb_color = mu.color_f32_to_u8(color_texture.color)
-                rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
-                rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
-                rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
-                rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
-            else:
-                rgba_texture = ColorTexture(color=(*color_texture.color, 1.0))
+        Memoized on the input texture instances so surfaces sharing the same textures (e.g. all
+        textured submeshes of a GLB) reuse one merged array instead of allocating one per surface.
+        Callers must pass ``input_specs`` as a tuple (not a list) so the cache key is hashable.
 
-        elif isinstance(color_texture, ImageTexture) and color_texture.image_array is not None:
-            if isinstance(opacity_texture, ColorTexture):
-                a_color = mu.color_f32_to_u8(opacity_texture.color)
-                a_array = np.full((*color_texture.image_array.shape[:2],), a_color, dtype=np.uint8)
-                rgba_array = np.dstack((color_texture.image_array, a_array))
-                rgba_scale = (*color_texture.image_color, 1.0)
-            elif (
-                isinstance(opacity_texture, ImageTexture)
-                and opacity_texture.image_array is not None
-                and opacity_texture.image_array.shape[:2] == color_texture.image_array.shape[:2]
-            ):
-                rgba_array = np.dstack((color_texture.image_array, opacity_texture.image_array))
-                rgba_scale = (*color_texture.image_color, *opacity_texture.image_color)
-            else:
-                if isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                    gs.logger.warning("Color and opacity image shapes do not match. Fall back to fully opaque texture.")
-                a_array = np.full(color_texture.image_array.shape[:2], 255, dtype=np.uint8)
-                rgba_array = np.dstack((color_texture.image_array, a_array))
-                rgba_scale = (*color_texture.image_color, 1.0)
-            rgba_texture = ImageTexture(image_array=rgba_array, image_color=rgba_scale)
+        - All-scalar inputs → `ColorTexture` with concatenated channel values.
+        - Any input is an `ImageTexture` → `ImageTexture` whose channels are dstacked; for scalar
+          inputs, the image array is filled with `default_fill` (uint8) and the actual value is
+          carried in the per-channel `image_color` scale.
+        """
+        # Expand each BatchTexture into a list of per-frame Textures; pin to length 1 in non-batch mode.
+        expanded = [
+            (
+                name,
+                (t.textures if isinstance(t, BatchTexture) else [t])[: None if batch else 1],
+                default_scale,
+                default_fill,
+            )
+            for name, t, default_scale, default_fill in input_specs
+        ]
 
-        else:
-            rgba_texture = ColorTexture(color=(1.0, 1.0, 1.0, 1.0))
+        num_iter = math.lcm(*(len(textures) for _, textures, _, _ in expanded)) if batch else 1
 
-        rgba_textures.append(rgba_texture)
+        results = []
+        for i in range(num_iter):
+            # Build the per-iteration component_dict that `_ref_shape` and the packing logic share.
+            component_dict = {
+                name: [
+                    textures[i % len(textures)],
+                    textures[i % len(textures)] is not None and textures[i % len(textures)].has_image,
+                    default_scale,
+                    default_fill,
+                ]
+                for name, textures, default_scale, default_fill in expanded
+            }
+            ref_shape = Surface._ref_shape(component_dict)
 
-    return BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
+            # Per-channel provenance: True iff the user supplied an explicit input for this
+            # component. Stamped on every result texture so downstream consumers (e.g. the Nyx
+            # exporter's matOverride clearing path) can tell "user override" from "default fill".
+            explicit = {name: (c[0] is not None) for name, c in component_dict.items()}
+
+            # All-scalar: pack ColorTexture.color or default into one ColorTexture.
+            if ref_shape is None:
+                packed = sum(
+                    (c[0].color if isinstance(c[0], ColorTexture) else c[2] for c in component_dict.values()),
+                    start=(),
+                )
+                results.append(ColorTexture(color=packed, explicit_channels=explicit))
+                continue
+
+            scale = sum(
+                (
+                    tuple(c[0].image_color[: len(c[2])])
+                    if c[1]
+                    else tuple(c[0].color[: len(c[2])])
+                    if isinstance(c[0], ColorTexture)
+                    else c[2]
+                    for c in component_dict.values()
+                ),
+                start=(),
+            )
+            array = np.dstack(
+                tuple(
+                    (c[0].image_array[:, :, : len(c[2])] if c[0].image_array.ndim == 3 else c[0].image_array)
+                    if c[1]
+                    else np.tile(np.asarray(c[3], dtype=np.uint8), (*ref_shape, 1))
+                    for c in component_dict.values()
+                )
+            )
+            results.append(ImageTexture(image_array=array, image_color=scale, explicit_channels=explicit))
+
+        return BatchTexture(textures=results) if batch else results[0]
+
+    @staticmethod
+    def _make_rgba(
+        color_texture: Texture | None, opacity_texture: Texture | None, batch: bool
+    ) -> BatchTexture | Texture:
+        return Surface._combine_textures(
+            (
+                ("color", color_texture, (1.0, 1.0, 1.0), (255, 255, 255)),
+                ("opacity", opacity_texture, (1.0,), (255,)),
+            ),
+            batch,
+        )
+
+    @staticmethod
+    def _make_arm(
+        roughness_texture: Texture | None, metallic_texture: Texture | None, batch: bool
+    ) -> BatchTexture | Texture:
+        """
+        Pack (AO=1.0, roughness, metallic) into a single 3-channel ARM texture.
+
+        Matches Nyx's ARM convention (R=AO, G=roughness, B=metallic) and glTF's
+        metallicRoughnessTexture layout. AO is always 1.0 (Genesis has no AO field).
+        """
+        return Surface._combine_textures(
+            (
+                ("ao", None, (1.0,), (255,)),
+                ("roughness", roughness_texture, (1.0,), (255,)),
+                ("metallic", metallic_texture, (0.0,), (255,)),
+            ),
+            batch,
+        )
 
 
 def clear_rgba_cache() -> None:
-    # Drop the memoized RGBA textures, releasing the strong references their large image arrays would otherwise keep
-    # alive. Called on genesis destroy so textures from gone scenes do not stay resident.
-    _make_rgba.cache_clear()
+    """Clear the memoization cache used by ``Surface._combine_textures``.
+
+    Mirrors upstream's ``_make_rgba.cache_clear()`` entry point invoked by ``genesis.destroy()``.
+    """
+    Surface._combine_textures.cache_clear()
 
 
 ############################ Surface types ############################
@@ -327,7 +429,6 @@ class Glass(Surface):
 
     subsurface: StrictBool = False
     specular_texture: Texture | None = None
-    diffuse_texture: Texture | None = None
     transmission_texture: Texture | None = None
     thickness_texture: Texture | None = None
     roughness_texture: Texture | None = None
@@ -336,6 +437,7 @@ class Glass(Surface):
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
+        super()._post_init()
         # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
         if self.specular_texture is not None:
             self.specular_texture.check_dim(3)
@@ -359,12 +461,23 @@ class Glass(Surface):
         return self.emissive_texture
 
     @property
+    def opacity_tex(self) -> Texture | None:
+        return None  # Glass has no opacity_texture field
+
+    @property
+    def roughness_tex(self) -> Texture | None:
+        return self.roughness_texture
+
+    @property
+    def metallic_tex(self) -> Texture | None:
+        return None  # Glass isn't metallic
+
+    @property
     def requires_uv(self) -> bool:
         return any(
             t is not None and t.requires_uv
             for t in (
                 self.specular_texture,
-                self.diffuse_texture,
                 self.transmission_texture,
                 self.thickness_texture,
                 self.roughness_texture,
@@ -373,25 +486,25 @@ class Glass(Surface):
             )
         )
 
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.specular_texture
-        return _make_rgba(color, None, batch)
-
     def update_texture(
         self,
         *,
         roughness_texture: Texture | None = None,
         normal_texture: Texture | None = None,
         emissive_texture: Texture | None = None,
-        force: bool = False,
         **kwargs,
     ) -> None:
-        super().update_texture(force=force, **kwargs)
-        self.roughness_texture = self._update_field(
-            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
+        self._extract_opacity_from(kwargs.get("color_texture"), emissive_texture, None)
+        super().update_texture(**kwargs)
+        self.roughness_texture = self._default_if_none(self.roughness_texture, roughness_texture)
+        self.normal_texture = self._default_if_none(self.normal_texture, normal_texture)
+        self.emissive_texture = self._default_if_none(self.emissive_texture, emissive_texture)
+
+    def finalize_texture(self) -> None:
+        super().finalize_texture()
+        self.roughness_texture = self._default_if_none(
+            self.roughness_texture, ColorTexture(color=(self.default_roughness,))
         )
-        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
-        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class Metal(Surface):
@@ -418,6 +531,7 @@ class Metal(Surface):
     """
 
     roughness: UnitInterval | None = Field(default=0.1, exclude=True, repr=False)
+    metallic: UnitInterval | None = Field(default=1.0, exclude=True, repr=False)
 
     metal_type: MetalType = "iron"
     diffuse_texture: Texture | None = None
@@ -425,6 +539,16 @@ class Metal(Surface):
     roughness_texture: Texture | None = None
     normal_texture: Texture | None = None
     emissive_texture: Texture | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_shortcuts(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "default_color" not in data:
+            metal_type = data.get("metal_type") or cls.model_fields["metal_type"].default
+            if metal_type in METAL_COLOR:
+                data["default_color"] = METAL_COLOR[metal_type]
+
+        return super()._resolve_shortcuts(data)
 
     @property
     def texture(self) -> Texture | None:
@@ -439,6 +563,19 @@ class Metal(Surface):
         return self.emissive_texture
 
     @property
+    def opacity_tex(self) -> Texture | None:
+        return self.opacity_texture
+
+    @property
+    def roughness_tex(self) -> Texture | None:
+        return self.roughness_texture
+
+    @property
+    def metallic_tex(self) -> Texture | None:
+        # Metal stores metallic as a scalar field; wrap as ColorTexture for the ARM channel.
+        return ColorTexture(color=(self.metallic,))
+
+    @property
     def requires_uv(self) -> bool:
         return any(
             t is not None and t.requires_uv
@@ -451,12 +588,9 @@ class Metal(Surface):
             )
         )
 
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return _make_rgba(color, self.opacity_texture, batch)
-
     @model_validator(mode="after")
     def _post_init(self) -> Self:
+        super()._post_init()
         self.opacity_texture = self._extract_opacity_from(
             self.diffuse_texture, self.emissive_texture, self.opacity_texture
         )
@@ -469,18 +603,25 @@ class Metal(Surface):
         roughness_texture: Texture | None = None,
         normal_texture: Texture | None = None,
         emissive_texture: Texture | None = None,
-        force: bool = False,
         **kwargs,
     ) -> None:
-        super().update_texture(force=force, **kwargs)
-        self.opacity_texture = self._update_field(
-            self.opacity_texture, opacity_texture, ColorTexture(color=(1.0,)), force
+        # Pre-truncate incoming RGBA color/emissive into RGB + a candidate opacity,
+        # so the invariant holds before `_default_if_none` runs and so an explicit
+        # `opacity_texture=` still wins (first-writer-wins). Parent's diffuse arrives
+        # as `color_texture` in kwargs.
+        opacity_texture = self._extract_opacity_from(kwargs.get("color_texture"), emissive_texture, opacity_texture)
+        super().update_texture(**kwargs)
+        self.opacity_texture = self._default_if_none(self.opacity_texture, opacity_texture)
+        self.roughness_texture = self._default_if_none(self.roughness_texture, roughness_texture)
+        self.normal_texture = self._default_if_none(self.normal_texture, normal_texture)
+        self.emissive_texture = self._default_if_none(self.emissive_texture, emissive_texture)
+
+    def finalize_texture(self) -> None:
+        super().finalize_texture()
+        self.opacity_texture = self._default_if_none(self.opacity_texture, ColorTexture(color=(self.default_opacity,)))
+        self.roughness_texture = self._default_if_none(
+            self.roughness_texture, ColorTexture(color=(self.default_roughness,))
         )
-        self.roughness_texture = self._update_field(
-            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
-        )
-        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
-        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class Plastic(Surface):
@@ -529,6 +670,18 @@ class Plastic(Surface):
         return self.emissive_texture
 
     @property
+    def opacity_tex(self) -> Texture | None:
+        return self.opacity_texture
+
+    @property
+    def roughness_tex(self) -> Texture | None:
+        return self.roughness_texture
+
+    @property
+    def metallic_tex(self) -> Texture | None:
+        return None  # Plastic isn't metallic
+
+    @property
     def requires_uv(self) -> bool:
         return any(
             t is not None and t.requires_uv
@@ -542,12 +695,9 @@ class Plastic(Surface):
             )
         )
 
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return _make_rgba(color, self.opacity_texture, batch)
-
     @model_validator(mode="after")
     def _post_init(self) -> Self:
+        super()._post_init()
         self.opacity_texture = self._extract_opacity_from(
             self.diffuse_texture, self.emissive_texture, self.opacity_texture
         )
@@ -560,18 +710,21 @@ class Plastic(Surface):
         roughness_texture: Texture | None = None,
         normal_texture: Texture | None = None,
         emissive_texture: Texture | None = None,
-        force: bool = False,
         **kwargs,
     ) -> None:
-        super().update_texture(force=force, **kwargs)
-        self.opacity_texture = self._update_field(
-            self.opacity_texture, opacity_texture, ColorTexture(color=(1.0,)), force
+        opacity_texture = self._extract_opacity_from(kwargs.get("color_texture"), emissive_texture, opacity_texture)
+        super().update_texture(**kwargs)
+        self.opacity_texture = self._default_if_none(self.opacity_texture, opacity_texture)
+        self.roughness_texture = self._default_if_none(self.roughness_texture, roughness_texture)
+        self.normal_texture = self._default_if_none(self.normal_texture, normal_texture)
+        self.emissive_texture = self._default_if_none(self.emissive_texture, emissive_texture)
+
+    def finalize_texture(self) -> None:
+        super().finalize_texture()
+        self.opacity_texture = self._default_if_none(self.opacity_texture, ColorTexture(color=(self.default_opacity,)))
+        self.roughness_texture = self._default_if_none(
+            self.roughness_texture, ColorTexture(color=(self.default_roughness,))
         )
-        self.roughness_texture = self._update_field(
-            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
-        )
-        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
-        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class BSDF(Surface):
@@ -582,8 +735,12 @@ class BSDF(Surface):
     ----------
     color : tuple | None, optional
         Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
-    ior : float, optional
-        Index of Refraction. Defaults to 1.0.
+    ior : float | None, optional
+        Index of Refraction. Defaults to ``None`` so the GLB-baked value
+        (``KHR_materials_ior``) — or, if absent, the class-level
+        ``default_ior`` (1.5) — fills it in via ``update_texture``. Set
+        explicitly to lock the surface to a fixed IOR (assets cannot then
+        override).
     specular_trans : float, optional
         Specular transmission. Defaults to 0.0.
     diffuse_trans : float, optional
@@ -602,7 +759,7 @@ class BSDF(Surface):
         Emissive texture of the surface.
     """
 
-    ior: float | None = 1.0
+    ior: float | None = None
 
     diffuse_texture: Texture | None = None
     opacity_texture: Texture | None = None
@@ -626,6 +783,18 @@ class BSDF(Surface):
         return self.emissive_texture
 
     @property
+    def opacity_tex(self) -> Texture | None:
+        return self.opacity_texture
+
+    @property
+    def roughness_tex(self) -> Texture | None:
+        return self.roughness_texture
+
+    @property
+    def metallic_tex(self) -> Texture | None:
+        return self.metallic_texture
+
+    @property
     def requires_uv(self) -> bool:
         return any(
             t is not None and t.requires_uv
@@ -639,12 +808,9 @@ class BSDF(Surface):
             )
         )
 
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
-        return _make_rgba(color, self.opacity_texture, batch)
-
     @model_validator(mode="after")
     def _post_init(self) -> Self:
+        super()._post_init()
         self.opacity_texture = self._extract_opacity_from(
             self.diffuse_texture, self.emissive_texture, self.opacity_texture
         )
@@ -658,19 +824,22 @@ class BSDF(Surface):
         metallic_texture: Texture | None = None,
         normal_texture: Texture | None = None,
         emissive_texture: Texture | None = None,
-        force: bool = False,
         **kwargs,
     ) -> None:
-        super().update_texture(force=force, **kwargs)
-        self.opacity_texture = self._update_field(
-            self.opacity_texture, opacity_texture, ColorTexture(color=(1.0,)), force
+        opacity_texture = self._extract_opacity_from(kwargs.get("color_texture"), emissive_texture, opacity_texture)
+        super().update_texture(**kwargs)
+        self.opacity_texture = self._default_if_none(self.opacity_texture, opacity_texture)
+        self.roughness_texture = self._default_if_none(self.roughness_texture, roughness_texture)
+        self.metallic_texture = self._default_if_none(self.metallic_texture, metallic_texture)
+        self.normal_texture = self._default_if_none(self.normal_texture, normal_texture)
+        self.emissive_texture = self._default_if_none(self.emissive_texture, emissive_texture)
+
+    def finalize_texture(self) -> None:
+        super().finalize_texture()
+        self.opacity_texture = self._default_if_none(self.opacity_texture, ColorTexture(color=(self.default_opacity,)))
+        self.roughness_texture = self._default_if_none(
+            self.roughness_texture, ColorTexture(color=(self.default_roughness,))
         )
-        self.roughness_texture = self._update_field(
-            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
-        )
-        self.metallic_texture = self._update_field(self.metallic_texture, metallic_texture, None, force)
-        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
-        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class Emission(Surface):
@@ -705,21 +874,34 @@ class Emission(Surface):
         return self.emissive_texture
 
     @property
+    def opacity_tex(self) -> Texture | None:
+        return None  # Emission has no opacity_texture field
+
+    @property
+    def roughness_tex(self) -> Texture | None:
+        return None  # Emission has no roughness_texture field
+
+    @property
+    def metallic_tex(self) -> Texture | None:
+        return None  # Emission isn't metallic
+
+    @property
     def requires_uv(self) -> bool:
         return self.emissive_texture is not None and self.emissive_texture.requires_uv
 
-    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        return _make_rgba(self.emissive_texture, None, batch)
-
     @model_validator(mode="after")
     def _post_init(self) -> Self:
+        super()._post_init()
         if self.emissive_texture is not None:
             self.emissive_texture.check_dim(3)
         return self
 
-    def update_texture(self, *, emissive_texture: Texture | None = None, force: bool = False, **kwargs) -> None:
-        super().update_texture(force=force, **kwargs)
-        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
+    def update_texture(self, *, emissive_texture: Texture | None = None, **kwargs) -> None:
+        # Pre-truncate incoming RGBA color/emissive to RGB; Emission has no
+        # `opacity_texture` field, so the extracted alpha is discarded.
+        self._extract_opacity_from(kwargs.get("color_texture"), emissive_texture, None)
+        super().update_texture(**kwargs)
+        self.emissive_texture = self._default_if_none(self.emissive_texture, emissive_texture)
 
 
 ############################ Handy shortcuts ############################
@@ -760,7 +942,11 @@ class Reflective(Plastic):
 
 class Collision(Plastic):
     """
-    Default surface type for collision geometry with a grey color by default.
+    Default surface type for collision geometry.
+
+    Each instance gets a freshly randomized color at construction (when the user does
+    not supply an explicit ``color=`` kwarg), making convex-decomposition pieces
+    visually distinguishable. Pass ``color=...`` to override.
     """
 
     color: FArrayType | None = Field(default=(0.5, 0.5, 0.5), exclude=True, repr=False)
@@ -780,8 +966,6 @@ class Iron(Metal):
     """
     Shortcut for a metallic surface with `metal_type = 'iron'`.
     """
-
-    pass
 
 
 class Aluminium(Metal):
@@ -806,3 +990,35 @@ class Gold(Metal):
     """
 
     metal_type: MetalType = "gold"
+
+
+class Brass(Metal):
+    """
+    Shortcut for a metallic surface with `metal_type = 'brass'`.
+    """
+
+    metal_type: MetalType = "brass"
+
+
+class Titanium(Metal):
+    """
+    Shortcut for a metallic surface with `metal_type = 'titanium'`.
+    """
+
+    metal_type: MetalType = "titanium"
+
+
+class Vanadium(Metal):
+    """
+    Shortcut for a metallic surface with `metal_type = 'vanadium'`.
+    """
+
+    metal_type: MetalType = "vanadium"
+
+
+class Lithium(Metal):
+    """
+    Shortcut for a metallic surface with `metal_type = 'lithium'`.
+    """
+
+    metal_type: MetalType = "lithium"
