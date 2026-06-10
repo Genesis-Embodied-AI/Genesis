@@ -261,14 +261,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
 
     Genesis Coupling Options
     ------------------------
-    constraint_strength_translation : float, optional
-        Translation strength for IPC soft transform constraint coupling.
-        Higher values create stiffer position coupling between Genesis rigid bodies and IPC ABD objects.
-        Defaults to 100.0.
-    constraint_strength_rotation : float, optional
-        Rotation strength for IPC soft transform constraint coupling.
-        Higher values create stiffer orientation coupling between Genesis rigid bodies and IPC ABD objects.
-        Defaults to 100.0.
     enable_rigid_ground_contact : bool, optional
         Whether to enable ground contact in IPC system. When False, objects in IPC will not collide
         with the ground plane. Defaults to True.
@@ -276,19 +268,16 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Whether to enable contact detection between rigid bodies (ABD objects) in the IPC system.
         When False, only soft-soft and soft-rigid collisions are detected by IPC; rigid-rigid
         collisions within IPC are skipped. Defaults to True.
-    two_way_coupling : bool, optional
-        Whether to apply coupling forces/torques from IPC back to Genesis rigid bodies. Defaults to True.
-    enable_rigid_dofs_sync : bool, optional
-        Whether to synchronize the IPC reference DOF state with Genesis each step for
-        external_articulation entities. When True, IPC gets tighter coupling with Genesis joint
-        state but may amplify small divergences. When False, IPC uses its own DOF reference
-        without per-step updates. Defaults to False.
-    free_base_driven_by_ipc : bool, optional
-        For external_articulation with non-fixed base: whether base link is fully driven by IPC physics.
-        When False, base link uses SoftTransformConstraint controlled by Genesis. When True, base link
-        is fully driven by IPC physics. Defaults to False.
-    _show_ipc_gui : bool, optional
-        [Dev/debug] Enable the libuipc built-in polyscope GUI viewer for inspecting the IPC scene.
+    restitution : float, optional
+        Coefficient of restitution for IPC contact (0 = perfectly inelastic, 1 = perfectly elastic).
+        IPC natively computes inelastic contact (e=0). This parameter adds a post-solve velocity
+        correction: v_final = v_inelastic + e * (q_solved - q_pred) / dt, where q_pred is the
+        predicted position before IPC and q_solved is IPC's contact-resolved position.
+        Defaults to 0.0.
+    ignore_end_effector_check : bool, optional
+        Advanced override for two-way soft coupling on articulated robots. When True, IPC coupler
+        skips both the explicit `coup_links` requirement and the end-effector-only validation.
+        This can produce non-physical behavior and should be used only for debugging/experiments.
         Defaults to False.
     """
 
@@ -328,19 +317,30 @@ class IPCCouplerOptions(BaseCouplerOptions):
     sanity_check_enable: StrictBool | None = None
 
     # Genesis coupling options
-    constraint_strength_translation: PositiveFloat = 100.0
-    constraint_strength_rotation: PositiveFloat = 100.0
-    enable_rigid_ground_contact: StrictBool = True
-    enable_rigid_rigid_contact: StrictBool = True
-    two_way_coupling: StrictBool = True
-    enable_rigid_dofs_sync: StrictBool = False
-    free_base_driven_by_ipc: StrictBool = False
+    enable_rigid_ground_contact: bool = True
+    enable_rigid_rigid_contact: bool = True
+    restitution: float = 1.0
+    ignore_end_effector_check: bool = False
 
-    _show_ipc_gui: bool = PrivateAttr(default=False)
+    # Internal export options
+    _export_ipc_surface: bool = False
+    _export_pre_coupling_surface: bool = False
+    _export_post_coupling_surface: bool = False
+    _export_surface_dir: str | None = None
 
-    def __init__(self, *, _show_ipc_gui: StrictBool = False, **data) -> None:
+    def __init__(self, **data):
+        # Private keys are not part of pydantic model_fields (leading underscore), so parse manually.
+        export_ipc_surface = data.pop("_export_ipc_surface", False)
+        export_pre_coupling_surface = data.pop("_export_pre_coupling_surface", False)
+        export_post_coupling_surface = data.pop("_export_post_coupling_surface", False)
+        export_surface_dir = data.pop("_export_surface_dir", None)
+
         super().__init__(**data)
-        self._show_ipc_gui = bool(_show_ipc_gui)
+
+        self._export_ipc_surface = bool(export_ipc_surface)
+        self._export_pre_coupling_surface = bool(export_pre_coupling_surface)
+        self._export_post_coupling_surface = bool(export_post_coupling_surface)
+        self._export_surface_dir = None if export_surface_dir is None else str(export_surface_dir)
 
 
 ############################ Solvers inside simulator ############################

@@ -68,7 +68,7 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     from .utils import (
         build_ipc_scene_config,
         compute_link_to_link_transform,
-        find_abd_merge_target,
+        find_target_link_for_fixed_merge,
         read_ipc_geometry_metadata,
     )
 
@@ -791,7 +791,7 @@ class IPCCoupler(RBC):
             entity = link.entity
             if self._coup_type_by_entity.get(entity) != COUPLING_TYPE.EXTERNAL_ARTICULATION:
                 continue
-            target = find_abd_merge_target(link)
+            target = find_target_link_for_fixed_merge(link)
             if target is not link:
                 abd_merge_target[link] = target
                 abd_merge_children.setdefault(target, []).append(link)

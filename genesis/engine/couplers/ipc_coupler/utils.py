@@ -13,32 +13,34 @@ import genesis.utils.geom as gu
 from uipc.core import Scene
 
 
-def find_abd_merge_target(link):
-    """Find the ABD merge target for a fixed-joint link.
+def find_target_link_for_fixed_merge(link):
+    """
+    Find the target link for merging fixed joints.
 
-    Walks up the kinematic tree through FIXED joints until finding a link
-    that has a non-FIXED joint (or the root). Returns that ancestor link.
-    Used by external_articulation coupling so fixed-joint child bodies are
-    folded into their parent ABD body instead of floating freely.
+    Walks up the kinematic tree, skipping links connected via FIXED joints, until finding a link with a non-FIXED joint
+    or the root.
 
-    Parameters
-    ----------
-    link : RigidLink
-        The link to find a merge target for.
+    This is similar to _merge_target_id in mjcf.py.
 
     Returns
     -------
-    RigidLink
-        The ancestor link to merge into. Returns ``link`` itself if it
-        already has a non-FIXED joint or is the root.
+    int
+        The target link index to merge into
     """
     entity = link.entity
+
     while True:
+        # If this is the root link (no parent), stop
         if link.parent_idx < 0:
             break
+
+        # Stop if the link has any non-fixed joint (non-fixed joints define separate bodies)
         if any(joint.type != gs.JOINT_TYPE.FIXED for joint in link.joints):
             break
+
+        # All joints are FIXED, move up to parent
         link = entity.links[link.parent_idx - entity.link_start]
+
     return link
 
 
@@ -121,19 +123,14 @@ def build_ipc_scene_config(options, simulator):
     _set_if_not_none(config, ["contact", "eps_velocity"], options.contact_eps_velocity)
     _set_if_not_none(config, ["contact", "constitution"], options.contact_constitution)
 
-    # AL-IPC options (only effective when contact_constitution='al-ipc')
-    _set_if_not_none(config, ["contact", "al-ipc", "mu_scale_fem"], options.al_ipc_mu_scale_fem)
-    _set_if_not_none(config, ["contact", "al-ipc", "mu_scale_abd"], options.al_ipc_mu_scale_abd)
-    _set_if_not_none(config, ["contact", "al-ipc", "toi_threshold"], options.al_ipc_toi_threshold)
-    _set_if_not_none(config, ["contact", "al-ipc", "decay_factor"], options.al_ipc_decay_factor)
-
     # Collision detection options
     _set_if_not_none(config, ["collision_detection", "method"], options.collision_detection_method)
 
     # CFL options
     _set_if_not_none(config, ["cfl", "enable"], options.cfl_enable)
 
-    # Sanity check is always enabled — never disable it; fix geometry issues instead.
+    # Sanity check options
+    _set_if_not_none(config, ["sanity_check", "enable"], options.sanity_check_enable)
 
     # Differential simulation options
     _set_if_not_none(config, ["diff_sim", "enable"], simulator.options.requires_grad)
@@ -178,7 +175,7 @@ def read_ipc_geometry_metadata(geo):
 
     if solver_type == "rigid":
         (idx,) = map(int, meta_attrs.find("link_idx").view())
-    elif solver_type in ("fem", "cloth", "rope"):
+    elif solver_type in ("fem", "cloth"):
         (idx,) = map(int, meta_attrs.find("entity_idx").view())
     else:
         gs.raise_exception(f"Unknown IPC geometry solver_type: {solver_type!r}")
