@@ -171,7 +171,7 @@ def _link_is_fixed_for_ipc(link: "RigidLink") -> bool:
     always True, but the body should only be fixed if the morph was originally
     fixed. For other coupling types, link.is_fixed is correct.
     """
-    if link.entity.delegation is not None:
+    if link.entity.material.coup_type == "ipc_only":
         return link.entity.morph.fixed
     return link.is_fixed
 
@@ -1103,7 +1103,7 @@ class IPCCoupler(RBC):
                     parent_abd_slot = self._abd_data_by_link[parent_link].slots[env_idx]
                     child_abd_slot = self._abd_data_by_link[child_link].slots[env_idx]
                     joint_constitution().apply_to(
-                        joint_geom, [parent_abd_slot], [0], [child_abd_slot], [0], [self.options.joint_strength_ratio]
+                        joint_geom, [parent_abd_slot], [0], [child_abd_slot], [0], [JOINT_STRENGTH_RATIO]
                     )
 
                     joint_obj = self._ipc_objects.create(f"joint_{joint.idx}_{env_idx}")
@@ -1167,7 +1167,7 @@ class IPCCoupler(RBC):
             abd_link_infos.append((elem, link, friction, resistance))
 
         # ---- Non-ABD × Non-ABD pairs (FEM × FEM) ----
-        enable_fem_fem_friction = self.options.enable_fem_fem_friction
+        enable_fem_fem_friction = True
         for i, (elem_i, friction_i, resistance_i) in enumerate(non_abd_infos):
             for elem_j, friction_j, resistance_j in non_abd_infos[i:]:
                 friction_ij = geometric_mean(friction_i, friction_j) if enable_fem_fem_friction else 0.0
@@ -1279,7 +1279,7 @@ class IPCCoupler(RBC):
         """Finalize IPC setup and initialize AffineBodyStateAccessorFeature"""
         assert gs.logger is not None
         assert self._ipc_world is not None
-        callback: IPCBeforeWorldInitCallback | None = self.options.before_ipc_world_init
+        callback: IPCBeforeWorldInitCallback | None = None
         if callback is not None:
             ipc = self._build_before_ipc_world_init_context()
             try:
@@ -1392,7 +1392,7 @@ class IPCCoupler(RBC):
         _t2 = _time.perf_counter()
 
         # Debug: dump IPC body info on first frame
-        if self._ipc_frame == 0 and self.options.verbose_ipc_log:
+        if self._ipc_frame == 0 and False:
             gs.logger.info("[IPC DEBUG] === IPC bodies at frame 0, before advance ===")
             for link, abd_data in self._abd_data_by_link.items():
                 entity = link.entity
@@ -1408,7 +1408,7 @@ class IPCCoupler(RBC):
             gs.logger.info(f"[IPC DEBUG] Coupling types: {set(self._coup_type_by_entity.values())}")
 
         # Step 3: IPC advance + retrieve (common)
-        _verbose = self.options.verbose_ipc_log
+        _verbose = False
         if not _verbose:
             self._newton_counter.start()
         try:
@@ -1957,7 +1957,7 @@ class IPCCoupler(RBC):
                 ad.mass_matrix[:] = entity_mass
 
                 # Debug: check mass matrix for NaN/Inf/singularity
-                if self.options.verbose_ipc_log:
+                if False:
                     import numpy as _np
 
                     for env_idx in range(self._B):
@@ -2060,7 +2060,7 @@ class IPCCoupler(RBC):
         links_quat_tc = qd_to_torch(self.rigid_solver.links_state.quat, transpose=True, copy=False)
         for link, abd_data in self._abd_data_by_link.items():
             entity = link.entity
-            if not (entity.delegation is not None):
+            if not (entity.material.coup_type == "ipc_only"):
                 continue
             if link is not entity.base_link:
                 continue
@@ -2075,7 +2075,7 @@ class IPCCoupler(RBC):
         # ---- Step 1b: Non-fixed base links — write IPC transform to qpos[0:7] ----
         for link, abd_data in self._abd_data_by_link.items():
             entity = link.entity
-            if entity.delegation is not None:
+            if entity.material.coup_type == "ipc_only":
                 continue
             if link is not entity.base_link or entity.base_link.is_fixed:
                 continue
