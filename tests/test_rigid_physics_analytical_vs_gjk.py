@@ -277,21 +277,20 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Insert errno marker in contact0's GJK path (before gjk.func_gjk call, uses i_b)
     lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in contact0")
 
-    # Insert errno markers in multicontact's GJK path (before _func_multicontact_gjk_full, uses i_b)
-    lines = insert_errno_before_call(
-        lines,
-        "_func_multicontact_gjk_full(",
-        ERRNO_CALLED_GJK_K2,
-        "MODIFIED: GJK path in multicontact",
-        "i_b",
-    )
-
-    # Insert errno before GJK calls in func_convex_convex_contact (uses i_b)
+    # Insert errno before GJK calls in the monolithic kernel func_convex_convex_contact (uses i_b). This is the first
+    # gjk.func_gjk_contact occurrence; the split path's call lives in _func_multicontact_run_detection, which has no
+    # errno and is marked at its dispatch call site below instead.
     lines = insert_errno_before_call(
         lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK called for collision detection"
     )
     lines = insert_errno_before_call(
         lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK called for collision detection"
+    )
+
+    # Split path: mark the multicontact dispatch call (errno/i_b in scope; in this forced-GJK scene the multicontact
+    # pass always resolves contacts with GJK).
+    lines = insert_errno_before_call(
+        lines, "_func_multicontact_mpr(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK path in multicontact", "i_b"
     )
 
     content = "\n".join(lines)
@@ -393,8 +392,8 @@ class AnalyticalVsGJKSceneCreator:
         )
         self.monkeypatch.setattr(
             narrowphase,
-            "_func_narrowphase_multicontact_mixed",
-            narrowphase_modified._func_narrowphase_multicontact_mixed,
+            "_func_narrowphase_multicontact",
+            narrowphase_modified._func_narrowphase_multicontact,
         )
         self.monkeypatch.setattr(
             narrowphase,

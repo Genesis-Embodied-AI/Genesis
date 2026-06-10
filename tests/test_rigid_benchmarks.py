@@ -17,7 +17,6 @@ from .utils import (
     pprint_oneline,
 )
 
-
 STEP_DT = 0.01
 DURATION_WARMUP = 45.0
 DURATION_RECORD = 15.0
@@ -250,8 +249,8 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
         device=gs.device,
     ).repeat((scene.n_envs, 1))
     dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-    init_qpos[:, 7:] = dofs_lower_bound[6:] + (dofs_upper_bound[6:] - dofs_lower_bound[6:]) * torch.rand(
-        (scene.n_envs, robot.n_dofs - 6), dtype=gs.tc_float, device=gs.device
+    init_qpos[:, 7:] = dofs_lower_bound[6:] + (dofs_upper_bound[6:] - dofs_lower_bound[6:]) * torch.as_tensor(
+        np.random.rand(scene.n_envs, robot.n_dofs - 6), dtype=gs.tc_float, device=gs.device
     )
     robot.set_qpos(init_qpos)
 
@@ -305,13 +304,9 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
 
     def step():
         if rand_shape is not None:
-            robot.control_dofs_position(
-                torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
-            )
+            robot.control_dofs_position(np.random.rand(*rand_shape) * 0.1 - 0.05, motors_dof_idx)
         if ghost is not None:
-            ghost.set_dofs_position(
-                torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
-            )
+            ghost.set_dofs_position(np.random.rand(*rand_shape) * 0.1 - 0.05, motors_dof_idx)
         scene.step()
 
     return scene, step, SceneMeta(compile_time=compile_time)
@@ -352,7 +347,7 @@ def make_franka(
         franka.control_dofs_position(qpos0)
 
     if n_envs > 0 and is_randomized:
-        vel0 = 0.2 * torch.clip(torch.randn((n_envs, franka.n_dofs), dtype=gs.tc_float, device=gs.device), -1.0, 1.0)
+        vel0 = 0.2 * np.clip(np.random.randn(n_envs, franka.n_dofs), -1.0, 1.0)
         vel0[:, [link.dof_start for link in franka.links if not link.name.startswith("link") and link.n_dofs]] = 0.0
     else:
         vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
@@ -364,7 +359,9 @@ def make_franka(
 
     if n_envs > 0:
         n_reset_envs = max(int(0.02 * n_envs), 1)
-        reset_envs_idx = torch.randperm(n_envs, dtype=gs.tc_int, device=gs.device)[:n_reset_envs]
+        reset_envs_idx = torch.as_tensor(
+            np.random.permutation(n_envs)[:n_reset_envs], dtype=gs.tc_int, device=gs.device
+        )
         reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
     else:
         reset_envs_mask = None
@@ -443,7 +440,7 @@ def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
     compile_time = time.time() - time_start
 
     if n_envs > 0:
-        duck.set_dofs_velocity(0.5 * torch.rand((n_envs, 6), dtype=gs.tc_float, device=gs.device))
+        duck.set_dofs_velocity(0.5 * np.random.rand(n_envs, 6))
 
     def step():
         scene.step()
@@ -492,7 +489,7 @@ def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
 
     if n_envs > 0:
         for box in scene.entities[1:]:
-            box.set_dofs_velocity(0.04 * torch.rand((n_envs, 6), dtype=gs.tc_float, device=gs.device))
+            box.set_dofs_velocity(0.04 * np.random.rand(n_envs, 6))
 
     def step():
         scene.step()
@@ -617,11 +614,14 @@ def make_double_smplx(n_envs, solver=None, gjk=None, **scene_kwargs):
 
 
 def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **scene_kwargs):
-    _STEP_DT = 1.0 / 30
+    STEP_DT = 1.0 / 30
     TABLE_Z = 0.762
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=_STEP_DT, substeps=4, gravity=(0, 0, -9.81)),
+        sim_options=gs.options.SimOptions(
+            dt=STEP_DT,
+            substeps=4,
+        ),
         rigid_options=gs.options.RigidOptions(
             noslip_iterations=2,
             max_collision_pairs=256,
@@ -683,7 +683,7 @@ def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **
         step,
         SceneMeta(
             compile_time=compile_time,
-            step_dt=_STEP_DT,
+            step_dt=STEP_DT,
             duration_warmup=20.0,
             duration_record=5.0,
         ),
@@ -698,7 +698,7 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     FINGER_FORCE = 0.6
     DRILL_STIFFNESS = 20
 
-    _STEP_DT = 1 / 16
+    STEP_DT = 1 / 16
 
     JOINT_NAMES = [
         *("FFJ4", "FFJ3", "FFJ2", "FFJ1"),
@@ -741,7 +741,7 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     # at https://github.com/Genesis-Embodied-AI/Genesis/pull/2500#discussion_r2900243286
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=_STEP_DT,
+            dt=STEP_DT,
             substeps=25,
         ),
         rigid_options=gs.options.RigidOptions(
@@ -816,7 +816,7 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
         step,
         SceneMeta(
             compile_time=compile_time,
-            step_dt=_STEP_DT,
+            step_dt=STEP_DT,
             duration_warmup=20.0,
             duration_record=5.0,
         ),

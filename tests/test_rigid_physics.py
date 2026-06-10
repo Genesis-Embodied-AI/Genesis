@@ -3935,15 +3935,11 @@ def test_convexify(euler, show_viewer, gjk_collision):
 
     # Check resting conditions repeateadly rather not just once, for numerical robustness
     # cam.start_recording()
-    qvel_norminf_all = []
-    for i in range(900):
+    for i in range(1000):
         scene.step()
         # cam.render()
-        if i > 800:
-            qvel = tensor_to_array(gs_sim.rigid_solver.get_dofs_velocity())
-            qvel_norminf = np.linalg.norm(qvel, ord=float("inf"))
-            qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(np.median(np.stack(qvel_norminf_all, axis=0)), 0.1)
+        if i > 900:
+            assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=0.5)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
@@ -3953,10 +3949,12 @@ def test_convexify(euler, show_viewer, gjk_collision):
         np.testing.assert_array_less(np.linalg.norm(obj_pos[:2]), 0.5)
 
     # Check that the mug, donut and cup are landing straight if the tank is horizontal
+    # Note that the cup is falling on Windows OS because the convex decomposition provided by CoACD is different than
+    # other platform, and much worst in practice, with the bottom of the tank that is not planar (even discontinuous).
     if euler == (90, 0, 90):
-        for i, obj in enumerate((mug, donut, cup)):
+        for i, obj in enumerate((mug, donut, *(() if sys.platform == "win32" else (cup,)))):
             obj_pos = obj.get_pos()
-            assert_allclose(obj_pos[:2], (OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5)), atol=7e-3)
+            assert_allclose(obj_pos[:2], (OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5)), atol=6e-3)
 
 
 @pytest.mark.slow("gpu")  # gpu ~250s

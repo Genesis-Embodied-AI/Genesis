@@ -269,6 +269,7 @@ def _func_broad_phase_sap(
                             if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                                collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
                             continue
 
                         if n_broad == collider_info.max_collision_pairs_broad[None]:
@@ -324,6 +325,7 @@ def _func_broad_phase_sap(
                                 if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                                    collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
                                 continue
 
                             collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
@@ -357,6 +359,7 @@ def _func_broad_phase_sap(
                                     # Clear collision normal cache if not in contact
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                                    collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
                                     continue
 
                                 collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
@@ -450,6 +453,7 @@ def _func_broad_phase_all_vs_all(
             if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                collider_state.contact_cache.penetration[i_pair, i_b] = 0.0
             continue
 
         n_broad = qd.atomic_add(collider_state.n_broad_pairs[i_b], 1)

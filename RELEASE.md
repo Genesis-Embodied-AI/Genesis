@@ -1,5 +1,25 @@
 # Genesis Release Note
 
+This minor release mainly improves the robustness of rigid collision detection for both convex and non-convex geometries. It is no longer considered experimental to disable convex decomposition when higher fidelity is necessary.
+
+## 1.1.1
+
+### Bug Fixes
+
+* Deduplicate textures across GLB submeshes sharing a material. (@duburcqa) (#2896)
+* Skip grayscale conversion for colorized segmentation maps. (@ACMLCZH) (#2901)
+* Fix non-deterministic simulation on GPU. (@duburcqa) (#2898, #2907, #2909)
+* Fix non-convex collision detection for concave geometries. (@duburcqa) (#2903)
+* More robust perturbation-based multi-contact convex-convex collision detection. (@duburcqa) (#2917, #2921)
+
+### Miscellaneous
+
+* Support passing sliced env mask to RigidSolver.set_base_links_(pos|quat). (@duburcqa) (#2897)
+* Improve interactive scene mode. (@duburcqa) (#2899)
+* Use qd.ndrange(axes=) to collapse layout-flip duplications. (@hughperkins) (#2861)
+* Switch dedupe contact sort to use Quadrants bitonic sort (@hughperkins) (#2853)
+* Move register-tile Cholesky into quadrants. (@hughperkins) (#2860)
+
 ## 1.1.0
 
 This release focuses on performance improvement and numerical stability of rigid solver. Genesis speed should drop less aggressively as the complexity of the scene increases, notably the number of decomposed convex geoms, floating-base entities, and dofs.
