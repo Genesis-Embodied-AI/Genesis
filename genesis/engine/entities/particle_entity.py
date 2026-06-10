@@ -311,7 +311,7 @@ class ParticleEntity(Entity):
                 faces=combined_faces,
                 vertex_normals=combined_vert_normals,
             )
-            self._vmesh = mu.trimesh_to_mesh(combined_tmesh, 1, self._surface)
+            self._vmesh = mu.trimesh_to_mesh(combined_tmesh, 1, self.surface_override)
 
             if self._need_skinning:
                 self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
