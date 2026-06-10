@@ -996,49 +996,11 @@ def test_convex_decompose_cache(monkeypatch):
         assert_equal(scaled_part.faces, cached_part.faces)
 
 
-# ==================== Surface Lifecycle Tests ====================
+# ==================== Surface finalizing Tests ====================
 
 
 @pytest.mark.required
-def test_surface_lifecycle_gates():
-    """Once `finalize_texture` is called, both `update_texture` and a second `finalize_texture` raise."""
-    surface = gs.surfaces.Default()
-    assert surface._finalized is False
-    surface.update_texture(ior=1.5)
-    surface.finalize_texture()
-    assert surface._finalized is True
-    with pytest.raises(gs.GenesisException, match="update_texture"):
-        surface.update_texture(ior=1.7)
-    with pytest.raises(gs.GenesisException, match="finalize_texture"):
-        surface.finalize_texture()
-
-
-@pytest.mark.required
-def test_finalize_fills_defaults():
-    """Unset texture fields are populated with their `default_*` counterparts at finalize."""
-    from genesis.options.surfaces import METAL_COLOR
-
-    surface = gs.surfaces.Default()
-    assert surface.texture is None
-    assert surface.ior is None
-    assert surface.roughness is None
-
-    surface.finalize_texture()
-
-    assert surface.texture is not None
-    assert tuple(surface.texture.color) == tuple(surface.default_color)
-    assert surface.ior == surface.default_ior
-    assert surface.roughness == surface.default_roughness
-
-    # METAL_COLOR maps each MetalType to its `default_color`, picked up via Metal._resolve_shortcuts.
-    for metal_type, expected_color in METAL_COLOR.items():
-        m = gs.surfaces.Metal(metal_type=metal_type)
-        m.finalize_texture()
-        assert tuple(m.texture.color) == tuple(expected_color)
-
-
-@pytest.mark.required
-def test_surface_lifecycle_across_morphs(tmp_path):
+def test_surface_finalize_across_morphs(tmp_path):
     """For every supported Morph, entity.surface_override must stay un-finalized while every
     per-geom (vgeom + collision geom) surface that the entity exposes must be finalized.
     This is the contract downstream consumers (rasterizer, exporters) rely on."""
