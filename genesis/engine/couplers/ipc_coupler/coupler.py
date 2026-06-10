@@ -17,8 +17,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity.rigid_link import RHO_MUJOCO, RHO_OBJECT, RHO_ROBOT
 from genesis.engine.materials.FEM.cloth import Cloth
-from genesis.engine.materials.FEM.paper import Paper
-from genesis.engine.materials.FEM.rope import Rope
 from genesis.options.solvers import IPCCouplerOptions, RigidOptions
 from genesis.repr_base import RBC
 from genesis.utils.mesh import are_meshes_overlapping
@@ -43,51 +41,23 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     from uipc.backend import SceneVisitor
     from uipc.constitution import (
         AffineBodyConstitution,
-        AffineBodyShell,
         AffineBodyPrismaticJoint,
         AffineBodyRevoluteJoint,
         DiscreteShellBending,
-        HookeanSpring,
-        KirchhoffRodBending,
-        StrainPlasticDiscreteShellBending,
-        StressPlasticDiscreteShellBending,
         ElasticModuli,
         ElasticModuli2D,
         ExternalArticulationConstraint,
-        SoftPositionConstraint,
         SoftTransformConstraint,
         StableNeoHookean,
-        NeoHookeanShell,
         StrainLimitingBaraffWitkinShell,
     )
 
-    # AerodynamicDamping was added in a private uipc fork and is not part of
-    # every public release.  Try to import it; if it's missing we simply
-    # disable the corresponding code path at runtime instead of failing
-    # the whole module import.
-    try:
-        from uipc.constitution import AerodynamicDamping  # type: ignore[attr-defined]
-    except ImportError:
-        AerodynamicDamping = None  # type: ignore[assignment, misc]
-    try:
-        from uipc.constitution import StrainPlasticDiscreteShellBendingModifier  # type: ignore[attr-defined]
-    except ImportError:
-        StrainPlasticDiscreteShellBendingModifier = None  # type: ignore[assignment, misc]
-    try:
-        from uipc.constitution import StressPlasticDiscreteShellBendingModifier  # type: ignore[attr-defined]
-    except ImportError:
-        StressPlasticDiscreteShellBendingModifier = None  # type: ignore[assignment, misc]
-    try:
-        from uipc.constitution import FiniteElementExternalForce  # type: ignore[attr-defined]
-    except ImportError:
-        FiniteElementExternalForce = None  # type: ignore[assignment, misc]
     from uipc.core import (
         Engine,
         World,
         Scene,
         SceneIO,
         AffineBodyStateAccessorFeature,
-        FiniteElementStateAccessorFeature,
         ContactElement,
         SubsceneElement,
     )
@@ -442,29 +412,16 @@ class IPCCoupler(RBC):
 
         # ==== IPC Constitutions ====
         self._ipc_abd: AffineBodyConstitution | None = None
-        self._ipc_abd_shell: AffineBodyShell | None = None
         self._ipc_stk: StableNeoHookean | None = None
         self._ipc_stc: SoftTransformConstraint | None = None
-        self._ipc_nhs: NeoHookeanShell | None = None
         self._ipc_slbws: StrainLimitingBaraffWitkinShell | None = None
         self._ipc_dsb: DiscreteShellBending | None = None
-        self._ipc_stress_pdsb: StressPlasticDiscreteShellBending | None = None
-        self._ipc_strain_pdsb: StrainPlasticDiscreteShellBending | None = None
-        self._ipc_stress_pdsb_modifier: StressPlasticDiscreteShellBendingModifier | None = None
-        self._ipc_strain_pdsb_modifier: StrainPlasticDiscreteShellBendingModifier | None = None
-        # AerodynamicDamping is optional (only some uipc builds ship it).
-        self._ipc_aero: "AerodynamicDamping | None" = None
-        self._ipc_hks: HookeanSpring | None = None
-        self._ipc_krb: KirchhoffRodBending | None = None
         self._ipc_eac: ExternalArticulationConstraint | None = None
-        self._ipc_fem_ext_force: FiniteElementExternalForce | None = None
-        self._ipc_soft_pos_constraint: SoftPositionConstraint | None = None
 
         # ==== IPC Contact Elements ====
         self._ipc_no_collision_contact: ContactElement | None = None
         self._ipc_fems_contact: dict["FEMEntity", ContactElement] = {}
         self._ipc_clothes_contact: dict["FEMEntity", ContactElement] = {}
-        self._ipc_ropes_contact: dict["FEMEntity", ContactElement] = {}
         self._ipc_abd_links_contact: dict["RigidLink", ContactElement] = {}
         self._ipc_grounds_contact: dict["RigidEntity", ContactElement] = {}
 
@@ -478,18 +435,6 @@ class IPCCoupler(RBC):
         self._coup_links: dict["RigidEntity", set["RigidLink"]] = {}
         self._coupling_collision_settings: dict["RigidEntity", dict["RigidLink", bool]] = {}
         self._entities_by_coup_type: dict[COUPLING_TYPE, list["RigidEntity"]] = {}
-
-        # ==== FEM Geometry & State ====
-        # Per-entity FEM geometry slots, one list per env: entity → list[GeometrySlot] indexed by env
-        self._fem_state_feature: "FiniteElementStateAccessorFeature | None" = None
-        self._fem_state_geom: SimplicialComplex | None = None
-        # FEM entities whose IPC positions need sync: entity → set of dirty env indices.
-        self._fem_updated_entities: dict["FEMEntity", set[int]] = {}
-        # Pending per-vertex external forces: entity → (n_verts, 3) array or None (clear).
-        self._fem_external_forces: dict["FEMEntity", np.ndarray | None] = {}
-        # Pending per-vertex soft position constraints: entity → dict with
-        # "strength_ratio" (n_verts,) and "aim_position" (n_verts, 3), or None (clear).
-        self._fem_soft_position: dict["FEMEntity", dict[str, np.ndarray] | None] = {}
 
         # ==== ABD Geometry & State ====
         # Cached merged world-frame trimesh per link for neutral-pose overlap check
@@ -759,22 +704,13 @@ class IPCCoupler(RBC):
 
         entity: "FEMEntity"
         for i_e, entity in enumerate(cast(list["FEMEntity"], self.fem_solver.entities)):
-            is_rope = isinstance(entity.material, Rope)
-            is_cloth = not is_rope and isinstance(entity.material, Cloth)
-            if is_rope:
-                solver_type = "rope"
-            elif is_cloth:
-                solver_type = "cloth"
-            else:
-                solver_type = "fem"
+            is_cloth = isinstance(entity.material, Cloth)
+            solver_type = "cloth" if is_cloth else "fem"
 
             # ---- Create mesh (env-independent geometry) ----
-            # linemesh for rope (1D), trimesh for cloth (2D), tetmesh for volumetric FEM (3D)
+            # trimesh for cloth (2D shell), tetmesh for volumetric FEM (3D)
             verts = tensor_to_array(entity.init_positions).astype(np.float64, copy=False)
-            if is_rope:
-                edges = entity.elems.astype(np.int32, copy=False)
-                mesh = uipc.geometry.linemesh(verts, edges)
-            elif is_cloth:
+            if is_cloth:
                 faces = entity.surface_triangles.astype(np.int32, copy=False)
                 mesh = uipc.geometry.trimesh(verts, faces)
             else:
@@ -783,10 +719,7 @@ class IPCCoupler(RBC):
 
             # ---- Apply constitutions (env-independent) ----
             # Apply per-entity contact element
-            if is_rope:
-                self._ipc_ropes_contact[entity] = self._ipc_contact_tabular.create(f"rope_contact_{i_e}")
-                self._ipc_ropes_contact[entity].apply_to(mesh)
-            elif is_cloth:
+            if is_cloth:
                 self._ipc_clothes_contact[entity] = self._ipc_contact_tabular.create(f"cloth_contact_{i_e}")
                 self._ipc_clothes_contact[entity].apply_to(mesh)
             else:
@@ -794,116 +727,22 @@ class IPCCoupler(RBC):
                 self._ipc_fems_contact[entity].apply_to(mesh)
 
             # Apply material constitution based on type
-            if is_rope:
-                # HookeanSpring for stretch
-                if self._ipc_hks is None:
-                    self._ipc_hks = HookeanSpring()
-                    self._ipc_constitution_tabular.insert(self._ipc_hks)
+            if is_cloth:
+                if self._ipc_slbws is None:
+                    self._ipc_slbws = StrainLimitingBaraffWitkinShell()
+                    self._ipc_constitution_tabular.insert(self._ipc_slbws)
 
-                self._ipc_hks.apply_to(
-                    mesh,
-                    moduli=entity.material.E,
-                    mass_density=entity.material.rho,
-                    thickness=entity.material.thickness,
+                moduli = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)
+                self._ipc_slbws.apply_to(
+                    mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
                 )
 
-                # KirchhoffRodBending for bending (optional)
                 if entity.material.bending_stiffness is not None:
-                    if self._ipc_krb is None:
-                        self._ipc_krb = KirchhoffRodBending()
-                        self._ipc_constitution_tabular.insert(self._ipc_krb)
+                    if self._ipc_dsb is None:
+                        self._ipc_dsb = DiscreteShellBending()
+                        self._ipc_constitution_tabular.insert(self._ipc_dsb)
 
-                    self._ipc_krb.apply_to(mesh, E=entity.material.bending_stiffness)
-            elif is_cloth:
-                moduli = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)
-                shell_model = entity.material.model
-
-                if shell_model == "neohookean":
-                    if self._ipc_nhs is None:
-                        self._ipc_nhs = NeoHookeanShell()
-                        self._ipc_constitution_tabular.insert(self._ipc_nhs)
-                    self._ipc_nhs.apply_to(
-                        mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
-                    )
-                else:
-                    if self._ipc_slbws is None:
-                        self._ipc_slbws = StrainLimitingBaraffWitkinShell()
-                        self._ipc_constitution_tabular.insert(self._ipc_slbws)
-                    self._ipc_slbws.apply_to(
-                        mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
-                    )
-
-                if entity.material.bending_stiffness is not None:
-                    is_paper = isinstance(entity.material, Paper)
-                    if is_paper:
-                        # Plastic bending for Paper material
-                        if entity.material.plasticity_model == "stress":
-                            if self._ipc_stress_pdsb is None:
-                                self._ipc_stress_pdsb = StressPlasticDiscreteShellBending()
-                                self._ipc_constitution_tabular.insert(self._ipc_stress_pdsb)
-                            self._ipc_stress_pdsb.apply_to(
-                                mesh,
-                                bending_stiffness=entity.material.bending_stiffness,
-                                yield_stress=entity.material.yield_stress,
-                                hardening_modulus=entity.material.hardening_modulus,
-                            )
-                            if StressPlasticDiscreteShellBendingModifier is None:
-                                gs.logger.warning(
-                                    "Material requests stress-plastic bending modifier but the installed "
-                                    "uipc build does not expose StressPlasticDiscreteShellBendingModifier; skipping."
-                                )
-                            else:
-                                if self._ipc_stress_pdsb_modifier is None:
-                                    self._ipc_stress_pdsb_modifier = StressPlasticDiscreteShellBendingModifier()
-                                    self._ipc_constitution_tabular.insert(self._ipc_stress_pdsb_modifier)
-                                self._ipc_stress_pdsb_modifier.apply_to(mesh)
-                        else:
-                            if self._ipc_strain_pdsb is None:
-                                self._ipc_strain_pdsb = StrainPlasticDiscreteShellBending()
-                                self._ipc_constitution_tabular.insert(self._ipc_strain_pdsb)
-                            self._ipc_strain_pdsb.apply_to(
-                                mesh,
-                                bending_stiffness=entity.material.bending_stiffness,
-                                yield_threshold=entity.material.yield_threshold,
-                                hardening_modulus=entity.material.hardening_modulus,
-                            )
-                            if StrainPlasticDiscreteShellBendingModifier is None:
-                                gs.logger.warning(
-                                    "Material requests strain-plastic bending modifier but the installed "
-                                    "uipc build does not expose StrainPlasticDiscreteShellBendingModifier; skipping."
-                                )
-                            else:
-                                if self._ipc_strain_pdsb_modifier is None:
-                                    self._ipc_strain_pdsb_modifier = StrainPlasticDiscreteShellBendingModifier()
-                                    self._ipc_constitution_tabular.insert(self._ipc_strain_pdsb_modifier)
-                                self._ipc_strain_pdsb_modifier.apply_to(mesh)
-                    else:
-                        # Elastic bending for Cloth material
-                        if self._ipc_dsb is None:
-                            self._ipc_dsb = DiscreteShellBending()
-                            self._ipc_constitution_tabular.insert(self._ipc_dsb)
-
-                        self._ipc_dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
-
-                # Aerodynamic damping (optional, for Cloth and Paper).
-                # Only available when the installed uipc build exposes
-                # ``AerodynamicDamping`` (private fork); skipped otherwise.
-                if entity.material.aerodynamic_drag is not None:
-                    if AerodynamicDamping is None:
-                        gs.logger.warning(
-                            "Material requests aerodynamic_drag but the installed "
-                            "uipc build does not expose AerodynamicDamping; skipping."
-                        )
-                    else:
-                        if self._ipc_aero is None:
-                            self._ipc_aero = AerodynamicDamping()
-                            self._ipc_constitution_tabular.insert(self._ipc_aero)
-                        self._ipc_aero.apply_to(
-                            mesh,
-                            drag_coefficient=entity.material.aerodynamic_drag,
-                            curvature_scale=entity.material.curvature_drag_scale,
-                            inflate_scale=entity.material.curvature_inflate_scale,
-                        )
+                    self._ipc_dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
             else:
                 if self._ipc_stk is None:
                     self._ipc_stk = StableNeoHookean()
@@ -911,41 +750,6 @@ class IPCCoupler(RBC):
 
                 moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                 self._ipc_stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
-
-            # Apply external force constitution (initially zero, activated at runtime)
-            if is_cloth:
-                if FiniteElementExternalForce is None:
-                    gs.logger.warning(
-                        "Cloth entity requests FiniteElementExternalForce but the installed "
-                        "uipc build does not expose it; external forces will be unavailable."
-                    )
-                else:
-                    if self._ipc_fem_ext_force is None:
-                        self._ipc_fem_ext_force = FiniteElementExternalForce()
-                        self._ipc_constitution_tabular.insert(self._ipc_fem_ext_force)
-                    self._ipc_fem_ext_force.apply_to(mesh, np.array([0.0, 0.0, 0.0]))
-
-            # Apply soft position constraint (initially inactive, activated at runtime)
-            if is_cloth:
-                if self._ipc_soft_pos_constraint is None:
-                    self._ipc_soft_pos_constraint = SoftPositionConstraint()
-                    self._ipc_constitution_tabular.insert(self._ipc_soft_pos_constraint)
-                self._ipc_soft_pos_constraint.apply_to(mesh, strength_rate=0.0)
-
-            # Per-entity d_hat override
-            if entity.material.contact_d_hat is not None:
-                mesh.meta().create(uipc.builtin.d_hat, float(entity.material.contact_d_hat))
-
-            # Per-entity gravity override (e.g. (0,0,0) to disable gravity on this entity).
-            if entity.material.gravity is not None:
-                mesh.vertices().create(
-                    uipc.builtin.gravity,
-                    np.array(entity.material.gravity, dtype=np.float64),
-                )
-
-            # Partition FEM/cloth mesh for faster IPC assembly/solve on large meshes.
-            # This follows libuipc sample usage and is applied once on env-independent geometry.
-            uipc.geometry.mesh_partition(mesh)
 
             # ---- Per-environment: create IPC objects, then set per-env attrs on slot geometry ----
             fem_slots: list = []
@@ -1142,35 +946,11 @@ class IPCCoupler(RBC):
                 else:
                     self._ipc_no_collision_contact.apply_to(rigid_link_geom)
 
-                # Apply ABD constitution — use AffineBodyShell for non-watertight meshes
-                # (open surfaces like gripper pads) where volume-based mass would be near-zero.
-                mesh_for_check = self._abd_merged_meshes.get(link)
-                is_watertight = mesh_for_check is not None and mesh_for_check.is_watertight
-                gs.logger.info(
-                    f"[IPC ABD] link={link.name}, is_watertight={is_watertight}, mesh_exists={mesh_for_check is not None}, rho={rho}"
-                )
-
-                if is_watertight:
-                    if self._ipc_abd is None:
-                        self._ipc_abd = AffineBodyConstitution()
-                        self._ipc_constitution_tabular.insert(self._ipc_abd)
-                    self._ipc_abd.apply_to(rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=rho)
-                    # Explicitly set thickness=0 so the sanity check merge doesn't
-                    # inherit a non-zero default from AffineBodyShell geometries.
-                    rigid_link_geom.vertices().create(uipc.builtin.thickness, 0.0)
-                else:
-                    if self._ipc_abd_shell is None:
-                        self._ipc_abd_shell = AffineBodyShell()
-                        self._ipc_constitution_tabular.insert(self._ipc_abd_shell)
-                    # Use contact_d_hat as shell thickness — a reasonable scale for thin rigid surfaces.
-                    shell_thickness = (self.options.contact_d_hat or 0.001) / 2
-                    self._ipc_abd_shell.apply_to(
-                        rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=rho, thickness=shell_thickness
-                    )
-
-            # Per-entity d_hat override
-            if entity.material.contact_d_hat is not None:
-                rigid_link_geom.meta().create(uipc.builtin.d_hat, float(entity.material.contact_d_hat))
+                # Apply ABD constitution
+                if self._ipc_abd is None:
+                    self._ipc_abd = AffineBodyConstitution()
+                    self._ipc_constitution_tabular.insert(self._ipc_abd)
+                self._ipc_abd.apply_to(rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=rho)
 
             # Apply SoftTransformConstraint for coupled links
             if is_soft_constraint_target:
@@ -1373,7 +1153,6 @@ class IPCCoupler(RBC):
         non_abd_infos: list[tuple[ContactElement, float, float]] = []
         for entity, elem in (
             *self._ipc_clothes_contact.items(),
-            *self._ipc_ropes_contact.items(),
             *self._ipc_fems_contact.items(),
         ):
             friction = entity.material.friction_mu
@@ -1547,17 +1326,6 @@ class IPCCoupler(RBC):
             self._abd_state_geom = self._abd_state_feature.create_geometry()
             self._abd_state_geom.instances().create(uipc.builtin.transform, np.eye(4, dtype=np.float64))
             self._abd_state_geom.instances().create(uipc.builtin.velocity, np.zeros((4, 4), dtype=np.float64))
-
-        # ---- FEM state accessor ----
-        if self._fem_slots_by_entity:
-            self._fem_state_feature = cast(
-                FiniteElementStateAccessorFeature,
-                self._ipc_world.features().find(FiniteElementStateAccessorFeature),
-            )
-            if self._fem_state_feature is not None:
-                self._fem_state_geom = self._fem_state_feature.create_geometry()
-                self._fem_state_geom.vertices().create(uipc.builtin.position, np.zeros(3, dtype=np.float64))
-                self._fem_state_geom.vertices().create(uipc.builtin.velocity, np.zeros(3, dtype=np.float64))
 
     def _init_ipc_gui(self):
         """Initialize polyscope-based IPC GUI viewer."""
@@ -1968,133 +1736,6 @@ class IPCCoupler(RBC):
 
         self._abd_updated_links.clear()
 
-    def set_fem_external_force(self, entity: "FEMEntity", forces: np.ndarray) -> None:
-        """Set per-vertex external forces for a FEM entity.
-
-        Forces are written to IPC geometry before each advance().
-        Requires FiniteElementExternalForce constitution on the entity (applied
-        automatically for cloth/paper in _add_fem_entities_to_ipc).
-
-        Parameters
-        ----------
-        entity : FEMEntity
-            The FEM entity to apply forces to.
-        forces : np.ndarray
-            Per-vertex force vectors, shape (n_vertices, 3).
-        """
-        self._fem_external_forces[entity] = forces.astype(np.float64)
-
-    def clear_fem_external_force(self, entity: "FEMEntity") -> None:
-        """Clear external forces for a FEM entity.
-
-        Zeros are written on the next advance, then the entry is removed.
-        """
-        if entity in self._fem_external_forces:
-            self._fem_external_forces[entity] = None
-
-    def set_fem_soft_position(
-        self,
-        entity: "FEMEntity",
-        strength_ratio: np.ndarray,
-        aim_position: np.ndarray,
-    ) -> None:
-        """Set per-vertex soft position constraint for a FEM entity.
-
-        Parameters
-        ----------
-        entity : FEMEntity
-            The FEM entity.
-        strength_ratio : np.ndarray
-            Per-vertex strength, shape (n_vertices,). Use 0 to disable on a vertex.
-        aim_position : np.ndarray
-            Per-vertex target positions, shape (n_vertices, 3).
-        """
-        self._fem_soft_position[entity] = {
-            "strength_ratio": strength_ratio.astype(np.float64),
-            "aim_position": aim_position.astype(np.float64),
-        }
-
-    def clear_fem_soft_position(self, entity: "FEMEntity") -> None:
-        """Clear soft position constraint for a FEM entity."""
-        if entity in self._fem_soft_position:
-            self._fem_soft_position[entity] = None
-
-    def freeze_plastic_bending(self, entity: "FEMEntity", new_bending_stiffness: float = 0.0) -> None:
-        """Freeze plasticity on all environment copies of an entity's shell mesh.
-
-        Sets per-edge attribute "cancel_plastic" = 1 (all edges) and
-        optionally "target_bending_stiffness".  Individual edges can also be
-        controlled directly via the slot geometry.
-
-        Args:
-            entity: The FEM entity whose plasticity should be frozen.
-            new_bending_stiffness: Bending stiffness after freeze (Pa·m).
-                                   Pass 0.0 to keep the original value.
-        """
-        slots = self._fem_slots_by_entity.get(entity)
-        if slots is None:
-            return
-        for env_idx in range(self._B):
-            geom = slots[env_idx].geometry()
-            freeze_attr = geom.edges().find("cancel_plastic")
-            if freeze_attr is not None:
-                uipc.view(freeze_attr)[:] = 1
-            if new_bending_stiffness > 0.0:
-                stiffness_attr = geom.edges().find("target_bending_stiffness")
-                if stiffness_attr is not None:
-                    uipc.view(stiffness_attr)[:] = new_bending_stiffness
-
-    def mark_fem_updated(self, entity: "FEMEntity", envs_idx=None):
-        """Mark a FEM entity as needing IPC position sync."""
-        if entity not in self._fem_slots_by_entity:
-            return
-        all_envs = set(range(self._B)) if self._B > 0 else {0}
-        env_set = all_envs if envs_idx is None else set(int(i) for i in envs_idx)
-        existing = self._fem_updated_entities.get(entity)
-        if existing is None:
-            self._fem_updated_entities[entity] = env_set.copy()
-        else:
-            existing.update(env_set)
-
-    def cache_fem_positions(self):
-        """Sync FEM vertex positions from Genesis to IPC before advance.
-
-        Called when the user modifies FEM positions via set_position().
-        Writes the new positions (and zero velocity) to IPC's internal
-        FEM state via FiniteElementStateAccessorFeature.copy_from().
-        """
-        if not self._fem_updated_entities or self._fem_state_feature is None:
-            return
-
-        assert self._fem_state_geom is not None
-
-        self._fem_state_feature.copy_to(self._fem_state_geom)
-        pos_attr = self._fem_state_geom.vertices().find(uipc.builtin.position)
-        vel_attr = self._fem_state_geom.vertices().find(uipc.builtin.velocity)
-        positions = pos_attr.view()
-        velocities = vel_attr.view() if vel_attr is not None else None
-
-        # FEM vertex order in IPC matches the order geometries were added.
-        # Each entity-env pair occupies a contiguous block of vertices.
-        # Read current positions from the solver state via get_frame().
-        offset = 0
-        for entity, slots in self._fem_slots_by_entity.items():
-            n_verts = entity.n_vertices
-            dirty_envs = self._fem_updated_entities.get(entity)
-            if dirty_envs is not None:
-                state = entity.get_state()
-                entity_pos = state.pos.cpu().numpy()
-            for env_idx, slot in enumerate(slots):
-                if dirty_envs is not None and env_idx in dirty_envs:
-                    # IPC stores positions as (N, 3, 1) column vectors
-                    positions[offset : offset + n_verts] = entity_pos[env_idx].astype(np.float64).reshape(-1, 3, 1)
-                    if velocities is not None:
-                        velocities[offset : offset + n_verts] = 0.0
-                offset += n_verts
-
-        self._fem_state_feature.copy_from(self._fem_state_geom)
-        self._fem_updated_entities.clear()
-
     @property
     def is_active(self) -> bool:
         """Check if IPC coupling is active"""
@@ -2382,60 +2023,6 @@ class IPCCoupler(RBC):
 
                 mass_matrix_attr = articulation_geom["joint_joint"].find("mass")
                 uipc.view(mass_matrix_attr).flat[:] = ad.mass_matrix[env_idx]
-
-        # 4. Write FEM external forces
-        for entity, forces in list(self._fem_external_forces.items()):
-            slots = self._fem_slots_by_entity.get(entity)
-            if slots is None:
-                continue
-            for env_idx in range(self._B):
-                geom = slots[env_idx].geometry()
-                force_attr = geom.vertices().find("external_force")
-                is_constrained = geom.vertices().find(uipc.builtin.is_constrained)
-                if force_attr is None or is_constrained is None:
-                    continue
-                fv = uipc.view(force_attr)
-                cv = uipc.view(is_constrained)
-                if forces is not None:
-                    cv[:] = 1
-                    fv[:] = forces.reshape(-1, 3, 1)
-                else:
-                    cv[:] = 0
-                    fv[:] = 0.0
-            if forces is None:
-                del self._fem_external_forces[entity]
-
-        # 5. Write FEM soft position constraints
-        # Must run AFTER section 4 so is_constrained for pinned vertices
-        # is not clobbered by the external force clear (cv[:] = 0).
-        for entity, data in list(self._fem_soft_position.items()):
-            slots = self._fem_slots_by_entity.get(entity)
-            if slots is None:
-                continue
-            for env_idx in range(self._B):
-                geom = slots[env_idx].geometry()
-                sr_attr = geom.vertices().find("strength_ratio")
-                aim_attr = geom.vertices().find(uipc.builtin.aim_position)
-                is_constrained = geom.vertices().find(uipc.builtin.is_constrained)
-                if sr_attr is None or aim_attr is None:
-                    continue
-                sr = uipc.view(sr_attr)
-                ap = uipc.view(aim_attr)
-                if data is not None:
-                    sr[:] = data["strength_ratio"]
-                    ap[:] = data["aim_position"].reshape(-1, 3, 1)
-                    # Ensure is_constrained=1 for vertices with non-zero strength
-                    # so the SoftPositionConstraint backend includes them.
-                    if is_constrained is not None:
-                        cv = uipc.view(is_constrained)
-                        pinned = data["strength_ratio"] > 0
-                        for k in range(len(pinned)):
-                            if pinned[k]:
-                                cv[k] = 1
-                else:
-                    sr[:] = 0.0
-            if data is None:
-                del self._fem_soft_position[entity]
 
     def _post_advance_write_qpos(self):
         """

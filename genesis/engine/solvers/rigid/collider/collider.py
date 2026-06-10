@@ -43,7 +43,7 @@ from .contact import (
     func_add_contact,
     func_set_contact,
     func_add_diff_contact_input,
-    func_compute_tolerance,
+    func_compute_geom_pair_scale,
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
