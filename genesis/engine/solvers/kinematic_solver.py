@@ -97,6 +97,8 @@ class KinematicSolver(Solver):
         self.constraint_solver = None
 
         self.qpos = None
+        self.qpos0 = None
+        self.qpos_prev = None
 
         self._is_forward_pos_updated: bool = False
         self._is_forward_vel_updated: bool = False
@@ -106,6 +108,15 @@ class KinematicSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def add_entity(self, idx, material, morph, surface, visualize_contact=False, name=None) -> "KinematicEntity":
+        # KinematicSolver is visualization-only — it has no collision-geom transform buffer
+        # (`_geoms_render_T`), so the rasterizer's collision/sdf/recon paths would crash.
+        # Reject early instead of producing a cryptic AttributeError at first render.
+        if surface.vis_mode not in (None, "visual"):
+            gs.raise_exception(
+                f"KinematicSolver only supports vis_mode='visual', got {surface.vis_mode!r}. "
+                "Collision/sdf/recon visualization requires RigidSolver."
+            )
+
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph
@@ -347,6 +358,7 @@ class KinematicSolver(Solver):
         # Set initial qpos
         self.qpos = self._rigid_global_info.qpos
         self.qpos0 = self._rigid_global_info.qpos0
+        self.qpos_prev = self._rigid_global_info.qpos_prev
         if self.n_qs > 0:
             init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))
 

@@ -13,35 +13,32 @@ import genesis.utils.geom as gu
 from uipc.core import Scene
 
 
-def find_target_link_for_fixed_merge(link):
-    """
-    Find the target link for merging fixed joints.
+def find_abd_merge_target(link):
+    """Find the ABD merge target for a fixed-joint link.
 
-    Walks up the kinematic tree, skipping links connected via FIXED joints, until finding a link with a non-FIXED joint
-    or the root.
+    Walks up the kinematic tree through FIXED joints until finding a link
+    that has a non-FIXED joint (or the root). Returns that ancestor link.
+    Used by external_articulation coupling so fixed-joint child bodies are
+    folded into their parent ABD body instead of floating freely.
 
-    This is similar to _merge_target_id in mjcf.py.
+    Parameters
+    ----------
+    link : RigidLink
+        The link to find a merge target for.
 
     Returns
     -------
-    int
-        The target link index to merge into
+    RigidLink
+        The ancestor link to merge into. Returns ``link`` itself if it
+        already has a non-FIXED joint or is the root.
     """
     entity = link.entity
-
     while True:
-        # If this is the root link (no parent), stop
         if link.parent_idx < 0:
             break
-
-        # Check if there is any non-fixed joint
         if any(joint.type != gs.JOINT_TYPE.FIXED for joint in link.joints):
-            # Found a link with non-FIXED joint, this is our target
             break
-
-        # All joints are FIXED, move up to parent
         link = entity.links[link.parent_idx - entity.link_start]
-
     return link
 
 
@@ -71,28 +68,33 @@ def compute_link_to_link_transform(from_link, to_link):
     return pos, quat
 
 
-def build_ipc_scene_config(options, sim_options):
+def build_ipc_scene_config(options, simulator):
     """
-    Build IPC Scene config dict from IPCCouplerOptions and SimOptions.
+    Build IPC Scene config dict from IPCCouplerOptions and simulator.
 
     Parameters
     ----------
     options : IPCCouplerOptions
         The coupler options
-    sim_options : SimOptions
-        The simulation options (provides dt, gravity, requires_grad)
-
-    Returns
-    -------
-    dict
-        Scene config dict ready to pass to Scene(config)
+    simulator : Simulator
+        The simulator instance
     """
     config = Scene.default_config()
 
-    # Basic simulation parameters (derived from SimOptions)
-    config["dt"] = sim_options.dt
-    gravity = sim_options.gravity
-    config["gravity"] = [[float(e)] for e in gravity]
+    # Read dt/gravity from active solvers; verify consistency if multiple are active
+    active = []
+    if simulator.rigid_solver.is_active:
+        active.append(("RigidSolver", simulator.rigid_options))
+    if simulator.fem_solver.is_active:
+        active.append(("FEMSolver", simulator.fem_options))
+
+    ref_name, ref_opts = active[0] if active else ("SimOptions", simulator.options)
+    for name, opts in active[1:]:
+        if opts.dt != ref_opts.dt or tuple(opts.gravity) != tuple(ref_opts.gravity):
+            gs.raise_exception(f"IPC coupler requires consistent dt/gravity: {ref_name} vs {name}.")
+
+    config["dt"] = ref_opts.dt
+    config["gravity"] = [[float(e)] for e in ref_opts.gravity]
 
     # Newton solver options (only set if specified)
     _set_if_not_none(config, ["newton", "max_iter"], options.newton_max_iterations)
@@ -119,17 +121,22 @@ def build_ipc_scene_config(options, sim_options):
     _set_if_not_none(config, ["contact", "eps_velocity"], options.contact_eps_velocity)
     _set_if_not_none(config, ["contact", "constitution"], options.contact_constitution)
 
+    # AL-IPC options (only effective when contact_constitution='al-ipc')
+    _set_if_not_none(config, ["contact", "al-ipc", "mu_scale_fem"], options.al_ipc_mu_scale_fem)
+    _set_if_not_none(config, ["contact", "al-ipc", "mu_scale_abd"], options.al_ipc_mu_scale_abd)
+    _set_if_not_none(config, ["contact", "al-ipc", "toi_threshold"], options.al_ipc_toi_threshold)
+    _set_if_not_none(config, ["contact", "al-ipc", "decay_factor"], options.al_ipc_decay_factor)
+
     # Collision detection options
     _set_if_not_none(config, ["collision_detection", "method"], options.collision_detection_method)
 
     # CFL options
     _set_if_not_none(config, ["cfl", "enable"], options.cfl_enable)
 
-    # Sanity check options
-    _set_if_not_none(config, ["sanity_check", "enable"], options.sanity_check_enable)
+    # Sanity check is always enabled — never disable it; fix geometry issues instead.
 
-    # Differential simulation options (derived from SimOptions)
-    _set_if_not_none(config, ["diff_sim", "enable"], sim_options.requires_grad)
+    # Differential simulation options
+    _set_if_not_none(config, ["diff_sim", "enable"], simulator.options.requires_grad)
 
     return config
 
@@ -171,7 +178,7 @@ def read_ipc_geometry_metadata(geo):
 
     if solver_type == "rigid":
         (idx,) = map(int, meta_attrs.find("link_idx").view())
-    elif solver_type in ("fem", "cloth"):
+    elif solver_type in ("fem", "cloth", "rope"):
         (idx,) = map(int, meta_attrs.find("entity_idx").view())
     else:
         gs.raise_exception(f"Unknown IPC geometry solver_type: {solver_type!r}")
