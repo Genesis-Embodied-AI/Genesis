@@ -564,12 +564,15 @@ def get_sort_buffer(solver):
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ContactCache:
     normal: qd.Tensor
+    # Previous-step penetration per pair (reset to 0 when out of contact), the warm-start for the MPR->GJK gate.
+    penetration: qd.Tensor
 
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
     return ContactCache(
         normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
+        penetration=V(dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
     )
 
 
@@ -597,19 +600,10 @@ class ContactIslandState:
     edge_id: qd.Tensor
     constraint_list: qd.Tensor
     constraint_id: qd.Tensor
-    # entity_edge (flattened from AggList for direct field access — matches solver_island.py)
-    entity_edge_n: qd.Tensor
-    entity_edge_start: qd.Tensor
-    entity_edge_curr: qd.Tensor
-    # island_col (flattened from AggList)
-    island_col_n: qd.Tensor
-    island_col_start: qd.Tensor
-    island_col_curr: qd.Tensor
+    entity_edge: AggList
+    island_col: AggList
     island_hibernated: qd.Tensor
-    # island_entity (flattened from AggList)
-    island_entity_n: qd.Tensor
-    island_entity_start: qd.Tensor
-    island_entity_curr: qd.Tensor
+    island_entity: AggList
     entity_id: qd.Tensor
     n_edges: qd.Tensor
     n_islands: qd.Tensor
@@ -635,16 +629,10 @@ def get_contact_island_state(solver, collider):
         edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
         constraint_list=V(dtype=gs.qd_int, shape=(max_contact_pairs, _B)),
         constraint_id=V(dtype=gs.qd_int, shape=(max_contact_pairs * 2, _B)),
-        entity_edge_n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        entity_edge_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        entity_edge_curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_col_n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_col_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_col_curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        entity_edge=get_agg_list(solver),
+        island_col=get_agg_list(solver),
         island_hibernated=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_entity_n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_entity_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_entity_curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        island_entity=get_agg_list(solver),
         entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         n_edges=V(dtype=gs.qd_int, shape=(_B,)),
         n_islands=V(dtype=gs.qd_int, shape=(_B,)),
@@ -664,18 +652,11 @@ class NarrowphaseWorkQueues:
     mpr_contact_pos_0: qd.Tensor
     mpr_normal_0: qd.Tensor
     mpr_penetration_0: qd.Tensor
-    gjk_i_b: qd.Tensor
-    gjk_i_ga: qd.Tensor
-    gjk_i_gb: qd.Tensor
-    gjk_i_pair: qd.Tensor
-    gjk_contact_pos_0: qd.Tensor
-    gjk_normal_0: qd.Tensor
-    gjk_penetration_0: qd.Tensor
+    # Whether contact0 preferred GJK (the per-pair MPR->GJK gate fired). The multicontact pass uses GJK for contact0
+    # when set, and otherwise tries MPR first and falls back to GJK per perturbed contact.
+    mpr_prefer_gjk: qd.Tensor
     mpr_queue_size: qd.Tensor
-    gjk_queue_size: qd.Tensor
-    gjk_queue_size_k2: qd.Tensor
     mpr_work_counter: qd.Tensor
-    gjk_work_counter: qd.Tensor
 
 
 def get_narrowphase_work_queues(max_entries):
@@ -687,18 +668,9 @@ def get_narrowphase_work_queues(max_entries):
         mpr_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
         mpr_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
         mpr_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
-        gjk_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
-        gjk_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
-        gjk_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
-        gjk_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_prefer_gjk=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_queue_size=V(dtype=gs.qd_int, shape=(1,)),
-        gjk_queue_size=V(dtype=gs.qd_int, shape=(1,)),
-        gjk_queue_size_k2=V(dtype=gs.qd_int, shape=(1,)),
         mpr_work_counter=V(dtype=gs.qd_int, shape=(1,)),
-        gjk_work_counter=V(dtype=gs.qd_int, shape=(1,)),
     )
 
 
@@ -827,6 +799,7 @@ class ColliderInfo:
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
     mpr_to_gjk_overlap_ratio: qd.Tensor
+    mpr_to_gjk_penetration_ratio: qd.Tensor
     # differentiable contact tolerance
     diff_pos_tolerance: qd.Tensor
     diff_normal_tolerance: qd.Tensor
@@ -861,6 +834,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
         mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
+        mpr_to_gjk_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_penetration_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
         contact_pruning_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_pruning_tolerance"]),

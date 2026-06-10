@@ -1,8 +1,6 @@
 import math
 import os
-import tempfile
 from itertools import permutations
-from pathlib import Path
 from typing import TYPE_CHECKING, cast, Any
 
 import numpy as np
@@ -98,7 +96,6 @@ def assert_ipc_genesis_transform_close(coupler, link, env_idx, gs_pos, gs_quat, 
     assert_allclose(rot_diff, 0.0, atol=atol)
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("enable_rigid_rigid_contact", [False, True])
 def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     from genesis.engine.entities import RigidEntity, FEMEntity
@@ -181,6 +178,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
                     elem = coupler._ipc_abd_links_contact[entity.base_link]
                 friction = entity.material.coup_friction
             else:
+                assert isinstance(entity, FEMEntity)
                 elem = coupler._ipc_fems_contact[entity]
                 friction = entity.material.friction_mu
             resistance = entity.material.contact_resistance or coupler.options.contact_resistance
@@ -261,7 +259,6 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     assert (np.diff(final_positions[..., ::-1, 0], axis=-1) > 0.2).all()
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -399,7 +396,6 @@ def test_link_filter_strict():
     assert base_link not in coupler._abd_data_by_link
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize(
@@ -434,10 +430,10 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             newton_semi_implicit_enable=False,
             restitution=0.0,
             ignore_end_effector_check=True,  # bypass two-way soft constraint check
-            # _export_ipc_surface=True,
-            # _export_pre_coupling_surface=True,
-            # _export_post_coupling_surface=True,
-            # _export_surface_dir="C:/Users/81946/Projects/GenesisFix/Output",
+            _export_ipc_surface=True,
+            _export_pre_coupling_surface=True,
+            _export_post_coupling_surface=True,
+            _export_surface_dir="C:/Users/81946/Projects/GenesisFix/Output",
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 0.8),
@@ -488,8 +484,8 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         art_data = coupler._articulation_data_by_entity[robot]
         assert len(art_data.slots) == max(scene.n_envs, 1)
         if fixed:
-            # Fixed-base ext_art: links are in IPC with ipc_transforms for ref_dof_prev
-            assert coupler._abd_data_by_link[moving_link].ipc_transforms is not None
+            # Fixed-base ext_art: links are in IPC but not coupling targets
+            assert coupler._abd_data_by_link[moving_link].ipc_transforms is None
 
     dist_min = np.array(float("inf"))
     cur_dof_pos_history, target_dof_pos_history = [], []
@@ -563,7 +559,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
 def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
     """Test that find_target_link_for_fixed_merge correctly groups ABD bodies."""
     from genesis.engine.entities import RigidEntity
-    from genesis.engine.couplers.ipc_coupler.utils import find_abd_merge_target
+    from genesis.engine.couplers.ipc_coupler.utils import find_target_link_for_fixed_merge
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.8)),
@@ -584,13 +580,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
         ),
     )
 
-    material_kwargs = dict(
-        coup_type=coup_type,
-        coup_stiffness=(1.0, 1.0),
-    )
-    # two_way_soft_constraint requires explicit coup_links for articulated robots
-    if coup_type == "two_way_soft_constraint":
-        material_kwargs["coup_links"] = ("link7",)
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/panda_bullet/panda_nohand.urdf",
@@ -598,7 +587,10 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             fixed=True,
             merge_fixed_links=merge_fixed_links,
         ),
-        material=gs.materials.Rigid(**material_kwargs),
+        material=gs.materials.Rigid(
+            coup_type=coup_type,
+            coup_stiffness=(1.0, 1.0),
+        ),
     )
     assert isinstance(robot, RigidEntity)
 
@@ -615,7 +607,7 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
     if not merge_fixed_links:
         attachment = robot.get_link("attachment")
         # attachment exists as separate link but shares ABD body with link7
-        target = find_abd_merge_target(attachment)
+        target = find_target_link_for_fixed_merge(attachment)
         assert target == link7
         # attachment is NOT in _abd_data_by_link — only the target link gets a slot entry
         assert attachment not in coupler._abd_data_by_link
@@ -1128,7 +1120,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     assert (gs_positions_f[..., 2] - finger_aabb[..., 0, 2] > 0).any()
 
 
-@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_abd(coup_type, show_viewer):
@@ -1162,117 +1153,12 @@ def test_robot_grasp_abd(coup_type, show_viewer):
     cyl_link = cylinder.links[0]
     assert cyl_link in coupler._abd_data_by_link
 
-    # ipc_only has FIXED joints (0 DOFs), so use get_pos() instead of get_dofs_position()
-    cyl_z_0 = tensor_to_array(cylinder.get_pos())[..., 2]
+    cyl_z_0 = tensor_to_array(cylinder.get_dofs_position())[..., 2]
 
     _run_grasp_sequence(scene, franka, DT)
 
-    cyl_z_f = tensor_to_array(cylinder.get_pos())[..., 2]
+    cyl_z_f = tensor_to_array(cylinder.get_dofs_position())[..., 2]
     assert (cyl_z_f - cyl_z_0 >= 0.2).all()
-
-
-@pytest.mark.required
-def test_robot_grasp_abd_missing_collision_geom(show_viewer, tmp_path):
-    """Verify ext_art grasp works when a middle link has no collision geometry.
-
-    Creates a modified Panda MJCF with link4's collision geom removed, then runs
-    the standard grasp sequence to ensure the IPC coupler handles the missing
-    geometry gracefully.
-    """
-    import xml.etree.ElementTree as ET
-
-    from genesis.engine.entities import RigidEntity
-
-    # Build a modified MJCF with link4's collision geom removed
-    mjcf_src = Path(gs.utils.get_assets_dir()) / "xml" / "franka_emika_panda" / "panda_non_overlap.xml"
-    tree = ET.parse(mjcf_src)
-    root = tree.getroot()
-
-    # Find the link4 body and remove its collision geom(s)
-    removed = 0
-    for body in root.iter("body"):
-        if body.get("name") == "link4":
-            for geom in list(body):
-                if geom.tag == "geom" and geom.get("class") == "collision":
-                    body.remove(geom)
-                    removed += 1
-            break
-    assert removed > 0, "Expected to remove at least one collision geom from link4"
-
-    # Symlink the assets directory so meshdir="assets" resolves correctly
-    (tmp_path / "assets").symlink_to(mjcf_src.parent / "assets")
-    mjcf_path = tmp_path / "panda_no_link4_coll.xml"
-    tree.write(mjcf_path, xml_declaration=False)
-
-    # Build scene
-    coup_type = "external_articulation"
-    DT = 0.01
-    GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
-    CYL_POS = (0.65, 0.0, 0.025)
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=DT, gravity=GRAVITY),
-        coupler_options=gs.options.IPCCouplerOptions(
-            newton_translation_tolerance=10.0,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 1.0, 1.0),
-            camera_lookat=(0.3, 0.0, 0.5),
-        ),
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(
-        gs.morphs.Plane(),
-        material=gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.8),
-    )
-
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file=str(mjcf_path)),
-        material=gs.materials.Rigid(
-            coup_friction=0.8,
-            coup_type=coup_type,
-            coup_stiffness=(10.0, 10.0),
-        ),
-    )
-    assert isinstance(franka, RigidEntity)
-
-    cylinder = scene.add_entity(
-        morph=gs.morphs.Cylinder(pos=CYL_POS, height=0.05, radius=0.025),
-        material=gs.materials.Rigid(rho=1000.0, coup_type="ipc_only", coup_friction=0.8),
-        surface=gs.surfaces.Plastic(color=(0.2, 0.2, 0.8, 0.5)),
-    )
-    assert isinstance(cylinder, RigidEntity)
-
-    scene.build()
-
-    # Verify finger links and cylinder are registered in IPC
-    coupler = cast("IPCCoupler", scene.sim.coupler)
-    for finger_name in ("left_finger", "right_finger"):
-        finger_link = franka.get_link(finger_name)
-        assert finger_link in coupler._abd_data_by_link, f"{finger_name} should be in IPC"
-    cyl_link = cylinder.links[0]
-    assert cyl_link in coupler._abd_data_by_link
-
-    # Verify link4 is a proxy: registered in IPC but with a single-vertex geometry
-    # (no triangles = no surface for contact detection)
-    link4 = franka.get_link("link4")
-    assert link4 in coupler._abd_data_by_link, "link4 proxy should be registered"
-    assert link4 not in coupler._ipc_abd_links_contact, "link4 proxy should have no collision contact"
-    link4_slot = coupler._abd_data_by_link[link4].slots[0]
-    link4_geom = link4_slot.geometry()
-    link4_n_verts = link4_geom.positions().view().shape[0]
-    link4_tris = link4_geom.triangles().topo()
-    assert link4_n_verts == 1, f"Proxy should have 1 vertex, got {link4_n_verts}"
-    assert link4_tris is None or link4_tris.view().shape[0] == 0, "Proxy should have no triangles"
-
-    cyl_z_0 = tensor_to_array(cylinder.get_pos())[..., 2]
-
-    # Run grasp sequence
-    _run_grasp_sequence(scene, franka, DT)
-
-    cyl_z_f = tensor_to_array(cylinder.get_pos())[..., 2]
-    assert (cyl_z_f - cyl_z_0 >= 0.2).all(), f"Cylinder should be lifted >= 0.2m, got {(cyl_z_f - cyl_z_0).min():.4f}m"
 
 
 @pytest.mark.required
@@ -1414,7 +1300,6 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert_allclose(total_p_history, momentum_0, tol=0.001)
 
 
-@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
 @pytest.mark.parametrize("coup_type", ["ipc_only", "two_way_soft_constraint"])
@@ -1438,6 +1323,7 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
             needs_coup=False,
         ),
     )
+    assert isinstance(plane, RigidEntity)
 
     # Non-IPC box — always handled by rigid solver
     box = scene.add_entity(
@@ -1535,7 +1421,6 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
 
 
-@pytest.mark.slow  # ~400s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_cloth_corner_drag(n_envs, show_viewer):
@@ -1820,358 +1705,6 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_cloth_aerodynamic_drag(n_envs, show_viewer):
-    """Drop two identical cloths under gravity — one with aerodynamic drag, one without.
-
-    Compare their centroid Z after N steps: the cloth with drag must fall significantly
-    less than the one without, confirming the aerodynamic damping force is active.
-    """
-    DT = 0.01
-    N_STEPS = 40
-    DROP_HEIGHT = 1.0
-    DRAG_COEFF = 2.0
-
-    def run_cloth_drop(aerodynamic_drag):
-        scene = gs.Scene(
-            sim_options=gs.options.SimOptions(
-                dt=DT,
-                gravity=(0.0, 0.0, -9.8),
-            ),
-            coupler_options=gs.options.IPCCouplerOptions(
-                contact_enable=False,
-                newton_tolerance=0.1,
-            ),
-            show_viewer=show_viewer,
-        )
-
-        asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
-        cloth = scene.add_entity(
-            morph=gs.morphs.Mesh(
-                file=f"{asset_path}/IPC/grid20x20.obj",
-                scale=1.0,
-                pos=(0.0, 0.0, DROP_HEIGHT),
-                euler=(90, 0, 0),
-            ),
-            material=gs.materials.FEM.Cloth(
-                E=1e4,
-                nu=0.3,
-                rho=200.0,
-                thickness=0.001,
-                aerodynamic_drag=aerodynamic_drag,
-            ),
-        )
-
-        scene.build(n_envs=n_envs)
-        for _ in range(N_STEPS):
-            scene.step()
-
-        cloth_positions = tensor_to_array(cloth.get_state().pos)
-        return cloth_positions[..., 2].mean(axis=-1)
-
-    centroid_z_no_drag = run_cloth_drop(aerodynamic_drag=None)
-    centroid_z_zero_drag = run_cloth_drop(aerodynamic_drag=0.0)
-    centroid_z_drag = run_cloth_drop(aerodynamic_drag=DRAG_COEFF)
-
-    # drag=0.0 must behave identically to drag=None
-    assert_allclose(centroid_z_zero_drag, centroid_z_no_drag, tol=1e-6)
-
-    # Both cloths must have fallen (below initial height)
-    assert (centroid_z_no_drag < DROP_HEIGHT).all()
-    assert (centroid_z_drag < DROP_HEIGHT).all()
-
-    # Aerodynamic drag must significantly slow the fall
-    fall_no_drag = DROP_HEIGHT - centroid_z_no_drag
-    fall_drag = DROP_HEIGHT - centroid_z_drag
-    assert (fall_drag < fall_no_drag * 0.1).all(), (
-        f"Cloth with drag fell {fall_drag} but without drag fell {fall_no_drag}. "
-        f"Drag should reduce fall distance to less than 10% of no-drag fall."
-    )
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_cloth_curvature_drag(n_envs, show_viewer):
-    """Verify curvature-aware aerodynamic drag modulation.
-
-    Drop a cloth with aerodynamic drag enabled. Compare results with
-    curvature_drag_scale=0 (baseline) vs curvature_drag_scale>0 (curvature active).
-
-    A falling cloth deforms into a bowl shape (center sags), developing curvature.
-    With curvature_drag_scale>0, concave regions get amplified drag, producing
-    measurably different centroid positions from the curvature-free baseline.
-    """
-    DT = 0.01
-    N_STEPS = 60
-    DROP_HEIGHT = 1.0
-    DRAG_COEFF = 1.0
-
-    def run_cloth_drop(curvature_drag_scale):
-        scene = gs.Scene(
-            sim_options=gs.options.SimOptions(
-                dt=DT,
-                gravity=(0.0, 0.0, -9.8),
-            ),
-            coupler_options=gs.options.IPCCouplerOptions(
-                contact_enable=False,
-                newton_tolerance=0.1,
-            ),
-            show_viewer=show_viewer,
-        )
-
-        asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
-        cloth = scene.add_entity(
-            morph=gs.morphs.Mesh(
-                file=f"{asset_path}/IPC/grid20x20.obj",
-                scale=1.0,
-                pos=(0.0, 0.0, DROP_HEIGHT),
-                euler=(90, 0, 0),
-            ),
-            material=gs.materials.FEM.Cloth(
-                E=1e4,
-                nu=0.3,
-                rho=200.0,
-                thickness=0.001,
-                aerodynamic_drag=DRAG_COEFF,
-                curvature_drag_scale=curvature_drag_scale,
-            ),
-        )
-
-        scene.build(n_envs=n_envs)
-        for _ in range(N_STEPS):
-            scene.step()
-
-        cloth_positions = tensor_to_array(cloth.get_state().pos)
-        return cloth_positions[..., 2].mean(axis=-1)
-
-    centroid_z_no_curv = run_cloth_drop(curvature_drag_scale=0.0)
-    centroid_z_with_curv = run_cloth_drop(curvature_drag_scale=10.0)
-
-    # Both cloths must have fallen from initial height
-    assert (centroid_z_no_curv < DROP_HEIGHT).all()
-    assert (centroid_z_with_curv < DROP_HEIGHT).all()
-
-    # Curvature modulation must produce measurably different results
-    diff = np.abs(centroid_z_no_curv - centroid_z_with_curv)
-    assert (diff > 1e-6).all(), (
-        f"Curvature drag scale had no effect. "
-        f"Without curvature: {centroid_z_no_curv}, with curvature: {centroid_z_with_curv}"
-    )
-
-
-def _generate_hemisphere_obj(filepath, radius=0.25, n_lat=12, n_lon=20):
-    """Generate a hemisphere mesh OBJ (dome at +Y, opening at Y=0)."""
-    verts = []
-    faces = []
-
-    # Pole vertex
-    verts.append((0.0, radius, 0.0))
-
-    # Latitude rings from near-pole to equator
-    for i in range(1, n_lat + 1):
-        theta = (np.pi / 2) * i / n_lat
-        y = radius * np.cos(theta)
-        r = radius * np.sin(theta)
-        for j in range(n_lon):
-            phi = 2 * np.pi * j / n_lon
-            x = r * np.cos(phi)
-            z = r * np.sin(phi)
-            verts.append((x, y, z))
-
-    # Triangle fan at pole
-    for j in range(n_lon):
-        j_next = (j + 1) % n_lon
-        faces.append((1, 1 + j + 1, 1 + j_next + 1))
-
-    # Quad strips between rings
-    for i in range(n_lat - 1):
-        ring_start = 1 + i * n_lon
-        next_ring_start = 1 + (i + 1) * n_lon
-        for j in range(n_lon):
-            j_next = (j + 1) % n_lon
-            v00 = ring_start + j + 1
-            v01 = ring_start + j_next + 1
-            v10 = next_ring_start + j + 1
-            v11 = next_ring_start + j_next + 1
-            faces.append((v00, v10, v11))
-            faces.append((v00, v11, v01))
-
-    with open(filepath, "w") as f:
-        for v in verts:
-            f.write(f"v {v[0]:.8f} {v[1]:.8f} {v[2]:.8f}\n")
-        for face in faces:
-            f.write(f"f {face[0]} {face[1]} {face[2]}\n")
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_hemisphere_curvature_drag(n_envs, show_viewer):
-    """Dome (convex down) must fall faster than parachute (concave down).
-
-    Two identical hemisphere meshes drop under gravity with the same
-    aerodynamic_drag and curvature_drag_scale. The only difference is
-    orientation: one opens downward (parachute), the other opens upward (dome).
-
-    With curvature-aware drag (min-clamped H_v ≤ 0), the dome's convex
-    exterior facing velocity gets reduced drag (H_v < 0), while the
-    parachute's concave interior gets baseline drag (H_v clamped to 0).
-    """
-    DT = 0.01
-    N_STEPS = 80
-    DROP_HEIGHT = 1.5
-    DRAG = 0.05
-    CURV_SCALE = 5.0
-
-    tmpdir = tempfile.mkdtemp()
-    hemi_obj = os.path.join(tmpdir, "hemisphere.obj")
-    _generate_hemisphere_obj(hemi_obj)
-
-    def run_hemisphere_drop(euler):
-        scene = gs.Scene(
-            sim_options=gs.options.SimOptions(
-                dt=DT,
-                gravity=(0.0, 0.0, -9.8),
-            ),
-            coupler_options=gs.options.IPCCouplerOptions(
-                contact_enable=False,
-                newton_tolerance=0.5,
-                newton_translation_tolerance=10.0,
-            ),
-            show_viewer=show_viewer,
-        )
-
-        hemi = scene.add_entity(
-            morph=gs.morphs.Mesh(
-                file=hemi_obj,
-                scale=1.0,
-                pos=(0.0, 0.0, DROP_HEIGHT),
-                euler=euler,
-            ),
-            material=gs.materials.FEM.Cloth(
-                E=20e3,
-                nu=0.4,
-                rho=200.0,
-                thickness=0.001,
-                bending_stiffness=20.0,
-                aerodynamic_drag=DRAG,
-                curvature_drag_scale=CURV_SCALE,
-            ),
-        )
-
-        scene.build(n_envs=n_envs)
-        for _ in range(N_STEPS):
-            scene.step()
-
-        positions = tensor_to_array(hemi.get_state().pos)
-        return positions[..., 2].mean(axis=-1)
-
-    # Parachute: open-side down (euler 90° → dome at +Z, opening at Z=0)
-    centroid_z_parachute = run_hemisphere_drop(euler=(90, 0, 0))
-    # Dome: open-side up (euler -90° → dome at -Z, opening at Z=0)
-    centroid_z_dome = run_hemisphere_drop(euler=(-90, 0, 0))
-
-    # Both must have fallen
-    assert (centroid_z_parachute < DROP_HEIGHT).all()
-    assert (centroid_z_dome < DROP_HEIGHT).all()
-
-    # Parachute must fall less than dome (higher centroid = more drag)
-    fall_parachute = DROP_HEIGHT - centroid_z_parachute
-    fall_dome = DROP_HEIGHT - centroid_z_dome
-    assert (fall_parachute < fall_dome).all(), (
-        f"Parachute fell {fall_parachute} but dome fell {fall_dome}. "
-        f"Curvature-aware drag should make the parachute fall less than the dome."
-    )
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_hemisphere_curvature_inflate(n_envs, show_viewer):
-    """Curvature inflate must slow descent of a parachute (open-side down).
-
-    Drop identical hemispheres in parachute orientation (open-side down).
-    Compare curvature_inflate_scale=0 (baseline) vs curvature_inflate_scale>0.
-
-    With inflate active, concave-facing-velocity regions (H_v > 0) get increased
-    drag, slowing the fall. The inflate hemisphere must have a higher centroid Z
-    (fell less) than the baseline.
-
-    Also verifies that inflate_scale=0 is bit-identical to curvature-only baseline.
-    """
-    DT = 0.01
-    N_STEPS = 80
-    DROP_HEIGHT = 1.5
-    DRAG = 0.05
-    CURV_SCALE = 5.0
-
-    tmpdir = tempfile.mkdtemp()
-    hemi_obj = os.path.join(tmpdir, "hemisphere.obj")
-    _generate_hemisphere_obj(hemi_obj)
-
-    def run_hemisphere_drop(curvature_inflate_scale):
-        scene = gs.Scene(
-            sim_options=gs.options.SimOptions(
-                dt=DT,
-                gravity=(0.0, 0.0, -9.8),
-            ),
-            coupler_options=gs.options.IPCCouplerOptions(
-                contact_enable=False,
-                newton_tolerance=0.5,
-                newton_translation_tolerance=10.0,
-            ),
-            show_viewer=show_viewer,
-        )
-
-        hemi = scene.add_entity(
-            morph=gs.morphs.Mesh(
-                file=hemi_obj,
-                scale=1.0,
-                pos=(0.0, 0.0, DROP_HEIGHT),
-                # Parachute orientation: open-side down
-                euler=(90, 0, 0),
-            ),
-            material=gs.materials.FEM.Cloth(
-                E=20e3,
-                nu=0.4,
-                rho=200.0,
-                thickness=0.001,
-                bending_stiffness=20.0,
-                aerodynamic_drag=DRAG,
-                curvature_drag_scale=CURV_SCALE,
-                curvature_inflate_scale=curvature_inflate_scale,
-            ),
-        )
-
-        scene.build(n_envs=n_envs)
-        for _ in range(N_STEPS):
-            scene.step()
-
-        positions = tensor_to_array(hemi.get_state().pos)
-        return positions[..., 2].mean(axis=-1)
-
-    centroid_z_no_inflate = run_hemisphere_drop(curvature_inflate_scale=0.0)
-    centroid_z_no_inflate_2 = run_hemisphere_drop(curvature_inflate_scale=0.0)
-    centroid_z_with_inflate = run_hemisphere_drop(curvature_inflate_scale=5.0)
-
-    # inflate_scale=0 must be bit-identical across runs
-    assert_allclose(centroid_z_no_inflate, centroid_z_no_inflate_2, tol=1e-10)
-
-    # Both must have fallen
-    assert (centroid_z_no_inflate < DROP_HEIGHT).all()
-    assert (centroid_z_with_inflate < DROP_HEIGHT).all()
-
-    # Inflate must slow the fall (higher centroid = less fall)
-    fall_no_inflate = DROP_HEIGHT - centroid_z_no_inflate
-    fall_with_inflate = DROP_HEIGHT - centroid_z_with_inflate
-    assert (fall_with_inflate < fall_no_inflate).all(), (
-        f"Inflate did not slow descent. Without inflate fell {fall_no_inflate}, with inflate fell {fall_with_inflate}."
-    )
-
-    # The effect should be significant (at least 10% reduction in fall distance)
-    reduction = (fall_no_inflate - fall_with_inflate) / fall_no_inflate
-    assert (reduction > 0.1).all(), f"Inflate effect too small: only {reduction * 100:.1f}% reduction in fall distance."
-
-
-@pytest.mark.required
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "ipc_only"])
 def test_set_object_qpos(coup_type):
     """Verify set_qpos and set_dofs_position on a free rigid object with IPC coupling."""
@@ -2205,20 +1738,16 @@ def test_set_object_qpos(coup_type):
     pos0 = tensor_to_array(box.get_pos()).flatten()
     assert_allclose(pos0, INIT_POS, atol=1e-4)
 
-    if coup_type == "ipc_only":
-        # ipc_only uses FIXED joints — no qpos DOFs. Use set_pos/set_quat instead.
-        box.set_pos(TARGET_POS)
-    else:
-        # Free joint qpos: [x, y, z, qw, qx, qy, qz]
-        target_qpos = np.array([*TARGET_POS, 1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
-        box.set_qpos(target_qpos)
-
-        # Velocity should be zeroed (default zero_velocity=True for RigidEntity)
-        vel_after_set = tensor_to_array(box.get_dofs_velocity()).flatten()
-        assert_allclose(vel_after_set, np.zeros(6), atol=1e-6)
-
+    # --- Test set_qpos ---
+    # Free joint qpos: [x, y, z, qw, qx, qy, qz]
+    target_qpos = np.array([*TARGET_POS, 1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+    box.set_qpos(target_qpos)
     pos_after_set = tensor_to_array(box.get_pos()).flatten()
     assert_allclose(pos_after_set, TARGET_POS, atol=1e-4)
+
+    # Velocity should be zeroed (default zero_velocity=True for RigidEntity)
+    vel_after_set = tensor_to_array(box.get_dofs_velocity()).flatten()
+    assert_allclose(vel_after_set, np.zeros(6), atol=1e-6)
 
     # Step and verify IPC stays in sync (no crash, position doesn't jump back)
     for _ in range(5):
@@ -2228,13 +1757,8 @@ def test_set_object_qpos(coup_type):
     gs_quat = tensor_to_array(box.get_quat()).flatten()
     assert_ipc_genesis_transform_close(coupler, box.base_link, 0, pos_after_step, gs_quat, atol=0.01)
 
-    if coup_type == "ipc_only":
-        # Reset via set_pos
-        box.set_pos(INIT_POS)
-    else:
-        # Test set_dofs_position
-        box.set_dofs_position(INIT_POS, dofs_idx_local=[0, 1, 2])
-
+    # --- Test set_dofs_position ---
+    box.set_dofs_position(INIT_POS, dofs_idx_local=[0, 1, 2])
     pos_after_dof_set = tensor_to_array(box.get_pos()).flatten()
     assert_allclose(pos_after_dof_set, INIT_POS, atol=1e-4)
 
@@ -2374,190 +1898,3 @@ def test_coup_collision_links():
     assert base_link in collision_settings
     assert collision_settings[base_link] is False
     assert moving_link not in collision_settings
-
-
-# ============================================================
-# FEM set_position IPC sync
-# ============================================================
-
-
-@pytest.mark.required
-def test_fem_set_position_ipc_sync():
-    """Verify FEMEntity.set_position syncs to IPC via FiniteElementStateAccessorFeature."""
-    DT = 0.01
-    INIT_POS = (0.5, 0.0, 0.3)
-    TELEPORT_DZ = 0.3
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=DT, gravity=(0, 0, 0)),
-        coupler_options=gs.options.IPCCouplerOptions(
-            newton_translation_tolerance=10.0,
-        ),
-        show_viewer=False,
-    )
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
-    cube = scene.add_entity(
-        morph=gs.morphs.Box(pos=INIT_POS, size=(0.05, 0.05, 0.05)),
-        material=gs.materials.FEM.Elastic(E=5e4, nu=0.45, rho=1000, model="stable_neohookean"),
-    )
-    scene.build()
-
-    coupler = cast("IPCCoupler", scene.sim.coupler)
-    assert coupler._fem_state_feature is not None
-    assert coupler._fem_state_geom is not None
-    assert cube in coupler._fem_slots_by_entity
-
-    # Step once to settle
-    scene.step()
-    state0 = cube.get_state()
-    z0 = state0.pos.numpy()[0].mean(axis=0)[2]
-
-    # Teleport up
-    new_pos = state0.pos.numpy()[0] + np.array([0, 0, TELEPORT_DZ])
-    cube.set_position(new_pos)
-    assert len(coupler._fem_updated_entities) == 1
-
-    # Step — IPC should see teleported positions
-    scene.step()
-    z1 = cube.get_state().pos.numpy()[0].mean(axis=0)[2]
-    assert abs(z1 - (z0 + TELEPORT_DZ)) < 0.05, f"FEM teleport failed: z={z1:.4f}, expected ~{z0 + TELEPORT_DZ:.4f}"
-
-
-@pytest.mark.required
-def test_fem_set_position_skip_forward():
-    """Verify skip_forward=True defers flush but IPC still syncs on next step."""
-    DT = 0.01
-    TELEPORT_DZ = 0.2
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=DT, gravity=(0, 0, 0)),
-        coupler_options=gs.options.IPCCouplerOptions(
-            newton_translation_tolerance=10.0,
-        ),
-        show_viewer=False,
-    )
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
-    cube = scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.5, 0.0, 0.3), size=(0.05, 0.05, 0.05)),
-        material=gs.materials.FEM.Elastic(E=5e4, nu=0.45, rho=1000, model="stable_neohookean"),
-    )
-    scene.build()
-
-    scene.step()
-    z0 = cube.get_state().pos.numpy()[0].mean(axis=0)[2]
-
-    # Teleport with skip_forward=True
-    new_pos = cube.get_state().pos.numpy()[0] + np.array([0, 0, TELEPORT_DZ])
-    cube.set_position(new_pos, skip_forward=True)
-
-    # Step — process_input flushes _tgt, then cache_fem_positions syncs to IPC
-    scene.step()
-    z1 = cube.get_state().pos.numpy()[0].mean(axis=0)[2]
-    assert abs(z1 - (z0 + TELEPORT_DZ)) < 0.05, (
-        f"skip_forward teleport failed: z={z1:.4f}, expected ~{z0 + TELEPORT_DZ:.4f}"
-    )
-
-
-# ============================================================
-# ExtArt coupler-level fixed-link merge
-# ============================================================
-
-
-@pytest.mark.required
-def test_ext_art_coupler_fixed_merge():
-    """Verify ext_art auto-merges fixed-joint links at coupler level without merge_fixed_links on morph."""
-    from genesis.engine.couplers.ipc_coupler.utils import find_abd_merge_target
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.02),
-        coupler_options=gs.options.IPCCouplerOptions(
-            newton_translation_tolerance=10.0,
-            enable_rigid_rigid_contact=True,
-            enable_rigid_ground_contact=True,
-        ),
-        show_viewer=False,
-    )
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
-
-    # No merge_fixed_links on morph — coupler should handle it
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
-        material=gs.materials.Rigid(coup_type="external_articulation"),
-    )
-    scene.build()
-
-    coupler = cast("IPCCoupler", scene.sim.coupler)
-
-    # hand link should be merged into link7
-    hand = franka.get_link("hand")
-    link7 = franka.get_link("link7")
-    assert find_abd_merge_target(hand) is link7
-
-    # hand should NOT have its own ABD body
-    assert hand not in coupler._abd_data_by_link
-    # link7 should have an ABD body
-    assert link7 in coupler._abd_data_by_link
-    # hand's lookup should point to link7
-    assert coupler._link_to_abd_link[hand.idx] is link7
-
-    # Fingers should still have their own ABD bodies (prismatic joints, not fixed)
-    left_finger = franka.get_link("left_finger")
-    right_finger = franka.get_link("right_finger")
-    assert left_finger in coupler._abd_data_by_link
-    assert right_finger in coupler._abd_data_by_link
-
-    # Articulation should have 9 joints (7 revolute + 2 prismatic, no fixed)
-    ad = list(coupler._articulation_data_by_entity.values())[0]
-    assert len(ad.joints_child_link) == 9
-
-    # Step to verify no crash
-    ee = franka.get_link("link7")
-    franka.set_dofs_kp([4500, 4500, 3500, 3500, 2000, 2000, 2000, 500, 500])
-    qpos = franka.inverse_kinematics(link=franka.get_link("hand"), pos=[0.5, 0, 0.5], quat=[0, 1, 0, 0])
-    qpos[7:9] = 0.04
-    franka.set_qpos(qpos)
-    franka.control_dofs_position(qpos)
-    for _ in range(3):
-        scene.step()
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
-def test_ext_art_same_trajectory(coup_type):
-    """Verify ext_art and two_way produce similar arm trajectories in free space."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
-        coupler_options=gs.options.IPCCouplerOptions(
-            enable_rigid_rigid_contact=False,
-            enable_rigid_ground_contact=False,
-            newton_translation_tolerance=10.0,
-        ),
-        show_viewer=False,
-    )
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
-
-    kw = dict(coup_friction=0.8, coup_type=coup_type, coup_stiffness=(10, 10))
-    if coup_type == "two_way_soft_constraint":
-        kw["coup_links"] = ("left_finger", "right_finger")
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
-        material=gs.materials.Rigid(**kw),
-    )
-    scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.65, 0, 0.03), size=(0.05, 0.05, 0.05)),
-        material=gs.materials.FEM.Elastic(E=5e4, nu=0.45, rho=1000, friction_mu=0.5, model="stable_neohookean"),
-    )
-    scene.build()
-
-    ee = franka.get_link("hand")
-    franka.set_dofs_kp([4500, 4500, 3500, 3500, 2000, 2000, 2000, 500, 500])
-    qpos = franka.inverse_kinematics(link=ee, pos=[0.65, 0, 0.4], quat=[0, 1, 0, 0])
-    qpos[7:9] = 0.04
-    franka.control_dofs_position(qpos)
-    for _ in range(3):
-        scene.step()
-
-    # After 3 steps the arm won't reach the target yet, but IPC should be
-    # stable (no crash, no NaN) and the hand should have moved from neutral.
-    hand_pos = qd_to_numpy(scene.sim.rigid_solver.links_state.pos, transpose=True)[0][ee.idx]
-    assert not np.any(np.isnan(hand_pos)), f"{coup_type}: hand pos is NaN"

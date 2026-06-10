@@ -3,7 +3,6 @@ import marshal
 import math
 import os
 import pickle as pkl
-import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -81,7 +80,7 @@ class MeshInfo:
         self.uvs.append(uvs)
         self.n_points += len(verts)
 
-    def export_mesh(self, scale, is_mesh_zup):
+    def export_mesh(self, scale: float, is_mesh_zup: bool) -> "gs.Mesh":
         uvs = None
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
@@ -107,9 +106,9 @@ class MeshInfo:
 
 class MeshInfoGroup:
     def __init__(self):
-        self.infos = dict()
+        self.infos: dict[str, MeshInfo] = {}
 
-    def get(self, name):
+    def get(self, name: str):
         first_created = False
         mesh_info = self.infos.get(name)
         if mesh_info is None:
@@ -117,7 +116,7 @@ class MeshInfoGroup:
             first_created = True
         return mesh_info, first_created
 
-    def export_meshes(self, scale, is_mesh_zup):
+    def export_meshes(self, scale, is_mesh_zup) -> "list[gs.Mesh]":
         return [mesh_info.export_mesh(scale, is_mesh_zup) for mesh_info in self.infos.values()]
 
 
@@ -232,11 +231,6 @@ def compute_sdf_data(mesh, res):
 
 
 def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
-    if not surface._finalized:
-        gs.raise_exception(
-            "Surface must be finalized via `surface.finalize_texture()` before building a trimesh visual. "
-            "Call `finalize_texture()` after all `update_texture()` layering is complete."
-        )
     texture = surface.get_rgba()
 
     if isinstance(texture, gs.textures.ImageTexture):
@@ -341,7 +335,6 @@ def postprocess_collision_geoms(
     decompose_error_threshold,
     coacd_options,
     watertighten,
-    surface=None,
 ):
     # Early return if there is no geometry to process
     if not g_infos:
@@ -512,31 +505,36 @@ def postprocess_collision_geoms(
             if not (np.isnan(diffs).all(axis=0) | (np.abs(diffs) < gs.EPS).all(axis=0)).all():
                 is_merged = False
 
-        # Must apply geometry transform before merge concatenation
+        # Merge geometry into a single mesh, always preserving the first geom's local pose.
+        # Each submesh's vertices are expressed relative to the first geom's frame, so the
+        # merged geom inherits the first geom's pos/quat unchanged.
         if is_merged:
+            first_g_info = g_infos[0]
             tmeshes = []
-            metadata = set(g_infos[0]["mesh"].metadata.items())
+            metadata = set(first_g_info["mesh"].metadata.items())
+            T_first_inv = np.linalg.inv(
+                gs.utils.geom.trans_quat_to_T(
+                    first_g_info.get("pos", gu.zero_pos()),
+                    first_g_info.get("quat", gu.identity_quat()),
+                )
+            )
             for g_info in g_infos:
                 mesh = g_info["mesh"]
                 tmesh = mesh.trimesh
-                if "pos" in g_info or "quat" in g_info:
+                T_rel = T_first_inv @ gs.utils.geom.trans_quat_to_T(
+                    g_info.get("pos", gu.zero_pos()),
+                    g_info.get("quat", gu.identity_quat()),
+                )
+                if not np.allclose(T_rel, np.eye(4)):
                     tmesh = tmesh.copy()
-                    pos = g_info.get("pos", gu.zero_pos())
-                    quat = g_info.get("quat", gu.identity_quat())
-                    tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
+                    tmesh.apply_transform(T_rel)
                 metadata &= set(mesh.metadata.items())
                 tmeshes.append(tmesh)
 
             tmesh = trimesh.util.concatenate(tmeshes)
-            # `mesh_path` from the first sub-mesh's metadata doesn't represent this merged
-            # geometry — it'd mis-route Nyx to load the unmerged original asset. Drop it.
-            metadata = {k: v for k, v in metadata if k != "mesh_path"} | {"merged": True}
-            mesh = gs.Mesh.from_trimesh(
-                mesh=tmesh,
-                surface=gs.surfaces.Collision.from_source(surface),
-                metadata=metadata,
-            )
-            g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
+            metadata = dict(metadata) | {"merged": True}
+            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata=metadata)
+            g_infos = [{**first_g_info, **dict(mesh=mesh)}]
 
         # Try again to convexify then apply convex decomposition if not possible
         if must_decompose and is_merged:
@@ -549,7 +547,6 @@ def postprocess_collision_geoms(
                 decompose_error_threshold,
                 coacd_options,
                 watertighten,
-                surface=surface,
             )
 
     if must_decompose:
@@ -580,9 +577,7 @@ def postprocess_collision_geoms(
                 tmeshes = convex_decompose(tmesh, coacd_options)
                 meshes = [
                     gs.Mesh.from_trimesh(
-                        tmesh,
-                        surface=gs.surfaces.Collision.from_source(surface),
-                        metadata={**mesh.metadata, "decomposed": True},
+                        tmesh, surface=gs.surfaces.Collision(), metadata={**mesh.metadata, "decomposed": True}
                     )
                     for tmesh in tmeshes
                 ]
@@ -608,12 +603,12 @@ def postprocess_collision_geoms(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
 
-        # Watertightening already runs its own feature-preserving QEM, so re-decimating with `fast_simplification`
-        # on the wrap output barely helps (the wrap's residual non-manifold edges block most collapses) and risks
-        # destroying the careful feature preservation.
-        already_decimated = mesh.metadata.get("watertightened", False)
-        must_decimate = (num_faces > decimate_face_num or tmesh.is_watertight) and not already_decimated
-        if not must_decimate and not already_decimated:
+        # Decimation is an independent step applied after watertightening (which runs its own internal QEM): when
+        # 'decimate' is requested it simplifies the collision mesh - including a watertighten wrap - down to
+        # 'decimate_face_num'. It is gated on the mesh being either above that target or watertight, since decimating
+        # a low-poly non-watertight mesh would be unreliable.
+        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
+        if not must_decimate:
             gs.logger.debug(
                 "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
             )
@@ -624,7 +619,7 @@ def postprocess_collision_geoms(
             decimate=decimate and must_decimate,
             decimate_face_num=decimate_face_num,
             decimate_aggressiveness=decimate_aggressiveness,
-            surface=gs.surfaces.Collision.from_source(surface),
+            surface=gs.surfaces.Collision(),
             metadata=mesh.metadata.copy(),
         )
         _g_infos.append({**g_info, **dict(mesh=mesh)})
@@ -632,100 +627,16 @@ def postprocess_collision_geoms(
     return _g_infos
 
 
-def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
-    meshes = []
-    mesh_dir = os.path.dirname(path)
+def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface) -> "list[gs.Mesh]":
+    meshes: list[gs.Mesh] = []
     scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")
-        metadata = {"mesh_path": path}
         mesh = gs.Mesh.from_trimesh(
-            mesh=tmesh,
-            scale=scale,
-            surface=surface,
-            is_mesh_zup=is_mesh_zup,
-            metadata=metadata,
+            mesh=tmesh, scale=scale, surface=surface, is_mesh_zup=is_mesh_zup, metadata={"mesh_path": path}
         )
         meshes.append(mesh)
-    return meshes
-
-
-def _parse_obj_lines(path):
-    """Parse OBJ 'l' (line) elements into per-group edge lists.
-
-    OBJ vertex indices are global (1-based). Groups are split by 'o'/'g' lines.
-    Returns a list of (N, 2) int arrays with 0-based global indices, one per
-    group that has 'l' elements. Returns empty list if no 'l' elements found.
-    """
-    groups = []
-    current_edges = []
-    try:
-        with open(path) as f:
-            for line in f:
-                parts = line.strip().split()
-                if not parts:
-                    continue
-                if parts[0] in ("o", "g"):
-                    if current_edges:
-                        groups.append(np.array(current_edges, dtype=np.int32))
-                        current_edges = []
-                elif parts[0] == "l":
-                    indices = [int(re.split(r"/", p)[0]) - 1 for p in parts[1:]]
-                    for j in range(len(indices) - 1):
-                        current_edges.append([indices[j], indices[j + 1]])
-    except Exception:
-        return []
-    if current_edges:
-        groups.append(np.array(current_edges, dtype=np.int32))
-    return groups
-
-
-def parse_mesh_linemesh(path, scale, radius, is_mesh_zup, surface):
-    """Load an OBJ with 'l' (line) elements as a LineMesh.
-
-    Vertices are loaded via trimesh. Edges are parsed from 'l' lines.
-    Falls back to sequential edges if no 'l' lines are found.
-    """
-    from genesis.engine.mesh import LineMesh
-
-    # Load all vertices globally. trimesh merges PointCloud groups into one,
-    # but concatenate all geometries' vertices to be safe.
-    scene = trimesh.load(path, force="scene", process=False)
-    vert_arrays = []
-    for geom in scene.geometry.values():
-        if isinstance(geom, (trimesh.points.PointCloud, trimesh.Trimesh)):
-            vert_arrays.append(np.array(geom.vertices, dtype=gs.np_float))
-    if len(vert_arrays) == 0:
-        gs.raise_exception(f"Cannot load vertices from: {path}")
-    all_verts = np.vstack(vert_arrays)
-
-    # Parse per-group edges (global indices).
-    edge_groups = _parse_obj_lines(path)
-
-    # No 'l' lines: treat all vertices as a single sequential chain
-    if len(edge_groups) == 0:
-        n = len(all_verts)
-        edge_groups = [np.column_stack([np.arange(n - 1), np.arange(1, n)]).astype(np.int32)]
-
-    # One LineMesh per group, extracting only the referenced vertices.
-    meshes = []
-    for group_edges in edge_groups:
-        used_global = np.unique(group_edges)
-        group_verts = all_verts[used_global]
-        global_to_local = np.full(len(all_verts), -1, dtype=np.int32)
-        global_to_local[used_global] = np.arange(len(used_global), dtype=np.int32)
-        local_edges = global_to_local[group_edges]
-        meshes.append(
-            LineMesh(
-                vertices=group_verts,
-                edges=local_edges,
-                radius=radius,
-                surface=surface.copy() if surface is not None else gs.surfaces.Default(),
-                is_mesh_zup=is_mesh_zup,
-                scale=scale,
-            )
-        )
     return meshes
 
 
@@ -1145,38 +1056,35 @@ def create_plane(
     normal=(0.0, 0.0, 1.0),
     plane_size=(1e3, 1e3),
     tile_size=(1, 1),
-    color=None,
-    texture_path=None,
+    color_or_texture=DEFAULT_PLANE_TEXTURE_PATH,
     double_sided=False,
 ):
-    if color is not None and texture_path is not None:
-        gs.raise_exception("`color` and `texture_path` cannot both be set.")
+    if isinstance(color_or_texture, str):
+        color, texture_path = None, color_or_texture
+    else:
+        color, texture_path = color_or_texture, None
 
     thickness = 1e-2  # for safety
     mesh = trimesh.creation.box(extents=[plane_size[0], plane_size[1], thickness])
     mesh.vertices[:, 2] -= thickness / 2
     mesh.vertices = gu.transform_by_R(mesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    # Four quad corners (BL, BR, TR, TL) with paired (x, y, u, v). Indexed triangles
-    # share the corners; UVs are 4-vert indexed (no per-triangle duplication needed
-    # even for double-sided, since reversed-winding faces sample the same UV at each vert).
-    half_x, half_y = plane_size[0] * 0.5, plane_size[1] * 0.5
-    n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
-    corners = np.array(
+    half_x, half_y = (plane_size[0] * 0.5, plane_size[1] * 0.5)
+    verts = np.array(
         [
-            [-half_x, -half_y, 0.0, 0.0],
-            [+half_x, -half_y, n_tile_x, 0.0],
-            [+half_x, +half_y, n_tile_x, n_tile_y],
-            [-half_x, +half_y, 0.0, n_tile_y],
+            [-half_x, -half_y, 0.0],
+            [half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, -half_y, 0.0],
+            [half_x, half_y, 0.0],
+            [-half_x, half_y, 0.0],
         ],
         dtype=np.float32,
     )
-    verts = np.column_stack([corners[:, :2], np.zeros(4, dtype=np.float32)])
-    uv_coords = corners[:, 2:].copy()
+    faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
 
-    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
     if double_sided:
-        # Add reversed-winding triangles for back-facing visibility (share the 4 verts).
+        # Add reversed faces for back-facing visibility
         faces = np.vstack([faces, faces[:, ::-1]])
 
     vmesh = trimesh.Trimesh(verts, faces, process=False)
@@ -1184,18 +1092,33 @@ def create_plane(
     # the actual rendered surface position.
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
-    # Optional inline material for callers that don't layer the surface separately
-    # (e.g. viewer overlays). Genesis's primitive Plane path passes neither and layers
-    # the surface via `surface.update_texture` after the call.
-    material = None
     if texture_path is not None:
-        material = trimesh.visual.material.SimpleMaterial(
-            image=Image.open(os.path.join(get_assets_dir(), texture_path)),
+        n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
+        uv_coords = np.array(
+            [
+                [0, 0],
+                [n_tile_x, 0],
+                [n_tile_x, n_tile_y],
+                [0, 0],
+                [n_tile_x, n_tile_y],
+                [0, n_tile_y],
+            ],
+            dtype=np.float32,
         )
-    elif color is not None:
-        material = trimesh.visual.material.SimpleMaterial(diffuse=color)
+        if double_sided:
+            # Duplicate UV coords for back faces
+            uv_coords = np.vstack([uv_coords, uv_coords])
 
-    vmesh.visual = trimesh.visual.TextureVisuals(uv=uv_coords, material=material)
+        vmesh.visual = trimesh.visual.TextureVisuals(
+            uv=uv_coords,
+            material=trimesh.visual.material.SimpleMaterial(
+                image=Image.open(os.path.join(get_assets_dir(), texture_path)),
+            ),
+        )
+    else:
+        vmesh.visual = trimesh.visual.ColorVisuals(
+            vertex_colors=np.tile(np.asarray(color, dtype=np.float32), (len(vmesh.vertices), 1))
+        )
 
     return vmesh, mesh
 

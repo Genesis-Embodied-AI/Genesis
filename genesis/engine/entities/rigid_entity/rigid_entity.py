@@ -106,11 +106,6 @@ class KinematicEntity(Entity):
         self._is_attached: bool = False
         self._variant_init_qpos: list[np.ndarray] | None = None
 
-        # LBS skin overlays declared on FileMorph.skins (e.g. textured glove
-        # scan over a URDF hand). Materialised in _build() once links exist;
-        # each renderer reads this list to add/update its own scan node.
-        self._skin_states: list = []
-
         self._load_model()
 
         # Initialize target variables and checkpoint
@@ -133,13 +128,13 @@ class KinematicEntity(Entity):
     def _load_morph(self, morph: Morph):
         """Load a single morph into the entity."""
         if isinstance(morph, gs.morphs.Mesh):
-            self._load_mesh(morph, self._surface_override)
+            self._load_mesh(morph, self._surface)
         elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
-            self._load_scene(morph, self._surface_override)
+            self._load_scene(morph, self._surface)
         elif isinstance(morph, gs.morphs.Primitive):
-            self._load_primitive(morph, self._surface_override)
+            self._load_primitive(morph, self._surface)
         elif isinstance(morph, gs.morphs.Terrain):
-            self._load_terrain(morph, self._surface_override)
+            self._load_terrain(morph, self._surface)
         else:
             gs.raise_exception(f"Unsupported morph: {morph}.")
 
@@ -169,7 +164,7 @@ class KinematicEntity(Entity):
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
                 # Parse variant scene file
                 morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
-                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface_override)
+                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface)
 
                 # Validate that the variant has the same joint structure as the primary
                 if len(v_l_infos) != n_links:
@@ -220,9 +215,9 @@ class KinematicEntity(Entity):
 
             elif isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive)):
                 if isinstance(morph, gs.morphs.Mesh):
-                    g_infos = self._load_mesh(morph, self._surface_override, load_geom_only_for_heterogeneous=True)
+                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 else:
-                    g_infos = self._load_primitive(morph, self._surface_override, load_geom_only_for_heterogeneous=True)
+                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 if morph.fixed != self._morph.fixed:
                     gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
                 cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
@@ -300,7 +295,7 @@ class KinematicEntity(Entity):
             n_dofs = 6
             init_qpos = np.concatenate([morph.pos, morph.quat])
 
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = {"texture_path": None}
 
         if isinstance(morph, gs.options.morphs.Box):
             extents = np.array(morph.size)
@@ -322,15 +317,12 @@ class KinematicEntity(Entity):
             geom_type = gs.GEOM_TYPE.CYLINDER
             link_name_prefix = "cylinder"
         elif isinstance(morph, gs.options.morphs.Plane):
+            metadata["texture_path"] = mu.DEFAULT_PLANE_TEXTURE_PATH
             tmesh, cmesh = mu.create_plane(
                 normal=morph.normal,
                 plane_size=morph.plane_size,
                 tile_size=morph.tile_size,
-            )
-            # Layer the default plane texture onto the surface. update_texture is fill-if-None,
-            # so a user-provided color/texture on `surface` wins over the default checker.
-            surface.update_texture(
-                color_texture=gs.textures.ImageTexture(image_path=mu.DEFAULT_PLANE_TEXTURE_PATH),
+                color_or_texture=metadata["texture_path"],
             )
             geom_data = np.array(morph.normal)
             geom_type = gs.GEOM_TYPE.PLANE
@@ -353,7 +345,7 @@ class KinematicEntity(Entity):
                 dict(
                     contype=morph.contype,
                     conaffinity=morph.conaffinity,
-                    mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision.from_source(surface)),
+                    mesh=gs.Mesh.from_trimesh(cmesh, surface=gs.surfaces.Collision()),
                     type=geom_type,
                     data=geom_data,
                     sol_params=gu.default_solver_params(),
@@ -422,7 +414,7 @@ class KinematicEntity(Entity):
             # Merge them as a single one if requested
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
                 tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision.from_source(surface))
+                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
                 meshes = (mesh,)
 
             for mesh in meshes:
@@ -791,23 +783,12 @@ class KinematicEntity(Entity):
             self._add_by_info(l_info, link_j_infos, link_g_infos, morph, surface)
 
     def _build(self):
-        # Materialise SkinSpec → SkinState now that links are queryable. Only
-        # FileMorph subtypes carry a `skins` field (URDF, Mesh, MJCF, USD,
-        # Drone); Primitive and Terrain morphs don't, so we gate on isinstance.
-        # Done before link._build() so each link can read entity._skin_states
-        # to decide its own `is_skinned` flag.
-        if isinstance(self._morph, gs.morphs.FileMorph) and self._morph.skins:
-            from genesis.utils.skin import SkinState  # noqa: PLC0415
-
-            self._skin_states = [SkinState(spec, self) for spec in self._morph.skins]
-
         for link in self._links:
             link._build()
 
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
         self._vgeoms = self.vgeoms
-
         self._is_built = True
 
     def _create_joints(self, j_infos, link_idx, joint_start):
@@ -894,9 +875,7 @@ class KinematicEntity(Entity):
         link_idx = self.n_links + self._link_start
         joint_start = self.n_joints + self._joint_start
 
-        cg_infos, vg_infos = self._postprocess_geoms_info(
-            morph, g_infos, l_info.get("is_robot", False), link_name=l_info.get("name")
-        )
+        cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, l_info.get("is_robot", False))
         self._align_link(l_info, j_infos, cg_infos, vg_infos, morph)
 
         joints = self._create_joints(j_infos, link_idx, joint_start)
@@ -928,17 +907,11 @@ class KinematicEntity(Entity):
 
         return link, joints
 
-    def _postprocess_geoms_info(self, morph, g_infos, is_robot, link_name=None):
+    def _postprocess_geoms_info(self, morph, g_infos, is_robot):
         """
         Split g_infos into (cg_infos, vg_infos) collision and visual lists, then
         post-process collision meshes (convexification / decomposition).
         Used for both normal loading and heterogeneous simulation.
-
-        Parameters
-        ----------
-        link_name : str | None
-            If provided, used to check ``no_decimate_links`` and ``no_convexify_links``
-            on the morph to skip decimation/convexification for specific links.
         """
         cg_infos, vg_infos = [], []
         for g_info in g_infos:
@@ -969,25 +942,21 @@ class KinematicEntity(Entity):
             else:
                 decompose_error_threshold = morph.decompose_object_error_threshold
 
-            # Skip decimation/convexification for links listed in no_decimate/no_convexify_links
-            decimate = morph.decimate
-            if decimate and link_name is not None and link_name in morph.no_decimate_links:
-                decimate = False
-            convexify = morph.convexify
-            if convexify and link_name is not None and link_name in morph.no_convexify_links:
-                convexify = False
-
             cg_infos = mu.postprocess_collision_geoms(
                 cg_infos,
-                decimate,
+                morph.decimate,
                 morph.decimate_face_num,
                 morph.decimate_aggressiveness,
-                convexify,
+                morph.convexify,
                 decompose_error_threshold,
                 morph.coacd_options,
                 morph.watertighten,
-                surface=self._surface_override,
             )
+
+        # Randomize collision mesh colors. This is especially useful to check convex decomposition.
+        for g_info in cg_infos:
+            mesh = g_info["mesh"]
+            mesh.set_color((*np.random.rand(3), 0.7))
 
         return cg_infos, vg_infos
 
@@ -1952,11 +1921,6 @@ class KinematicEntity(Entity):
             return self._vgeoms
         return gs.List(vgeom for link in self._links for vgeom in link.vgeoms)
 
-    @property
-    def skin_states(self) -> list:
-        """The list of `SkinState` objects materialised from this entity's `morph.skins` (empty if none)."""
-        return self._skin_states
-
     @gs.assert_built
     def set_vverts(self, vverts, envs_idx=None):
         """Override this entity's visual vertex positions for rendering and sensors.
@@ -2085,18 +2049,6 @@ class RigidEntity(KinematicEntity):
 
         self._batch_fixed_verts: bool = morph.batch_fixed_verts
 
-        self._delegation: str | None = None
-        from genesis.engine.couplers.ipc_coupler.coupler import IPCCoupler
-
-        if isinstance(scene.sim.coupler, IPCCoupler) and material.coup_type == "ipc_only":
-            self._delegation = "ipc"
-
-        # ipc_only entities: IPC fully controls dynamics, so we convert their FREE
-        # joint to FIXED (0 DOFs in constraint solver). We force batch_fixed_verts
-        # so that geometry vertices are stored per-batch despite the FIXED joint.
-        if self._delegation is not None:
-            self._batch_fixed_verts = True
-
         super().__init__(
             scene,
             solver,
@@ -2115,7 +2067,7 @@ class RigidEntity(KinematicEntity):
             custom_vvert_start,
             custom_vface_start,
             morph_heterogeneous,
-            name=name,
+            name,
         )
 
     def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
@@ -2305,30 +2257,6 @@ class RigidEntity(KinematicEntity):
         self._IK_jacobian = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self.n_dofs, self._solver._B))
         self._IK_jacobian_T = qd.field(dtype=gs.qd_float, shape=(self.n_dofs, self._IK_error_dim, self._solver._B))
 
-    def _create_joints(self, j_infos, link_idx, joint_start):
-        # ipc_only entities: convert FREE joint to FIXED so they contribute 0 DOFs
-        # to the constraint solver. IPC fully controls their dynamics.
-        if self._delegation is not None:
-            for j_info in j_infos:
-                if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    j_info["type"] = gs.JOINT_TYPE.FIXED
-                    j_info["n_dofs"] = 0
-                    j_info["n_qs"] = 0
-                    j_info["dofs_limit"] = np.zeros((0, 2))
-                    j_info["init_qpos"] = np.zeros(0)
-                    j_info["dofs_armature"] = np.zeros(0)
-                    j_info["dofs_invweight"] = np.zeros(0)
-                    j_info["dofs_stiffness"] = np.zeros(0)
-                    j_info["dofs_damping"] = np.zeros(0)
-                    j_info["dofs_friction_loss"] = np.zeros(0)
-
-        super()._create_joints(j_infos, link_idx, joint_start)
-
-    @property
-    def delegation(self) -> str | None:
-        """Solver delegation mode. ``'ipc'`` if IPC fully controls this entity, else ``None``."""
-        return self._delegation
-
     def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
         if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
             raise ValueError(
@@ -2352,9 +2280,7 @@ class RigidEntity(KinematicEntity):
 
         # Split and convexify collision geometry. Must be done before alignment so that
         # convexified geoms are used to compute the inertia frame.
-        cg_infos, vg_infos = self._postprocess_geoms_info(
-            morph, g_infos, l_info.get("is_robot", False), link_name=l_info.get("name")
-        )
+        cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, l_info.get("is_robot", False))
 
         # Align root links' frames to their collision geometry COM and principal inertia axes.
         self._align_link(l_info, j_infos, cg_infos, vg_infos, morph)
@@ -3370,35 +3296,6 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_invweight(links_idx, envs_idx)
 
     # ------------------------------------------------------------------------------------
-    # -------------------------------- IPC sync helper -----------------------------------
-    # ------------------------------------------------------------------------------------
-
-    def _notify_ipc_coupler(self, qs_idx_local=None, dofs_idx_local=None, links_idx=None, envs_idx=None):
-        """Notify the IPC coupler that this entity's state changed (set_pos/set_qpos/etc).
-
-        Converts local indices to global and calls coupler.mark_abd_updated().
-        No-op when there is no IPC coupler or when the entity has needs_coup=False.
-        """
-        from genesis.engine.couplers import IPCCoupler
-
-        if not isinstance(self.sim.coupler, IPCCoupler):
-            return
-        if not self.material.needs_coup:
-            return
-        qs_idx = None
-        if qs_idx_local is not None:
-            qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
-        dofs_idx = None
-        if dofs_idx_local is not None:
-            dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
-        self.sim.coupler.mark_abd_updated(
-            qs_idx=qs_idx,
-            dofs_idx=dofs_idx,
-            links_idx=links_idx,
-            envs_idx=envs_idx,
-        )
-
-    # ------------------------------------------------------------------------------------
     # ----------------------------- base pos/quat get/set --------------------------------
     # ------------------------------------------------------------------------------------
 
@@ -3423,11 +3320,13 @@ class RigidEntity(KinematicEntity):
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
-        # Delegated entities (ipc_only) have no DOFs to zero
-        if self._delegation is not None:
-            zero_velocity = False
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type is not None and self.base_link.is_fixed:
+            gs.raise_exception(
+                "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
+            )
         super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
-        self._notify_ipc_coupler(links_idx=[self.base_link_idx], envs_idx=envs_idx)
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
@@ -3454,10 +3353,13 @@ class RigidEntity(KinematicEntity):
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
-        if self._delegation is not None:
-            zero_velocity = False
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type is not None and self.base_link.is_fixed:
+            gs.raise_exception(
+                "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
+            )
         super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
-        self._notify_ipc_coupler(links_idx=[self.base_link_idx], envs_idx=envs_idx)
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):
@@ -3516,10 +3418,11 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         """
-        if self._delegation is not None:
-            gs.raise_exception("ipc_only entities have no qpos. Use set_pos() and set_quat() instead.")
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coup_type='external_articulation'`.")
         super().set_qpos(qpos, qs_idx_local, envs_idx, zero_velocity=zero_velocity, skip_forward=skip_forward)
-        self._notify_ipc_coupler(qs_idx_local=qs_idx_local, envs_idx=envs_idx)
 
     @gs.assert_built
     def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
@@ -3678,8 +3581,11 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coup_type='external_articulation'`.")
         super().set_dofs_position(position, dofs_idx_local, envs_idx, zero_velocity=zero_velocity)
-        self._notify_ipc_coupler(dofs_idx_local=dofs_idx_local, envs_idx=envs_idx)
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- PD control --------------------------------------

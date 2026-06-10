@@ -1,4 +1,4 @@
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 import numpy as np
 from pydantic import PrivateAttr, StrictBool, model_validator
@@ -184,9 +184,6 @@ class SAPCouplerOptions(BaseCouplerOptions):
     rigid_rigid_contact_type: Literal["tet", "vert", "none"] = "tet"
 
 
-IPCBeforeWorldInitCallback = Callable[[Any, Any], None]
-
-
 class IPCCouplerOptions(BaseCouplerOptions):
     """
     Options configuring the Incremental Potential Contact (IPC) coupler.
@@ -257,38 +254,42 @@ class IPCCouplerOptions(BaseCouplerOptions):
     cfl_enable : bool, optional
         Whether to enable CFL (Courant-Friedrichs-Lewy) condition. Defaults to None (use libuipc default: False).
 
-    AL-IPC Options
-    --------------
-    al_ipc_mu_scale_fem : float | None, optional
-        Override AL-IPC mu scale for FEM bodies. ``mu = vertex_mass * mu_scale_fem * dt^2``.
-        None uses libuipc default. Defaults to None.
-    al_ipc_mu_scale_abd : float | None, optional
-        Override AL-IPC mu scale for ABD (rigid) bodies. ``mu = body_mass * mu_scale_abd * dt^2``.
-        None uses libuipc default. Defaults to None.
-    al_ipc_toi_threshold : float | None, optional
-        Override AL-IPC TOI (time of impact) threshold. None uses libuipc default. Defaults to None.
-    al_ipc_decay_factor : float | None, optional
-        Override AL-IPC decay factor. None uses libuipc default. Defaults to None.
+    Sanity Check Options
+    --------------------
+    sanity_check_enable : bool, optional
+        Whether to enable sanity checks. Defaults to None (use libuipc default: True).
 
     Genesis Coupling Options
     ------------------------
+    constraint_strength_translation : float, optional
+        Translation strength for IPC soft transform constraint coupling.
+        Higher values create stiffer position coupling between Genesis rigid bodies and IPC ABD objects.
+        Defaults to 100.0.
+    constraint_strength_rotation : float, optional
+        Rotation strength for IPC soft transform constraint coupling.
+        Higher values create stiffer orientation coupling between Genesis rigid bodies and IPC ABD objects.
+        Defaults to 100.0.
     enable_rigid_ground_contact : bool, optional
-        Whether to enable ground contact in IPC system. Defaults to True.
+        Whether to enable ground contact in IPC system. When False, objects in IPC will not collide
+        with the ground plane. Defaults to True.
     enable_rigid_rigid_contact : bool, optional
-        Whether to enable contact detection between rigid bodies (ABD objects) in IPC. Defaults to True.
-    enable_fem_fem_friction : bool, optional
-        Whether to enable friction between FEM bodies. Defaults to True.
-    restitution : float, optional
-        Restitution coefficient for IPC contact. Defaults to 1.0.
-    ignore_end_effector_check : bool, optional
-        Skip end-effector geometry overlap check during IPC setup. Defaults to False.
-    before_ipc_world_init : callable | None, optional
-        Callback ``(world, coupler) -> None`` invoked after IPC scene setup but before ``world.init()``.
-        Defaults to None.
-    verbose_ipc_log : bool, optional
-        Print full libuipc info log instead of the digest. Defaults to False.
+        Whether to enable contact detection between rigid bodies (ABD objects) in the IPC system.
+        When False, only soft-soft and soft-rigid collisions are detected by IPC; rigid-rigid
+        collisions within IPC are skipped. Defaults to True.
+    two_way_coupling : bool, optional
+        Whether to apply coupling forces/torques from IPC back to Genesis rigid bodies. Defaults to True.
+    enable_rigid_dofs_sync : bool, optional
+        Whether to synchronize the IPC reference DOF state with Genesis each step for
+        external_articulation entities. When True, IPC gets tighter coupling with Genesis joint
+        state but may amplify small divergences. When False, IPC uses its own DOF reference
+        without per-step updates. Defaults to False.
+    free_base_driven_by_ipc : bool, optional
+        For external_articulation with non-fixed base: whether base link is fully driven by IPC physics.
+        When False, base link uses SoftTransformConstraint controlled by Genesis. When True, base link
+        is fully driven by IPC physics. Defaults to False.
     _show_ipc_gui : bool, optional
-        [Dev/debug] Enable the libuipc built-in polyscope GUI viewer. Defaults to False.
+        [Dev/debug] Enable the libuipc built-in polyscope GUI viewer for inspecting the IPC scene.
+        Defaults to False.
     """
 
     # Newton solver options (None = use libuipc default)
@@ -315,7 +316,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     contact_friction_enable: StrictBool | None = None
     contact_resistance: PositiveFloat = 1e9
     contact_eps_velocity: PositiveFloat | None = None
-    contact_constitution: Literal["ipc", "al-ipc"] | None = None
+    contact_constitution: Literal["ipc", "isometric"] | None = None
 
     # Collision detection options
     collision_detection_method: Literal["linear_bvh", "spatial_hash"] | None = None
@@ -323,46 +324,23 @@ class IPCCouplerOptions(BaseCouplerOptions):
     # CFL options
     cfl_enable: StrictBool | None = None
 
-    # AL-IPC options
-    al_ipc_mu_scale_fem: PositiveFloat | None = None
-    al_ipc_mu_scale_abd: PositiveFloat | None = None
-    al_ipc_toi_threshold: PositiveFloat | None = None
-    al_ipc_decay_factor: PositiveFloat | None = None
+    # Sanity check options
+    sanity_check_enable: StrictBool | None = None
 
     # Genesis coupling options
+    constraint_strength_translation: PositiveFloat = 100.0
+    constraint_strength_rotation: PositiveFloat = 100.0
     enable_rigid_ground_contact: StrictBool = True
     enable_rigid_rigid_contact: StrictBool = True
-    enable_fem_fem_friction: StrictBool = True
-    restitution: NonNegativeFloat = 1.0
-    ignore_end_effector_check: StrictBool = False
-    joint_strength_ratio: PositiveFloat = 100.0
-    """Strength ratio for external articulation joint constraints. Higher = stiffer joints, less drift."""
-    before_ipc_world_init: IPCBeforeWorldInitCallback | None = None
+    two_way_coupling: StrictBool = True
+    enable_rigid_dofs_sync: StrictBool = False
+    free_base_driven_by_ipc: StrictBool = False
 
-    # Verbose IPC log — bypass the digest and print full libuipc info log
-    verbose_ipc_log: StrictBool = False
-
-    # Internal export options
-    _export_ipc_surface: bool = PrivateAttr(default=False)
-    _export_pre_coupling_surface: bool = PrivateAttr(default=False)
-    _export_post_coupling_surface: bool = PrivateAttr(default=False)
-    _export_surface_dir: str | None = PrivateAttr(default=None)
     _show_ipc_gui: bool = PrivateAttr(default=False)
 
     def __init__(self, *, _show_ipc_gui: StrictBool = False, **data) -> None:
-        # Private keys are not part of pydantic model_fields (leading underscore), so parse manually.
-        export_ipc_surface = data.pop("_export_ipc_surface", False)
-        export_pre_coupling_surface = data.pop("_export_pre_coupling_surface", False)
-        export_post_coupling_surface = data.pop("_export_post_coupling_surface", False)
-        export_surface_dir = data.pop("_export_surface_dir", None)
-
         super().__init__(**data)
-
         self._show_ipc_gui = bool(_show_ipc_gui)
-        self._export_ipc_surface = bool(export_ipc_surface)
-        self._export_pre_coupling_surface = bool(export_pre_coupling_surface)
-        self._export_post_coupling_surface = bool(export_post_coupling_surface)
-        self._export_surface_dir = None if export_surface_dir is None else str(export_surface_dir)
 
 
 ############################ Solvers inside simulator ############################
@@ -873,7 +851,6 @@ class FEMOptions(Options):
     damping_alpha: NonNegativeFloat = 0.5
     damping_beta: NonNegativeFloat = 5e-4
     enable_vertex_constraints: StrictBool = False
-    use_rigid_compatible_transform: StrictBool = False
 
 
 class SFOptions(Options):

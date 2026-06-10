@@ -17,7 +17,6 @@ import genesis as gs
 
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-from genesis.engine.materials.rigid import Rigid
 from genesis.utils.misc import assign_indexed_tensor, tensor_to_array, qd_to_torch, qd_to_numpy, indices_to_mask
 from genesis.utils.sdf import SDF
 
@@ -95,9 +94,14 @@ class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
 
-        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
-        self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1e-2
+        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 2e-3
+        self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
         self._mpr_to_gjk_overlap_ratio = 0.25
+        # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
+        # having resolved a deeper, non-minimal portal (then upgraded to GJK). At the gate the threshold is clamped
+        # into [tolerance, mpr_to_gjk_overlap_ratio * geom_scale], so a cold pair (cached penetration reset to 0)
+        # reduces to the original "penetration > tolerance" gate and a genuinely deep contact always upgrades.
+        self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
@@ -269,6 +273,7 @@ class Collider:
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
+            mpr_to_gjk_penetration_ratio=self._mpr_to_gjk_penetration_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
             contact_pruning_tolerance=self._solver._options.contact_pruning_tolerance or 0.0,
@@ -323,19 +328,17 @@ class Collider:
             self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
             self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
 
-            if self._collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK):
-                self._multicontact_n_gjk_threads = gpu_cores
-            else:
-                # Heuristic to distribute the workflow between GJK and MPR
-                self._multicontact_n_gjk_threads = math.ceil((gpu_cores // 32) / 64) * 64
             self._multicontact_n_total_threads = gpu_cores
             self._multicontact_max_items_per_thread = cores_per_unit
             self._multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
 
     def _init_multicontact_gjk_state(self):
-        """Kernel 2 GJK state. Must be called after self._gjk is initialized."""
+        """Allocate the GJK scratch state for the multicontact pass.
+
+        Must be called after self._gjk is initialized. Sized to all multicontact threads because any thread may fall
+        back to GJK for its own contact."""
         self._multicontact_gjk_state = array_class.get_gjk_state(
-            self._multicontact_n_gjk_threads,
+            self._multicontact_n_total_threads,
             self._solver._static_rigid_sim_config,
             self._gjk._gjk_info,
             True,
@@ -357,6 +360,7 @@ class Collider:
         # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
         from genesis.engine.couplers import IPCCoupler
+        from genesis.engine.couplers.ipc_coupler.data import COUPLING_TYPE
         from genesis.utils.mesh import are_meshes_overlapping
 
         n_geoms = self._solver.n_geoms
@@ -381,10 +385,11 @@ class Collider:
                         mode = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
                     else:
                         mode = "ipc_only"
-                if mode == "ipc_only":
+                coup_type = COUPLING_TYPE[mode.upper()]
+                if coup_type == COUPLING_TYPE.IPC_ONLY:
                     ipc_only_link_idxs.update(l.idx for l in entity.links)
                 link_filter_names = entity.material.coup_links
-                if mode == "two_way_soft_constraint" and link_filter_names is not None:
+                if coup_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT and link_filter_names is not None:
                     for name in link_filter_names:
                         ipc_delegated_link_idxs.add(entity.get_link(name=name).idx)
                 else:
@@ -479,7 +484,16 @@ class Collider:
                 # adjacent links
                 # FIXME: Links should be considered adjacent if connected by only fixed joints.
                 if not self._solver._enable_adjacent_collision:
-                    if are_links_adjacent(link_ga, link_gb):
+                    is_adjacent = False
+                    link_a_, link_b_ = (link_ga, link_gb) if link_ga.idx < link_gb.idx else (link_gb, link_ga)
+                    while link_b_.parent_idx != -1:
+                        if link_b_.parent_idx == link_a_.idx:
+                            is_adjacent = True
+                            break
+                        if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link_b_.joints):
+                            break
+                        link_b_ = self._solver.links[link_b_.parent_idx]
+                    if is_adjacent:
                         valid[idx] = False
                         continue
 
@@ -489,10 +503,20 @@ class Collider:
                     mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geoms[i_ga].init_faces, process=False)
                     verts_b = geoms_verts[i_gb][0]
                     mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geoms[i_gb].init_faces, process=False)
-                    if are_meshes_overlapping(mesh_a, mesh_b, NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL):
-                        self_colliding_pairs.append((i_ga, i_gb))
-                        valid[idx] = False
-                        continue
+                    bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
+                    if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
+                        voxels_a = mesh_a.voxelized(
+                            pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_a.extents))
+                        )
+                        voxels_b = mesh_b.voxelized(
+                            pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_b.extents))
+                        )
+                        coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
+                        coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
+                        if voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any():
+                            self_colliding_pairs.append((i_ga, i_gb))
+                            valid[idx] = False
+                            continue
 
         # Emit warning for self-collision pairs
         if self_colliding_pairs:
@@ -681,15 +705,21 @@ class Collider:
                     first_time[envs_idx] = True
 
             normal = qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
+            penetration = qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
             if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
                     normal.masked_fill_(envs_idx[None, :, None], 0.0)
+                    penetration.masked_fill_(envs_idx[None, :], 0.0)
                 else:
                     normal.scatter_(1, envs_idx[None, :, None].expand((normal.shape[0], -1, 3)), 0.0)
+                    penetration.scatter_(1, envs_idx[None, :].expand((normal.shape[0], -1)), 0.0)
             elif envs_idx is None:
                 normal.zero_()
+                penetration.zero_()
             else:
                 normal[:, envs_idx] = 0.0
+                penetration[:, envs_idx] = 0.0
+
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return
@@ -764,7 +794,7 @@ class Collider:
         )
 
     def _call_multicontact(self):
-        narrowphase._func_narrowphase_multicontact_mixed(
+        narrowphase._func_narrowphase_multicontact(
             self._solver.links_state,
             self._solver.links_info,
             self._solver.geoms_state,
@@ -783,9 +813,7 @@ class Collider:
             self._gjk._gjk_info,
             self._gjk._gjk_static_config,
             self._support_field._support_field_info,
-            self._multicontact_gjk_state.diff_contact_input,
             self._solver._errno,
-            self._multicontact_n_gjk_threads,
             self._multicontact_n_total_threads,
             self._multicontact_max_items_per_thread,
         )
@@ -837,8 +865,6 @@ class Collider:
                 self._solver._B,
                 self._contact0_n_chunks,
             )
-            self._call_multicontact()
-            narrowphase._func_prepare_gjk_rerun(self._collider_state)
             self._call_multicontact()
         elif self._collider_static_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(

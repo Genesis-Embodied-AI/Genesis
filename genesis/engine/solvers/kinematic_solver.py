@@ -108,15 +108,6 @@ class KinematicSolver(Solver):
     # ------------------------------------------------------------------------------------
 
     def add_entity(self, idx, material, morph, surface, visualize_contact=False, name=None) -> "KinematicEntity":
-        # KinematicSolver is visualization-only — it has no collision-geom transform buffer
-        # (`_geoms_render_T`), so the rasterizer's collision/sdf/recon paths would crash.
-        # Reject early instead of producing a cryptic AttributeError at first render.
-        if surface.vis_mode not in (None, "visual"):
-            gs.raise_exception(
-                f"KinematicSolver only supports vis_mode='visual', got {surface.vis_mode!r}. "
-                "Collision/sdf/recon visualization requires RigidSolver."
-            )
-
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph

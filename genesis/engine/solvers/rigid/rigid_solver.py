@@ -118,8 +118,6 @@ from .abd.forward_dynamics import (
     kernel_forward_dynamics_without_qacc,
     update_qacc_from_qvel_delta,
     update_qvel,
-    kernel_restore_integrate,
-    kernel_predict_integrate,
 )
 from .abd.accessor import (
     kernel_get_state,
@@ -466,9 +464,6 @@ class RigidSolver(KinematicSolver):
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0
-        # Blackwell guard removed: quadrants==1.0.2 (--no-deps) + locally-rebuilt sm_120 fatbin
-        # patched into quadrants_python.so handles SM 12.0+ cleanly. See feedback_blackwell_fatbin_patch
-        # for repro of the patch if the .so is ever reinstalled.
 
         if self.is_active:
             # The tiled and cooperative Cholesky kernels trade per-env serial work for cross-lane parallelism, so they
@@ -1308,62 +1303,9 @@ class RigidSolver(KinematicSolver):
             from genesis.engine.couplers import IPCCoupler
 
             if isinstance(self.sim.coupler, IPCCoupler):
+                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
+                # The rigid simulation will be done in post-coupling phase instead
                 if self.sim.coupler.has_any_rigid_coupling:
-                    # IPC split step: run step_1 (forces/acc) + predict + FK before coupler
-                    if self._requires_grad and f == 0:
-                        kernel_save_adjoint_cache(
-                            f=f,
-                            dofs_state=self.dofs_state,
-                            rigid_global_info=self._rigid_global_info,
-                            rigid_adjoint_cache=self._rigid_adjoint_cache,
-                            static_rigid_sim_config=self._static_rigid_sim_config,
-                        )
-                    kernel_step_1(
-                        self.links_state,
-                        self.links_info,
-                        self.joints_state,
-                        self.joints_info,
-                        self.dofs_state,
-                        self.dofs_info,
-                        self.geoms_state,
-                        self.geoms_info,
-                        self.entities_state,
-                        self.entities_info,
-                        self._rigid_global_info,
-                        self._static_rigid_sim_config,
-                        self.constraint_solver.contact_island.contact_island_state,
-                        self._is_forward_pos_updated,
-                        self._is_forward_vel_updated,
-                        self._is_backward,
-                    )
-                    self._func_constraint_force()
-                    # Sync any set_pos/set_qpos changes to IPC before prediction
-                    self.sim.coupler.cache_pre_prediction_transforms()
-                    # Predict: vel_prev=vel, vel=vel+acc*dt, qpos_prev=qpos, qpos=qpos+vel*dt
-                    kernel_predict_integrate(
-                        dofs_state=self.dofs_state,
-                        links_info=self.links_info,
-                        joints_info=self.joints_info,
-                        rigid_global_info=self._rigid_global_info,
-                        static_rigid_sim_config=self._static_rigid_sim_config,
-                        is_backward=self._is_backward,
-                        update_qpos=True,
-                    )
-                    # FK on predicted qpos to get predicted link transforms for IPC coupler
-                    kernel_forward_kinematics_links_geoms(
-                        self._scene._envs_idx,
-                        links_state=self.links_state,
-                        links_info=self.links_info,
-                        joints_state=self.joints_state,
-                        joints_info=self.joints_info,
-                        dofs_state=self.dofs_state,
-                        dofs_info=self.dofs_info,
-                        geoms_state=self.geoms_state,
-                        geoms_info=self.geoms_info,
-                        entities_info=self.entities_info,
-                        rigid_global_info=self._rigid_global_info,
-                        static_rigid_sim_config=self._static_rigid_sim_config,
-                    )
                     return
 
             # Run Genesis rigid simulation step for non-IPC couplers
@@ -1583,37 +1525,10 @@ class RigidSolver(KinematicSolver):
                 errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
-            # IPC split step: step_1 + predict + FK ran in substep_pre_coupling.
-            # Coupler has written IPC-resolved state to qpos/links_state.
-            # Now undo prediction and run step_2 (integration + collision + FK).
+            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
+            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
             if self.sim.coupler.has_any_rigid_coupling:
-                kernel_restore_integrate(
-                    dofs_state=self.dofs_state,
-                    links_info=self.links_info,
-                    joints_info=self.joints_info,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    is_backward=self._is_backward,
-                    restore_qpos=True,
-                )
-                kernel_step_2(
-                    dofs_state=self.dofs_state,
-                    dofs_info=self.dofs_info,
-                    links_info=self.links_info,
-                    links_state=self.links_state,
-                    joints_info=self.joints_info,
-                    joints_state=self.joints_state,
-                    entities_state=self.entities_state,
-                    entities_info=self.entities_info,
-                    geoms_info=self.geoms_info,
-                    geoms_state=self.geoms_state,
-                    collider_state=self.collider._collider_state,
-                    rigid_global_info=self._rigid_global_info,
-                    static_rigid_sim_config=self._static_rigid_sim_config,
-                    contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                    is_backward=self._is_backward,
-                    errno=self._errno,
-                )
+                self.substep(f)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- render -----------------------------------------
