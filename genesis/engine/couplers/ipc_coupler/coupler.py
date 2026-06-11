@@ -93,8 +93,6 @@ IPCBeforeWorldInitCallback = Callable[[IPCBeforeWorldInitContext, GenesisSolverC
 # Affine body stiffness in MPa
 ABD_KAPPA = 100.0
 JOINT_STRENGTH_RATIO = 100.0
-# Position-space threshold for detecting active IPC contact (restitution tracking)
-RESTITUTION_CONTACT_THRESHOLD = 1e-7
 COM_AABB_TOL = 2e-3
 IPC_SURFACE_PREFIX = "ipc_surface"
 GENESIS_SURFACE_PREFIX = "genesis_surface"
@@ -462,9 +460,6 @@ class IPCCoupler(RBC):
         # Each hook receives the coupler instance as its sole argument.
         self._pre_finalize_hooks: list = []
 
-        # ==== Restitution ====
-        # Per-frame velocity corrections: (dof_start, dof_end, correction_array).
-        self._restitution_vel_corrections: list[tuple[int, int, np.ndarray]] = []
         self._debug_surface_export_idx = 0
         self._debug_genesis_surface_export_after_genesis_before_ipc_idx = 0
         self._debug_genesis_surface_export_after_ipc_correction_idx = 0
@@ -1476,7 +1471,6 @@ class IPCCoupler(RBC):
             assert envs_set == all_envs, f"IPC coupler only supports full reset, got envs_idx={envs_idx}"
 
         self._abd_updated_links.clear()
-        self._restitution_vel_corrections.clear()
         self._saved_states.clear()
         self._ipc_frame = 0
 
@@ -1578,7 +1572,6 @@ class IPCCoupler(RBC):
         snapshot = self._saved_states[frame]
         self._ipc_frame = snapshot["ipc_frame"]
         self._abd_updated_links.clear()
-        self._restitution_vel_corrections.clear()
 
         # Re-sync cached IPC transforms
         self._retrieve_ipc_rigid_states()
@@ -2047,16 +2040,7 @@ class IPCCoupler(RBC):
         if not self._coup_type_by_entity:
             return
 
-        e = self.options.restitution
-        dt = self.rigid_solver.substep_dt
         qpos_tc = qd_to_torch(self.rigid_solver.qpos, transpose=True, copy=False)
-
-        # Read predicted qpos (q_pred) before overwriting — needed for restitution
-        if e > 0:
-            qpos_pred_np = qpos_tc.cpu().numpy().copy()
-
-        # Clear one-shot impulses from previous step
-        self._restitution_vel_corrections = []
 
         # ---- Step 1a: ipc_only base links — write IPC transform to links_state directly ----
         # ipc_only entities have FIXED joints (0 qs/DOFs), so we write to links_state.pos/quat
@@ -2091,14 +2075,6 @@ class IPCCoupler(RBC):
             for env_idx in range(self._B):
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_data.ipc_transforms[env_idx])
             qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos).to(qpos_tc.device)
-
-            if e > 0:
-                self._accumulate_restitution_base_link(
-                    dof_start,
-                    envs_qpos,
-                    qpos_pred_np[:, q_start : q_start + 7],
-                    dt,
-                )
 
         # ---- Step 2a: Two-way child links — back-compute joint angles from IPC transforms ----
         if COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT in self._entities_by_coup_type:
@@ -2188,38 +2164,3 @@ class IPCCoupler(RBC):
         self.rigid_solver._is_forward_pos_updated = True
         self.rigid_solver._is_forward_vel_updated = True
 
-    def _accumulate_restitution_base_link(
-        self,
-        dof_start: int,
-        q_solved: np.ndarray,
-        q_pred: np.ndarray,
-        dt: float,
-    ):
-        """Per-frame restitution correction for a free-joint base link (6 DOFs)."""
-        correction = np.zeros((self._B, 6), dtype=gs.np_float)
-
-        # Translation correction
-        correction[:, :3] = (q_solved[:, :3] - q_pred[:, :3]) / dt
-
-        # Rotation correction
-        for env_idx in range(self._B):
-            dq = gu.transform_quat_by_quat(q_solved[env_idx, 3:7], gu.inv_quat(q_pred[env_idx, 3:7]))
-            rotvec = gu.quat_to_rotvec(dq)
-            correction[env_idx, 3:6] = rotvec / dt
-
-        if np.max(np.abs(correction)) > RESTITUTION_CONTACT_THRESHOLD / dt:
-            e = self.options.restitution
-            self._restitution_vel_corrections.append((dof_start, dof_start + 6, e * correction))
-
-    def apply_restitution_velocity(self):
-        """Apply per-frame restitution velocity corrections after step_2.
-
-        Called by rigid_solver.substep_post_coupling after kernel_step_2.
-        Each frame: Δv = e * (q_solved - q_pred) / dt for base links in contact.
-        """
-        if not self._restitution_vel_corrections:
-            return
-        vel_tc = qd_to_torch(self.rigid_solver.dofs_state.vel, transpose=True, copy=False)
-        for dof_start, dof_end, correction in self._restitution_vel_corrections:
-            vel_tc[:, dof_start:dof_end] += torch.from_numpy(correction).to(vel_tc.device)
-        self._restitution_vel_corrections = []
