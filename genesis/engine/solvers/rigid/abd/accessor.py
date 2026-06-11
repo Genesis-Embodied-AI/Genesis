@@ -265,9 +265,10 @@ def kernel_wake_up_entities_by_links(
     contact_island_state: array_class.ContactIslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Wake up the entities owning the specified links, together with all the other entities of their hibernated
-    islands. Waking up the whole island is necessary to clear its daisy-chain links, which would otherwise keep
-    re-connecting the woken entities to their previous islands at the next contact island construction."""
+    """Wake up the entities owning the specified links, along with the other entities of their hibernated islands.
+
+    Waking up the whole island is necessary to clear its daisy-chain links, which would otherwise keep re-connecting
+    the woken entities to their previous islands at the next contact island construction."""
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
