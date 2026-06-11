@@ -368,14 +368,14 @@ def get_constraint_state(constraint_solver, solver):
     dof_vec_layout = (1, 0) if batch_first else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    # The split (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update sweep.
+    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update sweep.
     # The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes its
     # AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
     # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
     noslip = solver._options.noslip_iterations > 0
-    noslip_split = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
-    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_split else 1), noslip)
-    efc_b_shape = maybe_shape((len_constraints_, _B if noslip_split else 1), noslip)
+    noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
+    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_decomposed else 1), noslip)
+    efc_b_shape = maybe_shape((len_constraints_, _B if noslip_decomposed else 1), noslip)
     jac_dofs_idx_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
     jac_n_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
     sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
@@ -418,7 +418,7 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, noslip_split)),
+        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, noslip_decomposed)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),

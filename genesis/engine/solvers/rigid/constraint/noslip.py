@@ -117,79 +117,6 @@ def func_solve_mass_entity_row(
             buf[i_row, i_d, i_b] = curr_out
 
 
-@qd.kernel(fastcache=True)
-def kernel_compute_MinvJT(
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Compute MinvJT[row, :, i_b] = M^{-1} @ J[row, :, i_b] for each constraint row.
-
-    Parallelized over (row, batch) via ndrange — each thread independently
-    copies J[row] into MinvJT[row] and solves M^{-1} in-place using the
-    row-indexed LDL^T substitution. No shared buffers between rows.
-    """
-    len_c = constraint_state.MinvJT.shape[0]
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
-
-    for i_row, i_b in qd.ndrange(len_c, _B):
-        if i_row < constraint_state.n_constraints[i_b]:
-            # Copy J[row] into MinvJT[row] (per-row buffer)
-            for i_d in range(n_dofs):
-                constraint_state.MinvJT[i_row, i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
-
-            # In-place solve: MinvJT[row] = M^{-1} @ J[row]
-            for i_0 in (
-                range(rigid_global_info.n_awake_entities[i_b])
-                if qd.static(static_rigid_sim_config.use_hibernation)
-                else range(entities_info.n_links.shape[0])
-            ):
-                i_e = (
-                    rigid_global_info.awake_entities[i_0, i_b]
-                    if qd.static(static_rigid_sim_config.use_hibernation)
-                    else i_0
-                )
-                func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
-
-
-@qd.kernel(fastcache=True)
-def kernel_compute_AR_and_b(
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Phase 2: Compute AR = J @ MinvJT and efc_b.
-
-    AR[row, col, i_b] = sum_d J[col, d, i_b] * MinvJT[row, d, i_b]
-
-    Uses ndrange for full GPU parallelism across (row, col, batch) - gives nefc^2 * n_envs independent threads (~490K
-    for typical scenes). This kernel is only called when para_level >= PARA_LEVEL.PARTIAL (GPU). On the serialized
-    path, kernel_noslip_fused builds AR/b per env instead.
-    """
-    len_c = constraint_state.efc_AR.shape[0]
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
-
-    for i_row, i_col, i_b in qd.ndrange(len_c, len_c, _B):
-        nefc = constraint_state.n_constraints[i_b]
-        if i_row < nefc and i_col < nefc:
-            s = gs.qd_float(0.0)
-            for i_d in range(n_dofs):
-                s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.MinvJT[i_row, i_d, i_b]
-            constraint_state.efc_AR[i_row, i_col, i_b] = s
-        else:
-            constraint_state.efc_AR[i_row, i_col, i_b] = gs.qd_float(0.0)
-
-    for i_c, i_b in qd.ndrange(len_c, _B):
-        if i_c < constraint_state.n_constraints[i_b]:
-            v = -constraint_state.aref[i_c, i_b]
-            for i_d in range(n_dofs):
-                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
-            constraint_state.efc_b[i_c, i_b] = v
-
-
 @qd.func
 def func_noslip_batch(
     i_b,
@@ -302,20 +229,6 @@ def func_noslip_batch(
             break
 
 
-@qd.kernel(fastcache=True)
-def kernel_noslip(
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    _B = constraint_state.jac.shape[2]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_noslip_batch(i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
-
-
 @qd.func
 def func_dual_finish_batch(
     i_b,
@@ -357,23 +270,6 @@ def func_dual_finish_batch(
 
 
 @qd.kernel(fastcache=True)
-def kernel_dual_finish(
-    dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    _B = constraint_state.qfrc_constraint.shape[1]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_dual_finish_batch(
-            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
-        )
-
-
-@qd.kernel(fastcache=True)
 def kernel_noslip_fused(
     collider_state: array_class.ColliderState,
     dofs_state: array_class.DofsState,
@@ -395,6 +291,76 @@ def kernel_noslip_fused(
             i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
         )
         func_noslip_batch(i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        func_dual_finish_batch(
+            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
+        )
+
+
+@qd.kernel(fastcache=True)
+def kernel_noslip_decomposed(
+    collider_state: array_class.ColliderState,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Decomposed noslip pass: parallel MinvJT solve, parallel AR/b build, force-update sweep, and dual finish.
+
+    Each top-level loop is an independent offloaded task with its own launch shape, with implicit barriers in
+    between. The MinvJT solve runs one thread per (row, env): each thread copies J[row] into its own MinvJT row and
+    solves M^{-1} in place via the row-indexed LDL^T substitution, with no shared buffers between rows. The AR build
+    runs one thread per (row, col, env) - nefc^2 * n_envs independent threads (~490K for typical scenes) - computing
+    AR[row, col, i_b] = sum_d J[col, d, i_b] * MinvJT[row, d, i_b]. On the serialized path, kernel_noslip_fused is
+    used instead.
+    """
+    len_c = constraint_state.MinvJT.shape[0]
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+
+    for i_row, i_b in qd.ndrange(len_c, _B):
+        if i_row < constraint_state.n_constraints[i_b]:
+            # Copy J[row] into MinvJT[row] (per-row buffer)
+            for i_d in range(n_dofs):
+                constraint_state.MinvJT[i_row, i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+
+            # In-place solve: MinvJT[row] = M^{-1} @ J[row]
+            for i_0 in (
+                range(rigid_global_info.n_awake_entities[i_b])
+                if qd.static(static_rigid_sim_config.use_hibernation)
+                else range(entities_info.n_links.shape[0])
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_0, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
+
+    for i_row, i_col, i_b in qd.ndrange(len_c, len_c, _B):
+        nefc = constraint_state.n_constraints[i_b]
+        if i_row < nefc and i_col < nefc:
+            s = gs.qd_float(0.0)
+            for i_d in range(n_dofs):
+                s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.MinvJT[i_row, i_d, i_b]
+            constraint_state.efc_AR[i_row, i_col, i_b] = s
+        else:
+            constraint_state.efc_AR[i_row, i_col, i_b] = gs.qd_float(0.0)
+
+    # Build efc_b
+    for i_c, i_b in qd.ndrange(len_c, _B):
+        if i_c < constraint_state.n_constraints[i_b]:
+            v = -constraint_state.aref[i_c, i_b]
+            for i_d in range(n_dofs):
+                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            constraint_state.efc_b[i_c, i_b] = v
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_noslip_batch(i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
         func_dual_finish_batch(
             i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
         )
