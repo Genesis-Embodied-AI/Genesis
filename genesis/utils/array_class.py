@@ -385,10 +385,10 @@ def get_constraint_state(constraint_solver, solver):
             f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
     if math.prod(efc_AR_shape) > np.iinfo(np.int32).max:
-        gs.logger.warning(
-            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={solver.n_dofs_}, n_envs={_B}) is too "
-            "large. Consider manually setting a smaller 'max_collision_pairs' in RigidOptions to reduce the size of "
-            "reserved memory. "
+        gs.raise_exception(
+            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={len_constraints_}, "
+            f"n_envs={efc_AR_shape[2]}) is too large. Consider setting a smaller 'max_contacts' in RigidOptions "
+            "to reduce the size of reserved memory."
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\

@@ -97,6 +97,7 @@ class Collider:
         self._prune_deep_penetration_ratio = 3.0
         self._prune_max_contacts_per_link_pair = 32
         self._prune_max_contacts_floor = 512
+        self._noslip_max_contacts = 128
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -671,6 +672,13 @@ class Collider:
             max_contacts_pruned = np.minimum(link_pairs_n_contacts, self._prune_max_contacts_per_link_pair)
             max_contacts_pruned_total = max(int(max_contacts_pruned.sum()), self._prune_max_contacts_floor)
             max_contacts = min(max_contacts, max_contacts_pruned_total)
+
+        # The noslip dual matrix efc_AR is quadratic in the contact budget, so noslip scenes get a much tighter
+        # default cap: measured noslip workloads (manipulation-style scenes) peak below ~70 simultaneous contact
+        # points, while the worst-case candidate budget is orders of magnitude larger. A denser scene hits the
+        # max_contacts clamp and halts with a request to set 'max_contacts' explicitly, which overrides this cap.
+        if self._solver._options.noslip_iterations > 0 and self._solver._options.max_contacts is None:
+            max_contacts = min(max_contacts, self._noslip_max_contacts)
 
         self._collider_info.max_possible_pairs[None] = n_possible_pairs
         self._collider_info.max_collision_pairs[None] = max_collision_pairs
