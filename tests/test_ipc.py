@@ -577,6 +577,13 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
         ),
     )
 
+    material_kwargs = dict(
+        coup_type=coup_type,
+        coup_stiffness=(1.0, 1.0),
+    )
+    # two_way_soft_constraint requires explicit coup_links for articulated robots
+    if coup_type == "two_way_soft_constraint":
+        material_kwargs["coup_links"] = ("link7",)
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/panda_bullet/panda_nohand.urdf",
@@ -584,10 +591,7 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             fixed=True,
             merge_fixed_links=merge_fixed_links,
         ),
-        material=gs.materials.Rigid(
-            coup_type=coup_type,
-            coup_stiffness=(1.0, 1.0),
-        ),
+        material=gs.materials.Rigid(**material_kwargs),
     )
     assert isinstance(robot, RigidEntity)
 
@@ -1150,11 +1154,12 @@ def test_robot_grasp_abd(coup_type, show_viewer):
     cyl_link = cylinder.links[0]
     assert cyl_link in coupler._abd_data_by_link
 
-    cyl_z_0 = tensor_to_array(cylinder.get_dofs_position())[..., 2]
+    # ipc_only has FIXED joints (0 DOFs), so use get_pos() instead of get_dofs_position()
+    cyl_z_0 = tensor_to_array(cylinder.get_pos())[..., 2]
 
     _run_grasp_sequence(scene, franka, DT)
 
-    cyl_z_f = tensor_to_array(cylinder.get_dofs_position())[..., 2]
+    cyl_z_f = tensor_to_array(cylinder.get_pos())[..., 2]
     assert (cyl_z_f - cyl_z_0 >= 0.2).all()
 
 
@@ -1735,16 +1740,24 @@ def test_set_object_qpos(coup_type):
     pos0 = tensor_to_array(box.get_pos()).flatten()
     assert_allclose(pos0, INIT_POS, atol=1e-4)
 
-    # --- Test set_qpos ---
-    # Free joint qpos: [x, y, z, qw, qx, qy, qz]
-    target_qpos = np.array([*TARGET_POS, 1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
-    box.set_qpos(target_qpos)
+    # --- Test set_qpos (two_way_soft_constraint) / set_pos+set_quat (ipc_only) ---
+    # ipc_only entities have FREE→FIXED joint conversion, so qpos has length 0;
+    # they must use set_pos()/set_quat() instead of set_qpos().
+    if coup_type == "ipc_only":
+        box.set_pos(TARGET_POS)
+        box.set_quat(np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float))
+    else:
+        # Free joint qpos: [x, y, z, qw, qx, qy, qz]
+        target_qpos = np.array([*TARGET_POS, 1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+        box.set_qpos(target_qpos)
     pos_after_set = tensor_to_array(box.get_pos()).flatten()
     assert_allclose(pos_after_set, TARGET_POS, atol=1e-4)
 
-    # Velocity should be zeroed (default zero_velocity=True for RigidEntity)
-    vel_after_set = tensor_to_array(box.get_dofs_velocity()).flatten()
-    assert_allclose(vel_after_set, np.zeros(6), atol=1e-6)
+    # Velocity should be zeroed (default zero_velocity=True for RigidEntity).
+    # ipc_only entities have 0 DOFs after FREE→FIXED conversion.
+    if coup_type != "ipc_only":
+        vel_after_set = tensor_to_array(box.get_dofs_velocity()).flatten()
+        assert_allclose(vel_after_set, np.zeros(6), atol=1e-6)
 
     # Step and verify IPC stays in sync (no crash, position doesn't jump back)
     for _ in range(5):
@@ -1754,8 +1767,11 @@ def test_set_object_qpos(coup_type):
     gs_quat = tensor_to_array(box.get_quat()).flatten()
     assert_ipc_genesis_transform_close(coupler, box.base_link, 0, pos_after_step, gs_quat, atol=0.01)
 
-    # --- Test set_dofs_position ---
-    box.set_dofs_position(INIT_POS, dofs_idx_local=[0, 1, 2])
+    # --- Test set_dofs_position (only meaningful for entities with DOFs) ---
+    if coup_type == "ipc_only":
+        box.set_pos(INIT_POS)
+    else:
+        box.set_dofs_position(INIT_POS, dofs_idx_local=[0, 1, 2])
     pos_after_dof_set = tensor_to_array(box.get_pos()).flatten()
     assert_allclose(pos_after_dof_set, INIT_POS, atol=1e-4)
 

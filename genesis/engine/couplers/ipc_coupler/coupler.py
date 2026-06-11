@@ -1677,6 +1677,10 @@ class IPCCoupler(RBC):
                     self._mark_abd_link_updated(link, env_set)
 
         if links_idx is not None:
+            if isinstance(links_idx, int):
+                links_idx = [links_idx]
+            elif isinstance(links_idx, slice):
+                links_idx = range(*links_idx.indices(len(self._link_to_abd_link)))
             for li in links_idx:
                 link = self._link_to_abd_link[int(li)]
                 if link is not None:
