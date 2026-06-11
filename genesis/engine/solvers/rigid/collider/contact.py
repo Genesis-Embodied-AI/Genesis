@@ -325,7 +325,7 @@ def func_add_contact(
         i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
     else:
         i_c = collider_state.n_contacts[i_b]
-    if i_c < collider_info.max_contact_pairs[None]:
+    if i_c < collider_info.max_candidate_contacts[None]:
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
 
@@ -395,7 +395,7 @@ def func_add_diff_contact_input(
     collider_info: array_class.ColliderInfo,
 ):
     i_c = collider_state.n_contacts[i_b]
-    if i_c < collider_info.max_contact_pairs[None]:
+    if i_c < collider_info.max_candidate_contacts[None]:
         collider_state.diff_contact_input.geom_a[i_b, i_c] = i_ga
         collider_state.diff_contact_input.geom_b[i_b, i_c] = i_gb
         collider_state.diff_contact_input.local_pos1_a[i_b, i_c] = gjk_state.diff_contact_input.local_pos1_a[i_b, i_d]
@@ -568,6 +568,7 @@ def func_clamp_prune_and_sort_contacts(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """Clamp + (optional) link-pair pruning + (optional) x-position sort, in one per-env loop pass.
 
@@ -576,10 +577,12 @@ def func_clamp_prune_and_sort_contacts(
     ``contact_data.X[contact_sort_idx[i_col, i_b], i_b]``. The physical layout of ``contact_data`` is left intact.
 
     Phases per env (gated at compile time by ``collider_static_config``):
-    - Always: clamp ``n_contacts`` to ``max_contact_pairs``; initialise ``contact_sort_idx`` to the identity.
+    - Always: clamp ``n_contacts`` to ``max_candidate_contacts``; initialise ``contact_sort_idx`` to the identity.
     - If ``has_prunable_contacts and not requires_grad``: prune redundant contacts via 2D convex hull on the
       contact-patch plane (skipped at runtime when ``contact_pruning_tolerance`` is 0). Drops are realised by
       compacting ``contact_sort_idx`` rather than ``contact_data``.
+    - Always: clamp the surviving ``n_contacts`` to ``max_contacts`` (the budget sizing the contact constraint
+      buffers) and flag OVERFLOW_CONTACTS in ``errno``, which halts the simulation at the next errno check.
     - If ``has_non_box_plane_convex_convex and backend != cpu``: spatial sort the index permutation by x-position
       with geom-pair groups treated as units (provides spatial locality for downstream constraint-solver reads), with
       a (geom_a, geom_b) tie-break so groups sharing the same x sort deterministically regardless of physical layout.
@@ -593,7 +596,7 @@ def func_clamp_prune_and_sort_contacts(
     The single ``tol`` parameter controls the depth gate as a dimensionless slop fraction:
       max |out-of-plane offset| / in-plane radius <= tol.
 
-    Phases (per env, scratch sized to max_contact_pairs):
+    Phases (per env, scratch sized to max_candidate_contacts):
     1. Group by canonical link-pair: insertion-sort ``contact_sort_idx`` by (min_link, max_link) key, reading link
        data through the current index permutation.
     2. Per bucket of >= 3 contacts: compute mean normal (folded to a common hemisphere). Check depth coplanarity of
@@ -605,7 +608,8 @@ def func_clamp_prune_and_sort_contacts(
     overwriting it with final keep flags before the bucket exits.
     """
     _B = collider_state.n_contacts.shape[0]
-    max_contact_pairs = collider_info.max_contact_pairs[None]
+    max_candidate_contacts = collider_info.max_candidate_contacts[None]
+    max_contacts = collider_info.max_contacts[None]
     tol = collider_info.contact_pruning_tolerance[None]
     prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
@@ -613,7 +617,7 @@ def func_clamp_prune_and_sort_contacts(
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        n_con = qd.min(collider_state.n_contacts[i_b], max_contact_pairs)
+        n_con = qd.min(collider_state.n_contacts[i_b], max_candidate_contacts)
         collider_state.n_contacts[i_b] = n_con
 
         # Identity permutation. Required so downstream consumers can always indirect through contact_sort_idx,
@@ -924,7 +928,7 @@ def func_clamp_prune_and_sort_contacts(
                                         break
                                 # The closing iteration of the upper hull visits the leftmost point, which already sits
                                 # at stack[i_cb_start] from the lower hull. Skipping that push, plus the n_hull < n_cb
-                                # guard, bounds n_hull to n_cb and keeps the write index within max_contact_pairs even
+                                # guard, bounds n_hull to n_cb and keeps the write index within the candidate buffer even
                                 # for buckets where the lower-hull pass already kept all n_cb points (downward-convex
                                 # layouts: every lex-sorted triple makes a left turn so nothing gets popped, then the
                                 # upper-hull pass tries to push a duplicate of an already-kept lower-hull vertex).
@@ -976,6 +980,13 @@ def func_clamp_prune_and_sort_contacts(
                             collider_state.contact_sort_idx[i_cw, i_b] = collider_state.contact_sort_idx[i_cr, i_b]
                         i_cw += 1
                 collider_state.n_contacts[i_b] = i_cw
+
+        # The contact constraint buffers are sized to 4 * max_contacts, so any surviving contact beyond that budget
+        # would write out of bounds. Clamp and flag the env: check_errno halts the simulation with a request to
+        # increase 'max_contacts'.
+        if collider_state.n_contacts[i_b] > max_contacts:
+            collider_state.n_contacts[i_b] = max_contacts
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CONTACTS
 
         # === Spatial sort by x-position with geom-pair grouping. Gated on collider_static_config.
         # spatial_sort_supported, which combines the narrowphase condition (has_non_box_plane_convex_convex on GPU)
@@ -1037,6 +1048,7 @@ def func_clamp_prune_and_sort_contacts_coop(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """GPU-only cooperative warp-per-env variant of `func_clamp_prune_and_sort_contacts`.
 
@@ -1048,7 +1060,8 @@ def func_clamp_prune_and_sort_contacts_coop(
         the phase-3 compact (with fused spatial sort when `collider_static_config.spatial_sort_supported`).
     """
     _B = collider_state.n_contacts.shape[0]
-    max_contact_pairs = collider_info.max_contact_pairs[None]
+    max_candidate_contacts = collider_info.max_candidate_contacts[None]
+    max_contacts = collider_info.max_contacts[None]
     tol = collider_info.contact_pruning_tolerance[None]
     prune_deep_penetration_ratio = collider_info.prune_deep_penetration_ratio[None]
     LP_KEY_STRIDE = gs.qd_float(1.0e7)
@@ -1061,7 +1074,7 @@ def func_clamp_prune_and_sort_contacts_coop(
         tid = i_flat % _K
         i_b = i_flat // _K
         # All lanes compute n_con (cheap, no memory write on non-lane-0).
-        n_con = qd.min(collider_state.n_contacts[i_b], max_contact_pairs)
+        n_con = qd.min(collider_state.n_contacts[i_b], max_candidate_contacts)
         if tid == 0:
             collider_state.n_contacts[i_b] = n_con
 
@@ -1501,6 +1514,13 @@ def func_clamp_prune_and_sort_contacts_coop(
                         collider_state.contact_sort_idx[i_cw, i_b] = i_c
                         i_cw += 1
                 collider_state.n_contacts[i_b] = i_cw
+
+            # The contact constraint buffers are sized to 4 * max_contacts, so any surviving contact beyond that
+            # budget would write out of bounds. Clamp and flag the env: check_errno halts the simulation with a
+            # request to increase 'max_contacts'.
+            if collider_state.n_contacts[i_b] > max_contacts:
+                collider_state.n_contacts[i_b] = max_contacts
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CONTACTS
 
 
 @qd.kernel

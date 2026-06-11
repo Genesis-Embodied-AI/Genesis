@@ -3959,12 +3959,37 @@ def test_convexify(euler, show_viewer, gjk_collision):
 
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
+@pytest.mark.parametrize(
+    "max_collision_pairs, max_contacts, error_pattern",
+    [
+        # Post-pruning contact budget overflow, with the candidate buffer oversized so that it cannot trip first.
+        # The automatic budget resolves to 32 contact points per link pair floored at 512, far below what the
+        # piled-up bowls produce.
+        (5_000, None, "max number of post-pruning contact points"),
+        (5_000, 16, "max number of post-pruning contact points"),
+        # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
+        # the buffer itself can overflow.
+        (150, 5_000, "max number of candidate contact points"),
+        # Buffers large enough for the whole pile: no overflow at all.
+        (5_000, 5_000, None),
+    ],
+)
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_num_contact_overflow(show_viewer):
+def test_num_contact_overflow(max_collision_pairs, max_contacts, error_pattern, show_viewer):
+    from genesis.engine.simulator import RATE_CHECK_ERRNO
+
+    N_BOWLS = 4
     asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
-    scene = gs.Scene(show_viewer=show_viewer, renderer=gs.renderers.Rasterizer())
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=max_collision_pairs,
+            max_contacts=max_contacts,
+        ),
+        show_viewer=show_viewer,
+        renderer=gs.renderers.Rasterizer(),
+    )
     scene.add_entity(morph=gs.morphs.Plane())
-    for _ in range(4):
+    for _ in range(N_BOWLS):
         scene.add_entity(
             morph=gs.morphs.Mesh(
                 file=f"{asset_path}/glb/orange_plastic_bowl.glb",
@@ -3975,8 +4000,26 @@ def test_num_contact_overflow(show_viewer):
             ),
         )
     scene.build()
-    with pytest.raises(gs.GenesisException, match="max number of contact pairs"):
-        for _ in range(20):
+
+    # The resolved contact budget must match the documented resolution: 32 contact points per link pair floored at
+    # 512 when automatic (every link pair here has more than 32 candidate contact points), the explicit value clamped
+    # to the candidate buffer size otherwise. The constraint buffers are sized accordingly, with 4 constraint rows
+    # per contact point (all joints are free so there is no joint-limit term).
+    solver = scene.rigid_solver
+    collider_info = solver.collider._collider_info
+    if max_contacts is None:
+        n_link_pairs = (N_BOWLS + 1) * N_BOWLS // 2
+        expected_max_contacts = max(32 * n_link_pairs, 512)
+    else:
+        expected_max_contacts = min(max_contacts, int(collider_info.max_candidate_contacts[None]))
+    assert int(collider_info.max_contacts[None]) == expected_max_contacts
+    expected_len_constraints = 4 * expected_max_contacts + solver.n_dofs + 6 * solver.n_candidate_equalities_
+    assert solver.constraint_solver.len_constraints == expected_len_constraints
+
+    # Both overflows occur on the very first step (the bowls start fully overlapping), but errno is only polled every
+    # RATE_CHECK_ERRNO substeps, so one extra step is required to guarantee that the error gets raised.
+    with nullcontext() if error_pattern is None else pytest.raises(gs.GenesisException, match=error_pattern):
+        for _ in range(RATE_CHECK_ERRNO + 1):
             scene.step()
 
 

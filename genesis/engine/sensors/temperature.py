@@ -659,7 +659,7 @@ class TemperatureGridSensor(
         )
 
         # Contact area buffers
-        n_c_max = int(solver.collider._collider_info.max_contact_pairs[None])
+        n_c_max = int(solver.collider._collider_info.max_candidate_contacts[None])
         self._shared_metadata.contact_area_buffer = torch.zeros(
             (n_c_max, solver._B), device=gs.device, dtype=gs.tc_float
         )

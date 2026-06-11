@@ -86,6 +86,7 @@ class ErrorCode(IntEnum):
     OVERFLOW_HIBERNATION_ISLANDS = 0b00000000000000000000000000000100
     INVALID_FORCE_NAN = 0b00000000000000000000000000001000
     INVALID_ACC_NAN = 0b00000000000000000000000000010000
+    OVERFLOW_CONTACTS = 0b00000000000000000000000000100000
 
 
 # =========================================== RigidGlobalInfo ===========================================
@@ -478,22 +479,22 @@ class ContactData:
     pair_idx: qd.Tensor
 
 
-def get_contact_data(solver, max_contact_pairs, requires_grad):
+def get_contact_data(solver, max_candidate_contacts, requires_grad):
     _B = solver._B
-    max_contact_pairs_ = max(max_contact_pairs, 1)
+    max_candidate_contacts_ = max(max_candidate_contacts, 1)
 
     return ContactData(
-        geom_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        geom_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        normal=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
-        pos=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
-        penetration=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
-        friction=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
-        sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
-        force=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B)),
-        link_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        link_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        pair_idx=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
+        geom_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        geom_b=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        normal=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
+        pos=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
+        penetration=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
+        friction=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        force=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
+        link_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        link_b=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        pair_idx=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
     )
 
 
@@ -612,20 +613,20 @@ class ContactIslandState:
 
 def get_contact_island_state(solver, collider):
     _B = solver._B
-    max_contact_pairs = max(collider._collider_info.max_contact_pairs[None], 1)
+    max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     n_entities = max(solver.n_entities, 1)
 
     # When hibernation is enabled, the island construction adds edges for hibernated entity chains
     # in addition to contact edges. The chain construction is cyclic (last entity links back to first),
     # so worst case: each entity contributes one hibernation edge, totaling n_entities hibernation edges.
     max_hibernation_edges = n_entities if solver._use_hibernation else 0
-    max_edges = max_contact_pairs + max_hibernation_edges
+    max_edges = max_candidate_contacts + max_hibernation_edges
 
     return ContactIslandState(
         ci_edges=V(dtype=gs.qd_int, shape=(max_edges, 2, _B)),
         edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
-        constraint_list=V(dtype=gs.qd_int, shape=(max_contact_pairs, _B)),
-        constraint_id=V(dtype=gs.qd_int, shape=(max_contact_pairs * 2, _B)),
+        constraint_list=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
+        constraint_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts * 2, _B)),
         entity_edge=get_agg_list(solver),
         island_col=get_agg_list(solver),
         island_hibernated=V(dtype=gs.qd_int, shape=(n_entities, _B)),
@@ -703,7 +704,7 @@ class ColliderState:
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
     # Per-bucket lex sort permutation used by the cooperative dedup kernel
-    # (func_clamp_prune_and_sort_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_contact_pairs because
+    # (func_clamp_prune_and_sort_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_candidate_contacts because
     # each env writes its own permutation.
     contact_lex_idx: qd.Tensor
 
@@ -720,8 +721,8 @@ def get_collider_state(
     n_geoms = solver.n_geoms_
     max_collision_pairs = min(solver.max_collision_pairs, n_possible_pairs)
     max_collision_pairs_broad = max_collision_pairs * max_collision_pairs_broad_k
-    # Already sized per regime (convex vs nonconvex) by Collider._init_max_contact_pairs, which runs before this.
-    max_contact_pairs = max(collider_info.max_contact_pairs[None], 1)
+    # Already sized per regime (convex vs nonconvex) by Collider._init_max_contacts, which runs before this.
+    max_candidate_contacts = max(collider_info.max_candidate_contacts[None], 1)
     requires_grad = static_rigid_sim_config.requires_grad
 
     box_depth_shape = maybe_shape(
@@ -736,7 +737,7 @@ def get_collider_state(
     box_axi_shape = maybe_shape((3, _B), static_rigid_sim_config.box_box_detection)
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
-    prune_shape = maybe_shape((max(max_contact_pairs, 1), _B), collider_static_config.has_prunable_contacts)
+    prune_shape = maybe_shape((max(max_candidate_contacts, 1), _B), collider_static_config.has_prunable_contacts)
 
     return ColliderState(
         sort_buffer=get_sort_buffer(solver),
@@ -759,13 +760,13 @@ def get_collider_state(
         first_time=V(dtype=gs.qd_bool, shape=(_B,)),
         contact_cache=get_contact_cache(solver, n_possible_pairs),
         broad_collision_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(max_collision_pairs_broad, 1), _B)),
-        contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
-        diff_contact_input=get_diff_contact_input(_B, max(max_contact_pairs, 1), True, requires_grad),
+        contact_data=get_contact_data(solver, max_candidate_contacts, requires_grad),
+        diff_contact_input=get_diff_contact_input(_B, max(max_candidate_contacts, 1), True, requires_grad),
         narrowphase_work_queues=get_narrowphase_work_queues(
             max(max_collision_pairs_broad * _B, 1) if collider_static_config.has_non_box_plane_convex_convex else 1
         ),
-        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_contact_pairs, 1), _B)),
-        contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_contact_pairs, 1), _B)),
+        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B)),
+        contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_candidate_contacts, 1), _B)),
         contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape),
         contact_keep=V(dtype=gs.qd_int, shape=prune_shape),
         contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape),
@@ -782,8 +783,12 @@ class ColliderInfo:
     collision_pair_idx: qd.Tensor
     max_possible_pairs: qd.Tensor
     max_collision_pairs: qd.Tensor
-    max_contact_pairs: qd.Tensor
+    max_candidate_contacts: qd.Tensor
     max_collision_pairs_broad: qd.Tensor
+    # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints
+    # per contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts'
+    # is set.
+    max_contacts: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
     n_valid_pairs: qd.Tensor
     valid_collision_pairs: qd.Tensor
@@ -820,8 +825,9 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         collision_pair_idx=V(dtype=gs.qd_int, shape=(solver.n_geoms_, solver.n_geoms_)),
         max_possible_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs=V(dtype=gs.qd_int, shape=()),
-        max_contact_pairs=V(dtype=gs.qd_int, shape=()),
+        max_candidate_contacts=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
+        max_contacts=V(dtype=gs.qd_int, shape=()),
         n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
         valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),

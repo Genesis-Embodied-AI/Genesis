@@ -63,12 +63,18 @@ class ConstraintSolver:
         self.sparse_solve = rigid_solver._static_rigid_sim_config.sparse_solve
 
         # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
-        # * 4 constraints per contact
+        # * 4 constraints per contact, bounded by the post-pruning contact budget enforced by the collider
         # * 1 constraint per 1DoF joint limit (upper and lower, if not inf)
         # * 1 constraint per dof frictionloss
         # * up to 6 constraints per equality (weld)
+        # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
+        collider_info = rigid_solver.collider._collider_info
+        if rigid_solver._options.max_contacts is not None:
+            collider_info.max_contacts[None] = min(
+                rigid_solver._options.max_contacts, collider_info.max_candidate_contacts[None]
+            )
         self.len_constraints = int(
-            4 * rigid_solver.collider._collider_info.max_contact_pairs[None]
+            4 * collider_info.max_contacts[None]
             + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
             + self._solver.n_dofs
             + self._solver.n_candidate_equalities_ * 6
@@ -732,12 +738,12 @@ def _add_collision_constraints_per_friction(
     layout (_B, n_dofs, n_constraints), n_con is stride-1, so jac writes coalesce.
     """
     _B = dofs_state.ctrl_mode.shape[1]
-    max_contact_pairs = collider_state.contact_data.link_a.shape[0]
+    max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
 
     qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for flat_idx in range(_B * max_contact_pairs * 4):
-        slot = flat_idx % (max_contact_pairs * 4)
-        i_b = flat_idx // (max_contact_pairs * 4)
+    for flat_idx in range(_B * max_candidate_contacts * 4):
+        slot = flat_idx % (max_candidate_contacts * 4)
+        i_b = flat_idx // (max_candidate_contacts * 4)
         i_col_ = slot // 4
         i_friction = slot % 4
         if i_col_ < collider_state.n_contacts[i_b]:
@@ -769,10 +775,10 @@ def _add_collision_constraints_per_contact(
     EPS = rigid_global_info.EPS[None]
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
-    max_contact_pairs = collider_state.contact_data.link_a.shape[0]
+    max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
 
     qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for flat_idx in range(max_contact_pairs * _B):
+    for flat_idx in range(max_candidate_contacts * _B):
         i_b = flat_idx % _B
         i_col_ = flat_idx // _B
         if i_col_ < collider_state.n_contacts[i_b]:

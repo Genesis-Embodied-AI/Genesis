@@ -1101,10 +1101,16 @@ class RigidSolver(KinematicSolver):
                 f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
             )
         if errno & array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS:
-            max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
+            max_candidate_contacts = self.collider._collider_info.max_candidate_contacts[None]
             gs.raise_exception(
-                f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
-                "RigidSolver's option 'max_collision_pairs'."
+                f"Exceeding max number of candidate contact points ({max_candidate_contacts}). Please increase the "
+                "value of RigidSolver's option 'max_collision_pairs'."
+            )
+        if errno & array_class.ErrorCode.OVERFLOW_CONTACTS:
+            max_contacts = self.collider._collider_info.max_contacts[None]
+            gs.raise_exception(
+                f"Exceeding max number of post-pruning contact points ({max_contacts}) supported by the constraint "
+                "solver. Please increase the value of RigidSolver's option 'max_contacts'."
             )
         if errno & array_class.ErrorCode.INVALID_FORCE_NAN:
             gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
