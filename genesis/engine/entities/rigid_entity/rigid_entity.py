@@ -2257,6 +2257,24 @@ class RigidEntity(KinematicEntity):
         self._IK_jacobian = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self.n_dofs, self._solver._B))
         self._IK_jacobian_T = qd.field(dtype=gs.qd_float, shape=(self.n_dofs, self._IK_error_dim, self._solver._B))
 
+    def _create_joints(self, j_infos, link_idx, joint_start):
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "ipc_only":
+            for j_info in j_infos:
+                if j_info["type"] == gs.JOINT_TYPE.FREE:
+                    j_info["type"] = gs.JOINT_TYPE.FIXED
+                    j_info["n_dofs"] = 0
+                    j_info["n_qs"] = 0
+                    j_info["dofs_limit"] = np.zeros((0, 2))
+                    j_info["init_qpos"] = np.zeros(0)
+                    j_info["dofs_armature"] = np.zeros(0)
+                    j_info["dofs_invweight"] = np.zeros(0)
+                    j_info["dofs_stiffness"] = np.zeros(0)
+                    j_info["dofs_damping"] = np.zeros(0)
+                    j_info["dofs_friction_loss"] = np.zeros(0)
+        return super()._create_joints(j_infos, link_idx, joint_start)
+
     def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
         if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
             raise ValueError(
