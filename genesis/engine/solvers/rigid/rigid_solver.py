@@ -267,7 +267,6 @@ class RigidSolver(KinematicSolver):
 
         self.qpos: qd.Tensor | qd.Field | qd.Ndarray | None = None
 
-
         self._is_backward: bool = False
 
         self._ckpt = dict()

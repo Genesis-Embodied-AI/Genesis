@@ -93,7 +93,6 @@ def update_qvel(
                 )
 
 
-
 @qd.kernel
 def kernel_restore_integrate(
     dofs_state: array_class.DofsState,
