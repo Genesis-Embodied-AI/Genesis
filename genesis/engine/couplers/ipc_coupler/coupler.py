@@ -92,6 +92,7 @@ IPCBeforeWorldInitCallback = Callable[[IPCBeforeWorldInitContext, GenesisSolverC
 
 # Affine body stiffness in MPa
 ABD_KAPPA = 100.0
+JOINT_STRENGTH_RATIO = 100.0
 # Position-space threshold for detecting active IPC contact (restitution tracking)
 RESTITUTION_CONTACT_THRESHOLD = 1e-7
 COM_AABB_TOL = 2e-3

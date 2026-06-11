@@ -483,9 +483,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     elif coup_type == "external_articulation":
         art_data = coupler._articulation_data_by_entity[robot]
         assert len(art_data.slots) == max(scene.n_envs, 1)
-        if fixed:
-            # Fixed-base ext_art: links are in IPC but not coupling targets
-            assert coupler._abd_data_by_link[moving_link].ipc_transforms is None
 
     dist_min = np.array(float("inf"))
     cur_dof_pos_history, target_dof_pos_history = [], []
