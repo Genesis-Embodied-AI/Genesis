@@ -3958,28 +3958,29 @@ def test_convexify(euler, show_viewer, gjk_collision):
 
 
 @pytest.mark.slow("gpu")  # gpu ~250s
-@pytest.mark.required
 @pytest.mark.parametrize(
-    "max_collision_pairs, max_contacts, error_pattern",
+    "scene_kind, max_collision_pairs, max_contacts, error_pattern",
     [
-        # Post-pruning contact budget overflow, with the candidate buffer oversized so that it cannot trip first.
-        # The automatic budget resolves to 32 contact points per link pair floored at 512, far below what the
-        # piled-up bowls produce.
-        (5_000, None, "max number of post-pruning contact points"),
-        (5_000, 16, "max number of post-pruning contact points"),
+        # Post-pruning contact budget overflow, with the candidate buffer large enough (2x margin) that it cannot
+        # trip first. The automatic budget resolves to 32 contact points per link pair floored at 512, far below
+        # what the piled-up bowls produce.
+        pytest.param("bowls", 1_000, None, "max number of post-pruning contact points", marks=pytest.mark.required),
         # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
         # the buffer itself can overflow.
-        (150, 5_000, "max number of candidate contact points"),
-        # Buffers large enough for the whole pile: no overflow at all.
-        (5_000, 5_000, None),
+        ("bowls", 150, 1_000, "max number of candidate contact points"),
+        # Buffers large enough for the whole pile: no overflow at all. Both values keep a 2x margin over the peaks
+        # reached within the stepped window (about 500 colliding geom pairs and 1040 post-pruning contact points).
+        ("bowls", 1_000, 2_000, None),
+        # Two contacts against a budget of one: the clamp must also run when the contact count is below the pruning
+        # gate (n_contacts < 3), in both the serial and the GPU cooperative kernel variants.
+        ("spheres", 150, 1, "max number of post-pruning contact points"),
     ],
 )
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_num_contact_overflow(max_collision_pairs, max_contacts, error_pattern, show_viewer):
+def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, error_pattern, show_viewer):
     from genesis.engine.simulator import RATE_CHECK_ERRNO
 
     N_BOWLS = 4
-    asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             max_collision_pairs=max_collision_pairs,
@@ -3989,17 +3990,37 @@ def test_num_contact_overflow(max_collision_pairs, max_contacts, error_pattern, 
         renderer=gs.renderers.Rasterizer(),
     )
     scene.add_entity(morph=gs.morphs.Plane())
-    for _ in range(N_BOWLS):
+    if scene_kind == "bowls":
+        asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
+        for _ in range(N_BOWLS):
+            scene.add_entity(
+                morph=gs.morphs.Mesh(
+                    file=f"{asset_path}/glb/orange_plastic_bowl.glb",
+                    pos=(0, 0, 0.5),
+                    euler=(90, 0, 0),
+                    convexify=True,
+                    file_meshes_are_zup=True,
+                ),
+            )
+    else:
+        # Non-contacting nonconvex mesh: makes the scene prunable so that the GPU cooperative kernel is exercised.
         scene.add_entity(
             morph=gs.morphs.Mesh(
-                file=f"{asset_path}/glb/orange_plastic_bowl.glb",
-                pos=(0, 0, 0.5),
-                euler=(90, 0, 0),
-                convexify=True,
-                file_meshes_are_zup=True,
+                file="meshes/duck.obj",
+                scale=0.04,
+                pos=(5.0, 5.0, 5.0),
+                convexify=False,
             ),
         )
+        for i in range(2):
+            scene.add_entity(
+                morph=gs.morphs.Sphere(
+                    pos=(0.5 * i, 0.0, 0.0999),
+                    radius=0.1,
+                ),
+            )
     scene.build()
+    assert scene.rigid_solver.collider._collider_static_config.has_prunable_contacts
 
     # The resolved contact budget must match the documented resolution: 32 contact points per link pair floored at
     # 512 when automatic (every link pair here has more than 32 candidate contact points), the explicit value clamped
@@ -4016,8 +4037,9 @@ def test_num_contact_overflow(max_collision_pairs, max_contacts, error_pattern, 
     expected_len_constraints = 4 * expected_max_contacts + solver.n_dofs + 6 * solver.n_candidate_equalities_
     assert solver.constraint_solver.len_constraints == expected_len_constraints
 
-    # Both overflows occur on the very first step (the bowls start fully overlapping), but errno is only polled every
-    # RATE_CHECK_ERRNO substeps, so one extra step is required to guarantee that the error gets raised.
+    # All overflows occur on the very first step (the bowls start fully overlapping, the spheres start resting on the
+    # plane), but errno is only polled every RATE_CHECK_ERRNO substeps, so one extra step is required to guarantee
+    # that the error gets raised.
     with nullcontext() if error_pattern is None else pytest.raises(gs.GenesisException, match=error_pattern):
         for _ in range(RATE_CHECK_ERRNO + 1):
             scene.step()
