@@ -14,7 +14,11 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .misc import func_apply_link_external_force, func_apply_link_external_torque
+from .misc import (
+    func_apply_link_external_force,
+    func_apply_link_external_torque,
+    func_wakeup_entity_and_its_temp_island,
+)
 
 
 @qd.kernel(fastcache=True)
@@ -258,9 +262,12 @@ def kernel_wake_up_entities_by_links(
     dofs_state: array_class.DofsState,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    contact_island_state: array_class.ContactIslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Wake up entities that own the specified links by setting their hibernated flags to False."""
+    """Wake up the entities owning the specified links, together with all the other entities of their hibernated
+    islands. Waking up the whole island is necessary to clear its daisy-chain links, which would otherwise keep
+    re-connecting the woken entities to their previous islands at the next contact island construction."""
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -268,29 +275,18 @@ def kernel_wake_up_entities_by_links(
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         i_e = links_info.entity_idx[I_l]
 
-        # Wake up the entity and all its components
         if entities_state.hibernated[i_e, i_b]:
-            entities_state.hibernated[i_e, i_b] = False
-
-            # Add entity to awake_entities list
-            n_awake = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-            rigid_global_info.awake_entities[n_awake, i_b] = i_e
-
-            # Wake up all links of this entity and add to awake_links
-            for i_l2 in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-                links_state.hibernated[i_l2, i_b] = False
-                n_awake_links = qd.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
-                rigid_global_info.awake_links[n_awake_links, i_b] = i_l2
-
-            # Wake up all DOFs of this entity and add to awake_dofs
-            for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                dofs_state.hibernated[i_d, i_b] = False
-                n_awake_dofs = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
-                rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
-
-            # Wake up all geoms of this entity
-            for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
-                geoms_state.hibernated[i_g, i_b] = False
+            func_wakeup_entity_and_its_temp_island(
+                i_e,
+                i_b,
+                entities_state,
+                entities_info,
+                dofs_state,
+                links_state,
+                geoms_state,
+                rigid_global_info,
+                contact_island_state,
+            )
 
 
 @qd.kernel(fastcache=True)

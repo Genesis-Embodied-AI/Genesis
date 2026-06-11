@@ -7277,6 +7277,8 @@ def test_hibernation_and_contact_islands(show_viewer):
     2. Move one box above the other using set_pos (wakes it up)
     3. Box falls and collides -> both boxes awake
     4. Stacked boxes settle and hibernate -> 1 contact island (merged)
+    5. Move one box off the hibernated stack using set_pos -> the whole island wakes up
+    6. Boxes settle separately and hibernate -> 2 contact islands (split)
     """
     if gs.use_ndarray:
         pytest.skip("Hibernation does not support dynamic array mode.")
@@ -7343,6 +7345,22 @@ def test_hibernation_and_contact_islands(show_viewer):
 
     # Stacked boxes should form 1 contact island
     assert solver.constraint_solver.contact_island.n_islands[0] == 1
+
+    # Phase 4: Move box1 off the hibernated stack. The whole island must wake up, otherwise the stale hibernated
+    # island daisy-chain would keep re-connecting both boxes at every contact island construction.
+    box1.set_pos(np.array([1.0, 0.0, 0.15]))
+    assert not solver.entities_state.hibernated[box1_idx, 0]
+    assert not solver.entities_state.hibernated[box2_idx, 0]
+
+    # Phase 5: Let both boxes settle far apart and hibernate as 2 distinct contact islands
+    for step in range(500):
+        scene.step()
+        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
+            break
+
+    assert solver.entities_state.hibernated[box1_idx, 0]
+    assert solver.entities_state.hibernated[box2_idx, 0]
+    assert solver.constraint_solver.contact_island.n_islands[0] == 2
 
 
 @pytest.mark.required
