@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 from typing_extensions import override
 
 import genesis as gs
@@ -45,6 +46,9 @@ class Raycaster:
             return
 
         n_envs_max = len(self.envs_idx)
+        # The viewer BVH is always per-env (one tree per env), so each tree slot is built from its own env: the
+        # identity mapping kernel_update_verts_and_aabbs expects for batch_repr_env.
+        self.batch_repr_env = torch.arange(n_envs_max, dtype=gs.tc_int, device=gs.device)
         self.aabb = AABB(n_batches=n_envs_max, n_aabbs=n_faces)
         self.bvh = LBVH(
             self.aabb,
@@ -72,6 +76,7 @@ class Raycaster:
             free_verts_state=self.solver.free_verts_state,
             fixed_verts_state=self.solver.fixed_verts_state,
             links_info=self.solver.links_info,
+            batch_repr_env=self.batch_repr_env,
             static_rigid_sim_config=self.solver._static_rigid_sim_config,
             aabb_state=self.aabb,
         )
