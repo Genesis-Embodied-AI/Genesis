@@ -25,9 +25,9 @@ from .misc import (
     func_add_safe_backward,
 )
 
-# Block size (warp width) for the cooperative mass_mat_assemble path. Used only when constraint_layout_transposed=True
-# (and not use_hibernation). One warp per (entity, env); lanes stride i_d_ within the entity dof block to coalesce the
-# flipped mass_mat writes.
+# Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
+# enable_cooperative_constraint_kernels=True (and not use_hibernation). One warp per (entity, env); lanes stride i_d_
+# within the entity dof block to coalesce the flipped mass_mat writes.
 _MASS_MAT_BLOCK = 32
 
 
@@ -380,7 +380,9 @@ def func_compute_mass_matrix(
                         dofs_state.cdof_ang[i_d, i_b],
                     )
 
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.use_hibernation):
+    if qd.static(
+        static_rigid_sim_config.enable_cooperative_constraint_kernels and not static_rigid_sim_config.use_hibernation
+    ):
         # Cooperative warp-per-(entity, env) writer over the lower triangle (inclusive of diagonal). Each cell's
         # symmetric value is computed once via the sqrt-formula compressed pair index and written to both
         # `[i_d, j_d, i_b]` and `[j_d, i_d, i_b]` inline, saving the upper-tri dot products that the previous

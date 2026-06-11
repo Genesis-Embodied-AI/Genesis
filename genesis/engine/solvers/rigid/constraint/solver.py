@@ -303,30 +303,32 @@ class ConstraintSolver:
                 self.constraint_state,
                 self._solver._static_rigid_sim_config,
             )
-        else:
-            # CPU: use original fused kernel (no overhead)
-            constraint_noslip.kernel_build_efc_AR_b(
+
+            constraint_noslip.kernel_noslip(
+                self._collider._collider_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+
+            constraint_noslip.kernel_dual_finish(
                 self._solver.dofs_state,
                 self._solver.entities_info,
                 self._solver._rigid_global_info,
                 self.constraint_state,
                 self._solver._static_rigid_sim_config,
             )
-
-        constraint_noslip.kernel_noslip(
-            self._collider._collider_state,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-        )
-
-        constraint_noslip.kernel_dual_finish(
-            self._solver.dofs_state,
-            self._solver.entities_info,
-            self._solver._rigid_global_info,
-            self.constraint_state,
-            self._solver._static_rigid_sim_config,
-        )
+        else:
+            # Serialized (CPU): single fused kernel processing each env end-to-end, so that the per-env AR scratch stays
+            # cache-hot between the AR build and the force-update sweep (func_noslip_batch).
+            constraint_noslip.kernel_noslip_fused(
+                self._collider._collider_state,
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
@@ -777,10 +779,14 @@ def _add_collision_constraints_per_contact(
     n_dofs = dofs_state.ctrl_mode.shape[0]
     max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
 
+    # Iteration order follows the jac layout: batch-outer keeps every write within one env's batch-first block, while
+    # the batch-inner order keeps consecutive GPU threads on consecutive envs (coalesced batch-last).
     qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for flat_idx in range(max_candidate_contacts * _B):
-        i_b = flat_idx % _B
-        i_col_ = flat_idx // _B
+    for i_col_, i_b in qd.ndrange(
+        max_candidate_contacts,
+        _B,
+        axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None),
+    ):
         if i_col_ < collider_state.n_contacts[i_b]:
             collision_con_start = constraint_state.n_constraints[i_b]
 
@@ -880,7 +886,7 @@ def add_collision_constraints(
 ):
     _B = dofs_state.ctrl_mode.shape[1]
 
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
         _add_collision_constraints_per_friction(
             links_info=links_info,
             links_state=links_state,
@@ -3515,7 +3521,7 @@ def _func_update_efc_force(
 
     qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_c, i_b in qd.ndrange(
-        len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
         if i_c < constraint_state.n_constraints[i_b]:
             _func_update_efc_force_body(i_c, i_b, constraint_state, static_rigid_sim_config)
@@ -3647,13 +3653,13 @@ def func_update_constraint(
 ):
     """Compute active / efc_force / qfrc_constraint / gauss / cost.
 
-    Under ``constraint_layout_transposed=True`` we run three sub-kernels (``_func_update_efc_force``,
+    Under ``enable_cooperative_constraint_kernels=True`` we run three sub-kernels (``_func_update_efc_force``,
     ``_func_update_qfrc_constraint_coop``, ``_func_update_cost_coop``) so per-constraint reads/writes coalesce against
     the flipped jac and Tier-1 constraint-state tensors. Under canonical we keep the original 1-thread-per-env loop
     (bit-identical to the previous code path). The transpose heuristic disables the flip entirely under sparse_solve,
     so sparse runs always take the canonical path here.
     """
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
         _func_update_efc_force(constraint_state, static_rigid_sim_config)
         _func_update_qfrc_constraint_coop(constraint_state, static_rigid_sim_config)
         _func_update_cost_coop(
@@ -3729,7 +3735,7 @@ def func_update_gradient_tiled(
     # is canonical — swap the ndrange so adjacent lanes vary i_d.
     qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
         constraint_state.grad[i_d, i_b] = (
             constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
@@ -3930,7 +3936,7 @@ def _initialize_Jaref_parallel(
     # layout, i_b-innermost under canonical.
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_c, i_b in qd.ndrange(
-        len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
         if i_c < constraint_state.n_constraints[i_b]:
             _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
@@ -3953,7 +3959,7 @@ def initialize_Ma(
     # constant within the warp -> broadcast load.
     qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d1, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
         I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
         i_e = dofs_info.entity_idx[I_d1]
@@ -4049,7 +4055,7 @@ def func_solve_init(
         # set, dominated by the qacc write).
         qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in qd.ndrange(
-            n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+            n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
         ):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
                 constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
@@ -4104,7 +4110,7 @@ def func_solve_init(
 
     qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 

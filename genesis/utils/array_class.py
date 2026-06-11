@@ -148,13 +148,15 @@ def get_rigid_global_info(solver, kinematic_only):
     # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
     # layout=(2, 1, 0): i_d1 becomes innermost / stride-1, which coalesces consumer kernels whose lanes stride i_d1
     # with a serial inner i_d2 loop. The trade-off is regression on writer-side kernels that pair with cooperative
-    # rewrites to recover under the same constraint_layout_transposed flag.
+    # rewrites to recover under the same enable_cooperative_constraint_kernels flag.
     #
     # mass_mat_L stays canonical. Its dominant consumer is a serial Cholesky-style back-substitution that is already
     # coalesced under (n_dofs, n_dofs, _B) with lanes varying i_b, so flipping L would regress that path more than
     # the corresponding writer-side win on the tiled factor_mass.
     mass_mat_layout = (
-        (2, 1, 0) if not kinematic_only and solver._static_rigid_sim_config.constraint_layout_transposed else None
+        (2, 1, 0)
+        if not kinematic_only and solver._static_rigid_sim_config.enable_cooperative_constraint_kernels
+        else None
     )
 
     # FIXME: Add a better split between kinematic and Genesis
@@ -338,26 +340,42 @@ def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
-    # All three constraint-state layout flips (con / jac / dof_vec) gate on the same `constraint_layout_transposed`
-    # static-config flag. See `_should_transpose_constraint_layout` in rigid_solver.py for the heuristic, and the
-    # per-flip docs below.
-    transposed = solver._static_rigid_sim_config.constraint_layout_transposed
+    # The constraint-state layout flips (con / jac / dof_vec) gate on constraint_layout_batch_first; jac additionally
+    # picks its batch-first permutation from enable_cooperative_constraint_kernels. See the per-flip docs below.
+    cooperative = solver._static_rigid_sim_config.enable_cooperative_constraint_kernels
+    batch_first = solver._static_rigid_sim_config.constraint_layout_batch_first
+    # Serialized execution visits envs in the outermost loop of every constraint kernel, so the hot per-env rows of the
+    # constraint tensors must be contiguous in memory: batch-first physical layout. With the canonical batch-last layout
+    # every scalar access strides by n_envs, wasting a full cache line per element, which makes the constraint solver
+    # DRAM-bound once the combined per-env working sets exceed the CPU caches and batched stepping scales super-linearly
+    # with n_envs.
+    serialized = solver._static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
     # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
     # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.
     # Cooperative kernels read the same flag at compile time to switch between serial and warp-cooperative reductions.
-    con_layout = (1, 0) if transposed else None
+    # The remaining (len_constraints_,) tensors outside the GPU cooperative flip set follow only the serialized flip.
+    con_layout = (1, 0) if batch_first else None
+    serial_layout = (1, 0) if serialized else None
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
-    jac_layout = (2, 1, 0) if transposed else None
+    # Serialized execution instead wants physical (_B, len_constraints_, n_dofs_) via layout=(2, 0, 1): constraint rows
+    # are read and written dof-by-dof for a fixed env.
+    jac_layout = (2, 1, 0) if cooperative else (2, 0, 1) if serialized else None
     # DOF-vec family flip: canonical (n_dofs_, _B) -> physical (_B, n_dofs_) via layout=(1, 0). Adjacent-lane reads
     # striding i_d in cooperative kernels become stride-1; the regression on 1T-per-(i_d, i_b) writers is patched on
-    # a per-consumer basis under the same constraint_layout_transposed flag.
-    dof_vec_layout = (1, 0) if transposed else None
+    # a per-consumer basis under the same enable_cooperative_constraint_kernels flag.
+    dof_vec_layout = (1, 0) if batch_first else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
-    efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
+    # The split (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update sweep.
+    # The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes its
+    # AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
+    # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
+    noslip = solver._options.noslip_iterations > 0
+    noslip_split = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
+    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_split else 1), noslip)
+    efc_b_shape = maybe_shape((len_constraints_, _B if noslip_split else 1), noslip)
     jac_dofs_idx_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
     jac_n_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
     sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
@@ -400,7 +418,7 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, solver._options.noslip_iterations > 0)),
+        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, noslip_split)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
@@ -415,7 +433,7 @@ def get_constraint_state(constraint_solver, solver):
         dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_iperm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_sort_key=V(dtype=gs.qd_float, shape=sparse_dof_shape),
-        incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B)),
+        incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=serial_layout),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
@@ -423,12 +441,12 @@ def get_constraint_state(constraint_solver, solver):
         # ``layout=(1, 0)`` to physically store as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B);
         # kernel-body indexing ``Jaref[i_c, i_b]`` is rewritten by the AST when ``layout != None``.
         active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=con_layout),
-        prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
+        prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=serial_layout),
         diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
         Jaref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
@@ -437,7 +455,7 @@ def get_constraint_state(constraint_solver, solver):
             shape=jac_dofs_idx_shape,
             layout=jac_layout if constraint_solver.sparse_solve else None,
         ),
-        jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape),
+        jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape, layout=serial_layout if jac_n_dofs_shape else None),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
@@ -2165,10 +2183,17 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # ``func_cholesky_factor_direct_tiled`` + ``func_cholesky_solve_tiled`` pair. Requires
     # ``enable_tiled_cholesky_hessian`` for the fused kernel to be available.
     enable_fused_factor_solve_init: bool = False
-    # When True, some constraint-state tensors (eg Jaref, efc_D, ...) are allocated with ``layout=(1, 0)``,
-    # i.e. (_B, len_constraints_) physical storage. This unlocks coalesced cross-lane reads for the
-    # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
-    constraint_layout_transposed: bool = False
+    # When True, the constraint solver uses the GPU subgroup-cooperative kernel variants (warp-cooperative linesearch
+    # refinement, per-friction constraint builder, cooperative mass-matrix assembly), together with the batch-first
+    # tensor layouts they expect, eg (_B, len_constraints_) for Jaref / efc_D / ... which unlocks coalesced cross-lane
+    # reads.
+    enable_cooperative_constraint_kernels: bool = False
+    # Purely descriptive layout flag: True whenever the layout-flippable constraint-state tensors are physically
+    # batch-first, i.e. enable_cooperative_constraint_kernels or serialized execution (env loop outermost, so per-env
+    # rows must be contiguous). Consumers that only need iteration order to follow the physical layout (ndrange axes,
+    # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
+    # reductions) keys on enable_cooperative_constraint_kernels alone.
+    constraint_layout_batch_first: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
