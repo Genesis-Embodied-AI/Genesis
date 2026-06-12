@@ -52,10 +52,10 @@ def tracked(fun):
     return wrapper
 
 
-def _declared_inertial(l_info, recompute_inertia):
-    """Return a link's file-specified '(inertia, pos, quat)' for alignment, or None to recompute it from geometry.
+def _get_original_inertial_properties(l_info, recompute_inertia):
+    """Return a link's original '(inertia, pos, quat)' for alignment, or None to recompute it from geometry.
 
-    None is returned when the link has no valid file inertia or 'recompute_inertia' is set.
+    None is returned when the link has no valid declared inertia or 'recompute_inertia' is set.
     """
     inertia_valid = (
         (l_info.get("inertial_mass") or 0.0) > gs.EPS
@@ -309,7 +309,7 @@ class KinematicEntity(Entity):
                         )
                     if align and is_root and any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in v_j_infos):
                         global_com, principal_quat, diagonal_inertial = _align_geoms_to_inertia(
-                            cg_infos, vg_infos, _declared_inertial(v_l_info, morph.recompute_inertia)
+                            cg_infos, vg_infos, _get_original_inertial_properties(v_l_info, morph.recompute_inertia)
                         )
                         if diagonal_inertial is not None:
                             v_l_info["inertial_pos"] = diagonal_inertial[0]
@@ -1163,7 +1163,7 @@ class KinematicEntity(Entity):
         global_com = principal_quat = None
         if do_align:
             global_com, principal_quat, diagonal_inertial = _align_geoms_to_inertia(
-                cg_infos, vg_infos, _declared_inertial(l_info, morph.recompute_inertia)
+                cg_infos, vg_infos, _get_original_inertial_properties(l_info, morph.recompute_inertia)
             )
             if diagonal_inertial is not None:
                 l_info["inertial_pos"], l_info["inertial_quat"], l_info["inertial_i"] = diagonal_inertial
