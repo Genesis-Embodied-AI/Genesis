@@ -910,7 +910,7 @@ class KinematicSolver(Solver):
         if relative and self._links_offset_quat is None:
             relative = False
         idx = links_idx if isinstance(links_idx, int) else slice(None)
-        pos_is_identity = relative and self._links_offset_pos_is_identity[idx].all()
+        relative_pos_passthrough = relative and self._links_offset_pos_is_identity[idx].all()
         quat, links_idx, envs_idx = self._sanitize_io_variables(
             quat, links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
         )
@@ -919,7 +919,7 @@ class KinematicSolver(Solver):
 
         if relative:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-            if not pos_is_identity:
+            if not relative_pos_passthrough:
                 # The offset position rotates with the orientation, so keep the user-frame position fixed by rewriting
                 # the world position from the current user position and the new user orientation.
                 cur_pos = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
