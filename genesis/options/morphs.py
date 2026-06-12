@@ -6,6 +6,7 @@ rigid object / MPM object / FEM object.
 """
 
 import os
+import xml.etree.ElementTree as ET
 from typing import Annotated, Any, ClassVar, Literal
 from typing_extensions import Self
 
@@ -583,12 +584,17 @@ class FileMorph(Morph):
 
         file = data.get("file", "")
         if isinstance(file, str) and file:
-            abs_file = os.path.abspath(file)
-            if not os.path.exists(abs_file):
-                abs_file = os.path.join(gs.utils.get_assets_dir(), file)
-            if not os.path.exists(abs_file):
-                gs.raise_exception(f"File not found in either current directory or assets directory: '{file}'.")
-            data["file"] = abs_file
+            # Inline XML content (a description built in-memory) parses directly and is passed through untouched to the
+            # loader. A path string does not parse as XML and is resolved against the working and assets directories.
+            try:
+                ET.fromstring(file)
+            except ET.ParseError:
+                abs_file = os.path.abspath(file)
+                if not os.path.exists(abs_file):
+                    abs_file = os.path.join(gs.utils.get_assets_dir(), file)
+                if not os.path.exists(abs_file):
+                    gs.raise_exception(f"File not found in either current directory or assets directory: '{file}'.")
+                data["file"] = abs_file
 
         return data
 
@@ -919,7 +925,13 @@ class MJCF(FileMorph):
         return data
 
     def model_post_init(self, context: Any) -> None:
-        if not self.is_format(MJCF_FORMAT):
+        # Inline XML content parses directly and bypasses the file extension check.
+        try:
+            ET.fromstring(self.file)
+            is_inline_xml = True
+        except (ET.ParseError, TypeError):
+            is_inline_xml = False
+        if not is_inline_xml and not self.is_format(MJCF_FORMAT):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
 
