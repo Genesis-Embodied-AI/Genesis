@@ -322,8 +322,17 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     # Make sure that it reaches equilibrium
     assert_allclose(dist[..., -1], dist[..., -2], tol=TOL_SINGLE)
 
-    # Larger contact resistance should produce larger ground clearance (less penetration/compression).
-    assert (np.diff(dist, axis=-2) > TOL_SINGLE).all()
+    # Larger contact resistance should produce larger ground clearance. Equilibrium clearance d of one cube
+    # (libuipc barrier E(d) = -kappa*(d^2-d_hat^2)^2*log(d^2/d_hat^2) vs gravity) solves the transcendental equation
+    #     2 * N * kappa * d_hat^3 * [4*u*(u^2-1)*log(u) + (u^2-1)^2 / u] = m * g,   u = d/d_hat
+    # where N=4 contacting bottom vertices, kappa = 2*R_cube*R_plane / (R_cube + R_plane), and
+    # R_plane = IPCCouplerOptions.contact_resistance. Deep-barrier limit (u<<1) gives d ~= 2*N*kappa*d_hat^4/(m*g),
+    # so d scales linearly with kappa (and ~linearly with R_cube when R_cube << R_plane). Use a RATIO test here.
+    deep_barrier_diff_ratios = dist[..., 1:-1, :] / dist[..., :-2, :]
+    assert (deep_barrier_diff_ratios > 9).all()
+
+    saturate_diff_ratios = dist[..., -1, :] / dist[..., -2, :]
+    assert (saturate_diff_ratios > 1.5).all()
 
 
 @pytest.mark.required
@@ -1184,6 +1193,12 @@ def test_momentum_conservation(n_envs, show_viewer):
             # which breaks rigid+FEM momentum conservation. Disable it here to isolate
             # IPC's internal momentum-conserving contact resolution.
             restitution=0.0,
+            # libuipc's default velocity_tol=0.05 stops Newton at ~2 iterations/step.
+            # The residual gradient acts as a per-step ghost force; mesh-asymmetric
+            # contact distribution biases its direction, so the bias accumulates
+            # linearly in time and leaks ~1e-3 of momentum over 300 steps. Tightening
+            # to 1e-3 forces convergence and keeps the leak well under the test's tol.
+            newton_tolerance=1e-3,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 1.3, 0.6),
@@ -1296,9 +1311,11 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert (fem_velocities[..., 0].mean(axis=-1) > 0.5).all()
 
     # Check total momentum conservation.
-    # NOTE : The tet mesh's contact-facing vertices (x < -0.05) have a z-mean of -0.00138 due to TetGen's asymmetric
-    # Steiner point insertion, causing an asymmetric contact force distribution during the x-direction collision.
-    # This z-bias produces a net -z impulse, resulting in the observed z-momentum leak.
+    # NOTE: IPC contact-pair forces are equal-and-opposite by construction (symmetric barrier-energy
+    # gradient), so total rigid+FEM momentum is conserved at Newton convergence. The dominant leak
+    # source is Newton's residual gradient at early stop: with mesh-asymmetric contact distribution,
+    # the residual is direction-biased and integrates linearly over many steps. We tighten
+    # newton_tolerance above so the per-step residual is small enough to stay under tol below.
     assert_allclose(total_p_history, momentum_0, tol=0.001)
 
 
