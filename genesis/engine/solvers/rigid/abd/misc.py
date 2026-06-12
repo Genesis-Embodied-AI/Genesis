@@ -59,7 +59,7 @@ def func_wakeup_entity_and_its_temp_island(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_invweight(
     envs_idx: qd.types.ndarray(),
     links_invweight: qd.types.ndarray(),
@@ -99,7 +99,7 @@ def kernel_init_invweight(
                 dofs_info.invweight[i_d] = dofs_invweight[i_d]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_meaninertia(
     envs_idx: qd.types.ndarray(),
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -123,7 +123,7 @@ def kernel_init_meaninertia(
             rigid_global_info.meaninertia[i_b] = 1.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_dof_fields(
     # input np array
     entity_idx: qd.types.ndarray(),
@@ -135,8 +135,8 @@ def kernel_init_dof_fields(
     dofs_damping: qd.types.ndarray(),
     dofs_frictionloss: qd.types.ndarray(),
     dofs_armature: qd.types.ndarray(),
-    dofs_kp: qd.types.ndarray(),
-    dofs_kv: qd.types.ndarray(),
+    dofs_act_gain: qd.types.ndarray(),
+    dofs_act_bias: qd.types.ndarray(),
     dofs_force_range: qd.types.ndarray(),
     # Quadrants variables
     dofs_info: array_class.DofsInfo,
@@ -153,6 +153,7 @@ def kernel_init_dof_fields(
         for j in qd.static(range(3)):
             dofs_info.motion_ang[I_d][j] = dofs_motion_ang[i_d, j]
             dofs_info.motion_vel[I_d][j] = dofs_motion_vel[i_d, j]
+            dofs_info.act_bias[I_d][j] = dofs_act_bias[i_d, j]
 
         for j in qd.static(range(2)):
             dofs_info.limit[I_d][j] = dofs_limit[i_d, j]
@@ -163,8 +164,7 @@ def kernel_init_dof_fields(
         dofs_info.stiffness[I_d] = dofs_stiffness[i_d]
         dofs_info.damping[I_d] = dofs_damping[i_d]
         dofs_info.frictionloss[I_d] = dofs_frictionloss[i_d]
-        dofs_info.kp[I_d] = dofs_kp[i_d]
-        dofs_info.kv[I_d] = dofs_kv[i_d]
+        dofs_info.act_gain[I_d] = dofs_act_gain[i_d]
         dofs_info.entity_idx[I_d] = entity_idx[i_d]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -183,7 +183,7 @@ def kernel_init_dof_fields(
             rigid_global_info.n_awake_dofs[i_b] = n_dofs
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_link_fields(
     links_parent_idx: qd.types.ndarray(),
     links_root_idx: qd.types.ndarray(),
@@ -275,7 +275,7 @@ def kernel_init_link_fields(
             rigid_global_info.n_awake_links[i_b] = n_links
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_heterogeneous_links_vgeom(
     i_l: qd.i32,
     links_vgeom_start: qd.types.ndarray(),
@@ -291,7 +291,7 @@ def kernel_update_heterogeneous_links_vgeom(
         links_info.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_heterogeneous_link_info(
     i_l: qd.i32,
     links_geom_start: qd.types.ndarray(),
@@ -325,7 +325,7 @@ def kernel_update_heterogeneous_link_info(
             links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_joint_fields(
     joints_type: qd.types.ndarray(),
     joints_sol_params: qd.types.ndarray(),
@@ -354,7 +354,7 @@ def kernel_init_joint_fields(
             joints_info.pos[I_j][j] = joints_pos[i_j, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_vert_fields(
     verts: qd.types.ndarray(),
     faces: qd.types.ndarray(),
@@ -401,12 +401,13 @@ def kernel_init_vert_fields(
         edges_info.length[i_ed] = (verts_info.init_pos[edges[i_ed, 0]] - verts_info.init_pos[edges[i_ed, 1]]).norm()
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_vvert_fields(
     vverts: qd.types.ndarray(),
     vfaces: qd.types.ndarray(),
     vnormals: qd.types.ndarray(),
     vverts_vgeom_idx: qd.types.ndarray(),
+    vverts_state_idx: qd.types.ndarray(),
     # Quadrants variables
     vverts_info: array_class.VVertsInfo,
     vfaces_info: array_class.VFacesInfo,
@@ -422,6 +423,7 @@ def kernel_init_vvert_fields(
             vverts_info.init_vnormal[i_vv][j] = vnormals[i_vv, j]
 
         vverts_info.vgeom_idx[i_vv] = vverts_vgeom_idx[i_vv]
+        vverts_info.vverts_state_idx[i_vv] = vverts_state_idx[i_vv]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_vf in range(n_vfaces):
@@ -430,7 +432,7 @@ def kernel_init_vvert_fields(
         vfaces_info.vgeom_idx[i_vf] = vverts_vgeom_idx[vfaces[i_vf, 0]]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_geom_fields(
     geoms_pos: qd.types.ndarray(),
     geoms_center: qd.types.ndarray(),
@@ -512,13 +514,38 @@ def kernel_init_geom_fields(
         geoms_info.is_decomposed[i_g] = geoms_is_decomp[i_g]
 
         # compute init AABB.
-        # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere
-        # in the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes.
+        # Beware the ordering the this corners is critical and MUST NOT be changed as this order is used elsewhere in
+        # the codebase, e.g. overlap estimation between two convex geometries using there bounding boxes. For
+        # primitives, use exact analytical AABB bounds rather than tessellated mesh vertices, which are inscribed in
+        # the true surface. Using the mesh AABB would shrink the box and cause broadphase to false-negative shallow
+        # penetrations.
         lower = gu.qd_vec3(qd.math.inf)
         upper = gu.qd_vec3(-qd.math.inf)
-        for i_v in range(geoms_vert_start[i_g], geoms_vert_end[i_g]):
-            lower = qd.min(lower, verts_info.init_pos[i_v])
-            upper = qd.max(upper, verts_info.init_pos[i_v])
+        geom_type = geoms_type[i_g]
+        if geom_type == gs.GEOM_TYPE.SPHERE:
+            radius = geoms_data[i_g, 0]
+            lower = qd.Vector([-radius, -radius, -radius], dt=gs.qd_float)
+            upper = qd.Vector([radius, radius, radius], dt=gs.qd_float)
+        elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+            a = geoms_data[i_g, 0]
+            b = geoms_data[i_g, 1]
+            c = geoms_data[i_g, 2]
+            lower = qd.Vector([-a, -b, -c], dt=gs.qd_float)
+            upper = qd.Vector([a, b, c], dt=gs.qd_float)
+        elif geom_type == gs.GEOM_TYPE.CAPSULE:
+            radius = geoms_data[i_g, 0]
+            half_length = 0.5 * geoms_data[i_g, 1]
+            lower = qd.Vector([-radius, -radius, -(half_length + radius)], dt=gs.qd_float)
+            upper = qd.Vector([radius, radius, half_length + radius], dt=gs.qd_float)
+        elif geom_type == gs.GEOM_TYPE.CYLINDER:
+            radius = geoms_data[i_g, 0]
+            half_length = 0.5 * geoms_data[i_g, 1]
+            lower = qd.Vector([-radius, -radius, -half_length], dt=gs.qd_float)
+            upper = qd.Vector([radius, radius, half_length], dt=gs.qd_float)
+        else:
+            for i_v in range(geoms_vert_start[i_g], geoms_vert_end[i_g]):
+                lower = qd.min(lower, verts_info.init_pos[i_v])
+                upper = qd.max(upper, verts_info.init_pos[i_v])
         geoms_init_AABB[i_g, 0] = qd.Vector([lower[0], lower[1], lower[2]], dt=gs.qd_float)
         geoms_init_AABB[i_g, 1] = qd.Vector([lower[0], lower[1], upper[2]], dt=gs.qd_float)
         geoms_init_AABB[i_g, 2] = qd.Vector([lower[0], upper[1], lower[2]], dt=gs.qd_float)
@@ -533,7 +560,7 @@ def kernel_init_geom_fields(
         geoms_state.friction_ratio[i_g, i_b] = 1.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_vgeom_fields(
     vgeoms_pos: qd.types.ndarray(),
     vgeoms_quat: qd.types.ndarray(),
@@ -570,7 +597,7 @@ def kernel_init_vgeom_fields(
             vgeoms_info.color[i_vg][j] = vgeoms_color[i_vg, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_entity_fields(
     entities_dof_start: qd.types.ndarray(),
     entities_dof_end: qd.types.ndarray(),
@@ -619,7 +646,7 @@ def kernel_init_entity_fields(
             rigid_global_info.n_awake_entities[i_b] = n_entities
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_equality_fields(
     equalities_type: qd.types.ndarray(),
     equalities_eq_obj1id: qd.types.ndarray(),
@@ -650,7 +677,7 @@ def kernel_init_equality_fields(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_apply_links_external_force(
     force: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -666,7 +693,7 @@ def kernel_apply_links_external_force(
         func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local, links_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_apply_links_external_torque(
     torque: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -762,7 +789,7 @@ def func_clear_external_force(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_geoms_render_T(
     geoms_render_T: qd.types.ndarray(),
     geoms_state: array_class.GeomsState,
@@ -783,7 +810,7 @@ def kernel_update_geoms_render_T(
                 geoms_render_T[(i_g, i_b, *J)] = qd.cast(geom_T[J], qd.float32)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_vgeoms_render_T(
     vgeoms_render_T: qd.types.ndarray(),
     vgeoms_info: array_class.VGeomsInfo,
@@ -811,8 +838,8 @@ def kernel_update_vgeoms_render_T(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> qd.i32:
+@qd.kernel(fastcache=True)
+def kernel_bit_reduction(tensor: qd.Tensor) -> qd.i32:
     flag = qd.i32(0)
     for i in range(tensor.shape[0]):
         flag = qd.atomic_or(flag, tensor[i])
@@ -841,14 +868,14 @@ def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: array_class.V_ANNOTATI
 
 
 @qd.func
-def func_atomic_add_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_atomic_add_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         qd.atomic_add(field[I], value)
     return value
 
 
 @qd.func
-def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
     # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to
     # write, use atomic add directly. For reference, see official Quadrants documentation:
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
@@ -859,19 +886,19 @@ def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: qd.t
 
 
 @qd.func
-def func_read_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     return field[I] if qd.static(cond) else value
 
 
 @qd.func
-def func_write_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_write_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return value
 
 
 @qd.func
-def func_write_and_read_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_write_and_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return field[I] if qd.static(cond) else value
@@ -883,7 +910,7 @@ def func_check_index_range(idx: qd.i32, min: qd.i32, max: qd.i32, cond: qd.templ
     return (idx >= min and idx < max) if qd.static(cond) else True
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_clear_external_force(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,

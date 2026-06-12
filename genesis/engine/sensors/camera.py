@@ -4,7 +4,7 @@ Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, NamedTuple, Optional, Type
 
 import numpy as np
 import torch
@@ -23,7 +23,6 @@ from genesis.utils.geom import (
     T_to_trans,
     pos_lookat_up_to_T,
     trans_quat_to_T,
-    trans_to_T,
     transform_by_quat,
     transform_by_trans_quat,
 )
@@ -32,13 +31,7 @@ from genesis.vis.batch_renderer import BatchRenderer
 from genesis.vis.rasterizer import Rasterizer
 from genesis.vis.rasterizer_context import RasterizerContext
 
-from .base_sensor import (
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    Sensor,
-    SharedSensorMetadata,
-)
-from .base_sensor import OptionsT
+from .base_sensor import OptionsT, KinematicSensorMetadataMixin, KinematicSensorMixin, Sensor, SharedSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -63,10 +56,9 @@ class MinimalVisualizerWrapper:
     """
     Minimal visualizer wrapper for BatchRenderer camera sensors.
 
-    BatchRenderer requires a visualizer-like object to provide camera information and context,
-    but camera sensors don't need the full visualizer functionality (viewer, UI, etc.).
-    This wrapper provides just the minimal interface expected by BatchRenderer while
-    avoiding the overhead of creating a full visualizer instance.
+    BatchRenderer requires a visualizer-like object to provide camera information and context, but camera sensors don't
+    need the full visualizer functionality (viewer, UI, etc.). This wrapper provides just the minimal interface expected
+    by BatchRenderer while avoiding the overhead of creating a full visualizer instance.
     """
 
     def __init__(self, scene, sensors, vis_options):
@@ -74,8 +66,8 @@ class MinimalVisualizerWrapper:
         self._cameras = []  # Will be populated with camera wrappers
         self._sensors = sensors  # Keep reference to sensors
 
-        # Create a minimal rasterizer context for camera frustum visualization
-        # (required by BatchRenderer even though cameras don't render frustums)
+        # Create a minimal rasterizer context for camera frustum visualization (required by BatchRenderer even though
+        # cameras don't render frustums)
         self._context = RasterizerContext(vis_options)
         self._context.build(scene)
         self._context.reset()
@@ -140,7 +132,7 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
 
 
 @dataclass
-class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
+class RasterizerCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Rasterizer cameras."""
 
     # Rasterizer instance
@@ -171,7 +163,7 @@ class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetad
 
 
 @dataclass
-class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
+class RaytracerCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Raytracer cameras."""
 
     # Raytracer instance
@@ -194,7 +186,7 @@ class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetada
 
 
 @dataclass
-class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
+class BatchRendererCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Batch Renderer cameras."""
 
     # BatchRenderer instance
@@ -222,18 +214,21 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
 # ========================== Base Camera Sensor ==========================
 
 
-class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
+class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
     """
     Base class for camera sensors that render RGB images into an internal image_cache.
 
     This class centralizes:
-    - Attachment handling via RigidSensorMixin
+    - Attachment handling via KinematicSensorMixin
     - The _stale flag used for auto-render-on-read
     - Common Sensor cache integration (shape/dtype)
     - Shared read() method returning torch tensors
     """
 
+    uses_ring_pipeline: ClassVar[bool] = False
+
     def __init__(self, options: "SensorOptions", idx: int, manager: "SensorManager"):
+        # `uses_ring_pipeline = False` triggers the generic delay / jitter / history rejection in `Sensor.__init__`.
         super().__init__(options, idx, manager)
         self._stale: bool = True
 
@@ -248,25 +243,19 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
         return torch.uint8
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls,
-        shared_metadata: SharedSensorMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-    ):
-        pass
-
-    @classmethod
     def _update_shared_cache(
         cls,
         shared_metadata: SharedSensorMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
+        current_ground_truth_data_T: torch.Tensor,
+        ground_truth_data_timeline: "TensorRingBuffer | None",
+        measured_data_timeline: "TensorRingBuffer | None",
+        intermediate_cache: torch.Tensor,
     ):
-        # No per-step measured-cache update for cameras (handled lazily on read()).
+        # No per-step cache update for cameras (handled lazily on read()). `BaseCameraSensor` declares
+        # `uses_ring_pipeline = False`, so the manager passes both timeline rings as ``None`` here.
         pass
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """No debug drawing for cameras."""
         pass
 
@@ -286,7 +275,9 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
             offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
         else:
             pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_to_T(pos)
+            lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+            up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+            offset_T = pos_lookat_up_to_T(pos, lookat, up)
 
         link_pos = self._link.get_pos()
         link_quat = self._link.get_quat()
@@ -314,7 +305,6 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
 
     def _ensure_rendered_for_current_state(self):
         """Ensure this camera has an up-to-date render before reading.
-
         Base handles staleness and timestamps; subclasses implement _render_current_state().
         """
         scene = self._manager._sim.scene
@@ -392,8 +382,8 @@ class RasterizerCameraSensor(
     """
     Rasterizer camera sensor using OpenGL-based rendering.
 
-    This sensor renders RGB images using the existing Rasterizer backend,
-    but operates independently from the scene visualizer.
+    This sensor renders RGB images using the existing Rasterizer backend, but operates independently from the scene
+    visualizer.
     """
 
     def __init__(self, options: RasterizerCameraOptions, idx: int, manager: "SensorManager"):
@@ -417,8 +407,8 @@ class RasterizerCameraSensor(
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
 
-            # If a viewer is active, reuse its windowed OpenGL context for both offscreen and onscreen
-            # rendering, rather than creating a separate headless context which is fragile.
+            # If a viewer is active, reuse its windowed OpenGL context for both offscreen and onscreen rendering, rather
+            # than creating a separate headless context which is fragile.
             if scene.viewer is not None:
                 self._shared_metadata.context = scene.visualizer.context
                 self._shared_metadata.renderer = scene.visualizer.rasterizer
@@ -429,6 +419,12 @@ class RasterizerCameraSensor(
                 self._shared_metadata.renderer.build()
 
         self._shared_metadata.sensors.append(self)
+
+        if self._manager._sim.n_envs > 1 and not self._shared_metadata.context.env_separate_rigid:
+            gs.raise_exception(
+                "RasterizerCameraSensor with n_envs > 1 requires 'env_separate_rigid=True' in VisOptions "
+                "for correct per-environment rendering."
+            )
 
         # Register camera now if standalone (offscreen), or defer to first render if using visualizer's rasterizer
         # (visualizer isn't built yet at sensor.build() time)
@@ -510,8 +506,8 @@ class RasterizerCameraSensor(
             pos_world = transform_by_quat(pos, link_quat) + link_pos
             pos = pos_world
         elif self._link is not None:
-            # Link exists but not built yet - use configured pose as-is (treat as world coordinates for now)
-            # This will be corrected when move_to_attach is called
+            # Link exists but not built yet - use configured pose as-is (treat as world coordinates for now) This will
+            # be corrected when move_to_attach is called
             pass
 
         transform = pos_lookat_up_to_T(pos, lookat, up)
@@ -528,15 +524,41 @@ class RasterizerCameraSensor(
         """Perform the actual render for the current state."""
         self._ensure_camera_registered()
 
-        self._shared_metadata.context.update(force_render=True)
+        context = self._shared_metadata.context
+
+        # When env_separate_rigid is enabled, geometry render transforms include env_spacing offsets (baked in by
+        # kernel_update_geoms_render_T). For per-env sensor rendering, these offsets must be temporarily removed so each
+        # env's geometry renders at local origin relative to the camera. The offsets are restored after rendering to
+        # preserve the correct layout for the interactive viewer which shares the same context.
+        context.update(force_render=True)
+
+        # When env_separate_rigid is enabled, geometry render transforms include env_spacing offsets (baked in by
+        # kernel_update_geoms_render_T). For per-env sensor rendering, these offsets must be temporarily removed so each
+        # env's geometry renders at local origin relative to the camera. The offsets are restored after rendering to
+        # preserve the correct layout for the interactive viewer which shares the same context.
+        envs_offset = context.scene.envs_offset
+        saved_poses = {}
+        if context.env_separate_rigid and (envs_offset != 0).any():
+            for node_uid, node in context.rigid_nodes.items():
+                poses = node.mesh.primitives[0].poses
+                if poses is not None and len(poses) > 1:
+                    saved_poses[node_uid] = poses.copy()
+                    poses[:, :3, 3] -= envs_offset[context.rendered_envs_idx]
+                    buf_id = context._scene.get_buffer_id(node, "model")
+                    if buf_id >= 0:
+                        context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
-            self._camera_wrapper,
-            rgb=True,
-            depth=False,
-            segmentation=False,
-            normal=False,
+            self._camera_wrapper, rgb=True, depth=False, segmentation=False, normal=False
         )
+
+        # Restore original geometry transforms with offsets for the interactive viewer
+        for node_uid, poses in saved_poses.items():
+            node = context.rigid_nodes[node_uid]
+            node.mesh.primitives[0].poses = poses
+            buf_id = context._scene.get_buffer_id(node, "model")
+            if buf_id >= 0:
+                context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
 
         # Ensure contiguous layout because the rendered array may have negative strides.
         rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)
@@ -612,8 +634,8 @@ class RaytracerCameraSensor(
             lookat = transform_by_trans_quat(lookat, link_pos, link_quat)
             up = transform_by_quat(up, link_quat)
         elif self._link is not None:
-            # Link exists but not built yet - use configured pose as-is (treat as world coordinates for now)
-            # This will be corrected when move_to_attach is called
+            # Link exists but not built yet - use configured pose as-is (treat as world coordinates for now) This will
+            # be corrected when move_to_attach is called
             pass
 
         self._camera_obj = visualizer.add_camera(
@@ -640,7 +662,9 @@ class RaytracerCameraSensor(
                 offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
             else:
                 pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-                offset_T = trans_to_T(pos)
+                lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+                up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+                offset_T = pos_lookat_up_to_T(pos, lookat, up)
             self._camera_obj.attach(self._link, offset_T)
 
         _B = max(n_envs, 1)
@@ -732,9 +756,7 @@ class BatchRendererCameraSensor(
                     f"All BatchRendererCameraSensor instances must have the same resolution. Found: {set(resolutions)}"
                 )
 
-            br_options = BatchRendererOptions(
-                use_rasterizer=self._options.use_rasterizer,
-            )
+            br_options = BatchRendererOptions(use_rasterizer=self._options.use_rasterizer)
 
             vis_options = VisOptions(
                 show_world_frame=False,
@@ -776,12 +798,7 @@ class BatchRendererCameraSensor(
         self._shared_metadata.renderer.update_scene(force_render=True)
 
         rgb_arr, *_ = self._shared_metadata.renderer.render(
-            rgb=True,
-            depth=False,
-            segmentation=False,
-            normal=False,
-            antialiasing=False,
-            force_render=True,
+            rgb=True, depth=False, segmentation=False, normal=False, antialiasing=False, force_render=True
         )
 
         # rgb_arr might be a tuple of arrays (one per camera) or a single array

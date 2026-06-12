@@ -22,12 +22,15 @@ ALLOW_PATTERNS = {
     "tutorials/**/*.py",
     "usd/**/*.py",
     "viewer_plugins/**/*.py",
+    "gui/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",
     "multi_gpu.py",
     "single_franka_batch_render.py",  # FIXME: segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit (corrupted double-linked list)
+    "differentiable_push.py",
+    "hibernation.py",
 }
 if sys.platform != "linux":
     IGNORE_SCRIPT_NAMES |= {

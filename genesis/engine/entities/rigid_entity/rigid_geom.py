@@ -127,19 +127,22 @@ class RigidGeom(RBC):
         self.vert_n_neighbors = np.array(tuple(map(len, all_vert_neighbors_list)), dtype=gs.np_int)
         self.vert_neighbor_start = np.array((0, *np.cumsum(self.vert_n_neighbors)[:-1]), dtype=gs.np_int)
 
-        # NOTE: sdf size is from the center of the lower voxel cell to the center of the upper voxel cell
-        # add padding. Adjust the cell size to keep resolution within bounds.
+        # NOTE: sdf size is from the center of the lower voxel cell to the center of the upper voxel cell. Add
+        # padding. The cell size is anisotropic - each axis is sized independently to its own extent - so a thin
+        # slab gets fine resolution perpendicular to its surface without bloating the cell count along the long axes
+        # (which a uniform `grid_size.max() / sdf_max_res` cell size would force, leaving primitive-vs-mesh contacts
+        # noisy when the primitive's smallest dimension is below the cell size).
         padding_ratio = 0.2
         lower = self._init_verts.min(axis=0)
         upper = self._init_verts.max(axis=0)
         grid_size = (upper - lower).max() * padding_ratio + (upper - lower)
-        self._sdf_cell_size = gs.EPS + np.clip(
-            self._material.sdf_cell_size,
-            grid_size.max() / (self._material.sdf_max_res - 1),
-            grid_size.min() / max(self._material.sdf_min_res - 1, 2),
-        )
+        per_axis_lower = grid_size / (self._material.sdf_max_res - 1)
+        per_axis_upper = grid_size / max(self._material.sdf_min_res - 1, 2)
+        self._sdf_cell_size = gs.EPS + np.clip(self._material.sdf_cell_size, per_axis_lower, per_axis_upper)
         self._sdf_res = np.ceil(grid_size / self._sdf_cell_size).astype(gs.np_int) + 1
-        self._sdf_grad_delta = 0.0 if self.type == gs.GEOM_TYPE.TERRAIN else self._sdf_cell_size * 1e-2
+        self._sdf_grad_delta = (
+            np.zeros(3, dtype=gs.np_float) if self.type == gs.GEOM_TYPE.TERRAIN else self._sdf_cell_size * 1e-2
+        )
         self._is_preprocessed = False
 
     def _build(self):
@@ -244,16 +247,19 @@ class RigidGeom(RBC):
 
     def _compute_sd_grad(self, query_points, delta=5e-4):
         ######## sdf gradient via finite differencing ########
-        sd_val_xpos = self._compute_sd(query_points + np.array((delta, 0.0, 0.0), dtype=gs.np_float))
-        sd_val_xneg = self._compute_sd(query_points - np.array((delta, 0.0, 0.0), dtype=gs.np_float))
-        sd_val_ypos = self._compute_sd(query_points + np.array((0.0, delta, 0.0), dtype=gs.np_float))
-        sd_val_yneg = self._compute_sd(query_points - np.array((0.0, delta, 0.0), dtype=gs.np_float))
-        sd_val_zpos = self._compute_sd(query_points + np.array((0.0, 0.0, delta), dtype=gs.np_float))
-        sd_val_zneg = self._compute_sd(query_points - np.array((0.0, 0.0, delta), dtype=gs.np_float))
+        # `delta` can be a scalar or a per-axis array (anisotropic SDF cells).
+        delta_arr = np.broadcast_to(np.asarray(delta, dtype=gs.np_float), (3,))
+        dx, dy, dz = float(delta_arr[0]), float(delta_arr[1]), float(delta_arr[2])
+        sd_val_xpos = self._compute_sd(query_points + np.array((dx, 0.0, 0.0), dtype=gs.np_float))
+        sd_val_xneg = self._compute_sd(query_points - np.array((dx, 0.0, 0.0), dtype=gs.np_float))
+        sd_val_ypos = self._compute_sd(query_points + np.array((0.0, dy, 0.0), dtype=gs.np_float))
+        sd_val_yneg = self._compute_sd(query_points - np.array((0.0, dy, 0.0), dtype=gs.np_float))
+        sd_val_zpos = self._compute_sd(query_points + np.array((0.0, 0.0, dz), dtype=gs.np_float))
+        sd_val_zneg = self._compute_sd(query_points - np.array((0.0, 0.0, dz), dtype=gs.np_float))
 
-        sd_grad_x = (sd_val_xpos - sd_val_xneg) / (2 * delta)
-        sd_grad_y = (sd_val_ypos - sd_val_yneg) / (2 * delta)
-        sd_grad_z = (sd_val_zpos - sd_val_zneg) / (2 * delta)
+        sd_grad_x = (sd_val_xpos - sd_val_xneg) / (2 * dx)
+        sd_grad_y = (sd_val_ypos - sd_val_yneg) / (2 * dy)
+        sd_grad_z = (sd_val_zpos - sd_val_zneg) / (2 * dz)
         sd_grad = np.stack([sd_grad_x, sd_grad_y, sd_grad_z], -1)
         return sd_grad
 
@@ -374,7 +380,7 @@ class RigidGeom(RBC):
     @gs.assert_built
     def get_AABB(self):
         """
-        Get the axis-aligned bounding box (AABB) of the geom in world frame.
+        Get the vertex-based axis-aligned bounding box (AABB) of the geom in world frame.
         """
         verts = self.get_verts()
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
@@ -901,6 +907,48 @@ class RigidVisGeom(RBC):
         )
         vverts_pos = pos[..., None, :] + gu.transform_by_quat(self._aabb_verts, quat[..., None, :])
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def set_vverts(self, vverts, envs_idx=None):
+        """Override this vgeom's visual vertex positions for rendering and sensors. See
+        :meth:`KinematicEntity.set_vverts` for the full behavior; this method writes only this vgeom's slice.
+
+        Requires the owning entity's morph to be created with 'enable_custom_vverts=True'.
+        """
+        if not self._entity._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
+            )
+        custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
+        self._entity._solver.set_vverts(
+            self.vvert_start + custom_offset,
+            self.vvert_end + custom_offset,
+            np.array([self.idx], dtype=gs.np_int),
+            vverts,
+            envs_idx,
+        )
+
+    @gs.assert_built
+    def get_vverts(self, envs_idx=None):
+        """Return a copy of this vgeom's visual vertex positions in world space.
+
+        Entities created with 'morph.enable_custom_vverts=True' read from the engine-owned 'vverts_state.pos' buffer.
+        Other entities compute the positions on the fly from the vgeom's current world pose applied to 'init_vverts'.
+        """
+        if self._entity._morph.enable_custom_vverts:
+            custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
+            return self._entity._solver.get_vverts(
+                self.vvert_start + custom_offset, self.vvert_end + custom_offset, envs_idx
+            )
+
+        self._solver.update_vgeoms()
+        vgeoms_pos = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, transpose=True, copy=None)
+        vgeoms_quat = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, transpose=True, copy=None)
+        init = torch.as_tensor(self.init_vverts, dtype=gs.tc_float, device=gs.device)
+        pos = vgeoms_pos[..., self.idx, :].unsqueeze(-2)
+        quat = vgeoms_quat[..., self.idx, :].unsqueeze(-2)
+        tensor = gu.transform_by_trans_quat(init, pos, quat)
+        return tensor[0] if self._solver.n_envs == 0 else tensor
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

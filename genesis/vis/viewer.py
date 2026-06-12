@@ -12,6 +12,7 @@ import OpenGL.platform
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.ext import pyrender
+from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.utils.tools import Rate
@@ -50,6 +51,8 @@ class Viewer(RBC):
         self._viewer_plugins: list["ViewerPlugin"] = []
         if options.enable_default_keybinds:
             self._viewer_plugins.append(DefaultControlsPlugin())
+        if options.enable_gui:
+            self._viewer_plugins.append(ImGuiOverlayPlugin())
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
@@ -72,6 +75,15 @@ class Viewer(RBC):
 
         # set viewer camera
         self.setup_camera()
+
+        # Reuse an existing window across an InteractiveScene rebuild instead of opening a new one (which
+        # would close and reopen the OS window). The preserved pyrender viewer is re-pointed at the rebuilt
+        # scene graph in place.
+        if self._pyrender_viewer is not None:
+            self._pyrender_viewer.rebind(self.context, self._viewer_plugins)
+            self.lock = ViewerLock(self._pyrender_viewer)
+            self._is_built = True
+            return
 
         # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
         opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
@@ -196,7 +208,15 @@ class Viewer(RBC):
         return self._pyrender_viewer.close_offscreen(render_target)
 
     def render_offscreen(
-        self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False, skip_markers=False
+        self,
+        camera_node,
+        render_target,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+        skip_markers=False,
+        env_separate_rigid=None,
     ):
         return self._pyrender_viewer.render_offscreen(
             camera_node,
@@ -206,6 +226,7 @@ class Viewer(RBC):
             seg,
             normal,
             skip_markers=skip_markers,
+            env_separate_rigid=env_separate_rigid,
         )
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
@@ -358,6 +379,19 @@ class Viewer(RBC):
         if self.is_built:
             self._pyrender_viewer.register_plugin(plugin)
         return plugin
+
+    def consume_rebuild_requests(self) -> bool:
+        """Let any plugin perform a pending scene rebuild on the calling (main) thread. Returns True if one
+        did, in which case this viewer has just been torn down and the caller must stop using it."""
+        for plugin in tuple(self._viewer_plugins):
+            if plugin.consume_rebuild_request():
+                return True
+        return False
+
+    def should_advance_simulation(self) -> bool:
+        """Whether the simulation may advance this frame, i.e. no plugin (e.g. the GUI play/pause control)
+        vetoes it. Every plugin is polled so stateful single-step controls always observe the frame."""
+        return all([plugin.should_step() for plugin in self._viewer_plugins])
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

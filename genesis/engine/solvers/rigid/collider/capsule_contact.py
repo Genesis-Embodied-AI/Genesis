@@ -124,21 +124,11 @@ def func_sphere_capsule_contact(
     """
     EPS = rigid_global_info.EPS[None]
 
-    # Ensure sphere is always i_ga and capsule is i_gb
-    normal_dir = 1
+    # Caller guarantees sphere is i_ga and capsule is i_gb (geoms are sorted by ascending type).
     sphere_center = ga_pos
     capsule_center = gb_pos
-    capsule_q = gb_quat
-    if geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
-        i_ga, i_gb = i_gb, i_ga
-        sphere_center = gb_pos
-        capsule_center = ga_pos
-        capsule_q = ga_quat
-        normal_dir = -1
-
+    capsule_quat = gb_quat
     sphere_radius = geoms_info.data[i_ga][0]
-
-    capsule_quat = capsule_q
     capsule_radius = geoms_info.data[i_gb][0]
     capsule_halflength = 0.5 * geoms_info.data[i_gb][1]
 
@@ -193,4 +183,4 @@ def func_sphere_capsule_contact(
         # Contact position at midpoint between surfaces
         contact_pos = sphere_center - (sphere_radius - 0.5 * penetration) * normal_unit
 
-    return is_col, normal_unit * normal_dir, contact_pos, penetration
+    return is_col, normal_unit, contact_pos, penetration

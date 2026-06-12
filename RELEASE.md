@@ -1,6 +1,132 @@
 # Genesis Release Note
 
+## 1.0.0
+
+This release adds full support of non-convex multi-contact collision detection. Besides, many components of the simulation have been sped up, incl the rigid solver that should now be up to 35% for contact-reach scenes with about 64 dofs.
+
+### New Features
+
+* Add robust non-convex mesh repair pipeline. (@duburcqa) (#2816)
+* Add robust non-convex multi-contact collision detection. (@duburcqa) (#2812, #2821, #2823, #2825, #2828, #2844)
+* Add 'ViewerOptions.enable_gui' option to easily enable ImGui overlay. (@duburcqa) (#2846, #2849)
+
+### Bug Fixes
+
+* Always register scene for destroy even in case of build failure. (@duburcqa) (#2807)
+* Fix static-contact drift on smooth-vs-polytope contacts. (@duburcqa) (#2801, #2841)
+* Fix spurious rotation on flat terrain. (@duburcqa) (#2810)
+* Fix elastomer taxel broken on Apple Metal. (@duburcqa) (#2811)
+* Fix inconsistency between broadphase and narrowphase. (@duburcqa) (#2838)
+* Fix tilted plane rendering. (@duburcqa) (#2824)
+
+### Miscellaneous
+
+* Speed up point cloud tactile sensors. (@Milotrince) (#2800)
+* Speed up MPM solver. (@Kashu7100) (#2720)
+* Speed up rigid constraint solver. (@hughperkins) (#2809, #2817, #2820, #2827, #2837)
+* Add contact pruning at link pair level. (@duburcqa, @hughperkins) (#2829, #2831, #2832, #2834, #2835)
+
+## 0.4.7
+
+This release introduces a new type of tactile sensors while improving the existing raycasting-based and tactile sensors. Besides, a new opt-in experimental viewer plugin to interact with the simulation is now available.
+
+### Breaking changes
+
+* [MISC] Default constraint solver tolerance based on precision. (@duburcqa) (#2713)
+
+### New Features
+
+* Add ImGui overlay for interactive joint control and visualization. (@YilingQiao, @duburcqa) (#2541, #2780)
+* Add public API to set / get vertex positions of visual rigid geometries. (@duburcqa) (#2776)
+* Add support of visual-mesh to camera and raycasting-based sensors. (@Kashu7100, @duburcqa) (#2769, #2783)
+* Add `history_length` to Sensors (@Milotrince) (#2655)
+* Add new point-cloud-based tactile sensors. (@Milotrince) (#2735)
+
+### Bug Fixes
+
+* Fix 'qd_zero_grad' not supporting qd.Tensor. (@duburcqa) (#2753)
+* Fix zero-copy race condition on Apple Metal. (@duburcqa) (#2758)
+* Fix rigid body Jacobian getter for compound joints. (@vlordier) (#2706)
+* Fix ImGui interactive viewer plugin. (@Kashu7100) (#2789)
+* Fix safe GJK fallback. (@duburcqa) (#2716, #2717)
+* Workaround buggy float modulo on AMDGPU. (@duburcqa) (#2714)
+* Reject 'CoacdOptions.pca=True' due to upstream CoACD bug (@voidborne-d) (#2757)
+* Make Surface shortcut resolution idempotent. (@Kashu7100) (#2761)
+* Robust device handling in slerp utils. (@Kashu7100) (#2754)
+
+### Miscellaneous
+
+* Speedup noslip post-processing step used to suppress slip/drift. (@erizmr) (#2671, #2672, #2703)
+* Unify linesearch refinement between decomposed and monolith solver paths. (@duburcqa) (#2710)
+* Improve stability of CI performance benchmarks. (@hughperkins) (#2722, #2723, #2724, #2731)
+* Speedup rigid constraint solver. (@hughperkins) (#2659, #2762)
+* Serialize USD bake operations to prevent deadlocks. (@hughperkins) (#2739)
+* Migrate to unified Quadrant's tensor abstraction. (@hughperkins) (#2751)
+* Add support of autodiff with dynamic loops. (@duburcqa) (#2742, #2743)
+* Viewer plugin updates: orthographic cam mode, multi-env mouse interaction, auto dark mode. (@Milotrince) (#2728)
+* Refactor sensor pipeline. (@duburcqa, @Milotrince) (#2770, #2786, #2792)
+* Avoid manually sync between torch and quadrants on Metal. (@hughperkins) (#2760)
+* Update Dockerfile for Ubuntu 24.04 (@alnI3S) (#2744)
+
+## 0.4.6
+
+This release brings recent performance benefits that where CUDA only to all GPU backends while relaxing CUDA Toolkit requirement. Besides, all reported CUDA crashes have been fixed.
+
+### New Features
+
+* Add public API to Scene for drawing cameras frustum and trajectories. (@Mehak261124) (#2593)
+
+### Bug Fixes
+
+* Fix EGL context not properly destroy during scene destruction. (@duburcqa) (#2673)
+* Fix loading of GLB meshes missing normals or tex_coord. (@iory) (#2668)
+* Fix sparse solve bug when building hessian. (@erizmr) (#2670)
+* Fix contact overflow causing unbounded memory access. (@duburcqa) (#2688)
+
+### Miscellaneous
+
+* Enable parallel linesearch on all GPU backends. (@duburcqa, @hughperkins) (#2678, #2689, #2692)
+* Add public API to update debug markers. (@duburcqa) (#2665)
+* Make markers always foreground with XRAY effect. (@duburcqa) (#2666, #2685)
+* Speed up rigid constraint solver init. (@erizmr) (#2521)
+* More robust GPU detection in test infrastructure. (@Lidang-Jiang) (#2653)
+
+## 0.4.5
+
+This release continues on the ongoing trend of rigid body simulation speed improvements. A few camera-related bugs and all known regression on Metal backend are now fixed.
+
+### New Features
+
+* Add support of xacro URDF. (@duburcqa) (#2642)
+* Add public API to RigidEntity for kinematic and potential energy. (@Lidang-Jiang) (#2613)
+* Add support of Mujoco general actuator model. (@duburcqa) (#2641)
+* Add support of zerocopy to set_pos/set_quat. (@duburcqa) (#2657)
+
+### Bug Fixes
+
+* Guard gradient computation not supported on Metal backend with dynamic array mode. (@duburcqa) (#2628)
+* Fix plotter video export race condition. (@duburcqa) (#2647)
+* Fix sensor camera 'lookat' being ignored when 'entity_idx' is set. (@Lidang-Jiang) (#2614)
+* Fix various regressions on Metal backend. (@duburcqa) (#2651, #2624, #2657)
+* Fix camera sensor per-env rendering with Rasterizer. (@duburcqa) (#2657)
+
+### Miscellaneous
+
+* Add parallel linesearch for constraint solver to speedup simulation on GPU backend. (@erizmr) (#2523)
+* Speedup tiled hessian kernel by using direct lower-triangle indexing. (@hughperkins) (#2618)
+* Add broadphase all-vs-all to speedup simulation on GPU backend. (@hughperkins) (#2607)
+* Add GPU graph to decomposed solver to reduce kernel launch latency. (@hughperkins, @duburcqa) (#2621, #2635, #2636)
+* Add support of opt-in shared memory for tiled hessian to improve performance. (@duburcqa) (#2629)
+* Better parallelization of add collision constraints. (@hughperkins) (#2639)
+* Enable GPU-optimised decomposed constraints solver implementation on all GPU backends. (@duburcqa) (#2623)
+* Unify narrowphase codepath on all GPU backends. (@duburcqa) (#2637)
+* Automatically select optimal H264 codec for Video recorder. (@duburcqa) (#2657)
+* Update all RL examples. (@duburcqa) (#2644, #2657)
+* Update docker container. (@duburcqa) (#2643)
+
 ## 0.4.4
+
+The numerical stability of the simulation for simple rigid objects has been greatly improved. Apart from that, rigid body simulation is now much faster for complex scenes with many entities. Finally, a significant number of bugs have been fixed.
 
 ### Breaking changes
 

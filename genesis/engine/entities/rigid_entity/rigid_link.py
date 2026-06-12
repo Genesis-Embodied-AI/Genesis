@@ -918,8 +918,8 @@ class RigidLink(KinematicLink):
     @gs.assert_built
     def get_AABB(self):
         """
-        Get the axis-aligned bounding box (AABB) of the link's collision body in the world frame by aggregating all
-        the collision geometries associated with this link (`link.geoms`).
+        Get the vertex-based axis-aligned bounding box (AABB) of the link's collision body in the world frame by
+        aggregating all the collision geometries associated with this link (`link.geoms`).
         """
         if self.n_geoms == 0:
             gs.raise_exception("Link has no collision geometries.")

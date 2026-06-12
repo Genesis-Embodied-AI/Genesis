@@ -1,9 +1,11 @@
 import base64
 import ctypes
 import gc
+import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import warnings
@@ -96,6 +98,9 @@ def _skip_reason(reason):
 
 SKIP_NO_GPU = _skip_reason("No GPU available on this machine")
 SKIP_METAL_64BIT = _skip_reason("Apple Metal GPU does not support 64bits precision.")
+SKIP_NDARRAY_PERFORMANCE_MODE = _skip_reason(
+    "Skipping unit tests requiring performance mode when running with Quadrants dynamic array mode."
+)
 SKIP_BACKEND_UNAVAILABLE = _skip_reason("Backend not available on this machine")
 SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madrona' is not available.")
 SKIP_NO_LUISA = _skip_reason("RayTracer is not supported because 'LuisaRenderPy' is not available.")
@@ -188,6 +193,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         if config.option.numprocesses > max_workers:
             raise ValueError(f"The number of workers cannot exceed '{max_workers}' on this machine.")
 
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    config = session.config
+
     # Properly configure Quadrants std out stream right away to avoid significant performance penalty (~10%)
     # Note that this variable must be set in the main thread BEFORE spawning the distributed workers, otherwise
     # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
@@ -205,10 +214,20 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
             os.environ["HIP_VISIBLE_DEVICES"] = str(gpu_index)
-            os.environ["ROCR_VISIBLE_DEVICES"] = str(gpu_index)
+            # NOTE: do NOT also set ROCR_VISIBLE_DEVICES here. On ROCm, ROCR_VISIBLE_DEVICES and
+            # HIP_VISIBLE_DEVICES are *layered* masks: ROCR filters physical->visible first (so
+            # physical GPU N becomes the only visible device, re-indexed to 0), then HIP indexes
+            # into that already-filtered list. Setting both to the same nonzero N double-masks down
+            # to zero visible devices (HIP looks for index N in a 1-element list), so
+            # ``torch.cuda.is_available()`` returns False in the worker and every gpu-parametrized
+            # test is skipped with "Backend 'gs.gpu' not available on this machine". Setting only
+            # HIP_VISIBLE_DEVICES (plus CUDA_VISIBLE_DEVICES, which Torch's ROCm build also honors)
+            # selects exactly one GPU without the double-mask. On NVIDIA these AMD vars are ignored.
             os.environ["QD_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
+        expr = Expression.compile(config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
         if is_benchmarks:
             # FIXME: Enabling multi-threading in benchmark is making compile time estimation unreliable
             num_cpu_per_worker = "1"
@@ -223,6 +242,11 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         os.environ["VECLIB_MAXIMUM_THREADS"] = num_cpu_per_worker
         os.environ["NUMEXPR_NUM_THREADS"] = num_cpu_per_worker
         os.environ["NUMBA_NUM_THREADS"] = num_cpu_per_worker
+
+    # Avoid numba cache collision between sessions and workers.
+    # Must be set before numba is imported, so it cannot live in a fixture.
+    basetemp = config._tmp_path_factory.getbasetemp()
+    os.environ["NUMBA_CACHE_DIR"] = str(basetemp / "numba-cache")
 
 
 def _get_visible_gpu_indices():
@@ -242,19 +266,49 @@ def _get_gpu_indices():
     if sys.platform == "linux":
         # NVIDIA: enumerate via procfs when available
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        if os.path.exists(nvidia_gpu_interface_path):
-            return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
-
-        # AMD / other: fall back to torch device count (ROCm exposes GPUs through torch.cuda)
         try:
-            import torch
+            return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
+        except FileNotFoundError:
+            warnings.warn(
+                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
+                "on WSL2 where the NVIDIA proc interface is not mounted.",
+                stacklevel=2,
+            )
 
-            if torch.cuda.is_available():
-                return tuple(range(torch.cuda.device_count()))
-        except Exception:
-            pass
+        # AMD / other: fall back to torch device count (ROCm exposes GPUs through torch.cuda).
+        #
+        # This must NOT touch torch.cuda in-process here: `_get_gpu_indices()` is called from
+        # `pytest_sessionstart` in each xdist worker *before* pytest-forked forks the per-test
+        # subprocesses. `torch.cuda.is_available()` / `torch.cuda.device_count()` initialize the
+        # CUDA/HIP primary context in the worker parent, after which every forked test dies with
+        # "Cannot re-initialize CUDA in forked subprocess". Query the count in a short-lived
+        # subprocess so the worker parent's CUDA state stays pristine. (After sessionstart sets
+        # HIP_VISIBLE_DEVICES, later calls short-circuit via _get_visible_gpu_indices above, so this
+        # subprocess runs at most once per worker.)
+        count = _query_torch_gpu_count_subprocess()
+        if count > 0:
+            return tuple(range(count))
 
     return (0,)
+
+
+def _query_torch_gpu_count_subprocess():
+    """Return torch's GPU device count without initializing CUDA/HIP in the current process.
+
+    Initializing the primary context in an xdist worker parent before pytest-forked forks each
+    test poisons every forked test with "Cannot re-initialize CUDA in forked subprocess", so the
+    query is delegated to a short-lived subprocess. Returns 0 on any failure.
+    """
+    code = "import torch; print(torch.cuda.device_count() if torch.cuda.is_available() else 0)"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip() or "0")
+    except Exception:
+        pass
+    return 0
 
 
 def _torch_get_gpu_idx(device):
@@ -283,8 +337,10 @@ def _torch_get_gpu_idx(device):
                     device_info = f.read()
                 if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
                     return device_idx
+            else:
+                return -1
 
-    return -1
+    return 0
 
 
 def _get_egl_index(gpu_index):
@@ -350,6 +406,9 @@ def pytest_xdist_auto_num_workers(config):
                 text=True,
             )
             devices_vram_memory = tuple(int(e.strip()) for e in result.stdout.splitlines())
+        except ValueError:
+            # Unknown VRAM. Assuming unbounded.
+            vram_memory = float("inf")
         except (FileNotFoundError, subprocess.CalledProcessError):
             try:
                 result = subprocess.run(
@@ -363,7 +422,39 @@ def pytest_xdist_auto_num_workers(config):
                     int(m.group(1)) for m in re.finditer(r"VRAM Total:\s+(\d+)\s*MiB", result.stdout)
                 )
             except (FileNotFoundError, subprocess.CalledProcessError):
-                pass
+                # Some ROCm images ship 'amd-smi' instead of 'rocm-smi'. Without this fallback,
+                # VRAM stays unknown ('inf'), the VRAM-based cap is disabled, and the number of
+                # workers collapses to the physical core count - massively oversubscribing a
+                # single GPU and causing kernel-launch timeouts under heavy contention.
+                try:
+                    result = subprocess.run(
+                        ["amd-smi", "static", "--vram", "--json"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=True,
+                        text=True,
+                    )
+                    data = json.loads(result.stdout)
+                    if isinstance(data, dict):
+                        data = data.get("gpu_data", [])
+                    sizes = []
+                    for entry in data:
+                        size = entry.get("vram", {}).get("size", {})
+                        value = size.get("value") if isinstance(size, dict) else size
+                        if value:
+                            sizes.append(int(value))  # MB, close enough to MiB for this heuristic
+                    if sizes:
+                        devices_vram_memory = tuple(sizes)
+                except (
+                    FileNotFoundError,
+                    subprocess.CalledProcessError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    AttributeError,
+                    json.JSONDecodeError,
+                ):
+                    pass
         if devices_vram_memory is not None:
             assert len(set(devices_vram_memory)) == 1, "Heterogeneous Nvidia GPU devices not supported."
             num_gpus = len(devices_vram_memory)
@@ -380,8 +471,11 @@ def pytest_xdist_auto_num_workers(config):
                     device_property = torch.cuda.get_device_properties(device)
                     vram_memory += device_property.total_memory / 1024**3
             else:
-                # Ignore VRAM if no GPU is available
-                num_gpus = 0
+                # No nvidia-smi/rocm-smi/amd-smi was usable (e.g. minimal ROCm images). Determine
+                # the GPU count via a short-lived subprocess (so we never initialize CUDA/HIP in
+                # this process) and leave VRAM unbounded; the per-GPU worker cap below still
+                # prevents oversubscribing the device.
+                num_gpus = _query_torch_gpu_count_subprocess()
                 vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
@@ -400,6 +494,19 @@ def pytest_xdist_auto_num_workers(config):
         max(ram_memory / ram_memory_per_worker, 1),
         max(vram_memory / vram_memory_per_worker, 1),
     )
+
+    # Cap the number of workers sharing each visible GPU. VRAM accounting alone is not enough:
+    # a single 256GB GPU would still allow ~100 workers, and that many processes contending for
+    # one device (compute + the on-disk kernel-compilation cache lock) makes heavy GPU tests blow
+    # past the pytest timeout. Empirically ~8 workers per GPU keeps these tests well under budget.
+    # The multiplier is based on the number of *visible* GPUs (what workers are actually pinned
+    # across via `_get_gpu_indices`), not the physical count `nvidia-smi`/`amd-smi` reports, since
+    # those tools ignore the CUDA/HIP/ROCR visibility masks used to restrict a run to fewer GPUs.
+    if num_gpus > 0 and sys.platform != "darwin":
+        max_workers_per_gpu = 8
+        visible_gpu_count = len(_get_gpu_indices())
+        if visible_gpu_count > 0:
+            num_workers = min(num_workers, visible_gpu_count * max_workers_per_gpu)
 
     # Special treatment for benchmarks
     expr = Expression.compile(config.option.markexpr)
@@ -441,6 +548,10 @@ def pytest_runtest_setup(item):
     warnings.filterwarnings(
         "default", message=r".*The .grad attribute of a Tensor that is not a leaf Tensor is being accessed..*"
     )
+    warnings.filterwarnings(
+        "default", message=r".*not currently supported on the MPS backend and will fall back to run on the CPU.*"
+    )
+    warnings.filterwarnings("default", message=r"\s*.*cuda capability.*")
     warnings.filterwarnings("error", category=UserWarning, module="quadrants")
     warnings.filterwarnings("default", message=r".*cannot create weak reference to 'tuple' object.*")
 
@@ -480,7 +591,7 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.skipped and isinstance(report.longrepr, tuple):
         _, _, reason = report.longrepr
-        # pytest may prefix the reason with "Skipped: " — strip it for matching
+        # pytest may prefix the reason with "Skipped: " - strip it for matching
         bare_reason = reason.removeprefix("Skipped: ")
         lineno = _CANONICAL_SKIP_LINES.get(bare_reason)
         if (
@@ -491,6 +602,29 @@ def pytest_runtest_makereport(item, call):
             lineno = _CANONICAL_SKIP_LINES[SKIP_BACKEND_UNAVAILABLE]
         if lineno is not None:
             report.longrepr = (os.path.relpath(__file__), lineno, reason)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """Print a plain list of failed test IDs at the end of the run.
+
+    Replaces pytest's default 'FAILED test_id - msg' short summary lines (which in verbose mode
+    duplicate the FAILURES section) with a compact, easy-to-scan ID-only list.
+    """
+    failed = terminalreporter.stats.get("failed")
+    if not failed:
+        return
+    terminalreporter.write_sep("=", "Failed tests")
+    fullwidth = terminalreporter._tw.fullwidth
+    for report in failed:
+        reprcrash = getattr(report.longrepr, "reprcrash", None)
+        msg = " ".join(reprcrash.message.split()) if reprcrash is not None else ""
+        if not msg:
+            terminalreporter.write_line(report.nodeid)
+            continue
+        line = f"{report.nodeid} - {msg}"
+        if len(line) > fullwidth:
+            line = line[: fullwidth - 3] + "..."
+        terminalreporter.write_line(line)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -633,16 +767,16 @@ def dof_damping(request):
 
 
 @pytest.fixture
-def disable_cache(request):
-    disable_cache = None
-    for mark in request.node.iter_markers("disable_cache"):
+def cache(request):
+    cache = None
+    for mark in request.node.iter_markers("cache"):
         if mark.args:
-            if disable_cache is not None:
-                pytest.fail("'disable_cache' can only be specified once.")
-            (disable_cache,) = mark.args
-    if disable_cache is None:
-        disable_cache = True
-    return disable_cache
+            if cache is not None:
+                pytest.fail("'cache' can only be specified once.")
+            (cache,) = mark.args
+    if cache is None:
+        cache = True
+    return cache
 
 
 @pytest.fixture
@@ -653,8 +787,6 @@ def performance_mode(request):
             if performance_mode is not None:
                 pytest.fail("'performance_mode' can only be specified once.")
             (performance_mode,) = mark.args
-    if performance_mode is None:
-        performance_mode = False
     return performance_mode
 
 
@@ -670,7 +802,7 @@ def debug(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, disable_cache):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -682,19 +814,24 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
     if isinstance(backend, str):
         backend = getattr(gs.constants.backend, backend)
 
-    logging_level = request.config.getoption("--log-cli-level", logging.INFO)
+    dev_mode = request.config.getoption("--dev")
+    logging_level = request.config.getoption("--log-cli-level")
+    if logging_level is None:
+        logging_level = logging.DEBUG if dev_mode else logging.INFO
     if debug is None:
-        debug = request.config.getoption("--dev")
+        debug = dev_mode
 
-    if not disable_cache:
+    if not cache:
         monkeypatch.setenv("QD_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
-        monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
-    # Avoid numba cache collision
-    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / ".cache" / "numba"))
+        # Wipe worker-specific cache entirely since there is no way to disable it
+        numba_cache_dir = Path(os.environ["NUMBA_CACHE_DIR"])
+        basetemp = request.config._tmp_path_factory.getbasetemp()
+        assert numba_cache_dir.is_relative_to(basetemp)
+        shutil.rmtree(numba_cache_dir, ignore_errors=True)
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
     monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
@@ -711,6 +848,10 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip(SKIP_METAL_64BIT)
 
+        # Skip test if performance mode is required but 'GS_ENABLE_NDARRAY' != '0' because it cannot be updated
+        if performance_mode is not None and ((os.environ.get("GS_ENABLE_NDARRAY", "1") == "0") ^ performance_mode):
+            pytest.skip(SKIP_NDARRAY_PERFORMANCE_MODE)
+
         gs.init(
             backend=backend,
             precision=precision,
@@ -721,9 +862,25 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         )
         gc.collect()
 
+        # Prefer the decomposed solver on GPU so both code paths (decomposed on GPU, monolith on CPU) are tested
+        # Skip for benchmarks - let auto-detection choose freely
+        expr = Expression.compile(request.config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        if not is_benchmarks:
+            from genesis.utils.array_class import RigidSimStaticConfig
+
+            _RigidSimStaticConfig_init_orig = RigidSimStaticConfig.__init__
+
+            def _RigidSimStaticConfig_init(self, *args, **kwargs):
+                kwargs.setdefault("prefer_decomposed_solver", int(gs.backend != gs.cpu))
+                _RigidSimStaticConfig_init_orig(self, *args, **kwargs)
+
+            monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
+
         if gs.backend != gs.cpu and gs.device.index is not None:
-            if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():
-                raise RuntimeError(f"Invalid CUDA GPU device, got {gs.device.index}, expected {_get_gpu_indices()}.")
+            device_idx = _torch_get_gpu_idx(gs.device.index)
+            if device_idx not in _get_gpu_indices():
+                raise RuntimeError(f"Invalid CUDA GPU device, got {device_idx}, not in {_get_gpu_indices()}.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip(SKIP_NO_GPU)

@@ -123,9 +123,10 @@ def _kernel_solve_iter_post_linesearch_amdgpu(
             )
 
 
-@solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.amdgpu})
+@solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: False)  # disabled (v1.0.0): split path calls solver.func_solve_iter_post_linesearch, removed upstream
 def func_solve_body_split_amdgpu(
     entities_info,
+    dofs_info,
     dofs_state,
     constraint_state,
     rigid_global_info,
@@ -188,6 +189,7 @@ def _kernel_solve_one_iter_amdgpu(
 @solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.amdgpu})
 def func_solve_body_lifted_loop_amdgpu(
     entities_info,
+    dofs_info,
     dofs_state,
     constraint_state,
     rigid_global_info,
@@ -456,14 +458,19 @@ def _kernel_update_search_direction_amdgpu_decomposed(
 
 
 def _decomposed_amdgpu_is_compatible(*args, **kwargs):
+    # disabled (v1.0.0): decomposed sub-kernels call upstream solver device
+    # functions whose signatures changed in the upstream-v1.0.0 merge. The
+    # self-contained wavecoop / tiled_wc variants cover the AMD perf path.
+    return False
     # `func_solve_body` is invoked positionally everywhere (see solver.py
-    # ConstraintSolver.solve), so static_rigid_sim_config arrives as args[4].
+    # ConstraintSolver.solve). Upstream v1.0.0 inserted `dofs_info` as the 2nd
+    # positional arg, so static_rigid_sim_config now arrives as args[5].
     if gs.backend not in {gs.amdgpu}:
         return False
     # Dense path only -- _kernel_update_constraint_qfrc_amdgpu_decomposed
     # reads constraint_state.jac directly. Sparse decomposition is a
     # separate kernel design (scatter-add) and not implemented here yet.
-    cfg = kwargs.get("static_rigid_sim_config", args[4] if len(args) >= 5 else None)
+    cfg = kwargs.get("static_rigid_sim_config", args[5] if len(args) >= 6 else None)
     if cfg is None:
         return False
     if cfg.sparse_solve:
@@ -1630,7 +1637,7 @@ def _wavecoop_amdgpu_is_compatible(*args, **kwargs):
     #     matches the tiled-wc tile size for consistency.
     if gs.backend not in {gs.amdgpu}:
         return False
-    cfg = kwargs.get("static_rigid_sim_config", args[4] if len(args) >= 5 else None)
+    cfg = kwargs.get("static_rigid_sim_config", args[5] if len(args) >= 6 else None)
     if cfg is None:
         return False
     if cfg.sparse_solve:
@@ -1645,6 +1652,7 @@ def _wavecoop_amdgpu_is_compatible(*args, **kwargs):
 @solver.func_solve_body.register(is_compatible=_wavecoop_amdgpu_is_compatible)
 def func_solve_body_wavecoop_amdgpu(
     entities_info,
+    dofs_info,
     dofs_state,
     constraint_state,
     rigid_global_info,
@@ -1666,6 +1674,7 @@ def func_solve_body_wavecoop_amdgpu(
 @solver.func_solve_body.register(is_compatible=_decomposed_amdgpu_is_compatible)
 def func_solve_body_decomposed_amdgpu(
     entities_info,
+    dofs_info,
     dofs_state,
     constraint_state,
     rigid_global_info,
@@ -2885,7 +2894,7 @@ def _tiled_wc_amdgpu_is_compatible(*args, **kwargs):
     #     unbatched workloads.
     if gs.backend not in {gs.amdgpu}:
         return False
-    cfg = kwargs.get("static_rigid_sim_config", args[4] if len(args) >= 5 else None)
+    cfg = kwargs.get("static_rigid_sim_config", args[5] if len(args) >= 6 else None)
     if cfg is None:
         return False
     if cfg.sparse_solve:
@@ -2900,6 +2909,7 @@ def _tiled_wc_amdgpu_is_compatible(*args, **kwargs):
 @solver.func_solve_body.register(is_compatible=_tiled_wc_amdgpu_is_compatible)
 def func_solve_body_tiled_wc_amdgpu(
     entities_info,
+    dofs_info,
     dofs_state,
     constraint_state,
     rigid_global_info,

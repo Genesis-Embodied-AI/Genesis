@@ -7,9 +7,10 @@ import numpy as np
 import trimesh
 
 import genesis as gs
-import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
+import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
+import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr
@@ -106,6 +107,25 @@ class Mesh(RBC):
             self._metadata["convexified"] = True
         self.clear_visuals()
 
+    def watertighten(self, aggressiveness=7):
+        """Replace `self._mesh` with a closed manifold wrap of the current geometry.
+
+        `aggressiveness` is the integer 0..8 controlling the wrap's quadric-error decimation cost cutoff; see
+        `genesis.utils.watertighten.watertighten_mesh` for the full pipeline.
+        """
+        if self._mesh.vertices.shape[0] <= 3:
+            return
+        from genesis.utils.watertighten import watertighten_mesh
+
+        v, f = watertighten_mesh(
+            np.asarray(self._mesh.vertices),
+            np.asarray(self._mesh.faces, dtype=np.int32),
+            aggressiveness=aggressiveness,
+        )
+        self._mesh = trimesh.Trimesh(vertices=v, faces=f, process=False)
+        self._metadata["watertightened"] = True
+        self.clear_visuals()
+
     def decimate(self, decimate_face_num, decimate_aggressiveness):
         """
         Decimate the mesh.
@@ -182,6 +202,30 @@ class Mesh(RBC):
         if "pbs" in sampler:
             return pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
         return pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
+
+    def sample_point_cloud(
+        self,
+        n_points: int,
+        *,
+        n_candidates: int | None = None,
+        seed: int | None = None,
+        use_cache: bool = True,
+        return_normals: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """
+        Sample `n_points` from mesh in local coordinates using Furthest Point Sampling.
+
+        If ``return_normals`` is True, returns ``(positions, normals)`` with face normals aligned to each sample.
+        """
+        return pc.sample_mesh_point_cloud(
+            self.verts,
+            self.faces,
+            n_points,
+            n_candidates=n_candidates,
+            seed=seed,
+            use_cache=use_cache,
+            return_normals=return_normals,
+        )
 
     def clear_visuals(self):
         """

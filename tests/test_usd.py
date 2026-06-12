@@ -141,8 +141,8 @@ def compare_joints(compared_joints, usd_joints, tol):
             assert_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature, tol=tol, err_msg=err_msg)
 
             # Compare dof control properties
-            assert_allclose(compared_joint.dofs_kp, usd_joint.dofs_kp, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_kv, usd_joint.dofs_kv, tol=tol, err_msg=err_msg)
+            assert_allclose(compared_joint.dofs_act_gain, usd_joint.dofs_act_gain, tol=tol, err_msg=err_msg)
+            assert_allclose(compared_joint.dofs_act_bias, usd_joint.dofs_act_bias, tol=tol, err_msg=err_msg)
             assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol, err_msg=err_msg)
 
 
@@ -844,41 +844,24 @@ def test_usd_parse_nodegraph(usd_file):
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason=SKIP_NO_OMNIVERSE_KIT)
 def test_usd_bake(usd_file, tmp_path):
-    RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
-    RETRY_DELAY = 30.0
-
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir=tmp_path)
     usd_fullpath = os.path.join(asset_path, usd_file)
 
-    # Note that bootstrapping omni-kit by multiple workers concurrently is causing failure.
-    # There is no easy way to get around this limitation except retrying after some delay...
-    retry_idx = 0
-    while True:
-        is_stage = usd_file == "usd/franka_mocap_teleop/table_scene.usd"
-        usd_scene = build_usd_scene(
-            usd_fullpath,
-            scale=1.0,
-            vis_mode="visual",
-            is_stage=is_stage,
-            fixed=True,
-        )
+    is_stage = usd_file == "usd/franka_mocap_teleop/table_scene.usd"
+    usd_scene = build_usd_scene(
+        usd_fullpath,
+        scale=1.0,
+        vis_mode="visual",
+        is_stage=is_stage,
+        fixed=True,
+    )
 
-        is_any_baked = False
-        for vgeom in usd_scene.entities[0].vgeoms:
-            bake_success = vgeom.vmesh.metadata["bake_success"]
-            try:
-                assert bake_success
-            except AssertionError:
-                if retry_idx < RETRY_NUM:
-                    usd_scene.destroy()
-                    print(f"Failed to bake usd. Trying again in {RETRY_DELAY}s...")
-                    time.sleep(RETRY_DELAY)
-                    break
-                raise
-            is_any_baked |= bake_success
-        else:
-            assert is_any_baked
-            break
+    is_any_baked = False
+    for vgeom in usd_scene.entities[0].vgeoms:
+        bake_success = vgeom.vmesh.metadata["bake_success"]
+        assert bake_success
+        is_any_baked |= bake_success
+    assert is_any_baked
 
 
 @pytest.mark.required
@@ -1202,9 +1185,11 @@ def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):
     for _ in range(50):
         scene.step()
 
-    capsule_aabb_min, _capsule_aabb_max = tensor_to_array(capsule.get_AABB())
+    capsule_aabb_min, _capsule_aabb_max = tensor_to_array(
+        scene.rigid_solver.get_AABB(entities_idx=(capsule.idx,))[..., 0, :]
+    )
     capsule_aabb_min_z = float(capsule_aabb_min[-1])
-    assert -0.001 < capsule_aabb_min_z < 0.0
+    assert -5e-4 < capsule_aabb_min_z < 0.0
 
 
 @pytest.mark.required

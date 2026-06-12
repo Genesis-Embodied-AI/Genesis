@@ -10,6 +10,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, assert_equal
 
@@ -57,6 +58,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         from dataclasses import dataclass
 
         import genesis as gs
+        import torch
         from genesis.engine.sensors.base_sensor import Sensor, SharedSensorMetadata
 
         from .options import FakeSensorOptions
@@ -76,11 +78,9 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 return gs.tc_float
 
             @classmethod
-            def _update_shared_ground_truth_cache(cls, metadata, cache):
-                pass
-
-            @classmethod
-            def _update_shared_cache(cls, metadata, gt_cache, cache, buffer):
+            def _update_shared_cache(
+                cls, metadata, gt_cache, ground_truth_data_timeline, measured_data_timeline, intermediate_cache,
+            ):
                 pass
 
             @classmethod
@@ -126,6 +126,302 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
 
 
 @pytest.mark.required
+def test_post_process_requires_intermediate_override():
+    # Strict-override rule: a subclass overriding `_post_process` without also overriding `_get_intermediate_format`
+    # or `_get_intermediate_dtype` must raise TypeError at class-definition time. The intermediate buffer is
+    # structurally distinct from the return buffer (timeline ring is in intermediate space); the explicit override
+    # forces the author to declare it - even a no-op override is acceptable when shape/dtype coincide with return.
+    # Local import: importing `genesis.engine.sensors.base_sensor` at module top triggers the sensors package
+    # `__init__.py`, which transitively loads `genesis.utils.sdf` and dereferences `gs.qd_float`. That attribute is
+    # only set by `gs.init(...)`, which runs in the autouse conftest fixture after pytest collection. Defer here.
+    from genesis.engine.sensors.base_sensor import Sensor
+
+    with pytest.raises(TypeError, match="_get_intermediate"):
+
+        class BadSensor(Sensor):
+            def _get_return_format(self):
+                return (1,)
+
+            @classmethod
+            def _get_cache_dtype(cls):
+                return gs.tc_float
+
+            @classmethod
+            def _post_process(cls, shared_metadata, tensor):
+                return tensor * 2
+
+
+@pytest.mark.required
+def test_pipeline_contract(tol):
+    # Two synthetic sensor families share a single scene/build:
+    #   * `FakePipelineSensor` is a vector sensor whose components each take a different
+    #     (physics_imp, measured_only_imp, transform_alpha, hardware_imp) path, so GT-cleanliness, physics
+    #     propagation through transform recurrence, the `is_measured` gate on `_apply_transform`, and HW non-
+    #     compounding are all verified in one batched pass.
+    #   * `FakeSimpleSensor` instances cover the three return-space ring allocation paths: no-ring (delay=0,
+    #     history=0), history-only ring, and delay+history ring. All four instances of `FakeSimpleSensor` share
+    #     the same per-class step counter, so they all see the same raw value at each step and the expected
+    #     outputs are simple shifts / windows of that sequence.
+    from dataclasses import dataclass
+
+    from genesis.engine.sensors.base_sensor import SimpleSensor, SimpleSensorMetadata
+    from genesis.options.sensors.options import SimpleSensorOptions
+
+    @dataclass
+    class FakeMetadata(SimpleSensorMetadata):
+        # Per-component knob vectors, shape `(1, vec_size)` so they broadcast over the batch dim of slot 0.
+        step_counter: int = 0
+        physics_imp: torch.Tensor = None
+        measured_only_imp: torch.Tensor = None
+        transform_alpha: torch.Tensor = None
+        hardware_imp: torch.Tensor = None
+
+    class FakeOptions(SimpleSensorOptions["FakePipelineSensor"]):
+        physics_imp: tuple[float, ...] = (0.0,)
+        measured_only_imp: tuple[float, ...] = (0.0,)
+        transform_alpha: tuple[float, ...] = (0.0,)
+        hardware_imp: tuple[float, ...] = (0.0,)
+
+    class FakePipelineSensor(SimpleSensor[FakeOptions, FakeMetadata]):
+        def _get_return_format(self):
+            return (len(self._options.physics_imp),)
+
+        @classmethod
+        def _get_cache_dtype(cls):
+            return gs.tc_float
+
+        def build(self):
+            super().build()
+            self._shared_metadata.physics_imp = torch.tensor(
+                [self._options.physics_imp], device=gs.device, dtype=gs.tc_float
+            )
+            self._shared_metadata.measured_only_imp = torch.tensor(
+                [self._options.measured_only_imp], device=gs.device, dtype=gs.tc_float
+            )
+            self._shared_metadata.transform_alpha = torch.tensor(
+                [self._options.transform_alpha], device=gs.device, dtype=gs.tc_float
+            )
+            self._shared_metadata.hardware_imp = torch.tensor(
+                [self._options.hardware_imp], device=gs.device, dtype=gs.tc_float
+            )
+
+        @classmethod
+        def reset(cls, shared_metadata, ground_truth_cache, envs_idx):
+            super().reset(shared_metadata, ground_truth_cache, envs_idx)
+            shared_metadata.step_counter = 0
+
+        @classmethod
+        def _update_raw_data(cls, metadata, raw_data_T):
+            # Same scalar raw value across all components and envs; per-component divergence is introduced by the
+            # downstream hook vectors. 1-indexed step.
+            metadata.step_counter += 1
+            raw_data_T.fill_(float(metadata.step_counter))
+
+        @classmethod
+        def _apply_physics_imperfections(cls, metadata, slot_0, timeline):
+            slot_0.add_(metadata.physics_imp)
+
+        @classmethod
+        def _apply_transform(cls, metadata, data, timeline, *, is_measured):
+            # Measured-only pre-acquisition contribution: exercises the `is_measured` gate.
+            if is_measured:
+                data.add_(metadata.measured_only_imp)
+            # Stateful linear recurrence per component, branch-symmetric. `timeline.at(1)` is the previous step's
+            # post-transform value on this branch (clean of hardware noise - the load-bearing invariant under test).
+            data.add_(timeline.at(1) * metadata.transform_alpha)
+
+        @classmethod
+        def _apply_hardware_imperfections(cls, metadata, working_buf):
+            working_buf.add_(metadata.hardware_imp)
+
+    # Each row is one (physics_imp, measured_only_imp, transform_alpha, hardware_imp) tuple. Components are
+    # independent.
+    paths = [
+        (0.0, 0.0, 0.0, 0.0),  # identity pipeline
+        (0.0, 0.0, 0.0, 100.0),  # hardware only: GT must stay clean, measured = raw + H
+        (0.0, 0.0, 1.0, 0.0),  # stateful transform on both branches
+        (0.0, 0.0, 1.0, 100.0),  # stateful transform + large H: HW must NOT compound through recurrence
+        (5.0, 0.0, 0.0, 0.0),  # physics imperfection measured-only, no transform
+        (0.0, 5.0, 0.0, 0.0),  # measured-only pre-acquisition (transform with is_measured)
+        (5.0, 0.0, 1.0, 0.0),  # physics imperfection compounds through transform recurrence
+        (5.0, 5.0, 1.0, 100.0),  # all four together
+    ]
+    P = np.array([row[0] for row in paths], dtype=np.float32)
+    M = np.array([row[1] for row in paths], dtype=np.float32)
+    A = np.array([row[2] for row in paths], dtype=np.float32)
+    H = np.array([row[3] for row in paths], dtype=np.float32)
+
+    # Companion simple sensor for the ring-allocation paths. No knobs, no overrides beyond raw write - the read
+    # just echoes the shared per-class step counter. Four instances cover (delay=0, history=0), history-only,
+    # delay-only, and (delay + history).
+    @dataclass
+    class FakeSimpleMetadata(SimpleSensorMetadata):
+        step_counter: int = 0
+
+    class FakeSimpleOptions(SimpleSensorOptions["FakeSimpleSensor"]):
+        pass
+
+    class FakeSimpleSensor(SimpleSensor[FakeSimpleOptions, FakeSimpleMetadata]):
+        def _get_return_format(self):
+            return (1,)
+
+        @classmethod
+        def _get_cache_dtype(cls):
+            return gs.tc_float
+
+        @classmethod
+        def reset(cls, shared_metadata, ground_truth_cache, envs_idx):
+            super().reset(shared_metadata, ground_truth_cache, envs_idx)
+            shared_metadata.step_counter = 0
+
+        @classmethod
+        def _update_raw_data(cls, metadata, raw_data_T):
+            metadata.step_counter += 1
+            raw_data_T.fill_(float(metadata.step_counter))
+
+    DT = 1e-2
+    DELAY_STEPS = 2
+    HISTORY_LEN = 3
+    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())  # minimum scene; the sensors do not depend on any physics.
+    sensor = scene.add_sensor(
+        FakeOptions(
+            physics_imp=tuple(P.tolist()),
+            measured_only_imp=tuple(M.tolist()),
+            transform_alpha=tuple(A.tolist()),
+            hardware_imp=tuple(H.tolist()),
+        )
+    )
+    s_baseline = scene.add_sensor(FakeSimpleOptions())
+    s_history = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN))
+    s_delay = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT))
+    s_both = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN, delay=DELAY_STEPS * DT))
+    scene.build()
+    scene.reset()  # zero the build-warmup counter increment so step 1 sees raw = 1.
+
+    n_steps = 8
+    gt_observed = np.zeros((n_steps, len(paths)), dtype=np.float32)
+    measured_observed = np.zeros((n_steps, len(paths)), dtype=np.float32)
+    baseline_observed = np.zeros(n_steps, dtype=np.float32)
+    history_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    delay_observed = np.zeros(n_steps, dtype=np.float32)
+    both_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    for i in range(n_steps):
+        scene.step()
+        gt_observed[i] = tensor_to_array(sensor.read_ground_truth()).reshape(-1)
+        measured_observed[i] = tensor_to_array(sensor.read()).reshape(-1)
+        baseline_observed[i] = tensor_to_array(s_baseline.read()).item()
+        history_observed[i] = tensor_to_array(s_history.read()).reshape(-1)
+        delay_observed[i] = tensor_to_array(s_delay.read()).item()
+        both_observed[i] = tensor_to_array(s_both.read()).reshape(-1)
+
+    # Analytical expectation for the vector sensor, per component. Let raw[k] = k, and (P, M, A, H) be the per-
+    # component vectors.
+    # GT ring:    gt[k]  = k + A * gt[k-1]                       (raw -> transform with is_measured=False)
+    # Meas ring:  m[k]   = (k + P + M) + A * m[k-1]              (raw -> physics_imp -> transform is_measured=True)
+    # Measured:   meas[k] = m[k] + H                             (working buffer adds H; no compounding into m)
+    gt_expected = np.zeros_like(gt_observed)
+    measured_expected = np.zeros_like(measured_observed)
+    gt_prev = np.zeros(len(paths), dtype=np.float32)
+    m_prev = np.zeros(len(paths), dtype=np.float32)
+    for k in range(1, n_steps + 1):
+        gt_k = k + A * gt_prev
+        m_k = (k + P + M) + A * m_prev
+        gt_expected[k - 1] = gt_k
+        measured_expected[k - 1] = m_k + H
+        gt_prev, m_prev = gt_k, m_k
+
+    assert_allclose(gt_observed, gt_expected, tol=tol)
+    assert_allclose(measured_observed, measured_expected, tol=tol)
+
+    # Ring-allocation paths. raw[k] = k for every FakeSimpleSensor instance (shared step counter); delayed reads
+    # before slot D has been filled return zero (ring initialized to zero on reset). History reads source slots
+    # `at(0..H-1)` of the return-space ring directly - i.e. the last H post-`_post_process` snapshots - without
+    # additional delay shift. A sensor that configures both `delay > 0` and `history_length > 0` therefore sees
+    # undelayed history alongside a delayed non-history read; this matches the implementation and is what the
+    # combined test asserts.
+    raw = np.arange(1, n_steps + 1, dtype=np.float32)
+    expected_baseline = raw
+    expected_delay = np.where(raw - DELAY_STEPS >= 1, raw - DELAY_STEPS, 0.0)
+    expected_history = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    for k in range(1, n_steps + 1):
+        for h in range(HISTORY_LEN):
+            past_step = k - h
+            expected_history[k - 1, h] = past_step if past_step >= 1 else 0.0
+
+    assert_allclose(baseline_observed, expected_baseline, tol=tol)
+    assert_allclose(delay_observed, expected_delay, tol=tol)
+    assert_allclose(history_observed, expected_history, tol=tol)
+    # The combined delay + history sensor returns the same history as the history-only sensor (delay is bypassed
+    # by the ring-gather history path); verify they match.
+    assert_allclose(both_observed, expected_history, tol=tol)
+
+
+@pytest.mark.required
+def test_pipeline_contract_uint8_delay(tol):
+    # ZOH delay sampling must work on non-float return dtypes. A sensor whose `_post_process` casts a float
+    # intermediate to a `uint8` return stores `uint8` snapshots in the per-class return-space ring; delay
+    # sampling reads those slots verbatim (the dtype-safe ZOH default). Verifies the slot is correctly typed
+    # and the delayed values match the cast of `raw[k - delay]`.
+    from dataclasses import dataclass
+
+    from genesis.engine.sensors.base_sensor import SimpleSensor, SimpleSensorMetadata
+    from genesis.options.sensors.options import SimpleSensorOptions
+
+    @dataclass
+    class FakeQuantizedMetadata(SimpleSensorMetadata):
+        step_counter: int = 0
+
+    class FakeQuantizedOptions(SimpleSensorOptions["FakeQuantizedSensor"]):
+        pass
+
+    class FakeQuantizedSensor(SimpleSensor[FakeQuantizedOptions, FakeQuantizedMetadata]):
+        def _get_return_format(self):
+            return (1,)
+
+        @classmethod
+        def _get_cache_dtype(cls):
+            return torch.uint8
+
+        @classmethod
+        def _get_intermediate_dtype(cls):
+            return gs.tc_float
+
+        @classmethod
+        def reset(cls, shared_metadata, ground_truth_cache, envs_idx):
+            super().reset(shared_metadata, ground_truth_cache, envs_idx)
+            shared_metadata.step_counter = 0
+
+        @classmethod
+        def _update_raw_data(cls, metadata, raw_data_T):
+            metadata.step_counter += 1
+            raw_data_T.fill_(float(metadata.step_counter))
+
+        @classmethod
+        def _post_process(cls, shared_metadata, tensor, timeline, *, is_measured):
+            return tensor.clamp(0, 255).to(torch.uint8)
+
+    DT = 1e-2
+    DELAY_STEPS = 2
+    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+    sensor = scene.add_sensor(FakeQuantizedOptions(delay=DELAY_STEPS * DT))
+    scene.build()
+    scene.reset()
+
+    n_steps = 8
+    observed = np.zeros(n_steps, dtype=np.uint8)
+    for i in range(n_steps):
+        scene.step()
+        observed[i] = tensor_to_array(sensor.read()).item()
+
+    raw = np.arange(1, n_steps + 1, dtype=np.float32)
+    expected = np.where(raw - DELAY_STEPS >= 1, raw - DELAY_STEPS, 0.0).astype(np.uint8)
+    assert observed.dtype == np.uint8
+    assert_equal(observed, expected)
+
+
+@pytest.mark.required
 def test_add_and_read_all_registered_sensors():
     """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
     from genesis.engine.sensors.sensor_manager import SensorManager
@@ -161,9 +457,12 @@ def test_add_and_read_all_registered_sensors():
             sensor_kwargs.update(
                 pattern=gs.sensors.raycaster.DepthCameraPattern(),
             )
-        if issubclass(option_cls, gs.sensors.Proximity):
+        if issubclass(
+            option_cls,
+            (gs.sensors.SurfaceDistanceProbe, gs.sensors.ProximityTaxel, gs.sensors.ElastomerTaxel),
+        ):
             sensor_kwargs.update(
-                track_link_idx=(sphere.idx,),
+                track_link_idx=(sphere.base_link_idx,),
             )
         if issubclass(option_cls, gs.sensors.TemperatureGrid):
             sensor_kwargs.update(
@@ -246,7 +545,6 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             delay=DT,
             magnetic_field=MAG_FIELD,
             jitter=DT * 0.1,
-            interpolate=True,
         )
     )
 
@@ -352,6 +650,83 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
+    """history_length stacks recent frames from ring snapshot buffers (Contact + IMU)."""
+    GRAVITY = -10.0
+    DT = 1e-2
+    HISTORY_LEN = 4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+
+    contact_h = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box.idx,
+            history_length=HISTORY_LEN,
+        )
+    )
+    imu_h = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            history_length=HISTORY_LEN,
+        )
+    )
+    imu_ref = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    def _expected_shape_with_history(shape: tuple[int, ...]):
+        return (HISTORY_LEN, *shape) if n_envs == 0 else (n_envs, HISTORY_LEN, *shape)
+
+    prev_c = None
+    prev_i = None
+    for _ in range(HISTORY_LEN * 2):
+        scene.step()
+        cg = contact_h.read_ground_truth()
+        assert cg.shape == _expected_shape_with_history((1,))
+        ig = imu_h.read_ground_truth()
+        assert ig.lin_acc.shape == _expected_shape_with_history((3,))
+        assert ig.ang_vel.shape == _expected_shape_with_history((3,))
+        assert ig.mag.shape == _expected_shape_with_history((3,))
+
+        assert_equal(contact_h.read(), cg)
+
+        batch_shape = () if n_envs == 0 else (slice(None),)
+        cur_slice = (*batch_shape, 0)
+        prev_slice = (*batch_shape, 1)
+        assert_allclose(ig.lin_acc[cur_slice], imu_ref.read_ground_truth().lin_acc, tol=tol)
+        assert_allclose(ig.ang_vel[cur_slice], imu_ref.read_ground_truth().ang_vel, tol=tol)
+        assert_allclose(ig.mag[cur_slice], imu_ref.read_ground_truth().mag, tol=tol)
+
+        if prev_c is not None:
+            assert_equal(cg[prev_slice], prev_c[cur_slice])
+        if prev_i is not None:
+            assert_allclose(ig.lin_acc[prev_slice], prev_i.lin_acc[cur_slice], tol=gs.EPS)
+            assert_allclose(ig.ang_vel[prev_slice], prev_i.ang_vel[cur_slice], tol=gs.EPS)
+            assert_allclose(ig.mag[prev_slice], prev_i.mag[cur_slice], tol=gs.EPS)
+        prev_c = cg
+        prev_i = ig
+
+
 # ------------------------------------------------------------------------------------------
 # ------------------------------------ Contact Sensors -------------------------------------
 # ------------------------------------------------------------------------------------------
@@ -364,10 +739,13 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
     NOISE = 0.01
+    DT = 1e-2
+    DELAY_STEPS = 2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
+            dt=DT,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -390,7 +768,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(1.0, 1.0, 1.0),  # volume = 1 m^3
-            pos=(0.0, 0.0, 0.51),
+            pos=(0.0, 0.0, 0.55),
         ),
         material=gs.materials.Rigid(
             rho=1.0,  # mass = 1.0 kg
@@ -452,9 +830,8 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
             noise=NOISE,
             bias=BIAS,
             random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
-            delay=0.05,
+            delay=DT * DELAY_STEPS,
             jitter=0.01,
-            interpolate=True,
         )
     )
     # Adding extra sensor sharing same dtype to force discontinuous memory layout for ground truth when batched
@@ -477,7 +854,8 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box_3.set_dofs_position((-np.pi / 2, -np.pi / 4, -np.pi / 2), dofs_idx_local=slice(3, None))
 
     # Note that it is necessary to do a first step, because the initial state right after reset is not valid
-    scene.step()
+    for _ in range(DELAY_STEPS + 1):
+        scene.step()
 
     # Make sure that box CoM is valid
     assert_allclose(box.get_links_pos(ref="root_com")[..., :2], box_com_offset[:2], tol=tol)
@@ -488,14 +866,14 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor.read(), force_sensor_noisy.read_ground_truth(), tol=gs.EPS)
     assert_allclose(force_sensor_noisy.read(), BIAS, tol=NOISE * 3)
 
-    for _ in range(10):
+    for _ in range(20):
         scene.step()
 
     assert bool_sensor_floor.read().all(), "ContactSensor for floor should detect contact with the ground"
     assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."
     assert_allclose(force_sensor_noisy.read(), force_sensor_noisy.read(), tol=gs.EPS)
 
-    for _ in range(90):
+    for _ in range(80):
         scene.step()
 
     assert bool_sensor_box_2.read().all(), "ContactSensor for box_2 should detect contact with the ground"
@@ -503,8 +881,10 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     # Moving force back in world frame because box is not perfectly flat on the ground due to CoM offset
     with np.testing.assert_raises(AssertionError):
         assert_allclose(box.get_quat(), 0.0, atol=tol)
+    # Unsaturated GT physics check uses force_sensor (no max_force). force_sensor_noisy clamps in _post_process,
+    # which applies uniformly to read() and read_ground_truth().
     assert_allclose(
-        gu.transform_by_quat(force_sensor_noisy.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
+        gu.transform_by_quat(force_sensor.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
     )
 
     # FIXME: Adding CoM offset on box is disturbing contact force computations on box_2 for some reason...
@@ -512,6 +892,57 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
 
     assert_allclose(force_sensor_noisy.read()[..., :2], BIAS[:2], tol=NOISE * 3)
     assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_contact_sensor_filter_link_idx(show_viewer):
+    """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    floor = scene.add_entity(morph=gs.morphs.Plane())
+    box_on_floor = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.1),
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.5, 0.1),
+        ),
+    )
+    sensor = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_on_floor.idx,
+        )
+    )
+    sensor_filtered = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_on_floor.idx,
+            filter_link_idx=(floor.link_start,),
+        )
+    )
+    scene.build(n_envs=2)
+    box.set_pos(
+        (
+            (0.0, 0.5, 0.1),  # box not touching box_on_floor
+            (0.0, 0.0, 0.3),  # box on top of box_on_floor
+        )
+    )
+    for _ in range(20):  # make sure the boxes are stably resting
+        scene.step()
+    data = sensor.read()
+    filtered_data = sensor_filtered.read()
+    assert data[0], "Contact sensor should detect contact with the floor"
+    assert not filtered_data[0], "Contact sensor with filter_link_idx should filter out contact with the floor"
+    assert data[1], "Contact sensor should detect contact with the box"
+    assert filtered_data[1], "Contact sensor with filter_link_idx should still detect contact with the box"
 
 
 # ------------------------------------------------------------------------------------------
@@ -693,6 +1124,132 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("kin_raycastable", [True, False])
+def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):
+    # Two depth cameras, one per entity:
+    #   - cam_kin -> KinematicEntity sphere. When use_visual_raycasting=True the depth camera reads the entity's
+    #     visual mesh (including set_vverts overrides, which survive step() until set_vverts(None) hands control
+    #     back to FK). When False the kinematic entity is completely ignored by the raycaster.
+    #   - cam_rigid -> RigidEntity whose visual mesh (sphere radius 0.2) is intentionally different from its collision
+    #     mesh (capsule radius 0.05). With use_visual_raycasting=True the depth must match the visual sphere.
+    urdf_path = tmp_path / "vis_diff.urdf"
+    urdf_path.write_text(
+        textwrap.dedent(
+            """
+            <robot name="vis_diff">
+                <link name="root">
+                    <visual>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <sphere radius="0.2"/>
+                        </geometry>
+                    </visual>
+                    <collision>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule radius="0.05" length="0.05"/>
+                        </geometry>
+                    </collision>
+                </link>
+            </robot>
+            """
+        )
+    )
+
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    kin_sphere = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.2,
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+        material=gs.materials.Kinematic(use_visual_raycasting=kin_raycastable),
+    )
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=str(urdf_path),
+            pos=(0.0, 0.0, 1.5),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(use_visual_raycasting=True),
+    )
+    cam_kin = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.DepthCameraPattern(
+                res=(40, 30),
+                fov_horizontal=30.0,
+            ),
+            entity_idx=plane.idx,
+            link_idx_local=0,
+            pos_offset=(-1.0, 0.0, 0.5),
+            euler_offset=(0.0, 0.0, 0.0),
+            max_range=5.0,
+            return_world_frame=True,
+        ),
+    )
+    cam_rigid = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.DepthCameraPattern(
+                res=(40, 30),
+                fov_horizontal=30.0,
+            ),
+            entity_idx=plane.idx,
+            link_idx_local=0,
+            pos_offset=(-1.0, 0.0, 1.5),
+            euler_offset=(0.0, 0.0, 0.0),
+            max_range=5.0,
+            return_world_frame=True,
+        ),
+    )
+    if n_envs > 0:
+        scene.build(n_envs=n_envs)
+    else:
+        scene.build()
+    scene.step()
+
+    # Each camera at x=-1 along its own z-row looks along +x. The center pixel hits the closest point of its target
+    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this comes from the visual BVH (not the collision capsule). When
+    # the kinematic entity opts out of raycasting, cam_kin sees nothing and returns the no_hit_value (max_range=5.0).
+    NO_HIT = 5.0  # max_range
+    kin_at_origin = 0.8 if kin_raycastable else NO_HIT
+    kin_scaled = 0.6 if kin_raycastable else NO_HIT
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
+
+    # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
+    # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. Scaling perturbs each vvert by a
+    # different amount, so only the correct vvert-to-state mapping yields 0.6. cam_rigid is unaffected.
+    fk_vverts = tensor_to_array(kin_sphere.get_vverts())
+    center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
+    kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
+    scene.step()
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_scaled, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
+
+    # Push the kinematic sphere far away. cam_kin should report no_hit_value at the center pixel; cam_rigid still sees
+    # the rigid visual sphere.
+    kin_sphere.set_vverts((100.0, 100.0, 100.0))
+    scene.step()
+    assert_allclose(cam_kin.read_image()[..., 15, 20], NO_HIT, tol=gs.EPS)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
+
+    # Restoring FK control returns the original hit distance on cam_kin; cam_rigid stays put.
+    kin_sphere.set_vverts(None)
+    scene.step()
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
 
 @pytest.mark.required
@@ -1010,413 +1567,7 @@ def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
-    """Test KinematicContactProbe for a box resting on the ground and a fixed sphere on top of it."""
-    BOX_SIZE = 0.5
-    PROBE_RADIUS = 0.05
-    PENETRATION = 0.02
-    STIFFNESS = 100.0
-    SPHERE_RADIUS = 0.1
-    NOISE = 0.001
-    GRAVITY = -10.0
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, GRAVITY),
-        ),
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),  # box is penetrating ground plane
-            fixed=False,  # probe will not detect fixed-fixed contact
-        ),
-    )
-
-    sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=SPHERE_RADIUS,
-            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + 0.2),  # start with sphere above the box
-            fixed=True,
-        ),
-    )
-
-    probe_normals = (
-        (0.0, 0.0, 1.0),
-        (0.0, 0.0, 1.0),
-        (0.0, 0.0, 1.0),
-        (0.0, 0.0, -1.0),
-    )
-    probe = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=box.idx,
-            probe_local_pos=(
-                (0.0, 0.0, BOX_SIZE / 2),  # top of box, center
-                (BOX_SIZE / 4, BOX_SIZE / 4, BOX_SIZE / 2),  # top of box
-                (-BOX_SIZE / 4, -BOX_SIZE / 4, BOX_SIZE / 2),  # top of box
-                (0.0, 0.0, -BOX_SIZE / 2),  # bottom of box, center
-            ),
-            probe_local_normal=probe_normals,
-            probe_radius=(
-                PROBE_RADIUS,
-                PROBE_RADIUS / 10,  # small radius which cannot detect sphere unless it's perfectly on top
-                BOX_SIZE / 3,  # large radius that can detect sphere when not aligned
-                PROBE_RADIUS,
-            ),
-            stiffness=STIFFNESS,
-            noise=NOISE,
-            random_walk=NOISE * 0.1,
-            draw_debug=show_viewer,
-        )
-    )
-
-    sphere_probe = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=sphere.idx,
-            probe_local_pos=[(0.0, 0.0, -SPHERE_RADIUS)],
-            probe_local_normal=[(0.0, 0.0, -1.0)],
-            probe_radius=PROBE_RADIUS,
-            stiffness=STIFFNESS,
-            debug_sphere_color=(0.0, 0.0, 1.0, 0.5),
-            draw_debug=show_viewer,
-        )
-    )
-
-    scene.build(n_envs=n_envs)
-
-    scene.step()
-
-    noisy_data = probe.read()
-    box_data = probe.read_ground_truth()
-
-    with np.testing.assert_raises(AssertionError):
-        assert_allclose(noisy_data.penetration, box_data.penetration, tol=gs.EPS)
-    with np.testing.assert_raises(AssertionError):
-        assert_allclose(noisy_data.force, box_data.force, tol=gs.EPS)
-
-    noise_tol = NOISE * 10.0
-    assert_allclose(noisy_data.penetration, box_data.penetration, atol=noise_tol)
-    assert_allclose(noisy_data.force, box_data.force, atol=noise_tol)
-
-    # Check that the box's bottom probe (idx 3) detects the ground
-    assert (box_data.penetration[..., 3] > tol).all(), "Bottom probe should detect ground contact"
-    assert (box_data.force[..., 3, 2] > tol).all(), "Bottom probe should have upward force from ground"
-
-    # Forces should be equivalent to the penetration * stiffness along normal vector
-    normals = torch.stack([-torch.tensor(n) for n in probe_normals])
-    expected_force = (box_data.penetration * STIFFNESS).unsqueeze(-1) * normals
-    assert_allclose(box_data.force, expected_force, tol=tol)
-
-    # Top probes should not detect anything yet
-    assert_allclose(box_data.penetration[..., :3], 0.0, tol=gs.EPS)
-    assert_allclose(box_data.force[..., :3, :], 0.0, tol=gs.EPS)
-
-    # Now position the sphere to penetrate the top of the box
-    sphere.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS - PENETRATION))
-    scene.step()
-
-    box_data = probe.read_ground_truth()
-    sphere_data = sphere_probe.read()
-
-    assert (box_data.penetration[..., 0] > tol).all(), "Top probe should detect sphere contact"
-    assert (box_data.force[..., 0, 2] < -tol).all(), "Top probe should have downward force from sphere"
-    assert (sphere_data.penetration[..., 0] > tol).all(), "Sphere probe should detect box contact"
-    assert_allclose(
-        sphere_data.penetration[..., 0],
-        box_data.penetration[..., 0],
-        tol=2e-3,
-        err_msg="Sphere probe penetration should match top box probe penetration",
-    )
-    assert_equal(
-        box_data.penetration[..., 1], 0.0, err_msg="Noncenter probe with small radius should not detect contact"
-    )
-    assert (box_data.penetration[..., 2] > tol).all(), "Noncenter probe with large radius should detect contact"
-
-    # Move sphere away and check no contact
-    sphere.set_pos((0.0, 0.0, BOX_SIZE / 2 + SPHERE_RADIUS + PROBE_RADIUS + 0.2))
-    scene.step()
-
-    sphere_data = sphere_probe.read()
-    sphere_ground_truth = sphere_probe.read_ground_truth()
-    assert_allclose(sphere_data.penetration, sphere_ground_truth.penetration, tol=gs.EPS)
-    assert_allclose(sphere_data.force, sphere_ground_truth.force, tol=gs.EPS)
-    assert_allclose(sphere_data.penetration, 0.0, tol=gs.EPS)
-    assert_allclose(sphere_data.force, 0.0, tol=gs.EPS)
-
-
-def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
-    """Probe positions and outward normals on the bottom hemisphere (z <= 0 in link frame)."""
-    theta = (np.pi / 2) * (1 + torch.arange(n_theta, dtype=gs.tc_float, device=gs.device) / n_theta)
-    phi = torch.arange(n_phi, dtype=gs.tc_float, device=gs.device) * (2 * np.pi) / n_phi
-    theta, phi = torch.meshgrid(theta, phi, indexing="ij")
-    theta = theta.ravel()
-    phi = phi.ravel()
-    x = radius * theta.sin() * phi.cos()
-    y = radius * theta.sin() * phi.sin()
-    z = radius * theta.cos()
-    positions = torch.stack([x, y, z], dim=-1)
-    normals = positions / radius
-    return positions, normals
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
-    """Test ElastomerDisplacementSensor with bottom-hemisphere probes on a sphere penetrating the ground."""
-
-    SPHERE_RADIUS = 0.2
-    PROBE_RADIUS = 0.02
-    PENETRATION = 0.01
-    RING_ANGLE_DEG = 6.0
-    N_RING = 6
-    MAX_DELTAS = (1.0, 1.0, 60.0)
-
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    # Sphere penetrating the ground (center below z=0 by PENETRATION)
-    sphere_init_pos = (0.0, 0.0, SPHERE_RADIUS - PENETRATION)
-    sphere_init_quat = (1.0, 0.0, 0.0, 0.0)
-    sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=SPHERE_RADIUS,
-            pos=sphere_init_pos,
-        ),
-    )
-
-    # One probe at bottom of sphere plus a ring at RING_ANGLE_DEG from bottom (angle from center)
-    angle_rad = torch.tensor(RING_ANGLE_DEG * torch.pi / 180, dtype=gs.tc_float, device=gs.device)
-    theta_ring = torch.pi - angle_rad
-    z_ring = SPHERE_RADIUS * theta_ring.cos()
-    r_xy = SPHERE_RADIUS * theta_ring.sin()
-    phi = torch.arange(N_RING, dtype=gs.tc_float, device=gs.device) * (2 * torch.pi) / N_RING
-    ring_positions = torch.stack([r_xy * phi.cos(), r_xy * phi.sin(), torch.full_like(phi, z_ring)], dim=-1)
-    ring_normals = ring_positions / SPHERE_RADIUS
-    bottom_pos = torch.tensor([[0.0, 0.0, -SPHERE_RADIUS]], dtype=gs.tc_float, device=gs.device)
-    bottom_normal = torch.tensor([[0.0, 0.0, -1.0]], dtype=gs.tc_float, device=gs.device)
-    probe_positions = torch.cat([bottom_pos, ring_positions], dim=0)
-    probe_normals = torch.cat([bottom_normal, ring_normals], dim=0)
-
-    sensor_kwargs = dict(
-        entity_idx=sphere.idx,
-        probe_local_pos=probe_positions,
-        probe_local_normal=probe_normals,
-        probe_radius=PROBE_RADIUS,
-        draw_debug=show_viewer,
-        dilate_coefficient=1e-2,
-        shear_coefficient=1e-2,
-        twist_coefficient=1e-2,
-    )
-    dilate_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacement(
-            dilate_max_delta=MAX_DELTAS[0],
-            shear_max_delta=0.0,
-            twist_max_delta=0.0,
-            **sensor_kwargs,
-        )
-    )
-    shear_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacement(
-            dilate_max_delta=0.0,
-            shear_max_delta=MAX_DELTAS[1],
-            twist_max_delta=0.0,
-            **sensor_kwargs,
-        )
-    )
-    twist_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacement(
-            dilate_max_delta=0.0,
-            shear_max_delta=0.0,
-            twist_max_delta=MAX_DELTAS[2],
-            **sensor_kwargs,
-        )
-    )
-    sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacement(
-            dilate_max_delta=MAX_DELTAS[0],
-            shear_max_delta=MAX_DELTAS[1],
-            twist_max_delta=MAX_DELTAS[2],
-            **sensor_kwargs,
-        )
-    )
-
-    if show_viewer:
-        rec_kwargs = dict(
-            normal=(0.0, 0.0, -1.0),
-            scale_factor=10.0,
-            max_magnitude=1.0e-2,
-            positions=probe_positions,
-        )
-        dilate_sensor.start_recording(
-            rec_options=gs.recorders.MPLVectorFieldPlot(
-                title="Dilate Sensor",
-                **rec_kwargs,
-            ),
-        )
-        shear_sensor.start_recording(
-            rec_options=gs.recorders.MPLVectorFieldPlot(
-                title="Shear Sensor",
-                **rec_kwargs,
-            ),
-        )
-        twist_sensor.start_recording(
-            rec_options=gs.recorders.MPLVectorFieldPlot(
-                title="Twist Sensor",
-                **rec_kwargs,
-            ),
-        )
-
-    scene.build(n_envs=n_envs)
-
-    dt = scene.dt
-
-    scene.step()
-
-    # test dilate displacement
-    dilate_data = dilate_sensor.read()
-    # Contact point in sphere link frame (south pole); direction away from contact for each probe
-    contact_pos = torch.tensor([0.0, 0.0, -PENETRATION], dtype=gs.tc_float, device=gs.device)
-    direction_away = probe_positions - contact_pos
-    direction_away = direction_away / (direction_away.norm(dim=-1, keepdim=True).clamp(min=1e-12))
-    dots = (dilate_data * direction_away).sum(dim=-1)
-    assert (dots < tol).all(), "All dilate displacements should point away from the contact"
-
-    # test shear displacement
-    sphere.set_pos(sphere_init_pos)
-    sphere.set_quat(sphere_init_quat)
-    sphere.set_dofs_velocity((-0.2, 0.0, 0.0, 0.0, 0.0, 0.0))
-    scene.step()
-    # shear sensor should detect 0.5 m/s of shear displacement
-    assert_allclose(shear_sensor.read()[..., 0], 0.2 * dt, rtol=1.5)
-    assert_allclose(twist_sensor.read(), 0.0, tol=tol)
-
-    # test twist displacement
-    sphere.set_pos(sphere_init_pos)
-    sphere.set_quat(sphere_init_quat)
-    sphere.set_dofs_velocity((0.0, 0.0, 0.0, 0.0, 0.0, 30.0))
-    scene.step()
-    # twist sensor should detect 0.05 m of twist displacement
-    assert_allclose(twist_sensor.read()[..., 1:, :2].norm(dim=-1), 0.2 * dt, rtol=1.5)
-    assert_allclose(twist_sensor.read()[..., 2], 0.0, tol=dt)
-    assert_allclose(shear_sensor.read(), 0.0, tol=tol)
-
-    # test combined displacement
-    sphere.set_pos(sphere_init_pos)
-    sphere.set_quat(sphere_init_quat)
-    sphere.set_dofs_velocity((0.2, 0.0, 0.0, 0.0, 0.0, 0.2))
-    scene.step()
-    dilate_data = dilate_sensor.read()
-    shear_data = shear_sensor.read()
-    twist_data = twist_sensor.read()
-    combined_data = sensor.read()
-    assert_allclose(combined_data, dilate_data + shear_data + twist_data, tol=tol)
-
-    # test no contact
-    sphere.set_pos((0.0, 0.0, SPHERE_RADIUS + 0.05))
-    scene.step()
-    data = sensor.read()
-    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
-    """Test ElastomerDisplacementSensor with probes on a box resting on a sphere."""
-    SPHERE_RADIUS = 0.1
-    PROBE_RADIUS = 0.02
-    PENETRATION = 0.01
-    BOX_SIZE = 0.1
-    GRID_SIZE = (8, 8)
-
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    # Sphere penetrating the ground (center below z=0 by PENETRATION)
-    sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=SPHERE_RADIUS,
-            pos=(0.0, 0.0, SPHERE_RADIUS),
-            fixed=True,
-        ),
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION),
-        ),
-    )
-    sensor_kwargs = dict(
-        entity_idx=box.idx,
-        link_idx_local=0,
-        probe_local_normal=(0.0, 0.0, -1.0),
-        probe_radius=PROBE_RADIUS,
-        dilate_coefficient=1e-2,
-        shear_coefficient=1e-2,
-        twist_coefficient=1e-2,
-        draw_debug=show_viewer,
-    )
-    probe_local_pos = gu.generate_grid_points_on_plane(
-        lo=(-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
-        hi=(BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
-        normal=(0.0, 0.0, -1.0),
-        nx=GRID_SIZE[0],
-        ny=GRID_SIZE[1],
-    )
-    elastomer_grid_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacement(
-            probe_local_pos=probe_local_pos,
-            **sensor_kwargs,
-        )
-    )
-    elastomer_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacement(
-            probe_local_pos=probe_local_pos.reshape(-1, 3),
-            **sensor_kwargs,
-        )
-    )
-    assert elastomer_grid_sensor._is_grid and not elastomer_sensor._is_grid
-    assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
-
-    scene.build(n_envs=n_envs)
-
-    scene.step()
-
-    # grid sensor should match
-    grid_data = elastomer_grid_sensor.read()
-    data = elastomer_sensor.read()
-
-    assert_allclose(data, grid_data, tol=tol)
-
-    # test no contact
-    box.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS * 2 + PENETRATION))
-    scene.step()
-
-    data = elastomer_grid_sensor.read()
-    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
-
-
-# ------------------------------------------------------------------------------------------
-# ----------------------------------- Proximity Sensor -------------------------------------
-# ------------------------------------------------------------------------------------------
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
-    """Test proximity sensor returns distance and nearest points with correct shapes and plausible values."""
+def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     SPHERE_RADIUS = 0.05
     DISTANCE = 0.15
     MAX_RANGE = 10.0
@@ -1459,20 +1610,20 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
         ),
     )
 
-    box_prox_sensor = scene.add_sensor(
-        gs.sensors.Proximity(
+    box_to_spheres_dist_sensor = scene.add_sensor(
+        gs.sensors.SurfaceDistanceProbe(
             entity_idx=box.idx,
             probe_local_pos=BOX_PROBE_POS,
+            probe_radius=MAX_RANGE,
             track_link_idx=(sphere1.base_link_idx, sphere2.base_link_idx),
-            max_range=MAX_RANGE,
         )
     )
-    sphere_prox_sensor = scene.add_sensor(
-        gs.sensors.Proximity(
+    sphere_to_box_dist_sensor = scene.add_sensor(
+        gs.sensors.SurfaceDistanceProbe(
             entity_idx=sphere1.idx,
             probe_local_pos=SPHERE_PROBE_POS,
+            probe_radius=MAX_RANGE,
             track_link_idx=(box.base_link_idx,),
-            max_range=MAX_RANGE,
             resolution=0.001,
             bias=0.1,
             noise=0.01,
@@ -1483,13 +1634,13 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
 
     scene.step()
 
-    box_prox_data = box_prox_sensor.read()
-    sphere_prox_noisy_data = sphere_prox_sensor.read()
-    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+    box_prox_data = box_to_spheres_dist_sensor.read()
+    sphere_prox_noisy_data = sphere_to_box_dist_sensor.read()
+    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
 
     for i in range(len(BOX_PROBE_POS)):
         assert_allclose(box_prox_data[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
-    assert_allclose(box_prox_sensor.nearest_points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
+    assert_allclose(box_to_spheres_dist_sensor.nearest_points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
     assert_allclose(sphere_prox_data, DISTANCE, tol=tol)
 
     with np.testing.assert_raises(AssertionError):
@@ -1500,8 +1651,8 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
 
     scene.step()
 
-    box_prox_data = box_prox_sensor.read()
-    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+    box_prox_data = box_to_spheres_dist_sensor.read()
+    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
 
     assert_allclose(box_prox_data[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
     assert_allclose(box_prox_data[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
@@ -1511,21 +1662,762 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
     box.set_pos(box_pos)
     scene.step()
 
-    box_prox_data = box_prox_sensor.read()
-    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+    box_prox_data = box_to_spheres_dist_sensor.read()
+    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
 
     assert_allclose(box_prox_data, MAX_RANGE, tol=tol)
     assert_allclose(sphere_prox_data, MAX_RANGE, tol=tol)
     for i in range(len(BOX_PROBE_POS)):
         assert_allclose(
-            box_prox_sensor.nearest_points[..., i, :],
+            box_to_spheres_dist_sensor.nearest_points[..., i, :],
             np.array(BOX_PROBE_POS[i]) + box_pos,
             tol=tol,
             err_msg="When out of range, points should be the probe position in world frame",
         )
     assert_allclose(
-        sphere_prox_sensor.nearest_points,
+        sphere_to_box_dist_sensor.nearest_points,
         np.array(SPHERE_PROBE_POS) + sphere1_pos,
         tol=tol,
         err_msg="When out of range, points should be the probe position in world frame",
     )
+
+
+def _as_env_batch(data, n_envs: int) -> torch.Tensor:
+    data = torch.as_tensor(data, device=gs.device)
+    return data.unsqueeze(0) if n_envs == 0 else data
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Tactile Sensors --------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
+    """Test ContactProbe, ContactDepthProbe, and KinematicTaxel on a box resting on ground with sphere on top."""
+    BOX_SIZE = 0.5
+    PROBE_RADIUS = 0.05
+    PENETRATION = 0.02
+    CONTACT_THRESHOLD = 0.002
+    STIFFNESS = 100.0
+    SPHERE_RADIUS = 0.1
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),  # box is penetrating ground plane
+            fixed=False,  # probe will not detect fixed-fixed contact
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + 0.2),  # start with sphere above the box
+            fixed=True,
+        )
+    )
+
+    probe_local_pos = (
+        (0.0, 0.0, BOX_SIZE / 2),
+        (BOX_SIZE / 4, BOX_SIZE / 4, BOX_SIZE / 2),
+        (-BOX_SIZE / 4, -BOX_SIZE / 4, BOX_SIZE / 2),
+        (0.0, 0.0, -BOX_SIZE / 2),
+    )
+    probe_normals = (
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, -1.0),
+    )
+    probe_radii = (
+        PROBE_RADIUS,
+        PROBE_RADIUS / 10.0,
+        BOX_SIZE / 3.0,
+        PROBE_RADIUS,
+    )
+    common_kwargs = dict(
+        entity_idx=box.idx,
+        probe_local_pos=probe_local_pos,
+        probe_radius=probe_radii,
+        draw_debug=show_viewer,
+    )
+    contact_probe = scene.add_sensor(
+        gs.sensors.ContactProbe(
+            contact_threshold=CONTACT_THRESHOLD,
+            **common_kwargs,
+        )
+    )
+    depth_probe = scene.add_sensor(gs.sensors.ContactDepthProbe(**common_kwargs))
+    noisy_radius_depth_probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            probe_radius_noise=0.25,
+            **common_kwargs,
+        )
+    )
+    taxel = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_normal=probe_normals,
+            normal_stiffness=STIFFNESS,
+            normal_damping=0.0,
+            shear_scalar=0.0,
+            twist_scalar=0.0,
+            **common_kwargs,
+        )
+    )
+    sphere_taxel = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            entity_idx=sphere.idx,
+            probe_local_pos=((0.0, 0.0, -SPHERE_RADIUS),),
+            probe_local_normal=((0.0, 0.0, -1.0),),
+            probe_radius=PROBE_RADIUS,
+            normal_stiffness=STIFFNESS,
+            normal_damping=0.0,
+            shear_scalar=0.0,
+            twist_scalar=0.0,
+            draw_debug=show_viewer,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    depth = _as_env_batch(depth_probe.read_ground_truth(), n_envs)
+    contact = _as_env_batch(contact_probe.read_ground_truth(), n_envs)
+    force = _as_env_batch(taxel.read_ground_truth().force, n_envs)
+    torque = _as_env_batch(taxel.read_ground_truth().torque, n_envs)
+
+    assert_equal(contact, depth > CONTACT_THRESHOLD)
+    assert _as_env_batch(noisy_radius_depth_probe.read(), n_envs).shape == depth.shape
+    # Check that the box's bottom probe (idx 3) detects the ground.
+    assert (depth[..., 3] > tol).all(), "Bottom probe should detect the ground."
+    assert (force[..., 3, 2] > tol).all(), "Bottom taxel force should point upward."
+    # Top probes should not detect anything yet.
+    assert_allclose(depth[..., :3], 0.0, tol=gs.EPS)
+    assert_allclose(force[..., :3, :], 0.0, tol=gs.EPS)
+    assert_allclose(torque, 0.0, tol=gs.EPS)
+
+    # Forces should be equivalent to the penetration * stiffness along normal vector.
+    expected_normals = -torch.tensor(probe_normals, dtype=gs.tc_float, device=gs.device)
+    assert_allclose(force, depth.unsqueeze(-1) * STIFFNESS * expected_normals, tol=tol)
+
+    # Now position the sphere to penetrate the top of the box.
+    box_top_z = BOX_SIZE - PENETRATION
+    sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS - PENETRATION))
+    scene.step()
+
+    depth = _as_env_batch(depth_probe.read_ground_truth(), n_envs)
+    contact = _as_env_batch(contact_probe.read_ground_truth(), n_envs)
+    force = _as_env_batch(taxel.read_ground_truth().force, n_envs)
+    sphere_force = _as_env_batch(sphere_taxel.read_ground_truth().force, n_envs)
+
+    assert_equal(contact, depth > CONTACT_THRESHOLD)
+    assert (depth[..., 0] > tol).all(), "Top center probe should detect the sphere."
+    assert (force[..., 0, 2] < -tol).all(), "Top center taxel force should point downward."
+    assert_allclose(depth[..., 1], 0.0, tol=gs.EPS)
+    assert (depth[..., 2] > tol).all(), "Large offset probe should detect the nearby sphere."
+    assert (sphere_force[..., 0, 2] > tol).all(), "Sphere taxel should see the box underneath."
+
+    # Move sphere away and check no contact.
+    sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS + PROBE_RADIUS + 0.2))
+    scene.step()
+    assert_allclose(sphere_taxel.read_ground_truth().force, 0.0, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
+    """ElastomerTaxel should separate dilation and shear on a dome-like sensor surface."""
+    SPHERE_RADIUS = 0.2
+    PROBE_RADIUS = 0.02
+    PENETRATION = 0.01
+    GROUND_THICKNESS = 0.08
+    N_RINGS = 3
+    LATERAL_SHIFT = 0.01
+    SHEAR_SCALE = 100.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    ground = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.8, 0.8, GROUND_THICKNESS),
+            pos=(0.0, 0.0, -GROUND_THICKNESS / 2),
+            fixed=True,
+        )
+    )
+    # Sphere penetrating the ground (center below z=0 by PENETRATION).
+    sphere_init_pos = (0.0, 0.0, SPHERE_RADIUS - PENETRATION)
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=sphere_init_pos,
+            fixed=False,
+        )
+    )
+
+    probe_local_pos, probe_local_normal = gu.generate_ring_points_on_sphere(
+        radius=SPHERE_RADIUS,
+        cap_axis=(0.0, 0.0, -1.0),
+        n_rings=N_RINGS,
+        arc_spacing=2.0 * PROBE_RADIUS,
+        return_normals=True,
+    )
+    normals = torch.as_tensor(probe_local_normal, dtype=gs.tc_float, device=gs.device)
+    sensor_kwargs = dict(
+        entity_idx=sphere.idx,
+        probe_local_pos=probe_local_pos,
+        probe_local_normal=probe_local_normal,
+        probe_radius=PROBE_RADIUS,
+        track_link_idx=(ground.base_link_idx,),
+        n_sample_points=800,
+        lambda_s=0.0,
+        draw_debug=show_viewer,
+    )
+    dilate_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            **sensor_kwargs,
+        )
+    )
+    shear_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            dilate_scale=0.0,
+            shear_scale=SHEAR_SCALE,
+            **sensor_kwargs,
+        )
+    )
+    combined_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            dilate_scale=1.0,
+            shear_scale=SHEAR_SCALE,
+            **sensor_kwargs,
+        )
+    )
+    assert not dilate_sensor._is_grid and not dilate_sensor._use_grid_fft
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    dilate_data = _as_env_batch(dilate_sensor.read_ground_truth(), n_envs)
+    shear_data = _as_env_batch(shear_sensor.read_ground_truth(), n_envs)
+    combined_data = _as_env_batch(combined_sensor.read_ground_truth(), n_envs)
+    normal_projection = (dilate_data * normals).sum(dim=-1)
+    assert (normal_projection[..., 0] > tol).all(), "Bottom marker should dilate along its outward normal."
+    assert torch.linalg.norm(dilate_data, dim=-1).max() > tol
+    assert_allclose(shear_data, 0.0, tol=tol)
+    assert_allclose(combined_data, dilate_data, tol=tol)
+
+    sphere.set_pos((LATERAL_SHIFT, 0.0, sphere_init_pos[2]))
+    scene.step()
+
+    dilate_data = _as_env_batch(dilate_sensor.read_ground_truth(), n_envs)
+    shear_data = _as_env_batch(shear_sensor.read_ground_truth(), n_envs)
+    combined_data = _as_env_batch(combined_sensor.read_ground_truth(), n_envs)
+    shear_normal_projection = (shear_data * normals).sum(dim=-1)
+    shear_tangent = shear_data - shear_normal_projection.unsqueeze(-1) * normals
+    assert torch.linalg.norm(shear_tangent, dim=-1).max() > tol
+    assert_allclose(shear_normal_projection, 0.0, tol=tol)
+    assert_allclose(combined_data, dilate_data + shear_data, tol=5e-5)
+
+    sphere.set_pos((0.0, 0.0, SPHERE_RADIUS + 0.05))
+    scene.step()
+    assert_equal(combined_sensor.read_ground_truth(), 0.0, err_msg="ElastomerTaxel should be zero with no contact.")
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
+    """ElastomerTaxel grid and flat probe layouts should agree on the same flat pad."""
+    SPHERE_RADIUS = 0.1
+    BOX_SIZE = 0.1
+    PENETRATION = 0.01
+    GRID_SIZE = (8, 8)
+    LATERAL_SHIFT = 0.01
+    SHEAR_SCALE = 100.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            fixed=True,
+        )
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION),
+            fixed=False,
+        )
+    )
+    probe_local_pos = gu.generate_grid_points_on_plane(
+        lo=(-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
+        hi=(BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
+        normal=(0.0, 0.0, -1.0),
+        nx=GRID_SIZE[0],
+        ny=GRID_SIZE[1],
+    )
+    sensor_kwargs = dict(
+        entity_idx=box.idx,
+        probe_local_normal=(0.0, 0.0, -1.0),
+        probe_radius=0.02,
+        track_link_idx=(sphere.base_link_idx,),
+        n_sample_points=600,
+        lambda_s=0.0,
+        draw_debug=show_viewer,
+    )
+    elastomer_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos,
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            **sensor_kwargs,
+        )
+    )
+    elastomer_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            **sensor_kwargs,
+        )
+    )
+    shear_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
+            dilate_scale=0.0,
+            shear_scale=SHEAR_SCALE,
+            **sensor_kwargs,
+        )
+    )
+    combined_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
+            dilate_scale=1.0,
+            shear_scale=SHEAR_SCALE,
+            **sensor_kwargs,
+        )
+    )
+    assert elastomer_grid_sensor._is_grid and elastomer_grid_sensor._use_grid_fft
+    assert not elastomer_sensor._is_grid and not elastomer_sensor._use_grid_fft
+    assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    # Test dilate displacement: grid sensor should match the flat-layout sensor and detect contact magnitude.
+    grid_data = elastomer_grid_sensor.read_ground_truth()
+    flat_data = elastomer_sensor.read_ground_truth()
+    assert_allclose(flat_data, grid_data, tol=tol)
+    assert torch.linalg.norm(torch.as_tensor(grid_data, device=gs.device), dim=-1).max() > tol
+    assert_allclose(shear_sensor.read_ground_truth(), 0.0, tol=tol)
+    assert_allclose(combined_sensor.read_ground_truth(), flat_data, tol=tol)
+
+    # Test combined displacement: dilate + shear contributions should add when the box slides laterally.
+    box.set_pos((LATERAL_SHIFT, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION))
+    scene.step()
+    dilate_data = elastomer_sensor.read_ground_truth()
+    shear_data = shear_sensor.read_ground_truth()
+    combined_data = combined_sensor.read_ground_truth()
+    assert torch.linalg.norm(torch.as_tensor(shear_data, device=gs.device), dim=-1).max() > tol
+    assert_allclose(combined_data, dilate_data + shear_data, tol=5e-5)
+
+    # Move box away and check no contact.
+    box.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS * 2 + 0.05))
+    scene.step()
+    assert_equal(elastomer_grid_sensor.read_ground_truth(), 0.0, err_msg="ElastomerTaxel should be zero in air.")
+    assert_equal(combined_sensor.read_ground_truth(), 0.0, err_msg="ElastomerTaxel should be zero in air.")
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
+    """ProximityTaxel reports a nonzero point-cloud force in contact and near-zero force in air."""
+    BOX_SIZE = 0.2
+    PENETRATION = 0.01
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    support = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE / 2),
+            fixed=True,
+        )
+    )
+    taxel_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE + BOX_SIZE / 2 - PENETRATION),
+            fixed=False,
+        )
+    )
+    sensor = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            entity_idx=taxel_box.idx,
+            probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
+            probe_local_normal=(0.0, 0.0, -1.0),
+            probe_radius=0.06,
+            probe_radius_noise=0.1,
+            track_link_idx=(support.base_link_idx,),
+            n_sample_points=600,
+            stiffness=100.0,
+            shear_coupling=0.0,
+            draw_debug=show_viewer,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    force_norm = torch.linalg.norm(_as_env_batch(sensor.read_ground_truth().force, n_envs), dim=-1)
+    assert (force_norm > tol).all()
+
+    taxel_box.set_pos((0.0, 0.0, BOX_SIZE + BOX_SIZE / 2 + 0.2))
+    scene.step()
+    force_norm = torch.linalg.norm(_as_env_batch(sensor.read_ground_truth().force, n_envs), dim=-1)
+    assert_allclose(force_norm, 0.0, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
+    """Heterogeneous active-env masks should keep tactile readings variant-specific."""
+    PAD_SIZE = (0.4, 0.4, 0.1)
+    PAD_TOP_Z = PAD_SIZE[2]
+    OBJECT_Z_SIZE = 0.16
+    BOX_XY_SIZE = 0.28
+    SPHERE_RADIUS = 0.08
+    PENETRATION = 0.01
+    CENTER_PROBE = (0.0, 0.0, PAD_SIZE[2] / 2)
+    OUTER_PROBE = (0.13, 0.0, PAD_SIZE[2] / 2)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    pad = scene.add_entity(
+        gs.morphs.Box(
+            size=PAD_SIZE,
+            pos=(0.0, 0.0, PAD_SIZE[2] / 2),
+            fixed=True,
+        )
+    )
+    obj = scene.add_entity(
+        morph=[
+            gs.morphs.Box(
+                size=(BOX_XY_SIZE, BOX_XY_SIZE, OBJECT_Z_SIZE),
+            ),
+            gs.morphs.Sphere(
+                radius=SPHERE_RADIUS,
+            ),
+        ],
+        material=gs.materials.Rigid(
+            friction=0.5,
+        ),
+    )
+
+    probe_local_pos = (CENTER_PROBE, OUTER_PROBE)
+    expected_contact = torch.tensor([[True, True], [True, False]], dtype=gs.tc_bool, device=gs.device)
+    common = dict(
+        entity_idx=pad.idx,
+        probe_local_pos=probe_local_pos,
+        probe_radius=0.025,
+        draw_debug=show_viewer,
+    )
+    contact_probe = scene.add_sensor(
+        gs.sensors.ContactProbe(
+            contact_threshold=0.001,
+            **common,
+        )
+    )
+    depth_probe = scene.add_sensor(gs.sensors.ContactDepthProbe(**common))
+    kinematic_taxel = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_normal=(0.0, 0.0, 1.0),
+            normal_stiffness=100.0,
+            normal_damping=0.0,
+            shear_scalar=0.0,
+            twist_scalar=0.0,
+            **common,
+        )
+    )
+    proximity_taxel = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            probe_local_normal=(0.0, 0.0, 1.0),
+            probe_radius=0.04,
+            track_link_idx=(obj.base_link_idx,),
+            n_sample_points=800,
+            stiffness=100.0,
+            shear_coupling=0.0,
+            **{k: v for k, v in common.items() if k != "probe_radius"},
+        )
+    )
+    elastomer_taxel = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_normal=(0.0, 0.0, 1.0),
+            track_link_idx=(obj.base_link_idx,),
+            n_sample_points=800,
+            **common,
+        )
+    )
+    surface_probe = scene.add_sensor(
+        gs.sensors.SurfaceDistanceProbe(
+            probe_radius=1.0,
+            track_link_idx=(obj.base_link_idx,),
+            **{k: v for k, v in common.items() if k != "probe_radius"},
+        )
+    )
+
+    scene.build(n_envs=2)
+    obj.set_pos(
+        [
+            [0.0, 0.0, PAD_TOP_Z + OBJECT_Z_SIZE / 2 - PENETRATION],
+            [0.0, 0.0, PAD_TOP_Z + SPHERE_RADIUS - PENETRATION],
+        ]
+    )
+    scene.step()
+
+    contact = contact_probe.read_ground_truth()
+    depth = depth_probe.read_ground_truth()
+    kinematic_norm = torch.linalg.norm(kinematic_taxel.read_ground_truth().force, dim=-1)
+    proximity_norm = torch.linalg.norm(proximity_taxel.read_ground_truth().force, dim=-1)
+    elastomer_norm = torch.linalg.norm(elastomer_taxel.read_ground_truth(), dim=-1)
+    surface_distance = surface_probe.read_ground_truth()
+
+    assert_equal(contact, expected_contact)
+    assert_equal(depth > 0.001, expected_contact)
+    assert_equal(kinematic_norm > tol, expected_contact)
+    assert (proximity_norm[0, 0] > tol) and (proximity_norm[1, 0] > tol)
+    assert proximity_norm[0, 1] > proximity_norm[1, 1] + tol
+    assert (elastomer_norm[0, 0] > tol) and (elastomer_norm[1, 0] > tol)
+    assert elastomer_norm[0, 1] > elastomer_norm[1, 1] + gs.EPS
+    assert surface_distance[0, 1] < surface_distance[1, 1]
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Bulk read API ----------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_read_sensors_bulk_api(show_viewer, n_envs):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    box_a = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    box_b = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.5, 0.0, 0.2),
+        ),
+    )
+
+    # Diverse sensor set covering multiple dtypes (float for IMU/ContactForce, bool for Contact, uint8 for the static
+    # camera) and heterogeneous per-sensor cache sizes within the float dtype (9 cells for IMU vs 3 for ContactForce).
+    # Two IMUs on box_a, one IMU on box_b. ContactForce and Contact sensors on both boxes. A static camera not attached
+    # to any entity (entity_idx defaults to -1).
+    imu_a1 = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_a.idx,
+        ),
+    )
+    imu_a2 = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_a.idx,
+        ),
+    )
+    imu_b = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_b.idx,
+        ),
+    )
+    force_a = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_a.idx,
+        ),
+    )
+    force_b = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_b.idx,
+        ),
+    )
+    contact_a = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_a.idx,
+        ),
+    )
+    contact_b = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_b.idx,
+        ),
+    )
+    static_cam = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(32, 32),
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+    for _ in range(5):
+        scene.step()
+
+    # Scene-wide read returns every sensor class. Per-entity reads restrict to classes present on that entity, so the
+    # static camera class is excluded from both box_a and box_b reads. Each call allocates a fresh tensor per class.
+    scene_data = scene.read_sensors()
+    a_data = box_a.read_sensors()
+    b_data = box_b.read_sensors()
+    assert set(scene_data.keys()) == {
+        gs.sensors.types.IMU,
+        gs.sensors.types.ContactForce,
+        gs.sensors.types.Contact,
+        gs.sensors.types.RasterizerCameraOptions,
+    }
+    assert set(a_data.keys()) == {gs.sensors.types.IMU, gs.sensors.types.ContactForce, gs.sensors.types.Contact}
+    assert set(b_data.keys()) == {gs.sensors.types.IMU, gs.sensors.types.ContactForce, gs.sensors.types.Contact}
+
+    # Sensors within a class are sorted by entity_idx, so per-entity reads must match contiguous slices of the
+    # scene-wide read.
+    for type_tag, a_slice, b_slice in (
+        (gs.sensors.types.IMU, slice(0, 18), slice(18, 27)),
+        (gs.sensors.types.ContactForce, slice(0, 3), slice(3, 6)),
+        (gs.sensors.types.Contact, slice(0, 1), slice(1, 2)),
+    ):
+        assert_equal(a_data[type_tag], scene_data[type_tag][..., a_slice])
+        assert_equal(b_data[type_tag], scene_data[type_tag][..., b_slice])
+
+    # Individual sensor reads must agree with bulk reads at both scene and entity levels.
+    # IMU cache layout per sensor is 3 acc + 3 gyro + 3 mag in that order.
+    for local_idx, imu in enumerate((imu_a1, imu_a2, imu_b)):
+        base = local_idx * 9
+        imu_data = imu.read()
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base : base + 3], imu_data.lin_acc)
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base + 3 : base + 6], imu_data.ang_vel)
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base + 6 : base + 9], imu_data.mag)
+    for entity_local_idx, imu in enumerate((imu_a1, imu_a2)):
+        base = entity_local_idx * 9
+        imu_data = imu.read()
+        assert_equal(a_data[gs.sensors.types.IMU][..., base : base + 3], imu_data.lin_acc)
+        assert_equal(a_data[gs.sensors.types.IMU][..., base + 3 : base + 6], imu_data.ang_vel)
+        assert_equal(a_data[gs.sensors.types.IMU][..., base + 6 : base + 9], imu_data.mag)
+    # ContactForce returns a 3-vector per sensor.
+    for local_idx, force in enumerate((force_a, force_b)):
+        base = local_idx * 3
+        assert_equal(scene_data[gs.sensors.types.ContactForce][..., base : base + 3], force.read())
+    assert_equal(a_data[gs.sensors.types.ContactForce], force_a.read())
+    assert_equal(b_data[gs.sensors.types.ContactForce], force_b.read())
+    # Contact returns a bool per sensor.
+    assert_equal(scene_data[gs.sensors.types.Contact][..., 0:1], contact_a.read())
+    assert_equal(scene_data[gs.sensors.types.Contact][..., 1:2], contact_b.read())
+    assert_equal(a_data[gs.sensors.types.Contact], contact_a.read())
+    assert_equal(b_data[gs.sensors.types.Contact], contact_b.read())
+
+    # `read_sensors` always returns a fresh tensor independent of internal sensor storage. Two successive calls (at
+    # the scene level or the entity level) must back onto distinct storage. Verified on both IMU (identity
+    # `_post_process`, intermediate-space ring) and Contact (overridden `_post_process`, per-class return-space ring).
+    for type_tag in (gs.sensors.types.IMU, gs.sensors.types.Contact):
+        scene_a = scene.read_sensors()[type_tag]
+        scene_b = scene.read_sensors()[type_tag]
+        entity_a = box_a.read_sensors()[type_tag]
+        assert scene_a.untyped_storage().data_ptr() != scene_b.untyped_storage().data_ptr()
+        assert scene_a.untyped_storage().data_ptr() != entity_a.untyped_storage().data_ptr()
+        assert_equal(scene_a, scene_b)
+
+    # Batching must be exercised end-to-end. For n_envs > 0, every per-env row of the bulk view must equal that env's
+    # individual sensor read.
+    if n_envs > 0:
+        for env_idx in range(n_envs):
+            assert_equal(scene.read_sensors()[gs.sensors.types.IMU][env_idx, 0:3], imu_a1.read().lin_acc[env_idx])
+            assert_equal(scene.read_sensors()[gs.sensors.types.Contact][env_idx, 0:1], contact_a.read()[env_idx])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_imu_resolution_only_quantizes(show_viewer, n_envs):
+    # IMU with only `*_resolution` set (no other noise/delay) returns acceleration components quantized to that
+    # resolution.
+    RESOLUTION = 0.5
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    imu = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            acc_resolution=RESOLUTION,
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    for _ in range(3):
+        scene.step()
+
+    measured = imu.read().lin_acc
+    remainders = (measured / RESOLUTION) - torch.round(measured / RESOLUTION)
+    assert_allclose(remainders, 0.0, tol=gs.EPS)

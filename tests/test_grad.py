@@ -10,12 +10,6 @@ from genesis.utils import set_random_seed
 from .utils import assert_allclose
 
 
-# FIXME: Gradient computation is broken if debug mode is enabled and field is used
-pytestmark = [
-    pytest.mark.debug(False),
-]
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(show_viewer):
@@ -220,6 +214,7 @@ def test_diff_contact():
 # stable way.
 @pytest.mark.required
 @pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_solver(monkeypatch):
     from genesis.engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
     from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
@@ -263,6 +258,7 @@ def test_diff_solver(monkeypatch):
         )
         func_solve_body(
             entities_info=rigid_solver.entities_info,
+            dofs_info=rigid_solver.dofs_info,
             dofs_state=rigid_solver.dofs_state,
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
@@ -417,7 +413,12 @@ def test_differentiable_rigid(show_viewer):
     goal_quat = goal_quat / torch.norm(goal_quat, dim=-1, keepdim=True)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, substeps=substeps, requires_grad=True, gravity=(0, 0, -1)),
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            substeps=substeps,
+            requires_grad=True,
+            gravity=(0, 0, -1),
+        ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
             enable_self_collision=False,
@@ -492,3 +493,54 @@ def test_differentiable_rigid(show_viewer):
             init_quat.data = init_quat / torch.norm(init_quat, dim=-1, keepdim=True)
 
     assert_allclose(loss, 0.0, atol=1e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_diff_sim_vs_solver_state_grad_parity(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=(0.0, 0.0, 0.0),
+            requires_grad=True,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0),
+        )
+    )
+    scene.build()
+
+    ctrl = gs.tensor(np.random.randn(robot.n_dofs), dtype=gs.tc_float, requires_grad=True)
+
+    grads = []
+    for use_sim_state in (False, True):
+        scene.reset()
+
+        robot.set_dofs_velocity(ctrl)
+        scene.step()
+
+        if use_sim_state:
+            solver_state = scene.get_state().solvers_state[scene.solvers.index(scene.rigid_solver)]
+            chassis_pos = solver_state.links_pos[:, 0].squeeze()
+        else:
+            chassis_pos = robot.get_state().pos.squeeze()
+
+        loss = torch.linalg.norm(chassis_pos)
+        loss.backward()
+        grad = ctrl.grad.detach().clone()
+        ctrl.grad.zero_()
+
+        # Basic sanity check
+        assert (grad[..., :3].abs() > gs.EPS).all()
+        assert (grad[..., 3:].abs() < gs.EPS).all()
+
+        grads.append(grad)
+
+    assert_allclose(*grads, atol=gs.EPS)

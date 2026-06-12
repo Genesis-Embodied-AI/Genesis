@@ -79,7 +79,7 @@ def func_collision_clear(
 ):
     _B = collider_state.n_contacts.shape[0]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="collision_clear", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         if qd.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts_hibernated[i_b] = 0
@@ -99,7 +99,7 @@ def func_collision_clear(
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
-                        # Copying all fields of class StructContactData individually
+                        # Copying all fields of class ContactData individually
                         # (fields mode doesn't support struct-level copy operations):
                         # fmt: off
                         collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
@@ -139,7 +139,7 @@ def func_collision_clear(
 
 MAX_GEOMS_IN_LDS = 60
 
-@qd.func
+@qd.kernel(fastcache=gs.use_fastcache)
 def func_broad_phase_lds(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -469,8 +469,8 @@ def func_broad_phase_lds(
         collider_state.n_broad_pairs[i_b] = n_broad
 
 
-@qd.func
-def func_broad_phase_global_mem(
+@qd.kernel(fastcache=True)
+def _func_broad_phase_sap(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
@@ -481,7 +481,7 @@ def func_broad_phase_global_mem(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
     Sweep and Prune (SAP) for broad-phase collision detection.
@@ -756,8 +756,8 @@ def func_broad_phase_global_mem(
         collider_state.n_broad_pairs[i_b] = n_broad
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase(
+@qd.kernel(fastcache=True)
+def _func_broad_phase_all_vs_all(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
@@ -768,21 +768,100 @@ def func_broad_phase(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
-    Sweep and Prune (SAP) for broad-phase collision detection.
+    All-vs-all broad-phase collision detection.
 
-    This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for
-    potential collision pairs based on the AABB overlap.
+    Iterates over pre-filtered valid geom pairs in parallel across pairs and batches, checking 3D AABB overlap.
+    Passing pairs are appended to the output buffer via atomic add.
     """
-    # NOTE: must use `n_geoms_` (always populated to max(1, n_geoms)) and not `n_geoms`
-    # (only populated when requires_grad=True; defaults to -1 otherwise). With the bare
-    # `n_geoms` check, non-grad runs evaluated `-1 <= MAX_GEOMS_IN_LDS` as True and
-    # selected the LDS path even when the actual geom count exceeded MAX_GEOMS_IN_LDS,
-    # producing OOB LDS reads/writes whose garbage `i_g` values then OOB'd into
-    # geoms_state.aabb_min and triggered an HSA aperture violation on AMD at scale.
-    if qd.static(static_rigid_sim_config.n_geoms_ <= MAX_GEOMS_IN_LDS and static_rigid_sim_config.backend != gs.cpu):
+
+    func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
+
+    _B = collider_state.n_contacts.shape[0]
+    qd.loop_config(name="init_broad_pairs", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        collider_state.n_broad_pairs[i_b] = 0
+
+    n_valid_pairs = collider_info.n_valid_pairs[None]
+    qd.loop_config(name="traverse_valid")
+    for i_vp, i_b in qd.ndrange(n_valid_pairs, _B):
+        pair = collider_info.valid_collision_pairs[i_vp]
+        i_ga = pair[0]
+        i_gb = pair[1]
+
+        if not func_check_collision_valid(
+            i_ga,
+            i_gb,
+            i_b,
+            links_state,
+            links_info,
+            geoms_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state,
+            equalities_info,
+            collider_info,
+        ):
+            continue
+
+        if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
+            if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+                i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            continue
+
+        n_broad = qd.atomic_add(collider_state.n_broad_pairs[i_b], 1)
+        if n_broad < collider_info.max_collision_pairs_broad[None]:
+            collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+            collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+        else:
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS
+
+
+def func_broad_phase(
+    links_state,
+    links_info,
+    geoms_state,
+    geoms_info,
+    rigid_global_info,
+    static_rigid_sim_config,
+    constraint_state,
+    collider_state,
+    equalities_info,
+    collider_info,
+    errno,
+):
+    """Dispatch to the appropriate broad-phase kernel based on config."""
+    if static_rigid_sim_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
+        _func_broad_phase_all_vs_all(
+            links_state,
+            links_info,
+            geoms_state,
+            geoms_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state,
+            collider_state,
+            equalities_info,
+            collider_info,
+            errno,
+        )
+    elif (
+        static_rigid_sim_config.n_geoms_ <= MAX_GEOMS_IN_LDS
+        and static_rigid_sim_config.backend != gs.cpu
+    ):
+        # AMD-tuned SAP path that maps 16 envs to one 64-thread workgroup using LDS
+        # (shared memory) to hold the per-env sort buffer and active set. Only safe when
+        # the geom count fits the LDS slot (MAX_GEOMS_IN_LDS) and we're on a GPU backend.
+        # NOTE: must use `n_geoms_` (always populated to max(1, n_geoms)) and not `n_geoms`
+        # (only populated when requires_grad=True; defaults to -1 otherwise). With the
+        # bare `n_geoms` check, non-grad runs evaluated `-1 <= MAX_GEOMS_IN_LDS` as True
+        # and selected the LDS path even when the actual geom count exceeded
+        # MAX_GEOMS_IN_LDS, producing OOB LDS reads/writes whose garbage `i_g` values
+        # then OOB'd into geoms_state.aabb_min and triggered an HSA aperture violation
+        # on AMD at scale.
         func_broad_phase_lds(
             links_state,
             links_info,
@@ -797,7 +876,7 @@ def func_broad_phase(
             errno,
         )
     else:
-        func_broad_phase_global_mem(
+        _func_broad_phase_sap(
             links_state,
             links_info,
             geoms_state,

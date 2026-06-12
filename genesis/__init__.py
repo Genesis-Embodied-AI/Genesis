@@ -83,32 +83,6 @@ def init(
     if precision not in ("32", "64"):
         raise_exception(f"Unsupported precision type: ~~<{precision}>~~")
 
-    # Get device and backend
-    global device
-    if backend is None and debug:
-        backend_candidates = [_gs_backend.cpu]
-    elif backend is None or backend == _gs_backend.gpu:
-        backend_candidates = [_gs_backend.cuda, _gs_backend.amdgpu, _gs_backend.metal, _gs_backend.cpu]
-    else:
-        backend_candidates = [backend]
-    while backend_candidates:
-        _backend = backend_candidates.pop(0)
-        if os.environ.get(f"QD_ENABLE_{_backend.name.upper()}", "1") == "0":
-            continue
-        try:
-            device, device_name, total_mem, _backend = get_device(_backend)
-            is_cpu_fallback = backend == _gs_backend.gpu and _backend == _gs_backend.cpu
-            backend = _backend
-            break
-        except GenesisException as e:
-            if not backend_candidates:
-                raise_exception_from(f"Backend ~~<{_backend}>~~ not available on this machine.", e)
-    globals()["backend"] = backend
-
-    # Fallback to Torch CPU device if requested
-    if backend != _gs_backend.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
-        device, device_name, total_mem, _backend = get_device(_gs_backend.cpu)
-
     # Initialize the logger and print greeting message
     global logger
     if logging_level is None:
@@ -129,26 +103,49 @@ def init(
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─' * (bar_width)}╯>~")
 
-    if is_cpu_fallback:
-        logger.warning(f"Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
+    # Get device and backend
+    global device
+    if backend is None and debug:
+        backend_candidates = [_gs_backend.cpu]
+    elif backend is None or backend == _gs_backend.gpu:
+        backend_candidates = [_gs_backend.cuda, _gs_backend.amdgpu, _gs_backend.metal, _gs_backend.cpu]
+    else:
+        backend_candidates = [backend]
+    while backend_candidates:
+        _backend = backend_candidates.pop(0)
+        if os.environ.get(f"QD_ENABLE_{_backend.name.upper()}", "1") == "0":
+            continue
+        try:
+            device, device_name, total_mem, _backend = get_device(_backend)
+            if backend == _gs_backend.gpu and _backend == _gs_backend.cpu:
+                logger.warning(f"Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
+            backend = _backend
+            break
+        except GenesisException as e:
+            if not backend_candidates:
+                raise_exception_from(f"Backend ~~<{_backend}>~~ not available on this machine.", e)
+    globals()["backend"] = backend
+
+    # Fallback to Torch CPU device if requested
+    if backend != _gs_backend.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
+        device, device_name, total_mem, _backend = get_device(_gs_backend.cpu)
 
     # Configure Quadrants fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
     is_ndarray_disabled = os.environ.get("GS_ENABLE_NDARRAY", "1") == "0"
-    if use_ndarray is None:
-        _use_ndarray = not (is_ndarray_disabled or performance_mode)
-    else:
-        _use_ndarray = use_ndarray
-        if _use_ndarray and is_ndarray_disabled:
-            raise_exception("Genesis previous initialized. Quadrants dynamic array mode cannot be disabled anymore.")
+    _use_ndarray = not (is_ndarray_disabled or performance_mode)
+    use_ndarray = _use_ndarray
+
+    # Fork-specific: quadrants fastcache toggle. The ROCm fork's kernels reference
+    # gs.use_fastcache at decorator time (e.g. @qd.kernel(fastcache=gs.use_fastcache)),
+    # so this must be a concrete bool by the time those modules import. We default it
+    # to True when ndarray mode is on; opt-out via GS_ENABLE_FASTCACHE=0.
     is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
     if use_fastcache is None:
-        _use_fastcache = not is_fastcache_disabled and _use_ndarray
+        _use_fastcache = (not is_fastcache_disabled) and _use_ndarray
     else:
-        _use_fastcache = use_fastcache
-        if use_fastcache and is_fastcache_disabled:
-            raise_exception("Genesis previous initialized. Quadrants fast cache mode cannot be disabled anymore.")
-    use_ndarray, use_fastcache = _use_ndarray, _use_fastcache
+        _use_fastcache = bool(use_fastcache)
+    use_fastcache = _use_fastcache
 
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue
     _use_zerocopy = bool(int(os.environ["GS_ENABLE_ZEROCOPY"])) if "GS_ENABLE_ZEROCOPY" in os.environ else None
@@ -297,7 +294,10 @@ def init(
             fast_math=not debug and os.environ.get("GS_FAST_MATH", "1") != "0",
             default_ip=qd_int,
             default_fp=qd_float,
-            unrolling_limit=100,  # This threshold needs to be increased to accommodate gradient computation
+            # This feature is necessary to support auto-diff with non-static for-loop:
+            # * Up to 500MiB static upper-bound mem alloc per kernel before switching to tight runtime-based bound
+            ad_stack_sparse_threshold_bytes=200_000_000,
+            ad_stack_experimental_enabled=True,
             **qd_init_kwargs,
         )
 
@@ -325,8 +325,6 @@ def init(
         setattr(qd._logging, qd_name, getattr(logger, gs_name))
 
     # Dealing with default backend
-    if use_fastcache:
-        logger.debug("[Quadrants] Enabling pure kernels for fast cache mode.")
     if use_ndarray:
         logger.debug("[Quadrants] Enabling Quadrants dynamic array type to avoid scene-specific compilation.")
     if backend == _gs_backend.amdgpu:
@@ -348,9 +346,9 @@ def init(
             ("🔖 version", __version__),
             ("🎨 theme", theme),
             ("🌱 seed", seed),
-            ("🐛 debug", debug),
+            ("🐛 debug", bool(debug)),
             ("📏 precision", precision),
-            ("🔥 performance", performance_mode),
+            ("🔥 performance", bool(performance_mode)),
             ("💬 verbose", _logging.getLevelName(logger.level)),
         )
     )
@@ -478,12 +476,41 @@ sys.excepthook = _custom_excepthook
 from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
 
+# Pre-load CoACD's native library with RTLD_DEEPBIND so its statically-linked spdlog resolves to its
+# own copy instead of binding to the ABI-incompatible spdlog exported by the ROCm runtime libraries
+# (e.g. librocroller.so), which torch/ROCm load globally above before CoACD is ever imported. Without
+# DEEPBIND, CoACD's `spdlog::registry::initialize_logger` ends up calling ROCm's
+# `spdlog::pattern_formatter::clone` and segfaults the first time CoACD logs (which happens during
+# convex decomposition in rigid-mesh post-processing). dlopen-ing the file here makes the later
+# `import coacd` reuse this DEEPBIND mapping.
+if sys.platform == "linux":
+    try:
+        import ctypes as _ctypes
+        import glob as _glob
+        from importlib.util import find_spec as _find_spec
+
+        _coacd_spec = _find_spec("coacd")
+        _coacd_dirs = list(getattr(_coacd_spec, "submodule_search_locations", None) or [])
+        _deepbind = getattr(os, "RTLD_DEEPBIND", 0)
+        for _coacd_dir in _coacd_dirs:
+            for _coacd_lib in _glob.glob(os.path.join(_coacd_dir, "lib*coacd*.so*")):
+                _ctypes.CDLL(_coacd_lib, mode=os.RTLD_NOW | os.RTLD_LOCAL | _deepbind)
+    except Exception:
+        pass
+
+# Eagerly load native extensions under redirected stderr to silence dlopen-time noise (e.g. macOS
+# objc duplicate-class warnings when several libraries ship their own copy of GLFW).
 with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
     try:
         from pygel3d import graph, hmesh
     except OSError as e:
         # Import may fail because of missing system dependencies (libGLU.so.1).
         # This is not blocking because it is only an issue for hybrid entities.
+        pass
+
+    try:
+        import imgui_bundle  # noqa: F401
+    except ImportError:
         pass
 
     try:
@@ -503,6 +530,7 @@ from .constants import (
     INACTIVE,
     integrator,
     constraint_solver,
+    broadphase_traversal,
 )
 
 from .utils.uid import UID

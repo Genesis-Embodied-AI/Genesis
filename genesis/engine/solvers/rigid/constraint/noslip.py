@@ -6,7 +6,7 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_build_efc_AR_b(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -29,31 +29,53 @@ def kernel_build_efc_AR_b(
         # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp
         for i_row in range(nefc):
             # tmp = M^{-1} * Jr^T
-            for i_d in range(n_dofs):
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                # Sparse: zero buffer, copy only relevant DOFs
+                for i_d in range(n_dofs):
+                    constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
+                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_row, i_b]):
+                    i_d = constraint_state.jac_relevant_dofs[i_row, i_d_, i_b]
+                    constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+            else:
+                for i_d in range(n_dofs):
+                    constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
 
             rigid_solver.func_solve_mass_batch(
                 i_b,
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
-                array_class.PLACEHOLDER,
+                None,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
                 is_backward=False,
             )
 
-            # AR[r, c] = J[c, :] * tmp
-            for i_col in range(nefc):
+            # TODO: For consistency with other usages, migrate to either the lower or upper variant
+            # and update all remaining use cases that still read both.
+            # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
+            for i_col in range(i_row + 1):
                 s = gs.qd_float(0.0)
-                for i_d in range(n_dofs):
-                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                if qd.static(static_rigid_sim_config.sparse_solve):
+                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_col, i_b]):
+                        i_d = constraint_state.jac_relevant_dofs[i_col, i_d_, i_b]
+                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                else:
+                    for i_d in range(n_dofs):
+                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
                 constraint_state.efc_AR[i_row, i_col, i_b] = s
+                constraint_state.efc_AR[i_col, i_row, i_b] = s
 
+        # Build efc_b
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
-            for i_d in range(n_dofs):
-                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            else:
+                for i_d in range(n_dofs):
+                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
             constraint_state.efc_b[i_c, i_b] = v
 
 
@@ -62,7 +84,7 @@ def func_solve_mass_entity_row(
     i_row: qd.int32,
     i_e: qd.int32,
     i_b: qd.int32,
-    buf: array_class.V_ANNOTATION,
+    buf: qd.Tensor,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
@@ -98,7 +120,7 @@ def func_solve_mass_entity_row(
             buf[i_row, i_d, i_b] = curr_out
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_compute_MinvJT(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -135,7 +157,7 @@ def kernel_compute_MinvJT(
                 func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_compute_AR_and_b(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -173,7 +195,7 @@ def kernel_compute_AR_and_b(
             constraint_state.efc_b[i_c, i_b] = v
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_noslip(
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -282,7 +304,7 @@ def kernel_noslip(
                 break
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_dual_finish(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -309,7 +331,7 @@ def kernel_dual_finish(
             i_b=i_b,
             vec=constraint_state.qfrc_constraint,
             out=constraint_state.qacc,
-            out_bw=array_class.PLACEHOLDER,
+            out_bw=None,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -357,7 +379,7 @@ def func_residual_constraint_force(
 def func_cost_change(
     i_b: int,
     Ac,
-    force: array_class.V_ANNOTATION,
+    force: qd.Tensor,
     force_start: int,
     old_force,
     res,
@@ -383,7 +405,7 @@ def func_cost_change(
     return change
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def compute_A_diag(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -404,7 +426,7 @@ def compute_A_diag(
                 i_b,
                 constraint_state.Mgrad,
                 constraint_state.Mgrad,
-                array_class.PLACEHOLDER,
+                None,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,

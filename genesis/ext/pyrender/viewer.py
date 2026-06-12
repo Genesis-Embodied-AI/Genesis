@@ -39,6 +39,8 @@ from .constants import (
     DEFAULT_SCENE_SCALE,
     DEFAULT_Z_FAR,
     DEFAULT_Z_NEAR,
+    FONT_COLOR_DARKMODE,
+    FONT_COLOR_LIGHTMODE,
     FONT_SIZE,
     MIN_OPEN_GL_MAJOR,
     MIN_OPEN_GL_MINOR,
@@ -107,25 +109,9 @@ class Viewer(pyglet.window.Window):
       - Scroll the mouse wheel, or
       - Hold the right mouse button and drag the cursor.
 
-    Other keyboard commands are as follows:
-
-    - ``a``: Toggles rotational animation mode.
-    - ``c``: Toggles backface culling.
-    - ``f``: Toggles fullscreen mode.
-    - ``h``: Toggles shadow rendering.
-    - ``i``: Toggles axis display mode.
-    - ``l``: Toggles lighting mode
-      (scene lighting, Raymond lighting, or direct lighting).
-    - ``m``: Toggles face normal visualization.
-    - ``n``: Toggles vertex normal visualization.
-    - ``o``: Toggles orthographic mode.
-    - ``q``: Quits the viewer.
-    - ``r``: Starts recording a GIF, and pressing again stops recording
-      and opens a file dialog.
-    - ``s``: Opens a file dialog to save the current view as an image.
-    - ``w``: Toggles wireframe mode
-      (scene default, flip wireframes, all wireframe, or all solid).
-    - ``z``: Resets the camera to the initial view.
+    Keyboard shortcuts are registered by ``DefaultControlsPlugin`` (see
+    ``genesis/vis/viewer_plugins/plugins/default_controls.py``) and surfaced in the on-screen help overlay; press the
+    help key to toggle it.
 
     Note
     ----
@@ -211,7 +197,11 @@ class Viewer(pyglet.window.Window):
             viewport_size = (640, 480)
         self.gs_context = context
         self._scene = context._scene
+        # ``_viewport_size`` tracks the current window content area and follows ``on_resize`` (the OS may
+        # clamp the window to a smaller area than requested); ``_offscreen_viewport_size`` keeps the size the
+        # caller asked for so the offscreen renderer can always honor it regardless of window clamping.
         self._viewport_size = viewport_size
+        self._offscreen_viewport_size = viewport_size
         self._render_lock = RLock()
         self._initialized_event = Event()
         self._is_active = False
@@ -290,61 +280,11 @@ class Viewer(pyglet.window.Window):
         #######################################################################
         # Set up camera node
         #######################################################################
-        self._camera_node = None
-        self._prior_main_camera_node = None
-        self._default_camera_pose = None
-        self._default_persp_cam = None
-        self._default_orth_cam = None
-        self._trackball = None
-
-        # Extract main camera from scene and set up our mirrored copy
-        znear = None
-        zfar = None
-        if self.scene.main_camera_node is not None:
-            n = self.scene.main_camera_node
-            camera = copy.copy(n.camera)
-            if isinstance(camera, (PerspectiveCamera, IntrinsicsCamera)):
-                self._default_persp_cam = camera
-                znear = camera.znear
-                zfar = camera.zfar
-            elif isinstance(camera, OrthographicCamera):
-                self._default_orth_cam = camera
-                znear = camera.znear
-                zfar = camera.zfar
-            self._default_camera_pose = self.scene.get_pose(self.scene.main_camera_node)
-            self._prior_main_camera_node = n
-
-        # Set defaults as needed
-        if zfar is None:
-            zfar = max(self.scene.scale * 10.0, DEFAULT_Z_FAR)
-        if znear is None or znear < 1e-6:
-            if self.scene.scale < 1e-6:
-                znear = DEFAULT_Z_NEAR
-            else:
-                znear = min(self.scene.scale / 10.0, DEFAULT_Z_NEAR)
-
-        if self._default_persp_cam is None:
-            self._default_persp_cam = PerspectiveCamera(yfov=np.pi / 3.0, znear=znear, zfar=zfar)
-        if self._default_orth_cam is None:
-            xmag = ymag = self.scene.scale
-            if self.scene.scale < 1e-6:
-                xmag = ymag = 1.0
-            self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
-        if self._default_camera_pose is None:
-            self._default_camera_pose = self._compute_initial_camera_pose()
-
-        # Pick camera
-        if self.viewer_flags["use_perspective_cam"]:
-            camera = self._default_persp_cam
-        else:
-            camera = self._default_orth_cam
-
-        self._camera_node = Node(matrix=self._default_camera_pose, camera=camera)
-        self.scene.add_node(self._camera_node)
-        self.scene.main_camera_node = self._camera_node
-        self._reset_view()
+        self._setup_main_camera()
 
         # Setup help text functionality
+        is_dark_mode = np.mean(context.background_color[0:3]) < 0.5
+        self._font_color = FONT_COLOR_DARKMODE if is_dark_mode else FONT_COLOR_LIGHTMODE
         self._enable_help_text = enable_help_text
         if self._enable_help_text:
             self._collapse_instructions = True
@@ -501,6 +441,80 @@ class Viewer(pyglet.window.Window):
     @viewer_flags.setter
     def viewer_flags(self, value):
         self._viewer_flags = value
+
+    def _setup_main_camera(self):
+        # Extract main camera from the current scene and set up our mirrored copy. Re-runnable so a rebind
+        # to a rebuilt scene graph re-creates the camera node on the new scene.
+        self._camera_node = None
+        self._prior_main_camera_node = None
+        self._default_camera_pose = None
+        self._default_persp_cam = None
+        self._default_orth_cam = None
+        self._trackball = None
+
+        znear = None
+        zfar = None
+        if self.scene.main_camera_node is not None:
+            n = self.scene.main_camera_node
+            camera = copy.copy(n.camera)
+            if isinstance(camera, (PerspectiveCamera, IntrinsicsCamera)):
+                self._default_persp_cam = camera
+                znear = camera.znear
+                zfar = camera.zfar
+            elif isinstance(camera, OrthographicCamera):
+                self._default_orth_cam = camera
+                znear = camera.znear
+                zfar = camera.zfar
+            self._default_camera_pose = self.scene.get_pose(self.scene.main_camera_node)
+            self._prior_main_camera_node = n
+
+        # Set defaults as needed
+        if zfar is None:
+            zfar = max(self.scene.scale * 10.0, DEFAULT_Z_FAR)
+        if znear is None or znear < 1e-6:
+            if self.scene.scale < 1e-6:
+                znear = DEFAULT_Z_NEAR
+            else:
+                znear = min(self.scene.scale / 10.0, DEFAULT_Z_NEAR)
+
+        if self._default_persp_cam is None:
+            self._default_persp_cam = PerspectiveCamera(yfov=np.pi / 3.0, znear=znear, zfar=zfar)
+        if self._default_orth_cam is None:
+            xmag = ymag = self.scene.scale
+            if self.scene.scale < 1e-6:
+                xmag = ymag = 1.0
+            self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
+        self._orth_cam_reset_mags = (self._default_orth_cam.xmag, self._default_orth_cam.ymag)
+        if self._default_camera_pose is None:
+            self._default_camera_pose = self._compute_initial_camera_pose()
+
+        # Pick camera
+        if self.viewer_flags["use_perspective_cam"]:
+            camera = self._default_persp_cam
+        else:
+            camera = self._default_orth_cam
+
+        self._camera_node = Node(matrix=self._default_camera_pose, camera=camera)
+        self.scene.add_node(self._camera_node)
+        self.scene.main_camera_node = self._camera_node
+        self._reset_view()
+
+    def rebind(self, context, plugins):
+        """Re-point this live viewer/window at a rebuilt scene graph (InteractiveScene rebuild) instead of
+        opening a new window. Reuses the OS window and GL context, refreshing the context-bound state:
+        scene graph, segmentation map, renderer, camera node and plugins. Rough on purpose - assumes no
+        concurrent render thread is touching the old scene during the rebuild."""
+        with self._render_lock:
+            self.gs_context = context
+            self._scene = context._scene
+            self._seg_node_map = context.seg_node_map
+            if self._renderer is not None:
+                self._renderer.delete()
+            self._renderer = Renderer(*self._viewport_size, context.jit, self.render_flags["point_size"])
+            self._setup_main_camera()
+            self.plugins = []
+            for plugin in plugins:
+                self.register_plugin(plugin)
 
     def register_plugin(self, plugin: ViewerPlugin) -> None:
         """
@@ -691,7 +705,15 @@ class Viewer(pyglet.window.Window):
             self._event_loop_step_offscreen()
 
     def render_offscreen(
-        self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False, skip_markers=False
+        self,
+        camera_node,
+        render_target,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+        skip_markers=False,
+        env_separate_rigid=None,
     ):
         if not self.is_active:
             gs.raise_exception("Viewer already closed.")
@@ -701,6 +723,9 @@ class Viewer(pyglet.window.Window):
         self.render_flags["rgb"] = rgb
         self.render_flags["seg"] = seg
         self.render_flags["depth"] = depth
+        saved_env_separate_rigid = self.render_flags["env_separate_rigid"]
+        if env_separate_rigid is not None:
+            self.render_flags["env_separate_rigid"] = env_separate_rigid
         self._offscreen_pending_render = (camera_node, render_target, normal, skip_markers)
         if self._run_in_thread:
             # Send offscreen request
@@ -713,6 +738,7 @@ class Viewer(pyglet.window.Window):
         self.render_flags["rgb"] = True
         self.render_flags["seg"] = False
         self.render_flags["depth"] = False
+        self.render_flags["env_separate_rigid"] = saved_env_separate_rigid
         return self._offscreen_result
 
     def wait_until_initialized(self):
@@ -742,15 +768,21 @@ class Viewer(pyglet.window.Window):
                 self._offscreen_pending_render = None
 
                 # Update context, just in case is not already done before
-                self._renderer.jit.update_buffer(self.gs_context.buffer)
-                self.gs_context.buffer.clear()
+                self.gs_context.update()
 
-                # Render current frame from camera viewpoint
+                # Render current frame from camera viewpoint. Force the renderer back to the originally
+                # requested viewport size so the offscreen FBO honors what the caller asked for even when the
+                # window has since been clamped to a smaller content area by the OS (e.g. macOS CI runners).
                 self._offscreen_results = []
                 self.render_flags["offscreen"] = True
                 self.render_flags["skip_markers"] = skip_markers
-                self.clear()
-                retval = self._render(camera, target, normal)
+                saved_viewport = (target.viewport_width, target.viewport_height)
+                target.viewport_width, target.viewport_height = self._offscreen_viewport_size
+                try:
+                    self.clear()
+                    retval = self._render(camera, target, normal)
+                finally:
+                    target.viewport_width, target.viewport_height = saved_viewport
                 self._offscreen_result = retval if retval else (None, None)
                 self.render_flags["offscreen"] = False
                 self.render_flags["skip_markers"] = False
@@ -766,10 +798,6 @@ class Viewer(pyglet.window.Window):
         with self.render_lock if self._run_in_thread or not self.auto_start else nullcontext():
             # Make OpenGL context current
             self.switch_to()
-
-            # Update the context if not already done before
-            self._renderer.jit.update_buffer(self.gs_context.buffer)
-            self.gs_context.buffer.clear()
 
             # Render the scene
             self.clear()
@@ -852,12 +880,10 @@ class Viewer(pyglet.window.Window):
             self._trackball.scroll(dy)
         else:
             spfc = 0.95
-            spbc = 1.0 / 0.95
-            sf = 1.0
-            if dy > 0:
-                sf = spfc * dy
-            elif dy < 0:
-                sf = -spbc * dy
+            dy_f = float(dy)
+            if abs(dy_f) < 1e-8:
+                return EVENT_HANDLED
+            sf = float(spfc**dy_f)
 
             c = self._camera_node.camera
             xmag = max(c.xmag * sf, 1e-8)
@@ -910,9 +936,6 @@ class Viewer(pyglet.window.Window):
         The view is initially along the positive x-axis at a
         sufficient distance from the scene.
         """
-        # scale = self.scene.scale
-        # if scale == 0.0:
-        #     scale = DEFAULT_SCENE_SCALE
         scale = DEFAULT_SCENE_SCALE
         centroid = self.scene.centroid
 
@@ -920,6 +943,8 @@ class Viewer(pyglet.window.Window):
             centroid = self.viewer_flags["view_center"]
 
         self._camera_node.matrix = self._default_camera_pose
+        oc = self._default_orth_cam
+        oc.xmag, oc.ymag = self._orth_cam_reset_mags
         self._trackball = Trackball(self._default_camera_pose, self.viewport_size, scale, centroid)
 
     def _get_save_filename(self, file_exts):
@@ -1034,6 +1059,8 @@ class Viewer(pyglet.window.Window):
             flags |= RenderFlags.OFFSCREEN
         if self.render_flags.get("skip_markers", False):
             flags |= RenderFlags.SKIP_MARKERS
+        else:
+            flags |= RenderFlags.MARKER_XRAY
 
         seg_node_map = None
         if self.render_flags["seg"]:
@@ -1045,8 +1072,10 @@ class Viewer(pyglet.window.Window):
             if not (self.render_flags["rgb"] or self.render_flags["seg"]):
                 flags |= RenderFlags.DEPTH_ONLY
 
+        first_pass_done = False
         if self.render_flags["rgb"] or self.render_flags["depth"] or self.render_flags["seg"]:
             retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+            first_pass_done = True
         else:
             retval = ()
 
@@ -1074,7 +1103,7 @@ class Viewer(pyglet.window.Window):
             if self.render_flags.get("skip_markers", False):
                 flags |= RenderFlags.SKIP_MARKERS
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False)
+            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=not first_pass_done)
             retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache
@@ -1086,6 +1115,7 @@ class Viewer(pyglet.window.Window):
 
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
+        import pyglet.app
 
         try:
             import pyglet.display.xlib
@@ -1094,6 +1124,12 @@ class Viewer(pyglet.window.Window):
             xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
             xlib_exceptions = ()
+
+        # Pyglet's Win32EventLoop captures the thread that first instantiates it and refuses ``dispatch_events``
+        # from any other thread. Mixing ``run_in_thread=True`` and ``run_in_thread=False`` viewers in the same
+        # Python process (typical in unit tests) leaves a stale thread id behind. Recreate the platform event
+        # loop here so its constructor rebinds the dispatch thread to whoever is about to call us.
+        pyglet.app.platform_event_loop = pyglet.app.PlatformEventLoop()
 
         # Try multiple configs starting with target OpenGL version and multisampling enabled, then removing these
         # options if not supported.
@@ -1431,7 +1467,7 @@ class Viewer(pyglet.window.Window):
                 TEXT_PADDING,
                 self._viewport_size[1] - TEXT_PADDING,
                 font_pt=FONT_SIZE,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
+                color=self._font_color,
             )
         else:
             self._renderer.render_texts(
@@ -1439,7 +1475,7 @@ class Viewer(pyglet.window.Window):
                 TEXT_PADDING,
                 self._viewport_size[1] - TEXT_PADDING,
                 font_pt=FONT_SIZE,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
+                color=self._font_color,
             )
 
 

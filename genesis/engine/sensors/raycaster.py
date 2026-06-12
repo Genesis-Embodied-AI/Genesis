@@ -1,146 +1,59 @@
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple, Type
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
-import quadrants as qd
 import torch
 
 import genesis as gs
-import genesis.utils.array_class as array_class
 from genesis.engine.bvh import AABB, LBVH
-from genesis.options.sensors import (
-    Raycaster as RaycasterOptions,
+from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+from genesis.options.sensors import Raycaster as RaycasterOptions
+from genesis.options.sensors import RaycastPattern
+from genesis.utils.geom import transform_by_quat, transform_by_trans_quat
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy
+from genesis.utils.raycast_qd import (
+    kernel_cast_rays,
+    kernel_cast_rays_visual,
+    kernel_update_visual_aabbs,
+    kernel_update_verts_and_aabbs,
 )
-from genesis.options.sensors import (
-    RaycastPattern,
-)
-from genesis.utils.geom import (
-    qd_normalize,
-    qd_transform_by_quat,
-    qd_transform_by_trans_quat,
-    transform_by_quat,
-    transform_by_trans_quat,
-)
-from genesis.utils.misc import concat_with_tensor, make_tensor_field
-from genesis.utils.raycast_qd import bvh_ray_cast, kernel_update_verts_and_aabbs
 from genesis.vis.rasterizer_context import RasterizerContext
 
-from .base_sensor import (
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    Sensor,
-    SharedSensorMetadata,
-)
+from .base_sensor import KinematicSensorMetadataMixin, KinematicSensorMixin, Sensor, SimpleSensorMetadata, SimpleSensor
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
 
     from .sensor_manager import SensorManager
 
 
-@qd.kernel
-def kernel_cast_rays(
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    bvh_nodes: qd.template(),
-    bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
-    links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
-    links_quat: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 4]
-    ray_starts: qd.types.ndarray(ndim=2),  # [n_points, 3]
-    ray_directions: qd.types.ndarray(ndim=2),  # [n_points, 3]
-    max_ranges: qd.types.ndarray(ndim=1),  # [n_sensors]
-    no_hit_values: qd.types.ndarray(ndim=1),  # [n_sensors]
-    is_world_frame: qd.types.ndarray(ndim=1),  # [n_sensors]
-    points_to_sensor_idx: qd.types.ndarray(ndim=1),  # [n_points]
-    sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
-    sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
-    sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
-    output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
-    eps: gs.qd_float,
-):
+class _SolverBVH(NamedTuple):
     """
-    Quadrants kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
+    One BVH built against a solver's mesh.
 
-    The result `output_hits` will be a 2D array of shape (total_cache_size, n_env) where in the first dimension,
-    each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
+    ``raycast_mask`` is ``None`` for a collision BVH (``faces_info`` / ``verts_info``, no per-face mask), otherwise an
+    int8 array of shape ``(n_vfaces,)`` selecting which visual faces contribute.
     """
 
-    n_points = ray_starts.shape[0]
-    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
-        i_s = points_to_sensor_idx[i_p]
-
-        # --- 1. Setup Ray ---
-        link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
-        link_quat = qd.math.vec4(
-            links_quat[i_b, i_s, 0], links_quat[i_b, i_s, 1], links_quat[i_b, i_s, 2], links_quat[i_b, i_s, 3]
-        )
-
-        ray_start_local = qd.math.vec3(ray_starts[i_p, 0], ray_starts[i_p, 1], ray_starts[i_p, 2])
-        ray_start_world = qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
-
-        ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
-        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), eps)
-
-        # --- 2. BVH Traversal for ray intersection ---
-        max_range = max_ranges[i_s]
-        hit_face, hit_distance, _hit_normal = bvh_ray_cast(
-            ray_start=ray_start_world,
-            ray_dir=ray_direction_world,
-            max_range=max_range,
-            i_b=i_b,
-            bvh_nodes=bvh_nodes,
-            bvh_morton_codes=bvh_morton_codes,
-            faces_info=faces_info,
-            verts_info=verts_info,
-            fixed_verts_state=fixed_verts_state,
-            free_verts_state=free_verts_state,
-            eps=eps,
-        )
-
-        # --- 3. Process Hit Result ---
-        # The format of output_hits is: [sensor1 points][sensor1 ranges][sensor2 points][sensor2 ranges]...
-        i_p_sensor = i_p - sensor_point_offsets[i_s]
-        i_p_offset = sensor_cache_offsets[i_s]  # cumulative cache offset for this sensor
-        n_points_in_sensor = sensor_point_counts[i_s]  # number of points in this sensor
-
-        i_p_dist = i_p_offset + n_points_in_sensor * 3 + i_p_sensor  # index for distance output
-
-        if hit_face >= 0:
-            dist = hit_distance
-            # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
-            output_hits[i_p_dist, i_b] = dist
-
-            if is_world_frame[i_s]:
-                hit_point = ray_start_world + dist * ray_direction_world
-
-                # Store points at: cache_offset + point_idx_in_sensor * 3
-                output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
-                output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
-                output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
-            else:
-                # Local frame output along provided local ray direction
-                hit_point = dist * qd_normalize(
-                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), eps
-                )
-                output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
-                output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
-                output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
-        else:
-            # No hit
-            output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
-            output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
-            output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
-            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
+    solver: "KinematicSolver"
+    bvh: LBVH
+    aabb: AABB
+    raycast_mask: np.ndarray | None
 
 
 @dataclass
-class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
-    bvh: LBVH | None = None
-    aabb: AABB | None = None
+class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata):
+    # All BVHs (one per active solver per mesh type) cast against each frame. The first is written into the output cache
+    # with is_merge=False (initializes hits or no_hit_value), the rest merge in closer hits. Per-sensor link poses are
+    # gathered via KinematicSensorMetadataMixin.solver_groups, independent of which BVH is being cast.
+    solver_bvhs: list[_SolverBVH] = field(default_factory=list)
+
+    # Per-step scratch tensors for sensor link poses, lazily allocated on the first cast (B and n_sensors known).
+    links_pos: torch.Tensor | None = None
+    links_quat: torch.Tensor | None = None
 
     sensors_ray_start_idx: list[int] = field(default_factory=list)
     total_n_rays: int = 0
@@ -148,7 +61,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     min_ranges: torch.Tensor = make_tensor_field((0,))
     max_ranges: torch.Tensor = make_tensor_field((0,))
     no_hit_values: torch.Tensor = make_tensor_field((0,))
-    return_world_frame: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_bool)
+    return_world_frame: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
 
     patterns: list[RaycastPattern] = field(default_factory=list)
     ray_dirs: torch.Tensor = make_tensor_field((0, 3))
@@ -156,10 +69,10 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     ray_starts_world: torch.Tensor = make_tensor_field((0, 3))
     ray_dirs_world: torch.Tensor = make_tensor_field((0, 3))
 
-    points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class RaycasterData(NamedTuple):
@@ -167,57 +80,110 @@ class RaycasterData(NamedTuple):
     distances: torch.Tensor
 
 
-class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
-    def __init__(self, options: RaycasterOptions, shared_metadata: RaycasterSharedMetadata, manager: "SensorManager"):
-        super().__init__(options, shared_metadata, manager)
+class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
+    def __init__(self, options: RaycasterOptions, sensor_idx: int, manager: "SensorManager"):
+        super().__init__(options, sensor_idx, manager)
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
+    @staticmethod
+    def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
+        """Build a per-vface mask (int8, shape (n_vfaces,)) selecting vfaces opted into visual raycasting.
+        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
+        """
+        n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
+        if n_vfaces == 0:
+            return np.zeros(0, dtype=np.int8)
+        vgeom_enabled = np.zeros(solver.n_vgeoms, dtype=np.bool_)
+        for entity in solver.entities:
+            if not entity.material.use_visual_raycasting:
+                continue
+            for vgeom in entity.vgeoms:
+                vgeom_enabled[vgeom.idx] = True
+        vface_vgeom_idx = qd_to_numpy(solver.vfaces_info.vgeom_idx)
+        return vgeom_enabled[vface_vgeom_idx].astype(np.int8)
+
     @classmethod
     def _update_bvh(cls, shared_metadata: RaycasterSharedMetadata):
-        """Rebuild BVH from current geometry in the scene."""
-        kernel_update_verts_and_aabbs(
-            geoms_info=shared_metadata.solver.geoms_info,
-            geoms_state=shared_metadata.solver.geoms_state,
-            verts_info=shared_metadata.solver.verts_info,
-            faces_info=shared_metadata.solver.faces_info,
-            free_verts_state=shared_metadata.solver.free_verts_state,
-            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
-            static_rigid_sim_config=shared_metadata.solver._static_rigid_sim_config,
-            aabb_state=shared_metadata.aabb,
-        )
-
-        shared_metadata.bvh.build()
+        """Rebuild every BVH from current geometry in the scene."""
+        for entry in shared_metadata.solver_bvhs:
+            if entry.raycast_mask is None:
+                kernel_update_verts_and_aabbs(
+                    geoms_info=entry.solver.geoms_info,
+                    geoms_state=entry.solver.geoms_state,
+                    verts_info=entry.solver.verts_info,
+                    faces_info=entry.solver.faces_info,
+                    free_verts_state=entry.solver.free_verts_state,
+                    fixed_verts_state=entry.solver.fixed_verts_state,
+                    static_rigid_sim_config=entry.solver._static_rigid_sim_config,
+                    aabb_state=entry.aabb,
+                )
+                entry.bvh.build()
+            else:
+                # Reads vverts_state.pos as the source of vvert positions. The buffer is seeded by FK at scene.build()
+                # and refreshed for each user-driven entity via set_vverts; entries set via set_vverts survive across
+                # calls until set_vverts(None) re-runs FK over the entity's vgeoms. raycast_mask gates which vfaces
+                # contribute to the BVH; masked-out vfaces keep an inverted AABB and are skipped by ray queries.
+                entry.solver.update_forward_pos()
+                entry.solver.update_vgeoms()
+                kernel_update_visual_aabbs(
+                    vverts_info=entry.solver.vverts_info,
+                    vverts_state=entry.solver.vverts_state,
+                    vfaces_info=entry.solver.vfaces_info,
+                    vgeoms_state=entry.solver.vgeoms_state,
+                    face_mask=entry.raycast_mask,
+                    aabb_state=entry.aabb,
+                )
+                entry.bvh.build()
 
     def build(self):
         super().build()
 
-        # first lidar sensor initialization: build aabb and bvh
-        if self._shared_metadata.bvh is None:
+        # First raycast sensor: build the per-(solver, mesh-type) BVHs once. Rigid solvers get a collision BVH covering
+        # all collision faces; any solver with entities opting in via material.use_visual_raycasting gets a visual BVH
+        # masked to those entities' vfaces. Collision and visual entries coexist transparently because the cast kernels
+        # merge in place via is_merge.
+        if not self._shared_metadata.solver_bvhs:
             self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
                 self._shared_metadata.sensor_cache_offsets, 0
             )
-            n_faces = self._shared_metadata.solver.faces_info.geom_idx.shape[0]
-            n_envs = self._shared_metadata.solver.free_verts_state.pos.shape[1]
-            self._shared_metadata.aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
 
-            # FIXME: Empirically, the values 0 and 64 seem to be sufficient and decrease memory usage.
-            # Should these parameters be exposed to the user?
-            self._shared_metadata.bvh = LBVH(
-                self._shared_metadata.aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64
-            )
+            sim = self._manager._sim
+            for solver in (sim.rigid_solver, sim.kinematic_solver):
+                if not solver.is_active:
+                    continue
+                n_envs = solver._B
+                if isinstance(solver, RigidSolver):
+                    n_faces = solver.faces_info.geom_idx.shape[0]
+                    aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
+                    bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+                    self._shared_metadata.solver_bvhs.append(_SolverBVH(solver, bvh, aabb, None))
+                n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
+                if n_vfaces > 0:
+                    mask = self._compute_visual_raycast_mask(solver)
+                    if mask.any():
+                        aabb = AABB(n_batches=n_envs, n_aabbs=n_vfaces)
+                        bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+                        self._shared_metadata.solver_bvhs.append(_SolverBVH(solver, bvh, aabb, mask))
+
+            if not self._shared_metadata.solver_bvhs:
+                gs.raise_exception(
+                    "Raycaster sensor has no geometry to raycast against: rigid_solver is inactive and no entity "
+                    "has material.use_visual_raycasting=True."
+                )
+
             self._update_bvh(self._shared_metadata)
 
         self._shared_metadata.patterns.append(self._options.pattern)
-        pos_offset = self._shared_metadata.offsets_pos[0, -1, :]  # all envs have same offset on build
-        quat_offset = self._shared_metadata.offsets_quat[0, -1, :]
 
         ray_starts = self._options.pattern.ray_starts.reshape(-1, 3)
-        self.ray_starts = transform_by_trans_quat(ray_starts, pos_offset, quat_offset)
+        self.ray_starts = transform_by_trans_quat(
+            ray_starts, self._shared_metadata.offsets_pos[0, -1, :], self._shared_metadata.offsets_quat[0, -1, :]
+        )
         self._shared_metadata.ray_starts = torch.cat([self._shared_metadata.ray_starts, self.ray_starts])
 
         ray_dirs = self._options.pattern.ray_dirs.reshape(-1, 3)
-        ray_dirs = transform_by_quat(ray_dirs, quat_offset)
+        ray_dirs = transform_by_quat(ray_dirs, self._shared_metadata.offsets_quat[0, -1, :])
         self._shared_metadata.ray_dirs = torch.cat([self._shared_metadata.ray_dirs, ray_dirs])
 
         num_rays = math.prod(self._options.pattern.return_shape)
@@ -243,68 +209,97 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         )
         self._shared_metadata.min_ranges = concat_with_tensor(self._shared_metadata.min_ranges, self._options.min_range)
         self._shared_metadata.max_ranges = concat_with_tensor(self._shared_metadata.max_ranges, self._options.max_range)
-        no_hit_value = self._options.no_hit_value if self._options.no_hit_value is not None else self._options.max_range
-        self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
+        self._shared_metadata.no_hit_values = concat_with_tensor(
+            self._shared_metadata.no_hit_values, self._options.no_hit_value
+        )
+
+        # Multi-BVH merge passes use raw distance comparison to pick the closer hit; this only works if no_hit_value >=
+        # max_range. The negated form also rejects NaN (every IEEE 754 comparison with NaN is False).
+        if len(self._shared_metadata.solver_bvhs) > 1 and not (self._options.no_hit_value >= self._options.max_range):
+            gs.raise_exception(
+                f"no_hit_value ({self._options.no_hit_value}) must be >= max_range ({self._options.max_range}) "
+                f"when multiple BVHs are active (the merge step compares raw distances)."
+            )
 
     @classmethod
-    def reset(cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
-        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.return_shape
-        return (*shape, 3), shape
+        return ((*shape, 3), shape)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor
-    ):
+    def _update_raw_data(cls, shared_metadata: RaycasterSharedMetadata, raw_data_T: torch.Tensor):
         cls._update_bvh(shared_metadata)
 
-        links_pos = shared_metadata.solver.get_links_pos(links_idx=shared_metadata.links_idx)
-        links_quat = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
-        if shared_metadata.solver.n_envs == 0:
-            links_pos = links_pos[None]
-            links_quat = links_quat[None]
+        # Allocate the link-pose scratch buffers on first cast (B and n_sensors are known here). Identity quat is baked
+        # into the initial allocation so static sensors (entity_idx<0) leave their rows at identity, letting the cast
+        # kernel apply pos_offset / euler_offset in world frame.
+        if shared_metadata.links_pos is None:
+            B = shared_metadata.solver_bvhs[0].solver._B
+            shared_metadata.links_pos = torch.zeros(
+                B, shared_metadata.n_sensors, 3, device=gs.device, dtype=gs.tc_float
+            )
+            shared_metadata.links_quat = torch.zeros(
+                B, shared_metadata.n_sensors, 4, device=gs.device, dtype=gs.tc_float
+            )
+            shared_metadata.links_quat[:, :, 0] = 1.0
 
-        kernel_cast_rays(
-            shared_metadata.solver.fixed_verts_state,
-            shared_metadata.solver.free_verts_state,
-            shared_metadata.solver.verts_info,
-            shared_metadata.solver.faces_info,
-            shared_metadata.bvh.nodes,
-            shared_metadata.bvh.morton_codes,
-            links_pos,
-            links_quat,
-            shared_metadata.ray_starts,
-            shared_metadata.ray_dirs,
-            shared_metadata.max_ranges,
-            shared_metadata.no_hit_values,
-            shared_metadata.return_world_frame,
-            shared_metadata.points_to_sensor_idx,
-            shared_metadata.sensor_cache_offsets,
-            shared_metadata.sensor_point_offsets,
-            shared_metadata.sensor_point_counts,
-            shared_ground_truth_cache,
-            gs.EPS,
-        )
+        # Gather link poses per sensor. Sensors are pre-bucketed into shared_metadata.solver_groups at build time so
+        # this loop issues one bulk get_links_pos / get_links_quat per solver with already-tensor-typed indices.
+        links_pos = shared_metadata.links_pos
+        links_quat = shared_metadata.links_quat
+        for group in shared_metadata.solver_groups:
+            pos = group.solver.get_links_pos(links_idx=group.links_idx)
+            quat = group.solver.get_links_quat(links_idx=group.links_idx)
+            if group.solver.n_envs == 0:
+                pos = pos[None]
+                quat = quat[None]
+            links_pos[:, group.sensor_cols, :] = pos
+            links_quat[:, group.sensor_cols, :] = quat
 
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: RaycasterSharedMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        buffered_data.set(shared_ground_truth_cache)
-        cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
+        # First entry initializes the cache (is_merge=False, writes a hit or no_hit_value into every slot). Each
+        # subsequent entry merges in place (is_merge=True, writes only where it found a closer hit).
+        for i, entry in enumerate(shared_metadata.solver_bvhs):
+            solver = entry.solver
+            args_common = (
+                entry.bvh.nodes,
+                entry.bvh.morton_codes,
+                links_pos,
+                links_quat,
+                shared_metadata.ray_starts,
+                shared_metadata.ray_dirs,
+                shared_metadata.max_ranges,
+                shared_metadata.no_hit_values,
+                shared_metadata.return_world_frame,
+                shared_metadata.points_to_sensor_idx,
+                shared_metadata.sensor_cache_offsets,
+                shared_metadata.sensor_point_offsets,
+                shared_metadata.sensor_point_counts,
+                raw_data_T,
+                gs.EPS,
+                i > 0,
+            )
+            if entry.raycast_mask is None:
+                kernel_cast_rays(
+                    solver.fixed_verts_state,
+                    solver.free_verts_state,
+                    solver.verts_info,
+                    solver.faces_info,
+                    *args_common,
+                )
+            else:
+                kernel_cast_rays_visual(
+                    solver.vverts_info, solver.vverts_state, solver.vfaces_info, solver.vgeoms_state, *args_common
+                )
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """
         Draw hit points as spheres in the scene.
 
@@ -315,8 +310,10 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         data = self.read(env_idx)
         points = data.points.reshape((-1, 3))
 
-        pos = self._link.get_pos(env_idx).reshape((3,))
-        quat = self._link.get_quat(env_idx).reshape((4,))
+        pos = self._link.get_pos(env_idx)
+        quat = self._link.get_quat(env_idx)
+        if pos.ndim == 2:
+            pos, quat = pos[0], quat[0]
 
         ray_starts = transform_by_trans_quat(self.ray_starts, pos, quat)
 
@@ -329,13 +326,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
 
         self.debug_objects += [
             context.draw_debug_spheres(
-                ray_starts,
-                radius=self._options.debug_sphere_radius,
-                color=self._options.debug_ray_start_color,
+                ray_starts, radius=self._options.debug_sphere_radius, color=self._options.debug_ray_start_color
             ),
             context.draw_debug_spheres(
-                points,
-                radius=self._options.debug_sphere_radius,
-                color=self._options.debug_ray_hit_color,
+                points, radius=self._options.debug_sphere_radius, color=self._options.debug_ray_hit_color
             ),
         ]

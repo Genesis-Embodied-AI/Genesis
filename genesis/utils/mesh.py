@@ -29,6 +29,7 @@ from .misc import (
     get_src_dir,
     get_tet_cache_dir,
     get_usd_cache_dir,
+    get_wt_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
@@ -37,6 +38,12 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
     [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
+
+WT_CACHE_VERSION = 2
+
+
+def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:
+    return np.round(arr / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64)
 
 
 def color_f32_to_u8(color) -> np.ndarray:
@@ -118,7 +125,10 @@ def get_asset_path(file):
 
 
 def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res)
+    # Schema tag bumped when the on-disk SDF layout changes (e.g. scalar -> per-axis cell size).
+    # Forces a cache miss on stale entries written by older code without manually clearing the cache.
+    schema = "v2-anisotropic-cells"
+    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res, schema)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
@@ -145,6 +155,11 @@ def get_tet_path(verts, faces, tet_cfg):
 def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
     hashkey = get_hashkey(verts, faces, edge_len_abs, edge_len_ratio, fix)
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
+
+
+def get_wt_path(verts, faces, aggressiveness):
+    hashkey = get_hashkey(verts, faces, aggressiveness, WT_CACHE_VERSION)
+    return os.path.join(get_wt_cache_dir(), f"{hashkey}.wt")
 
 
 def get_exr_path(file_path):
@@ -247,8 +262,7 @@ def convex_decompose(mesh, coacd_options):
     # rescale mesh vertices to remove scale factor, and quantize to int to prevent cache miss due to rounding errors
     mesh_scale = float(np.linalg.norm(mesh.extents))
     assert not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0)
-    normalized_vertices = mesh.vertices / mesh_scale
-    discretized_vertices = np.round(normalized_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64)
+    discretized_vertices = discretize_array_for_hashing(mesh.vertices / mesh_scale)
 
     # compute file name via hashing for caching
     cvx_path = get_cvx_path(discretized_vertices, mesh.faces, coacd_options)
@@ -313,11 +327,38 @@ def convex_decompose(mesh, coacd_options):
 
 
 def postprocess_collision_geoms(
-    g_infos, decimate, decimate_face_num, decimate_aggressiveness, convexify, decompose_error_threshold, coacd_options
+    g_infos,
+    decimate,
+    decimate_face_num,
+    decimate_aggressiveness,
+    convexify,
+    decompose_error_threshold,
+    coacd_options,
+    watertighten,
 ):
     # Early return if there is no geometry to process
     if not g_infos:
         return []
+
+    # Weld coincident vertices of non-convex collision meshes onto a separate copy. Formats that store unshared
+    # per-face vertices (notably STL) yield a vertex soup whose duplicates differ only by float rounding; the
+    # downstream exact dedup at geom build only partially fuses them, leaving a degraded (sliver) mesh that corrupts
+    # the SDF. The convex path skips this (the hull / decomposition replaces the surface anyway). The collision mesh
+    # may be the very same trimesh as the visual geom, so the weld must not be done in place: only the collision geom
+    # is swapped for the welded copy, leaving the visual vertices untouched. Already-shared meshes (OBJ, glTF) weld to
+    # no fewer vertices and keep their original geom.
+    if not convexify:
+        for g_info in g_infos:
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
+                continue
+            welded = g_info["mesh"].trimesh.copy()
+            welded.merge_vertices()
+            if len(welded.vertices) < len(g_info["mesh"].trimesh.vertices):
+                g_info["mesh"] = gs.Mesh.from_trimesh(
+                    mesh=welded,
+                    surface=gs.surfaces.Collision(),
+                    metadata=g_info["mesh"].metadata.copy(),
+                )
 
     # Try the repair meshes that seems to be "broken" but not beyond repair.
     # Note that this procedure is only applied if the estimated volume is significantly different before and after
@@ -343,6 +384,69 @@ def postprocess_collision_geoms(
                 tmesh.update_faces(tmesh.unique_faces())
                 tmesh._cache.clear()
                 tmesh.visual._cache.clear()
+
+    # Watertighten non-convex meshes that are not already closed. The convex path skips this: the convex hull /
+    # decomposition replaces the surface anyway, so an alpha-wrap of the input would be wasted work. Each unique
+    # (vertex, face) pair is wrapped at most once - one entity can hold many sub-meshes that share buffers
+    # (repeated wheels, bolts, panel decorations from URDF parts) and re-running the wrap on each one would be
+    # pure duplicated effort.
+    if not convexify and watertighten is not None:
+        from .watertighten import watertighten_mesh
+
+        # Fuse every non-watertight MESH-type g_info into one combined triangle soup, run the SDF wrap once on
+        # the union, and replace the first of those g_infos with the wrap output (dropping the rest). Wrapping
+        # each sub-piece independently would produce overlapping closed surfaces - one per piece - which the
+        # downstream SDF / contact generator would then read as nested layers; a single fused wrap is one
+        # closed surface for the whole entity and also runs in one SDF pass instead of N.
+        mesh_idx: list[int] = []
+        verts_chunks: list[np.ndarray] = []
+        faces_chunks: list[np.ndarray] = []
+        v_offset = 0
+        for i, g_info in enumerate(g_infos):
+            tmesh = g_info["mesh"].trimesh
+            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.is_watertight:
+                continue
+            mesh_idx.append(i)
+            verts_chunks.append(np.asarray(tmesh.vertices, dtype=np.float64))
+            faces_chunks.append(np.asarray(tmesh.faces, dtype=np.int32) + v_offset)
+            v_offset += len(tmesh.vertices)
+        if mesh_idx:
+            verts_in = np.concatenate(verts_chunks, axis=0)
+            faces_in = np.concatenate(faces_chunks, axis=0).astype(np.int32, copy=False)
+            # On-disk cache keyed by (vertices, faces, aggressiveness): a repeated run on the same entity is a
+            # file read instead of a multi-second SDF + DC + QEM rebuild. The reader tolerates corruption
+            # (partial writes, stale pickles, missing modules) by falling back to a fresh compute, matching
+            # the pattern used by `get_cvx_path` above.
+            cache_path = get_wt_path(verts_in, faces_in, watertighten)
+            from_cache = False
+            v_out = f_out = None
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as fp:
+                        v_out, f_out = pkl.load(fp)
+                    from_cache = True
+                except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
+                    gs.logger.info("Ignoring corrupted watertighten cache.")
+            if not from_cache:
+                v_out, f_out = watertighten_mesh(verts_in, faces_in, aggressiveness=watertighten)
+                os.makedirs(get_wt_cache_dir(), exist_ok=True)
+                with open(cache_path, "wb") as fp:
+                    pkl.dump((v_out, f_out), fp, protocol=pkl.HIGHEST_PROTOCOL)
+            fused = trimesh.Trimesh(vertices=v_out, faces=f_out, process=False)
+            metadata = g_infos[mesh_idx[0]]["mesh"].metadata.copy()
+            metadata["watertightened"] = True
+            g_infos[mesh_idx[0]]["mesh"] = gs.Mesh.from_trimesh(
+                mesh=fused,
+                surface=gs.surfaces.Collision(),
+                metadata=metadata,
+            )
+            for i in reversed(mesh_idx[1:]):
+                del g_infos[i]
+            gs.logger.info(
+                f"Watertightened {len(mesh_idx)} non-watertight collision sub-mesh(es) into one fused wrap "
+                f"({'cache hit' if from_cache else 'fresh compute'}): "
+                f"{len(verts_in)} -> {len(v_out)} vertices, {len(faces_in)} -> {len(f_out)} faces."
+            )
 
     # Check if all the geometries can be convexified without decomposition
     must_decompose = False
@@ -442,6 +546,7 @@ def postprocess_collision_geoms(
                 convexify,
                 decompose_error_threshold,
                 coacd_options,
+                watertighten,
             )
 
     if must_decompose:
@@ -498,8 +603,12 @@ def postprocess_collision_geoms(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
 
-        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
-        if not must_decimate:
+        # Watertightening already runs its own feature-preserving QEM, so re-decimating with `fast_simplification`
+        # on the wrap output barely helps (the wrap's residual non-manifold edges block most collapses) and risks
+        # destroying the careful feature preservation.
+        already_decimated = mesh.metadata.get("watertightened", False)
+        must_decimate = (num_faces > decimate_face_num or tmesh.is_watertight) and not already_decimated
+        if not must_decimate and not already_decimated:
             gs.logger.debug(
                 "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
             )
@@ -979,7 +1088,8 @@ def create_plane(
         faces = np.vstack([faces, faces[:, ::-1]])
 
     vmesh = trimesh.Trimesh(verts, faces, process=False)
-    vmesh.vertices[:, 2] -= thickness / 2
+    # Align visual surface with the collision top face, both at z=0 in link-local frame, so morph.pos specifies
+    # the actual rendered surface position.
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
     if texture_path is not None:

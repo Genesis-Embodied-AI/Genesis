@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.4.4"
+version = "1.0.0"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -13,7 +13,10 @@ dependencies = [
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
-    "trimesh",
+    # * 4.8.2 fixed linear/sRGB color conversion in `to_color()`.
+    "trimesh>=4.8.2",
+    # Used for preprocessing .urdf.xacro files into plain URDF
+    "xacro",
     # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
     "libigl!=2.6.2",
     # Cross-platform library to get various kind of CPU information such as model name
@@ -37,6 +40,8 @@ dependencies = [
     "pycollada",
     # Used for parsing `.glb` mesh files
     "pygltflib==1.16.0",
+    # Used for decoding Draco-compressed `.glb` mesh files
+    "DracoPy",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen==0.8.2",
     # Used for some advanced mesh processing such as `skeletonization`
@@ -74,6 +79,7 @@ dev = [
     "pytest",
     "pytest-xdist",
     "pytest-forked",
+    "pytest-timeout",
     "pytest-print",
     # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
@@ -92,7 +98,7 @@ dev = [
     "matplotlib>=3.7.0",
     # Used internally by 'VideoFileWriter'
     "av",
-    # Used for validating polar decomposition in unit tests
+    # Used for ground truth validation in unit tests
     "scipy",
     # Used for code formatting during commits
     "pre_commit",
@@ -118,11 +124,16 @@ docs = [
 ]
 render = [
     "pybind11[global]",
-    "open3d",
+    # Pre-compiled wheels are only published for cp38-cp312 on macOS (universal2), Linux x86_64, and Windows.
+    "open3d; python_version < '3.13' and platform_machine != 'aarch64'",
+    # No pre-compiled wheels are published for Python 3.10, and the source build needs CMake.
+    "imgui-bundle; python_version >= '3.11'",
 ]
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core==25.11",
+    # Used to serialize concurrent omni-kit bake operations (concurrent bootstrapping causes segfaults)
+    "filelock",
 ]
 
 [project.scripts]
@@ -166,7 +177,9 @@ ignore = [
 [tool.pytest.ini_options]
 addopts = [
     "--verbose",
-    "-r", "a",
+    # Exclude 'f' (failed) from short test summary because it duplicates the FAILURES section in verbose mode.
+    # A plain list of failed test IDs is printed instead by 'pytest_terminal_summary' hook in tests/conftest.py.
+    "-r", "EsxXw",
     "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
@@ -176,6 +189,7 @@ addopts = [
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",
+    "--timeout=1200",  # Very large timeout, just in case of deadlock
     # Note that the retry mechanism is not compatible with "--forked".
     "-m not (benchmarks or examples)",
 ]
