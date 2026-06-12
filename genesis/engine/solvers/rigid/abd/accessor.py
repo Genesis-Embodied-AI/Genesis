@@ -219,7 +219,6 @@ def kernel_get_state_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_pos(
-    relative: qd.template(),
     pos: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -237,18 +236,10 @@ def kernel_set_links_pos(
         if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
             for j in qd.static(range(3)):
                 links_state.pos[i_l, i_b][j] = pos[i_b_, i_l_, j]
-            if qd.static(relative):
-                for j in qd.static(range(3)):
-                    links_state.pos[i_l, i_b][j] = links_state.pos[i_l, i_b][j] + links_info.pos[I_l][j]
         else:
             q_start = links_info.q_start[I_l]
             for j in qd.static(range(3)):
                 rigid_global_info.qpos[q_start + j, i_b] = pos[i_b_, i_l_, j]
-            if qd.static(relative):
-                for j in qd.static(range(3)):
-                    rigid_global_info.qpos[q_start + j, i_b] = (
-                        rigid_global_info.qpos[q_start + j, i_b] + rigid_global_info.qpos0[q_start + j, i_b]
-                    )
 
 
 @qd.kernel(fastcache=True)
@@ -292,7 +283,6 @@ def kernel_wake_up_entities_by_links(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_pos_grad(
-    relative: qd.i32,
     pos_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -320,7 +310,6 @@ def kernel_set_links_pos_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_quat(
-    relative: qd.template(),
     quat: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -335,45 +324,17 @@ def kernel_set_links_quat(
         i_l = links_idx[i_l_]
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-        if qd.static(relative):
-            quat_ = qd.Vector(
-                [
-                    quat[i_b_, i_l_, 0],
-                    quat[i_b_, i_l_, 1],
-                    quat[i_b_, i_l_, 2],
-                    quat[i_b_, i_l_, 3],
-                ],
-                dt=gs.qd_float,
-            )
-            if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
-                links_state.quat[i_l, i_b] = gu.qd_transform_quat_by_quat(links_info.quat[I_l], quat_)
-            else:
-                q_start = links_info.q_start[I_l]
-                quat0 = qd.Vector(
-                    [
-                        rigid_global_info.qpos0[q_start + 3, i_b],
-                        rigid_global_info.qpos0[q_start + 4, i_b],
-                        rigid_global_info.qpos0[q_start + 5, i_b],
-                        rigid_global_info.qpos0[q_start + 6, i_b],
-                    ],
-                    dt=gs.qd_float,
-                )
-                quat_ = gu.qd_transform_quat_by_quat(quat0, quat_)
-                for j in qd.static(range(4)):
-                    rigid_global_info.qpos[q_start + j + 3, i_b] = quat_[j]
+        if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
+            for j in qd.static(range(4)):
+                links_state.quat[i_l, i_b][j] = quat[i_b_, i_l_, j]
         else:
-            if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
-                for j in qd.static(range(4)):
-                    links_state.quat[i_l, i_b][j] = quat[i_b_, i_l_, j]
-            else:
-                q_start = links_info.q_start[I_l]
-                for j in qd.static(range(4)):
-                    rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
+            q_start = links_info.q_start[I_l]
+            for j in qd.static(range(4)):
+                rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
 
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_quat_grad(
-    relative: qd.template(),
     quat_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),

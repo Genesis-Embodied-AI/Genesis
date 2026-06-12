@@ -1593,10 +1593,11 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
         show_viewer=show_viewer,
     )
     plane = scene.add_entity(gs.morphs.Plane())
+    pole_pos = (0.0, 0.0, BASE_HEIGHT / 2)
     pole = scene.add_entity(
         morph=gs.morphs.URDF(
             file="tower/base_pole.urdf",
-            pos=(0.0, 0.0, BASE_HEIGHT / 2),
+            pos=pole_pos,
             file_meshes_are_zup=True,
         ),
         material=gs.materials.Rigid(
@@ -1604,15 +1605,19 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
         ),
         vis_mode="collision",
     )
+    poss_init = [pole_pos]
+    rpys_init = [(0.0, 0.0, 0.0)]
     rings = []
     height = BASE_HEIGHT
     for i, ring_idx in enumerate(RINGS_ORDER):
+        ring_pos = (0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2)
+        # Alternate rotational offset along z-axis to avoid lateral contacts
+        ring_yaw = 180 / N_WEDGES * (i % 2)
         ring = scene.add_entity(
             morph=gs.morphs.URDF(
                 file=f"tower/ring_{ring_idx + 1:02d}.urdf",
-                pos=(0.0, 0.0, height + (RING_HEIGHT - 1e-4) / 2),
-                # Alternate rotational offset along z-axis to avoid lateral contacts
-                euler=(0.0, 0.0, 180 / N_WEDGES * (i % 2)),
+                pos=ring_pos,
+                euler=(0.0, 0.0, ring_yaw),
                 file_meshes_are_zup=True,
             ),
             material=gs.materials.Rigid(
@@ -1622,11 +1627,14 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
             visualize_contact=True,
         )
         rings.append(ring)
+        poss_init.append(ring_pos)
+        rpys_init.append((0.0, 0.0, np.deg2rad(ring_yaw)))
         height += RING_HEIGHT - 1e-4
+    ball_pos = (0.0, 0.0, height + BALL_HEIGHT)
     ball = scene.add_entity(
         morph=gs.morphs.URDF(
             file="tower/ball.urdf",
-            pos=(0.0, 0.0, height + BALL_HEIGHT),
+            pos=ball_pos,
             file_meshes_are_zup=True,
         ),
         material=gs.materials.Rigid(
@@ -1634,19 +1642,13 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
         ),
         vis_mode="collision",
     )
+    poss_init.append(ball_pos)
+    rpys_init.append((0.0, 0.0, 0.0))
     scene.build()
 
     geom_owner = {geom.idx: entity for entity in (plane, pole, *rings, ball) for geom in entity.geoms}
     ring_geoms = {geom.idx for ring in rings for geom in ring.geoms}
     ball_geoms = {geom.idx for geom in ball.geoms}
-
-    poss_init = [
-        qd_to_torch(scene.rigid_solver.links_info.pos, entity._idx_in_solver) for entity in (pole, *rings, ball)
-    ]
-    rpys_init = [
-        gu.quat_to_xyz(qd_to_torch(scene.rigid_solver.links_info.quat, entity._idx_in_solver), rpy=True)
-        for entity in (pole, *rings, ball)
-    ]
 
     # Tiny warm-up to deal with initial penetration (~5e-4)
     for _ in range(2):
@@ -2388,7 +2390,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
 
     # A no-offset entity reports the same pose in the user and world frames.
     assert_allclose(plain_box.get_pos(relative=True), plain_box.get_pos(relative=False), tol=tol)
-    assert_allclose(plain_box.get_pos(relative=False), (2.0, 0.0, 0.2), tol=tol)
+    assert_allclose(plain_box.get_pos(), (2.0, 0.0, 0.2), tol=tol)
     # With both a morph pose and an offset, the relative getter returns the morph pose while the world getter carries
     # the offset composed onto it (the offset position adds in z since the user orientation is identity).
     assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
@@ -2399,6 +2401,13 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         gu.xyz_to_quat(np.array(POSED_BOX_OFFSET_EULER), rpy=True, degrees=True),
         tol=tol,
     )
+    # Setting the orientation in the user frame keeps the user-frame position fixed: the offset position rotates with
+    # the orientation, so the world position is rewritten to preserve the reported relative position. Rotating about x
+    # while the offset position is along z makes that offset contribution change, exercising the rewrite.
+    new_quat = gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), rpy=True, degrees=True)
+    posed_box.set_quat(new_quat, relative=True)
+    assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
+    assert_allclose(posed_box.get_quat(relative=True), new_quat, tol=tol)
 
     robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
     cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
@@ -2419,14 +2428,14 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0, relative=False)
     quat_delta = np.random.rand(2, 4)
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
-        robot.set_quat(quat_delta)
+        robot.set_quat(quat_delta, relative=False)
         if show_viewer:
             scene.visualizer.update()
     with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
-        robot.set_quat(quat_delta[[0]], envs_idx=[0])
+        robot.set_quat(quat_delta[[0]], envs_idx=[0], relative=False)
         if show_viewer:
             scene.visualizer.update()
-    cube.set_quat(quat_delta)
+    cube.set_quat(quat_delta, relative=False)
     if show_viewer:
         scene.visualizer.update()
 
@@ -2471,19 +2480,15 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             entity.set_pos(pos_delta, relative=relative)
 
             pos_ref = pos_delta + pos_zero if relative else pos_delta
-            assert_allclose(entity.get_pos(relative=False), pos_ref, tol=tol)
+            # Round-trip in the frame it was set in: the getter must report back exactly what set_pos received.
+            assert_allclose(entity.get_pos(relative=relative), pos_delta, tol=tol)
             assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init + (pos_ref - pos_zero), tol=tol)
             assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
 
             quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
             quat_delta /= torch.linalg.norm(quat_delta, axis=1, keepdim=True)
             entity.set_quat(quat_delta, relative=relative)
-            quat = entity.get_quat(relative=False)
-            if relative:
-                quat_ref = gu.transform_quat_by_quat(quat_zero, quat_delta)
-            else:
-                quat_ref = quat_delta
-            assert_allclose(quat, quat_ref, tol=tol)
+            assert_allclose(entity.get_quat(relative=relative), quat_delta, tol=tol)
 
 
 @pytest.mark.slow  # ~200s
@@ -4600,7 +4605,9 @@ def test_urdf_parsing(show_viewer, tol):
     root_idx_all = [link.root_idx for link in scene.rigid_solver.links]
     assert len(set(root_idx_all)) == 4
 
-    def _check_entity_positions(relative, tol):
+    def _check_entity_positions(expected_y_spacing, tol):
+        # The four parsing configs are laid out 'expected_y_spacing' apart in y, so their world AABBs must coincide once
+        # that spacing is removed. AABBs are world-frame, so this check is independent of the relative-getter frame.
         nonlocal entities
         AABB_all = []
         for key in ((False, False), (False, True), (True, False), (True, True)):
@@ -4616,33 +4623,35 @@ def test_urdf_parsing(show_viewer, tol):
                 AABB[1] = np.maximum(AABB[1], AABB_i[1])
             AABB_all.append(AABB)
         AABB_diff = np.diff(AABB_all, axis=0)
-        if relative:
-            AABB_diff[..., 1] -= POS_OFFSET
+        AABB_diff[..., 1] -= expected_y_spacing
         assert_allclose(AABB_diff, 0.0, tol=tol)
 
-    # Check that `set_pos` / `set_quat` applies the same transform in all cases
+    # Check that `set_pos` / `set_quat` applies the same transform in all cases. Both frames place every config at the
+    # same pose, so the world AABBs coincide with no residual spacing.
     for relative in (False, True):
         for key in ((False, False), (False, True), (True, False), (True, True)):
             entities[key].set_pos(np.array([0.5, 0.0, 0.0]), relative=relative)
             entities[key].set_quat(np.array([0.0, 0.0, 0.0, 1.0]), relative=relative)
         if show_viewer:
             scene.visualizer.update()
-        _check_entity_positions(relative, tol=tol)
+        _check_entity_positions(0.0, tol=tol)
 
-    # Check that `set_qpos` applies the same absolute transform in all cases
+    # Check that `set_qpos` applies the same absolute transform in all cases. The fixed roots have no free joint to
+    # take a base pose via qpos, so they are placed at the matching absolute world pose with the (relative=False)
+    # setters. All four configs then sit POS_OFFSET apart in y, as at creation.
     door_angle = np.array([1.1])
+    world_quat = tuple(WOLRD_QUAT / np.linalg.norm(WOLRD_QUAT))
     for i, key in enumerate(((False, False), (False, True))):
-        qpos = np.concatenate(
-            ((0.0, (i - 1.5) * POS_OFFSET, 0.0), tuple(WOLRD_QUAT / np.linalg.norm(WOLRD_QUAT)), door_angle)
-        )
+        qpos = np.concatenate(((0.0, (i - 1.5) * POS_OFFSET, 0.0), world_quat, door_angle))
         entities[key].set_qpos(qpos)
     for i, key in enumerate(((True, False), (True, True))):
-        entities[key].set_pos(np.array([0.0, 0.0, 0.0]), relative=True)
-        entities[key].set_quat(np.array([1.0, 0.0, 0.0, 0.0]), relative=True)
+        config_y = ((i + 2) - 1.5) * POS_OFFSET
+        entities[key].set_pos(np.array([0.0, config_y, 0.0]), relative=False)
+        entities[key].set_quat(np.array(world_quat), relative=False)
         entities[key].set_qpos(door_angle)
     if show_viewer:
         scene.visualizer.update()
-    _check_entity_positions(relative=True, tol=tol)
+    _check_entity_positions(POS_OFFSET, tol=tol)
 
     # Add dof damping to stabilitze the physics
     for key in ((False, False), (False, True), (True, False), (True, True)):
@@ -4670,7 +4679,7 @@ def test_urdf_parsing(show_viewer, tol):
         door_pos_diff = torch.diff(torch.concatenate(door_pos_all))
         assert_allclose(door_pos_diff, 0, tol=5e-3)
     assert_allclose(scene.rigid_solver.dofs_state.vel.to_numpy(), 0.0, tol=1e-3)
-    _check_entity_positions(relative=True, tol=2e-3)
+    _check_entity_positions(POS_OFFSET, tol=2e-3)
 
 
 @pytest.mark.slow  # ~200s
@@ -6340,8 +6349,8 @@ def test_mesh_align(show_viewer, tol):
     assert_allclose(mango.get_quat(relative=True), gu.identity_quat(), tol=tol)
     # The world-frame base pose places the link frame at the geometry COM and principal axes.
     assert_allclose(
-        mango.get_links_pos(links_idx_local=[0], ref="link_com"),
-        mango.get_links_pos(links_idx_local=[0], ref="link_origin"),
+        mango.get_links_pos(links_idx_local=[0], ref="link_com", relative=False),
+        mango.get_links_pos(links_idx_local=[0], ref="link_origin", relative=False),
         tol=tol,
     )
     geom_inertia_i = qd_to_numpy(scene.rigid_solver.links_state.cinr_inertial, transpose=True)[0, 1]
@@ -6355,8 +6364,8 @@ def test_mesh_align(show_viewer, tol):
         assert_allclose(het_obj.get_pos(relative=True, envs_idx=i_env), HET_POS, tol=tol)
         assert_allclose(het_obj.get_quat(relative=True, envs_idx=i_env), gu.identity_quat(), tol=tol)
         assert_allclose(
-            het_obj.get_links_pos(links_idx_local=[0], ref="link_com", envs_idx=i_env),
-            het_obj.get_links_pos(links_idx_local=[0], ref="link_origin", envs_idx=i_env),
+            het_obj.get_links_pos(links_idx_local=[0], ref="link_com", envs_idx=i_env, relative=False),
+            het_obj.get_links_pos(links_idx_local=[0], ref="link_origin", envs_idx=i_env, relative=False),
             tol=tol,
         )
     # The two variants have different geometry, so their aligned world origins differ.
@@ -6492,6 +6501,52 @@ def test_relative_offset_on_link_relative_geoms(show_viewer, tol):
         expected_world_quat = gu.transform_quat_by_quat(geom_user_quat, offset_quat)
         assert_allclose(geom.get_pos(relative=False), expected_world_pos, tol=tol)
         assert_allclose(geom.get_quat(relative=False), expected_world_quat, tol=tol)
+
+
+@pytest.mark.required
+def test_multi_root_offset(show_viewer, tol):
+    # One MJCF with two free root bodies, each auto-aligned to its own geometry. Every root's pose offset is tracked
+    # independently, so each root reports its own user-specified pose through the relative (default) getters while the
+    # world frame carries that root's own COM shift. Without per-root tracking, the offsets cross-contaminate.
+    BODY_A_POS = (1.0, 0.0, 0.5)
+    BODY_B_POS = (-1.0, 0.0, 0.5)
+    mjcf = ET.Element("mujoco", model="two_bodies")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body_a = ET.SubElement(worldbody, "body", name="a", pos=f"{BODY_A_POS[0]} {BODY_A_POS[1]} {BODY_A_POS[2]}")
+    ET.SubElement(body_a, "joint", name="a_free", type="free")
+    ET.SubElement(body_a, "geom", type="box", size="0.05 0.05 0.05", pos="0.02 0.01 0.0", density="1000")
+    body_b = ET.SubElement(worldbody, "body", name="b", pos=f"{BODY_B_POS[0]} {BODY_B_POS[1]} {BODY_B_POS[2]}")
+    ET.SubElement(body_b, "joint", name="b_free", type="free")
+    ET.SubElement(body_b, "geom", type="box", size="0.05 0.08 0.03", pos="0.0 0.03 0.02", density="1000")
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=ET.tostring(mjcf, encoding="unicode"),
+            align=True,
+        ),
+    )
+    scene.build()
+
+    link_a, link_b = entity.links
+    # Each root reports its own user-specified pose in the relative frame, independent of the other root.
+    assert_allclose(link_a.get_pos(), BODY_A_POS, tol=tol)
+    assert_allclose(link_b.get_pos(), BODY_B_POS, tol=tol)
+    assert_allclose(link_a.get_quat(), gu.identity_quat(), tol=tol)
+    assert_allclose(link_b.get_quat(), gu.identity_quat(), tol=tol)
+    # The world frame carries each root's own COM shift (the box center), confirming the offsets are not shared.
+    assert_allclose(link_a.get_pos(relative=False), (1.02, 0.01, 0.5), tol=tol)
+    assert_allclose(link_b.get_pos(relative=False), (-1.0, 0.03, 0.52), tol=tol)
+
+    # Both roots free-fall under gravity: the relative getter tracks each user frame, holding x/y and dropping z
+    # equally (free fall is mass-independent).
+    for _ in range(20):
+        scene.step()
+    assert_allclose(link_a.get_pos()[..., :2], BODY_A_POS[:2], tol=tol)
+    assert_allclose(link_b.get_pos()[..., :2], BODY_B_POS[:2], tol=tol)
+    assert_allclose(link_a.get_pos()[..., 2], link_b.get_pos()[..., 2], tol=tol)
 
 
 @pytest.fixture
@@ -7316,8 +7371,8 @@ def test_heterogeneous_robots(show_viewer, tol):
     # with the COM, and the relative getter strips the alignment back to the user pose.
     for i_env in (0, 2):
         assert_allclose(
-            free_het.get_links_pos(links_idx_local=[0], ref="link_com", envs_idx=i_env),
-            free_het.get_links_pos(links_idx_local=[0], ref="link_origin", envs_idx=i_env),
+            free_het.get_links_pos(links_idx_local=[0], ref="link_com", envs_idx=i_env, relative=False),
+            free_het.get_links_pos(links_idx_local=[0], ref="link_origin", envs_idx=i_env, relative=False),
             tol=tol,
         )
         assert_allclose(free_het.get_pos(relative=True, envs_idx=i_env), FREE_POS, tol=tol)
@@ -7340,7 +7395,7 @@ def test_heterogeneous_robots(show_viewer, tol):
     # Variant B has x-offset relative to variant A
     assert_allclose(het_pos_init[0, 0] - het_pos_init[2, 0], 0.5, tol=tol)
     assert_allclose(het_pos_init[1, 0] - het_pos_init[3, 0], 0.5, tol=tol)
-    het_links_pos_init = het_obj.get_links_pos()
+    het_links_pos_init = het_obj.get_links_pos(relative=False)
     assert_allclose(het_links_pos_init.diff(dim=-2), (0.1, 0, 0), tol=tol)
 
     # Same-variant envs produce identical results (balanced block [A, A, B, B])
@@ -7367,8 +7422,8 @@ def test_heterogeneous_robots(show_viewer, tol):
     assert_allclose(mass[0], sphere_base_mass + sphere_moving_mass, tol=tol)
 
     # CoM position: variant B should match explicit URDF inertial origin_xyz
-    com_pos = het_obj.get_links_pos(ref="link_com")
-    origin_pos = het_obj.get_links_pos(ref="link_origin")
+    com_pos = het_obj.get_links_pos(ref="link_com", relative=False)
+    origin_pos = het_obj.get_links_pos(ref="link_origin", relative=False)
     com_offset = com_pos - origin_pos
     # Variant A: CoM offset matches URDF inertial origin
     assert_allclose(com_offset[0, 0], sphere_base_com, tol=tol)
@@ -7426,7 +7481,7 @@ def test_heterogeneous_robots(show_viewer, tol):
     # Check that dof position is correct
     dof_pos = het_obj.get_dofs_position()
     assert_allclose(dof_pos[..., -1], target_dof_pos, tol=1e-3)
-    het_links_pos = het_obj.get_links_pos()
+    het_links_pos = het_obj.get_links_pos(relative=False)
     assert_allclose(het_links_pos[..., 1, 0] - het_links_pos[..., 0, 0], target_dof_pos + 0.1, tol=1e-3)
     assert_allclose(het_links_pos[..., 1, 1:], het_links_pos[..., 0, 1:], tol=5e-3)
 

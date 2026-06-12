@@ -369,19 +369,21 @@ class FEMEntity(Entity):
         verts = verts.astype(gs.np_float, copy=False)
         elems = elems.astype(gs.np_int, copy=False)
 
-        # rotate (composing the morph pose offset, e.g. an up-axis conversion, onto the morph orientation)
-        init_quat = gu.transform_quat_by_quat(
-            np.array(self._morph.offset_quat, dtype=gs.np_float), np.array(self._morph.quat, dtype=gs.np_float)
-        )
+        # Compose the morph pose offset (e.g. an up-axis conversion) onto the morph orientation, rotating the verts
+        # about their COM, then translate by the body-frame offset position R(morph.quat) @ offset_pos.
+        morph_quat = np.array(self._morph.quat, dtype=gs.np_float)
+        init_quat = gu.transform_quat_by_quat(np.array(self._morph.offset_quat, dtype=gs.np_float), morph_quat)
         R = gu.quat_to_R(init_quat)
         verts_COM = verts.mean(axis=0)
         init_positions = (verts - verts_COM) @ R.T + verts_COM
+        offset_shift = gu.transform_by_quat(np.array(self._morph.offset_pos, dtype=gs.np_float), morph_quat)
+        init_positions = init_positions + offset_shift
 
         if not init_positions.shape[0] > 0:
             gs.raise_exception("Entity has zero vertices.")
 
         self.init_positions = gs.tensor(init_positions)
-        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM)
+        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM + offset_shift)
 
         self.elems = elems
 

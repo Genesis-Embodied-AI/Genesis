@@ -83,14 +83,19 @@ class Morph(Options):
         The initial quaternion (w-x-y-z convention) of the entity at creation time.
         If specified, `euler` will be ignored. Defaults to None.
     offset_pos : tuple, shape (3,), optional
-        A fixed position offset composed on top of `pos` to obtain the world pose, while `pos` itself stays the value
-        reported by relative getters. Defaults to (0.0, 0.0, 0.0).
+        A fixed pose offset applied in the entity's own body frame on top of the `pos`/`euler` (or `pos`/`quat`) pose.
+        It shifts the world pose used internally by the solver but is stripped back out by the relative getters, so
+        `get_pos`/`get_quat` (which are relative by default) still report `pos`/`quat`. The morph pose and the offset
+        compound exactly like a parent and a child frame: the world pose is
+        `transform_pos_quat_by_trans_quat(offset_pos, offset_quat, pos, quat)`, i.e. the offset is expressed in the body
+        frame defined by `pos`/`quat`. So `offset_pos` rotates together with the orientation rather than being a
+        world-frame shift, and when the orientation is identity it simply adds to `pos`. Defaults to (0.0, 0.0, 0.0).
     offset_euler : tuple, shape (3,), optional
-        The orientation offset as an euler angle in degrees (scipy extrinsic x-y-z convention). If specified,
-        `offset_quat` will be ignored. Defaults to None.
+        The orientation offset `offset_quat` given as an euler angle in degrees (scipy extrinsic x-y-z convention).
+        Setting both `offset_euler` and `offset_quat` raises an error. Defaults to None.
     offset_quat : tuple, shape (4,), optional
-        A fixed orientation offset (w-x-y-z convention) composed on top of `quat` to obtain the world pose, while
-        `quat` itself stays the value reported by relative getters. Up-axis conversions are stored here.
+        A fixed orientation offset (w-x-y-z convention); see `offset_pos` for how it compounds with `pos`/`quat` to
+        form the world pose. Up-axis conversions (e.g. loading a Z-up asset) are stored here.
         Defaults to (1.0, 0.0, 0.0, 0.0).
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
