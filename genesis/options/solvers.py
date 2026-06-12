@@ -322,26 +322,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
     restitution: float = 1.0
     ignore_end_effector_check: bool = False
 
-    # Internal export options
-    _export_ipc_surface: bool = False
-    _export_pre_coupling_surface: bool = False
-    _export_post_coupling_surface: bool = False
-    _export_surface_dir: str | None = None
-
-    def __init__(self, **data):
-        # Private keys are not part of pydantic model_fields (leading underscore), so parse manually.
-        export_ipc_surface = data.pop("_export_ipc_surface", False)
-        export_pre_coupling_surface = data.pop("_export_pre_coupling_surface", False)
-        export_post_coupling_surface = data.pop("_export_post_coupling_surface", False)
-        export_surface_dir = data.pop("_export_surface_dir", None)
-
-        super().__init__(**data)
-
-        self._export_ipc_surface = bool(export_ipc_surface)
-        self._export_pre_coupling_surface = bool(export_pre_coupling_surface)
-        self._export_post_coupling_surface = bool(export_post_coupling_surface)
-        self._export_surface_dir = None if export_surface_dir is None else str(export_surface_dir)
-
 
 ############################ Solvers inside simulator ############################
 """

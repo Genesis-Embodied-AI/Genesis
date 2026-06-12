@@ -56,7 +56,6 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
         Engine,
         World,
         Scene,
-        SceneIO,
         AffineBodyStateAccessorFeature,
         ContactElement,
         SubsceneElement,
@@ -94,8 +93,6 @@ IPCBeforeWorldInitCallback = Callable[[IPCBeforeWorldInitContext, GenesisSolverC
 ABD_KAPPA = 100.0
 JOINT_STRENGTH_RATIO = 100.0
 COM_AABB_TOL = 2e-3
-IPC_SURFACE_PREFIX = "ipc_surface"
-GENESIS_SURFACE_PREFIX = "genesis_surface"
 
 
 def _combine_inertials(
@@ -459,10 +456,6 @@ class IPCCoupler(RBC):
         # Callbacks invoked after _add_objects_to_ipc() but before _finalize_ipc().
         # Each hook receives the coupler instance as its sole argument.
         self._pre_finalize_hooks: list = []
-
-        self._debug_surface_export_idx = 0
-        self._debug_genesis_surface_export_after_genesis_before_ipc_idx = 0
-        self._debug_genesis_surface_export_after_ipc_correction_idx = 0
 
         # ==== GUI ====
         self._ipc_gui: SceneGUI | None = None
@@ -1374,85 +1367,36 @@ class IPCCoupler(RBC):
         if not self.is_active:
             return
 
-        import time as _time
-
-        # Step 1: Store Genesis rigid states (common)
-        _t0 = _time.perf_counter()
         self._store_gs_rigid_states()
-        _t1 = _time.perf_counter()
-        if self.options._export_pre_coupling_surface:
-            self._export_genesis_surface("after_genesis_before_ipc")
-
-        # Step 2: Pre-advance processing — write all per-frame data to IPC geometries
         self._pre_advance_write_ipc_attributes()
-        _t2 = _time.perf_counter()
 
-        # Debug: dump IPC body info on first frame
-        if self._ipc_frame == 0 and False:
-            gs.logger.info("[IPC DEBUG] === IPC bodies at frame 0, before advance ===")
-            for link, abd_data in self._abd_data_by_link.items():
-                entity = link.entity
-                coup_type = self._coup_type_by_entity.get(entity, "?")
-                n_verts = abd_data.n_vertices if hasattr(abd_data, "n_vertices") else "?"
-                mass = link.inertial_mass if hasattr(link, "inertial_mass") else "?"
-                gs.logger.info(
-                    f"[IPC DEBUG]   link={link.name}, entity={entity.name}, "
-                    f"coup={coup_type}, verts={n_verts}, mass={mass}, "
-                    f"n_geoms={len(link.geoms)}"
-                )
-            gs.logger.info(f"[IPC DEBUG] Total ABD links: {len(self._abd_data_by_link)}")
-            gs.logger.info(f"[IPC DEBUG] Coupling types: {set(self._coup_type_by_entity.values())}")
-
-        # Step 3: IPC advance + retrieve (common)
-        _verbose = False
-        if not _verbose:
-            self._newton_counter.start()
+        self._newton_counter.start()
         try:
             self._ipc_world.advance()
-        except Exception as e:
-            if not _verbose:
-                self._newton_counter.stop()
-            gs.raise_exception(f"[IPC] advance() failed at frame {self._ipc_frame + 1}: {e}")
-        if not _verbose:
+        finally:
             self._newton_counter.stop()
-        _n_newton, _n_ls, _ls_max, _newton_max, _tol_fails = self._newton_counter.reset()
-        _t3 = _time.perf_counter()
-        # Check world validity before retrieve — a failed solver leaves corrupted GPU state
+        n_newton, n_ls, ls_max, newton_max, tol_fails = self._newton_counter.reset()
+
+        # A failed solver leaves corrupted GPU state; check before retrieve.
         if not self._ipc_world.is_valid():
             gs.raise_exception(
                 f"[IPC] World became invalid after advance at frame {self._ipc_frame + 1}. "
-                f"The solver likely hit a numerical failure (newton={_n_newton}, ls={_n_ls})."
+                f"The solver likely hit a numerical failure (newton={n_newton}, ls={n_ls})."
             )
         self._ipc_world.retrieve()
-        _t4 = _time.perf_counter()
-        if self.options._export_ipc_surface:
-            self._export_ipc_surface()
 
-        # Step 4: Retrieve states
         self._retrieve_ipc_fem_states()
         self._retrieve_ipc_rigid_states()
-        _t5 = _time.perf_counter()
-
-        # Step 5: Post-advance — write IPC-resolved state to qpos
         self._post_advance_write_qpos()
         self._sync_rigid_fk()
-        _t6 = _time.perf_counter()
-        if self.options._export_post_coupling_surface:
-            self._export_genesis_surface("after_ipc_correction")
 
         self._ipc_frame += 1
-        _ls_str = f"  ls_maxout={_ls_max}" if _ls_max > 0 else ""
-        _nmax_str = "  NEWTON_MAXOUT" if _newton_max else ""
-        if _newton_max and _tol_fails:
-            # Show tolerance check status from the last Newton iteration
-            _nmax_str += " (" + "; ".join(_tol_fails) + ")"
-        gs.logger.info(
-            f"[IPC] frame {self._ipc_frame:4d}  newton={_n_newton:2d}  ls={_n_ls:3d}  "
-            f"advance={(_t3 - _t2) * 1000:.0f}ms  total={(_t6 - _t0) * 1000:.0f}ms"
-            f"{_ls_str}{_nmax_str}"
-        )
+        ls_str = f"  ls_maxout={ls_max}" if ls_max > 0 else ""
+        nmax_str = "  NEWTON_MAXOUT" if newton_max else ""
+        if newton_max and tol_fails:
+            nmax_str += " (" + "; ".join(tol_fails) + ")"
+        gs.logger.info(f"[IPC] frame {self._ipc_frame:4d}  newton={n_newton:2d}  ls={n_ls:3d}{ls_str}{nmax_str}")
 
-        # Step 6: Update GUI if enabled
         if self._ipc_gui is not None:
             ps.frame_tick()
             self._ipc_gui.update()
@@ -1738,103 +1682,6 @@ class IPCCoupler(RBC):
     def is_active(self) -> bool:
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
-
-    def _export_ipc_surface(self):
-        """Export IPC scene surface snapshots after retrieve().
-
-        Controlled by IPCCouplerOptions private debug fields:
-        - _export_ipc_surface
-        - _export_surface_dir
-        """
-        output_dir = self.options._export_surface_dir or self._ipc_workspace
-        if output_dir is None:
-            output_dir = tempfile.gettempdir()
-        os.makedirs(output_dir, exist_ok=True)
-
-        stem = f"{IPC_SURFACE_PREFIX}_{self._debug_surface_export_idx:06d}"
-        output_path = os.path.join(output_dir, f"{stem}.obj")
-
-        try:
-            scene_io = SceneIO(self._ipc_scene)
-            exported = False
-            for method_name in ("write_surface", "write_surface_obj", "export_surface"):
-                method = getattr(scene_io, method_name, None)
-                if method is None:
-                    continue
-                try:
-                    method(output_path)
-                except TypeError:
-                    # Some bindings may accept (directory, stem) instead of full filepath.
-                    method(output_dir, stem)
-                exported = True
-                break
-
-            if not exported:
-                raise AttributeError("SceneIO has no supported surface export method.")
-
-            self._debug_surface_export_idx += 1
-        except Exception as exc:
-            assert gs.logger is not None
-            gs.logger.warning(f"Failed to export IPC debug surface snapshot: {exc}")
-
-    def _export_genesis_surface(self, phase: str):
-        """Export current Genesis rigid geometry as one combined OBJ snapshot."""
-        if not self.rigid_solver.is_active:
-            return
-        if phase not in ("after_genesis_before_ipc", "after_ipc_correction"):
-            gs.raise_exception(f"Unknown Genesis surface export phase: {phase}")
-        # Ensure links_state/geoms_state are refreshed from the latest qpos before exporting.
-        self._sync_rigid_fk()
-
-        output_dir = self.options._export_surface_dir or self._ipc_workspace
-        if output_dir is None:
-            output_dir = tempfile.gettempdir()
-        os.makedirs(output_dir, exist_ok=True)
-
-        if phase == "after_genesis_before_ipc":
-            frame_idx = self._debug_genesis_surface_export_after_genesis_before_ipc_idx
-        else:
-            frame_idx = self._debug_genesis_surface_export_after_ipc_correction_idx
-        stem = f"{GENESIS_SURFACE_PREFIX}_{phase}_{frame_idx:06d}"
-        output_path = os.path.join(output_dir, f"{stem}.obj")
-
-        env_idx = 0
-        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
-        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat, transpose=True)
-
-        obj_lines: list[str] = []
-        vert_offset = 1
-
-        for link in self.rigid_solver.links:
-            link_pos = links_pos[env_idx, link.idx]
-            link_quat = links_quat[env_idx, link.idx]
-            for geom in link.geoms:
-                if geom.type == gs.GEOM_TYPE.PLANE or geom.n_verts <= 0:
-                    continue
-                verts_link = gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat)
-                verts_world = gu.transform_by_trans_quat(verts_link, link_pos, link_quat)
-                faces = geom.init_faces.astype(np.int64, copy=False)
-
-                obj_lines.append(f"o link_{link.idx}_{link.name}_geom_{geom.idx}")
-                for v in verts_world:
-                    obj_lines.append(f"v {float(v[0]):.9g} {float(v[1]):.9g} {float(v[2]):.9g}")
-                for f in faces:
-                    i0, i1, i2 = int(f[0]) + vert_offset, int(f[1]) + vert_offset, int(f[2]) + vert_offset
-                    obj_lines.append(f"f {i0} {i1} {i2}")
-                vert_offset += len(verts_world)
-
-        try:
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write("# Genesis rigid geometry snapshot\n")
-                f.write("\n".join(obj_lines))
-                f.write("\n")
-            if phase == "after_genesis_before_ipc":
-                self._debug_genesis_surface_export_after_genesis_before_ipc_idx += 1
-            else:
-                self._debug_genesis_surface_export_after_ipc_correction_idx += 1
-        except Exception as exc:
-            assert gs.logger is not None
-            gs.logger.warning(f"Failed to export Genesis debug surface snapshot: {exc}")
 
     @property
     def has_any_rigid_coupling(self) -> bool:
@@ -2163,4 +2010,3 @@ class IPCCoupler(RBC):
         )
         self.rigid_solver._is_forward_pos_updated = True
         self.rigid_solver._is_forward_vel_updated = True
-
