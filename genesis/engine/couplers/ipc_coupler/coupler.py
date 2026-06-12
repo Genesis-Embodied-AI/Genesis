@@ -539,16 +539,16 @@ class IPCCoupler(RBC):
                     gs.raise_exception(
                         f"Rigid entity {i_e} has articulated joints. Use 'external_articulation' instead of 'ipc_only'."
                     )
+            elif coup_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
+                # Resolve link filter from material
+                coup_link_names = entity.material.coup_links
+                if coup_link_names is not None:
+                    self._coup_links[entity] = set(map(entity.get_link, coup_link_names))
+                    gs.logger.debug(f"Rigid entity {i_e}: IPC link filter set to {len(coup_link_names)} link(s)")
+                else:
+                    self._coup_links[entity] = set(entity.links)
+
             gs.logger.debug(f"Rigid entity {i_e}: coupling type '{coup_type.name.lower()}'")
-
-            # Resolve link filter from material
-            link_filter_names = entity.material.coup_links
-            if link_filter_names is not None:
-                self._coup_links[entity] = set(map(entity.get_link, link_filter_names))
-                gs.logger.debug(f"Rigid entity {i_e}: IPC link filter set to {len(link_filter_names)} link(s)")
-
-            if coup_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
-                selected_links = self._resolve_two_way_target_links(entity, is_robot)
 
             # Resolve collision settings from material
             if not entity.material.enable_coup_collision:
@@ -566,38 +566,6 @@ class IPCCoupler(RBC):
         # Categorize entities by coupling type
         for entity, coup_type in self._coup_type_by_entity.items():
             self._entities_by_coup_type.setdefault(coup_type, []).append(entity)
-
-    def _resolve_two_way_target_links(self, entity: "RigidEntity", is_robot: bool):
-        """Resolve and validate target links for two-way coupling."""
-        ignore_end_effector_check = self.options.ignore_end_effector_check
-        selected_links = self._coup_links.get(entity)
-        if selected_links is None:
-            if is_robot and not ignore_end_effector_check:
-                gs.raise_exception(
-                    "Two-way soft coupling for articulated robots requires explicit `coup_links` "
-                    "(end-effector links only)."
-                )
-            selected_links = set(entity.links)
-
-        if not ignore_end_effector_check:
-            for link in selected_links:
-                # End-effector only: no coupled child link in the same entity.
-                # Non-coupled children (e.g. a wheel attached to a sprocket) are fine.
-                coupled_children = [
-                    child for child in entity.links if child.parent_idx == link.idx and child in selected_links
-                ]
-                if coupled_children:
-                    gs.raise_exception(
-                        f"Two-way soft coupling only supports end-effector links. "
-                        f"Link '{link.name}' has coupled child links "
-                        f"{[c.name for c in coupled_children]} in entity '{entity.uid}'."
-                    )
-        elif gs.logger is not None and is_robot:
-            gs.logger.warning(
-                "IPCCouplerOptions.ignore_end_effector_check=True: bypassing articulated two-way "
-                "coupling link validation. Use with caution."
-            )
-        return selected_links
 
     @staticmethod
     def _validate_link_inertial_com_for_ipc(link: "RigidLink"):

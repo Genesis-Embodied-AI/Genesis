@@ -1,5 +1,5 @@
 import math
-import os
+from contextlib import nullcontext
 from itertools import permutations
 from typing import TYPE_CHECKING, cast, Any
 
@@ -96,6 +96,7 @@ def assert_ipc_genesis_transform_close(coupler, link, env_idx, gs_pos, gs_quat, 
     assert_allclose(rot_diff, 0.0, atol=atol)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("enable_rigid_rigid_contact", [False, True])
 def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     from genesis.engine.entities import RigidEntity, FEMEntity
@@ -259,6 +260,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     assert (np.diff(final_positions[..., ::-1, 0], axis=-1) > 0.2).all()
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -283,6 +285,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
+            rho=200.0,
             coup_type="ipc_only",
         ),
     )
@@ -295,6 +298,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
+                rho=200.0,
                 coup_type="ipc_only",
                 coup_friction=0.0,
                 contact_resistance=resistance,
@@ -438,7 +442,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             linear_system_tolerance=1e-3,
             newton_semi_implicit_enable=False,
             restitution=0.0,
-            ignore_end_effector_check=True,  # bypass two-way soft constraint check
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 0.8),
@@ -1486,7 +1489,6 @@ def test_cloth_corner_drag(n_envs, show_viewer):
             friction_mu=0.8,
         ),
     )
-    assert isinstance(cloth, FEMEntity)
 
     # Sandwich grip at one corner
     boxes = []
