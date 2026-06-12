@@ -86,6 +86,7 @@ class ErrorCode(IntEnum):
     OVERFLOW_HIBERNATION_ISLANDS = 0b00000000000000000000000000000100
     INVALID_FORCE_NAN = 0b00000000000000000000000000001000
     INVALID_ACC_NAN = 0b00000000000000000000000000010000
+    OVERFLOW_CONTACTS = 0b00000000000000000000000000100000
 
 
 # =========================================== RigidGlobalInfo ===========================================
@@ -147,13 +148,15 @@ def get_rigid_global_info(solver, kinematic_only):
     # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
     # layout=(2, 1, 0): i_d1 becomes innermost / stride-1, which coalesces consumer kernels whose lanes stride i_d1
     # with a serial inner i_d2 loop. The trade-off is regression on writer-side kernels that pair with cooperative
-    # rewrites to recover under the same constraint_layout_transposed flag.
+    # rewrites to recover under the same enable_cooperative_constraint_kernels flag.
     #
     # mass_mat_L stays canonical. Its dominant consumer is a serial Cholesky-style back-substitution that is already
     # coalesced under (n_dofs, n_dofs, _B) with lanes varying i_b, so flipping L would regress that path more than
     # the corresponding writer-side win on the tiled factor_mass.
     mass_mat_layout = (
-        (2, 1, 0) if not kinematic_only and solver._static_rigid_sim_config.constraint_layout_transposed else None
+        (2, 1, 0)
+        if not kinematic_only and solver._static_rigid_sim_config.enable_cooperative_constraint_kernels
+        else None
     )
 
     # FIXME: Add a better split between kinematic and Genesis
@@ -337,26 +340,42 @@ def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
-    # All three constraint-state layout flips (con / jac / dof_vec) gate on the same `constraint_layout_transposed`
-    # static-config flag. See `_should_transpose_constraint_layout` in rigid_solver.py for the heuristic, and the
-    # per-flip docs below.
-    transposed = solver._static_rigid_sim_config.constraint_layout_transposed
+    # The constraint-state layout flips (con / jac / dof_vec) gate on constraint_layout_batch_first; jac additionally
+    # picks its batch-first permutation from enable_cooperative_constraint_kernels. See the per-flip docs below.
+    cooperative = solver._static_rigid_sim_config.enable_cooperative_constraint_kernels
+    batch_first = solver._static_rigid_sim_config.constraint_layout_batch_first
+    # Serialized execution visits envs in the outermost loop of every constraint kernel, so the hot per-env rows of the
+    # constraint tensors must be contiguous in memory: batch-first physical layout. With the canonical batch-last layout
+    # every scalar access strides by n_envs, wasting a full cache line per element, which makes the constraint solver
+    # DRAM-bound once the combined per-env working sets exceed the CPU caches and batched stepping scales super-linearly
+    # with n_envs.
+    serialized = solver._static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
     # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
     # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.
     # Cooperative kernels read the same flag at compile time to switch between serial and warp-cooperative reductions.
-    con_layout = (1, 0) if transposed else None
+    # The remaining (len_constraints_,) tensors outside the GPU cooperative flip set follow only the serialized flip.
+    con_layout = (1, 0) if batch_first else None
+    serial_layout = (1, 0) if serialized else None
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
-    jac_layout = (2, 1, 0) if transposed else None
+    # Serialized execution instead wants physical (_B, len_constraints_, n_dofs_) via layout=(2, 0, 1): constraint rows
+    # are read and written dof-by-dof for a fixed env.
+    jac_layout = (2, 1, 0) if cooperative else (2, 0, 1) if serialized else None
     # DOF-vec family flip: canonical (n_dofs_, _B) -> physical (_B, n_dofs_) via layout=(1, 0). Adjacent-lane reads
     # striding i_d in cooperative kernels become stride-1; the regression on 1T-per-(i_d, i_b) writers is patched on
-    # a per-consumer basis under the same constraint_layout_transposed flag.
-    dof_vec_layout = (1, 0) if transposed else None
+    # a per-consumer basis under the same enable_cooperative_constraint_kernels flag.
+    dof_vec_layout = (1, 0) if batch_first else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
-    efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
+    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update sweep.
+    # The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes its
+    # AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
+    # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
+    noslip = solver._options.noslip_iterations > 0
+    noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
+    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_decomposed else 1), noslip)
+    efc_b_shape = maybe_shape((len_constraints_, _B if noslip_decomposed else 1), noslip)
     jac_dofs_idx_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
     jac_n_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
     sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
@@ -366,10 +385,10 @@ def get_constraint_state(constraint_solver, solver):
             f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
     if math.prod(efc_AR_shape) > np.iinfo(np.int32).max:
-        gs.logger.warning(
-            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={solver.n_dofs_}, n_envs={_B}) is too "
-            "large. Consider manually setting a smaller 'max_collision_pairs' in RigidOptions to reduce the size of "
-            "reserved memory. "
+        gs.raise_exception(
+            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={len_constraints_}, "
+            f"n_envs={efc_AR_shape[2]}) is too large. Consider setting a smaller 'max_contacts' in RigidOptions "
+            "to reduce the size of reserved memory."
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
@@ -399,7 +418,7 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, solver._options.noslip_iterations > 0)),
+        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, noslip_decomposed)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
@@ -414,7 +433,7 @@ def get_constraint_state(constraint_solver, solver):
         dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_iperm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_sort_key=V(dtype=gs.qd_float, shape=sparse_dof_shape),
-        incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B)),
+        incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=serial_layout),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
@@ -422,12 +441,12 @@ def get_constraint_state(constraint_solver, solver):
         # ``layout=(1, 0)`` to physically store as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B);
         # kernel-body indexing ``Jaref[i_c, i_b]`` is rewritten by the AST when ``layout != None``.
         active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=con_layout),
-        prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
+        prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=serial_layout),
         diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
         Jaref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
@@ -436,7 +455,7 @@ def get_constraint_state(constraint_solver, solver):
             shape=jac_dofs_idx_shape,
             layout=jac_layout if constraint_solver.sparse_solve else None,
         ),
-        jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape),
+        jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape, layout=serial_layout if jac_n_dofs_shape else None),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
@@ -478,22 +497,22 @@ class ContactData:
     pair_idx: qd.Tensor
 
 
-def get_contact_data(solver, max_contact_pairs, requires_grad):
+def get_contact_data(solver, max_candidate_contacts, requires_grad):
     _B = solver._B
-    max_contact_pairs_ = max(max_contact_pairs, 1)
+    max_candidate_contacts_ = max(max_candidate_contacts, 1)
 
     return ContactData(
-        geom_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        geom_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        normal=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
-        pos=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
-        penetration=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
-        friction=V(dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
-        sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_contact_pairs_, _B)),
-        force=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B)),
-        link_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        link_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
-        pair_idx=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
+        geom_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        geom_b=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        normal=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
+        pos=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
+        penetration=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
+        friction=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        force=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
+        link_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        link_b=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
+        pair_idx=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
     )
 
 
@@ -612,20 +631,20 @@ class ContactIslandState:
 
 def get_contact_island_state(solver, collider):
     _B = solver._B
-    max_contact_pairs = max(collider._collider_info.max_contact_pairs[None], 1)
+    max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     n_entities = max(solver.n_entities, 1)
 
     # When hibernation is enabled, the island construction adds edges for hibernated entity chains
     # in addition to contact edges. The chain construction is cyclic (last entity links back to first),
     # so worst case: each entity contributes one hibernation edge, totaling n_entities hibernation edges.
     max_hibernation_edges = n_entities if solver._use_hibernation else 0
-    max_edges = max_contact_pairs + max_hibernation_edges
+    max_edges = max_candidate_contacts + max_hibernation_edges
 
     return ContactIslandState(
         ci_edges=V(dtype=gs.qd_int, shape=(max_edges, 2, _B)),
         edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
-        constraint_list=V(dtype=gs.qd_int, shape=(max_contact_pairs, _B)),
-        constraint_id=V(dtype=gs.qd_int, shape=(max_contact_pairs * 2, _B)),
+        constraint_list=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
+        constraint_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts * 2, _B)),
         entity_edge=get_agg_list(solver),
         island_col=get_agg_list(solver),
         island_hibernated=V(dtype=gs.qd_int, shape=(n_entities, _B)),
@@ -703,7 +722,7 @@ class ColliderState:
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
     # Per-bucket lex sort permutation used by the cooperative dedup kernel
-    # (func_clamp_prune_and_sort_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_contact_pairs because
+    # (func_clamp_prune_and_sort_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_candidate_contacts because
     # each env writes its own permutation.
     contact_lex_idx: qd.Tensor
 
@@ -720,8 +739,8 @@ def get_collider_state(
     n_geoms = solver.n_geoms_
     max_collision_pairs = min(solver.max_collision_pairs, n_possible_pairs)
     max_collision_pairs_broad = max_collision_pairs * max_collision_pairs_broad_k
-    # Already sized per regime (convex vs nonconvex) by Collider._init_max_contact_pairs, which runs before this.
-    max_contact_pairs = max(collider_info.max_contact_pairs[None], 1)
+    # Already sized per regime (convex vs nonconvex) by Collider._init_max_contacts, which runs before this.
+    max_candidate_contacts = max(collider_info.max_candidate_contacts[None], 1)
     requires_grad = static_rigid_sim_config.requires_grad
 
     box_depth_shape = maybe_shape(
@@ -736,7 +755,7 @@ def get_collider_state(
     box_axi_shape = maybe_shape((3, _B), static_rigid_sim_config.box_box_detection)
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
-    prune_shape = maybe_shape((max(max_contact_pairs, 1), _B), collider_static_config.has_prunable_contacts)
+    prune_shape = maybe_shape((max(max_candidate_contacts, 1), _B), collider_static_config.has_prunable_contacts)
 
     return ColliderState(
         sort_buffer=get_sort_buffer(solver),
@@ -759,13 +778,13 @@ def get_collider_state(
         first_time=V(dtype=gs.qd_bool, shape=(_B,)),
         contact_cache=get_contact_cache(solver, n_possible_pairs),
         broad_collision_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(max_collision_pairs_broad, 1), _B)),
-        contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
-        diff_contact_input=get_diff_contact_input(_B, max(max_contact_pairs, 1), True, requires_grad),
+        contact_data=get_contact_data(solver, max_candidate_contacts, requires_grad),
+        diff_contact_input=get_diff_contact_input(_B, max(max_candidate_contacts, 1), True, requires_grad),
         narrowphase_work_queues=get_narrowphase_work_queues(
             max(max_collision_pairs_broad * _B, 1) if collider_static_config.has_non_box_plane_convex_convex else 1
         ),
-        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_contact_pairs, 1), _B)),
-        contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_contact_pairs, 1), _B)),
+        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_candidate_contacts, 1), _B)),
+        contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_candidate_contacts, 1), _B)),
         contact_proj_v=V(dtype=gs.qd_float, shape=prune_shape),
         contact_keep=V(dtype=gs.qd_int, shape=prune_shape),
         contact_hull_stack=V(dtype=gs.qd_int, shape=prune_shape),
@@ -782,8 +801,12 @@ class ColliderInfo:
     collision_pair_idx: qd.Tensor
     max_possible_pairs: qd.Tensor
     max_collision_pairs: qd.Tensor
-    max_contact_pairs: qd.Tensor
+    max_candidate_contacts: qd.Tensor
     max_collision_pairs_broad: qd.Tensor
+    # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints
+    # per contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts'
+    # is set.
+    max_contacts: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
     n_valid_pairs: qd.Tensor
     valid_collision_pairs: qd.Tensor
@@ -820,8 +843,9 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         collision_pair_idx=V(dtype=gs.qd_int, shape=(solver.n_geoms_, solver.n_geoms_)),
         max_possible_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs=V(dtype=gs.qd_int, shape=()),
-        max_contact_pairs=V(dtype=gs.qd_int, shape=()),
+        max_candidate_contacts=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
+        max_contacts=V(dtype=gs.qd_int, shape=()),
         n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
         valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),
@@ -2159,10 +2183,17 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # ``func_cholesky_factor_direct_tiled`` + ``func_cholesky_solve_tiled`` pair. Requires
     # ``enable_tiled_cholesky_hessian`` for the fused kernel to be available.
     enable_fused_factor_solve_init: bool = False
-    # When True, some constraint-state tensors (eg Jaref, efc_D, ...) are allocated with ``layout=(1, 0)``,
-    # i.e. (_B, len_constraints_) physical storage. This unlocks coalesced cross-lane reads for the
-    # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
-    constraint_layout_transposed: bool = False
+    # When True, the constraint solver uses the GPU subgroup-cooperative kernel variants (warp-cooperative linesearch
+    # refinement, per-friction constraint builder, cooperative mass-matrix assembly), together with the batch-first
+    # tensor layouts they expect, eg (_B, len_constraints_) for Jaref / efc_D / ... which unlocks coalesced cross-lane
+    # reads.
+    enable_cooperative_constraint_kernels: bool = False
+    # Purely descriptive layout flag: True whenever the layout-flippable constraint-state tensors are physically
+    # batch-first, i.e. enable_cooperative_constraint_kernels or serialized execution (env loop outermost, so per-env
+    # rows must be contiguous). Consumers that only need iteration order to follow the physical layout (ndrange axes,
+    # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
+    # reductions) keys on enable_cooperative_constraint_kernels alone.
+    constraint_layout_batch_first: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

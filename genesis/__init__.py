@@ -263,7 +263,8 @@ def init(
             enable_fallback=False,
             # Add a (hidden) mechanism to forcible disable Quadrants debug mode as it is still a bit experimental
             debug=qd_debug and backend == _gs_backend.cpu,
-            check_out_of_bound=debug and backend != _gs_backend.metal,
+            # Forcibly disabling out of bound checks on GPU because memory usage is blowing up (x10)
+            check_out_of_bound=debug and backend == gs.cpu,  # backend != _gs_backend.metal,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
             force_scalarize_matrix=True,

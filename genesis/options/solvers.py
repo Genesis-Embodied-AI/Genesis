@@ -418,6 +418,15 @@ class RigidOptions(Options):
         Whether to disable all constraints. Defaults to False.
     max_collision_pairs : int, optional
         Maximum number of collision pairs. Defaults to 100.
+    max_contacts : int, optional
+        Maximum number of simultaneous contact points per environment that the constraint solver can handle, which
+        determines the size of the contact constraint buffers (4 constraints per contact point). Defaults to None.
+
+        This limit applies to the final contact points after pruning, not to the candidate contact points that
+        collision detection can emit (see 'max_collision_pairs'). Exceeding it at runtime halts the simulation with
+        an error. None resolves it automatically: the pre-pruning worst case or, when contact pruning is enabled
+        (see 'contact_pruning_tolerance'), 32 contact points per candidate link pair but no less than 512, whichever
+        is smaller.
     integrator : gs.integrator, optional
         Integrator type. Current supported integrators are 'gs.integrator.Euler', 'gs.integrator.implicitfast' and
         'gs.integrator.approximate_implicitfast'. 'Euler' and 'implicitfast' are consistent with their Mujoco
@@ -495,6 +504,7 @@ class RigidOptions(Options):
     enable_adjacent_collision: StrictBool = False
     disable_constraint: StrictBool = False
     max_collision_pairs: NonNegativeInt = 150
+    max_contacts: PositiveInt | None = None
     multiplier_collision_broad_phase: PositiveInt = 8
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
     IK_max_targets: PositiveInt = 6

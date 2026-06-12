@@ -32,8 +32,14 @@ class ConstraintSolverIsland:
         self.sparse_solve: bool = True
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
+        # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
+        collider_info = self._collider._collider_info
+        if rigid_solver._options.max_contacts is not None:
+            collider_info.max_contacts[None] = min(
+                rigid_solver._options.max_contacts, collider_info.max_candidate_contacts[None]
+            )
         self.len_constraints = int(
-            4 * self._collider._collider_info.max_contact_pairs[None]
+            4 * collider_info.max_contacts[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)

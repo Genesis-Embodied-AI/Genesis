@@ -405,14 +405,15 @@ def _func_decomp_linesearch_refine(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_refine_and_apply``. Dispatches at compile time
-    on ``constraint_layout_transposed`` to ``_func_decomp_linesearch_refine_coop`` (warp-cooperative, all 32 lanes)
-    or ``_func_decomp_linesearch_refine_serial`` (1-thread-per-env, bit-identical baseline).
+    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_refine_and_apply``. Dispatches at
+    compile time on ``enable_cooperative_constraint_kernels`` to ``_func_decomp_linesearch_refine_coop``
+    (warp-cooperative, all 32 lanes) or ``_func_decomp_linesearch_refine_serial`` (1-thread-per-env, bit-identical
+    baseline).
 
     Each branch passes the literal Python ``True`` / ``False`` for the ``coop`` template arg of the unified
     ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine``: Quadrants' ``qd.template()`` machinery does not
     auto-promote a struct member access to a compile-time value, so we cannot share a single call site here."""
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
         _func_decomp_linesearch_refine_coop(
             i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
         )
@@ -432,8 +433,8 @@ def _func_decomp_linesearch_refine_and_apply(
 
     The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via the unified
     ``func_linesearch_refine`` (templated on ``coop``: serial-on-tid-0 when False, cooperative across the 32-lane
-    warp when True), gated on ``constraint_layout_transposed``. It then cooperatively applies the chosen alpha to
-    qacc, Ma, and Jaref.
+    warp when True), gated on ``enable_cooperative_constraint_kernels``. It then cooperatively applies the chosen alpha
+    to qacc, Ma, and Jaref.
 
     The cooperative path is only safe when the layout-flippable constraint-state tensors are stored with
     ``layout=(1, 0)`` (so per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across constraints for a
@@ -563,7 +564,9 @@ def _func_update_constraint_forces(
 
     qd.loop_config(name="update_constraint_forces")
     for i_c, i_b in qd.ndrange(
-        len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        len_constraints,
+        _B,
+        axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None),
     ):
         if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
             _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
@@ -576,16 +579,16 @@ def _func_update_qfrc_constraint_per_dof(
 ):
     """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env), each summing serially over i_c.
 
-    Under ``constraint_layout_transposed`` the outer ndrange is swapped so adjacent lanes vary i_d: the qfrc_constraint
-    write coalesces under the flipped DOF-vec layout. (jac and efc_force are both in the Tier-1 / jac-flip set, so the
-    inner serial reads see the same stride pattern either way.)
+    Under ``enable_cooperative_constraint_kernels`` the outer ndrange is swapped so adjacent lanes vary i_d: the
+    qfrc_constraint write coalesces under the flipped DOF-vec layout. (jac and efc_force are both in the Tier-1 /
+    jac-flip set, so the inner serial reads see the same stride pattern either way.)
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 
     qd.loop_config(name="update_constraint_qfrc")
     for i_d, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
     ):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_con = constraint_state.n_constraints[i_b]
@@ -721,9 +724,9 @@ def _func_update_constraint_cost(
     static_rigid_sim_config: qd.template(),
 ):
     """Compute gauss and cost (reductions over dofs and constraints). Dispatches at compile time on
-    ``constraint_layout_transposed`` to ``_func_update_constraint_cost_coop`` (warp-per-env) or
+    ``enable_cooperative_constraint_kernels`` to ``_func_update_constraint_cost_coop`` (warp-per-env) or
     ``_func_update_constraint_cost_serial`` (1-thread-per-env, bit-identical baseline)."""
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
         _func_update_constraint_cost_coop(dofs_state, constraint_state, static_rigid_sim_config)
     else:
         _func_update_constraint_cost_serial(dofs_state, constraint_state, static_rigid_sim_config)
@@ -898,14 +901,14 @@ def _func_update_gradient_no_solve(
 ):
     """Compute gradient only (no Cholesky solve) — used with fused Cholesky+Solve.
 
-    Under ``constraint_layout_transposed`` the ndrange is swapped so adjacent lanes vary i_d — 3 of 4 in-loop accesses
-    (grad, Ma, qfrc_constraint) are flipped DOF-vec; only dofs_state.force stays canonical.
+    Under ``enable_cooperative_constraint_kernels`` the ndrange is swapped so adjacent lanes vary i_d - 3 of 4 in-loop
+    accesses (grad, Ma, qfrc_constraint) are flipped DOF-vec; only dofs_state.force stays canonical.
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
     qd.loop_config(name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_transposed else None)
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
     ):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             constraint_state.grad[i_d, i_b] = (

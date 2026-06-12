@@ -381,10 +381,10 @@ class RigidSolver(KinematicSolver):
             return gs.broadphase_traversal.SAP
         return gs.broadphase_traversal.ALL_VS_ALL
 
-    def _should_transpose_constraint_layout(self) -> bool:
-        """Decide whether to allocate the layout-flippable constraint-state with layout=(1, 0).
+    def _should_enable_cooperative_constraint_kernels(self) -> bool:
+        """Decide whether to use the subgroup-cooperative constraint kernels and their batch-first layouts.
 
-        The transposed layout (plus its companion cooperative kernels) wins on workloads with enough per-env compute
+        The cooperative kernels (plus the batch-first layouts they expect) win on workloads with enough per-env compute
         density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
         legacy 1-thread-per-env path is already coalesced under (len_constraints_, _B) and warp scheduling dominates.
 
@@ -435,6 +435,15 @@ class RigidSolver(KinematicSolver):
         # sparsity applies, matching the pre-existing behaviour.
         sparse_envelope = sparse_solve and gs.backend == gs.cpu and not self.sim.options.requires_grad
 
+        # The layout-flippable constraint-state tensors are stored batch-first either for the GPU cooperative kernels or
+        # under serialized execution, where the env loop is outermost and per-env rows must be contiguous to avoid
+        # stride-n_envs access. Batched sweeps key their iteration-axis order on the same flag, so that iteration order
+        # always follows the physical layout.
+        enable_cooperative_constraint_kernels = self._should_enable_cooperative_constraint_kernels()
+        constraint_layout_batch_first = (
+            enable_cooperative_constraint_kernels or self.sim._para_level < gs.PARA_LEVEL.ALL
+        )
+
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -458,7 +467,8 @@ class RigidSolver(KinematicSolver):
             parallel_init=(
                 gs.backend != gs.cpu and not self.sim.options.requires_grad and self.n_envs <= get_gpu_core_count()
             ),
-            constraint_layout_transposed=self._should_transpose_constraint_layout(),
+            enable_cooperative_constraint_kernels=enable_cooperative_constraint_kernels,
+            constraint_layout_batch_first=constraint_layout_batch_first,
         )
 
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
@@ -1101,10 +1111,16 @@ class RigidSolver(KinematicSolver):
                 f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
             )
         if errno & array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS:
-            max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
+            max_candidate_contacts = self.collider._collider_info.max_candidate_contacts[None]
             gs.raise_exception(
-                f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
-                "RigidSolver's option 'max_collision_pairs'."
+                f"Exceeding max number of candidate contact points ({max_candidate_contacts}). Please increase the "
+                "value of RigidSolver's option 'max_collision_pairs'."
+            )
+        if errno & array_class.ErrorCode.OVERFLOW_CONTACTS:
+            max_contacts = self.collider._collider_info.max_contacts[None]
+            gs.raise_exception(
+                f"Exceeding max number of post-pruning contact points ({max_contacts}) supported by the constraint "
+                "solver. Please increase the value of RigidSolver's option 'max_contacts'."
             )
         if errno & array_class.ErrorCode.INVALID_FORCE_NAN:
             gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")

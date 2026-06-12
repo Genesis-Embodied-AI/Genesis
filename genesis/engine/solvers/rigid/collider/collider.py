@@ -95,6 +95,9 @@ class Collider:
         self._diff_pos_tolerance = 1e-2
         self._diff_normal_tolerance = 1e-2
         self._prune_deep_penetration_ratio = 3.0
+        self._prune_max_contacts_per_link_pair = 32
+        self._prune_max_contacts_floor = 512
+        self._noslip_max_contacts = 128
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -172,7 +175,7 @@ class Collider:
             has_non_box_plane_convex_convex,
             has_convex_specialization,
             has_nonconvex_nonterrain,
-            self._n_possible_nonconvex_pairs,
+            self._large_contact_pair_mask,
         ) = self._compute_collision_pair_idx()
 
         # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
@@ -271,7 +274,7 @@ class Collider:
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
-        self._init_max_contact_pairs(self._n_possible_pairs, self._n_possible_nonconvex_pairs)
+        self._init_max_contacts(self._n_possible_pairs, self._large_contact_pair_mask)
         self._init_terrain_state()
 
         # Initialize [state], which stores every data that are may be updated at every single simulation step
@@ -355,7 +358,8 @@ class Collider:
 
         if n_geoms == 0:
             empty_pairs = np.empty((0, 2), dtype=gs.np_int)
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_pairs, False, False, False, False, 0
+            empty_mask = np.zeros((0,), dtype=bool)
+            return 0, np.full((0, 0), -1, dtype=gs.np_int), empty_pairs, False, False, False, False, empty_mask
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
@@ -581,7 +585,6 @@ class Collider:
             large_contact_mask = large_contact_mask | (
                 (valid_type_a == gs.GEOM_TYPE.BOX) & (valid_type_b == gs.GEOM_TYPE.BOX)
             )
-        n_possible_nonconvex_pairs = int(np.count_nonzero(large_contact_mask))
 
         return (
             n_possible_pairs,
@@ -591,7 +594,7 @@ class Collider:
             has_non_box_plane_convex_convex,
             has_convex_specialization,
             has_nonconvex_vs_nonterrain,
-            n_possible_nonconvex_pairs,
+            large_contact_mask,
         )
 
     def _compute_verts_connectivity(self):
@@ -631,7 +634,8 @@ class Collider:
             self._collider_info.vert_neighbor_start.from_numpy(vert_neighbor_start)
             self._collider_info.vert_n_neighbors.from_numpy(vert_n_neighbors)
 
-    def _init_max_contact_pairs(self, n_possible_pairs, n_possible_nonconvex_pairs):
+    def _init_max_contacts(self, n_possible_pairs, large_contact_pair_mask):
+        n_possible_nonconvex_pairs = int(np.count_nonzero(large_contact_pair_mask))
         max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
         # Size the contact buffer per regime: nonconvex pairs each emit up to n_contacts_per_nonconvex_pair, convex and
         # terrain pairs up to n_contacts_per_convex_pair. The worst case fills the capped pair budget with as many
@@ -640,13 +644,47 @@ class Collider:
         cap_convex = self._collider_static_config.n_contacts_per_convex_pair
         n_nonconvex = min(n_possible_nonconvex_pairs, max_collision_pairs)
         n_convex = min(n_possible_pairs - n_possible_nonconvex_pairs, max_collision_pairs - n_nonconvex)
-        max_contact_pairs = n_nonconvex * cap_nonconvex + n_convex * cap_convex
-        max_contact_pairs_broad = max_collision_pairs * self._solver._options.multiplier_collision_broad_phase
+        max_candidate_contacts = n_nonconvex * cap_nonconvex + n_convex * cap_convex
+        max_collision_pairs_broad = max_collision_pairs * self._solver._options.multiplier_collision_broad_phase
+
+        # Post-pruning contact budget for sizing the contact constraint buffers. The physical contact buffer must hold
+        # everything the narrowphase can emit (max_candidate_contacts), but the constraint solver only consumes
+        # contacts surviving link-pair pruning, which keeps roughly the 2D support polygon of each (link_a, link_b)
+        # contact patch. Cap each candidate link pair at _prune_max_contacts_per_link_pair points (or the sum of its
+        # geom-pair caps if smaller) instead of the per-geom-pair worst case. This is a heuristic, not a hard
+        # guarantee: conforming (non-coplanar) contact patches are not pruned and can exceed the cap, which clamps
+        # the contact count and halts the simulation with a request to increase 'max_contacts'. Tightening only pays
+        # off when the worst case is large, so the budget never goes below _prune_max_contacts_floor: under it, the
+        # halt risk buys no meaningful memory savings. The constraint solver overrides this budget at build time when
+        # 'max_contacts' is set.
+        max_contacts = max_candidate_contacts
+        if (
+            self._collider_static_config.has_prunable_contacts
+            and not self._solver._requires_grad
+            and self._solver._options.contact_pruning_tolerance is not None
+        ):
+            geoms_link_idx = np.array([geom.link.idx for geom in self._solver.geoms], dtype=np.int64)
+            pairs_link_idx = geoms_link_idx[self._valid_collision_pairs]
+            pairs_key = self._solver.n_links * pairs_link_idx.min(axis=1) + pairs_link_idx.max(axis=1)
+            _, pairs_group_idx = np.unique(pairs_key, return_inverse=True)
+            pairs_n_contacts = np.where(large_contact_pair_mask, cap_nonconvex, cap_convex)
+            link_pairs_n_contacts = np.bincount(pairs_group_idx, weights=pairs_n_contacts)
+            max_contacts_pruned = np.minimum(link_pairs_n_contacts, self._prune_max_contacts_per_link_pair)
+            max_contacts_pruned_total = max(int(max_contacts_pruned.sum()), self._prune_max_contacts_floor)
+            max_contacts = min(max_contacts, max_contacts_pruned_total)
+
+        # The noslip dual matrix efc_AR is quadratic in the contact budget, so noslip scenes get a much tighter
+        # default cap: measured noslip workloads (manipulation-style scenes) peak below ~70 simultaneous contact
+        # points, while the worst-case candidate budget is orders of magnitude larger. A denser scene hits the
+        # max_contacts clamp and halts with a request to set 'max_contacts' explicitly, which overrides this cap.
+        if self._solver._options.noslip_iterations > 0 and self._solver._options.max_contacts is None:
+            max_contacts = min(max_contacts, self._noslip_max_contacts)
 
         self._collider_info.max_possible_pairs[None] = n_possible_pairs
         self._collider_info.max_collision_pairs[None] = max_collision_pairs
-        self._collider_info.max_collision_pairs_broad[None] = max_contact_pairs_broad
-        self._collider_info.max_contact_pairs[None] = max_contact_pairs
+        self._collider_info.max_collision_pairs_broad[None] = max_collision_pairs_broad
+        self._collider_info.max_candidate_contacts[None] = max_candidate_contacts
+        self._collider_info.max_contacts[None] = max_contacts
 
     def _init_terrain_state(self):
         if self._collider_static_config.has_terrain:
@@ -937,6 +975,7 @@ class Collider:
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
+                self._solver._errno,
             )
         else:
             func_clamp_prune_and_sort_contacts(
@@ -945,6 +984,7 @@ class Collider:
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
+                self._solver._errno,
             )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
@@ -991,7 +1031,7 @@ class Collider:
                     else:
                         data = tensor_to_array(data)
                 else:
-                    # data shape is (_B, max_contact_pairs) for scalars or (_B, max_contact_pairs, 3) for vectors.
+                    # data shape is (_B, max_candidate_contacts) for scalars, with a trailing 3 axis for vectors.
                     gidx = gather_idx_vec if data.dim() == 3 else gather_idx_flat
                     data = data.gather(dim=1, index=gidx)
                     if n_envs == 0 and not keep_batch_dim:

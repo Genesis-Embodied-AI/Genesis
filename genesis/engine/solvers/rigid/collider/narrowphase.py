@@ -2150,12 +2150,12 @@ def _func_multicontact_mpr(
     if n_con > 0:
         # Non-atomic pre-check to avoid reserving slots we cannot fill. A rare race between the read and the
         # atomic_add below may still overshoot; in that case we write only the contacts that fit and set errno.
-        max_contact_pairs = collider_info.max_contact_pairs[None]
-        if collider_state.n_contacts[i_b] + n_con > max_contact_pairs:
+        max_candidate_contacts = collider_info.max_candidate_contacts[None]
+        if collider_state.n_contacts[i_b] + n_con > max_candidate_contacts:
             errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
         else:
             start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
-            n_con = qd.math.clamp(max_contact_pairs - start_idx, 0, n_con)
+            n_con = qd.math.clamp(max_candidate_contacts - start_idx, 0, n_con)
             if n_con == 0:
                 errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
             for i in range(n_con):
