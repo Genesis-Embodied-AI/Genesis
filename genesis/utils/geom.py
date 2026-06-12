@@ -979,7 +979,9 @@ def _np_quat_mul(u, v, out=None):
     qq = 0.5 * (xx + (z1 - x1) * (x2 - y2))
 
     if out is None:
-        out_ = np.empty(u_2d.shape, dtype=qq.dtype)
+        # Use the dtype obtained by promoting the inputs (e.g. 'ww', a pure u/v product), not 'qq', whose float64
+        # literal would otherwise upcast a float32 result.
+        out_ = np.empty(u_2d.shape, dtype=ww.dtype)
     else:
         assert out.shape == u.shape
         out_ = out
