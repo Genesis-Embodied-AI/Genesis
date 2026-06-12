@@ -869,6 +869,15 @@ class KinematicSolver(Solver):
         )
         if self.n_envs == 0:
             pos_grad_ = pos_grad_.unsqueeze(0)
+        # A relative 'set_pos' adds 'R(user_quat) @ offset_pos', which reads the current orientation; that dependency
+        # is not propagated, so with a non-zero offset position the backward pass is only supported on links without
+        # one. 'relative=False' sets the world position directly and is a plain passthrough.
+        if relative and not self._links_offset_pos_is_identity[links_idx].all():
+            gs.raise_exception(
+                "Backward pass for 'set_pos' with 'relative=True' is only supported on links without an offset "
+                "position (no inertial alignment shifting the link origin). Use 'relative=False' to set the world "
+                "position."
+            )
         kernel_set_links_pos_grad(
             pos_grad_,
             links_idx,
