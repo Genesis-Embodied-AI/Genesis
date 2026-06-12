@@ -95,71 +95,6 @@ JOINT_STRENGTH_RATIO = 100.0
 COM_AABB_TOL = 2e-3
 
 
-def _combine_inertials(
-    parent_link: "RigidLink",
-    children: "list[RigidLink]",
-) -> "tuple[float, np.ndarray, np.ndarray]":
-    """Combine inertial properties of a parent link and its merged children.
-
-    Uses the parallel axis theorem to shift each body's inertia tensor to the
-    parent link's origin, then sums mass, computes combined COM, and shifts
-    the total inertia tensor to the combined COM.
-
-    Parameters
-    ----------
-    parent_link : RigidLink
-        The target link whose frame defines the output.
-    children : list[RigidLink]
-        Fixed-joint child links being merged into *parent_link*.
-
-    Returns
-    -------
-    tuple[float, np.ndarray, np.ndarray]
-        (total_mass, combined_com, combined_inertia) in parent-local frame.
-    """
-    total_mass = float(parent_link.inertial_mass)
-    # Weighted COM accumulator (in parent-local frame)
-    weighted_com = total_mass * np.asarray(parent_link.inertial_pos, dtype=np.float64)
-    # Inertia at parent-link origin (parallel axis from parent COM)
-    I_origin = _shift_inertia_to_origin(
-        np.asarray(parent_link.inertial_i, dtype=np.float64),
-        np.asarray(parent_link.inertial_pos, dtype=np.float64),
-        total_mass,
-    )
-
-    for child in children:
-        child_mass = child.inertial_mass
-        if child_mass is None or float(child_mass) < gs.EPS:
-            continue
-        m = float(child_mass)
-        child_com_local = np.asarray(child.inertial_pos, dtype=np.float64)
-        child_I_local = np.asarray(child.inertial_i, dtype=np.float64)
-
-        # Transform child COM and inertia into parent frame
-        rel_pos, rel_quat = compute_link_to_link_transform(child, parent_link)
-        rel_pos = np.asarray(rel_pos, dtype=np.float64)
-        R_child_to_parent = gu.quat_to_R(np.asarray(rel_quat, dtype=np.float64))
-
-        com_in_parent = R_child_to_parent @ child_com_local + rel_pos
-        I_in_parent = R_child_to_parent @ child_I_local @ R_child_to_parent.T
-
-        total_mass += m
-        weighted_com += m * com_in_parent
-        I_origin += _shift_inertia_to_origin(I_in_parent, com_in_parent, m)
-
-    combined_com = weighted_com / total_mass
-    # Shift accumulated inertia from origin to combined COM (reverse parallel axis)
-    d = combined_com
-    combined_I = I_origin - total_mass * (np.dot(d, d) * np.eye(3) - np.outer(d, d))
-    return total_mass, combined_com, combined_I
-
-
-def _shift_inertia_to_origin(I_com: np.ndarray, com: np.ndarray, mass: float) -> np.ndarray:
-    """Shift inertia tensor from COM to the frame origin via parallel axis theorem."""
-    d = com
-    return I_com + mass * (np.dot(d, d) * np.eye(3) - np.outer(d, d))
-
-
 def _link_is_fixed_for_ipc(link: "RigidLink") -> bool:
     """Whether a link should be treated as fixed in IPC.
 
@@ -372,8 +307,8 @@ class IPCCoupler(RBC):
         # Check if uipc is available
         if not UIPC_AVAILABLE:
             raise ImportError(
-                "Python module 'uipc' is required by IPCCoupler but is not installed. Please install it via "
-                "`pip install pyuipc`."
+                "Python module 'uipc' is required by IPCCoupler but is not installed. "
+                "Please install it via `pip install pyuipc`."
             )
 
         self.sim = simulator
@@ -403,8 +338,6 @@ class IPCCoupler(RBC):
         # ==== Newton iteration counter (captures libuipc stderr) ====
         self._newton_counter = _NewtonIterCounter()
         self._ipc_frame = 0
-        # Saved states for save_state/load_state (frame → snapshot dict)
-        self._saved_states: dict[int, dict] = {}
 
         # ==== IPC Constitutions ====
         self._ipc_abd: AffineBodyConstitution | None = None
@@ -420,10 +353,6 @@ class IPCCoupler(RBC):
         self._ipc_clothes_contact: dict["FEMEntity", ContactElement] = {}
         self._ipc_abd_links_contact: dict["RigidLink", ContactElement] = {}
         self._ipc_grounds_contact: dict["RigidEntity", ContactElement] = {}
-
-        # ==== Entity Collision Pair Overrides (pre-build) ====
-        # Frozensets of (entity_a, entity_b) whose cross-entity ABD collision is disabled.
-        self._disabled_collision_pairs: set[frozenset] = set()
 
         # ==== Entity Coupling Configuration ====
         self._coup_type_by_entity: dict["RigidEntity", COUPLING_TYPE] = {}
@@ -463,21 +392,6 @@ class IPCCoupler(RBC):
     # ============================================================
     # Section 1: Configuration API
     # ============================================================
-
-    def disable_collision_pair(self, entity_a: "RigidEntity", entity_b: "RigidEntity") -> None:
-        """Disable IPC collision between two cross-entity ABD rigid bodies.
-
-        Must be called before ``scene.build()``.  Order does not matter.
-        """
-        self._disabled_collision_pairs.add(frozenset((entity_a, entity_b)))
-
-    def enable_collision_pair(self, entity_a: "RigidEntity", entity_b: "RigidEntity") -> None:
-        """Re-enable a previously disabled cross-entity collision pair.
-
-        Must be called before ``scene.build()``.
-        """
-        self._disabled_collision_pairs.discard(frozenset((entity_a, entity_b)))
-
     def build(self) -> None:
         """Build IPC system"""
         # IPC coupler builds a single IPC scene shared across all envs, so it requires
@@ -1191,14 +1105,6 @@ class IPCCoupler(RBC):
                         gs.logger.debug(f"[IPC CONTACT] DISABLED overlapping: {link_i.name} × {link_j.name}")
                         continue
 
-                # Cross-entity collision pair override
-                if link_i.entity is not link_j.entity:
-                    if frozenset((link_i.entity, link_j.entity)) in self._disabled_collision_pairs:
-                        self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        _n_disabled += 1
-                        gs.logger.debug(f"[IPC CONTACT] DISABLED by pair override: {link_i.name} × {link_j.name}")
-                        continue
-
                 gs.logger.debug(f"[IPC CONTACT] ENABLED: {link_i.name} × {link_j.name}")
                 _n_enabled += 1
                 self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, True)
@@ -1383,7 +1289,6 @@ class IPCCoupler(RBC):
             assert envs_set == all_envs, f"IPC coupler only supports full reset, got envs_idx={envs_idx}"
 
         self._abd_updated_links.clear()
-        self._saved_states.clear()
         self._ipc_frame = 0
 
         self._ipc_world.recover(0)
@@ -1408,128 +1313,6 @@ class IPCCoupler(RBC):
             for ad in self._articulation_data_by_entity.values():
                 ad.delta_theta_tilde[:] = 0.0
                 ad.prev_qpos[:] = qpos[..., ad.q_slice]
-
-    # ------------------------------------------------------------------
-    # Manual save / load
-    # ------------------------------------------------------------------
-
-    def save_state(self) -> int:
-        """Save the current IPC + Genesis coupling state and return the frame id.
-
-        The saved frame can later be restored with :meth:`load_state`.
-        Internally this calls ``libuipc World.dump()`` and snapshots the
-        Genesis-side cached arrays (qpos_prev, articulation data, ABD
-        transforms) so they can be restored consistently.
-
-        Returns
-        -------
-        int
-            The IPC frame number of the saved state.
-        """
-        assert gs.logger is not None
-        assert self._ipc_world is not None
-
-        ok = self._ipc_world.dump()
-        if not ok:
-            gs.raise_exception(f"[IPC] dump() failed at frame {self._ipc_frame}")
-
-        # Snapshot Genesis-side state that is NOT stored inside libuipc
-        snapshot: dict = {
-            "ipc_frame": self._ipc_frame,
-        }
-        if self.rigid_solver.is_active:
-            snapshot["qpos"] = qd_to_numpy(self.rigid_solver.qpos, transpose=True).copy()
-            snapshot["qpos_prev"] = qd_to_numpy(self.rigid_solver.qpos_prev, transpose=True).copy()
-        for entity, ad in self._articulation_data_by_entity.items():
-            snapshot[("art_delta_theta", id(entity))] = (
-                ad.delta_theta_tilde.copy() if ad.delta_theta_tilde is not None else None
-            )
-            snapshot[("art_prev_qpos", id(entity))] = ad.prev_qpos.copy() if ad.prev_qpos is not None else None
-        for link, abd_data in self._abd_data_by_link.items():
-            snapshot[("abd_ipc_transforms", id(link))] = (
-                abd_data.ipc_transforms.copy() if abd_data.ipc_transforms is not None else None
-            )
-            snapshot[("abd_ipc_velocities", id(link))] = (
-                abd_data.ipc_velocities.copy() if abd_data.ipc_velocities is not None else None
-            )
-            snapshot[("abd_aim_transforms", id(link))] = (
-                abd_data.aim_transforms.copy() if abd_data.aim_transforms is not None else None
-            )
-
-        self._saved_states[self._ipc_frame] = snapshot
-        gs.logger.info(f"[IPC] Saved state at frame {self._ipc_frame}")
-        return self._ipc_frame
-
-    def load_state(self, frame: int) -> None:
-        """Restore a previously saved IPC + Genesis coupling state.
-
-        Parameters
-        ----------
-        frame : int
-            The frame number returned by :meth:`save_state`.
-        """
-        assert gs.logger is not None
-        assert self._ipc_world is not None
-
-        if frame not in self._saved_states:
-            gs.raise_exception(f"[IPC] No saved state at frame {frame}. Available: {sorted(self._saved_states.keys())}")
-
-        # Recover libuipc side
-        ok = self._ipc_world.recover(frame)
-        if not ok:
-            gs.raise_exception(f"[IPC] recover({frame}) failed")
-        self._ipc_world.retrieve()
-
-        # Restore Genesis-side snapshot
-        snapshot = self._saved_states[frame]
-        self._ipc_frame = snapshot["ipc_frame"]
-        self._abd_updated_links.clear()
-
-        # Re-sync cached IPC transforms
-        self._retrieve_ipc_rigid_states()
-
-        # Restore qpos and qpos_prev
-        if self.rigid_solver.is_active and "qpos" in snapshot:
-            qpos_tc = qd_to_torch(self.rigid_solver.qpos, copy=False)
-            qpos_prev_tc = qd_to_torch(self.rigid_solver.qpos_prev, copy=False)
-            saved_qpos = torch.as_tensor(snapshot["qpos"], dtype=qpos_tc.dtype, device=qpos_tc.device)
-            saved_prev = torch.as_tensor(snapshot["qpos_prev"], dtype=qpos_tc.dtype, device=qpos_tc.device)
-            # qpos/qpos_prev are stored as (B, n_qs) — match the transposed layout
-            if saved_qpos.shape == qpos_tc.shape:
-                qpos_tc.copy_(saved_qpos)
-                qpos_prev_tc.copy_(saved_prev)
-            else:
-                # Transposed: (n_qs, B) in qd vs (B, n_qs) in snapshot
-                qpos_tc.copy_(saved_qpos.T)
-                qpos_prev_tc.copy_(saved_prev.T)
-
-        # Restore articulation cached state
-        for entity, ad in self._articulation_data_by_entity.items():
-            key_dt = ("art_delta_theta", id(entity))
-            key_pq = ("art_prev_qpos", id(entity))
-            if key_dt in snapshot and snapshot[key_dt] is not None:
-                ad.delta_theta_tilde[:] = snapshot[key_dt]
-            if key_pq in snapshot and snapshot[key_pq] is not None:
-                ad.prev_qpos[:] = snapshot[key_pq]
-
-        # Restore ABD cached transforms
-        for link, abd_data in self._abd_data_by_link.items():
-            key_t = ("abd_ipc_transforms", id(link))
-            key_v = ("abd_ipc_velocities", id(link))
-            key_a = ("abd_aim_transforms", id(link))
-            if key_t in snapshot and snapshot[key_t] is not None:
-                abd_data.ipc_transforms[:] = snapshot[key_t]
-            if key_v in snapshot and snapshot[key_v] is not None:
-                abd_data.ipc_velocities[:] = snapshot[key_v]
-            if key_a in snapshot and snapshot[key_a] is not None:
-                abd_data.aim_transforms[:] = snapshot[key_a]
-
-        # Write restored IPC state back to the rigid solver and run FK
-        # so that entity.get_pos()/get_quat() reflect the restored state.
-        self._post_advance_write_qpos()
-        self._sync_rigid_fk()
-
-        gs.logger.info(f"[IPC] Loaded state from frame {frame}")
 
     def _mark_abd_link_updated(self, link: "RigidLink", env_set: set[int]):
         """Add a link to the updated set for the given environments."""
@@ -1768,24 +1551,6 @@ class IPCCoupler(RBC):
                 ad.prev_qpos[:] = entity_qpos_prev
                 entity_mass = mass_matrix[:, ad.dof_slice, ad.dof_slice]
                 ad.mass_matrix[:] = entity_mass
-
-                # Debug: check mass matrix for NaN/Inf/singularity
-                if False:
-                    import numpy as _np
-
-                    for env_idx in range(self._B):
-                        M = entity_mass[env_idx]
-                        has_nan = _np.any(_np.isnan(M))
-                        has_inf = _np.any(_np.isinf(M))
-                        diag = _np.diag(M)
-                        min_diag = _np.min(diag)
-                        max_diag = _np.max(diag)
-                        det = _np.linalg.det(M) if M.shape[0] <= 20 else float("nan")
-                        gs.logger.info(
-                            f"[IPC DEBUG] mass_matrix env={env_idx}: shape={M.shape}, "
-                            f"nan={has_nan}, inf={has_inf}, diag_range=[{min_diag:.6e}, {max_diag:.6e}], "
-                            f"det={det:.6e}, delta_theta={ad.delta_theta_tilde[env_idx]}"
-                        )
 
         # Store transforms for all rigid links
         links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
