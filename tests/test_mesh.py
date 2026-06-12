@@ -353,13 +353,6 @@ def test_mesh_yup(show_viewer):
     if show_viewer:
         scene.build()
 
-    assert not glb_y.vgeoms[0].vmesh.metadata["imported_as_zup"]
-    assert not glb_z.vgeoms[0].vmesh.metadata["imported_as_zup"]
-    assert not stl_y.vgeoms[0].vmesh.metadata["imported_as_zup"]
-    assert stl_z.vgeoms[0].vmesh.metadata["imported_as_zup"]
-    assert not obj_y.vgeoms[0].vmesh.metadata["imported_as_zup"]
-    assert obj_z.vgeoms[0].vmesh.metadata["imported_as_zup"]
-
     bounding_boxes = []
     for entity in (glb_y, glb_z, stl_y, stl_z, obj_y, obj_z):
         tmeshes = []
@@ -372,6 +365,11 @@ def test_mesh_yup(show_viewer):
             tmeshes.append(tmesh)
         combined = trimesh.util.concatenate(tmeshes)
         assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+        # Replaces deleted `metadata["imported_as_zup"]` asserts: cannon's long axis must come out on z.
+        extents = combined.bounding_box.extents
+        assert extents[1] > extents[0] > extents[2], (
+            f"{entity.morph.file}: expected extents Y>X>Z (cannon laying along Y), got {extents}"
+        )
         bounding_boxes.append(combined.bounding_box.bounds)
     # FIXME: The STL files are actually different from the glTF...
     # assert_allclose(np.diff(bounding_boxes, axis=0), 0.0, tol=0.001)
@@ -637,12 +635,12 @@ def test_glb_shared_texture_not_duplicated(tmp_path):
         ),
     )
 
-    # Submeshes are kept separate (group_by_material defaults to False to preserve baked convex decompositions), but
-    # they share one Surface whose resolved RGBA texture is memoized, so a single image array backs all of them rather
-    # than one full-resolution copy per submesh.
+    # Each Mesh owns its own Surface (per the lifecycle gate — Mesh.__init__ finalizes), but
+    # the underlying texture instances are shared via shallow `model_copy`, and `_combine_textures`
+    # memoizes the resolved RGBA texture. A single image array still backs all submeshes — i.e.
+    # the big texture memory is not duplicated even though the Surface containers are distinct.
     vgeoms = entity.vgeoms
     assert len(vgeoms) == n_submeshes
-    assert len({id(geom.surface) for geom in vgeoms}) == 1
     # Hold every array alive before counting so that ids cannot be recycled by the garbage collector.
     rgba_arrays = [geom.surface.get_rgba().image_array for geom in vgeoms]
     assert len({id(array) for array in rgba_arrays}) == 1
@@ -996,3 +994,61 @@ def test_convex_decompose_cache(monkeypatch):
     for scaled_part, cached_part in zip(scaled_parts, cached_parts):
         assert_allclose(scaled_part.vertices, cached_part.vertices * (second_scale / first_scale), rtol=1e-6)
         assert_equal(scaled_part.faces, cached_part.faces)
+
+
+# ==================== Surface finalizing Tests ====================
+
+
+@pytest.mark.required
+def test_surface_finalize_across_morphs(tmp_path):
+    """For every supported Morph, entity.surface_override must stay un-finalized while every
+    per-geom (vgeom + collision geom) surface that the entity exposes must be finalized.
+    This is the contract downstream consumers (rasterizer, exporters) rely on."""
+    urdf_path = tmp_path / "two_link.urdf"
+    urdf_path.write_text(
+        """<robot name="two_link">
+              <link name="base"><visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual></link>
+              <link name="tip"><visual><geometry><sphere radius="0.05"/></geometry></visual></link>
+              <joint name="j" type="fixed"><parent link="base"/><child link="tip"/></joint>
+            </robot>
+         """
+    )
+    mjcf_path = tmp_path / "two_geom.xml"
+    mjcf_path.write_text(
+        """<mujoco>
+              <worldbody>
+                <body><geom type="box" size="0.05 0.05 0.05"/></body>
+                <body><geom type="sphere" size="0.05"/></body>
+              </worldbody>
+            </mujoco>
+         """
+    )
+
+    morphs = [
+        ("Box", gs.morphs.Box(size=(0.1, 0.1, 0.1))),
+        ("Sphere", gs.morphs.Sphere(radius=0.05)),
+        ("Cylinder", gs.morphs.Cylinder(radius=0.05, height=0.1)),
+        ("Plane", gs.morphs.Plane()),
+        ("Mesh-obj", gs.morphs.Mesh(file="meshes/axis.obj")),
+        ("Mesh-glb", gs.morphs.Mesh(file="meshes/camera/camera.glb")),
+        ("URDF", gs.morphs.URDF(file=str(urdf_path))),
+        ("MJCF", gs.morphs.MJCF(file=str(mjcf_path))),
+    ]
+    # Note: USD lifecycle assertions live in tests/test_usd.py (USD support is pxr-gated).
+
+    scene = gs.Scene(show_viewer=False, show_FPS=False)
+    for _, morph in morphs:
+        scene.add_entity(morph=morph)
+
+    for (name, _), entity in zip(morphs, scene.entities):
+        assert entity.surface_override._finalized is False, (
+            f"{name}: entity.surface_override must stay un-finalized (user's input); got finalized."
+        )
+        for vgeom in entity.vgeoms:
+            assert vgeom.vmesh._surface._finalized is True, (
+                f"{name}: vgeom.vmesh.surface must be finalized post-Mesh.__init__."
+            )
+        for geom in entity.geoms:
+            assert geom.mesh._surface._finalized is True, (
+                f"{name}: collision geom.mesh.surface must be finalized post-Mesh.__init__."
+            )

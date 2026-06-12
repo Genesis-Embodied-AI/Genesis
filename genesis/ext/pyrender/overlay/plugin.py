@@ -218,13 +218,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
     def _apply_entity_vis_mode(self, entity, mode: str):
         """Switch the entity's rendered mesh between ``"visual"`` and ``"collision"``. Removes the previous
-        render nodes from the context, swaps ``entity.surface.vis_mode``, then rebuilds nodes from the
+        render nodes from the context, swaps ``entity.vis_mode``, then rebuilds nodes from the
         appropriate geom set."""
         from genesis.ext import pyrender
 
-        if not isinstance(entity.surface, gs.surfaces.Surface):
+        if not isinstance(entity, gs.engine.entities.RigidEntity):
             return
-        old_mode = entity.surface.vis_mode
+        old_mode = entity.vis_mode
         if old_mode == mode:
             return
 
@@ -238,7 +238,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     ctx.remove_node(ctx.rigid_nodes[geom.uid])
                     del ctx.rigid_nodes[geom.uid]
 
-            entity.surface.vis_mode = mode
+            entity.vis_mode = mode
             self._refresh_visuals()
 
             is_collision = mode == "collision"
@@ -378,7 +378,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             # not silently become Rigid, the add_entity default). visualize_contact is rigid-only.
             if isinstance(entity, gs.engine.entities.KinematicEntity):
                 kwargs["material"] = entity.material
-                kwargs["surface"] = entity.surface
+                kwargs["surface"] = entity.surface_override
                 if isinstance(entity, gs.engine.entities.RigidEntity):
                     kwargs["visualize_contact"] = entity.visualize_contact
             self._pending_entities_kwargs[entity.name] = kwargs
@@ -1099,7 +1099,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             # Vis mode combo. The collision item is greyed out unless the entity has collision geometry (kinematic
             # entities have none, and rigid entities can be loaded without it), so an empty mode is never selectable.
             has_collision = is_rigid and len(entity.geoms) > 0
-            current_mode = entity.surface.vis_mode
+            current_mode = entity.vis_mode
             if imgui.begin_combo(f"Vis Mode##vis_{entity_idx}", current_mode):
                 for mode in ("visual", "collision"):
                     disabled = mode == "collision" and not has_collision
@@ -1119,7 +1119,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             if changed_wf:
                 self._wireframe_state[entity_idx] = new_wf
                 ctx = self.viewer.gs_context
-                geoms = entity.vgeoms if entity.surface.vis_mode == "visual" else entity.geoms
+                geoms = entity.vgeoms if entity.vis_mode == "visual" else entity.geoms
                 for geom in geoms:
                     node = ctx.rigid_nodes.get(geom.uid)
                     if node is None:

@@ -270,13 +270,13 @@ class Raytracer:
         # rigid entities
         if self.sim.rigid_solver.is_active:
             for rigid_entity in self.sim.rigid_solver.entities:
-                if rigid_entity.surface.vis_mode == "visual":
+                if rigid_entity.vis_mode == "visual":
                     geoms = rigid_entity.vgeoms
                 else:
                     geoms = rigid_entity.geoms
 
                 for geom in geoms:
-                    if "sdf" in rigid_entity.surface.vis_mode:
+                    if "sdf" in rigid_entity.vis_mode:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
@@ -291,7 +291,7 @@ class Raytracer:
         # kinematic entities
         if self.sim.kinematic_solver.is_active:
             for kinematic_entity in self.sim.kinematic_solver.entities:
-                assert kinematic_entity.surface.vis_mode == "visual"
+                assert kinematic_entity.vis_mode == "visual"
                 for geom in kinematic_entity.vgeoms:
                     mesh = geom.get_trimesh()
                     self.add_rigid_batch(
@@ -305,7 +305,7 @@ class Raytracer:
         # MPM particles
         if self.sim.mpm_solver.is_active:
             for mpm_entity in self.sim.mpm_solver.entities:
-                if mpm_entity.surface.vis_mode == "visual":
+                if mpm_entity.vis_mode == "visual":
                     self.add_deformable(str(mpm_entity.uid))
                 else:
                     self.add_particles(
@@ -320,7 +320,7 @@ class Raytracer:
         # PBD entities
         if self.sim.pbd_solver.is_active:
             for pbd_entity in self.sim.pbd_solver.entities:
-                if pbd_entity.surface.vis_mode == "visual":
+                if pbd_entity.vis_mode == "visual":
                     self.add_deformable(str(pbd_entity.uid))
                 else:
                     if self.render_particle_as == "sphere":
@@ -333,7 +333,7 @@ class Raytracer:
         # FEM entities
         if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
+                if fem_entity.vis_mode == "visual":
                     self.add_deformable(str(fem_entity.uid))
 
     def get_transform(self, matrix):
@@ -371,10 +371,10 @@ class Raytracer:
 
     def add_surface(self, shape_name, surface):
         # add emission
-        if surface.emission is not None:
+        if surface.emissive_tex is not None:
             emission_luisa = LuisaRenderPy.Light(
                 name=f"emis_{shape_name}",
-                emission=self.get_texture(surface.emission),
+                emission=self.get_texture(surface.emissive_tex),
                 two_sided=False if surface.double_sided is None else surface.double_sided,
                 beam_angle=surface.cutoff,
             )
@@ -677,7 +677,7 @@ class Raytracer:
                 continue
 
             for entity in solver.entities:
-                if entity.surface.vis_mode == "visual":
+                if entity.vis_mode == "visual":
                     geoms = entity.vgeoms
                     geoms_T = solver._vgeoms_render_T
                 else:
@@ -698,7 +698,7 @@ class Raytracer:
             vverts_all = self.sim.mpm_solver.vverts_render.pos.to_numpy()[:, self.rendered_envs_idx[0]]
 
             for mpm_entity in self.sim.mpm_solver.entities:
-                if mpm_entity.surface.vis_mode == "visual":
+                if mpm_entity.vis_mode == "visual":
                     vverts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end]
 
                     self.update_deformable(
@@ -747,7 +747,7 @@ class Raytracer:
             vverts_all = self.sim.pbd_solver.vverts_render.pos.to_numpy()[:, idx]
 
             for pbd_entity in self.sim.pbd_solver.entities:
-                if pbd_entity.surface.vis_mode == "visual":
+                if pbd_entity.vis_mode == "visual":
                     vverts = vverts_all[pbd_entity.vvert_start : pbd_entity.vvert_end]
 
                     self.update_deformable(
@@ -787,7 +787,7 @@ class Raytracer:
             uvs_all = uvs_qd.to_numpy()
 
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
+                if fem_entity.vis_mode == "visual":
                     vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                     triangles = (
                         triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]

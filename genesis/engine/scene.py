@@ -582,8 +582,10 @@ class Scene(RBC):
 
         if not isinstance(morph, (gs.morphs.Primitive, gs.morphs.Mesh)):
             gs.raise_exception("Light morph only supports `gs.morphs.Primitive` or `gs.morphs.Mesh`.")
-        mesh = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
-        self._visualizer.add_mesh_light(mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff)
+        meshes = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
+        self._visualizer.add_mesh_light(
+            meshes[0], color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff
+        )
 
     @gs.assert_unbuilt
     def add_light(

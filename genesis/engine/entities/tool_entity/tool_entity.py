@@ -32,6 +32,9 @@ class ToolEntity(Entity):
     ):
         super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
+        self._surface = self.surface_override.model_copy()
+        self._surface.finalize_texture()
+
         self._init_pos = np.array(morph.pos, dtype=gs.np_float)
         self._init_quat = np.array(morph.quat, dtype=gs.np_float)
 

@@ -34,7 +34,7 @@ class Entity(RBC):
         self._solver = solver
         self._material = material
         self._morph = morph
-        self._surface = surface
+        self._surface_override = surface
         self._sim = scene.sim
 
         # Set entity name (auto-generate if not provided)
@@ -76,8 +76,29 @@ class Entity(RBC):
         return self._solver
 
     @property
-    def surface(self):
-        return self._surface
+    def surface_override(self):
+        """The user-supplied surface, un-processed.
+
+        Subclasses that have a meaningful entity-level resolved Surface (e.g.
+        ParticleEntity, ToolEntity) expose it separately as ``entity.surface``.
+        Subclasses with per-geom or per-render-mesh surfaces (RigidEntity, FEMEntity)
+        only expose this raw form — consumers must read per-geom / per-rmesh surfaces.
+        """
+        return self._surface_override
+
+    @property
+    def vis_mode(self) -> str:
+        """Entity-level visualization mode (visual / collision / particle / sdf / recon).
+
+        Thin façade over `surface_override.vis_mode` — `scene.add_entity` writes the
+        material-validated vis_mode onto the surface, and the viewer overlay /
+        interactive scene mutate it at runtime via the setter below.
+        """
+        return self._surface_override.vis_mode
+
+    @vis_mode.setter
+    def vis_mode(self, value: str) -> None:
+        self._surface_override.vis_mode = value
 
     @property
     def morph(self):

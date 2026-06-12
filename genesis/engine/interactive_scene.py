@@ -219,9 +219,9 @@ class InteractiveScene:
         """Switch entity rendering between ``"visual"`` and ``"collision"``."""
         from genesis.ext import pyrender
 
-        if not isinstance(entity.surface, gs.surfaces.Surface):
+        if not isinstance(entity, gs.engine.entities.RigidEntity):
             return
-        old_mode = entity.surface.vis_mode
+        old_mode = entity.vis_mode
         if old_mode == mode:
             return
 
@@ -234,7 +234,7 @@ class InteractiveScene:
                 ctx.remove_node(ctx.rigid_nodes[geom.uid])
                 del ctx.rigid_nodes[geom.uid]
 
-        entity.surface.vis_mode = mode
+        entity.vis_mode = mode
         rigid_solver.update_geoms_render_T()
         rigid_solver.update_vgeoms()
         rigid_solver.update_vgeoms_render_T()

@@ -135,8 +135,9 @@ def test_urdf_mjcf_names_from_file():
 
 @pytest.mark.required
 def test_surface_shortcut_resolution():
-    # Plastic family: color resolves to diffuse_texture; the Rough subclass roughness default (1.0) feeds
-    # roughness_texture and default_roughness.
+    # Plastic family: color resolves to diffuse_texture; Rough's class-level roughness default (1.0)
+    # routes into roughness_texture via the shortcut. ``default_roughness`` is an independent
+    # weaker-than-asset fallback and is NOT touched by the user shortcut.
     rough = gs.surfaces.Rough(color=(0.4, 0.4, 0.4))
     assert rough.color == (0.4, 0.4, 0.4)
     assert rough.roughness == 1.0
@@ -149,20 +150,27 @@ def test_surface_shortcut_resolution():
     assert glass.specular_texture.color == (0.6, 0.8, 1.0)
     assert glass.thickness_texture.color == (0.02,)
 
-    # BSDF exercises multiple shortcuts at once.
-    bsdf = gs.surfaces.BSDF(color=(0.2, 0.3, 0.4), roughness=0.3, metallic=0.5)
+    # BSDF exercises multiple shortcuts at once. The user-overwriting layer (the per-channel
+    # textures) is set; all `default_*` fields stay at their class defaults — shortcuts must NOT
+    # bleed into the weaker-than-asset default layer.
+    bsdf = gs.surfaces.BSDF(color=(0.2, 0.3, 0.4), opacity=0.8, roughness=0.3, metallic=0.5)
     assert bsdf.diffuse_texture.color == (0.2, 0.3, 0.4)
+    assert bsdf.opacity_texture.color == (0.8,)
     assert bsdf.roughness_texture.color == (0.3,)
     assert bsdf.metallic_texture.color == (0.5,)
-    assert bsdf.default_roughness == 0.3
+    assert bsdf.default_color == (1.0, 1.0, 1.0)
+    assert bsdf.default_opacity == 1.0
+    assert bsdf.default_roughness == 1.0
+    assert bsdf.default_ior == 1.0
 
     # Emission: color resolves to emissive_texture.
     emit = gs.surfaces.Emission(color=(1.0, 1.0, 0.0))
     assert emit.emissive_texture.color == (1.0, 1.0, 0.0)
 
-    # Explicit default_roughness wins over the roughness shortcut.
+    # Explicit default_roughness is honored independently of the roughness shortcut.
     override = gs.surfaces.Rough(roughness=0.7, default_roughness=0.5)
     assert override.default_roughness == 0.5
+    assert override.roughness_texture.color == (0.7,)
 
     # Nesting an already-resolved surface in another Pydantic model must not re-trigger resolution.
     class Wrapper(BaseModel):
@@ -179,6 +187,45 @@ def test_surface_shortcut_resolution():
         gs.surfaces.Rough(color=(1.0, 0.0, 0.0), diffuse_texture=ColorTexture(color=(0.0, 1.0, 0.0)))
     with pytest.raises(Exception, match="'thickness' and 'thickness_texture' cannot both be set"):
         gs.surfaces.Glass(thickness=0.02, thickness_texture=ColorTexture(color=(0.05,)))
+
+
+@pytest.mark.required
+def test_surface_finalize_gates():
+    """Once `finalize_texture` is called, both `update_texture` and a second `finalize_texture` raise."""
+    surface = gs.surfaces.Default()
+    assert surface._finalized is False
+    surface.update_texture(ior=1.5)
+    surface.finalize_texture()
+    assert surface._finalized is True
+    with pytest.raises(gs.GenesisException, match="update_texture"):
+        surface.update_texture(ior=1.7)
+    with pytest.raises(gs.GenesisException, match="finalize_texture"):
+        surface.finalize_texture()
+
+
+@pytest.mark.required
+def test_surface_finalize_fills_defaults():
+    """Unset texture fields are populated with their `default_*` counterparts at finalize."""
+    from genesis.options.surfaces import METAL_COLOR
+
+    surface = gs.surfaces.Default()
+    assert surface.texture is None
+    assert surface.ior is None
+    assert surface.roughness is None
+
+    surface.finalize_texture()
+
+    assert surface.texture is not None
+    assert tuple(surface.texture.color) == tuple(surface.default_color)
+    assert surface.ior == surface.default_ior
+    assert surface.roughness == surface.default_roughness
+
+    # METAL_COLOR maps each MetalType to its `default_color`, picked up via Metal._resolve_shortcuts.
+    for metal_type, expected_color in METAL_COLOR.items():
+        m = gs.surfaces.Metal(metal_type=metal_type)
+        m.finalize_texture()
+        assert tuple(m.default_color) == tuple(expected_color)
+        assert tuple(m.texture.color) == tuple(expected_color)
 
 
 @pytest.mark.required

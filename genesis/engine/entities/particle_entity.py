@@ -85,22 +85,21 @@ class ParticleEntity(Entity):
             self._vvert_start = -1
             self._vface_start = -1
 
-        # visual mesh
+        # visual mesh — resolve surface_override into a per-entity finalized _surface.
         if isinstance(self._morph, gs.options.morphs.MeshSet):
-            self._vmesh = gs.Mesh.from_morph_surface(self.morph, self.surface)
+            self._vmesh = gs.Mesh.from_morph_surface(self.morph, self.surface_override)
             self._surface = self._vmesh[0].surface
 
         elif isinstance(self._morph, (gs.options.morphs.Primitive, gs.options.morphs.Mesh)):
-            self._vmesh = gs.Mesh.from_morph_surface(self.morph, self.surface)
-            if isinstance(self._vmesh, list):
-                if len(self._vmesh) > 1:
-                    gs.raise_exception("Mesh file with multiple sub-meshes are not supported.")
-                else:
-                    self._vmesh = self._vmesh[0]
+            vmeshes = gs.Mesh.from_morph_surface(self.morph, self.surface_override)
+            if len(vmeshes) > 1:
+                gs.raise_exception("Mesh file with multiple sub-meshes are not supported.")
+            self._vmesh = vmeshes[0]
             self._surface = self._vmesh.surface
 
         else:
-            surface.update_texture()
+            self._surface = self.surface_override.model_copy()
+            self._surface.finalize_texture()
             self._vmesh = None
 
         self.sample()
@@ -312,7 +311,7 @@ class ParticleEntity(Entity):
                 faces=combined_faces,
                 vertex_normals=combined_vert_normals,
             )
-            self._vmesh = mu.trimesh_to_mesh(combined_tmesh, 1, self._surface)
+            self._vmesh = mu.trimesh_to_mesh(combined_tmesh, 1, self.surface_override)
 
             if self._need_skinning:
                 self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
