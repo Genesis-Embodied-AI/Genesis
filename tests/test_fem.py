@@ -157,11 +157,10 @@ def test_maxvolume(box_obj_path, show_viewer):
 
 
 @pytest.mark.required
-def test_fem_offset_pos(box_obj_path, show_viewer):
-    # The morph pose offset must shift the FEM vertices in the body frame, like rigid/particle/PBD entities. The
-    # orientation is identity here, so the world vertices are translated by exactly 'offset_pos'.
+def test_offset_pos(box_obj_path, show_viewer):
     POS = (0.2, -0.1, 0.3)
     OFFSET_POS = (0.05, 0.0, 0.1)
+
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -181,6 +180,7 @@ def test_fem_offset_pos(box_obj_path, show_viewer):
         material=gs.materials.FEM.Elastic(),
     )
     scene.build()
+
     offset = box.get_state().pos - box_no_offset.get_state().pos
     assert_allclose(offset, OFFSET_POS, tol=gs.EPS)
 

@@ -2391,6 +2391,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
     # A no-offset entity reports the same pose in the user and world frames.
     assert_allclose(plain_box.get_pos(relative=True), plain_box.get_pos(relative=False), tol=tol)
     assert_allclose(plain_box.get_pos(), (2.0, 0.0, 0.2), tol=tol)
+
     # With both a morph pose and an offset, the relative getter returns the morph pose while the world getter carries
     # the offset composed onto it (the offset position adds in z since the user orientation is identity).
     assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
@@ -2401,6 +2402,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
         gu.xyz_to_quat(np.array(POSED_BOX_OFFSET_EULER), rpy=True, degrees=True),
         tol=tol,
     )
+
     # Setting the orientation in the user frame keeps the user-frame position fixed: the offset position rotates with
     # the orientation, so the world position is rewritten to preserve the reported relative position. Rotating about x
     # while the offset position is along z makes that offset contribution change, exercising the rewrite.
@@ -6368,11 +6370,13 @@ def test_mesh_align(show_viewer, tol):
             het_obj.get_links_pos(links_idx_local=[0], ref="link_origin", envs_idx=i_env, relative=False),
             tol=tol,
         )
+
     # The two variants have different geometry, so their aligned world origins differ.
     with np.testing.assert_raises(AssertionError):
         assert_allclose(
             het_obj.get_pos(relative=False, envs_idx=0), het_obj.get_pos(relative=False, envs_idx=1), tol=tol
         )
+
     # The heterogeneous mango variant (env 1) is aligned exactly like the standalone mango: the world<-user offset
     # (COM shift and principal-axis rotation) matches, independent of the base placement.
     het_mango_offset = het_obj.get_pos(relative=False, envs_idx=1) - het_obj.get_pos(relative=True, envs_idx=1)
@@ -6452,11 +6456,10 @@ def test_urdf_align(show_viewer, tol):
 
 @pytest.mark.required
 def test_relative_offset_on_link_relative_geoms(show_viewer, tol):
-    # Geoms posed (rotated/translated) relative to their link, via collision/visual <origin>, combined with a morph
-    # orientation offset. The relative geom getters must revert the offset conjugated into each geom's own frame, not
-    # by a naive body-frame strip at the geom frame (which conjugates the geom pose by the offset and corrupts it).
-    # A convex-decomposed mesh would not exercise this, since its sub-geoms keep an identity frame (geometry sits in
-    # the vertices), so an articulated body with explicit geom origins is used.
+    # To exercise the geom-frame offset strip the geoms MUST sit at non-identity poses relative to their link (explicit
+    # collision/visual <origin>) AND the morph offset MUST be a rotation that does not commute with them - otherwise the
+    # conjugation degenerates to the plain morph offset and a naive (corrupted) strip would still pass. A convex-
+    # decomposed mesh is useless here: its sub-geoms keep an identity frame (geometry lives in the vertices).
     robot = ET.Element("robot", name="posed_geoms")
     link = ET.SubElement(robot, "link", name="body")
     for origin_rpy, origin_xyz in (
@@ -6489,6 +6492,7 @@ def test_relative_offset_on_link_relative_geoms(show_viewer, tol):
     scene.build()
 
     assert len(body.geoms) > 1, "expected multiple geoms posed relative to the link"
+
     # The user orientation is identity, so the world<-user offset rotates each geom about the link origin:
     # geom_world_pos = U_pos + R(offset) * (geom_user_pos - U_pos) and geom_world_quat = offset * geom_user_quat.
     assert_allclose(body.get_quat(relative=True), gu.identity_quat(), tol=tol)
@@ -6503,28 +6507,43 @@ def test_relative_offset_on_link_relative_geoms(show_viewer, tol):
         assert_allclose(geom.get_quat(relative=False), expected_world_quat, tol=tol)
 
 
+def create_two_free_bodies_mjcf(name, pos_a, geom_a, pos_b, geom_b):
+    """Helper to create an MJCF with two free root bodies, each a single box geom offset from its body origin."""
+    mjcf = ET.Element("mujoco", model=name)
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body_a = ET.SubElement(worldbody, "body", name="a", pos=f"{pos_a[0]} {pos_a[1]} {pos_a[2]}")
+    ET.SubElement(body_a, "joint", name="a_free", type="free")
+    ET.SubElement(
+        body_a, "geom", type="box", size="0.05 0.05 0.05", pos=f"{geom_a[0]} {geom_a[1]} {geom_a[2]}", density="1000"
+    )
+    body_b = ET.SubElement(worldbody, "body", name="b", pos=f"{pos_b[0]} {pos_b[1]} {pos_b[2]}")
+    ET.SubElement(body_b, "joint", name="b_free", type="free")
+    ET.SubElement(
+        body_b, "geom", type="box", size="0.05 0.08 0.03", pos=f"{geom_b[0]} {geom_b[1]} {geom_b[2]}", density="1000"
+    )
+    return mjcf
+
+
 @pytest.mark.required
 def test_multi_root_offset(show_viewer, tol):
-    # One MJCF with two free root bodies, each auto-aligned to its own geometry. Every root's pose offset is tracked
-    # independently, so each root reports its own user-specified pose through the relative (default) getters while the
-    # world frame carries that root's own COM shift. Without per-root tracking, the offsets cross-contaminate.
+    # To exercise per-root offset tracking the entity MUST hold more than one free root (one MJCF, several free
+    # bodies) with DISTINCT per-root geometry, so each root gets its own alignment offset; a single root - or
+    # identical roots - would not surface the cross-contamination bug (one root's offset leaking into another).
     BODY_A_POS = (1.0, 0.0, 0.5)
     BODY_B_POS = (-1.0, 0.0, 0.5)
-    mjcf = ET.Element("mujoco", model="two_bodies")
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    body_a = ET.SubElement(worldbody, "body", name="a", pos=f"{BODY_A_POS[0]} {BODY_A_POS[1]} {BODY_A_POS[2]}")
-    ET.SubElement(body_a, "joint", name="a_free", type="free")
-    ET.SubElement(body_a, "geom", type="box", size="0.05 0.05 0.05", pos="0.02 0.01 0.0", density="1000")
-    body_b = ET.SubElement(worldbody, "body", name="b", pos=f"{BODY_B_POS[0]} {BODY_B_POS[1]} {BODY_B_POS[2]}")
-    ET.SubElement(body_b, "joint", name="b_free", type="free")
-    ET.SubElement(body_b, "geom", type="box", size="0.05 0.08 0.03", pos="0.0 0.03 0.02", density="1000")
+    GEOM_A_POS = (0.02, 0.01, 0.0)
+    GEOM_B_POS = (0.0, 0.03, 0.02)
+
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
     )
     entity = scene.add_entity(
         gs.morphs.MJCF(
-            file=ET.tostring(mjcf, encoding="unicode"),
+            file=ET.tostring(
+                create_two_free_bodies_mjcf("two_bodies", BODY_A_POS, GEOM_A_POS, BODY_B_POS, GEOM_B_POS),
+                encoding="unicode",
+            ),
             align=True,
         ),
     )
@@ -6536,9 +6555,10 @@ def test_multi_root_offset(show_viewer, tol):
     assert_allclose(link_b.get_pos(), BODY_B_POS, tol=tol)
     assert_allclose(link_a.get_quat(), gu.identity_quat(), tol=tol)
     assert_allclose(link_b.get_quat(), gu.identity_quat(), tol=tol)
+
     # The world frame carries each root's own COM shift (the box center), confirming the offsets are not shared.
-    assert_allclose(link_a.get_pos(relative=False), (1.02, 0.01, 0.5), tol=tol)
-    assert_allclose(link_b.get_pos(relative=False), (-1.0, 0.03, 0.52), tol=tol)
+    assert_allclose(link_a.get_pos(relative=False), np.add(BODY_A_POS, GEOM_A_POS), tol=tol)
+    assert_allclose(link_b.get_pos(relative=False), np.add(BODY_B_POS, GEOM_B_POS), tol=tol)
 
     # Both roots free-fall under gravity: the relative getter tracks each user frame, holding x/y and dropping z
     # equally (free fall is mass-independent).

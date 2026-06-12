@@ -84,6 +84,16 @@ def _select_links_offset(offset, links_idx, envs_idx):
     return offset[indices_to_mask(row_mask, links_idx)]
 
 
+def _offset_world_shift(offset_pos, offset_quat, world_quat):
+    """World-frame displacement contributed by a body-frame offset position at a given world orientation.
+
+    The user orientation is 'world_quat' with the offset stripped, and 'offset_pos' rotates with it. Relative getters
+    subtract this from the world position to recover the user position; relative setters add it to do the reverse.
+    """
+    user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), world_quat)
+    return gu.transform_by_quat(offset_pos, user_quat)
+
+
 def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges):
     """Fill the per-geom forward offset for an entity's collision or visual geoms.
 
@@ -268,8 +278,10 @@ class KinematicSolver(Solver):
             _fill_base_link_geom_offsets(vgeoms_offset_pos, vgeoms_offset_quat, entity, entity.vgeoms, vgeoms_ranges)
         # Per-link identity flags gate the relative backward passes: a relative set on a link whose offset is identity
         # is a plain passthrough and stays differentiable, while a non-identity offset drops the composition jacobian.
-        links_offset_quat_is_identity = np.all(np.isclose(gu.quat_to_xyz(links_offset_quat), 0.0), axis=2).all(axis=0)
-        links_offset_pos_is_identity = np.all(np.isclose(links_offset_pos, 0.0), axis=2).all(axis=0)
+        links_offset_quat_is_identity = np.all(
+            np.isclose(gu.quat_to_xyz(links_offset_quat), 0.0, atol=gs.EPS), axis=2
+        ).all(axis=0)
+        links_offset_pos_is_identity = np.all(np.isclose(links_offset_pos, 0.0, atol=gs.EPS), axis=2).all(axis=0)
         self._links_offset_quat_is_identity = torch.from_numpy(links_offset_quat_is_identity).to(device=gs.device)
         self._links_offset_pos_is_identity = torch.from_numpy(links_offset_pos_is_identity).to(device=gs.device)
         self._links_offset_pos = self._links_offset_quat = None
@@ -277,7 +289,10 @@ class KinematicSolver(Solver):
             self._links_offset_pos = torch.from_numpy(links_offset_pos).to(device=gs.device, dtype=gs.tc_float)
             self._links_offset_quat = torch.from_numpy(links_offset_quat).to(device=gs.device, dtype=gs.tc_float)
         self._vgeoms_offset_pos = self._vgeoms_offset_quat = None
-        if not (np.allclose(vgeoms_offset_pos, 0.0) and np.allclose(gu.quat_to_xyz(vgeoms_offset_quat), 0.0)):
+        if not (
+            np.allclose(vgeoms_offset_pos, 0.0, atol=gs.EPS)
+            and np.allclose(gu.quat_to_xyz(vgeoms_offset_quat), 0.0, atol=gs.EPS)
+        ):
             self._vgeoms_offset_pos = torch.from_numpy(vgeoms_offset_pos).to(device=gs.device, dtype=gs.tc_float)
             self._vgeoms_offset_quat = torch.from_numpy(vgeoms_offset_quat).to(device=gs.device, dtype=gs.tc_float)
 
@@ -828,8 +843,7 @@ class KinematicSolver(Solver):
             cur_quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-            user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), cur_quat)
-            pos = pos + gu.transform_by_quat(offset_pos, user_quat)
+            pos = pos + _offset_world_shift(offset_pos, offset_quat, cur_quat)
             relative = False
 
         kernel_set_links_pos(
@@ -909,8 +923,7 @@ class KinematicSolver(Solver):
                 cur_pos = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
                 cur_quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
                 offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
-                cur_user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), cur_quat)
-                user_pos = cur_pos - gu.transform_by_quat(offset_pos, cur_user_quat)
+                user_pos = cur_pos - _offset_world_shift(offset_pos, offset_quat, cur_quat)
                 world_pos = user_pos + gu.transform_by_quat(offset_pos, quat)
                 kernel_set_links_pos(
                     world_pos,
@@ -1163,8 +1176,7 @@ class KinematicSolver(Solver):
             quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
             offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-            user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), quat)
-            tensor = tensor - gu.transform_by_quat(offset_pos, user_quat)
+            tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_quat(self, links_idx=None, envs_idx=None, *, relative=False):
@@ -1180,8 +1192,7 @@ class KinematicSolver(Solver):
             quat = qd_to_torch(self.vgeoms_state.quat, envs_idx, vgeoms_idx, transpose=True, copy=True)
             offset_pos = self._vgeoms_offset_pos if vgeoms_idx is None else self._vgeoms_offset_pos[vgeoms_idx]
             offset_quat = self._vgeoms_offset_quat if vgeoms_idx is None else self._vgeoms_offset_quat[vgeoms_idx]
-            user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), quat)
-            tensor = tensor - gu.transform_by_quat(offset_pos, user_quat)
+            tensor -= _offset_world_shift(offset_pos, offset_quat, quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_vgeoms_quat(self, vgeoms_idx=None, envs_idx=None, *, relative=False):

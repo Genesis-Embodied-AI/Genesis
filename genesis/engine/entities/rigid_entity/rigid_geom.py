@@ -307,7 +307,7 @@ class RigidGeom(RBC):
         if T is None:
             if pos is None:
                 T = gu.trans_quat_to_T(
-                    tensor_to_array(self.get_pos(relative=False)), tensor_to_array(self.get_quat(relative=False))
+                    *map(tensor_to_array, (self.get_pos(relative=False), self.get_quat(relative=False)))
                 )
             else:
                 T = gu.trans_to_T(np.array(pos))

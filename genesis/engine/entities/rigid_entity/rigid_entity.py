@@ -52,7 +52,7 @@ def tracked(fun):
     return wrapper
 
 
-def _file_inertial(l_info, recompute_inertia):
+def _declared_inertial(l_info, recompute_inertia):
     """Return a link's file-specified '(inertia, pos, quat)' for alignment, or None to recompute it from geometry.
 
     None is returned when the link has no valid file inertia or 'recompute_inertia' is set.
@@ -180,12 +180,10 @@ class KinematicEntity(Entity):
         self._is_attached: bool = False
         self._variant_init_qpos: list[np.ndarray] | None = None
 
-        # Per-link pose offset between the world frame (used by the solver) and the user frame (reported by relative
-        # getters), keyed by link index local to the entity. Only root links carry an offset (children stay identity);
-        # each is the morph 'offset_pos'/'offset_quat' (e.g. up-axis conversions) composed with that link's inertial
-        # alignment, filled in '_add_by_info'. Independent per root, so multi-root entities keep a distinct offset per
-        # root. The base link's offset is mirrored into '_offset_pos'/'_offset_quat' for the heterogeneous-variant seed.
-        # The solver gathers all of these into per-link tensors at build time.
+        # Per-link world<-user pose offset (morph 'offset_pos'/'offset_quat' composed with the link's inertial
+        # alignment), keyed by local link index; only root links carry one (children stay identity), so a multi-root
+        # entity keeps a distinct offset per root. The base link's is mirrored into '_offset_pos'/'_offset_quat' for the
+        # heterogeneous-variant seed; the solver gathers them into per-link tensors at build.
         self._links_offset_pos: dict[int, np.ndarray] = {}
         self._links_offset_quat: dict[int, np.ndarray] = {}
         self._offset_pos = np.array(self._morph.offset_pos, dtype=gs.np_float)
@@ -311,7 +309,7 @@ class KinematicEntity(Entity):
                         )
                     if align and is_root and any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in v_j_infos):
                         global_com, principal_quat, diagonal_inertial = _align_geoms_to_inertia(
-                            cg_infos, vg_infos, _file_inertial(v_l_info, morph.recompute_inertia)
+                            cg_infos, vg_infos, _declared_inertial(v_l_info, morph.recompute_inertia)
                         )
                         if diagonal_inertial is not None:
                             v_l_info["inertial_pos"] = diagonal_inertial[0]
@@ -1165,7 +1163,7 @@ class KinematicEntity(Entity):
         global_com = principal_quat = None
         if do_align:
             global_com, principal_quat, diagonal_inertial = _align_geoms_to_inertia(
-                cg_infos, vg_infos, _file_inertial(l_info, morph.recompute_inertia)
+                cg_infos, vg_infos, _declared_inertial(l_info, morph.recompute_inertia)
             )
             if diagonal_inertial is not None:
                 l_info["inertial_pos"], l_info["inertial_quat"], l_info["inertial_i"] = diagonal_inertial
