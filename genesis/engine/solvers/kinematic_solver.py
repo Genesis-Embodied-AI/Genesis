@@ -276,16 +276,15 @@ class KinematicSolver(Solver):
                     links_offset_quat[:, entity._link_start + local_idx] = entity._links_offset_quat[local_idx]
                 vgeoms_ranges = None
             _fill_base_link_geom_offsets(vgeoms_offset_pos, vgeoms_offset_quat, entity, entity.vgeoms, vgeoms_ranges)
-        # Per-link identity flags gate the relative backward passes: a relative set on a link whose offset is identity
-        # is a plain passthrough and stays differentiable, while a non-identity offset drops the composition jacobian.
-        links_offset_quat_is_identity = np.all(
+        # Per-link identity masks gate the relative set/backward paths: a relative set on a link whose offset is
+        # identity is a plain passthrough, while a non-identity offset rewrites the world position or drops the
+        # composition jacobian. Kept as host-side numpy (never used in kernels) so the gates avoid a GPU->host sync.
+        self._links_offset_quat_is_identity = np.all(
             np.isclose(gu.quat_to_xyz(links_offset_quat), 0.0, atol=gs.EPS), axis=2
         ).all(axis=0)
-        links_offset_pos_is_identity = np.all(np.isclose(links_offset_pos, 0.0, atol=gs.EPS), axis=2).all(axis=0)
-        self._links_offset_quat_is_identity = torch.from_numpy(links_offset_quat_is_identity).to(device=gs.device)
-        self._links_offset_pos_is_identity = torch.from_numpy(links_offset_pos_is_identity).to(device=gs.device)
+        self._links_offset_pos_is_identity = np.all(np.isclose(links_offset_pos, 0.0, atol=gs.EPS), axis=2).all(axis=0)
         self._links_offset_pos = self._links_offset_quat = None
-        if not (links_offset_pos_is_identity.all() and links_offset_quat_is_identity.all()):
+        if not (self._links_offset_pos_is_identity.all() and self._links_offset_quat_is_identity.all()):
             self._links_offset_pos = torch.from_numpy(links_offset_pos).to(device=gs.device, dtype=gs.tc_float)
             self._links_offset_quat = torch.from_numpy(links_offset_quat).to(device=gs.device, dtype=gs.tc_float)
         self._vgeoms_offset_pos = self._vgeoms_offset_quat = None
@@ -878,20 +877,21 @@ class KinematicSolver(Solver):
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
         if links_idx is None:
             links_idx = self._base_links_idx
-        pos_grad_, links_idx, envs_idx = self._sanitize_io_variables(
-            pos_grad.unsqueeze(-2), links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
-        )
-        if self.n_envs == 0:
-            pos_grad_ = pos_grad_.unsqueeze(0)
         # A relative 'set_pos' adds 'R(user_quat) @ offset_pos', which reads the current orientation; that dependency
         # is not propagated, so with a non-zero offset position the backward pass is only supported on links without
         # one. 'relative=False' sets the world position directly and is a plain passthrough.
-        if relative and not self._links_offset_pos_is_identity[links_idx].all():
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
+        if relative and not self._links_offset_pos_is_identity[idx].all():
             gs.raise_exception(
                 "Backward pass for 'set_pos' with 'relative=True' is only supported on links without an offset "
                 "position (no inertial alignment shifting the link origin). Use 'relative=False' to set the world "
                 "position."
             )
+        pos_grad_, links_idx, envs_idx = self._sanitize_io_variables(
+            pos_grad.unsqueeze(-2), links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
+        )
+        if self.n_envs == 0:
+            pos_grad_ = pos_grad_.unsqueeze(0)
         kernel_set_links_pos_grad(
             pos_grad_,
             links_idx,
@@ -909,6 +909,8 @@ class KinematicSolver(Solver):
         # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
         if relative and self._links_offset_quat is None:
             relative = False
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
+        pos_is_identity = relative and self._links_offset_pos_is_identity[idx].all()
         quat, links_idx, envs_idx = self._sanitize_io_variables(
             quat, links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
         )
@@ -917,7 +919,7 @@ class KinematicSolver(Solver):
 
         if relative:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-            if not self._links_offset_pos_is_identity[links_idx].all():
+            if not pos_is_identity:
                 # The offset position rotates with the orientation, so keep the user-frame position fixed by rewriting
                 # the world position from the current user position and the new user orientation.
                 cur_pos = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
@@ -970,22 +972,23 @@ class KinematicSolver(Solver):
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
         if links_idx is None:
             links_idx = self._base_links_idx
-        quat_grad_, links_idx, envs_idx = self._sanitize_io_variables(
-            quat_grad.unsqueeze(-2), links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
-        )
-        if self.n_envs == 0:
-            quat_grad_ = quat_grad_.unsqueeze(0)
         # A relative 'set_quat' composes the orientation offset (a constant right-multiplication) and, when the offset
         # position is non-zero, also rewrites the world position from the input orientation. Neither jacobian is
         # propagated, so the backward pass is only supported when the targeted links carry no pose offset. With
         # 'relative=False' the world orientation is set directly, which is a plain passthrough and always differentiable.
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
         if relative and not (
-            self._links_offset_quat_is_identity[links_idx].all() and self._links_offset_pos_is_identity[links_idx].all()
+            self._links_offset_quat_is_identity[idx].all() and self._links_offset_pos_is_identity[idx].all()
         ):
             gs.raise_exception(
                 "Backward pass for 'set_quat' with 'relative=True' is only supported on links without a pose offset "
                 "(no up-axis conversion or inertial alignment). Use 'relative=False' to set the world orientation."
             )
+        quat_grad_, links_idx, envs_idx = self._sanitize_io_variables(
+            quat_grad.unsqueeze(-2), links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
+        )
+        if self.n_envs == 0:
+            quat_grad_ = quat_grad_.unsqueeze(0)
         kernel_set_links_quat_grad(
             quat_grad_,
             links_idx,

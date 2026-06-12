@@ -370,7 +370,9 @@ class FEMEntity(Entity):
         elems = elems.astype(gs.np_int, copy=False)
 
         # Compose the morph pose offset (e.g. an up-axis conversion) onto the morph orientation, rotating the verts
-        # about their COM, then translate by the body-frame offset position R(morph.quat) @ offset_pos.
+        # about their COM (the pre-existing morph.quat convention), then translate by the body-frame offset position
+        # R(morph.quat) @ offset_pos. NB: pivoting the orientation about the vertex COM differs from the rigid
+        # parent-child composition when the mesh COM is not at the morph origin.
         morph_quat = np.array(self._morph.quat, dtype=gs.np_float)
         init_quat = gu.transform_quat_by_quat(np.array(self._morph.offset_quat, dtype=gs.np_float), morph_quat)
         R = gu.quat_to_R(init_quat)

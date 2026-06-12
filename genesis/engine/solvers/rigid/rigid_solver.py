@@ -1948,11 +1948,15 @@ class RigidSolver(KinematicSolver):
         if relative and self._links_offset_quat is None:
             relative = False
 
+        # Computed once and reused by the int fast path and the kernel branch below.
+        idx = links_idx if isinstance(links_idx, int) else slice(None)
+        pos_is_identity = relative and self._links_offset_pos_is_identity[idx].all()
+
         # Compose a single base link's user orientation to world here so the zero-copy in-place write below still
         # applies, both for an environment-uniform and a per-environment offset. This only preserves the user-frame
         # position when the offset position is identity; a non-zero offset position rotates with the orientation and
         # is handled (together with multi-link relative sets) in the kernel branch instead.
-        if relative and isinstance(links_idx, int) and self._links_offset_pos_is_identity[links_idx]:
+        if relative and isinstance(links_idx, int) and pos_is_identity:
             offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)[..., 0, :]
             quat = gu.transform_quat_by_quat(offset_quat, torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device))
             relative = False
@@ -2004,7 +2008,7 @@ class RigidSolver(KinematicSolver):
 
             if relative:
                 offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
-                if not self._links_offset_pos_is_identity[links_idx].all():
+                if not pos_is_identity:
                     # The offset position rotates with the orientation, so keep the user-frame position fixed by
                     # rewriting the world position from the current user position and the new user orientation.
                     cur_pos = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)

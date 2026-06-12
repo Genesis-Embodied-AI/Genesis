@@ -34,14 +34,12 @@ class ToolEntity(Entity):
         super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         # The morph pose offset (e.g. an up-axis conversion) is composed onto the morph pose.
-        init_pos, init_quat = transform_pos_quat_by_trans_quat(
+        self._init_pos, self._init_quat = transform_pos_quat_by_trans_quat(
             np.array(morph.offset_pos, dtype=gs.np_float),
             np.array(morph.offset_quat, dtype=gs.np_float),
             np.array(morph.pos, dtype=gs.np_float),
             np.array(morph.quat, dtype=gs.np_float),
         )
-        self._init_pos = np.array(init_pos, dtype=gs.np_float)
-        self._init_quat = np.array(init_quat, dtype=gs.np_float)
 
         self.mesh = Mesh(
             entity=self,

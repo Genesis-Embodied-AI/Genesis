@@ -6867,7 +6867,7 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
 
 @pytest.mark.slow  # ~450s
 @pytest.mark.required
-def test_heterogeneous_simulation(show_viewer, tol):
+def test_heterogeneous_physics_parity(show_viewer, tol):
     """Test heterogeneous simulation by comparing against independent homogeneous simulations.
 
     This test verifies that heterogeneous simulation produces identical physics results
@@ -7292,7 +7292,7 @@ def _build_free_body_urdf(name, com_xyz):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-def test_heterogeneous_robots(show_viewer, tol):
+def test_heterogeneous_inertial_alignment(show_viewer, tol):
     """Test heterogeneous articulated simulation with vertex-based and primitive collision geometries.
 
     Variant A splits each box primitive into two half-height sub-boxes (top/bottom),
@@ -7396,6 +7396,15 @@ def test_heterogeneous_robots(show_viewer, tol):
             tol=tol,
         )
         assert_allclose(free_het.get_pos(relative=True, envs_idx=i_env), FREE_POS, tol=tol)
+
+    # Relative set_pos on a boolean-masked subset of envs: each selected env's relative getter must report its target
+    # back, stripping its own per-variant offset.
+    mask = torch.tensor([True, False, True, False], device=gs.device)
+    free_new_pos = torch.tensor([[1.0, 0.0, 0.5], [2.0, 0.0, 0.5]], dtype=gs.tc_float, device=gs.device)
+    free_het.set_pos(free_new_pos, envs_idx=mask, relative=True)
+    free_pos = free_het.get_pos(relative=True)
+    assert_allclose(free_pos[[0, 2]], free_new_pos, tol=tol)
+    assert_allclose(free_pos[[1, 3]], FREE_POS, tol=tol)
 
     # Joint structure: both variants share the same joints (root_joint + joint1)
     assert len(het_obj.joints) == 2
