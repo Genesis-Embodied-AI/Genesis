@@ -1603,18 +1603,22 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         ),
     )
 
-    # 8 boxes: 2 per corner (sandwich grip above/below cloth)
+    # 8 boxes: 2 per corner (sandwich grip above/below cloth).
+    # Pre-compute per-box DOF targets for all three phases (free-joint dofs = 6: [x, y, z, axis-angle * 3]).
+    # phase 0: hold at rest with z=0. phase 1: stretch x,y by STRETCH_RATIO_1. phase 2: additionally by STRETCH_RATIO_2.
     boxes = []
+    boxes_dofs = []
     for x_sign, y_sign in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
         for z_sign in (+1, -1):
+            box_init_pos = (
+                x_sign * (CLOTH_HALF - BOX_SIZE),
+                y_sign * (CLOTH_HALF - BOX_SIZE),
+                z_sign * (0.5 * BOX_SIZE + GAP),
+            )
             box = scene.add_entity(
                 gs.morphs.Box(
                     size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-                    pos=(
-                        x_sign * (CLOTH_HALF - BOX_SIZE),
-                        y_sign * (CLOTH_HALF - BOX_SIZE),
-                        z_sign * (0.5 * BOX_SIZE + GAP),
-                    ),
+                    pos=box_init_pos,
                 ),
                 material=gs.materials.Rigid(
                     coup_type="two_way_soft_constraint",
@@ -1626,16 +1630,20 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                 ),
             )
             boxes.append(box)
+            box_phase0_dof = np.array([box_init_pos[0], box_init_pos[1], 0.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+            box_phase1_dof = box_phase0_dof.copy()
+            box_phase1_dof[:2] *= STRETCH_RATIO_1
+            box_phase2_dof = box_phase1_dof.copy()
+            box_phase2_dof[:2] *= STRETCH_RATIO_2
+            boxes_dofs.append([box_phase0_dof, box_phase1_dof, box_phase2_dof])
 
     scene.build(n_envs=n_envs)
 
-    # Configure PD: position-controlled outward pull on x,y; hold z + rotation
-    for box in boxes:
+    # Configure PD and apply phase-0 target.
+    for box, box_dofs in zip(boxes, boxes_dofs):
         box.set_dofs_kp(2000.0)
         box.set_dofs_kv(500.0)
-        init_dof = tensor_to_array(box.get_dofs_position())
-        init_dof[..., 2] = 0.0
-        box.control_dofs_position(init_dof)
+        box.control_dofs_position(box_dofs[0])
 
     # Wait for steady state
     cloth_positions_0 = tensor_to_array(cloth.get_state().pos)
@@ -1648,16 +1656,13 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=0.015)
 
     # Stretch: phase one
-    for box in boxes:
-        init_dof = tensor_to_array(box.get_dofs_position())
-        init_dof[..., :2] *= STRETCH_RATIO_1
-        box.control_dofs_position(init_dof)
+    for box, box_dofs in zip(boxes, boxes_dofs):
+        box.control_dofs_position(box_dofs[1])
     for _ in range(80):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    for box in boxes:
-        init_dof = tensor_to_array(box.get_dofs_position())
-        dist_vertices = np.linalg.norm(cloth_positions_f[..., :2] - init_dof[..., None, :2], axis=-1).min(axis=-1)
+    for box, box_dofs in zip(boxes, boxes_dofs):
+        dist_vertices = np.linalg.norm(cloth_positions_f[..., :2] - box_dofs[1][..., None, :2], axis=-1).min(axis=-1)
         # Tolerance relaxed from 0.02 to 0.04: predicted-position coupling shifts the box target
         # by velocity*dt, so steady-state box position deviates slightly from the cloth corner.
         assert_allclose(dist_vertices, 0.0, atol=0.04)
@@ -1706,10 +1711,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     # assert_allclose(np.abs(box_forces_xy), expected_force_per_box, tol=1e4 / E)
 
     # Stretch: phase two
-    for box in boxes:
-        init_dof = tensor_to_array(box.get_dofs_position())
-        init_dof[..., :2] *= STRETCH_RATIO_2
-        box.control_dofs_position(init_dof)
+    for box, box_dofs in zip(boxes, boxes_dofs):
+        box.control_dofs_position(box_dofs[2])
     for _ in range(50):
         scene.step()
 

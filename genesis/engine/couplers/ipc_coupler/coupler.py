@@ -1363,7 +1363,7 @@ class IPCCoupler(RBC):
         nmax_str = "  NEWTON_MAXOUT" if newton_max else ""
         if newton_max and tol_fails:
             nmax_str += " (" + "; ".join(tol_fails) + ")"
-        gs.logger.info(f"[IPC] frame {self._ipc_frame:4d}  newton={n_newton:2d}  ls={n_ls:3d}{ls_str}{nmax_str}")
+        gs.logger.debug(f"[IPC] frame {self._ipc_frame:4d}  newton={n_newton:2d}  ls={n_ls:3d}{ls_str}{nmax_str}")
 
         if self._ipc_gui is not None:
             ps.frame_tick()
