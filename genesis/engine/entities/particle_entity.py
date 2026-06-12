@@ -322,16 +322,16 @@ class ParticleEntity(Entity):
                 self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = np.mean(self._morph.poss, dtype=gs.np_float)
         else:
-            # transform vmesh
-            pos = np.asarray(self._morph.pos, dtype=gs.np_float)
-            quat = np.asarray(self._morph.quat, dtype=gs.np_float)
+            # transform vmesh (the morph pose offset, e.g. an up-axis conversion, is composed onto the morph pose)
+            pos, quat = gu.transform_pos_quat_by_trans_quat(
+                np.array(self._morph.offset_pos, dtype=gs.np_float),
+                np.array(self._morph.offset_quat, dtype=gs.np_float),
+                np.array(self._morph.pos, dtype=gs.np_float),
+                np.array(self._morph.quat, dtype=gs.np_float),
+            )
             self._vmesh.apply_transform(gu.trans_quat_to_T(pos, quat))
             # transform particles
-            particles = gu.transform_by_trans_quat(
-                particles,
-                np.asarray(self._morph.pos, dtype=gs.np_float),
-                np.asarray(self._morph.quat, dtype=gs.np_float),
-            )
+            particles = gu.transform_by_trans_quat(particles, pos, quat)
 
             if not self._solver.boundary.is_inside(particles):
                 gs.raise_exception(
@@ -347,7 +347,7 @@ class ParticleEntity(Entity):
             else:
                 self._vverts = np.zeros((0, 3), dtype=gs.np_float)
                 self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
-            origin = np.asarray(self._morph.pos, dtype=gs.np_float)
+            origin = pos
 
         self._particles = np.asarray(particles, dtype=gs.np_float, order="C")
         self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(origin)

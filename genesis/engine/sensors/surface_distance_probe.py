@@ -322,8 +322,8 @@ class SurfaceDistanceProbeSensor(
             context.clear_debug_object(obj)
         self._debug_objects.clear()
 
-        link_pos = self._link.get_pos(env_idx).squeeze()
-        link_quat = self._link.get_quat(env_idx).squeeze()
+        link_pos = self._link.get_pos(env_idx, relative=False).squeeze()
+        link_quat = self._link.get_quat(env_idx, relative=False).squeeze()
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
         points = tensor_to_array(self.nearest_points[env_idx]).reshape(-1, 3)
 

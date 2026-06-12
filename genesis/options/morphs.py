@@ -82,6 +82,16 @@ class Morph(Options):
     quat : tuple, shape (4,), optional
         The initial quaternion (w-x-y-z convention) of the entity at creation time.
         If specified, `euler` will be ignored. Defaults to None.
+    offset_pos : tuple, shape (3,), optional
+        A fixed position offset composed on top of `pos` to obtain the world pose, while `pos` itself stays the value
+        reported by relative getters. Defaults to (0.0, 0.0, 0.0).
+    offset_euler : tuple, shape (3,), optional
+        The orientation offset as an euler angle in degrees (scipy extrinsic x-y-z convention). If specified,
+        `offset_quat` will be ignored. Defaults to None.
+    offset_quat : tuple, shape (4,), optional
+        A fixed orientation offset (w-x-y-z convention) composed on top of `quat` to obtain the world pose, while
+        `quat` itself stays the value reported by relative getters. Up-axis conversions are stored here.
+        Defaults to (1.0, 0.0, 0.0, 0.0).
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -100,6 +110,9 @@ class Morph(Options):
     pos: Vec3FType = (0.0, 0.0, 0.0)
     euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
     quat: UnitVec4FType | None = None
+    offset_pos: Vec3FType = (0.0, 0.0, 0.0)
+    offset_euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
+    offset_quat: UnitVec4FType = (1.0, 0.0, 0.0, 0.0)
     visualization: StrictBool = True
     collision: StrictBool = True
     requires_jac_and_IK: StrictBool = False
@@ -119,6 +132,11 @@ class Morph(Options):
             data["quat"] = tuple(gu.xyz_to_quat(np.array(euler), rpy=True, degrees=True))
         elif quat is None:
             data["quat"] = (1.0, 0.0, 0.0, 0.0)
+        offset_euler = data.get("offset_euler")
+        if offset_euler is not None and data.get("offset_quat") is not None:
+            gs.raise_exception("'offset_euler' and 'offset_quat' cannot both be set.")
+        if offset_euler is not None:
+            data["offset_quat"] = tuple(gu.xyz_to_quat(np.array(offset_euler), rpy=True, degrees=True))
         return data
 
     def model_post_init(self, context: Any) -> None:
@@ -773,19 +791,19 @@ class Mesh(FileMorph, TetGenMixin):
 
         if is_gltf:
             if self.file_meshes_are_zup:
-                gs.logger.warning(
-                    "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
-                    "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
+                # GLTF/GLB is Y-up by standard, so a Z-up claim is honored by recording the compensating rotation in
+                # 'offset_quat'. It is post-multiplied on the user orientation to form the world pose, while 'quat'
+                # stays clean and is what relative getters report.
+                gs.logger.info(
+                    "Honoring 'file_meshes_are_zup' for a GLTF/GLB file by recording a compensating rotation in "
+                    "'offset_quat'. Consider fixing your asset to use the standard Y-up convention instead."
                 )
                 y_up_quat = (1.0, -1.0, 0.0, 0.0)
-                if self.quat is None:
-                    self.quat = y_up_quat
-                else:
-                    self.quat = tuple(
-                        gu.transform_quat_by_quat(
-                            np.array(y_up_quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
-                        )
+                self.offset_quat = tuple(
+                    gu.transform_quat_by_quat(
+                        np.array(y_up_quat, dtype=gs.np_float), np.array(self.offset_quat, dtype=gs.np_float)
                     )
+                )
                 if self.scale is not None:
                     scale_arr = np.atleast_1d(np.array(self.scale))
                     if scale_arr.size == 3:

@@ -600,7 +600,7 @@ class TemperatureGridSensor(
             aabb_world = aabb_world.unsqueeze(0)  # (1, 2, 3)
         aabb_min_w = aabb_world[0, 0]  # (3,)
         aabb_max_w = aabb_world[0, 1]  # (3,)
-        link_pos, link_quat = self._link.get_pos(), self._link.get_quat()
+        link_pos, link_quat = self._link.get_pos(relative=False), self._link.get_quat(relative=False)
         if link_pos.ndim == 2:
             link_pos, link_quat = link_pos[0], link_quat[0]
         aabb_min_local = gu.inv_transform_by_trans_quat(aabb_min_w, link_pos, link_quat)
@@ -816,8 +816,8 @@ class TemperatureGridSensor(
                 context.clear_debug_object(obj)
         self._debug_objects = []
 
-        link_pos = self._link.get_pos(env_idx)
-        link_quat = self._link.get_quat(env_idx)
+        link_pos = self._link.get_pos(env_idx, relative=False)
+        link_quat = self._link.get_quat(env_idx, relative=False)
         link_pos = tensor_to_array(link_pos).reshape(3)
         link_quat = tensor_to_array(link_quat).reshape(4)
         link_T = gu.trans_quat_to_T(link_pos, link_quat)

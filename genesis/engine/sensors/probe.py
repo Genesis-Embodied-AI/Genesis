@@ -118,8 +118,8 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
             envs_idx = list(context.rendered_envs_idx)
             n_debug_envs = len(envs_idx)
             env_offsets = context.scene.envs_offset[np.asarray(envs_idx, dtype=gs.np_int)]
-            link_pos = self._link.get_pos(envs_idx)[:, None, :]
-            link_quat = self._link.get_quat(envs_idx)[:, None, :]
+            link_pos = self._link.get_pos(envs_idx, relative=False)[:, None, :]
+            link_quat = self._link.get_quat(envs_idx, relative=False)[:, None, :]
             probe_world = gu.transform_by_trans_quat(
                 self._probe_local_pos.reshape(-1, 3)[None, :, :], link_pos, link_quat
             )
@@ -128,8 +128,8 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
             envs_idx = None
             n_debug_envs = 1
             env_offsets = None
-            link_pos = self._link.get_pos(envs_idx).reshape(3)
-            link_quat = self._link.get_quat(envs_idx).reshape(4)
+            link_pos = self._link.get_pos(envs_idx, relative=False).reshape(3)
+            link_quat = self._link.get_quat(envs_idx, relative=False).reshape(4)
             probe_world = tensor_to_array(
                 gu.transform_by_trans_quat(self._probe_local_pos.reshape(-1, 3), link_pos, link_quat)
             )

@@ -369,8 +369,11 @@ class FEMEntity(Entity):
         verts = verts.astype(gs.np_float, copy=False)
         elems = elems.astype(gs.np_int, copy=False)
 
-        # rotate
-        R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
+        # rotate (composing the morph pose offset, e.g. an up-axis conversion, onto the morph orientation)
+        init_quat = gu.transform_quat_by_quat(
+            np.array(self._morph.offset_quat, dtype=gs.np_float), np.array(self._morph.quat, dtype=gs.np_float)
+        )
+        R = gu.quat_to_R(init_quat)
         verts_COM = verts.mean(axis=0)
         init_positions = (verts - verts_COM) @ R.T + verts_COM
 
@@ -919,8 +922,8 @@ class FEMEntity(Entity):
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
             link_idx = link.idx
-            link_init_pos = link.get_pos()
-            link_init_quat = link.get_quat()
+            link_init_pos = link.get_pos(relative=False)
+            link_init_quat = link.get_quat(relative=False)
             if self._scene.n_envs == 0:
                 link_init_pos = link_init_pos[None]
                 link_init_quat = link_init_quat[None]

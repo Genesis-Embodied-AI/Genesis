@@ -700,8 +700,8 @@ class PointCloudTactileSensorMixin(ProbeSensorMixin[PointCloudTactileSensorMetad
                 active_mask = tensor_to_array(active_envs_mask[:, envs_idx].T).astype(bool)
                 if not active_mask.any():
                     continue
-                trk_pos = trk_link.get_pos(envs_idx)[:, None, :]
-                trk_quat = trk_link.get_quat(envs_idx)[:, None, :]
+                trk_pos = trk_link.get_pos(envs_idx, relative=False)[:, None, :]
+                trk_quat = trk_link.get_quat(envs_idx, relative=False)[:, None, :]
                 pc_world = gu.transform_by_trans_quat(pos_local[None, :, :], trk_pos, trk_quat)
                 pc_world = tensor_to_array(pc_world) + env_offsets[:, None, :]
                 world_chunks.append(pc_world[active_mask])
@@ -710,8 +710,8 @@ class PointCloudTactileSensorMixin(ProbeSensorMixin[PointCloudTactileSensorMetad
                 pos_active = pos_local[active_mask]
                 if pos_active.numel() == 0:
                     continue
-                trk_pos = trk_link.get_pos(envs_idx).reshape(3)
-                trk_quat = trk_link.get_quat(envs_idx).reshape(4)
+                trk_pos = trk_link.get_pos(envs_idx, relative=False).reshape(3)
+                trk_quat = trk_link.get_quat(envs_idx, relative=False).reshape(4)
                 world_chunks.append(tensor_to_array(gu.transform_by_trans_quat(pos_active, trk_pos, trk_quat)))
         if not world_chunks:
             return

@@ -681,8 +681,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
         entity = data.entity
 
-        pos = tensor_to_array(entity.get_pos())
-        quat_wxyz = tensor_to_array(entity.get_quat())
+        pos = tensor_to_array(entity.get_pos(relative=False))
+        quat_wxyz = tensor_to_array(entity.get_quat(relative=False))
         if self._controlled_env_idx is not None:
             pos = pos[self._controlled_env_idx]
             quat_wxyz = quat_wxyz[self._controlled_env_idx]
@@ -732,7 +732,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 # set_quat must be absolute (relative=False), since the KinematicEntity default is relative.
                 entity.set_quat(new_quat_wxyz, envs_idx=self._controlled_env_idx, relative=False)
             else:
-                entity.set_pos(new_mat[:3, 3], envs_idx=self._controlled_env_idx)
+                entity.set_pos(new_mat[:3, 3], envs_idx=self._controlled_env_idx, relative=False)
             self._refresh_visuals()
 
     def _is_gizmo_active(self):

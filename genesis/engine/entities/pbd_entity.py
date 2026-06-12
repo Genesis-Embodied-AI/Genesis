@@ -266,9 +266,14 @@ class PBDTetEntity(PBDBaseEntity):
         Applies transformation from the morph, stores mesh vertices and faces, and performs remeshing based on the
         particle size.
         """
-        # We don't use ParticleEntity.sample() because we need to maintain the remeshed self._mesh as well
-        pos = np.asarray(self._morph.pos, dtype=gs.np_float)
-        quat = np.asarray(self._morph.quat, dtype=gs.np_float)
+        # We don't use ParticleEntity.sample() because we need to maintain the remeshed self._mesh as well. The morph
+        # pose offset (e.g. an up-axis conversion) is composed onto the morph pose.
+        pos, quat = gu.transform_pos_quat_by_trans_quat(
+            np.array(self._morph.offset_pos, dtype=gs.np_float),
+            np.array(self._morph.offset_quat, dtype=gs.np_float),
+            np.array(self._morph.pos, dtype=gs.np_float),
+            np.array(self._morph.quat, dtype=gs.np_float),
+        )
         self._vmesh.apply_transform(gu.trans_quat_to_T(pos, quat))
         self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
         self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_int)

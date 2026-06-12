@@ -287,8 +287,8 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
             up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
             offset_T = pos_lookat_up_to_T(pos, lookat, up)
 
-        link_pos = self._link.get_pos()
-        link_quat = self._link.get_quat()
+        link_pos = self._link.get_pos(relative=False)
+        link_quat = self._link.get_quat(relative=False)
 
         link_T = trans_quat_to_T(link_pos, link_quat)
         camera_T = torch.matmul(link_T, offset_T)
@@ -514,8 +514,8 @@ class RasterizerCameraSensor(
         # If attached to a link and the link is built, pos is relative to link frame
         if self._link is not None and self._link.is_built:
             # Convert pos from link-relative to world coordinates
-            link_pos = self._link.get_pos()
-            link_quat = self._link.get_quat()
+            link_pos = self._link.get_pos(relative=False)
+            link_quat = self._link.get_quat(relative=False)
 
             # Apply pos directly as offset from link
             pos_world = transform_by_quat(pos, link_quat) + link_pos
@@ -646,8 +646,8 @@ class RaytracerCameraSensor(
 
         # If attached to a link and the link is built, transform pos to world coordinates
         if self._link is not None and self._link.is_built:
-            link_pos = self._link.get_pos().squeeze(0)
-            link_quat = self._link.get_quat().squeeze(0)
+            link_pos = self._link.get_pos(relative=False).squeeze(0)
+            link_quat = self._link.get_quat(relative=False).squeeze(0)
 
             # Apply pos directly as offset from link
             pos = transform_by_trans_quat(pos, link_pos, link_quat)

@@ -179,7 +179,7 @@ class ContactSensor(SimpleSensor[ContactSensorOptions, None, ContactSensorMetada
         """
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        pos = self._link.get_pos(env_idx).reshape((3,))
+        pos = self._link.get_pos(env_idx, relative=False).reshape((3,))
         is_contact = self.read(env_idx)
 
         if self.debug_object is not None:
@@ -313,8 +313,8 @@ class ContactForceSensor(
         """
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        pos = self._link.get_pos(env_idx).reshape((3,))
-        quat = self._link.get_quat(env_idx).reshape((4,))
+        pos = self._link.get_pos(env_idx, relative=False).reshape((3,))
+        quat = self._link.get_quat(env_idx, relative=False).reshape((4,))
 
         force = self.read(env_idx).reshape((3,))
         vec = tensor_to_array(transform_by_quat(force * self._options.debug_scale, quat))

@@ -419,8 +419,8 @@ class RaycasterSensor(
         data = self.read(env_idx)
         points = data.points.reshape((-1, 3))
 
-        pos = self._link.get_pos(env_idx)
-        quat = self._link.get_quat(env_idx)
+        pos = self._link.get_pos(env_idx, relative=False)
+        quat = self._link.get_quat(env_idx, relative=False)
         if pos.ndim == 2:
             pos, quat = pos[0], quat[0]
 

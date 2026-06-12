@@ -9,6 +9,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
@@ -28,7 +29,7 @@ from genesis.utils.misc import (
 from genesis.utils.sdf import SDF
 
 from ..base_solver import Solver, StateChange, mutates
-from ..kinematic_solver import KinematicSolver
+from ..kinematic_solver import KinematicSolver, _select_links_offset, _fill_base_link_geom_offsets
 from .collider import Collider
 from .constraint import ConstraintSolver, ConstraintSolverIsland
 from .abd.misc import (
@@ -360,6 +361,22 @@ class RigidSolver(KinematicSolver):
 
         self._init_collider()
         self._init_constraint_solver()
+
+        # Morph pose offset of each collision geom, conjugated into the geom's own frame so the relative getters
+        # revert it for geoms rotated relative to the link. Only the base link carries the offset; child-link geoms
+        # inherit it through the kinematic chain and keep an identity offset. Forward offset device tensors, None when
+        # everything is identity; the relative geom getters recompute the inverse.
+        geoms_offset_pos = np.zeros((self.n_geoms, 3), dtype=gs.np_float)
+        geoms_offset_quat = np.tile(gu.identity_quat(), (self.n_geoms, 1))
+        for entity in self._entities:
+            base_link = entity.links[0]
+            _fill_base_link_geom_offsets(
+                geoms_offset_pos, geoms_offset_quat, entity, base_link.geoms, base_link._variant_geom_ranges
+            )
+        self._geoms_offset_pos = self._geoms_offset_quat = None
+        if not (np.allclose(geoms_offset_pos, 0.0) and np.allclose(gu.quat_to_xyz(geoms_offset_quat), 0.0)):
+            self._geoms_offset_pos = torch.from_numpy(geoms_offset_pos).to(device=gs.device, dtype=gs.tc_float)
+            self._geoms_offset_quat = torch.from_numpy(geoms_offset_quat).to(device=gs.device, dtype=gs.tc_float)
 
         # FIXME: when the migration is finished, we will remove the about two lines
         self._func_vel_at_point = func_vel_at_point
@@ -1780,6 +1797,21 @@ class RigidSolver(KinematicSolver):
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
+        # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
+        if relative and self._links_offset_pos is None:
+            relative = False
+        # Map a single base link's user position to world here (keeping the current orientation) so the zero-copy
+        # in-place write below still applies, both for an environment-uniform and a per-environment offset. Multi-link
+        # relative sets are composed in the kernel branch instead.
+        if relative and isinstance(links_idx, int):
+            cur_quat = self.get_links_quat(links_idx, envs_idx, relative=False)[..., 0, :]
+            offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)[..., 0, :]
+            offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)[..., 0, :]
+            user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), cur_quat)
+            pos = torch.as_tensor(pos, dtype=gs.tc_float, device=gs.device) + gu.transform_by_quat(
+                offset_pos, user_quat
+            )
+            relative = False
 
         # Zero-copy fast path: single base link, non-relative. Write the position buffer in place instead of
         # launching a kernel. The kernel path below handles relative or multi-link updates, as well as waking up
@@ -1826,6 +1858,16 @@ class RigidSolver(KinematicSolver):
             )
             if self.n_envs == 0:
                 pos = pos[None]
+
+            if relative and self._links_offset_pos is not None:
+                # Compose the body-frame offset onto the user position, keeping the current orientation, then set the
+                # resulting world position absolutely.
+                cur_quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
+                offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
+                offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
+                user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), cur_quat)
+                pos = pos + gu.transform_by_quat(offset_pos, user_quat)
+                relative = False
 
             # Raise exception for fixed links with at least one geom and non-batched fixed vertices, except if setting
             # same location for all envs at once
@@ -1901,6 +1943,16 @@ class RigidSolver(KinematicSolver):
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
+        # Without any pose offset, the user and world frames coincide, so a relative set is just an absolute one.
+        if relative and self._links_offset_quat is None:
+            relative = False
+        # Compose a single base link's user orientation to world here so the zero-copy in-place write below still
+        # applies, both for an environment-uniform and a per-environment offset. Multi-link relative sets are composed
+        # in the kernel branch instead.
+        if relative and isinstance(links_idx, int):
+            offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)[..., 0, :]
+            quat = gu.transform_quat_by_quat(offset_quat, torch.as_tensor(quat, dtype=gs.tc_float, device=gs.device))
+            relative = False
 
         # Zero-copy fast path: single base link, non-relative. Write the quaternion buffer in place instead of
         # launching a kernel. The kernel path below handles relative or multi-link updates, as well as waking up
@@ -1946,6 +1998,12 @@ class RigidSolver(KinematicSolver):
             )
             if self.n_envs == 0:
                 quat = quat[None]
+
+            if relative and self._links_offset_quat is not None:
+                # Compose the offset onto the user orientation, then set the resulting world orientation absolutely.
+                offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
+                quat = gu.transform_quat_by_quat(offset_quat, quat)
+                relative = False
 
             set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
             has_fixed_verts = any(
@@ -2514,7 +2572,12 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
 
     def get_links_pos(
-        self, links_idx=None, envs_idx=None, *, ref: Literal["link_origin", "link_com", "root_com"] = "link_origin"
+        self,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        relative=False,
     ):
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2532,6 +2595,14 @@ class RigidSolver(KinematicSolver):
             tensor = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
         else:
             gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+
+        # The pose offset is defined on the link origin, so it is only stripped for the 'link_origin' reference.
+        if relative and ref_idx == 2 and self._links_offset_pos is not None:
+            quat = qd_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
+            offset_pos = _select_links_offset(self._links_offset_pos, links_idx, envs_idx)
+            offset_quat = _select_links_offset(self._links_offset_quat, links_idx, envs_idx)
+            user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), quat)
+            tensor = tensor - gu.transform_by_quat(offset_pos, user_quat)
 
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -2608,12 +2679,21 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.geoms_state.friction_ratio, envs_idx, geoms_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_geoms_pos(self, geoms_idx=None, envs_idx=None):
+    def get_geoms_pos(self, geoms_idx=None, envs_idx=None, *, relative=False):
         tensor = qd_to_torch(self.geoms_state.pos, envs_idx, geoms_idx, transpose=True, copy=True)
+        if relative and self._geoms_offset_pos is not None:
+            quat = qd_to_torch(self.geoms_state.quat, envs_idx, geoms_idx, transpose=True, copy=True)
+            offset_pos = self._geoms_offset_pos if geoms_idx is None else self._geoms_offset_pos[geoms_idx]
+            offset_quat = self._geoms_offset_quat if geoms_idx is None else self._geoms_offset_quat[geoms_idx]
+            user_quat = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), quat)
+            tensor = tensor - gu.transform_by_quat(offset_pos, user_quat)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_geoms_quat(self, geoms_idx=None, envs_idx=None):
+    def get_geoms_quat(self, geoms_idx=None, envs_idx=None, *, relative=False):
         tensor = qd_to_torch(self.geoms_state.quat, envs_idx, geoms_idx, transpose=True, copy=True)
+        if relative and self._geoms_offset_quat is not None:
+            offset_quat = self._geoms_offset_quat if geoms_idx is None else self._geoms_offset_quat[geoms_idx]
+            tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None):
