@@ -36,8 +36,10 @@ class Cloth(Base):
         Bending resistance coefficient. If None, no bending resistance.
         Default is None.
     model : str, optional
-        FEM material model (not used for cloth, kept for compatibility).
-        Default is "stable_neohookean".
+        Shell constitution model. The IPC coupler currently always applies
+        ``StrainLimitingBaraffWitkinShell`` regardless of this field; the
+        ``"neohookean"`` option is reserved for future routing to
+        ``NeoHookeanShell``. Default is ``"strain_limiting_baraff_witkin"``.
     friction_mu : float, optional
         Friction coefficient. Default is 0.1.
     contact_resistance : float | None, optional
@@ -66,4 +68,4 @@ class Cloth(Base):
     rho: PositiveFloat = 200.0
     thickness: PositiveFloat = 0.001
     bending_stiffness: NonNegativeFloat | None = None
-    model: Literal["linear", "stable_neohookean", "linear_corotated"] = "stable_neohookean"
+    model: Literal["strain_limiting_baraff_witkin"] = "strain_limiting_baraff_witkin"
