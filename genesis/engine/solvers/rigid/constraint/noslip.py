@@ -439,6 +439,7 @@ def func_dual_finish_batch_coop(
     as one lane, while every lane reading back its own qacc writes keeps it correct without an extra fence."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     n_con = constraint_state.n_constraints[i_b]
+    _BLOCK = qd.static(static_rigid_sim_config.noslip_coop_block_dim)
 
     # qfrc_constraint = J^T @ efc_force (lane-strided over dofs)
     i_d = tid
@@ -447,21 +448,25 @@ def func_dual_finish_batch_coop(
         for i_c in range(n_con):
             qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
         constraint_state.qfrc_constraint[i_d, i_b] = qfrc
-        i_d += 32
+        i_d += _BLOCK
 
-    # All lanes must see every qfrc entry before the (redundant) mass solve reads the full vector.
+    # All lanes must see every qfrc entry before the mass solve reads the full vector.
     qd.simt.block.sync()
 
-    rigid_solver.func_solve_mass_batch(
-        i_b=i_b,
-        vec=constraint_state.qfrc_constraint,
-        out=constraint_state.qacc,
-        out_bw=None,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=False,
-    )
+    # The mass solve is an in-place block-diagonal LDL on qacc; running it redundantly is only safe within a single
+    # warp (32 lanes in lockstep read/write identical values). With _BLOCK > 32 the extra warps are not lockstep with
+    # warp 0, so confine the solve to the first warp and fence its result to the rest of the block.
+    if tid < 32:
+        rigid_solver.func_solve_mass_batch(
+            i_b=i_b,
+            vec=constraint_state.qfrc_constraint,
+            out=constraint_state.qacc,
+            out_bw=None,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
+        )
 
     qd.simt.block.sync()
 
@@ -471,7 +476,7 @@ def func_dual_finish_batch_coop(
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-        i_d += 32
+        i_d += _BLOCK
 
 
 @qd.func
@@ -549,10 +554,11 @@ def func_dual_finish_coop(
 ):
     """Warp-per-env dual finish: a 32-lane block per env, cooperating on the per-dof J^T f and write-back."""
     _B = constraint_state.jac.shape[2]
-    qd.loop_config(name="noslip_dual_finish", block_dim=32)
-    for i_flat in range(_B * 32):
-        tid = i_flat % 32
-        i_b = i_flat // 32
+    _BLOCK = qd.static(static_rigid_sim_config.noslip_coop_block_dim)
+    qd.loop_config(name="noslip_dual_finish", block_dim=_BLOCK)
+    for i_flat in range(_B * _BLOCK):
+        tid = i_flat % _BLOCK
+        i_b = i_flat // _BLOCK
         func_dual_finish_batch_coop(
             tid, i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
         )
