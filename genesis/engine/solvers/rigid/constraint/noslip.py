@@ -2,8 +2,41 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+from genesis.constants import IntEnum
 
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
+
+
+class NoslipCoop(IntEnum):
+    """Lanes per env for the cooperative no-slip sweep.
+
+    The sweep is memory-latency-bound reading dense efc_AR rows at bs=1 (see perso_hugh/doc/table_bus_exp.md, E8), so
+    more lanes per env = more in-flight loads = better latency hiding. ``BLOCK`` must be a multiple of 32 (warp) and a
+    power of two; the per-constraint residual / iter-0 reductions warp-shuffle within each 32-lane warp and then do a
+    tiny shared-memory combine across the ``BLOCK // 32`` warps. An IntEnum (rather than a module-level int) keeps the
+    cooperative kernels fastcache-pure - enum captures are exempt from the purity check, plain globals are not."""
+
+    BLOCK = 128
+
+
+@qd.func
+def _func_noslip_block_reduce_add(sh_warp, tid: qd.i32, val):
+    """Sum ``val`` across all ``NoslipCoop.BLOCK`` lanes of the env's block, returning the total to every lane.
+
+    Hybrid reduction: a free warp-shuffle reduce within each 32-lane warp, then a shared-memory combine across the
+    (few) warps. ``sh_warp`` is a per-block SharedArray of length ``BLOCK // 32``, reused across calls; the leading and
+    trailing block syncs make back-to-back calls safe."""
+    w = tid // 32
+    lane = tid % 32
+    warp_sum = qd.simt.subgroup.reduce_all_add_tiled(val, 5)
+    if lane == 0:
+        sh_warp[w] = warp_sum
+    qd.simt.block.sync()
+    total = gs.qd_float(0.0)
+    for i in qd.static(range(NoslipCoop.BLOCK // 32)):
+        total += sh_warp[i]
+    qd.simt.block.sync()
+    return total
 
 
 @qd.func
@@ -238,16 +271,19 @@ def func_noslip_batch_coop(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Warp-per-env cooperative version of ``func_noslip_batch`` (approach A in ``perso_hugh/doc/noslip.md``).
+    """Block-per-env cooperative version of ``func_noslip_batch`` (approach A in ``perso_hugh/doc/noslip.md``).
 
-    All 32 lanes of the warp run identical control flow for one env; only the two reductions are split across lanes:
-    the dominant per-constraint residual dot product (via ``func_residual_constraint_force_coop``) and the iter-0
-    improvement sum. The projected Gauss-Seidel order is unchanged - every lane recomputes the scalar projection and
-    writes ``efc_force`` redundantly with the identical value, so each lane reads back its own writes in program order
-    and no cross-lane fence is needed. Results match the serial sweep up to reduction-associativity rounding."""
+    All ``NoslipCoop.BLOCK`` lanes of the env's block run identical control flow; only the two reductions are split across
+    lanes: the dominant per-constraint residual dot product (via ``func_residual_constraint_force_coop``) and the
+    iter-0 improvement sum. The projected Gauss-Seidel order is unchanged - every lane recomputes the scalar projection
+    and writes ``efc_force`` redundantly with the identical value, so each lane reads back its own writes in program
+    order and no cross-lane fence is needed. Results match the serial sweep up to reduction-associativity rounding."""
     EPS = rigid_global_info.EPS[None]
     n_dofs = constraint_state.jac.shape[1]
     i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
+
+    # Per-block scratch for the cross-warp part of the residual / improvement reductions.
+    sh_warp = qd.simt.block.SharedArray((NoslipCoop.BLOCK // 32,), gs.qd_float)
 
     # temp variables
     res = qd.Vector.zero(gs.qd_float, 5)
@@ -269,8 +305,8 @@ def func_noslip_batch_coop(
             i_c = tid
             while i_c < constraint_state.n_constraints[i_b]:
                 partial += 0.5 * constraint_state.efc_force[i_c, i_b] ** 2 * constraint_state.diag[i_c, i_b]
-                i_c += 32
-            improvement += qd.simt.subgroup.reduce_all_add_tiled(partial, 5)
+                i_c += NoslipCoop.BLOCK
+            improvement += _func_noslip_block_reduce_add(sh_warp, tid, partial)
 
         for i_c in range(ne, ne + nf):
             res = func_residual_constraint_force_coop(
@@ -279,6 +315,7 @@ def func_noslip_batch_coop(
                 i_b=i_b,
                 i_efc=i_c,
                 dim=1,
+                sh_warp=sh_warp,
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
@@ -302,6 +339,7 @@ def func_noslip_batch_coop(
                     i_b=i_b,
                     i_efc=j_efc,
                     dim=2,
+                    sh_warp=sh_warp,
                     constraint_state=constraint_state,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
@@ -468,12 +506,14 @@ def func_noslip_sweep_coop(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Warp-per-env force-update sweep: a 32-lane block per env, cooperating on the residual reductions."""
+    """Block-per-env force-update sweep: a ``NoslipCoop.BLOCK``-lane block per env, cooperating on the residual
+    reductions. A wider-than-warp block hides the dense efc_AR read latency (the bs=1 bottleneck) by keeping more
+    loads in flight."""
     _B = constraint_state.jac.shape[2]
-    qd.loop_config(name="noslip_sweep", block_dim=32)
-    for i_flat in range(_B * 32):
-        tid = i_flat % 32
-        i_b = i_flat // 32
+    qd.loop_config(name="noslip_sweep", block_dim=NoslipCoop.BLOCK)
+    for i_flat in range(_B * NoslipCoop.BLOCK):
+        tid = i_flat % NoslipCoop.BLOCK
+        i_b = i_flat // NoslipCoop.BLOCK
         func_noslip_batch_coop(tid, i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
@@ -677,13 +717,15 @@ def func_residual_constraint_force_coop(
     i_b: int,
     i_efc: int,
     dim: int,
+    sh_warp,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Warp-cooperative variant of ``func_residual_constraint_force``: the 32 lanes of the warp stride over the
-    constraint index ``k`` of the residual dot product ``res = b + AR @ f`` and the per-lane partial sums are combined
-    with ``subgroup.reduce_all_add_tiled``, so every lane ends up with the full residual. ``dim`` is uniform across the
-    warp (1 for frictionloss rows, 2 for a pyramidal pair), so all lanes call the reduction the same number of times."""
+    """Block-cooperative variant of ``func_residual_constraint_force``: the ``NoslipCoop.BLOCK`` lanes of the env's block
+    stride over the constraint index ``k`` of the residual dot product ``res = b + AR @ f`` and the per-lane partial
+    sums are combined with ``_func_noslip_block_reduce_add``, so every lane ends up with the full residual. ``dim`` is
+    uniform across the block (1 for frictionloss rows, 2 for a pyramidal pair), so all lanes call the reduction the
+    same number of times."""
     i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
     n = constraint_state.n_constraints[i_b]
     for j in range(dim):
@@ -691,8 +733,8 @@ def func_residual_constraint_force_coop(
         k = tid
         while k < n:
             partial += constraint_state.efc_AR[i_efc + j, k, i_b_AR] * constraint_state.efc_force[k, i_b]
-            k += 32
-        res[j] = constraint_state.efc_b[i_efc + j, i_b_AR] + qd.simt.subgroup.reduce_all_add_tiled(partial, 5)
+            k += NoslipCoop.BLOCK
+        res[j] = constraint_state.efc_b[i_efc + j, i_b_AR] + _func_noslip_block_reduce_add(sh_warp, tid, partial)
     return res
 
 
