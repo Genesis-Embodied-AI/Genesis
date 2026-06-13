@@ -1073,6 +1073,13 @@ def func_clamp_prune_and_sort_contacts_coop(
     for i_flat in range(_B * _K):
         tid = i_flat % _K
         i_b = i_flat // _K
+        # Shared-memory staging for the serial sort. The lane-0 insertion sort and bucket scans are the kernel's
+        # bottleneck (E13: ~75% scoreboard stalls reading contact_sort_key/idx from global DRAM each comparison).
+        # Staging into ~30-cycle shared memory removes that latency. Envs with more than _SMEM_CAP candidate contacts
+        # fall back to the in-place global path.
+        _SMEM_CAP = qd.static(512)
+        smem_key = qd.simt.block.SharedArray((512,), gs.qd_float)
+        smem_idx = qd.simt.block.SharedArray((512,), gs.qd_int)
         # All lanes compute n_con (cheap, no memory write on non-lane-0).
         n_con = qd.min(collider_state.n_contacts[i_b], max_candidate_contacts)
         if tid == 0:
@@ -1119,8 +1126,38 @@ def func_clamp_prune_and_sort_contacts_coop(
                 if tid < n_con:
                     collider_state.contact_sort_key[tid, i_b] = my_key
                     collider_state.contact_sort_idx[tid, i_b] = my_idx
+            elif n_con <= _SMEM_CAP:
+                # Stage keys+idx into shared memory, insertion-sort on lane 0 in smem (~30-cycle access vs ~400-cycle
+                # global), then write the sorted result back. Same algorithm as the global fallback, so bit-identical.
+                i_c_ = tid
+                while i_c_ < n_con:
+                    smem_key[i_c_] = collider_state.contact_sort_key[i_c_, i_b]
+                    smem_idx[i_c_] = collider_state.contact_sort_idx[i_c_, i_b]
+                    i_c_ += _K
+                qd.simt.subgroup.sync()
+                if tid == 0:
+                    for i_c in range(1, n_con):
+                        key_p = smem_key[i_c]
+                        if smem_key[i_c - 1] <= key_p:
+                            continue
+                        i_p = smem_idx[i_c]
+                        j_c = i_c - 1
+                        while j_c >= 0:
+                            if smem_key[j_c] <= key_p:
+                                break
+                            smem_key[j_c + 1] = smem_key[j_c]
+                            smem_idx[j_c + 1] = smem_idx[j_c]
+                            j_c = j_c - 1
+                        smem_key[j_c + 1] = key_p
+                        smem_idx[j_c + 1] = i_p
+                qd.simt.subgroup.sync()
+                i_c_ = tid
+                while i_c_ < n_con:
+                    collider_state.contact_sort_key[i_c_, i_b] = smem_key[i_c_]
+                    collider_state.contact_sort_idx[i_c_, i_b] = smem_idx[i_c_]
+                    i_c_ += _K
             elif tid == 0:
-                # Serial fallback: insertion sort on lane 0 for n_con > 32.
+                # Serial fallback: insertion sort on lane 0 for n_con > _SMEM_CAP (too big to stage).
                 for i_c in range(1, n_con):
                     key_p = collider_state.contact_sort_key[i_c, i_b]
                     if collider_state.contact_sort_key[i_c - 1, i_b] <= key_p:
