@@ -640,7 +640,17 @@ def kernel_noslip_decomposed(
                     if qd.static(static_rigid_sim_config.use_hibernation)
                     else i_0
                 )
-                func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
+                # A contact row's Jacobian only touches the 1-2 bodies in the contact, so most entity blocks have an
+                # all-zero RHS. M^-1 @ 0 = 0 and MinvJT already holds 0 there, so solving those blocks is pure waste
+                # (the dense robot block is the worst offender). Skip them - bit-identical, just fewer LDL solves.
+                row_touches_e = False
+                for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                    if constraint_state.MinvJT[i_row, i_d, i_b] != 0.0:
+                        row_touches_e = True
+                if row_touches_e:
+                    func_solve_mass_entity_row(
+                        i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info
+                    )
 
     for i_row, i_col, i_b in qd.ndrange(len_c, len_c, _B):
         nefc = constraint_state.n_constraints[i_b]
