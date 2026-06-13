@@ -9,7 +9,7 @@ import genesis as gs
 
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.engine.solvers.rigid.abd import func_solve_mass_batch, func_solve_mass_entity
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
 from ..collider.contact_island import ContactIsland
@@ -3700,6 +3700,68 @@ def func_update_gradient_batch(
         func_cholesky_solve_batch(
             i_b, constraint_state=constraint_state, static_rigid_sim_config=static_rigid_sim_config
         )
+
+
+@qd.func
+def func_update_gradient_batch_coop(
+    tid: qd.i32,
+    i_b,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-per-env cooperative version of ``func_update_gradient_batch`` for the CG path (approach A in
+    ``perso_hugh/doc/cg_solve_coop.md``).
+
+    The 32 lanes split the per-dof ``grad = Ma - force - qfrc`` write, then split the block-diagonal
+    ``Mgrad = M^-1 grad`` LDL solve *across entities* (each entity is an independent diagonal block, so lanes that own
+    different entities never touch the same dofs). This is the key over a redundant solve: the per-entity LDL
+    substitution is itself sequential, so the only parallelism available is over the independent entity blocks."""
+    n_dofs = constraint_state.grad.shape[0]
+
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.grad[i_d, i_b] = (
+            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+        )
+        i_d += 32
+
+    # All lanes must see every grad entry before the per-entity solves read their dof slices.
+    qd.simt.block.sync()
+
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        i_0 = tid
+        while i_0 < rigid_global_info.n_awake_entities[i_b]:
+            i_e = rigid_global_info.awake_entities[i_0, i_b]
+            func_solve_mass_entity(
+                i_e,
+                i_b,
+                constraint_state.grad,
+                constraint_state.Mgrad,
+                None,
+                entities_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                False,
+            )
+            i_0 += 32
+    else:
+        i_e = tid
+        while i_e < entities_info.n_links.shape[0]:
+            func_solve_mass_entity(
+                i_e,
+                i_b,
+                constraint_state.grad,
+                constraint_state.Mgrad,
+                None,
+                entities_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                False,
+            )
+            i_e += 32
 
 
 @qd.func

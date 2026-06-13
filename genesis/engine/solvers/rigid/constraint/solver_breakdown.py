@@ -876,19 +876,40 @@ def _func_update_gradient(
 ):
     """Step 5: Update gradient"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(
-        name="update_gradient", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
-    )
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_update_gradient_batch(
-                i_b,
-                dofs_state=dofs_state,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+    if qd.static(
+        static_rigid_sim_config.enable_cooperative_constraint_kernels
+        and static_rigid_sim_config.solver_type == gs.constraint_solver.CG
+    ):
+        # Warp-per-env: lane-strided grad + redundant block-diagonal mass solve (CG only; Newton keeps its
+        # Cholesky-solve path on the serial branch below).
+        qd.loop_config(name="update_gradient", block_dim=32)
+        for i_flat in range(_B * 32):
+            tid = i_flat % 32
+            i_b = i_flat // 32
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_update_gradient_batch_coop(
+                    tid,
+                    i_b,
+                    dofs_state=dofs_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+    else:
+        qd.loop_config(
+            name="update_gradient", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+        )
+        for i_b in range(_B):
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_update_gradient_batch(
+                    i_b,
+                    dofs_state=dofs_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
 
 
 @qd.func
