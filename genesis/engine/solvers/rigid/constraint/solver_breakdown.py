@@ -505,12 +505,22 @@ def _func_cg_only_save_prev_grad(
 ):
     """Save prev_grad and prev_Mgrad (CG only)"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(
-        name="cg_only_save_prev_grag", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
-    )
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
+        qd.loop_config(name="cg_only_save_prev_grad", block_dim=32)
+        for i_flat in range(_B * 32):
+            tid = i_flat % 32
+            i_b = i_flat // 32
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_save_prev_grad_coop(tid, i_b, constraint_state=constraint_state)
+    else:
+        qd.loop_config(
+            name="cg_only_save_prev_grag",
+            serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
+            block_dim=32,
+        )
+        for i_b in range(_B):
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
 
 
 @qd.func
@@ -959,17 +969,33 @@ def _func_update_search_direction(
 ):
     """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(
-        name="update_search_direction", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
-    )
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_terminate_or_update_descent_batch(
-                i_b,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
+        qd.loop_config(name="update_search_direction", block_dim=32)
+        for i_flat in range(_B * 32):
+            tid = i_flat % 32
+            i_b = i_flat // 32
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_terminate_or_update_descent_batch_coop(
+                    tid,
+                    i_b,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+    else:
+        qd.loop_config(
+            name="update_search_direction",
+            serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
+            block_dim=32,
+        )
+        for i_b in range(_B):
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_terminate_or_update_descent_batch(
+                    i_b,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
 
 
 @qd.func

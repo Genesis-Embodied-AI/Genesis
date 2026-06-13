@@ -3374,6 +3374,21 @@ def func_save_prev_grad(
 
 
 @qd.func
+def func_save_prev_grad_coop(
+    tid: qd.i32,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+):
+    """Warp-per-env cooperative ``func_save_prev_grad`` (approach B): lane-strided copy over dofs. Bit-identical."""
+    n_dofs = constraint_state.qacc.shape[0]
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+        constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
+        i_d += 32
+
+
+@qd.func
 def func_update_constraint_batch(
     i_b,
     qacc: qd.Tensor,
@@ -3909,6 +3924,66 @@ def func_terminate_or_update_descent_batch(
                 constraint_state.search[i_d, i_b] = (
                     -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
                 )
+
+
+@qd.func
+def func_terminate_or_update_descent_batch_coop(
+    tid: qd.i32,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-per-env cooperative version of ``func_terminate_or_update_descent_batch`` (approach C).
+
+    The per-dof reductions (grad-norm, and the two CG-beta dot products) are split across the 32 lanes via
+    ``reduce_all_add_tiled``; the ``search`` update is lane-strided. ``improved`` is uniform across the warp (all lanes
+    reduce the same grad-norm), so the reductions and the conditional search update are reached by all lanes together.
+    Not bit-identical (the reductions reorder fp adds), but converges to the same CG fixed point."""
+    n_dofs = constraint_state.jac.shape[1]
+
+    tol_scaled = (rigid_global_info.meaninertia[i_b] * qd.max(1, n_dofs)) * rigid_global_info.tolerance[None]
+    improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
+
+    gn_partial = gs.qd_float(0.0)
+    i_d = tid
+    while i_d < n_dofs:
+        gn_partial += constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+        i_d += 32
+    grad_norm = qd.sqrt(qd.simt.subgroup.reduce_all_add_tiled(gn_partial, 5))
+
+    improved = grad_norm > tol_scaled and improvement > tol_scaled
+    constraint_state.improved[i_b] = improved
+
+    if improved:
+        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            i_d = tid
+            while i_d < n_dofs:
+                constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+                i_d += 32
+        else:
+            beta_partial = gs.qd_float(0.0)
+            pg_partial = gs.qd_float(0.0)
+            i_d = tid
+            while i_d < n_dofs:
+                beta_partial += constraint_state.grad[i_d, i_b] * (
+                    constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                )
+                pg_partial += constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                i_d += 32
+            cg_beta_num = qd.simt.subgroup.reduce_all_add_tiled(beta_partial, 5)
+            cg_pg_dot_pMg = qd.simt.subgroup.reduce_all_add_tiled(pg_partial, 5)
+            cg_beta = qd.max(cg_beta_num / qd.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
+
+            constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
+            constraint_state.cg_beta[i_b] = cg_beta
+
+            i_d = tid
+            while i_d < n_dofs:
+                constraint_state.search[i_d, i_b] = (
+                    -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
+                )
+                i_d += 32
 
 
 @qd.func
