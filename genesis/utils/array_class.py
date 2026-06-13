@@ -2194,6 +2194,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
     # reductions) keys on enable_cooperative_constraint_kernels alone.
     constraint_layout_batch_first: bool = False
+    # Lanes per env for the GPU cooperative no-slip force-update sweep. The sweep is memory-latency-bound reading dense
+    # efc_AR rows at bs=1, so a wider-than-warp block keeps more loads in flight and hides the latency. Must be a
+    # multiple of 32 (warp) and a power of two; the per-constraint residual reductions warp-shuffle within each warp
+    # then combine across the noslip_coop_block_dim // 32 warps. Baked into the kernel from this static struct (a plain
+    # module constant would not be fastcache-pure).
+    noslip_coop_block_dim: int = 128
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
