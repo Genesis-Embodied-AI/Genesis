@@ -395,6 +395,59 @@ def func_dual_finish_batch(
 
 
 @qd.func
+def func_dual_finish_batch_coop(
+    tid: qd.i32,
+    i_b,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-per-env cooperative version of ``func_dual_finish_batch`` (approach C in ``perso_hugh/doc/noslip.md``).
+
+    The 32 lanes split the per-dof work: the ``qfrc = J^T f`` accumulation and the final acc/force write-back are
+    lane-strided over dofs (the dominant O(n_dofs * nefc) term). The block-diagonal mass solve runs redundantly on all
+    lanes - on a GPU a warp executes its lanes in lockstep, so identical work across 32 lanes costs the same wall time
+    as one lane, while every lane reading back its own qacc writes keeps it correct without an extra fence."""
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    n_con = constraint_state.n_constraints[i_b]
+
+    # qfrc_constraint = J^T @ efc_force (lane-strided over dofs)
+    i_d = tid
+    while i_d < n_dofs:
+        qfrc = gs.qd_float(0.0)
+        for i_c in range(n_con):
+            qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+        constraint_state.qfrc_constraint[i_d, i_b] = qfrc
+        i_d += 32
+
+    # All lanes must see every qfrc entry before the (redundant) mass solve reads the full vector.
+    qd.simt.block.sync()
+
+    rigid_solver.func_solve_mass_batch(
+        i_b=i_b,
+        vec=constraint_state.qfrc_constraint,
+        out=constraint_state.qacc,
+        out_bw=None,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=False,
+    )
+
+    qd.simt.block.sync()
+
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
+        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        i_d += 32
+
+
+@qd.func
 def func_noslip_sweep_serial(
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -437,6 +490,58 @@ def func_noslip_sweep(
         func_noslip_sweep_coop(collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
     else:
         func_noslip_sweep_serial(collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+
+
+@qd.func
+def func_dual_finish_serial(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """1-thread-per-env dual finish (the legacy serial path)."""
+    _B = constraint_state.jac.shape[2]
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_dual_finish_batch(
+            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
+        )
+
+
+@qd.func
+def func_dual_finish_coop(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-per-env dual finish: a 32-lane block per env, cooperating on the per-dof J^T f and write-back."""
+    _B = constraint_state.jac.shape[2]
+    qd.loop_config(name="noslip_dual_finish", block_dim=32)
+    for i_flat in range(_B * 32):
+        tid = i_flat % 32
+        i_b = i_flat // 32
+        func_dual_finish_batch_coop(
+            tid, i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
+        )
+
+
+@qd.func
+def func_dual_finish(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Dual finish (qfrc = J^T f, mass solve, acc/force write-back), dispatched at compile time on
+    ``enable_cooperative_constraint_kernels`` to the warp-per-env cooperative or 1-thread-per-env serial variant."""
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
+        func_dual_finish_coop(dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config)
+    else:
+        func_dual_finish_serial(dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config)
 
 
 @qd.kernel(fastcache=True)
@@ -527,11 +632,7 @@ def kernel_noslip_decomposed(
 
     func_noslip_sweep(collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_dual_finish_batch(
-            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
-        )
+    func_dual_finish(dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
