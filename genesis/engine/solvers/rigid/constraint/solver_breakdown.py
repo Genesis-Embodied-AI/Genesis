@@ -1025,23 +1025,27 @@ def _func_check_early_exit(
 
 
 @qd.func
-def _func_cg_save_prev_and_update_gradient(
+def _func_cg_save_prev_gradient_searchdir(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """E32: fuse ``cg_only_save_prev_grad`` into ``update_gradient`` (CG cooperative path) -> one kernel instead of two.
+    """E32+E33: fuse ``cg_only_save_prev_grad`` + ``update_gradient`` + ``update_search_direction`` into ONE warp-per-env
+    cooperative kernel for the CG path (three launches -> one; also removes the two single-thread `serial` separators).
 
-    ``grad``/``Mgrad`` are written only by the gradient solve, so copying them to ``cg_prev_*`` at the top of this kernel
-    reads the same values the earlier standalone launch did (nothing between the old save point and here touches them);
-    ``cg_prev_*`` are read only later, by ``update_search_direction``. A ``block.sync`` separates the save from the
-    grad overwrite. Non-coop / non-CG paths fall back to the two original launches.
+    All three phases are single-block (warp-per-env) cooperative work, so fusing loses no grid parallelism. Ordering /
+    dependencies (satisfied by `block.sync` between phases):
+      - save: ``cg_prev_{grad,Mgrad} = {grad,Mgrad}`` (reads the previous iter's grad/Mgrad, written only by the
+        gradient phase below, so identical to the old standalone-launch timing).
+      - gradient: ``grad = Ma - force - qfrc``; ``Mgrad = M^-1 grad`` (per-entity LDL).
+      - search_dir: reads grad/Mgrad/cg_prev_* -> grad_norm (warp reduce), CG beta, updates ``search`` + ``improved``.
+    Non-coop / non-CG paths fall back to the three original launches.
     """
     if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
         _B = constraint_state.grad.shape[1]
-        qd.loop_config(name="cg_save_prev_and_update_gradient", block_dim=32)
+        qd.loop_config(name="cg_save_prev_gradient_searchdir", block_dim=32)
         for i_flat in range(_B * 32):
             tid = i_flat % 32
             i_b = i_flat // 32
@@ -1057,9 +1061,18 @@ def _func_cg_save_prev_and_update_gradient(
                     constraint_state=constraint_state,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
+                qd.simt.block.sync()
+                solver.func_terminate_or_update_descent_batch_coop(
+                    tid,
+                    i_b,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
     else:
         _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
 # ============================================== Solve body dispatch ================================================
@@ -1107,11 +1120,13 @@ def _kernel_solve_graph(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
         else:
-            # E32: CG path - fused save_prev_grad + update_gradient (one kernel instead of two).
-            _func_cg_save_prev_and_update_gradient(
+            # E32+E33: CG path - fused save_prev_grad + update_gradient + update_search_direction (3 launches -> 1).
+            _func_cg_save_prev_gradient_searchdir(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
-        _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
+        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            # CG folds search_direction into the fused kernel above; Newton still needs the standalone launch.
+            _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
 
 
