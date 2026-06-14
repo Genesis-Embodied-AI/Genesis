@@ -1027,6 +1027,7 @@ def _func_check_early_exit(
     _B = constraint_state.grad.shape[1]
     qd.loop_config(name="check_early_exit")
     for _ in range(1):
+        constraint_state.dbg_iter_accum[()] = constraint_state.dbg_iter_accum[()] + 1
         graph_counter[()] = graph_counter[()] - 1
         any_improved = 0
         for i_b in range(_B):

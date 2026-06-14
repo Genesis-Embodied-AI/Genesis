@@ -334,6 +334,9 @@ class ConstraintState:
     # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
     graph_counter: qd.types.ndarray()
     early_exit_flag: qd.Tensor
+    # Debug-only accumulator: total CG-loop iterations executed across all substeps (read host-side to profile the
+    # average iterations/substep). Never reset on-device; never read by the solver itself.
+    dbg_iter_accum: qd.Tensor
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -476,6 +479,7 @@ def get_constraint_state(constraint_solver, solver):
         solver_iter_counter=V(dtype=qd.i32, shape=()),
         graph_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
+        dbg_iter_accum=V(dtype=qd.i32, shape=()),
     )
 
 
