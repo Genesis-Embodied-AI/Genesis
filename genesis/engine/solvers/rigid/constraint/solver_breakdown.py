@@ -1024,6 +1024,44 @@ def _func_check_early_exit(
             graph_counter[()] = 0
 
 
+@qd.func
+def _func_cg_save_prev_and_update_gradient(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """E32: fuse ``cg_only_save_prev_grad`` into ``update_gradient`` (CG cooperative path) -> one kernel instead of two.
+
+    ``grad``/``Mgrad`` are written only by the gradient solve, so copying them to ``cg_prev_*`` at the top of this kernel
+    reads the same values the earlier standalone launch did (nothing between the old save point and here touches them);
+    ``cg_prev_*`` are read only later, by ``update_search_direction``. A ``block.sync`` separates the save from the
+    grad overwrite. Non-coop / non-CG paths fall back to the two original launches.
+    """
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
+        _B = constraint_state.grad.shape[1]
+        qd.loop_config(name="cg_save_prev_and_update_gradient", block_dim=32)
+        for i_flat in range(_B * 32):
+            tid = i_flat % 32
+            i_b = i_flat // 32
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                solver.func_save_prev_grad_coop(tid, i_b, constraint_state=constraint_state)
+                qd.simt.block.sync()
+                solver.func_update_gradient_batch_coop(
+                    tid,
+                    i_b,
+                    dofs_state=dofs_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+    else:
+        _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
+        _func_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+
+
 # ============================================== Solve body dispatch ================================================
 
 
@@ -1044,8 +1082,7 @@ def _kernel_solve_graph(
         )
         # Fused: refinement + apply alpha
         _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
-        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-            _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
+        # E32: cg_only_save_prev_grad is fused into update_gradient below (CG path) to save one launch.
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
         _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
@@ -1070,7 +1107,8 @@ def _kernel_solve_graph(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
         else:
-            _func_update_gradient(
+            # E32: CG path - fused save_prev_grad + update_gradient (one kernel instead of two).
+            _func_cg_save_prev_and_update_gradient(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
         _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
