@@ -2232,9 +2232,11 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     #   - crb_initialize / mass_mat / armature / impint: one (link|dof) writes only its own state -> bit-identical.
     #   - crb: the child->parent composite-inertia backward pass is sequential WITHIN an entity but the entities are
     #     independent trees writing disjoint links, so parallelizing the OUTER entity loop is bit-identical too.
-    # Bitmask for isolation: bit0=crb_initialize+mass_mat+armature+impint (trivially disjoint), bit1=crb (entity tree).
-    # 3 = all on (default), 0 = off (legacy serial bs=1). Overridable via env GS_PARA_DYN.
-    bs1_parallel_dynamics: int = 3
+    # Bitmask for isolation: bit0=crb_initialize+mass_mat+armature+impint (trivially disjoint), bit1=crb+update_acc
+    # (entity-tree passes), bit2=geom_aabbs (per-geom), bit3=update_qacc (per-dof), bit4=solve_init from_warmstart+
+    # assign_search (per-dof). All write disjoint outputs -> bit-identical to serial. 31 = all on (default), 0 = off
+    # (legacy serial bs=1). Overridable via env GS_PARA_DYN.
+    bs1_parallel_dynamics: int = 31
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

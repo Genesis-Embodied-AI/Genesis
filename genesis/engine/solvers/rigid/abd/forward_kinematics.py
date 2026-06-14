@@ -1161,7 +1161,10 @@ def kernel_update_geom_aabbs(
     n_geoms = geoms_state.pos.shape[0]
     _B = geoms_state.pos.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 4) else gs.PARA_LEVEL.ALL)
+    )
     for i_g, i_b in qd.ndrange(n_geoms, _B):
         g_pos = geoms_state.pos[i_g, i_b]
         g_quat = geoms_state.quat[i_g, i_b]

@@ -4189,7 +4189,13 @@ def func_solve_init(
         # Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap the ndrange so adjacent lanes vary i_d
         # to coalesce those writes/reads. The dofs_state.acc_smooth read remains canonical (small per-env working
         # set, dominated by the qacc write).
-        qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(
+            name="from_warmstart",
+            serialize=static_rigid_sim_config.para_level
+            < qd.static(
+                gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 16) else gs.PARA_LEVEL.ALL
+            ),
+        )
         for i_d, i_b in qd.ndrange(
             n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
         ):
@@ -4244,7 +4250,11 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="assign_search",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 16) else gs.PARA_LEVEL.ALL),
+    )
     for i_d, i_b in qd.ndrange(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4456,7 +4466,10 @@ def func_update_qacc(
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 8) else gs.PARA_LEVEL.ALL)
+    )
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
