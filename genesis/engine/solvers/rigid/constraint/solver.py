@@ -3792,6 +3792,64 @@ def func_update_gradient_batch_coop(
 
 
 @qd.func
+def func_update_gradient_batch_coop_warp(
+    tid: qd.i32,
+    i_b,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-sync variant of ``func_update_gradient_batch_coop`` for the single-warp (block_dim=32) CG monolith: the
+    grad->Mgrad handoff uses ``subgroup.sync`` (``__syncwarp``) instead of a full block barrier. Identical math; only
+    safe when the block is exactly one warp."""
+    n_dofs = constraint_state.grad.shape[0]
+
+    i_d = tid
+    while i_d < n_dofs:
+        constraint_state.grad[i_d, i_b] = (
+            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+        )
+        i_d += 32
+
+    # All lanes must see every grad entry before the per-entity solves read their dof slices.
+    qd.simt.subgroup.sync()
+
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        i_0 = tid
+        while i_0 < rigid_global_info.n_awake_entities[i_b]:
+            i_e = rigid_global_info.awake_entities[i_0, i_b]
+            func_solve_mass_entity(
+                i_e,
+                i_b,
+                constraint_state.grad,
+                constraint_state.Mgrad,
+                None,
+                entities_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                False,
+            )
+            i_0 += 32
+    else:
+        i_e = tid
+        while i_e < entities_info.n_links.shape[0]:
+            func_solve_mass_entity(
+                i_e,
+                i_b,
+                constraint_state.grad,
+                constraint_state.Mgrad,
+                None,
+                entities_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                False,
+            )
+            i_e += 32
+
+
+@qd.func
 def func_update_gradient_tiled(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,

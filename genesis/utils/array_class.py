@@ -2241,11 +2241,14 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # assign_search (per-dof). All write disjoint outputs -> bit-identical to serial. 31 = all on (default), 0 = off
     # (legacy serial bs=1). Overridable via env GS_PARA_DYN.
     bs1_parallel_dynamics: int = 31
-    # Opt-in (env GS_CG_MONOLITH=1): fuse the entire CG iteration loop into ONE warp-per-env (32-lane) kernel, with
-    # warp-implicit / block.sync handoffs between phases instead of ~6 kernel launches per iteration. Aimed at bs=1,
-    # where E54 showed ~380 sequential CG iters/step => ~2300 kernel-boundary stalls/step dominate. Only registered as a
-    # candidate when CG + cooperative kernels; perf_dispatch picks it vs the decomposed graph path by measured speed.
-    cg_coop_monolith: bool = False
+    # Opt-in (env GS_CG_MONOLITH): fuse the entire CG iteration loop into ONE kernel instead of ~6 launches/iter. Aimed
+    # at bs=1, where E54 showed ~380 sequential CG iters/step => ~2300 kernel-boundary stalls/step dominate. Modes:
+    #   0 = off; 1 = serial-fused (the whole loop in a python for-loop on ONE thread/env: no sync/launch overhead, but no
+    #       warp parallelism - E55 found this is fastest at bs=1 because the per-iter work is too small to amortize sync);
+    #   2 = cooperative (all phases fused into one warp-per-env grid-loop, iterated by graph_do_while: keeps the
+    #       decomposed warp parallelism but with fewer launches - E56 found this slower than mode 1 at bs=1).
+    # Only registered as a perf_dispatch candidate when CG + cooperative kernels; perf_dispatch picks vs decomposed.
+    cg_coop_monolith: int = 0
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

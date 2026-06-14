@@ -1249,7 +1249,7 @@ def _func_mono_p0_coop(
         constraint_state.jv[i_c, i_b] = jv_val
         i_c += _K
 
-    qd.simt.block.sync()  # mv, jv visible before the reductions read them
+    qd.simt.subgroup.sync()  # mv, jv visible before the reductions read them (single-warp block)
 
     # === Phase 1: snorm + quad_gauss reduction over dofs ===
     local_snorm_sq = gs.qd_float(0.0)
@@ -1368,7 +1368,7 @@ def _func_mono_refine_apply_coop(
     _func_decomp_linesearch_refine_coop(
         i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
     )
-    qd.simt.block.sync()
+    qd.simt.subgroup.sync()
 
     alpha_apply = constraint_state.ls_alpha[i_b]
     if qd.abs(alpha_apply) < rigid_global_info.EPS[None]:
@@ -1388,16 +1388,78 @@ def _func_mono_refine_apply_coop(
             i_c += _K
 
 
-@solver.func_solve_body.register(
-    is_compatible=lambda *args, **kwargs: (
-        (_cfg := solver._get_static_config(*args, **kwargs)).cg_coop_monolith
-        and not _cfg.requires_grad
-        and _cfg.solver_type == gs.constraint_solver.CG
-        and _cfg.enable_cooperative_constraint_kernels
+@qd.func
+def _func_cg_monolith_iter_body(
+    tid: qd.i32,
+    i_b,
+    entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """All 6 CG phases for one (lane, env), fused with warp-level ``subgroup.sync`` handoffs. The block is a single warp
+    (block_dim=32) so a warp sync (``__syncwarp``) is sufficient and far cheaper than a full block barrier
+    (``__syncthreads``). Caller has already checked the outer ``n_constraints>0 and improved`` guard (warp-uniform), so
+    every lane reaches every sync. Each phase re-reads ``improved`` (warp-uniform) so a mid-iteration convergence
+    short-circuits the rest, matching the decomposed per-kernel guards."""
+    _K = qd.static(32)
+
+    # Phase A: linesearch p0 (mv/jv/snorm/quad_gauss/eq_sum/cost/Newton-step). May clear improved.
+    _func_mono_p0_coop(
+        tid, i_b, dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
     )
-)
+    qd.simt.subgroup.sync()
+
+    # Phase B: linesearch refine + apply alpha. May clear improved.
+    if constraint_state.improved[i_b]:
+        _func_mono_refine_apply_coop(tid, i_b, constraint_state, rigid_global_info, static_rigid_sim_config)
+    qd.simt.subgroup.sync()
+
+    # Phase C: constraint forces (active flags + efc_force), lane-strided over constraints.
+    if constraint_state.improved[i_b]:
+        n_con = constraint_state.n_constraints[i_b]
+        i_c = tid
+        while i_c < n_con:
+            _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+            i_c += _K
+    qd.simt.subgroup.sync()
+
+    # Phase D: qfrc_constraint = J^T @ efc_force, lane-strided over dofs.
+    if constraint_state.improved[i_b]:
+        n_dofs2 = constraint_state.qfrc_constraint.shape[0]
+        n_con = constraint_state.n_constraints[i_b]
+        i_d = tid
+        while i_d < n_dofs2:
+            qfrc = gs.qd_float(0.0)
+            for i_c in range(n_con):
+                qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            constraint_state.qfrc_constraint[i_d, i_b] = qfrc
+            i_d += _K
+    qd.simt.subgroup.sync()
+
+    # Phase E: cost + save prev grad + update gradient (M^-1) + CG search dir / convergence. Sets improved.
+    if constraint_state.improved[i_b]:
+        _func_update_constraint_cost_body_coop(tid, i_b, dofs_state, constraint_state, static_rigid_sim_config)
+        qd.simt.subgroup.sync()
+        solver.func_save_prev_grad_coop(tid, i_b, constraint_state=constraint_state)
+        qd.simt.subgroup.sync()
+        solver.func_update_gradient_batch_coop_warp(
+            tid, i_b, dofs_state=dofs_state, entities_info=entities_info,
+            constraint_state=constraint_state, rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        qd.simt.subgroup.sync()
+        solver.func_terminate_or_update_descent_batch_coop(
+            tid, i_b, constraint_state=constraint_state, rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    qd.simt.subgroup.sync()
+
+
 @qd.kernel(fastcache=True)
-def func_solve_body_coop_monolith(
+def _kernel_cg_monolith_serial(
     entities_info: array_class.EntitiesInfo,
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
@@ -1406,75 +1468,99 @@ def func_solve_body_coop_monolith(
     static_rigid_sim_config: qd.template(),
     _n_iterations: int,
 ):
-    """E55: the whole CG iteration loop fused into one warp-per-env (32-lane) kernel. One warp == one block, so the
-    inter-phase ``block.sync`` is a warp barrier and there are no per-iteration kernel launches / graph-node boundaries.
-    All branches are warp-uniform (one env per warp), so the conditional phases / early-exit ``break`` never deadlock a
-    ``block.sync``. Not bit-identical to the serial baseline (warp reductions reorder fp adds, same equivalence class as
-    the existing cooperative decomposed path); converges to the same CG fixed point."""
+    """Mode 1: the whole CG loop fused into one warp-per-env (block_dim=32) kernel with an in-kernel python ``for _it``
+    iteration loop + data-dependent ``break`` for early exit. This is genuinely warp-cooperative - all 32 lanes run every
+    iteration (profiled blk=32; the strided phase loops require all lanes for bit-identical results). Because the whole
+    iteration loop lives *inside* one kernel, there is zero per-iteration launch / graph-node / early-exit-check overhead,
+    unlike the graph_do_while variant (mode 2) which pays ~4 extra kernels per iteration. This is the fastest CG path at
+    bs=1 (E57): warp parallelism of decomposed + single fused launch of the monolith, with none of the graph machinery."""
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
 
-    qd.loop_config(name="cg_coop_monolith", block_dim=_K)
+    qd.loop_config(name="cg_monolith_serial", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
         i_b = i_flat // _K
-
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             for _it in range(_n_iterations):
-                # Phase A: linesearch p0 (mv/jv/snorm/quad_gauss/eq_sum/cost/Newton-step). May clear improved.
-                _func_mono_p0_coop(
-                    tid, i_b, dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info,
+                _func_cg_monolith_iter_body(
+                    tid, i_b, entities_info, dofs_info, dofs_state, constraint_state, rigid_global_info,
                     static_rigid_sim_config,
                 )
-                qd.simt.block.sync()
-
-                # Phase B: linesearch refine + apply alpha. May clear improved.
-                if constraint_state.improved[i_b]:
-                    _func_mono_refine_apply_coop(
-                        tid, i_b, constraint_state, rigid_global_info, static_rigid_sim_config
-                    )
-                qd.simt.block.sync()
-
-                # Phase C: constraint forces (active flags + efc_force), lane-strided over constraints.
-                if constraint_state.improved[i_b]:
-                    n_con = constraint_state.n_constraints[i_b]
-                    i_c = tid
-                    while i_c < n_con:
-                        _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
-                        i_c += _K
-                qd.simt.block.sync()
-
-                # Phase D: qfrc_constraint = J^T @ efc_force, lane-strided over dofs.
-                if constraint_state.improved[i_b]:
-                    n_dofs2 = constraint_state.qfrc_constraint.shape[0]
-                    n_con = constraint_state.n_constraints[i_b]
-                    i_d = tid
-                    while i_d < n_dofs2:
-                        qfrc = gs.qd_float(0.0)
-                        for i_c in range(n_con):
-                            qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                        constraint_state.qfrc_constraint[i_d, i_b] = qfrc
-                        i_d += _K
-                qd.simt.block.sync()
-
-                # Phase E: cost + save prev grad + update gradient (M^-1) + CG search dir / convergence. Sets improved.
-                if constraint_state.improved[i_b]:
-                    _func_update_constraint_cost_body_coop(tid, i_b, dofs_state, constraint_state, static_rigid_sim_config)
-                    qd.simt.block.sync()
-                    solver.func_save_prev_grad_coop(tid, i_b, constraint_state=constraint_state)
-                    qd.simt.block.sync()
-                    solver.func_update_gradient_batch_coop(
-                        tid, i_b, dofs_state=dofs_state, entities_info=entities_info,
-                        constraint_state=constraint_state, rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                    )
-                    qd.simt.block.sync()
-                    solver.func_terminate_or_update_descent_batch_coop(
-                        tid, i_b, constraint_state=constraint_state, rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                    )
-                qd.simt.block.sync()
-
-                # Phase F: early exit (warp-uniform).
                 if not constraint_state.improved[i_b]:
                     break
+
+
+@qd.kernel(graph=True, fastcache=True)
+def _kernel_cg_monolith_graph(
+    entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    graph_counter: qd.types.ndarray(qd.i32, ndim=0),
+    n_iters: qd.template(),
+):
+    """E55 (cooperative): all 6 CG phases fused into ONE warp-per-env (block_dim=32) cooperative grid-loop, iterated by
+    ``graph_do_while`` (GPU-side). Keeps the decomposed path's warp parallelism (1 warp/env) but collapses its ~6
+    launches/iter into 1 fused launch + the early-exit check (2 graph nodes/iter instead of ~6-8). The per-iteration
+    ``for``-loop is expressed as ``graph_do_while`` (not a python ``for ... break`` inside the grid-loop, which Quadrants
+    would serialize to one thread)."""
+    for _ in range(1):
+        graph_counter[()] = n_iters
+    while qd.graph_do_while(graph_counter):
+        qd.loop_config(name="cg_monolith_iter", block_dim=qd.static(32))
+        for i_flat in range(constraint_state.grad.shape[1] * qd.static(32)):
+            tid = i_flat % qd.static(32)
+            i_b = i_flat // qd.static(32)
+            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                _func_cg_monolith_iter_body(
+                    tid, i_b, entities_info, dofs_info, dofs_state, constraint_state, rigid_global_info,
+                    static_rigid_sim_config,
+                )
+        _func_check_early_exit(constraint_state, graph_counter)
+
+
+@solver.func_solve_body.register(
+    is_compatible=lambda *args, **kwargs: (
+        (_cfg := solver._get_static_config(*args, **kwargs)).cg_coop_monolith
+        and not _cfg.requires_grad
+        and _cfg.solver_type == gs.constraint_solver.CG
+        and _cfg.enable_cooperative_constraint_kernels
+    )
+)
+def func_solve_body_coop_monolith(
+    entities_info,
+    dofs_info,
+    dofs_state,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+    _n_iterations,
+):
+    """Thin perf_dispatch dispatcher. Mode 2 (cooperative graph kernel) vs mode 1 (serial-fused kernel), selected by the
+    ``cg_coop_monolith`` static config. Mirrors ``func_solve_decomposed`` -> ``_kernel_solve_graph``."""
+    if _n_iterations <= 0:
+        return
+    if static_rigid_sim_config.cg_coop_monolith == 2:
+        _kernel_cg_monolith_graph(
+            entities_info,
+            dofs_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state.graph_counter,
+            _n_iterations,
+        )
+    else:
+        _kernel_cg_monolith_serial(
+            entities_info,
+            dofs_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+            _n_iterations,
+        )
