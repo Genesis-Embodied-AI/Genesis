@@ -3922,6 +3922,30 @@ def func_update_gradient(
     _B = constraint_state.jac.shape[2]
 
     if qd.static(
+        static_rigid_sim_config.enable_cooperative_constraint_kernels
+        and static_rigid_sim_config.solver_type == gs.constraint_solver.CG
+        and static_rigid_sim_config.backend != gs.cpu
+    ):
+        # Warp-per-env cooperative grad + block-diagonal M^-1 solve. The scalar branch below runs both the per-dof
+        # ``grad = Ma - force - qfrc`` write and the per-entity LDL ``Mgrad = M^-1 grad`` solve on a single thread
+        # (the func_solve_init initial gradient, ~0.6ms at bs=1). This splits the per-dof grad across the 32 lanes
+        # and the independent per-entity solves across lanes (bit-identical: the per-entity substitution is still
+        # sequential, only distinct entity blocks run on distinct lanes). Gated on the same flag as the rest of the
+        # cooperative constraint solve, so it only engages where warp-per-env already wins.
+        qd.loop_config(name="update_gradient_coop", block_dim=32)
+        for i_flat in range(_B * 32):
+            tid = i_flat % 32
+            i_b = i_flat // 32
+            func_update_gradient_batch_coop(
+                tid,
+                i_b,
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+    elif qd.static(
         not (static_rigid_sim_config.enable_tiled_cholesky_hessian and static_rigid_sim_config.hessian_fits_shared)
         or static_rigid_sim_config.backend == gs.cpu
     ):

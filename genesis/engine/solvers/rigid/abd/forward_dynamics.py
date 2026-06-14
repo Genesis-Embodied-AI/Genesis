@@ -925,8 +925,11 @@ def func_torque_and_passive_force(
 ):
     BW = qd.static(is_backward)
 
-    # compute force based on each dof's ctrl mode
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # compute force based on each dof's ctrl mode (bs=1: parallelize over entities, each writes its own dofs' qf_applied)
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
         EPS = rigid_global_info.EPS[None]
 
@@ -1028,7 +1031,11 @@ def func_torque_and_passive_force(
                     contact_island_state,
                 )
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: per-dof passive damping force, disjoint write per dof (bit6).
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, dofs_state.ctrl_mode.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1051,7 +1058,11 @@ def func_torque_and_passive_force(
                 I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
                 dofs_state.qf_passive[i_d, i_b] = -dofs_info.damping[I_d] * dofs_state.vel[i_d, i_b]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: per-link passive stiffness force, disjoint write per link's dofs (bit6).
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, dofs_state.ctrl_mode.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1187,7 +1198,11 @@ def func_update_force(
 ):
     BW = qd.static(is_backward)
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: per-link net force (cfrc_vel/ang[i_l] is a disjoint write per link) (bit6).
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1232,7 +1247,12 @@ def func_update_force(
                     f1_ang + f3_ang + links_state.cfrc_applied_ang[i_l, i_b] + links_state.cfrc_coupling_ang[i_l, i_b]
                 )
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: cfrc child->parent accumulation is sequential WITHIN an entity but entities are independent (disjoint
+    # links), so parallelize the OUTER entity loop (bit-identical), gated by bit6.
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1261,8 +1281,11 @@ def func_update_force(
                         func_add_safe_backward(links_state.cfrc_vel, I_p, links_state.cfrc_vel[i_l, i_b], BW)
                         func_add_safe_backward(links_state.cfrc_ang, I_p, links_state.cfrc_ang[i_l, i_b], BW)
 
-    # Clear coupling forces after use
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # Clear coupling forces after use (bs=1: per-element disjoint write, bit6).
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for I in qd.grouped(qd.ndrange(*links_state.cfrc_coupling_ang.shape)):
         links_state.cfrc_coupling_ang[I] = qd.Vector.zero(gs.qd_float, 3)
         links_state.cfrc_coupling_vel[I] = qd.Vector.zero(gs.qd_float, 3)
@@ -1303,7 +1326,11 @@ def func_bias_force(
 ):
     BW = qd.static(is_backward)
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: per-link bias/smooth force, writes only this link's dofs (disjoint), bit6.
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, dofs_state.ctrl_mode.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1374,8 +1401,11 @@ def func_compute_qacc(
         is_backward=is_backward,
     )
 
-    # Assume this is the outermost loop
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    # Assume this is the outermost loop (bs=1: copy acc<-acc_smooth per entity's dofs, disjoint, bit6).
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 64) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, dofs_state.ctrl_mode.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1411,7 +1441,12 @@ def func_integrate(
 ):
     BW = qd.static(is_backward)
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: parallelize the per-dof velocity integration (vel_next[i_d] is a disjoint write per dof) by dropping the
+    # threshold to PARTIAL (bit5). CPU (NEVER) and multi-env (ALL) are unaffected.
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 32) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         (qd.ndrange(1, dofs_state.ctrl_mode.shape[1]))
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1435,7 +1470,11 @@ def func_integrate(
                     dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
                 )
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # bs=1: parallelize the per-link qpos integration (each link writes its own q range -> disjoint) via bit5.
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 32) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         (qd.ndrange(1, dofs_state.ctrl_mode.shape[1]))
         if qd.static(static_rigid_sim_config.use_hibernation)

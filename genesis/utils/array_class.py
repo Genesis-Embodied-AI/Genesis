@@ -2238,9 +2238,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     #     independent trees writing disjoint links, so parallelizing the OUTER entity loop is bit-identical too.
     # Bitmask for isolation: bit0=crb_initialize+mass_mat+armature+impint (trivially disjoint), bit1=crb+update_acc
     # (entity-tree passes), bit2=geom_aabbs (per-geom), bit3=update_qacc (per-dof), bit4=solve_init from_warmstart+
-    # assign_search (per-dof). All write disjoint outputs -> bit-identical to serial. 31 = all on (default), 0 = off
-    # (legacy serial bs=1). Overridable via env GS_PARA_DYN.
-    bs1_parallel_dynamics: int = 31
+    # assign_search (per-dof), bit5=integrate (vel_next per-dof + qpos per-link, both disjoint), bit6=remaining
+    # forward-dynamics force loops (torque_and_passive_force per-entity/per-dof, update_force per-link + cfrc
+    # entity-tree pass + coupling clear, bias_force per-link, compute_qacc per-entity). All write disjoint outputs
+    # (entity-tree passes parallel over entities) -> bit-identical to serial. 127 = all on (default), 0 = off (legacy
+    # serial bs=1). Overridable via env GS_PARA_DYN.
+    bs1_parallel_dynamics: int = 127
     # Opt-in (env GS_CG_MONOLITH): fuse the entire CG iteration loop into ONE kernel instead of ~6 launches/iter. Aimed
     # at bs=1, where E54 showed ~380 sequential CG iters/step => ~2300 kernel-boundary stalls/step dominate. Modes:
     #   0 = off; 1 = serial-fused (the whole loop in a python for-loop on ONE thread/env: no sync/launch overhead, but no

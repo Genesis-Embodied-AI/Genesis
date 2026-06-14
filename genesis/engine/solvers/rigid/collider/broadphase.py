@@ -79,9 +79,11 @@ def func_collision_clear(
 ):
     _B = collider_state.n_contacts.shape[0]
 
-    qd.loop_config(name="collision_clear", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        if qd.static(static_rigid_sim_config.use_hibernation):
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        # Hibernation path: sequential per-env advection + compaction of hibernated contacts (the compaction index
+        # n_contacts_hibernated is carried across iterations, so this is inherently serial within an env).
+        qd.loop_config(name="collision_clear", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
             collider_state.n_contacts_hibernated[i_b] = 0
 
             # Advect hibernated contacts
@@ -115,14 +117,27 @@ def func_collision_clear(
                         # fmt: on
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
-        # Clear contacts: when hibernation is enabled, only clear non-hibernated contacts.
-        # The hibernated contacts (positions 0 to n_contacts_hibernated-1) were just advected and should be preserved.
-        for i_c in range(collider_state.n_contacts[i_b]):
-            should_clear = True
-            if qd.static(static_rigid_sim_config.use_hibernation):
-                # Only clear if this is not a hibernated contact
-                should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
-            if should_clear:
+            # Clear only the non-hibernated contacts (positions 0..n_contacts_hibernated-1 were just advected).
+            for i_c in range(collider_state.n_contacts[i_b]):
+                if i_c >= collider_state.n_contacts_hibernated[i_b]:
+                    collider_state.contact_data.link_a[i_c, i_b] = -1
+                    collider_state.contact_data.link_b[i_c, i_b] = -1
+                    collider_state.contact_data.geom_a[i_c, i_b] = -1
+                    collider_state.contact_data.geom_b[i_c, i_b] = -1
+                    collider_state.contact_data.penetration[i_c, i_b] = 0.0
+                    collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+
+            collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
+    else:
+        # Non-hibernation: each contact slot is cleared independently, so parallelize the clear over (contact, env).
+        # At bs=1 the per-env serial path clears all N contacts on one thread; dropping to PARTIAL spreads the N
+        # disjoint clears across lanes (bit-identical). CPU (NEVER) and multi-env (ALL) are unaffected.
+        n_contacts_max = collider_state.contact_data.link_a.shape[0]
+        qd.loop_config(name="collision_clear", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_c, i_b in qd.ndrange(n_contacts_max, _B):
+            if i_c < collider_state.n_contacts[i_b]:
                 collider_state.contact_data.link_a[i_c, i_b] = -1
                 collider_state.contact_data.link_b[i_c, i_b] = -1
                 collider_state.contact_data.geom_a[i_c, i_b] = -1
@@ -132,9 +147,8 @@ def func_collision_clear(
                 collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
                 collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
-        if qd.static(static_rigid_sim_config.use_hibernation):
-            collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-        else:
+        qd.loop_config(name="collision_clear_reset", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
             collider_state.n_contacts[i_b] = 0
 
 
