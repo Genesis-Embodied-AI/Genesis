@@ -612,6 +612,63 @@ def _func_update_qfrc_constraint_per_dof(
 
 
 @qd.func
+def _func_update_constraint_cost_body_coop(
+    tid: qd.i32,
+    i_b,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Per-(lane, env) body of the warp-per-env cost reduction. Extracted (E34) so it can be called either as its own
+    kernel (``_func_update_constraint_cost_coop``) or fused as a phase of another warp-per-env kernel. Assumes a 32-lane
+    block (``reduce_all_add_tiled(_, 5)``). Caller guards on ``n_constraints>0 and improved``."""
+    _K = qd.static(32)
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    if tid == 0:
+        constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
+
+    cost_i = gs.qd_float(0.0)
+    gauss_i = gs.qd_float(0.0)
+
+    # Gauss cost from dofs (lane-strided)
+    i_d = tid
+    while i_d < n_dofs:
+        v = (
+            0.5
+            * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
+            * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+        )
+        gauss_i += v
+        cost_i += v
+        i_d = i_d + _K
+
+    # Constraint cost: quadratic + friction linear (lane-strided over constraints)
+    i_c = tid
+    while i_c < n_con:
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        cost_i += 0.5 * (Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b])
+        if ne <= i_c and i_c < nef:
+            f = constraint_state.efc_frictionloss[i_c, i_b]
+            r = constraint_state.diag[i_c, i_b]
+            rf = r * f
+            linear_neg = Jaref_c <= -rf
+            linear_pos = Jaref_c >= rf
+            cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+        i_c = i_c + _K
+
+    cost_i = qd.simt.subgroup.reduce_all_add_tiled(cost_i, 5)
+    gauss_i = qd.simt.subgroup.reduce_all_add_tiled(gauss_i, 5)
+
+    if tid == 0:
+        constraint_state.gauss[i_b] = gauss_i
+        constraint_state.cost[i_b] = cost_i
+
+
+@qd.func
 def _func_update_constraint_cost_coop(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -629,51 +686,7 @@ def _func_update_constraint_cost_coop(
         tid = i_flat % _K
         i_b = i_flat // _K
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            n_dofs = constraint_state.qfrc_constraint.shape[0]
-            ne = constraint_state.n_constraints_equality[i_b]
-            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-            n_con = constraint_state.n_constraints[i_b]
-
-            if tid == 0:
-                constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
-
-            cost_i = gs.qd_float(0.0)
-            gauss_i = gs.qd_float(0.0)
-
-            # Gauss cost from dofs (lane-strided)
-            i_d = tid
-            while i_d < n_dofs:
-                v = (
-                    0.5
-                    * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
-                    * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
-                )
-                gauss_i += v
-                cost_i += v
-                i_d = i_d + _K
-
-            # Constraint cost: quadratic + friction linear (lane-strided over constraints)
-            i_c = tid
-            while i_c < n_con:
-                Jaref_c = constraint_state.Jaref[i_c, i_b]
-                cost_i += 0.5 * (
-                    Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-                )
-                if ne <= i_c and i_c < nef:
-                    f = constraint_state.efc_frictionloss[i_c, i_b]
-                    r = constraint_state.diag[i_c, i_b]
-                    rf = r * f
-                    linear_neg = Jaref_c <= -rf
-                    linear_pos = Jaref_c >= rf
-                    cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
-                i_c = i_c + _K
-
-            cost_i = qd.simt.subgroup.reduce_all_add_tiled(cost_i, 5)
-            gauss_i = qd.simt.subgroup.reduce_all_add_tiled(gauss_i, 5)
-
-            if tid == 0:
-                constraint_state.gauss[i_b] = gauss_i
-                constraint_state.cost[i_b] = cost_i
+            _func_update_constraint_cost_body_coop(tid, i_b, dofs_state, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -1025,31 +1038,38 @@ def _func_check_early_exit(
 
 
 @qd.func
-def _func_cg_save_prev_gradient_searchdir(
+def _func_cg_cost_save_gradient_searchdir(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """E32+E33: fuse ``cg_only_save_prev_grad`` + ``update_gradient`` + ``update_search_direction`` into ONE warp-per-env
-    cooperative kernel for the CG path (three launches -> one; also removes the two single-thread `serial` separators).
+    """E32+E33+E34: fuse ``update_constraint_cost`` + ``cg_only_save_prev_grad`` + ``update_gradient`` +
+    ``update_search_direction`` into ONE warp-per-env cooperative kernel for the CG path (four launches -> one; also
+    removes three single-thread `serial` separators).
 
-    All three phases are single-block (warp-per-env) cooperative work, so fusing loses no grid parallelism. Ordering /
+    All four phases are single-block (warp-per-env) cooperative work, so fusing loses no grid parallelism. Ordering /
     dependencies (satisfied by `block.sync` between phases):
+      - cost: reads post-apply Ma/qacc/Jaref + `active` (written by the earlier forces kernel); writes cost/gauss
+        (gauss is consumed by next iter's p0, cost by search_dir's convergence test). Independent of grad/Mgrad.
       - save: ``cg_prev_{grad,Mgrad} = {grad,Mgrad}`` (reads the previous iter's grad/Mgrad, written only by the
         gradient phase below, so identical to the old standalone-launch timing).
       - gradient: ``grad = Ma - force - qfrc``; ``Mgrad = M^-1 grad`` (per-entity LDL).
-      - search_dir: reads grad/Mgrad/cg_prev_* -> grad_norm (warp reduce), CG beta, updates ``search`` + ``improved``.
-    Non-coop / non-CG paths fall back to the three original launches.
+      - search_dir: reads grad/Mgrad/cg_prev_*/cost -> grad_norm (warp reduce), CG beta, updates ``search``/``improved``.
+    Non-coop / non-CG paths fall back to the original separate launches.
     """
     if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
         _B = constraint_state.grad.shape[1]
-        qd.loop_config(name="cg_save_prev_gradient_searchdir", block_dim=32)
+        qd.loop_config(name="cg_cost_save_gradient_searchdir", block_dim=32)
         for i_flat in range(_B * 32):
             tid = i_flat % 32
             i_b = i_flat // 32
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                _func_update_constraint_cost_body_coop(
+                    tid, i_b, dofs_state, constraint_state, static_rigid_sim_config
+                )
+                qd.simt.block.sync()
                 solver.func_save_prev_grad_coop(tid, i_b, constraint_state=constraint_state)
                 qd.simt.block.sync()
                 solver.func_update_gradient_batch_coop(
@@ -1070,6 +1090,7 @@ def _func_cg_save_prev_gradient_searchdir(
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
     else:
+        _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
         _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
@@ -1098,7 +1119,9 @@ def _kernel_solve_graph(
         # E32: cg_only_save_prev_grad is fused into update_gradient below (CG path) to save one launch.
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
         _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
-        _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
+        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            # CG folds cost into the fused kernel below; Newton needs it standalone before the Hessian/gradient.
+            _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_tiled_cholesky_hessian
@@ -1120,8 +1143,8 @@ def _kernel_solve_graph(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
         else:
-            # E32+E33: CG path - fused save_prev_grad + update_gradient + update_search_direction (3 launches -> 1).
-            _func_cg_save_prev_gradient_searchdir(
+            # E32+E33+E34: CG path - fused cost + save_prev_grad + update_gradient + update_search_direction (4->1).
+            _func_cg_cost_save_gradient_searchdir(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
