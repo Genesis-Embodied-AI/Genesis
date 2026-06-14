@@ -494,6 +494,23 @@ class RigidSolver(KinematicSolver):
         if _noslip_block is not None:
             static_rigid_sim_config["noslip_coop_block_dim"] = int(_noslip_block)
 
+        # Experiment knob (E47): component-parallel no-slip sweep (one block per independent constraint-graph component,
+        # processed in parallel across blocks). 0 = off (default). See noslip.func_noslip_batch_comp_block.
+        _noslip_comp = os.environ.get("GS_NOSLIP_COMP")
+        if _noslip_comp is not None:
+            static_rigid_sim_config["noslip_component_parallel"] = int(_noslip_comp)
+            # The component sweep needs n_entities as a compile-time bound for its entity union-find. n_entities is
+            # otherwise left at -1 (unless requires_grad) to avoid per-scene recompilation, so set it here, gated on the
+            # off-by-default flag.
+            static_rigid_sim_config["n_entities"] = self._n_entities
+
+        # Experiment knob: at bs=1 (PARA_LEVEL.PARTIAL) parallelize the big embarrassingly-parallel constraint-build /
+        # init loops (collision-jac assembly + Jaref + efc_force) over constraints instead of serializing them onto one
+        # thread. Bit-identical to serial (disjoint per-constraint writes). 0 = off (default).
+        _para_build = os.environ.get("GS_PARA_BUILD")
+        if _para_build is not None:
+            static_rigid_sim_config["bs1_parallel_build"] = int(_para_build)
+
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0

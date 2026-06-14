@@ -725,7 +725,11 @@ def _add_collision_constraints_per_friction(
     _B = dofs_state.ctrl_mode.shape[1]
     max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
 
-    qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="add_collision_constraints",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_build & 1) else gs.PARA_LEVEL.ALL),
+    )
     for flat_idx in range(_B * max_candidate_contacts * 4):
         slot = flat_idx % (max_candidate_contacts * 4)
         i_b = flat_idx // (max_candidate_contacts * 4)
@@ -764,7 +768,11 @@ def _add_collision_constraints_per_contact(
 
     # Iteration order follows the jac layout: batch-outer keeps every write within one env's batch-first block, while
     # the batch-inner order keeps consecutive GPU threads on consecutive envs (coalesced batch-last).
-    qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="add_collision_constraints",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_build & 1) else gs.PARA_LEVEL.ALL),
+    )
     for i_col_, i_b in qd.ndrange(
         max_candidate_contacts,
         _B,
@@ -890,7 +898,7 @@ def add_collision_constraints(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="add_collision_count", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         constraint_state.n_constraints[i_b] = constraint_state.n_constraints[i_b] + collider_state.n_contacts[i_b] * 4
 
@@ -3517,7 +3525,11 @@ def _func_update_efc_force(
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
-    qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="update_constraint_forces",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_build & 4) else gs.PARA_LEVEL.ALL),
+    )
     for i_c, i_b in qd.ndrange(
         len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4054,7 +4066,11 @@ def _initialize_Jaref_parallel(
 
     # Innermost ndrange axis matches the stride-1 axis of jac so jac loads coalesce: i_c-innermost under the flipped
     # layout, i_b-innermost under canonical.
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="init_jaref_parallel",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_build & 2) else gs.PARA_LEVEL.ALL),
+    )
     for i_c, i_b in qd.ndrange(
         len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4107,7 +4123,7 @@ def func_solve_init(
     # Skyline envelope for the CPU sparse Cholesky, recomputed each step (the fill-reducing DOF permutation it builds
     # on is fixed at build time). Folded here rather than a standalone kernel to avoid a per-step launch.
     if qd.static(static_rigid_sim_config.sparse_envelope):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="solve_init_sparsity_pattern", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             func_compute_sparsity_pattern(i_b, constraint_state, rigid_global_info)
 
@@ -4161,7 +4177,7 @@ def func_solve_init(
         )
 
         # Pick the best starting point between current state and warmstart
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="solve_init_pick_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in qd.ndrange(n_dofs, _B):
             if constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
                 constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]

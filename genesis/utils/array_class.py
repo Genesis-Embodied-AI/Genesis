@@ -2200,6 +2200,30 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # then combine across the noslip_coop_block_dim // 32 warps. Baked into the kernel from this static struct (a plain
     # module constant would not be fastcache-pure).
     noslip_coop_block_dim: int = 128
+    # Experiment (E47): when nonzero, the cooperative no-slip sweep processes the independent connected components of the
+    # constraint graph in parallel across BLOCKS (one block per independent component; each block runs the proven
+    # block-cooperative projected Gauss-Seidel over its own contacts with the block-scope reduce_all_add residual, and
+    # converges per-component, which is exact since components do not interact). For bs=1 this lifts the sweep off a
+    # single block/SM onto ~n_components blocks. 0 = off. See noslip.func_noslip_batch_comp_block.
+    noslip_component_parallel: int = 0
+    # Compile-time cap on contacts for the component-parallel no-slip sweep's per-contact shared-memory scratch
+    # (sh_e0/sh_e1/sh_label). Envs whose live contact count exceeds this fall back to the dense cooperative sweep.
+    noslip_comp_max_contacts: int = 512
+    # Compile-time cap on independent constraint-graph components for the block-per-component no-slip sweep: the grid is
+    # launched with this many blocks per env (one per component). Envs with more components than this fall back to the
+    # dense cooperative sweep (run by component-block 0). Keep modest so empty trailing blocks stay cheap.
+    noslip_max_components: int = 64
+    # bs=1 (PARA_LEVEL.PARTIAL) parallelization of the big *embarrassingly-parallel* constraint-build / init loops
+    # (collision-jacobian assembly, Jaref = J@qacc, efc_force update). They normally serialize below PARA_LEVEL.ALL,
+    # i.e. onto a single thread when n_envs<=1, which is the dominant bs=1 GPU cost. These loops write disjoint
+    # per-(constraint,dof) outputs (no ordering atomics, no reductions) so parallelizing them is bit-identical to the
+    # serial path. The threshold drops from ALL to PARTIAL so they parallelize over constraints at bs=1; CPU (NEVER) and
+    # multi-env (ALL) are unaffected. Validated: a 150-step table_bus bs=1 run with this on (PARTIAL) is BIT-IDENTICAL
+    # to the fully-parallel GS_PARA_LEVEL=ALL trajectory - i.e. it makes bs=1 reproduce the canonical multi-env path
+    # (the serial bs=1 path was the FP-order outlier). +53% table_bus bs=1 fps (15->23). Bitmask for per-loop control:
+    # bit0=collision-jac assembly (37.7%), bit1=Jaref=J@qacc (19.6%), bit2=efc_force update. 7 = all on (default),
+    # 0 = off (legacy serial bs=1). Overridable via env GS_PARA_BUILD.
+    bs1_parallel_build: int = 7
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

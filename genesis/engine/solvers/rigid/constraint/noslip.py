@@ -496,25 +496,45 @@ def func_noslip_sweep_serial(
 @qd.func
 def func_noslip_sweep_coop(
     collider_state: array_class.ColliderState,
+    entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
     """Block-per-env force-update sweep: a ``noslip_coop_block_dim``-lane block per env, cooperating on the residual
     reductions. A wider-than-warp block hides the dense efc_AR read latency (the bs=1 bottleneck) by keeping more
-    loads in flight."""
+    loads in flight. With ``noslip_component_parallel`` set, the block instead splits the constraint graph's independent
+    components across its warps (E47)."""
     _BLOCK = qd.static(static_rigid_sim_config.noslip_coop_block_dim)
     _B = constraint_state.jac.shape[2]
-    qd.loop_config(name="noslip_sweep", block_dim=_BLOCK)
-    for i_flat in range(_B * _BLOCK):
-        tid = i_flat % _BLOCK
-        i_b = i_flat // _BLOCK
-        func_noslip_batch_coop(tid, i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+    if qd.static(static_rigid_sim_config.noslip_component_parallel):
+        # Block-per-(env, component): launch noslip_max_components blocks per env, each owning one independent
+        # constraint-graph component (trailing blocks beyond the env's live component count return immediately).
+        _MAXC = qd.static(static_rigid_sim_config.noslip_max_components)
+        qd.loop_config(name="noslip_sweep", block_dim=_BLOCK)
+        for i_flat in range(_B * _MAXC * _BLOCK):
+            tid = i_flat % _BLOCK
+            blk = i_flat // _BLOCK
+            i_b = blk // _MAXC
+            comp = blk % _MAXC
+            func_noslip_batch_comp_block(
+                tid, i_b, comp, collider_state, entities_info, constraint_state, rigid_global_info,
+                static_rigid_sim_config,
+            )
+    else:
+        qd.loop_config(name="noslip_sweep", block_dim=_BLOCK)
+        for i_flat in range(_B * _BLOCK):
+            tid = i_flat % _BLOCK
+            i_b = i_flat // _BLOCK
+            func_noslip_batch_coop(
+                tid, i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
 
 
 @qd.func
 def func_noslip_sweep(
     collider_state: array_class.ColliderState,
+    entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -522,7 +542,9 @@ def func_noslip_sweep(
     """Force-update sweep, dispatched at compile time on ``enable_cooperative_constraint_kernels`` to the warp-per-env
     cooperative variant (small n_envs, where one thread per env starves the GPU) or the 1-thread-per-env serial one."""
     if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
-        func_noslip_sweep_coop(collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        func_noslip_sweep_coop(
+            collider_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
     else:
         func_noslip_sweep_serial(collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
 
@@ -676,7 +698,7 @@ def kernel_noslip_decomposed(
                 v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
             constraint_state.efc_b[i_c, i_b] = v
 
-    func_noslip_sweep(collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+    func_noslip_sweep(collider_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config)
 
     func_dual_finish(dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config)
 
@@ -745,6 +767,259 @@ def func_residual_constraint_force_coop(
             sh_warp, tid, partial, static_rigid_sim_config
         )
     return res
+
+
+@qd.func
+def _func_residual_constraint_force_warp_unused(
+    res,
+    lane: qd.i32,
+    i_b: int,
+    i_efc: int,
+    dim: int,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """DEAD CODE (kept for reference). Warp-scoped residual reduction tried for the component-per-warp sweep (E47).
+    Abandoned: warp-shuffle ``reduce_all_add_tiled`` proved fragile in this kernel context (gross ~4e2 force error vs
+    the serial sweep, despite passing isolated microbenchmarks - likely a warp-reconvergence interaction after the
+    per-lane variable-trip stride loop). Replaced by the block-per-component design, which reuses the proven block-scope
+    ``func_residual_constraint_force_coop`` (``block.reduce_all_add``). Not referenced by any kernel."""
+    i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
+    n = constraint_state.n_constraints[i_b]
+    for j in range(dim):
+        partial = gs.qd_float(0.0)
+        k = lane
+        while k < n:
+            partial += constraint_state.efc_AR[i_efc + j, k, i_b_AR] * constraint_state.efc_force[k, i_b]
+            k += 32
+        # Reconverge the warp after the (per-lane variable trip-count) stride loop: the shuffle-based reduce assumes a
+        # fully-active 32-lane warp (__shfl_sync(0xFFFFFFFF)), and Volta+ independent thread scheduling does not
+        # guarantee reconvergence after a divergent loop without an explicit warp sync.
+        qd.simt.subgroup.sync()
+        warp_sum = qd.simt.subgroup.reduce_all_add_tiled(partial, 5)
+        res[j] = constraint_state.efc_b[i_efc + j, i_b_AR] + warp_sum
+    return res
+
+
+@qd.func
+def func_noslip_batch_comp_block(
+    tid: qd.i32,
+    i_b,
+    comp: qd.i32,
+    collider_state: array_class.ColliderState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Block-per-component cooperative no-slip sweep (E47).
+
+    The contact-friction constraint graph splits into independent connected components (two contacts couple only if they
+    share a moving entity -> their ``efc_AR`` cross-block is nonzero; the inverse mass matrix is block-diagonal per
+    entity). One block is launched per (env, component): block ``comp`` runs the projected Gauss-Seidel sub-sweep over
+    exactly the contacts whose component label == ``comp``, reusing the proven block-cooperative residual reduction
+    (``func_residual_constraint_force_coop``, i.e. the block-scope ``reduce_all_add``). Components are disjoint so blocks
+    never write each other's forces, and convergence is per-component (exact, since components do not interact).
+
+    For bs=1 this turns the single-block-per-env sweep (1 SM busy, ``nefc``-deep serial GS) into ~``n_components`` blocks
+    (more SMs busy, only ``max_component``-deep) -- the win on small env counts.
+
+    Each block redundantly recomputes the (cheap) component labels in shared memory via an entity union-find, then
+    selects its own component. Equality/frictionloss rows or a component count exceeding ``noslip_max_components`` fall
+    back to the dense cooperative sweep, run by component-block 0 only. Every branch here is block-uniform (``comp``,
+    ``n_comp`` and the per-contact label are identical across the block's threads), so the block syncs inside the
+    residual reduction are always reached by all threads.
+    """
+    EPS = rigid_global_info.EPS[None]
+    n_dofs = constraint_state.jac.shape[1]
+    _BLOCK = qd.static(static_rigid_sim_config.noslip_coop_block_dim)
+    _NCON_MAX = qd.static(static_rigid_sim_config.noslip_comp_max_contacts)
+    _NENT = qd.static(static_rigid_sim_config.n_entities)
+    _MAXC = qd.static(static_rigid_sim_config.noslip_max_components)
+
+    n_con = collider_state.n_contacts[i_b]
+    ne = constraint_state.n_constraints_equality[i_b]
+    nf = constraint_state.n_constraints_frictionloss[i_b]
+    const_start = ne + nf
+
+    if ne + nf > 0 or n_con > _NCON_MAX:
+        # Equality / frictionloss rows (not covered by the entity-based contact grouping) or a contact count exceeding
+        # the shared-memory scratch cap: component-block 0 runs the dense cooperative sweep (correct, not parallel).
+        if comp == 0:
+            func_noslip_batch_coop(
+                tid, i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+    else:
+        # codegen allows only one *large* shared array per kernel, so the per-contact / per-entity int scratch is packed
+        # into a single int SharedArray with manual sub-region offsets. Regions: e0=[0,N), e1=[N,2N), label=[2N,3N)
+        # (N=_NCON_MAX); parent=[3N,3N+E), root_id=[3N+E,3N+2E) (E=_NENT).
+        _E1 = qd.static(_NCON_MAX)
+        _LAB = qd.static(2 * _NCON_MAX)
+        _PAR = qd.static(3 * _NCON_MAX)
+        _ROOT = qd.static(3 * _NCON_MAX + _NENT)
+        sh_warp = qd.simt.block.SharedArray((static_rigid_sim_config.noslip_coop_block_dim // 32,), gs.qd_float)
+        sh_i = qd.simt.block.SharedArray((3 * _NCON_MAX + 2 * _NENT,), gs.qd_int)
+        sh_ncomp = qd.simt.block.SharedArray((1,), gs.qd_int)
+
+        # --- Phase 0a (cooperative): per-contact moving entities via the jac row dof support. ---
+        i_c = tid
+        while i_c < n_con:
+            r = const_start + i_c * 4
+            e0 = qd.i32(-1)
+            e1 = qd.i32(-1)
+            for i_e in range(_NENT):
+                if rigid_global_info.mass_mat_mask[i_e, i_b]:
+                    touch = False
+                    for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                        if constraint_state.jac[r, i_d, i_b] != 0.0:
+                            touch = True
+                    if touch:
+                        if e0 < 0:
+                            e0 = i_e
+                        else:
+                            e1 = i_e
+            sh_i[i_c] = e0
+            sh_i[_E1 + i_c] = e1
+            i_c += _BLOCK
+        qd.simt.block.sync()
+
+        # --- Phase 0b (thread 0): union-find over entities, then dense component label per contact. ---
+        if tid == 0:
+            for i_e in range(_NENT):
+                sh_i[_PAR + i_e] = i_e
+                sh_i[_ROOT + i_e] = -1
+            # Union the two moving entities of each contact.
+            for i_cc in range(n_con):
+                a = sh_i[i_cc]
+                b = sh_i[_E1 + i_cc]
+                if a >= 0 and b >= 0:
+                    # find(a)
+                    ra = a
+                    while sh_i[_PAR + ra] != ra:
+                        sh_i[_PAR + ra] = sh_i[_PAR + sh_i[_PAR + ra]]
+                        ra = sh_i[_PAR + ra]
+                    rb = b
+                    while sh_i[_PAR + rb] != rb:
+                        sh_i[_PAR + rb] = sh_i[_PAR + sh_i[_PAR + rb]]
+                        rb = sh_i[_PAR + rb]
+                    if ra != rb:
+                        sh_i[_PAR + ra] = rb
+            n_lab = qd.i32(0)
+            for i_cc in range(n_con):
+                a = sh_i[i_cc]
+                if a < 0:
+                    a = sh_i[_E1 + i_cc]
+                if a < 0:
+                    # Contact with no moving entity (fixed-vs-fixed); give it its own singleton component.
+                    sh_i[_LAB + i_cc] = n_lab
+                    n_lab += 1
+                else:
+                    ra = a
+                    while sh_i[_PAR + ra] != ra:
+                        sh_i[_PAR + ra] = sh_i[_PAR + sh_i[_PAR + ra]]
+                        ra = sh_i[_PAR + ra]
+                    if sh_i[_ROOT + ra] < 0:
+                        sh_i[_ROOT + ra] = n_lab
+                        n_lab += 1
+                    sh_i[_LAB + i_cc] = sh_i[_ROOT + ra]
+            sh_ncomp[0] = n_lab
+        qd.simt.block.sync()
+
+        n_comp = sh_ncomp[0]
+        if n_comp > _MAXC:
+            # More components than launched blocks: component-block 0 runs the dense cooperative sweep as a fallback.
+            if comp == 0:
+                func_noslip_batch_coop(
+                    tid, i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                )
+        elif comp < n_comp:
+            # --- This block's component: block-cooperative projected Gauss-Seidel, per-component convergence. ---
+            res = qd.Vector.zero(gs.qd_float, 5)
+            old_force = qd.Vector.zero(gs.qd_float, 5)
+            bc = qd.Vector.zero(gs.qd_float, 5)
+            Ac = qd.Vector.zero(gs.qd_float, 9)
+            scale = 1.0 / (rigid_global_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
+
+            for i_iter in range(rigid_global_info.noslip_iterations[None]):
+                improvement = gs.qd_float(0.0)
+                if i_iter == 0:
+                    # iter-0 baseline cost over THIS component's contact rows only (block-strided over contacts).
+                    partial = gs.qd_float(0.0)
+                    i_cc = tid
+                    while i_cc < n_con:
+                        if sh_i[_LAB + i_cc] == comp:
+                            for r2 in qd.static(range(4)):
+                                row = const_start + i_cc * 4 + r2
+                                partial += (
+                                    0.5 * constraint_state.efc_force[row, i_b] ** 2 * constraint_state.diag[row, i_b]
+                                )
+                        i_cc += _BLOCK
+                    improvement += _func_noslip_block_reduce_add(sh_warp, tid, partial, static_rigid_sim_config)
+
+                for i_col in range(n_con):
+                    if sh_i[_LAB + i_col] == comp:
+                        base = const_start + i_col * 4
+                        for j2 in qd.static(range(2)):
+                            j_efc = base + j2 * 2
+                            res = func_residual_constraint_force_coop(
+                                res=res,
+                                tid=tid,
+                                i_b=i_b,
+                                i_efc=j_efc,
+                                dim=2,
+                                sh_warp=sh_warp,
+                                constraint_state=constraint_state,
+                                static_rigid_sim_config=static_rigid_sim_config,
+                            )
+                            for i2 in qd.static(range(2)):
+                                old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
+                            Ac = func_extract_block_matrix_from_AR(
+                                Ac=Ac,
+                                i_b=i_b,
+                                start=j_efc,
+                                n=2,
+                                constraint_state=constraint_state,
+                                static_rigid_sim_config=static_rigid_sim_config,
+                            )
+                            for j in qd.static(range(2)):
+                                bc[j] = res[j]
+                                for k in qd.static(range(2)):
+                                    bc[j] -= Ac[j * 2 + k] * old_force[k]
+                            mid = 0.5 * (
+                                constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b]
+                            )
+                            y = 0.5 * (
+                                constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b]
+                            )
+                            K1 = Ac[0] + Ac[3] - Ac[1] - Ac[2]
+                            K0 = mid * (Ac[0] - Ac[3]) + bc[0] - bc[1]
+                            if K1 < EPS:
+                                constraint_state.efc_force[j_efc, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
+                            else:
+                                y = -K0 / K1
+                                if y < -mid:
+                                    constraint_state.efc_force[j_efc, i_b] = 0
+                                    constraint_state.efc_force[j_efc + 1, i_b] = 2 * mid
+                                elif y > mid:
+                                    constraint_state.efc_force[j_efc, i_b] = 2 * mid
+                                    constraint_state.efc_force[j_efc + 1, i_b] = 0
+                                else:
+                                    constraint_state.efc_force[j_efc, i_b] = mid + y
+                                    constraint_state.efc_force[j_efc + 1, i_b] = mid - y
+                            cost_change = func_cost_change(
+                                i_b=i_b,
+                                Ac=Ac,
+                                force=constraint_state.efc_force,
+                                force_start=j_efc,
+                                old_force=old_force,
+                                res=res,
+                                dim=2,
+                                eps=EPS,
+                            )
+                            improvement -= cost_change
+                improvement *= scale
+                if improvement < rigid_global_info.noslip_tolerance[None]:
+                    break
 
 
 @qd.func
