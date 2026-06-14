@@ -489,6 +489,11 @@ class RigidSolver(KinematicSolver):
             constraint_layout_batch_first=constraint_layout_batch_first,
         )
 
+        # Experiment knob: override cooperative no-slip block width (lanes/env). Default 128; must be a multiple of 32.
+        _noslip_block = os.environ.get("GS_NOSLIP_BLOCK")
+        if _noslip_block is not None:
+            static_rigid_sim_config["noslip_coop_block_dim"] = int(_noslip_block)
+
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0
