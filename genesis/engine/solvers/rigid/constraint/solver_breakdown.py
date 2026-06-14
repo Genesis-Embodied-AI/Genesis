@@ -1,3 +1,4 @@
+import os
 import sys
 
 import numpy as np
@@ -11,11 +12,13 @@ from genesis.engine.solvers.rigid.constraint import solver
 # Number of candidate step sizes evaluated simultaneously per env.
 # Each CUDA block processes one env with K threads, using shared memory for the argmin reduction.
 # Similar to BLOCK_DIM in func_hessian_direct_tiled: determines parallelism and shared memory layout.
-LS_PARALLEL_K = 32
+LS_PARALLEL_K = int(os.environ.get("GS_LS_PARALLEL_K", "32"))
 
 # Block sizes for shared-memory reductions in _kernel_parallel_linesearch_p0 and _jv.
-_P0_BLOCK = 32
-_JV_BLOCK = 32
+# Env-overridable to sweep cooperative-block parallelism at bs=1 (each block runs on one SM).
+# Default 64 (E30): the p0 linesearch matvec+reduction saturates ~64 lanes at bs=1 (13.0->5.6 ms).
+_P0_BLOCK = int(os.environ.get("GS_P0_BLOCK", "64"))
+_JV_BLOCK = int(os.environ.get("GS_JV_BLOCK", "32"))
 
 # Maximum allowed alpha (prevents divergence from degenerate steps).
 LS_ALPHA_MAX = 1e4
