@@ -518,6 +518,12 @@ class RigidSolver(KinematicSolver):
         if _para_dyn is not None:
             static_rigid_sim_config["bs1_parallel_dynamics"] = int(_para_dyn)
 
+        # Experiment knob (E55): fuse the whole CG iteration loop into one warp-per-env kernel (kills per-iteration
+        # kernel-boundary stalls at bs=1). Registered as a perf_dispatch candidate alongside the decomposed graph path.
+        _cg_monolith = os.environ.get("GS_CG_MONOLITH")
+        if _cg_monolith is not None:
+            static_rigid_sim_config["cg_coop_monolith"] = bool(int(_cg_monolith))
+
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0

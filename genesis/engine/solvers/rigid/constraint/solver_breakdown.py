@@ -1196,3 +1196,285 @@ def func_solve_decomposed(
         constraint_state.graph_counter,
         _n_iterations,
     )
+
+
+# ===================================== E55: warp-per-env CG monolith (bs=1) =========================================
+# Fuses the entire CG iteration loop into ONE 32-lane warp-per-env kernel. E54 showed bs=1 spends its time on ~380
+# sequential CG iterations/step, each a chain of ~6 single-block latency-bound kernels => ~2300 kernel-boundary stalls
+# /step. Collapsing the loop into one kernel replaces those launches/graph-node boundaries with warp-implicit /
+# block.sync handoffs (a block_dim=32 block == one warp, so block.sync is just a warp barrier). E50 already showed these
+# per-iteration kernels do not benefit from >32 lanes, so a single warp loses no throughput at bs=1.
+
+
+@qd.func
+def _func_mono_p0_coop(
+    tid: qd.i32,
+    i_b,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp (32-lane) variant of ``_func_decomp_linesearch_p0``: fused mv + jv + snorm + quad_gauss + eq_sum + p0_cost
+    + Newton-step estimate. Identical math; the per-dof / per-constraint reductions use ``subgroup.reduce_all_add_tiled``
+    (32-lane, broadcasts to all lanes) instead of shared-array tree reductions. Caller guards on improved."""
+    _K = qd.static(32)
+    n_dofs = constraint_state.search.shape[0]
+    n_con = constraint_state.n_constraints[i_b]
+
+    # === Phase 0a: mv = M @ search (lane-strided over dofs) ===
+    i_d1 = tid
+    while i_d1 < n_dofs:
+        I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
+        i_e = dofs_info.entity_idx[I_d1]
+        mv_val = gs.qd_float(0.0)
+        for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+            mv_val = mv_val + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+        constraint_state.mv[i_d1, i_b] = mv_val
+        i_d1 += _K
+
+    # === Phase 0b: jv = J @ search (lane-strided over constraints) ===
+    i_c = tid
+    while i_c < n_con:
+        jv_val = gs.qd_float(0.0)
+        if qd.static(static_rigid_sim_config.sparse_solve):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        constraint_state.jv[i_c, i_b] = jv_val
+        i_c += _K
+
+    qd.simt.block.sync()  # mv, jv visible before the reductions read them
+
+    # === Phase 1: snorm + quad_gauss reduction over dofs ===
+    local_snorm_sq = gs.qd_float(0.0)
+    local_qg_grad = gs.qd_float(0.0)
+    local_qg_hess = gs.qd_float(0.0)
+    i_d = tid
+    while i_d < n_dofs:
+        s = constraint_state.search[i_d, i_b]
+        local_snorm_sq += s * s
+        local_qg_grad += s * constraint_state.Ma[i_d, i_b] - s * dofs_state.force[i_d, i_b]
+        local_qg_hess += 0.5 * s * constraint_state.mv[i_d, i_b]
+        i_d += _K
+    snorm_sq = qd.simt.subgroup.reduce_all_add_tiled(local_snorm_sq, 5)
+    qg_grad = qd.simt.subgroup.reduce_all_add_tiled(local_qg_grad, 5)
+    qg_hess = qd.simt.subgroup.reduce_all_add_tiled(local_qg_hess, 5)
+    snorm = qd.sqrt(snorm_sq)
+
+    if snorm < rigid_global_info.EPS[None]:
+        if tid == 0:
+            constraint_state.ls_alpha[i_b] = 0.0
+            constraint_state.ls_p0_cost[i_b] = 0.0
+            constraint_state.improved[i_b] = False
+    else:
+        if tid == 0:
+            constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
+            constraint_state.quad_gauss[1, i_b] = qg_grad
+            constraint_state.quad_gauss[2, i_b] = qg_hess
+
+        # === Phase 2: constraint cost reduction over constraints ===
+        ne = constraint_state.n_constraints_equality[i_b]
+        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+
+        local_eq_cost = gs.qd_float(0.0)
+        local_eq_grad = gs.qd_float(0.0)
+        local_eq_hess = gs.qd_float(0.0)
+        local_p0_cost = gs.qd_float(0.0)
+        local_constraint_grad = gs.qd_float(0.0)
+        local_constraint_hess = gs.qd_float(0.0)
+
+        i_c = tid
+        while i_c < n_con:
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            jv_c = constraint_state.jv[i_c, i_b]
+            D = constraint_state.efc_D[i_c, i_b]
+            qf_0 = D * (0.5 * Jaref_c * Jaref_c)
+            qf_1 = D * (jv_c * Jaref_c)
+            qf_2 = D * (0.5 * jv_c * jv_c)
+            if i_c < ne:
+                local_eq_cost += qf_0
+                local_eq_grad += qf_1
+                local_eq_hess += qf_2
+                local_p0_cost += qf_0
+                local_constraint_grad += qf_1
+                local_constraint_hess += qf_2
+            elif i_c < nef:
+                f = constraint_state.efc_frictionloss[i_c, i_b]
+                r = constraint_state.diag[i_c, i_b]
+                rf = r * f
+                linear_neg = Jaref_c <= -rf
+                linear_pos = Jaref_c >= rf
+                if linear_neg or linear_pos:
+                    qf_0 = linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+                    qf_1 = linear_neg * (-f * jv_c) + linear_pos * (f * jv_c)
+                    qf_2 = 0.0
+                local_p0_cost += qf_0
+                local_constraint_grad += qf_1
+                local_constraint_hess += qf_2
+            else:
+                active = Jaref_c < 0
+                local_p0_cost += qf_0 * active
+                local_constraint_grad += qf_1 * active
+                local_constraint_hess += qf_2 * active
+            i_c += _K
+
+        eq_cost = qd.simt.subgroup.reduce_all_add_tiled(local_eq_cost, 5)
+        eq_grad = qd.simt.subgroup.reduce_all_add_tiled(local_eq_grad, 5)
+        eq_hess = qd.simt.subgroup.reduce_all_add_tiled(local_eq_hess, 5)
+        p0_cost = qd.simt.subgroup.reduce_all_add_tiled(local_p0_cost, 5)
+        constraint_grad = qd.simt.subgroup.reduce_all_add_tiled(local_constraint_grad, 5)
+        constraint_hess = qd.simt.subgroup.reduce_all_add_tiled(local_constraint_hess, 5)
+
+        if tid == 0:
+            constraint_state.eq_sum[0, i_b] = eq_cost
+            constraint_state.eq_sum[1, i_b] = eq_grad
+            constraint_state.eq_sum[2, i_b] = eq_hess
+            constraint_state.ls_it[i_b] = 1
+            constraint_state.ls_p0_cost[i_b] = constraint_state.gauss[i_b] + p0_cost
+            constraint_state.ls_alpha[i_b] = 0.0
+            total_hess = 2.0 * (qg_hess + constraint_hess)
+            if total_hess > 0.0:
+                total_grad = qg_grad + constraint_grad
+                constraint_state.ls_alpha_newton[i_b] = qd.abs(total_grad / total_hess)
+            else:
+                constraint_state.ls_alpha_newton[i_b] = 0.0
+            scale = rigid_global_info.meaninertia[i_b] * qd.max(1, n_dofs)
+            constraint_state.ls_gtol[i_b] = (
+                rigid_global_info.tolerance[None] * rigid_global_info.ls_tolerance[None] * snorm * scale
+            )
+
+
+@qd.func
+def _func_mono_refine_apply_coop(
+    tid: qd.i32,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp (32-lane) linesearch refine + cooperative apply, fused from ``_func_decomp_linesearch_refine_and_apply``.
+    Caller guards on improved."""
+    _K = qd.static(32)
+    p0_cost = constraint_state.ls_p0_cost[i_b]
+    gtol = constraint_state.ls_gtol[i_b]
+    alpha_newton = constraint_state.ls_alpha_newton[i_b]
+
+    _func_decomp_linesearch_refine_coop(
+        i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
+    qd.simt.block.sync()
+
+    alpha_apply = constraint_state.ls_alpha[i_b]
+    if qd.abs(alpha_apply) < rigid_global_info.EPS[None]:
+        if tid == 0:
+            constraint_state.improved[i_b] = False
+    else:
+        n_dofs_apply = constraint_state.qacc.shape[0]
+        n_con_apply = constraint_state.n_constraints[i_b]
+        i_d = tid
+        while i_d < n_dofs_apply:
+            constraint_state.qacc[i_d, i_b] += constraint_state.search[i_d, i_b] * alpha_apply
+            constraint_state.Ma[i_d, i_b] += constraint_state.mv[i_d, i_b] * alpha_apply
+            i_d += _K
+        i_c = tid
+        while i_c < n_con_apply:
+            constraint_state.Jaref[i_c, i_b] += constraint_state.jv[i_c, i_b] * alpha_apply
+            i_c += _K
+
+
+@solver.func_solve_body.register(
+    is_compatible=lambda *args, **kwargs: (
+        (_cfg := solver._get_static_config(*args, **kwargs)).cg_coop_monolith
+        and not _cfg.requires_grad
+        and _cfg.solver_type == gs.constraint_solver.CG
+        and _cfg.enable_cooperative_constraint_kernels
+    )
+)
+@qd.kernel(fastcache=True)
+def func_solve_body_coop_monolith(
+    entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    _n_iterations: int,
+):
+    """E55: the whole CG iteration loop fused into one warp-per-env (32-lane) kernel. One warp == one block, so the
+    inter-phase ``block.sync`` is a warp barrier and there are no per-iteration kernel launches / graph-node boundaries.
+    All branches are warp-uniform (one env per warp), so the conditional phases / early-exit ``break`` never deadlock a
+    ``block.sync``. Not bit-identical to the serial baseline (warp reductions reorder fp adds, same equivalence class as
+    the existing cooperative decomposed path); converges to the same CG fixed point."""
+    _B = constraint_state.grad.shape[1]
+    _K = qd.static(32)
+
+    qd.loop_config(name="cg_coop_monolith", block_dim=_K)
+    for i_flat in range(_B * _K):
+        tid = i_flat % _K
+        i_b = i_flat // _K
+
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            for _it in range(_n_iterations):
+                # Phase A: linesearch p0 (mv/jv/snorm/quad_gauss/eq_sum/cost/Newton-step). May clear improved.
+                _func_mono_p0_coop(
+                    tid, i_b, dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info,
+                    static_rigid_sim_config,
+                )
+                qd.simt.block.sync()
+
+                # Phase B: linesearch refine + apply alpha. May clear improved.
+                if constraint_state.improved[i_b]:
+                    _func_mono_refine_apply_coop(
+                        tid, i_b, constraint_state, rigid_global_info, static_rigid_sim_config
+                    )
+                qd.simt.block.sync()
+
+                # Phase C: constraint forces (active flags + efc_force), lane-strided over constraints.
+                if constraint_state.improved[i_b]:
+                    n_con = constraint_state.n_constraints[i_b]
+                    i_c = tid
+                    while i_c < n_con:
+                        _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+                        i_c += _K
+                qd.simt.block.sync()
+
+                # Phase D: qfrc_constraint = J^T @ efc_force, lane-strided over dofs.
+                if constraint_state.improved[i_b]:
+                    n_dofs2 = constraint_state.qfrc_constraint.shape[0]
+                    n_con = constraint_state.n_constraints[i_b]
+                    i_d = tid
+                    while i_d < n_dofs2:
+                        qfrc = gs.qd_float(0.0)
+                        for i_c in range(n_con):
+                            qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                        constraint_state.qfrc_constraint[i_d, i_b] = qfrc
+                        i_d += _K
+                qd.simt.block.sync()
+
+                # Phase E: cost + save prev grad + update gradient (M^-1) + CG search dir / convergence. Sets improved.
+                if constraint_state.improved[i_b]:
+                    _func_update_constraint_cost_body_coop(tid, i_b, dofs_state, constraint_state, static_rigid_sim_config)
+                    qd.simt.block.sync()
+                    solver.func_save_prev_grad_coop(tid, i_b, constraint_state=constraint_state)
+                    qd.simt.block.sync()
+                    solver.func_update_gradient_batch_coop(
+                        tid, i_b, dofs_state=dofs_state, entities_info=entities_info,
+                        constraint_state=constraint_state, rigid_global_info=rigid_global_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                    )
+                    qd.simt.block.sync()
+                    solver.func_terminate_or_update_descent_batch_coop(
+                        tid, i_b, constraint_state=constraint_state, rigid_global_info=rigid_global_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                    )
+                qd.simt.block.sync()
+
+                # Phase F: early exit (warp-uniform).
+                if not constraint_state.improved[i_b]:
+                    break

@@ -2241,6 +2241,11 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # assign_search (per-dof). All write disjoint outputs -> bit-identical to serial. 31 = all on (default), 0 = off
     # (legacy serial bs=1). Overridable via env GS_PARA_DYN.
     bs1_parallel_dynamics: int = 31
+    # Opt-in (env GS_CG_MONOLITH=1): fuse the entire CG iteration loop into ONE warp-per-env (32-lane) kernel, with
+    # warp-implicit / block.sync handoffs between phases instead of ~6 kernel launches per iteration. Aimed at bs=1,
+    # where E54 showed ~380 sequential CG iters/step => ~2300 kernel-boundary stalls/step dominate. Only registered as a
+    # candidate when CG + cooperative kernels; perf_dispatch picks it vs the decomposed graph path by measured speed.
+    cg_coop_monolith: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
