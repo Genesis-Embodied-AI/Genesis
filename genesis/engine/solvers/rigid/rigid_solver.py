@@ -511,6 +511,13 @@ class RigidSolver(KinematicSolver):
         if _para_build is not None:
             static_rigid_sim_config["bs1_parallel_build"] = int(_para_build)
 
+        # Experiment knob: at bs=1 parallelize the forward-dynamics (CRBA/mass-matrix) loops over links/dofs/entities
+        # instead of serializing onto one thread. Bit-identical to serial (disjoint writes). bit0=crb_init+mass_mat+
+        # armature+impint, bit1=crb. 3 = all on (default), 0 = off. Overridable via env GS_PARA_DYN.
+        _para_dyn = os.environ.get("GS_PARA_DYN")
+        if _para_dyn is not None:
+            static_rigid_sim_config["bs1_parallel_dynamics"] = int(_para_dyn)
+
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0

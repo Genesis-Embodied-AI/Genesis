@@ -291,7 +291,11 @@ def func_compute_mass_matrix(
     BW = qd.static(is_backward)
 
     # crb initialize
-    qd.loop_config(name="crb_initialize", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="crb_initialize",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 1) else gs.PARA_LEVEL.ALL),
+    )
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -316,8 +320,12 @@ def func_compute_mass_matrix(
                 links_state.crb_quat[i_l, i_b] = links_state.cinr_quat[i_l, i_b]
                 links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
 
-    # crb
-    qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # crb (child->parent composite-inertia backward pass: sequential within an entity, parallel over entities)
+    qd.loop_config(
+        name="crb",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 2) else gs.PARA_LEVEL.ALL),
+    )
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -350,7 +358,11 @@ def func_compute_mass_matrix(
                         func_add_safe_backward(links_state.crb_quat, I_p, links_state.crb_quat[i_l, i_b], BW)
 
     # mass_mat
-    qd.loop_config(name="mass_mat", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="mass_mat",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 1) else gs.PARA_LEVEL.ALL),
+    )
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -457,14 +469,24 @@ def func_compute_mass_matrix(
                             rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
 
     # Take into account motor armature
-    qd.loop_config(name="armature", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="armature",
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 1) else gs.PARA_LEVEL.ALL),
+    )
     for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
         I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
         func_add_safe_backward(rigid_global_info.mass_mat, (i_d, i_d, i_b), dofs_info.armature[I_d], BW)
 
     # Take into account first-order correction terms for implicit integration scheme right away
     if qd.static(implicit_damping):
-        qd.loop_config(name="impint_order_1_corr", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(
+            name="impint_order_1_corr",
+            serialize=static_rigid_sim_config.para_level
+            < qd.static(
+                gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 1) else gs.PARA_LEVEL.ALL
+            ),
+        )
         for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
             I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
             rigid_global_info.mass_mat[i_d, i_d, i_b] = (
@@ -1088,8 +1110,12 @@ def func_update_acc(
 ):
     BW = qd.static(is_backward)
 
-    # Assume this is the outermost loop
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    # Assume this is the outermost loop. Forward tree pass (child reads parent) -> sequential within an entity, but
+    # the entities are independent trees writing disjoint links, so the outer entity loop parallelizes bit-identically.
+    qd.loop_config(
+        serialize=static_rigid_sim_config.para_level
+        < qd.static(gs.PARA_LEVEL.PARTIAL if (static_rigid_sim_config.bs1_parallel_dynamics & 2) else gs.PARA_LEVEL.ALL)
+    )
     for i_0, i_b in (
         qd.ndrange(1, dofs_state.ctrl_mode.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)

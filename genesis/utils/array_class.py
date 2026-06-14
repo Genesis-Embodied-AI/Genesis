@@ -2224,6 +2224,17 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # bit0=collision-jac assembly (37.7%), bit1=Jaref=J@qacc (19.6%), bit2=efc_force update. 7 = all on (default),
     # 0 = off (legacy serial bs=1). Overridable via env GS_PARA_BUILD.
     bs1_parallel_build: int = 7
+    # bs=1 (PARA_LEVEL.PARTIAL) parallelization of the forward-dynamics (CRBA / mass-matrix) loops in
+    # func_forward_dynamics that otherwise serialize below PARA_LEVEL.ALL, i.e. onto a single thread when n_envs<=1
+    # (~6% of the bs=1 step: crb_initialize/mass_mat/armature/impint over links/dofs, crb over entities). Like
+    # bs1_parallel_build, the threshold drops from ALL to PARTIAL so they parallelize at bs=1; CPU (NEVER) and
+    # multi-env (ALL) are unaffected. All targeted loops write disjoint outputs:
+    #   - crb_initialize / mass_mat / armature / impint: one (link|dof) writes only its own state -> bit-identical.
+    #   - crb: the child->parent composite-inertia backward pass is sequential WITHIN an entity but the entities are
+    #     independent trees writing disjoint links, so parallelizing the OUTER entity loop is bit-identical too.
+    # Bitmask for isolation: bit0=crb_initialize+mass_mat+armature+impint (trivially disjoint), bit1=crb (entity tree).
+    # 3 = all on (default), 0 = off (legacy serial bs=1). Overridable via env GS_PARA_DYN.
+    bs1_parallel_dynamics: int = 3
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1
