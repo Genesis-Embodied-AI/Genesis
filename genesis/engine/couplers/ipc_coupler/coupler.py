@@ -622,6 +622,9 @@ class IPCCoupler(RBC):
                 moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                 self._ipc_stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
 
+            if is_cloth:
+                uipc.geometry.mesh_partition(mesh)
+
             # ---- Per-environment: create IPC objects, then set per-env attrs on slot geometry ----
             fem_slots: list = []
             for env_idx in range(self._B):
