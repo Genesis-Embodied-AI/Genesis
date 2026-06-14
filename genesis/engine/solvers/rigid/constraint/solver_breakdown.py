@@ -1,7 +1,6 @@
 import os
 import sys
 
-import numpy as np
 import quadrants as qd
 
 import genesis as gs
@@ -1108,7 +1107,12 @@ def _kernel_solve_graph(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
+    n_iters: qd.template(),
 ):
+    # Re-arm the iteration counter on-device (top-level for-loop runs exactly once per graph replay). This replaces a
+    # per-substep host `graph_counter.from_numpy(...)`, which forced a synchronous GPU-queue drain every substep.
+    for _ in range(1):
+        graph_counter[()] = n_iters
     while qd.graph_do_while(graph_counter):
         # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost
         _func_decomp_linesearch_p0(
@@ -1179,7 +1183,8 @@ def func_solve_decomposed(
     """
     if _n_iterations <= 0:
         return
-    constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
+    # The counter is now re-armed on-device inside the graph (top-level for-loop), so no per-substep host->device
+    # copy / queue drain is needed here.
     _kernel_solve_graph(
         dofs_info,
         entities_info,
@@ -1188,4 +1193,5 @@ def func_solve_decomposed(
         rigid_global_info,
         static_rigid_sim_config,
         constraint_state.graph_counter,
+        _n_iterations,
     )
