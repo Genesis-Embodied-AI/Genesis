@@ -265,10 +265,14 @@ class EGLPlatform(Platform):
             eglMakeCurrent(self._egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)
 
     def delete_context(self):
-        from OpenGL.EGL import eglDestroyContext
+        from OpenGL.EGL import eglDestroyContext, eglGetCurrentContext
 
         if self._egl_display is not None:
-            self.make_uncurrent()
+            # The EGL current context is per-thread and shared across renderers. Only release it if it is ours;
+            # otherwise another renderer (possibly mid-render) is current and tearing down this context must not
+            # strand it with no current context.
+            if self._egl_context is not None and eglGetCurrentContext() == self._egl_context:
+                self.make_uncurrent()
             if self._egl_context is not None:
                 eglDestroyContext(self._egl_display, self._egl_context)
                 self._egl_context = None

@@ -247,7 +247,10 @@ class OffscreenRenderer(object):
 
     def delete(self):
         """Free all OpenGL resources."""
-        self._platform.make_current()
+        # Do not force this context current before deleting it. The platforms' current-context state is
+        # process/thread-global, so making it current here would clobber the context another renderer may be
+        # using (e.g. while it is mid-render, when this renderer is being torn down by garbage collection).
+        # 'delete_context' makes itself current only when the platform requires it.
         self._platform.delete_context()
         del self._platform
         self._platform = None
