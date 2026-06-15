@@ -317,9 +317,14 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
 
-    # Apple Software Renderer is fully deterministic: successive captures do not match exactly
+    # Apple Software Renderer is not fully deterministic between successive captures.
     if sys.platform == "darwin" and scene.visualizer.is_software:
         tol_env = tol_step = 1.0
+    elif scene.visualizer.is_nvidia:
+        # GL_BLEND yields non-deterministic results on Nvidia GPU (see jit_render.py FIXME).
+        # Transparent objects in the scene trigger GL_BLEND, causing ~1e-6 pixel variance.
+        tol_env = 0.002
+        tol_step = 2e-6
     else:
         tol_env = 0.002
         tol_step = gs.EPS

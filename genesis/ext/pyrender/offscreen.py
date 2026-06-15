@@ -33,6 +33,7 @@ class OffscreenRenderer(object):
         self.point_size = point_size
         self._platform = None
         self._is_software = False
+        self._is_nvidia = False
         self._has_valid_context = False
         self._create(pyopengl_platform)
         self._seg_node_map = seg_node_map
@@ -280,6 +281,7 @@ class OffscreenRenderer(object):
             renderer = glGetString(GL_RENDERER).decode()
             gs.logger.debug(f"Using offscreen rendering OpenGL device: {renderer}")
             self._is_software = any(e in renderer for e in ("llvmpipe", "Apple Software Renderer"))
+            self._is_nvidia = "NVIDIA" in renderer
         except Exception:
             pass
         if self._is_software:
