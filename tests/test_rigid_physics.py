@@ -6848,10 +6848,18 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     with pytest.raises(gs.GenesisException):
         hand.set_quat(0.0)
 
+    # The free box is dynamically isolated from the robot, so its lateral position must stay put while the
+    # gripper actuates. Attaching the floating-base hand re-indexes joints by dropping its free base joint;
+    # the hand's mimic (joint-equality) references must follow that re-indexing, otherwise they alias this
+    # box's free-joint DOFs and the corrupted constraint drags the box sideways as the fingers move.
+    box_pos_init = box.get_pos()
+
     franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
     hand.control_dofs_position([0.04, 0.04])
     for _ in range(30):
         scene.step()
+
+    assert_allclose(box.get_pos()[..., :2], box_pos_init[..., :2], tol=1e-3)
 
     attach_link = franka.get_link("attachment")
     assert_allclose(attach_link.get_pos(), hand.links[0].get_pos(), tol=gs.EPS)

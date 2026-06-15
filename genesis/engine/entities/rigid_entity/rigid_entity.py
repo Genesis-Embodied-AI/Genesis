@@ -1244,10 +1244,22 @@ class KinematicEntity(Entity):
                 entity._dof_start -= n_base_dofs
                 entity._q_start -= n_base_qs
             for joint in self._solver.joints[self.joint_start :]:
+                joint._idx -= n_base_joints
                 joint._dof_start -= n_base_dofs
                 joint._q_start -= n_base_qs
             for link in self._solver.links[(self.link_start + 1) :]:
                 link._joint_start -= n_base_joints
+
+            # Joint-equality constraints (e.g. mimic joints) reference joints by global index, which must stay
+            # aligned with the dense joint ordering. Shift those references in lockstep with the joint re-indexing
+            # above. Link-based equalities (connect/weld) are unaffected since no link is removed here.
+            removed_joints_end = self.joint_start + n_base_joints
+            for equality in self._solver.equalities:
+                if equality.type == gs.EQUALITY_TYPE.JOINT:
+                    if equality._eq_obj1id >= removed_joints_end:
+                        equality._eq_obj1id -= n_base_joints
+                    if equality._eq_obj2id >= removed_joints_end:
+                        equality._eq_obj2id -= n_base_joints
 
         # Overwrite parent link
         base_link._parent_idx = parent_link.idx
