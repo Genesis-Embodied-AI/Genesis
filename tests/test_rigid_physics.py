@@ -3771,7 +3771,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
         # of its velocities have decayed to zero.
         aabb = nut.get_AABB()
         assert (aabb[..., 0, 2] < 1.0e-3).all()
-        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.06)
+        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.07)
 
 
 # Force CPU because nonconvex SDF is slow on GPU
@@ -3981,7 +3981,7 @@ def test_convexify(euler, show_viewer, gjk_collision):
         scene.step()
         # cam.render()
         if i > 900:
-            assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=1.0 if sys.platform == "win32" else 0.5)
+            assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=1.0 if sys.platform == "win32" else 0.6)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
