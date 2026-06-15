@@ -22,6 +22,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch
+from genesis.utils.warnings import warn_once
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -764,7 +765,7 @@ class KinematicEntity(Entity):
                         if is_col:
                             link_g_infos.append(g_info)
             except (ValueError, AssertionError) as e:
-                gs.logger.warning(
+                warn_once(
                     "Falling back to legacy URDF parser. Default values of physics properties may be off:\n"
                     + str(e).replace("\n", " - ")
                 )
