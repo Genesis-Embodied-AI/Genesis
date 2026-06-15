@@ -1453,6 +1453,40 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
             assert f.read() == png_snapshot
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_offscreen_context_isolation(renderer_type, renderer):
+    # Each offscreen scene owns a separate GL context, but the platform's current-context state is process/thread
+    # global. Destroying one scene's context must not strand another scene that is mid-render - which cyclic GC
+    # routinely does under parallel runs, by collecting a stale scene during another's render. Force that exact
+    # interleaving (tear down scene B in the middle of scene A's render) and assert A's render still completes
+    # rather than raising OpenGL "Attempt to retrieve context when no valid context".
+    scene_a = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
+    scene_a.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
+    camera_a = scene_a.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_a.build()
+
+    scene_b = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
+    scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
+    scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_b.build()
+
+    # Destroy scene B right after scene A's renderer makes its context current, i.e. mid-render.
+    renderer_a = scene_a.visualizer._rasterizer._renderer
+    original_make_current = renderer_a.make_current
+    destroyed = False
+
+    def make_current_then_destroy_b():
+        nonlocal destroyed
+        original_make_current()
+        if not destroyed:
+            destroyed = True
+            scene_b.destroy()
+
+    renderer_a.make_current = make_current_then_destroy_b
+    camera_a.render(rgb=True)
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
@@ -1640,8 +1674,9 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
     )
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
-def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
+def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapshot):
     # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
     # without denoiser.
     png_snapshot.extension._std_err_threshold = 3.0
@@ -1661,14 +1696,22 @@ def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
             # Reduce number of iterations to speedup runtime
             n_pcg_iterations=40,
         ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
         renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
     )
 
-    # Add ground plane
+    # Add ground plane. For the Rasterizer, keep it small enough to stay within the camera frustum: the Apple
+    # Software Renderer misrasterizes a plane whose vertices fall outside the view, breaking pixel matching. The
+    # RayTracer is unaffected, so keep its default size to preserve the existing snapshot.
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            plane_size=(1.3, 1.3) if renderer_type == RENDERER_TYPE.RASTERIZER else (1e3, 1e3),
+        ),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
         ),
