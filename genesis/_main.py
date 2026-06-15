@@ -172,7 +172,7 @@ def main():
     launch_args.add_argument("-l", "--link_frame", action="store_true", default=False, help="Show link frame")
 
     subparsers.add_parser("launch", parents=[launch_args], help="Visualize a given asset (Mesh/URDF/MJCF/USD)")
-    subparsers.add_parser("view", parents=[launch_args], help="[DEPRECATED] Alias of 'launch'.")
+    subparsers.add_parser("view", parents=[launch_args], help="[DEPRECATED] Use 'gs launch' instead.")
 
     parser_play = subparsers.add_parser("play", help="Interactive viewer with ImGui joint controls and simulation")
     parser_play.add_argument(
