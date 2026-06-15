@@ -832,7 +832,7 @@ class IPCCoupler(RBC):
                     self._ipc_stc = SoftTransformConstraint()
                     self._ipc_constitution_tabular.insert(self._ipc_stc)
 
-                constraint_strength = np.array(entity.material.coup_stiffness)
+                constraint_strength = np.array(entity.material.soft_constraint_strength)
                 self._ipc_stc.apply_to(rigid_link_geom, constraint_strength)
 
                 # Enable constraint once at build time (stays enabled for all frames)
