@@ -98,6 +98,10 @@ class OffscreenRenderer(object):
         self._platform.make_uncurrent()
         self._has_valid_context = False
 
+    def save_current_context(self):
+        """Capture the current GL context as a restore callable (see 'Platform.save_current_context')."""
+        return self._platform.save_current_context()
+
     def render(
         self,
         scene,
