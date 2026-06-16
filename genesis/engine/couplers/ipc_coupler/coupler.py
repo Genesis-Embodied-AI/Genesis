@@ -816,8 +816,6 @@ class IPCCoupler(RBC):
                 )
 
         # ---- ABD link × ABD link pairs (with self-collision filtering) ----
-        n_enabled = 0
-        n_disabled = 0
         for i, (elem_i, link_i, friction_i, resistance_i) in enumerate(abd_link_infos):
             for elem_j, link_j, friction_j, resistance_j in abd_link_infos[i:]:
                 friction_ij = geometric_mean(friction_i, friction_j)
@@ -825,25 +823,21 @@ class IPCCoupler(RBC):
 
                 if not self.options.enable_rigid_rigid_contact:
                     self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                    n_disabled += 1
                     continue
 
                 # Fixed-fixed pairs never collide (mirrors RigidSolver collider)
                 if self._abd_data_by_link[link_i].is_fixed and self._abd_data_by_link[link_j].is_fixed:
                     self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                    n_disabled += 1
                     continue
 
                 # Same-entity self-collision filtering (mirrors RigidSolver collider)
                 if link_i.entity is link_j.entity and link_i is not link_j:
                     if not enable_self_collision:
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        n_disabled += 1
                         gs.logger.debug(f"[IPC CONTACT] DISABLED self-collision: {link_i.name} × {link_j.name}")
                         continue
                     if not enable_adjacent_collision and are_links_adjacent(link_i, link_j):
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        n_disabled += 1
                         gs.logger.debug(f"[IPC CONTACT] DISABLED adjacent: {link_i.name} × {link_j.name}")
                         continue
                     mesh_i = self._abd_merged_meshes.get(link_i)
@@ -855,15 +849,11 @@ class IPCCoupler(RBC):
                         and are_meshes_overlapping(mesh_i, mesh_j)
                     ):
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        n_disabled += 1
                         gs.logger.debug(f"[IPC CONTACT] DISABLED overlapping: {link_i.name} × {link_j.name}")
                         continue
 
                 gs.logger.debug(f"[IPC CONTACT] ENABLED: {link_i.name} × {link_j.name}")
-                n_enabled += 1
                 self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, True)
-
-        gs.logger.info(f"[IPC CONTACT] ABD x ABD pairs: {n_enabled} enabled, {n_disabled} disabled")
 
         # ---- All contact elements (for ground and no-collision registration) ----
         # is_abd: whether the element is an ABD rigid link
