@@ -2003,6 +2003,11 @@ class KinematicEntity(Entity):
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
         return gs.List((self._morph, *self._morph_heterogeneous))
 
+    def _repr_morph(self):
+        if self._enable_heterogeneous:
+            return f"{len(self.morphs)} morph variants"
+        return f"{self.main_morph}"
+
     @property
     def n_joints(self):
         """The number of `RigidJoint` in the entity."""
