@@ -213,6 +213,9 @@ class Viewer(pyglet.window.Window):
         self._offscreen_event = Event()
         self._offscreen_pending_render = None
         self._offscreen_pending_close = None
+        # Renderers retired by rebind() on the stepping thread, waiting to be deleted on the
+        # thread that owns the GL context (see _flush_retired_renderers).
+        self._retired_renderers = []
         self._offscreen_semaphore = Semaphore(0)
         self._offscreen_result = None
 
@@ -512,7 +515,11 @@ class Viewer(pyglet.window.Window):
             self._scene = context._scene
             self._seg_node_map = context.seg_node_map
             if self._renderer is not None:
-                self._renderer.delete()
+                # rebind() runs on the stepping thread, which has no current GL context: deleting GL objects
+                # here segfaults. Retire the old renderer instead; the render thread deletes it right before
+                # its next draw, so shared GL objects (e.g. reused textures) are released - and re-uploaded -
+                # before the new renderer can record them as live (see _flush_retired_renderers).
+                self._retired_renderers.append(self._renderer)
             self._renderer = Renderer(*self._viewport_size, context.jit, self.render_flags["point_size"])
             self._setup_main_camera()
             self.plugins = []
@@ -684,7 +691,8 @@ class Viewer(pyglet.window.Window):
             if self.scene.has_node(self._direct_light):
                 self.scene.remove_node(self._direct_light)
 
-        # Delete renderer
+        # Delete renderer, along with any renderer retired by a rebind() that never drew again
+        self._flush_retired_renderers()
         if self._renderer is not None:
             try:
                 self._renderer.delete()
@@ -780,6 +788,8 @@ class Viewer(pyglet.window.Window):
             # Make OpenGL context current
             self.switch_to()
 
+            self._flush_retired_renderers()
+
             if self._offscreen_pending_close is not None:
                 # Extract request right away
                 (target,) = self._offscreen_pending_close
@@ -818,6 +828,16 @@ class Viewer(pyglet.window.Window):
             if self._run_in_thread:
                 self._offscreen_semaphore.release()
 
+    def _flush_retired_renderers(self):
+        """Delete renderers retired by rebind(). Must run with the GL context current, before the
+        replacement renderer draws (see rebind)."""
+        while self._retired_renderers:
+            renderer = self._retired_renderers.pop()
+            try:
+                renderer.delete()
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError):
+                pass
+
     def on_draw(self):
         """Redraw the scene into the viewing window."""
         if self._renderer is None:
@@ -826,6 +846,8 @@ class Viewer(pyglet.window.Window):
         with self.render_lock if self._run_in_thread or not self.auto_start else nullcontext():
             # Make OpenGL context current
             self.switch_to()
+
+            self._flush_retired_renderers()
 
             # Render the scene
             self.clear()
