@@ -6,6 +6,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.solvers.rigid.constraint import solver
+from genesis.engine.solvers.rigid.island import kernel_build_island_worklist
 
 # --- Parallel linesearch constants ---
 # Number of candidate step sizes evaluated simultaneously per env.
@@ -833,6 +834,7 @@ def _func_newton_only_nt_hessian(
 
 @qd.func
 def _func_newton_only_nt_hessian_and_cholesky(
+    island_state: array_class.IslandState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -858,11 +860,14 @@ def _func_newton_only_nt_hessian_and_cholesky(
         )
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                # Decomposed arm is non-island: i_island = 0 is the full-env work-unit (island branch is dead).
                 solver.func_cholesky_factor_direct_batch(
-                    i_b=i_b,
-                    constraint_state=constraint_state,
-                    rigid_global_info=rigid_global_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
+                    i_b,
+                    0,
+                    island_state,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
                 )
 
 
@@ -872,6 +877,7 @@ def _func_update_gradient(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     """Step 5: Update gradient"""
@@ -887,6 +893,7 @@ def _func_update_gradient(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
+                island_state=island_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
@@ -984,6 +991,7 @@ def _kernel_solve_graph(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
 ):
@@ -1015,16 +1023,52 @@ def _kernel_solve_graph(
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
             # so H patching is not possible)
-            _func_newton_only_nt_hessian_and_cholesky(constraint_state, rigid_global_info, static_rigid_sim_config)
+            _func_newton_only_nt_hessian_and_cholesky(
+                island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
             _func_update_gradient(
-                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
         else:
             _func_update_gradient(
-                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
         _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
+
+
+@qd.kernel(fastcache=True)
+def _kernel_island_presolve(
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # The per-env vector ops of one Newton iteration up to (but not including) the matrix solve: linesearch,
+    # the qacc/Ma/Jaref step, the constraint force/cost refresh, and the gradient. The per-island Hessian build
+    # + Cholesky + solve is the cooperative kernel that runs next, so only grad is produced here.
+    _func_decomp_linesearch_p0(
+        dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
+    _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
+    _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
+    _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
+    _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
+    _func_update_gradient_no_solve(
+        entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
+
+
+@qd.kernel(fastcache=True)
+def _kernel_island_postsolve(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Newton descent-direction update + termination test from the freshly solved per-island Mgrad.
+    _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
 @solver.func_solve_body.register(
@@ -1041,6 +1085,7 @@ def func_solve_decomposed(
     rigid_global_info,
     static_rigid_sim_config,
     _n_iterations,
+    island_state,
 ):
     """
     GPU graph accelerated solver loop with parallel grid-search linesearch and GPU-side iteration via graph_do_while.
@@ -1050,8 +1095,39 @@ def func_solve_decomposed(
     falls back to a host-side C++-side loop, that still reduces python launch overhead.
 
     Early exits when all batch elements have converged (no improved[i_b] is True).
+
+    With islands, the GPU-side graph loop is replaced by a host-orchestrated per-iteration loop: per-env vector
+    ops, then a warp-cooperative per-island matrix solve (one warp per island, work-stolen from the island
+    work-list). The Newton Hessian is block-diagonal by island, so per-island solves are exact vs the global
+    solve, and the tiny island tiles parallelize across warps. Runs a fixed _n_iterations (converged
+    envs/islands are cheap via the improved[] gate) rather than the graph_do_while early exit.
     """
     if _n_iterations <= 0:
+        return
+    if (
+        static_rigid_sim_config.use_contact_island
+        and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+    ):
+        # n_warps * max_items_per_thread must cover the work-list (one item per (env, island)); both are
+        # compile-time constants derived from the work-list capacity (n_entities * B), fixed per build.
+        work_max = island_state.work_i_b.shape[0]
+        n_warps = min(work_max, 256)
+        max_items_per_thread = (work_max + n_warps - 1) // n_warps
+        for _ in range(_n_iterations):
+            _kernel_island_presolve(
+                dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            kernel_build_island_worklist(island_state)
+            solver.kernel_solve_islands_cooperative(
+                island_state,
+                entities_info,
+                constraint_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+                n_warps,
+                max_items_per_thread,
+            )
+            _kernel_island_postsolve(constraint_state, rigid_global_info, static_rigid_sim_config)
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
     _kernel_solve_graph(
@@ -1060,6 +1136,7 @@ def func_solve_decomposed(
         dofs_state,
         constraint_state,
         rigid_global_info,
+        island_state,
         static_rigid_sim_config,
         constraint_state.graph_counter,
     )

@@ -660,6 +660,86 @@ def get_contact_island_state(solver, collider):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class IslandState:
+    # Union-find partition of dof-carrying entities into islands (connected components of the
+    # inter-entity coupling graph: contacts + equality constraints). entity_island is -1 for entities
+    # with no dofs (fixed bodies), which are never solved and never couple two dof-entities.
+    # island_entity maps island -> entity-idx range in entity_id; island_dof maps island -> local-dof
+    # range in dof_id (dof_id[local] -> global dof). The dof list is the block-gather map the
+    # per-island solve uses to assemble a dense local Hessian tile.
+    entity_parent: qd.Tensor
+    entity_island: qd.Tensor
+    n_islands: qd.Tensor
+    island_entity: AggList
+    entity_id: qd.Tensor
+    island_dof: AggList
+    dof_id: qd.Tensor
+    dof_iisland: qd.Tensor
+    dof_island: qd.Tensor
+    island_contact: AggList
+    contact_id: qd.Tensor
+    island_constraint: AggList
+    constraint_id: qd.Tensor
+    # Flat (env, island) work-list for the decomposed arm's warp-cooperative per-island dispatch. work_i_b[k] /
+    # work_i_island[k] identify the k-th island across all envs; work_size[0] is the total island count
+    # (Sum_b n_islands[b]); work_counter[0] is the atomic steal cursor. Only consumed when the decomposed arm
+    # solves islands; the monolith arm walks islands directly without the work-list.
+    work_i_b: qd.Tensor
+    work_i_island: qd.Tensor
+    work_size: qd.Tensor
+    work_counter: qd.Tensor
+    # Packed per-island dense Hessian/Cholesky scratch. All of an env's island tiles are packed contiguously
+    # into one flat [B, n_dofs * n_dofs] buffer: island i_island's n_i x n_i row-major tile starts at
+    # island_tile_start[i_island, i_b], so element (ld1, ld2) lives at that base + ld1 * n_i + ld2. Because
+    # Sum_i n_i^2 <= (Sum_i n_i)^2 = n_dofs^2, n_dofs^2 slots per env always suffice - the same footprint as a
+    # single global Hessian, with zero extra memory for islands and room for one island spanning the whole env.
+    # Tiles are keyed by their packed base, so islands solved concurrently by Mode B never collide.
+    island_tile_start: qd.Tensor
+    island_nt_H: qd.Tensor
+
+
+def get_island_state(solver, collider):
+    _B = solver._B
+    n_entities = max(solver.n_entities, 1)
+    n_dofs = max(solver.n_dofs, 1)
+    # island_state is always allocated (it is a kernel parameter), but the dense per-island Newton tile is
+    # large and only consumed when use_contact_island is set; shrink it to a placeholder otherwise so
+    # non-island simulations pay no extra memory.
+    use_contact_island = solver._static_rigid_sim_config.use_contact_island
+    max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
+    # Safe upper bound on active constraints: 4 per contact + joint-limit/frictionloss (<= n_dofs each)
+    # + equality rows (<= 6 per equality, e.g. weld).
+    n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver._n_equalities, 1) * 6, 1)
+    return IslandState(
+        entity_parent=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        entity_island=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        n_islands=V(dtype=gs.qd_int, shape=(_B,)),
+        island_entity=get_agg_list(solver),
+        entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        island_dof=get_agg_list(solver),
+        dof_id=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
+        dof_iisland=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
+        dof_island=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
+        island_contact=get_agg_list(solver),
+        contact_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
+        island_constraint=get_agg_list(solver),
+        constraint_id=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
+        # Work-list spans every (env, island); at most n_entities islands per env.
+        work_i_b=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
+        work_i_island=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
+        work_size=V(dtype=gs.qd_int, shape=(1,)),
+        work_counter=V(dtype=gs.qd_int, shape=(1,)),
+        # Each env has at most n_entities islands (every dof-entity isolated), so n_entities slots always
+        # suffice and the island count can never overflow. island_tile_start is partitioner output (written by
+        # kernel_build_islands), so allocate it always, like dof_id/entity_id; only the large packed Hessian
+        # scratch below is gated on use_contact_island.
+        island_tile_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        # Packed island tiles fit n_dofs^2 slots per env (Sum_i n_i^2 <= n_dofs^2); empty otherwise.
+        island_nt_H=V(dtype=gs.qd_float, shape=maybe_shape((_B, n_dofs * n_dofs), use_contact_island)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class NarrowphaseWorkQueues:
     mpr_i_b: qd.Tensor
     mpr_i_ga: qd.Tensor
@@ -2168,6 +2248,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     solver_type: int
     requires_grad: bool
     prefer_decomposed_solver: int = -1  # -1 = None (auto), 0 = False, 1 = True
+    use_contact_island: bool = False  # per-island Newton solve (gated; the legacy island solver is retired)
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
@@ -2196,6 +2277,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     constraint_layout_batch_first: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
+    tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1

@@ -31,7 +31,7 @@ from genesis.utils.sdf import SDF
 from ..base_solver import Solver, StateChange, mutates
 from ..kinematic_solver import KinematicSolver, _select_links_offset, _offset_world_shift, _fill_base_link_geom_offsets
 from .collider import Collider
-from .constraint import ConstraintSolver, ConstraintSolverIsland
+from .constraint import ConstraintSolver
 from .abd.misc import (
     func_add_safe_backward,
     func_apply_coupling_force,
@@ -399,47 +399,27 @@ class RigidSolver(KinematicSolver):
             return gs.broadphase_traversal.SAP
         return gs.broadphase_traversal.ALL_VS_ALL
 
-    def _should_enable_cooperative_constraint_kernels(self) -> bool:
-        """Decide whether to use the subgroup-cooperative constraint kernels and their batch-first layouts.
-
-        The cooperative kernels (plus the batch-first layouts they expect) win on workloads with enough per-env compute
-        density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
-        legacy 1-thread-per-env path is already coalesced under (len_constraints_, _B) and warp scheduling dominates.
-
-        Empirical pattern from `perso_hugh/doc/linesearch_shuffle.md` (Exp 5):
-          - Wins (>+3%): dex_hand, g1_fall, box_pyramid_3..6; all 4096 envs, n_dofs >= ~18.
-          - Wash / regression: anymal/franka families; 30000 envs, n_dofs <= ~12.
-
-        Heuristic: enable transpose when both (a) n_envs is small enough that env-parallelism does not already
-        saturate the GPU, and (b) per-env DoF count is large enough to keep a 32-lane warp busy on the cooperative
-        reductions.
-        """
-        if gs.backend == gs.cpu or self.sim.options.requires_grad:
-            return False
-        # Sparse solve relies on jac_dofs_idx / jac_n_dofs to skip irrelevant dofs in the constraint
-        # update. The cooperative qfrc kernel that pairs with the flipped layout is dense-only, and several other
-        # kernels that read jac under the flipped layout (e.g. the refinement-phase _func_update_qfrc_constraint_per_dof)
-        # would also need sparse-aware rewrites.
-        if self._options.sparse_solve:
-            return False
-        n_envs = self._sim._B
-        n_dofs = self.n_dofs
-        return n_envs <= 8192 and n_dofs >= 16
-
     def _build_static_config(self):
+        # The scene has multi-island block structure when it holds several independent DOF-carrying bodies or free
+        # joints (the Hessian then splits into per-island blocks instead of one dense tree). This gates both the CPU
+        # skyline solver and the GPU per-island force below: a single dense-coupled tree (e.g. one big robot) is one
+        # island and gains nothing from either.
+        n_dof_entities = sum(entity.n_dofs > 0 for entity in self.entities)
+        n_free_joints = sum(joint.type == gs.JOINT_TYPE.FREE for joint in self.joints)
+        has_multi_island_structure = n_dof_entities >= 2 or n_free_joints >= 2
+
+        # Islands only reduce work when the scene splits into several blocks. With a single dense-coupled tree (one
+        # island) the partition is pure overhead and the lone island would not even fit the cooperative tile, so
+        # disable it in computation even if the user opted in - the same way contact pruning is skipped when it is
+        # determinably irrelevant.
+        self._use_contact_island = self._use_contact_island and has_multi_island_structure
+
         # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene
-        # has block structure (several DOF-carrying bodies or free joints keep the Hessian band much tighter than
-        # n_dofs), whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An explicit
-        # value overrides this. On GPU the envelope factorization is dropped (the dense tiled path is faster there);
-        # an explicit True still enables the assembly-level sparsity, with a warning.
+        # has block structure, whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An
+        # explicit value overrides this. On GPU the envelope factorization is dropped (the dense tiled path is faster
+        # there); an explicit True still enables the assembly-level sparsity, with a warning.
         if self._options.sparse_solve is None:
-            n_dof_entities = sum(entity.n_dofs > 0 for entity in self.entities)
-            n_free_joints = sum(joint.type == gs.JOINT_TYPE.FREE for joint in self.joints)
-            sparse_solve = (
-                gs.backend == gs.cpu
-                and not self._enable_mujoco_compatibility
-                and (n_dof_entities >= 2 or n_free_joints >= 2)
-            )
+            sparse_solve = gs.backend == gs.cpu and not self._enable_mujoco_compatibility and has_multi_island_structure
         else:
             sparse_solve = self._options.sparse_solve
             if sparse_solve and gs.backend != gs.cpu:
@@ -447,6 +427,16 @@ class RigidSolver(KinematicSolver):
                     "Enabling 'sparse_solve' on the GPU backend likely impedes performance; the dense tiled "
                     "factorization is faster there. Use with caution."
                 )
+
+        # sparse-skyline and per-island are two implementations of the same idea - exploit the block-diagonal
+        # Hessian - so they never run together; the user need not choose between them. Route to the backend's
+        # winner: on CPU the skyline solver is faster than the per-island scalar path (and its dense per-island
+        # build could not read the sparse Jacobian anyway), so it supersedes islands; on GPU islands win and
+        # sparse is dropped regardless. An explicit sparse_solve=False still forces the island path on CPU.
+        if sparse_solve and gs.backend == gs.cpu:
+            self._use_contact_island = False
+        elif self._use_contact_island:
+            sparse_solve = False
 
         # The skyline-envelope factorization and its DOF reorder are CPU-only and incompatible with the differentiable
         # adjoint solve (which reuses nt_H with natural, dense indexing). Under requires_grad only the assembly-level
@@ -457,7 +447,20 @@ class RigidSolver(KinematicSolver):
         # under serialized execution, where the env loop is outermost and per-env rows must be contiguous to avoid
         # stride-n_envs access. Batched sweeps key their iteration-axis order on the same flag, so that iteration order
         # always follows the physical layout.
-        enable_cooperative_constraint_kernels = self._should_enable_cooperative_constraint_kernels()
+        #
+        # The subgroup-cooperative constraint kernels (and the batch-first layout they expect) win when per-env compute
+        # density amortizes the warp-per-env overhead, and lose when envs are sparse and many (the 1-thread-per-env path
+        # is already coalesced under (len_constraints_, _B)). They are also the layout the decomposed solve arm requires.
+        # Empirically the cooperative path wins around 4096 envs at n_dofs >= ~18 and washes out by ~30000 envs at
+        # n_dofs <= ~12; the n_envs <= 8192 and n_dofs >= 16 thresholds bound that crossover. Sparse solve is excluded
+        # (the cooperative qfrc kernel and the flipped-layout jac readers are dense-only).
+        enable_cooperative_constraint_kernels = (
+            gs.backend != gs.cpu
+            and not self.sim.options.requires_grad
+            and not self._options.sparse_solve
+            and self._sim._B <= 8192
+            and self.n_dofs >= 16
+        )
         constraint_layout_batch_first = (
             enable_cooperative_constraint_kernels or self.sim._para_level < gs.PARA_LEVEL.ALL
         )
@@ -476,6 +479,7 @@ class RigidSolver(KinematicSolver):
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
             box_box_detection=self._box_box_detection,
+            use_contact_island=self._use_contact_island,
             sparse_solve=sparse_solve,
             sparse_envelope=sparse_envelope,
             integrator=self._integrator,
@@ -515,6 +519,18 @@ class RigidSolver(KinematicSolver):
                 tiled_n_dofs = max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size
                 tiled_n_dofs_per_entity = max(math.ceil(max_n_dofs_per_entity / 32), 1) * 32
 
+                # The decomposed arm's cooperative per-island solve stages one island's tile in shared memory.
+                # Size it to the largest tile-size multiple that fits shared (precision-aware), but no larger
+                # than tiled_n_dofs; an island exceeding this falls back to the serial per-island solve. Unlike
+                # hessian_fits_shared (which sizes the whole-env tile and is often False for big envs), this is
+                # always usable because islands are small - it only caps how big a single island may be before
+                # it loses the cooperative path.
+                tiled_n_island_dofs = tiled_n_dofs
+                while tiled_n_island_dofs > cholesky_tile_size and not fits_in_gpu_shared_memory(
+                    tiled_n_island_dofs, tiled_n_island_dofs
+                ):
+                    tiled_n_island_dofs -= cholesky_tile_size
+
                 # enable_tiled_cholesky_hessian selects the register-streaming tiled factor (no shared-memory cap):
                 # worth tiling from n_dofs >= 16, and below the shared cap only when envs undersaturate (above it the
                 # scalar O(n_dofs^3) per-env factor is always worse). hessian_fits_shared additionally gates the
@@ -551,7 +567,29 @@ class RigidSolver(KinematicSolver):
                     enable_fused_factor_solve_init=enable_fused_factor_solve_init,
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
                     tiled_n_dofs=tiled_n_dofs,
+                    tiled_n_island_dofs=tiled_n_island_dofs,
                 )
+
+                # Manually pin the solve arm only where the winner is determinable in advance AND confirmed across
+                # CUDA + Metal; genuinely backend-dependent cases fall through to the per-step autotuner.
+                if not enable_cooperative_constraint_kernels:
+                    # No cooperative layout (n_envs > 8192 already saturates the GPU, or n_dofs < 16): the decomposed
+                    # arm has nothing to exploit, so the scalar one-thread-per-env monolith is the clear winner.
+                    static_rigid_sim_config["prefer_decomposed_solver"] = 0
+                elif self._options.constraint_solver == gs.constraint_solver.CG:
+                    # CG spends its time in the linesearch and never factors a Hessian, so the decomposed arm's
+                    # parallel grid-search linesearch (an on-GPU graph_do_while loop) beats the scalar monolith at
+                    # every scale measured on both CUDA (1.5-4.8x) and Metal (2-18x).
+                    static_rigid_sim_config["prefer_decomposed_solver"] = 1
+                elif self._use_contact_island:
+                    # Newton islands: the warp-cooperative per-island arm is host-orchestrated (a Python-side
+                    # per-iteration launch loop), so on CUDA it forgoes the graph-batched Newton loop and loses to
+                    # the on-GPU monolith (1024x64: 262 vs 857 ms). On Metal there are no CUDA graphs, so the
+                    # cooperative arm's per-island parallelism wins instead. The flip is fully predictable from the
+                    # backend, so pin it rather than autotune: monolith on CUDA, cooperative-decomposed elsewhere.
+                    static_rigid_sim_config["prefer_decomposed_solver"] = 0 if gs.backend == gs.cuda else 1
+                # Newton non-island stays on the autotuner: monolith vs decomposed is a small (~15%), env-count-
+                # dependent margin with a hardware-dependent crossover - not reliably predictable in advance.
 
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:
@@ -1036,10 +1074,8 @@ class RigidSolver(KinematicSolver):
             self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def _init_constraint_solver(self):
-        if self._use_contact_island:
-            self.constraint_solver = ConstraintSolverIsland(self)
-        else:
-            self.constraint_solver = ConstraintSolver(self)
+        # Islands are a per-island Newton solve inside ConstraintSolver.resolve, gated on use_contact_island.
+        self.constraint_solver = ConstraintSolver(self)
 
     def substep(self, f):
         # from genesis.utils.tools import create_timer
@@ -1164,29 +1200,14 @@ class RigidSolver(KinematicSolver):
 
     def _func_constraint_force(self):
         if not self._disable_constraint:
-            if self._use_contact_island:
-                self.constraint_solver.clear()
-            else:
-                self.constraint_solver.add_equality_constraints()
+            self.constraint_solver.add_equality_constraints()
 
         if self._enable_collision:
             self.collider.detection()
 
         if not self._disable_constraint:
-            if self._use_contact_island:
-                self.constraint_solver.add_constraints()
-                self.constraint_solver.resolve(
-                    self.entities_state,
-                    self.entities_info,
-                    self.dofs_state,
-                    self.links_state,
-                    self.geoms_state,
-                    self._rigid_global_info,
-                    self.constraint_solver.contact_island.contact_island_state,
-                )
-            else:
-                self.constraint_solver.add_inequality_constraints()
-                self.constraint_solver.resolve(self.entities_info, self._rigid_global_info)
+            self.constraint_solver.add_inequality_constraints()
+            self.constraint_solver.resolve(self.entities_info, self._rigid_global_info)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
