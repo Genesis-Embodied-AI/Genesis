@@ -69,7 +69,6 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
 # Affine body stiffness in MPa
 ABD_KAPPA = 100.0
 JOINT_STRENGTH_RATIO = 100.0
-COM_AABB_TOL = 2e-3
 
 
 class IPCCoupler(RBC):
@@ -259,39 +258,6 @@ class IPCCoupler(RBC):
         for entity, coup_type in self._coup_type_by_entity.items():
             self._entities_by_coup_type.setdefault(coup_type, []).append(entity)
 
-    @staticmethod
-    def _validate_link_inertial_com_for_ipc(link: "RigidLink"):
-        """Raise if inertial COM is outside collision mesh AABB (IPC assumption check)."""
-        if link.inertial_pos is None:
-            return
-
-        aabb_min = np.full(3, np.inf, dtype=gs.np_float)
-        aabb_max = np.full(3, -np.inf, dtype=gs.np_float)
-        has_collision_mesh = False
-        for geom in link.geoms:
-            if geom.type == gs.GEOM_TYPE.PLANE or geom.n_verts <= 0:
-                continue
-            verts = gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat)
-            aabb_min = np.minimum(aabb_min, verts.min(axis=0))
-            aabb_max = np.maximum(aabb_max, verts.max(axis=0))
-            has_collision_mesh = True
-
-        if not has_collision_mesh:
-            return
-
-        com = np.asarray(link.inertial_pos, dtype=gs.np_float)
-        tol = (aabb_max - aabb_min) * COM_AABB_TOL + COM_AABB_TOL
-        if not ((aabb_min - tol < com) & (com < aabb_max + tol)).all():
-            com_str = ", ".join(f"{n}={v:0.3f}" for n, v in zip(("x", "y", "z"), com))
-            aabb_str = ", ".join(
-                f"{n}=({mn:0.3f}, {mx:0.3f})" for n, mn, mx in zip(("x", "y", "z"), aabb_min, aabb_max)
-            )
-            gs.raise_exception(
-                f"IPC two-way coupling assumption violated for link '{link.name}': "
-                f"inertial COM [{com_str}] outside collision AABB [{aabb_str}]. "
-                "Fix inertial origin or collision geometry alignment."
-            )
-
     def _init_ipc(self) -> None:
         """Initialize IPC system components"""
         assert gs.logger is not None
@@ -417,7 +383,6 @@ class IPCCoupler(RBC):
                 slot_meta = slot_geom.meta()
                 slot_meta.create("solver_type", solver_type)
                 slot_meta.create("entity_idx", str(i_e))
-                slot_meta.create("entity_name", str(entity.name))
                 slot_meta.create("env_idx", str(env_idx))
             self._fem_slots_by_entity[entity] = fem_slots
 
@@ -515,8 +480,6 @@ class IPCCoupler(RBC):
                                 self._ipc_subscenes[env_idx].apply_to(slot_geom)
                             slot_meta = slot_geom.meta()
                             slot_meta.create("solver_type", "rigid")
-                            slot_meta.create("entity_name", str(entity.name))
-                            slot_meta.create("link_name", str(link.name))
                             slot_meta.create("link_idx", str(link.idx))
                             slot_meta.create("env_idx", str(env_idx))
                     elif geom.n_verts:
@@ -526,14 +489,10 @@ class IPCCoupler(RBC):
                         if frame_pos is not None and np.any(frame_pos) or np.any(frame_quat[1:]):
                             geom_verts = gu.transform_by_trans_quat(geom_verts, frame_pos, frame_quat)
 
-                        try:
-                            mesh = uipc.geometry.trimesh(
-                                geom_verts.astype(np.float64, copy=False),
-                                geom.init_faces.astype(np.int32, copy=False),
-                            )
-                        except RuntimeError as e:
-                            gs.raise_exception_from(f"Failed to process geom {geom.idx} for IPC.", e)
-
+                        mesh = uipc.geometry.trimesh(
+                            geom_verts.astype(np.float64, copy=False),
+                            geom.init_faces.astype(np.int32, copy=False),
+                        )
                         meshes.append(mesh)
 
             # ---- Determine coupling behavior ----
@@ -556,15 +515,19 @@ class IPCCoupler(RBC):
             if is_proxy and has_plane_geom:
                 continue
 
+            # ---- Hoisted: lazy-init the shared ABD constitution ----
+            if self._ipc_abd is None:
+                self._ipc_abd = AffineBodyConstitution()
+                self._ipc_constitution_tabular.insert(self._ipc_abd)
+
+            # ---- Hoisted: Genesis URDF inertials (used by both proxy + mesh paths) ----
+            mass_val = float(link.inertial_mass)
+            mass_center = np.asarray(link.inertial_pos, dtype=np.float64)
+            inertia = np.asarray(link.inertial_i, dtype=np.float64)
+            volume = mass_val / rho if rho > 0 else 1.0
+
             if is_proxy:
                 # No collision mesh — create a proxy ABD body from inertial properties
-                if self._ipc_abd is None:
-                    self._ipc_abd = AffineBodyConstitution()
-                    self._ipc_constitution_tabular.insert(self._ipc_abd)
-                mass_val = float(link.inertial_mass)
-                mass_center = np.asarray(link.inertial_pos, dtype=np.float64)
-                inertia = np.asarray(link.inertial_i, dtype=np.float64)
-                volume = mass_val / rho if rho > 0 else 1.0
                 rigid_link_geom = self._ipc_abd.create_proxy(
                     kappa=ABD_KAPPA * uipc.unit.MPa,
                     mass=mass_val,
@@ -598,10 +561,13 @@ class IPCCoupler(RBC):
                 else:
                     self._ipc_no_collision_contact.apply_to(rigid_link_geom)
 
-                # Apply ABD constitution
-                if self._ipc_abd is None:
-                    self._ipc_abd = AffineBodyConstitution()
-                    self._ipc_constitution_tabular.insert(self._ipc_abd)
+                # FIXME: libuipc derives its own uniform-density COM/inertia from the mesh,
+                # silently overriding the URDF/MJCF <inertial> spec. Switching to
+                # `apply_to(sc, kappa, mass: ndarray, volume)` with a 12x12 matrix built via
+                # `uipc.geometry.affine_body.from_rigid_body(mass_val, mass_center, inertia)`
+                # would honor the URDF inertials, but the conversion appears to need a frame
+                # alignment that isn't a drop-in — it currently SIGABRTs inside libuipc. Tracked
+                # for follow-up; for now mesh bodies use uniform-density.
                 self._ipc_abd.apply_to(rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=rho)
 
             # Apply SoftTransformConstraint for coupled links
@@ -659,8 +625,6 @@ class IPCCoupler(RBC):
                     self._ipc_subscenes[env_idx].apply_to(slot_geom)
                 slot_meta = slot_geom.meta()
                 slot_meta.create("solver_type", "rigid")
-                slot_meta.create("entity_name", str(entity.name))
-                slot_meta.create("link_name", str(link.name))
                 slot_meta.create("link_idx", str(link.idx))
                 slot_meta.create("env_idx", str(env_idx))
                 abd_geom_slots.append(abd_geom_slot)
