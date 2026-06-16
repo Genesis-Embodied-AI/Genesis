@@ -32,37 +32,6 @@ _MASS_MAT_BLOCK = 32
 
 
 @qd.kernel
-def update_qvel(
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-    is_backward: qd.template(),
-):
-    BW = qd.static(is_backward)
-
-    _B = dofs_state.vel.shape[1]
-    n_dofs = dofs_state.vel.shape[0]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
-        for i_1 in (
-            range(rigid_global_info.n_awake_dofs[i_b])
-            if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(1))
-        ):
-            if i_1 < (rigid_global_info.n_awake_dofs[i_b] if qd.static(static_rigid_sim_config.use_hibernation) else 1):
-                i_d = (
-                    rigid_global_info.awake_dofs[i_1, i_b]
-                    if qd.static(static_rigid_sim_config.use_hibernation)
-                    else i_0
-                )
-                dofs_state.vel_prev[i_d, i_b] = dofs_state.vel[i_d, i_b]
-                dofs_state.vel[i_d, i_b] = (
-                    dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
-                )
-
-
-@qd.kernel
 def kernel_restore_integrate(
     dofs_state: array_class.DofsState,
     links_info: array_class.LinksInfo,
