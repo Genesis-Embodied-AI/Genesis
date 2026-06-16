@@ -19,7 +19,7 @@ from genesis.utils.misc import qd_to_numpy, tensor_to_array
 from genesis.vis.keybindings import Key
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_LUISA, SKIP_NO_MADRONA, SKIP_NO_VIEWER
-from .utils import assert_allclose, assert_equal, get_hf_dataset, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_equal, assert_pixel_match, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -1455,36 +1455,52 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_offscreen_context_isolation(renderer_type, renderer):
+def test_offscreen_context_isolation(renderer_type):
     # Each offscreen scene owns a separate GL context, but the platform's current-context state is process/thread
-    # global. Destroying one scene's context must not strand another scene that is mid-render - which cyclic GC
-    # routinely does under parallel runs, by collecting a stale scene during another's render. Force that exact
-    # interleaving (tear down scene B in the middle of scene A's render) and assert A's render still completes
-    # rather than raising OpenGL "Attempt to retrieve context when no valid context".
-    scene_a = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
+    # global. Tearing down one scene's renderer while another is mid-render - which happens under cyclic GC, or
+    # when the render thread deletes a retired renderer - must leave the rendering scene's context untouched. Force
+    # that interleaving by destroying scene B in the middle of scene A's render, and assert A renders exactly as it
+    # does without the interference, rather than rendering on B's destroyed context or losing its context entirely.
+    # The two scenes must own independent renderers, hence a fresh Rasterizer each rather than a shared instance.
+    scene_a = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
     scene_a.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
     camera_a = scene_a.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
     scene_a.build()
+    rgb_reference = camera_a.render(rgb=True)[0]
 
-    scene_b = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
-    scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
-    scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    # Distinct content so that rendering A on B's context would be visibly wrong rather than coincidentally equal.
+    scene_b = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 5.0), size=(0.3, 0.3, 0.3)))
+    camera_b = scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
     scene_b.build()
+    camera_b.render(rgb=True)
 
-    # Destroy scene B right after scene A's renderer makes its context current, i.e. mid-render.
+    # Destroy scene B right after scene A's renderer makes its context current, i.e. mid-render, then check the current
+    # context directly: a stranded context does not necessarily corrupt the rendered pixels on every driver, so
+    # asserting on pixels alone is not enough to catch it. 'save_current_context' returns a restore callable for the
+    # current context, or None when none is current, so a stranded context surfaces as None here.
     renderer_a = scene_a.visualizer._rasterizer._renderer
     original_make_current = renderer_a.make_current
     destroyed = False
+    restore_after_destroy = None
 
     def make_current_then_destroy_b():
-        nonlocal destroyed
+        nonlocal destroyed, restore_after_destroy
         original_make_current()
         if not destroyed:
             destroyed = True
             scene_b.destroy()
+            restore_after_destroy = renderer_a.save_current_context()
 
     renderer_a.make_current = make_current_then_destroy_b
-    camera_a.render(rgb=True)
+    rgb_after = camera_a.render(rgb=True)[0]
+
+    assert restore_after_destroy is not None
+    assert_pixel_match(
+        rgb_after,
+        rgb_reference,
+        err_msg="Scene A rendered differently after scene B was destroyed mid-render (wrong or lost GL context).",
+    )
 
 
 @pytest.mark.slow  # ~200s
