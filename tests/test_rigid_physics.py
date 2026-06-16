@@ -6989,6 +6989,26 @@ def test_heterogeneous_invalid_material_raises():
         )
 
 
+@pytest.mark.required
+def test_morph_accessor_rejects_heterogeneous_entity():
+    """`.morph` is ambiguous once an entity has heterogeneous variants (#2750): it must raise and steer
+    callers to `.morphs` / `.main_morph` instead of silently returning only the primary morph."""
+    scene = gs.Scene(show_viewer=False)
+    homogeneous = scene.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(-0.3, 0.0, 0.2)))
+    heterogeneous = scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.2)),
+            gs.morphs.Sphere(radius=0.02, pos=(0.1, 0.0, 0.2)),
+        )
+    )
+
+    assert homogeneous.morph is homogeneous.main_morph  # unchanged for the common (homogeneous) case
+    with pytest.raises(gs.GenesisException):
+        _ = heterogeneous.morph
+    assert len(heterogeneous.morphs) == 2
+    assert heterogeneous.main_morph is heterogeneous.morphs[0]
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_heterogeneous_fewer_envs_than_variants():

@@ -1982,6 +1982,17 @@ class KinematicEntity(Entity):
         return len(self._links)
 
     @property
+    def morph(self):
+        """The morph of the entity.
+
+        Raises for heterogeneous entities, where a single morph is ambiguous; use `morphs` for all
+        variants or `main_morph` for the primary one.
+        """
+        if self._enable_heterogeneous:
+            gs.raise_exception("`morph` is ambiguous for heterogeneous entities; use `morphs` or `main_morph`.")
+        return self._morph
+
+    @property
     def main_morph(self):
         """The main morph of the entity (first morph for heterogeneous entities)."""
         return self._morph
