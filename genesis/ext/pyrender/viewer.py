@@ -798,11 +798,10 @@ class Viewer(pyglet.window.Window):
                 # Update context, just in case is not already done before
                 self.gs_context.update()
 
-                # ``target`` is the camera's own offscreen FBO, already sized to the camera's configured resolution,
-                # so render at that size and never resize it to ``self._offscreen_viewport_size`` (the interactive
-                # window size). The camera FBO is independent of the window: forcing the window size onto it renders
-                # the camera at the wrong resolution, and unlike the window the FBO is never subject to the OS
-                # content-area clamping that such a resize would otherwise be guarding against.
+                # ``target`` is the camera's own offscreen FBO, already sized to the camera's configured resolution;
+                # render at that size and do not resize it to ``self._offscreen_viewport_size``. That viewport tracks
+                # the interactive window, a surface distinct from this FBO; forcing it onto the FBO would render the
+                # camera at the window's resolution instead of its own.
                 self._offscreen_results = []
                 self.render_flags["offscreen"] = True
                 self.render_flags["skip_markers"] = skip_markers
