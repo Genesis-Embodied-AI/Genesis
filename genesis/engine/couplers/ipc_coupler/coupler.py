@@ -1,12 +1,7 @@
-import io
 import logging
 import os
-import sys
 import tempfile
-import weakref
-from functools import partial
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import torch
@@ -69,23 +64,6 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
         find_target_link_for_fixed_merge,
         read_ipc_geometry_metadata,
     )
-
-
-class IPCBeforeWorldInitContext(Protocol):
-    """Typed context passed to before_ipc_world_init(ipc, gs)."""
-
-    engine: "Engine"
-    world: "World"
-    scene: "Scene"
-
-
-class GenesisSolverContext(Protocol):
-    """Typed Genesis module view passed to before_ipc_world_init(ipc, gs)."""
-
-    pass
-
-
-IPCBeforeWorldInitCallback = Callable[[IPCBeforeWorldInitContext, GenesisSolverContext], None]
 
 
 # Affine body stiffness in MPa
@@ -246,16 +224,9 @@ class IPCCoupler(RBC):
         for i_e, entity in enumerate(cast(list["RigidEntity"], self.rigid_solver.entities)):
             if not entity.material.needs_coup:
                 continue
-            coup_type = entity.material.coup_type
+            coup_type = COUPLING_TYPE.resolve(entity)
+            self._coup_type_by_entity[entity] = coup_type
             is_robot = any(j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j in entity.joints)
-            if coup_type is None:
-                # Auto-select: robots get articulation coupling, objects get ipc_only
-                if is_robot:
-                    coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
-                else:
-                    coup_type = "ipc_only"
-
-            self._coup_type_by_entity[entity] = coup_type = getattr(COUPLING_TYPE, coup_type.upper())
             if coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
                 if not entity.base_link.is_fixed:
                     gs.raise_exception(
@@ -964,28 +935,10 @@ class IPCCoupler(RBC):
         """Finalize IPC setup and initialize AffineBodyStateAccessorFeature"""
         assert gs.logger is not None
         assert self._ipc_world is not None
-        callback: IPCBeforeWorldInitCallback | None = None
-        if callback is not None:
-            ipc = self._build_before_ipc_world_init_context()
-            try:
-                callback(ipc, gs)
-            except Exception as exc:
-                gs.raise_exception_from("`before_ipc_world_init(ipc, gs)` callback failed.", exc)
         self._ipc_world.init(self._ipc_scene)
         # Checkpoint frame 0 so that recover(0) works in reset().
         self._ipc_world.dump()
         gs.logger.info("IPC world initialized successfully")
-
-    def _build_before_ipc_world_init_context(self) -> IPCBeforeWorldInitContext:
-        """Build user callback context passed to before_ipc_world_init(ipc, gs)."""
-        return cast(
-            IPCBeforeWorldInitContext,
-            SimpleNamespace(
-                engine=self._ipc_engine,
-                world=self._ipc_world,
-                scene=self._ipc_scene,
-            ),
-        )
 
     def _init_accessors(self):
         assert gs.logger is not None
@@ -1153,8 +1106,13 @@ class IPCCoupler(RBC):
         """
         if not self._abd_data_by_link:
             return
-        all_envs = set(range(self._B)) if self._B > 0 else {0}
-        env_set = all_envs if envs_idx is None else set(int(i) for i in envs_idx)
+        # Normalize envs_idx via Scene helper (handles None, int, slice, range, list, np.ndarray,
+        # torch.Tensor incl. bool masks). Short-circuit n_envs==0 since the helper rejects it.
+        scene = self.sim.scene
+        if scene.n_envs == 0:
+            env_set = {0}
+        else:
+            env_set = set(scene._sanitize_envs_idx(envs_idx).tolist())
 
         if qs_idx is None and dofs_idx is None and links_idx is None:
             for link in self._abd_data_by_link:
@@ -1203,9 +1161,6 @@ class IPCCoupler(RBC):
         """
         if not self._abd_updated_links or self._abd_state_feature is None:
             return
-        # DEBUG: log when teleport sync is triggered
-        dirty_names = [f"{link.name}(envs={envs})" for link, envs in self._abd_updated_links.items()]
-        gs.logger.warning(f"[IPC TELEPORT SYNC] {len(self._abd_updated_links)} dirty links: {dirty_names}")
 
         assert self._abd_state_geom is not None
 
@@ -1499,32 +1454,35 @@ class IPCCoupler(RBC):
                 for env_idx in range(self._B):
                     parent_abd = self._abd_data_by_link.get(parent_link)
                     if parent_abd is not None and parent_abd.ipc_transforms is not None:
-                        parent_T = parent_abd.ipc_transforms[env_idx]
-                        parent_quat = gu.T_to_trans_quat(parent_T)[1]
+                        parent_cur_T = parent_abd.ipc_transforms[env_idx]
+                        parent_cur_pos, parent_cur_quat = gu.T_to_trans_quat(parent_cur_T)
                     else:
-                        parent_T = gu.trans_quat_to_T(
-                            links_pos[env_idx, parent_link.idx], links_quat[env_idx, parent_link.idx]
-                        )
-                        parent_quat = links_quat[env_idx, parent_link.idx]
-                    child_T = abd_data.ipc_transforms[env_idx]
-                    child_quat_pre = gu.transform_quat_by_quat(
-                        np.asarray(link.quat, dtype=parent_quat.dtype), parent_quat
+                        parent_cur_pos = links_pos[env_idx, parent_link.idx]
+                        parent_cur_quat = links_quat[env_idx, parent_link.idx]
+                        parent_cur_T = gu.trans_quat_to_T(parent_cur_pos, parent_cur_quat)
+                    child_cur_T = abd_data.ipc_transforms[env_idx]
+                    # child_cur_quat0: child's world orientation if the joint contributed nothing,
+                    # i.e. parent's current orientation composed with link.quat (URDF/MJCF offset
+                    # defined at qpos == qpos0). FK then post-applies Rz(qpos - qpos0); back-compute
+                    # peels that off to recover the joint coordinate.
+                    child_cur_quat0 = gu.transform_quat_by_quat(
+                        np.asarray(link.quat, dtype=parent_cur_quat.dtype), parent_cur_quat
                     )
                     if joint.type == gs.JOINT_TYPE.REVOLUTE:
-                        child_quat = gu.T_to_trans_quat(child_T)[1]
-                        qloc = gu.transform_quat_by_quat(child_quat, gu.inv_quat(child_quat_pre))
-                        rotvec = gu.quat_to_rotvec(qloc)
-                        axis = np.asarray(joint._dofs_motion_ang[0], dtype=rotvec.dtype)
-                        angle_ipc = float(np.dot(rotvec, axis))
+                        child_cur_quat = gu.T_to_trans_quat(child_cur_T)[1]
+                        child_cur_qrel = gu.transform_quat_by_quat(child_cur_quat, gu.inv_quat(child_cur_quat0))
+                        child_cur_rot = gu.quat_to_rotvec(child_cur_qrel)
+                        child_axis = np.asarray(joint._dofs_motion_ang[0], dtype=child_cur_rot.dtype)
+                        child_cur_qaxis = float(np.dot(child_cur_rot, child_axis))
                     else:  # PRISMATIC
-                        child_pos = child_T[:3, 3]
-                        parent_pos = parent_T[:3, 3]
-                        link_offset_pos = np.asarray(link.pos, dtype=parent_pos.dtype)
-                        pos_pre = parent_pos + gu.transform_by_quat(link_offset_pos, parent_quat)
-                        axis = np.asarray(joint._dofs_motion_vel[0], dtype=pos_pre.dtype)
-                        xaxis = gu.transform_by_quat(axis, child_quat_pre)
-                        angle_ipc = float(np.dot(child_pos - pos_pre, xaxis))
-                    envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + angle_ipc
+                        child_cur_pos = child_cur_T[:3, 3]
+                        child_cur_pos0 = parent_cur_pos + gu.transform_by_quat(
+                            np.asarray(link.pos, dtype=parent_cur_pos.dtype), parent_cur_quat
+                        )
+                        child_axis = np.asarray(joint._dofs_motion_vel[0], dtype=child_cur_pos0.dtype)
+                        child_axis_world = gu.transform_by_quat(child_axis, child_cur_quat0)
+                        child_cur_qaxis = float(np.dot(child_cur_pos - child_cur_pos0, child_axis_world))
+                    envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + child_cur_qaxis
                 qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q).to(qpos_tc.device)
 
         # ---- Step 2b: External articulation — read delta_theta, write joint qpos ----
@@ -1540,7 +1498,9 @@ class IPCCoupler(RBC):
             # Base link qpos[0:7] already handled in Step 1 for non-fixed base;
             # only write joint DOFs here.
             global_qs = [ad.q_slice.start + qi for qi in ad.joints_qs_idx_local]
-            qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(qpos_tc.device)
+            qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(
+                device=qpos_tc.device, dtype=qpos_tc.dtype
+            )
 
     def _sync_rigid_fk(self):
         """Explicitly run FK to sync qpos with link/geom transforms."""

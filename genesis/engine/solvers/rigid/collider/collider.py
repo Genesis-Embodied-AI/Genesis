@@ -377,15 +377,7 @@ class Collider:
             for entity in self._solver._entities:
                 if not entity.material.needs_coup:
                     continue
-                mode = entity.material.coup_type
-                if mode is None:
-                    # Auto-infer coupling type (mirrors IPCCoupler._setup_coupling_config)
-                    is_robot = any(j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j in entity.joints)
-                    if is_robot:
-                        mode = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
-                    else:
-                        mode = "ipc_only"
-                coup_type = COUPLING_TYPE[mode.upper()]
+                coup_type = COUPLING_TYPE.resolve(entity)
                 if coup_type == COUPLING_TYPE.IPC_ONLY:
                     ipc_only_link_idxs.update(l.idx for l in entity.links)
                 link_filter_names = entity.material.coup_links

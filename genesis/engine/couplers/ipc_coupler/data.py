@@ -24,6 +24,25 @@ class COUPLING_TYPE(IntEnum):
     IPC_ONLY = 2
     NONE = 3
 
+    @classmethod
+    def auto_infer(cls, entity) -> "COUPLING_TYPE":
+        """Default coup_type from entity properties when material.coup_type is unset.
+
+        Articulated robot + fixed base   -> EXTERNAL_ARTICULATION
+        Articulated robot + floating base -> TWO_WAY_SOFT_CONSTRAINT
+        Non-articulated                  -> IPC_ONLY
+        """
+        is_robot = any(j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j in entity.joints)
+        if not is_robot:
+            return cls.IPC_ONLY
+        return cls.EXTERNAL_ARTICULATION if entity.base_link.is_fixed else cls.TWO_WAY_SOFT_CONSTRAINT
+
+    @classmethod
+    def resolve(cls, entity) -> "COUPLING_TYPE":
+        """Resolve coup_type for `entity`: explicit material.coup_type if set, else auto_infer."""
+        coup_type = entity.material.coup_type
+        return cls[coup_type.upper()] if coup_type is not None else cls.auto_infer(entity)
+
 
 @dataclass
 class ABDLinkData:
