@@ -1,5 +1,7 @@
 import sys
 
+import pyglet
+
 import genesis as gs
 from genesis.repr_base import RBC
 
@@ -8,6 +10,9 @@ from .rasterizer import Rasterizer
 
 VIEWER_DEFAULT_HEIGHT_RATIO = 0.5
 VIEWER_DEFAULT_ASPECT_RATIO = 0.75
+# Headless fallback screen height. With the ratios above it yields a 640x480 default window, small enough to fit the
+# constrained virtual displays of CI runners (e.g. GitHub-hosted macOS).
+VIEWER_DEFAULT_SCREEN_HEIGHT = 960
 
 
 class DummyViewerLock:
@@ -44,13 +49,19 @@ class Visualizer(RBC):
             gs.raise_exception_from("Rendering not working on this machine.", e)
         self._context = RasterizerContext(vis_options)
 
-        try:
-            screen_height, _screen_width, screen_scale = gs.utils.try_get_display_size()
-            self._has_display = True
-        except Exception as e:
-            if show_viewer:
-                gs.raise_exception_from("No display detected. Use `show_viewer=False` for headless mode.", e)
+        if pyglet.options["headless"]:
+            # Headless: there is no real display to measure. The viewer renders offscreen, so fall back to a default
+            # screen size for computing the default window resolution below.
+            screen_height, screen_scale = VIEWER_DEFAULT_SCREEN_HEIGHT, 1.0
             self._has_display = False
+        else:
+            try:
+                screen_height, _screen_width, screen_scale = gs.utils.try_get_display_size()
+                self._has_display = True
+            except Exception as e:
+                if show_viewer:
+                    gs.raise_exception_from("No display detected. Use `show_viewer=False` for headless mode.", e)
+                self._has_display = False
 
         if show_viewer:
             if gs._scene_registry:
