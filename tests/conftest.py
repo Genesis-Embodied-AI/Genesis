@@ -133,6 +133,22 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     except NameError as e:
         raise pytest.UsageError(f"Unknown marker in CLI expression: '{e.name}'")
 
+    # Benchmarks are opt-in and exclusive: they run only via '-m benchmarks' alone. Exclude benchmarks from
+    # any expression that does not name them so they never run implicitly (e.g. '-m "not slow"' would match
+    # them since benchmarks are not slow), and reject combining the 'benchmarks' marker with anything else.
+    markexpr = config.option.markexpr
+    if markexpr and "benchmarks" not in markexpr:
+        config.option.markexpr = f"({markexpr}) and not benchmarks"
+    elif (
+        markexpr
+        and markexpr.strip() != "benchmarks"
+        and Expression.compile(markexpr).evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+    ):
+        raise pytest.UsageError(
+            "The 'benchmarks' marker is exclusive and cannot be combined with other markers; "
+            "run benchmarks with '-m benchmarks' alone."
+        )
+
     # Only launch memory monitor from the main process, not from xdist workers
     mem_filepath = config.getoption("--mem-monitoring-filepath")
     if mem_filepath and not os.environ.get("PYTEST_XDIST_WORKER"):
