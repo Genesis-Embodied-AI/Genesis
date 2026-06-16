@@ -52,6 +52,11 @@ class ABDLinkData:
     ----------
     slots : list[GeometrySlot]
         IPC geometry slots, one per environment.
+    is_fixed : bool
+        Whether IPC should treat this link as world-fixed. For ipc_only entities
+        the FREE→FIXED joint conversion makes link.is_fixed unconditionally True,
+        so this reflects morph.fixed instead; for other coup_types it mirrors
+        link.is_fixed.
 
     Per-step inputs
     ---------------
@@ -68,6 +73,7 @@ class ABDLinkData:
     """
 
     slots: list[GeometrySlot]
+    is_fixed: bool = False
     aim_transforms: np.ndarray | None = None
     ipc_transforms: np.ndarray | None = None
     ipc_velocities: np.ndarray | None = None

@@ -72,18 +72,6 @@ JOINT_STRENGTH_RATIO = 100.0
 COM_AABB_TOL = 2e-3
 
 
-def _link_is_fixed_for_ipc(link: "RigidLink") -> bool:
-    """Whether a link should be treated as fixed in IPC.
-
-    For ipc_only entities the FREE→FIXED joint conversion makes link.is_fixed
-    always True, but the body should only be fixed if the morph was originally
-    fixed. For other coupling types, link.is_fixed is correct.
-    """
-    if link.entity.material.coup_type == "ipc_only":
-        return link.entity.morph.fixed
-    return link.is_fixed
-
-
 class IPCCoupler(RBC):
     """
     Coupler class for handling Incremental Potential Contact (IPC) simulation coupling.
@@ -635,8 +623,11 @@ class IPCCoupler(RBC):
             external_kinetic_attr = rigid_link_geom.instances().find(uipc.builtin.external_kinetic)
             uipc.view(external_kinetic_attr)[:] = int(not is_ipc_only)
 
+            # IPC sense of "fixed": ipc_only entities have their FREE joint converted to FIXED,
+            # so link.is_fixed is always True and we must consult morph.fixed instead.
+            link_is_fixed = entity.morph.fixed if is_ipc_only else link.is_fixed
             is_fixed_attr = rigid_link_geom.instances().find(uipc.builtin.is_fixed)
-            uipc.view(is_fixed_attr)[:] = int(_link_is_fixed_for_ipc(link))
+            uipc.view(is_fixed_attr)[:] = int(link_is_fixed)
 
             # Create ref_dof_prev for external_articulation links.
             # This attribute is re-read every step by the ExternalArticulationConstraint
@@ -677,6 +668,7 @@ class IPCCoupler(RBC):
             # ---- Store link data ----
             self._abd_data_by_link[link] = ABDLinkData(
                 slots=abd_geom_slots,
+                is_fixed=link_is_fixed,
                 aim_transforms=np.tile(np.eye(4, dtype=gs.np_float), (self._B, 1, 1)),
                 ipc_transforms=np.tile(np.eye(4, dtype=gs.np_float), (self._B, 1, 1)),
                 ipc_velocities=np.zeros((self._B, 4, 4), dtype=gs.np_float),
@@ -855,8 +847,8 @@ class IPCCoupler(RBC):
                 )
 
         # ---- ABD link × ABD link pairs (with self-collision filtering) ----
-        _n_enabled = 0
-        _n_disabled = 0
+        n_enabled = 0
+        n_disabled = 0
         for i, (elem_i, link_i, friction_i, resistance_i) in enumerate(abd_link_infos):
             for elem_j, link_j, friction_j, resistance_j in abd_link_infos[i:]:
                 friction_ij = geometric_mean(friction_i, friction_j)
@@ -864,25 +856,25 @@ class IPCCoupler(RBC):
 
                 if not self.options.enable_rigid_rigid_contact:
                     self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                    _n_disabled += 1
+                    n_disabled += 1
                     continue
 
                 # Fixed-fixed pairs never collide (mirrors RigidSolver collider)
-                if _link_is_fixed_for_ipc(link_i) and _link_is_fixed_for_ipc(link_j):
+                if self._abd_data_by_link[link_i].is_fixed and self._abd_data_by_link[link_j].is_fixed:
                     self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                    _n_disabled += 1
+                    n_disabled += 1
                     continue
 
                 # Same-entity self-collision filtering (mirrors RigidSolver collider)
                 if link_i.entity is link_j.entity and link_i is not link_j:
                     if not enable_self_collision:
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        _n_disabled += 1
+                        n_disabled += 1
                         gs.logger.debug(f"[IPC CONTACT] DISABLED self-collision: {link_i.name} × {link_j.name}")
                         continue
                     if not enable_adjacent_collision and are_links_adjacent(link_i, link_j):
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        _n_disabled += 1
+                        n_disabled += 1
                         gs.logger.debug(f"[IPC CONTACT] DISABLED adjacent: {link_i.name} × {link_j.name}")
                         continue
                     mesh_i = self._abd_merged_meshes.get(link_i)
@@ -894,15 +886,15 @@ class IPCCoupler(RBC):
                         and are_meshes_overlapping(mesh_i, mesh_j)
                     ):
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
-                        _n_disabled += 1
+                        n_disabled += 1
                         gs.logger.debug(f"[IPC CONTACT] DISABLED overlapping: {link_i.name} × {link_j.name}")
                         continue
 
                 gs.logger.debug(f"[IPC CONTACT] ENABLED: {link_i.name} × {link_j.name}")
-                _n_enabled += 1
+                n_enabled += 1
                 self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, True)
 
-        gs.logger.info(f"[IPC CONTACT] ABD x ABD pairs: {_n_enabled} enabled, {_n_disabled} disabled")
+        gs.logger.info(f"[IPC CONTACT] ABD x ABD pairs: {n_enabled} enabled, {n_disabled} disabled")
 
         # ---- All contact elements (for ground and no-collision registration) ----
         # is_abd: whether the element is an ABD rigid link
@@ -911,7 +903,7 @@ class IPCCoupler(RBC):
         for elem, friction, resistance in non_abd_infos:
             all_contact_infos.append((elem, friction, resistance, False, False))
         for elem, link, friction, resistance in abd_link_infos:
-            all_contact_infos.append((elem, friction, resistance, True, _link_is_fixed_for_ipc(link)))
+            all_contact_infos.append((elem, friction, resistance, True, self._abd_data_by_link[link].is_fixed))
 
         # Register per-plane ground contact pairs
         for entity, ground_elem in self._ipc_grounds_contact.items():
@@ -1032,7 +1024,6 @@ class IPCCoupler(RBC):
         self._retrieve_ipc_fem_states()
         self._retrieve_ipc_rigid_states()
         self._post_advance_write_qpos()
-        self._sync_rigid_fk()
 
         self._ipc_frame += 1
         gs.logger.debug(f"[IPC] frame {self._ipc_frame:4d}")
@@ -1501,26 +1492,3 @@ class IPCCoupler(RBC):
             qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(
                 device=qpos_tc.device, dtype=qpos_tc.dtype
             )
-
-    def _sync_rigid_fk(self):
-        """Explicitly run FK to sync qpos with link/geom transforms."""
-        if not self.rigid_solver.is_active:
-            return
-        from genesis.engine.solvers.rigid.abd.forward_kinematics import kernel_forward_kinematics_links_geoms
-
-        kernel_forward_kinematics_links_geoms(
-            self.sim.scene._envs_idx,
-            links_state=self.rigid_solver.links_state,
-            links_info=self.rigid_solver.links_info,
-            joints_state=self.rigid_solver.joints_state,
-            joints_info=self.rigid_solver.joints_info,
-            dofs_state=self.rigid_solver.dofs_state,
-            dofs_info=self.rigid_solver.dofs_info,
-            geoms_state=self.rigid_solver.geoms_state,
-            geoms_info=self.rigid_solver.geoms_info,
-            entities_info=self.rigid_solver.entities_info,
-            rigid_global_info=self.rigid_solver._rigid_global_info,
-            static_rigid_sim_config=self.rigid_solver._static_rigid_sim_config,
-        )
-        self.rigid_solver._is_forward_pos_updated = True
-        self.rigid_solver._is_forward_vel_updated = True
