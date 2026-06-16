@@ -99,7 +99,7 @@ def assert_ipc_genesis_transform_close(coupler, link, env_idx, gs_pos, gs_quat, 
 @pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("enable_rigid_rigid_contact", [False, True])
 def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
-    from genesis.engine.entities import RigidEntity, FEMEntity
+    from genesis.engine.entities import RigidEntity
 
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
@@ -179,7 +179,6 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
                     elem = coupler._ipc_abd_links_contact[entity.base_link]
                 friction = entity.material.coup_friction
             else:
-                assert isinstance(entity, FEMEntity)
                 elem = coupler._ipc_fems_contact[entity]
                 friction = entity.material.friction_mu
             resistance = entity.material.contact_resistance or coupler.options.contact_resistance
@@ -369,7 +368,6 @@ def test_needs_coup():
 @pytest.mark.required
 def test_link_filter_strict():
     """Verify that IPC link filter controls which links are actually added to IPC."""
-    from genesis.engine.entities import RigidEntity
 
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
@@ -389,7 +387,6 @@ def test_link_filter_strict():
             coup_links=("moving",),
         ),
     )
-    assert isinstance(robot, RigidEntity)
 
     scene.build()
     assert scene.sim is not None
@@ -409,6 +406,7 @@ def test_link_filter_strict():
     assert base_link not in coupler._abd_data_by_link
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize(
@@ -417,8 +415,6 @@ def test_link_filter_strict():
 )
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
 def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
-    from genesis.engine.entities import RigidEntity
-
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
     POS = (0, 0, 0.5)
@@ -470,7 +466,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             coup_friction=0.1,
         ),
     )
-    assert isinstance(robot, RigidEntity)
 
     scene.build(n_envs=n_envs)
     assert scene.sim is not None
@@ -511,7 +506,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         if not fixed:
             robot_verts = tensor_to_array(robot.get_verts())
             dist_min = np.minimum(dist_min, robot_verts[..., 2].min(axis=-1))
-            assert (dist_min > 0).all(), f"failed at time: {scene.sim.cur_t}"
+            assert (dist_min > 0).all()
 
         scene.step()
 
@@ -538,8 +533,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     n_frames = len(target_dof_pos_history)
     corr_mask = np.ones(n_frames, dtype=bool)
     if fixed:
-        # only check dof on fixed object, details in ref:
-        # https://github.com/Genesis-Embodied-AI/Genesis/pull/2502
         corr_tol = 5e-3
         for env_idx in envs_idx if scene.n_envs > 0 else (slice(None),):
             actual = cur_dof_pos_history[env_idx]
@@ -563,7 +556,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
 @pytest.mark.parametrize("merge_fixed_links", [True, False])
 def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
     """Test that find_target_link_for_fixed_merge correctly groups ABD bodies."""
-    from genesis.engine.entities import RigidEntity
     from genesis.engine.couplers.ipc_coupler.utils import find_target_link_for_fixed_merge
 
     scene = gs.Scene(
@@ -601,7 +593,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
         ),
         material=gs.materials.Rigid(**material_kwargs),
     )
-    assert isinstance(robot, RigidEntity)
 
     scene.build()
     assert scene.sim is not None
@@ -632,8 +623,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("constraint_strength", [1, 100])
 def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
-    from genesis.engine.entities import RigidEntity
-
     DT = 0.002
     FREQ = 2.0
     SCALE = 0.1
@@ -660,7 +649,6 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
             soft_constraint_strength=(constraint_strength, 100.0),
         ),
     )
-    assert isinstance(box, RigidEntity)
 
     scene.build(n_envs=n_envs)
     assert scene.sim is not None
@@ -688,7 +676,7 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_objects_freefall(n_envs, show_viewer):
-    from genesis.engine.entities import RigidEntity, FEMEntity
+    from genesis.engine.entities import FEMEntity
 
     DT = 0.002
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -743,7 +731,6 @@ def test_objects_freefall(n_envs, show_viewer):
             color=(0.8, 0.3, 0.2, 0.8),
         ),
     )
-    assert isinstance(box, RigidEntity)
 
     sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -821,7 +808,6 @@ def test_objects_freefall(n_envs, show_viewer):
 
     for obj in objs_kwargs.keys():
         # Validate centroid consistency
-        assert isinstance(obj, (RigidEntity, FEMEntity))
         ipc_centroid = p_prev[obj].mean(axis=-2)
         gs_centroid = obj.get_state().pos.mean(axis=-2)
         assert_allclose(ipc_centroid, gs_centroid, atol=TOL_SINGLE)
@@ -972,7 +958,6 @@ def _build_grasp_scene(coup_type, show_viewer):
 
     Returns (scene, franka, DT).
     """
-    from genesis.engine.entities import RigidEntity
 
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -1014,7 +999,6 @@ def _build_grasp_scene(coup_type, show_viewer):
         ),
         material=gs.materials.Rigid(**material_kwargs),
     )
-    assert isinstance(franka, RigidEntity)
 
     return scene, franka, DT
 
@@ -1078,11 +1062,11 @@ def _verify_franka_ipc_setup(scene, franka, coup_type):
     return coupler
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_fem(coup_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
-    from genesis.engine.entities import FEMEntity
 
     BOX_POS = (0.65, 0.0, 0.03)
     scene, franka, DT = _build_grasp_scene(coup_type, show_viewer)
@@ -1103,7 +1087,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
             color=(0.2, 0.8, 0.2, 0.5),
         ),
     )
-    assert isinstance(box, FEMEntity)
 
     scene.build()
     coupler = _verify_franka_ipc_setup(scene, franka, coup_type)
@@ -1133,7 +1116,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_abd(coup_type, show_viewer):
     """Verify that robot can grasp and lift an ipc_only rigid cylinder."""
-    from genesis.engine.entities import RigidEntity
 
     CYL_POS = (0.65, 0.0, 0.025)
     scene, franka, DT = _build_grasp_scene(coup_type, show_viewer)
@@ -1153,7 +1135,6 @@ def test_robot_grasp_abd(coup_type, show_viewer):
             color=(0.2, 0.2, 0.8, 0.5),
         ),
     )
-    assert isinstance(cylinder, RigidEntity)
 
     scene.build()
     coupler = _verify_franka_ipc_setup(scene, franka, coup_type)
@@ -1171,11 +1152,10 @@ def test_robot_grasp_abd(coup_type, show_viewer):
     assert (cyl_z_f - cyl_z_0 >= 0.2).all()
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_momentum_conservation(n_envs, show_viewer):
-    from genesis.engine.entities import RigidEntity
-
     DT = 0.001
     DURATION = 0.30
     CONTACT_MARGIN = 0.01
@@ -1235,7 +1215,6 @@ def test_momentum_conservation(n_envs, show_viewer):
             color=(0.8, 0.2, 0.2, 0.8),
         ),
     )
-    assert isinstance(rigid_cube, RigidEntity)
 
     scene.build(n_envs=n_envs)
     assert scene.sim is not None
@@ -1318,12 +1297,12 @@ def test_momentum_conservation(n_envs, show_viewer):
     assert_allclose(total_p_history, momentum_0, tol=0.001)
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
 @pytest.mark.parametrize("coup_type", ["ipc_only", "two_way_soft_constraint"])
 def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contact):
     """Verify collision pair delegation between IPC and rigid solver based on coup_type and ground contact."""
-    from genesis.engine.entities import RigidEntity
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -1341,7 +1320,6 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
             needs_coup=False,
         ),
     )
-    assert isinstance(plane, RigidEntity)
 
     # Non-IPC box — always handled by rigid solver
     box = scene.add_entity(
@@ -1351,7 +1329,6 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
         ),
         material=gs.materials.Rigid(needs_coup=False),
     )
-    assert isinstance(box, RigidEntity)
 
     if coup_type == "two_way_soft_constraint":
         entity = scene.add_entity(
@@ -1363,7 +1340,6 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
                 coup_links=("left_finger", "right_finger"),
             ),
         )
-        assert isinstance(entity, RigidEntity)
 
         ipc_excluded_geoms = {geom.idx for name in entity.material.coup_links for geom in entity.get_link(name).geoms}
     else:
@@ -1387,7 +1363,6 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
                 coup_type="ipc_only",
             ),
         )
-        assert isinstance(entity, RigidEntity)
 
         ipc_excluded_geoms = {geom.idx for geom in entity.geoms}
 
@@ -1439,6 +1414,7 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
 
 
+@pytest.mark.slow  # ~400s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_cloth_corner_drag(n_envs, show_viewer):
@@ -1447,7 +1423,6 @@ def test_cloth_corner_drag(n_envs, show_viewer):
     Verify that FEM vertices near the gripped corner follow the imposed trajectory,
     while the rest of the cloth hangs freely under gravity.
     """
-    from genesis.engine.entities import FEMEntity
 
     DT = 0.01
     CLOTH_HALF = 0.5
@@ -1619,7 +1594,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                     rho=200.0,
                     coup_type="two_way_soft_constraint",
                     coup_friction=CUBE_FRICTION,
-                    soft_constraint_strength=(800.0, 100.0),
+                    soft_constraint_strength=(2000.0, 100.0),
                 ),
                 surface=gs.surfaces.Plastic(
                     color=np.random.rand(3),
@@ -1642,10 +1617,10 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(20):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    assert_allclose(cloth_positions_f[..., :2], cloth_positions_0[..., :2], atol=0.006)
-    assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=0.015)
+    assert_allclose(cloth_positions_f, cloth_positions_0, atol=0.005)
+    assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=0.005)
 
-    # Stretch: phase one — drift PD (only update xy, keep current z/rotation as target)
+    # Stretch: phase one
     for box in boxes:
         init_dof = tensor_to_array(box.get_dofs_position())
         init_dof[..., :2] *= STRETCH_RATIO_1
@@ -1656,9 +1631,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for box in boxes:
         init_dof = tensor_to_array(box.get_dofs_position())
         dist_vertices = np.linalg.norm(cloth_positions_f[..., :2] - init_dof[..., None, :2], axis=-1).min(axis=-1)
-        # Tolerance relaxed from 0.02 to 0.04: predicted-position coupling shifts the box target
-        # by velocity*dt, so steady-state box position deviates slightly from the cloth corner.
-        assert_allclose(dist_vertices, 0.0, atol=0.04)
+        assert_allclose(dist_vertices, 0.0, atol=0.02)
     assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=5e-3)
 
     # Extract X/Y forces while making sure observed forces are consistent
@@ -1725,8 +1698,6 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "ipc_only"])
 def test_set_object_qpos(coup_type):
     """Verify set_qpos and set_dofs_position on a free rigid object with IPC coupling."""
-    from genesis.engine.entities import RigidEntity
-
     DT = 0.01
     INIT_POS = np.array([0.0, 0.0, 0.5], dtype=gs.np_float)
     TARGET_POS = np.array([0.3, -0.2, 0.8], dtype=gs.np_float)
@@ -1746,7 +1717,6 @@ def test_set_object_qpos(coup_type):
         gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=INIT_POS),
         material=gs.materials.Rigid(coup_type=coup_type),
     )
-    assert isinstance(box, RigidEntity)
     scene.build()
 
     coupler = cast("IPCCoupler", scene.sim.coupler)
@@ -1803,7 +1773,6 @@ def test_set_object_qpos(coup_type):
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_set_robot_qpos(coup_type):
     """Verify set_qpos and set_dofs_position on an articulated robot with IPC coupling."""
-    from genesis.engine.entities import RigidEntity
 
     DT = 0.01
     TARGET_JOINT_POS = 0.5
@@ -1834,7 +1803,6 @@ def test_set_robot_qpos(coup_type):
         ),
         material=gs.materials.Rigid(**material_kwargs),
     )
-    assert isinstance(robot, RigidEntity)
     scene.build()
 
     coupler = cast("IPCCoupler", scene.sim.coupler)
@@ -1891,7 +1859,6 @@ def test_set_robot_qpos(coup_type):
 @pytest.mark.required
 def test_coup_collision_links():
     """Verify that coup_collision_links positive filter correctly limits IPC collision to named links."""
-    from genesis.engine.entities import RigidEntity
 
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
@@ -1912,7 +1879,6 @@ def test_coup_collision_links():
             coup_collision_links=("moving",),
         ),
     )
-    assert isinstance(robot, RigidEntity)
     scene.build()
     assert scene.sim is not None
 

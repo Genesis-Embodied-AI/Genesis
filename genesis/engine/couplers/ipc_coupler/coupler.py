@@ -1421,6 +1421,14 @@ class IPCCoupler(RBC):
 
                 # Zero velocity so IPC's time integrator doesn't see phantom
                 # motion from the teleported position.
+                # FIXME: this only resets q_n and v_n, which is correct for BDF1.
+                # BDF2 also requires resetting q_{n-1} (q_n_1s) and v_{n-1} (q_v_n_1s)
+                # to suppress the spurious velocity v ≈ (q_new - q_old_prev)/dt that
+                # BDF2's `(3·q - 4·q_n + q_{n-1}) / (2·dt)` would otherwise compute.
+                # libuipc currently does NOT expose those buffers as geometry attributes,
+                # so a teleport under BDF2 would launch the body with an enormous spurious
+                # velocity. See ipc_coupler/utils.py:build_ipc_scene_config for the broader
+                # BDF1 assumption tree.
                 if velocities is not None:
                     velocities[abd_body_idx] = np.zeros((4, 4), dtype=new_T.dtype)
 

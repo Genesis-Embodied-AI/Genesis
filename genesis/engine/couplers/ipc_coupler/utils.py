@@ -83,6 +83,16 @@ def build_ipc_scene_config(options, simulator):
     """
     config = Scene.default_config()
 
+    # FIXME: libuipc's integrator type is hard-coded to its default (bdf1). The coupler
+    # below assumes BDF1 in two places:
+    #   1. genesis/engine/solvers/rigid/abd/forward_dynamics.py:kernel_restore_integrate
+    #      back-computes velocity as `vel = (qpos - qpos_prev) / dt`, which is BDF1's
+    #      formula. BDF2 needs `(3·q - 4·q_n + q_{n-1}) / (2·dt)`.
+    #   2. IPCCoupler._apply_dirty_abd_state only resets q_n and v_n on teleport
+    #      (set_qpos / set_pos). BDF2 also needs q_{n-1} and v_{n-1} reset, but
+    #      libuipc doesn't currently expose those buffers as geometry attributes.
+    # Both gaps must be closed before exposing `integrator/type = "bdf2"` here.
+
     # Read dt/gravity from active solvers; verify consistency if multiple are active
     active = []
     if simulator.rigid_solver.is_active:
