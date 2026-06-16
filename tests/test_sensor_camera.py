@@ -241,6 +241,12 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
     assert data.rgb.dtype == torch.uint8
     assert (data.rgb[0] != data.rgb[1]).any(), "Frames should be different"
 
+    # Ground-truth per-env identity (independent of any screen-axis assumption): env 1's sphere sits closer to the
+    # camera (x=1 vs x=0), so it must cover strictly more pixels at its own batch index. A reversed batched read would
+    # place the larger sphere at index 0 and fail this.
+    sphere_px = [int(((data.rgb[i][..., 0].int() - data.rgb[i][..., 1].int()) > 40).sum()) for i in range(scene.n_envs)]
+    assert sphere_px[1] > sphere_px[0], f"data.rgb index must match env index; got per-env sphere pixels {sphere_px}"
+
     for i in range(scene.n_envs):
         assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
 

@@ -20,6 +20,45 @@ except ImportError:
     _IMGUI_BUNDLE_AVAILABLE = False
 
 
+@pytest.mark.required
+def test_imgui_overlay_capture_pending_entities_preserves_heterogeneous_morphs():
+    scene = gs.Scene(show_viewer=False)
+    single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
+    single_entity = scene.add_entity(
+        morph=single_morph,
+        visualize_contact=True,
+        name="single",
+    )
+    heterogeneous_morphs = (
+        gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+        gs.morphs.Cylinder(radius=0.05, height=0.2),
+    )
+    heterogeneous_entity = scene.add_entity(
+        morph=heterogeneous_morphs,
+        visualize_contact=True,
+        name="heterogeneous",
+    )
+
+    plugin = ImGuiOverlayPlugin.__new__(ImGuiOverlayPlugin)
+    plugin.scene = scene
+
+    plugin._capture_pending_entities_kwargs()
+
+    single_kwargs = plugin._pending_entities_kwargs[single_entity.name]
+    assert single_kwargs["morph"] is single_morph
+    assert single_kwargs["material"] is single_entity.material
+    assert single_kwargs["surface"] is single_entity.surface
+    assert single_kwargs["visualize_contact"] is True
+
+    heterogeneous_kwargs = plugin._pending_entities_kwargs[heterogeneous_entity.name]
+    assert heterogeneous_kwargs["morph"] == heterogeneous_morphs
+    assert heterogeneous_kwargs["morph"][0] is heterogeneous_morphs[0]
+    assert heterogeneous_kwargs["morph"][1] is heterogeneous_morphs[1]
+    assert heterogeneous_kwargs["material"] is heterogeneous_entity.material
+    assert heterogeneous_kwargs["surface"] is heterogeneous_entity.surface
+    assert heterogeneous_kwargs["visualize_contact"] is True
+
+
 def _apply_deterministic_imgui_overrides(monkeypatch):
     """Make ImGui rendering and timing pixel-identical across renderers for snapshot tests."""
     from imgui_bundle import imgui

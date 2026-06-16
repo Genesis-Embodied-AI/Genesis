@@ -80,6 +80,102 @@ def skip_if_not_installed(renderer_type):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("env_separate_rigid", [True, False])
+@pytest.mark.parametrize("n_envs", [1, 3])
+def test_rasterizer_renders_heterogeneous_entities(n_envs, env_separate_rigid, show_viewer, png_snapshot, renderer):
+    # A heterogeneous entity instantiates a different morph variant per environment (a sphere in some, the duck mesh in
+    # others). Each variant must render only in its own environments, both in the per-env batched path
+    # (env_separate_rigid + n_envs > 1, env_idx >= 0) and in the combined single-image path (env_idx == -1). A
+    # homogeneous box renders alongside to confirm ordinary entities are unaffected by the per-env masking.
+    CAM_RES = (160, 120)
+
+    scene = gs.Scene(
+        renderer=renderer,
+        vis_options=gs.options.VisOptions(
+            env_separate_rigid=env_separate_rigid,
+            shadow=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(
+            plane_size=(5.0, 5.0),
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.3, 0.3, 0.3),
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.3, 0.8, 0.3),
+        ),
+    )
+    heterogeneous = scene.add_entity(
+        morph=(
+            gs.morphs.Sphere(
+                radius=0.3,
+            ),
+            gs.morphs.Mesh(
+                file="meshes/duck/duck.obj",
+                scale=0.003,
+                euler=(90.0, 0.0, 90.0),
+            ),
+        ),
+    )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, 5.0, 2.6),
+        lookat=(0.0, 0.0, 0.2),
+        fov=55.0,
+        GUI=show_viewer,
+    )
+
+    scene.build(n_envs=n_envs)
+
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        # Small discrepancies between different hardware due the different physics integration
+        png_snapshot.extension._std_err_threshold = 1.5
+
+    # The sphere variant fills the first environments and the duck the last, placed on opposite sides so the duck
+    # (yellow) occupies a known half of the combined image. The box (homogeneous) sits at the back of each environment.
+    box.set_pos(np.array([[0.0, 1.4, 0.15], [0.4, 1.4, 0.15], [-0.4, 1.4, 0.15]])[:n_envs])
+    heterogeneous.set_pos(np.array([[-1.2, 0.3, 0.3], [-1.2, -0.3, 0.3], [1.2, 0.0, 0.0]])[:n_envs])
+
+    rgb = tensor_to_array(camera.render(rgb=True)[0])
+    # The combined draw-all path is taken unless rendering is both per-env-separated and multi-env.
+    per_env = env_separate_rigid and n_envs > 1
+    if per_env:
+        assert rgb.shape == (n_envs, *CAM_RES[::-1], 3)
+        frames = list(rgb)
+    else:
+        assert rgb.shape == (*CAM_RES[::-1], 3)
+        frames = [rgb]
+
+    # The homogeneous green box renders in every frame.
+    for frame in frames:
+        assert ((frame[..., 1].astype(int) - frame[..., 0].astype(int)) > 40).sum() > 0
+
+    if per_env:
+        # Distinct per-env variants and positions mean no two environments may render identically.
+        for i in range(len(frames)):
+            for j in range(i + 1, len(frames)):
+                assert (frames[i] != frames[j]).any()
+    elif n_envs > 1:
+        # Combined image: the duck variant (yellow) belongs to a single environment on one side, so it must not be
+        # duplicated into the sphere environments on the other side.
+        half = rgb.shape[1] // 2
+        yellow = (rgb[..., 0].astype(int) > 120) & (rgb[..., 1].astype(int) > 120) & (rgb[..., 2].astype(int) < 110)
+        left, right = int(yellow[:, :half].sum()), int(yellow[:, half:].sum())
+        assert max(left, right) > 3 * min(left, right), (
+            f"duck must render only in its environment; yellow={left, right}"
+        )
+
+    for frame in frames:
+        assert rgb_array_to_png_bytes(frame) == png_snapshot
+
+
+@pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
     [
