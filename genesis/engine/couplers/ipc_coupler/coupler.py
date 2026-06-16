@@ -1,7 +1,6 @@
 import io
 import logging
 import os
-import re
 import sys
 import tempfile
 import weakref
@@ -107,184 +106,6 @@ def _link_is_fixed_for_ipc(link: "RigidLink") -> bool:
     return link.is_fixed
 
 
-class _NewtonIterCounter:
-    """Redirect OS-level stdout/stderr to pipes so that C++ libuipc log spam
-    is captured and suppressed.  Extracts Newton iteration counts from the
-    convergence summary line and only forwards warnings/errors.
-
-    libuipc writes directly to C file descriptors (fd 1/2), so Python-level
-    sys.stdout/stderr replacement is not sufficient — we must use os.dup2.
-
-    Background threads drain the pipes continuously to prevent deadlock from
-    the finite pipe buffer (~64KB on Linux).
-    """
-
-    _CONVERGED_RE = re.compile(r"Newton Iteration Converged with Iteration Count: (\d+)(?:, Line Search Iters: (\d+))?")
-    _LS_MAX_RE = re.compile(r"Line Search Exits with Max Iteration: (\d+)")
-    _NEWTON_MAX_RE = re.compile(r"Newton Iteration Exits with Max Iteration: (\d+)")
-    # Tolerance checker lines: [x] or [*] followed by <CheckerName> report
-    _TOL_CHECK_RE = re.compile(r"\[([\*x])\]\s+<(.+?)>\s+(.*)")
-    # Separator line that ends a tolerance block
-    _TOL_BLOCK_END_RE = re.compile(r"-{20,}")
-
-    def __init__(self):
-        self.newton_iters = 0
-        self.ls_iters = 0
-        self.ls_max_hits = 0
-        self.newton_max_hit = False
-        self.last_tol_checks: list[str] = []
-        self._cur_tol_checks: list[str] = []
-        self._active = False
-        self._saved_stderr_fd = None
-        self._saved_stdout_fd = None
-        self._threads = []
-
-    def start(self):
-        if self._active:
-            return
-        import signal
-        import threading
-
-        # Flush before redirecting
-        sys.stderr.flush()
-        sys.stdout.flush()
-
-        # Save original fds
-        self._saved_stderr_fd = os.dup(2)
-        self._saved_stdout_fd = os.dup(1)
-
-        # Create pipes and redirect
-        pipe_r_err, pipe_w_err = os.pipe()
-        pipe_r_out, pipe_w_out = os.pipe()
-        os.dup2(pipe_w_err, 2)
-        os.dup2(pipe_w_out, 1)
-        os.close(pipe_w_err)
-        os.close(pipe_w_out)
-
-        # Background threads drain pipes continuously to avoid buffer deadlock
-        self._captured = [[], []]
-        t_err = threading.Thread(target=self._drain, args=(pipe_r_err, 0), daemon=True)
-        t_out = threading.Thread(target=self._drain, args=(pipe_r_out, 1), daemon=True)
-        t_err.start()
-        t_out.start()
-        self._threads = [t_err, t_out]
-        self._pipe_fds = [pipe_r_err, pipe_r_out]
-
-        # Install SIGABRT handler to restore fds before crash so libuipc's
-        # error message reaches the terminal instead of being lost in the pipe.
-        self._prev_sigabrt = signal.getsignal(signal.SIGABRT)
-
-        def _on_abort(signum, frame):
-            self._emergency_restore()
-            if callable(self._prev_sigabrt) and self._prev_sigabrt not in (signal.SIG_DFL, signal.SIG_IGN):
-                self._prev_sigabrt(signum, frame)
-            signal.signal(signal.SIGABRT, signal.SIG_DFL)
-            os.kill(os.getpid(), signal.SIGABRT)
-
-        signal.signal(signal.SIGABRT, _on_abort)
-
-        self._active = True
-
-    def _emergency_restore(self):
-        """Restore original fds without processing captured data."""
-        if not self._active:
-            return
-        try:
-            os.dup2(self._saved_stderr_fd, 2)
-            os.dup2(self._saved_stdout_fd, 1)
-        except OSError:
-            pass
-
-    def _drain(self, fd, idx):
-        """Read from pipe fd until EOF, storing chunks."""
-        try:
-            while True:
-                data = os.read(fd, 65536)
-                if not data:
-                    break
-                self._captured[idx].append(data)
-        except OSError:
-            pass
-
-    def stop(self):
-        if not self._active:
-            return
-        import signal
-
-        # Restore SIGABRT handler
-        signal.signal(signal.SIGABRT, self._prev_sigabrt)
-
-        # Flush Python streams before restoring
-        sys.stderr.flush()
-        sys.stdout.flush()
-
-        # Restore original fds (closes the pipe write ends implicitly)
-        os.dup2(self._saved_stderr_fd, 2)
-        os.dup2(self._saved_stdout_fd, 1)
-        os.close(self._saved_stderr_fd)
-        os.close(self._saved_stdout_fd)
-
-        # Wait for drain threads to finish (pipe write ends are closed, so reads will EOF)
-        for t in self._threads:
-            t.join(timeout=2.0)
-        for fd in self._pipe_fds:
-            os.close(fd)
-
-        # Process captured data — extract counters and forward errors/warnings.
-        # When an error or warning is detected, dump ALL captured output so
-        # stack traces and surrounding context are not lost.
-        has_error = False
-        all_lines: list[str] = []
-        for chunks in self._captured:
-            if not chunks:
-                continue
-            text = b"".join(chunks).decode("utf-8", errors="replace")
-            for line in text.splitlines():
-                all_lines.append(line)
-                m = self._CONVERGED_RE.search(line)
-                if m:
-                    self.newton_iters += int(m.group(1))
-                    if m.group(2) is not None:
-                        self.ls_iters += int(m.group(2))
-                m_ls = self._LS_MAX_RE.search(line)
-                if m_ls:
-                    self.ls_max_hits += 1
-                m_nmax = self._NEWTON_MAX_RE.search(line)
-                if m_nmax:
-                    self.newton_max_hit = True
-                m_tol = self._TOL_CHECK_RE.search(line)
-                if m_tol:
-                    status, name, report = m_tol.group(1), m_tol.group(2), m_tol.group(3)
-                    # Strip C++ namespace prefix for readability
-                    short_name = name.rsplit("::", 1)[-1]
-                    self._cur_tol_checks.append(f"[{status}] {short_name}: {report}")
-                if self._TOL_BLOCK_END_RE.search(line) and self._cur_tol_checks:
-                    self.last_tol_checks = self._cur_tol_checks
-                    self._cur_tol_checks = []
-                if "[error]" in line or "[warning]" in line:
-                    has_error = True
-        if has_error:
-            gs.logger.error("[IPC] libuipc log:\n" + "\n".join(all_lines))
-
-        self._threads = []
-        self._active = False
-
-    def reset(self):
-        """Reset counter for next frame."""
-        n = self.newton_iters
-        ls = self.ls_iters
-        ls_max = self.ls_max_hits
-        nmax = self.newton_max_hit
-        tol_checks = self.last_tol_checks
-        self.newton_iters = 0
-        self.ls_iters = 0
-        self.ls_max_hits = 0
-        self.newton_max_hit = False
-        self.last_tol_checks = []
-        self._cur_tol_checks = []
-        return n, ls, ls_max, nmax, tol_checks
-
-
 class IPCCoupler(RBC):
     """
     Coupler class for handling Incremental Potential Contact (IPC) simulation coupling.
@@ -335,8 +156,6 @@ class IPCCoupler(RBC):
         self._ipc_objects = None
         self._ipc_animator = None
 
-        # ==== Newton iteration counter (captures libuipc stderr) ====
-        self._newton_counter = _NewtonIterCounter()
         self._ipc_frame = 0
 
         # ==== IPC Constitutions ====
@@ -1247,18 +1066,13 @@ class IPCCoupler(RBC):
         self._store_gs_rigid_states()
         self._pre_advance_write_ipc_attributes()
 
-        self._newton_counter.start()
-        try:
-            self._ipc_world.advance()
-        finally:
-            self._newton_counter.stop()
-        n_newton, n_ls, ls_max, newton_max, tol_fails = self._newton_counter.reset()
+        self._ipc_world.advance()
 
         # A failed solver leaves corrupted GPU state; check before retrieve.
         if not self._ipc_world.is_valid():
             gs.raise_exception(
                 f"[IPC] World became invalid after advance at frame {self._ipc_frame + 1}. "
-                f"The solver likely hit a numerical failure (newton={n_newton}, ls={n_ls})."
+                "The solver likely hit a numerical failure."
             )
         self._ipc_world.retrieve()
 
@@ -1268,11 +1082,7 @@ class IPCCoupler(RBC):
         self._sync_rigid_fk()
 
         self._ipc_frame += 1
-        ls_str = f"  ls_maxout={ls_max}" if ls_max > 0 else ""
-        nmax_str = "  NEWTON_MAXOUT" if newton_max else ""
-        if newton_max and tol_fails:
-            nmax_str += " (" + "; ".join(tol_fails) + ")"
-        gs.logger.debug(f"[IPC] frame {self._ipc_frame:4d}  newton={n_newton:2d}  ls={n_ls:3d}{ls_str}{nmax_str}")
+        gs.logger.debug(f"[IPC] frame {self._ipc_frame:4d}")
 
         if self._ipc_gui is not None:
             ps.frame_tick()

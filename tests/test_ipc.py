@@ -85,6 +85,11 @@ def get_ipc_rigid_links_idx(scene, env_idx):
     return links_idx
 
 
+def n_steps(seconds, dt):
+    """Convert a physical duration in seconds to a discrete number of simulation steps."""
+    return int(seconds / dt)
+
+
 def assert_ipc_genesis_transform_close(coupler, link, env_idx, gs_pos, gs_quat, atol):
     """Assert IPC-side and Genesis-side link transforms match within tolerance."""
     abd_data = coupler._abd_data_by_link.get(link)
@@ -196,11 +201,12 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
 
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_rigid_ground_sliding(n_envs, show_viewer):
+    DT = 0.01
     GRAVITY = np.array([5.0, 0.0, -10.0], dtype=gs.np_float)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.01,
+            dt=DT,
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -239,7 +245,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     scene.build(n_envs=n_envs)
 
     initial_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
-    for _ in range(100):
+    for _ in range(n_steps(1.0, DT)):
         scene.step()
     final_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
 
@@ -262,11 +268,12 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
 @pytest.mark.slow  # ~200s
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
+    DT = 0.005
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.005,
+            dt=DT,
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -310,9 +317,9 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     initial_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
 
     dist = []
-    for _ in range(70):
+    for _ in range(n_steps(0.35, DT)):
         scene.step()
-    for _ in range(20):
+    for _ in range(n_steps(0.1, DT)):
         scene.step()
         dist.append(np.stack([tensor_to_array(cube.get_verts())[..., 2].min(axis=-1) for cube in cubes], axis=-1))
     dist = np.stack(dist, axis=-1)
@@ -489,9 +496,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
 
     dist_min = np.array(float("inf"))
     cur_dof_pos_history, target_dof_pos_history = [], []
-    gs_link_pose_history = {"base": {"pos": [], "quat": []}, "moving": {"pos": [], "quat": []}}
-    ipc_link_pose_history = {"base": {"pos": [], "quat": []}, "moving": {"pos": [], "quat": []}}
-    for _ in range(int(1 / (DT * FREQ))):
+    for _ in range(n_steps(1.0 / FREQ, DT)):
         # Apply sinusoidal target position
         target_dof_pos = SCALE * np.sin((2 * math.pi * FREQ) * scene.sim.cur_t)
         target_dof_vel = SCALE * (2 * math.pi * FREQ) * np.cos((2 * math.pi * FREQ) * scene.sim.cur_t)
@@ -509,19 +514,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             assert (dist_min > 0).all()
 
         scene.step()
-
-        links_pos = qd_to_numpy(scene.rigid_solver.links_state.pos, transpose=True)
-        links_quat = qd_to_numpy(scene.rigid_solver.links_state.quat, transpose=True)
-        for link in (robot.base_link, moving_link):
-            abd_data = coupler._abd_data_by_link.get(link)
-            if abd_data is None or abd_data.ipc_transforms is None:
-                continue
-            link_name = "base" if link is robot.base_link else "moving"
-            ipc_pos, ipc_quat = gu.T_to_trans_quat(abd_data.ipc_transforms.copy())
-            gs_link_pose_history[link_name]["pos"].append(links_pos[:, link.idx].copy())
-            gs_link_pose_history[link_name]["quat"].append(links_quat[:, link.idx].copy())
-            ipc_link_pose_history[link_name]["pos"].append(ipc_pos)
-            ipc_link_pose_history[link_name]["quat"].append(ipc_quat)
     cur_dof_pos_history = np.stack(cur_dof_pos_history, axis=-1)
     target_dof_pos_history = np.stack(target_dof_pos_history, axis=-1)
 
@@ -657,7 +649,7 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
     box.set_dofs_kv(500.0)
 
     z_actual, z_target = [], []
-    for _ in range(int(1 / (DT * FREQ))):
+    for _ in range(n_steps(1.0 / FREQ, DT)):
         t = scene.sim.cur_t
         target_z = SCALE * math.sin((2 * math.pi * FREQ) * t)
         target_vz = SCALE * (2 * math.pi * FREQ) * math.cos((2 * math.pi * FREQ) * t)
@@ -953,7 +945,7 @@ def test_objects_colliding(n_envs, show_viewer):
         assert (obj_p_history[..., 2].max(axis=-1) < cloth_p_history[..., 2].max(axis=-1)).all()
 
 
-def _build_grasp_scene(coup_type, show_viewer):
+def build_grasp_scene(coup_type, show_viewer):
     """Build a scene with ground plane + Franka robot for grasp tests.
 
     Returns (scene, franka, DT).
@@ -1003,7 +995,7 @@ def _build_grasp_scene(coup_type, show_viewer):
     return scene, franka, DT
 
 
-def _run_grasp_sequence(scene, franka, DT):
+def run_grasp_sequence(scene, franka, DT):
     """Execute the grasp motion: start → lower → reach → grasp → lift."""
     motors_dof, fingers_dof = slice(0, 7), slice(7, 9)
     franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 500.0, 500.0])
@@ -1011,7 +1003,7 @@ def _run_grasp_sequence(scene, franka, DT):
     def run_stage(target_qpos, finger_pos, duration):
         franka.control_dofs_position(target_qpos[motors_dof], motors_dof)
         franka.control_dofs_position(finger_pos, fingers_dof)
-        for _ in range(int(duration / DT)):
+        for _ in range(n_steps(duration, DT)):
             scene.step()
 
     # Start position (above the object)
@@ -1039,11 +1031,9 @@ def _run_grasp_sequence(scene, franka, DT):
     run_stage(qpos, finger_pos=0.0, duration=0.5)
 
 
-def _verify_franka_ipc_setup(scene, franka, coup_type):
+def verify_franka_ipc_setup(scene, franka, coup_type):
     """Verify franka finger links are correctly registered in IPC after build."""
-    assert scene.sim is not None
-    coupler = cast("IPCCoupler", scene.sim.coupler)
-
+    coupler = scene.sim.coupler
     franka_finger_links = {franka.get_link(name) for name in ("left_finger", "right_finger")}
     franka_finger_links_idx = {link.idx for link in franka_finger_links}
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
@@ -1059,8 +1049,6 @@ def _verify_franka_ipc_setup(scene, franka, coup_type):
     else:
         assert franka_finger_links_idx.issubset(franka_ipc_links_idx)
 
-    return coupler
-
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
@@ -1069,7 +1057,7 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
 
     BOX_POS = (0.65, 0.0, 0.03)
-    scene, franka, DT = _build_grasp_scene(coup_type, show_viewer)
+    scene, franka, DT = build_grasp_scene(coup_type, show_viewer)
 
     box = scene.add_entity(
         morph=gs.morphs.Box(
@@ -1089,7 +1077,7 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     )
 
     scene.build()
-    coupler = _verify_franka_ipc_setup(scene, franka, coup_type)
+    verify_franka_ipc_setup(scene, franka, coup_type)
 
     envs_idx = range(max(scene.n_envs, 1))
 
@@ -1102,7 +1090,7 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     gs_centroid_0 = gs_positions_0.mean(axis=1)
     assert_allclose(gs_centroid_0, BOX_POS, atol=1e-4)
 
-    _run_grasp_sequence(scene, franka, DT)
+    run_grasp_sequence(scene, franka, DT)
 
     ipc_positions_f = get_ipc_positions(scene, solver_type="fem", idx=box_entity_idx, envs_idx=envs_idx)
     gs_positions_f = tensor_to_array(box.get_state().pos)
@@ -1112,13 +1100,14 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     assert (gs_positions_f[..., 2] - finger_aabb[..., 0, 2] > 0).any()
 
 
+@pytest.mark.slow  # ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_abd(coup_type, show_viewer):
     """Verify that robot can grasp and lift an ipc_only rigid cylinder."""
 
     CYL_POS = (0.65, 0.0, 0.025)
-    scene, franka, DT = _build_grasp_scene(coup_type, show_viewer)
+    scene, franka, DT = build_grasp_scene(coup_type, show_viewer)
 
     cylinder = scene.add_entity(
         morph=gs.morphs.Cylinder(
@@ -1137,16 +1126,16 @@ def test_robot_grasp_abd(coup_type, show_viewer):
     )
 
     scene.build()
-    coupler = _verify_franka_ipc_setup(scene, franka, coup_type)
+    verify_franka_ipc_setup(scene, franka, coup_type)
 
     # Verify cylinder is registered in IPC
     cyl_link = cylinder.links[0]
-    assert cyl_link in coupler._abd_data_by_link
+    assert cyl_link in scene.sim.coupler._abd_data_by_link
 
     # ipc_only has FIXED joints (0 DOFs), so use get_pos() instead of get_dofs_position()
     cyl_z_0 = tensor_to_array(cylinder.get_pos())[..., 2]
 
-    _run_grasp_sequence(scene, franka, DT)
+    run_grasp_sequence(scene, franka, DT)
 
     cyl_z_f = tensor_to_array(cylinder.get_pos())[..., 2]
     assert (cyl_z_f - cyl_z_0 >= 0.2).all()
@@ -1248,7 +1237,7 @@ def test_momentum_conservation(n_envs, show_viewer):
 
     dist_min = np.array(float("inf"))
     fem_positions_prev = None  # FEM initial velocity is zero
-    for step in range(int(DURATION / DT)):
+    for step in range(n_steps(DURATION, DT)):
         cube_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
         rigid_linear_momentum = cube_mass * cube_vel
 
@@ -1274,7 +1263,7 @@ def test_momentum_conservation(n_envs, show_viewer):
         fem_linear_momentum = np.sum(fem_vertex_masses[:, np.newaxis] * fem_velocities, axis=0)
 
         # Before collision: FEM should have zero momentum, rigid should carry all momentum.
-        if step < int(DURATION / 10 / DT):
+        if step < n_steps(DURATION / 10, DT):
             assert_allclose(fem_linear_momentum, 0.0, atol=TOL_SINGLE)
             assert_allclose(rigid_linear_momentum, momentum_0, tol=TOL_SINGLE)
 
@@ -1500,7 +1489,7 @@ def test_cloth_corner_drag(n_envs, show_viewer):
     corner_idx = np.argmin(np.linalg.norm(cloth_positions, axis=-1), axis=-1)
 
     # Settle: let cloth conform to grip
-    for _ in range(40):
+    for _ in range(n_steps(0.4, DT)):
         scene.step()
 
     # Make sure that the cloth did not fall
@@ -1508,7 +1497,7 @@ def test_cloth_corner_drag(n_envs, show_viewer):
     assert_allclose(cloth_pos, 0.0, tol=5e-3)
 
     # Drag phase
-    for i in range(int(1.0 / (DT * FREQ))):
+    for i in range(n_steps(1.0 / FREQ, DT)):
         theta = (2.0 * np.pi * FREQ) * (i * scene.sim.dt)
         x = SCALE / math.sqrt(2.0) * (np.cos(theta) - 1.0)
         dx = -SCALE * math.sqrt(2.0) * np.pi * FREQ * np.sin(theta)
@@ -1533,6 +1522,7 @@ def test_cloth_corner_drag(n_envs, show_viewer):
 @pytest.mark.parametrize("E, nu, strech_scale", [(1e4, 0.3, 1.0), (5e4, 0.49, 0.3)])
 def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_viewer):
     """Stretch a square cloth uniformly via position-controlled boxes at corners. Verify stretch physics."""
+    DT = 0.01
     CLOTH_HALF = 0.5
     BOX_SIZE = 0.05
     GAP = 0.005
@@ -1545,7 +1535,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.01,
+            dt=DT,
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -1614,7 +1604,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
 
     # Wait for steady state
     cloth_positions_0 = tensor_to_array(cloth.get_state().pos)
-    for _ in range(20):
+    for _ in range(n_steps(0.2, DT)):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
     assert_allclose(cloth_positions_f, cloth_positions_0, atol=0.005)
@@ -1625,7 +1615,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         init_dof = tensor_to_array(box.get_dofs_position())
         init_dof[..., :2] *= STRETCH_RATIO_1
         box.control_dofs_position(init_dof)
-    for _ in range(80):
+    for _ in range(n_steps(0.8, DT)):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
     for box in boxes:
@@ -1683,7 +1673,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         init_dof = tensor_to_array(box.get_dofs_position())
         init_dof[..., :2] *= STRETCH_RATIO_2
         box.control_dofs_position(init_dof)
-    for _ in range(50):
+    for _ in range(n_steps(0.5, DT)):
         scene.step()
 
     # Lost grip
