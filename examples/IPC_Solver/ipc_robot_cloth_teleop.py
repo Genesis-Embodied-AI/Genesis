@@ -45,8 +45,6 @@ def main():
             dt=0.02,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=100.0,
-            constraint_strength_rotation=100.0,
             n_linesearch_iterations=8,
             linesearch_report_energy=False,
             newton_tolerance=1e-1,
@@ -72,6 +70,7 @@ def main():
     # Add Franka robot
     franka_material_kwargs = dict(
         coup_type=args.coup_type,
+        soft_constraint_strength=(100.0, 100.0),
     )
     if args.coup_type == "two_way_soft_constraint":
         franka_material_kwargs["coup_links"] = ("left_finger", "right_finger")

@@ -26,7 +26,6 @@ def main():
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=0.01,  # Contact barrier distance (10mm) - must be appropriate for mesh resolution
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 2.5, 1.5),

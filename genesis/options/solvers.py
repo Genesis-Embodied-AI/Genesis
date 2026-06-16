@@ -314,7 +314,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     # Genesis coupling options
     enable_rigid_ground_contact: bool = True
     enable_rigid_rigid_contact: bool = True
-    restitution: float = 1.0
+    restitution: float = 0.0
 
 
 ############################ Solvers inside simulator ############################
