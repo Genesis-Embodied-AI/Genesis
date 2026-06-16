@@ -2084,6 +2084,49 @@ def test_render_offscreen_oversized_resolution(renderer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_camera_render_honors_resolution_with_viewer(renderer):
+    # A camera renders into its own offscreen FBO, sized to the camera resolution and independent of the
+    # interactive window. With an interactive viewer shown, the rendered image must still match the camera
+    # resolution, not the (different) viewer resolution, otherwise it no longer matches the camera intrinsics.
+    viewer_res = (640, 480)
+    camera_res = (360, 240)
+    box_halfsize = 0.5
+    camera_dist = 3.0
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=viewer_res,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.0),
+            size=(2.0 * box_halfsize, 2.0 * box_halfsize, 2.0 * box_halfsize),
+            fixed=True,
+        ),
+    )
+    camera = scene.add_camera(
+        res=camera_res,
+        pos=(0.0, 0.0, camera_dist),
+        lookat=(0.0, 0.0, 0.0),
+        near=1.0,
+        far=10.0,
+    )
+    scene.build()
+
+    rgb, depth, _, _ = camera.render(rgb=True, depth=True)
+    assert rgb.shape[:2] == (camera_res[1], camera_res[0])
+    assert depth.shape[:2] == (camera_res[1], camera_res[0])
+
+    # The on-axis center pixel hits the front face of the box, at metric depth camera_dist - box_halfsize.
+    assert_allclose(depth[camera_res[1] // 2, camera_res[0] // 2], camera_dist - box_halfsize, atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_set_vverts(renderer, show_viewer):
     scene = gs.Scene(
         renderer=renderer,

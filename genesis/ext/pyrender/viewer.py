@@ -798,19 +798,26 @@ class Viewer(pyglet.window.Window):
                 # Update context, just in case is not already done before
                 self.gs_context.update()
 
-                # Render current frame from camera viewpoint. Force the renderer back to the originally
-                # requested viewport size so the offscreen FBO honors what the caller asked for even when the
-                # window has since been clamped to a smaller content area by the OS (e.g. macOS CI runners).
                 self._offscreen_results = []
                 self.render_flags["offscreen"] = True
                 self.render_flags["skip_markers"] = skip_markers
-                saved_viewport = (target.viewport_width, target.viewport_height)
-                target.viewport_width, target.viewport_height = self._offscreen_viewport_size
-                try:
+                if target is self._renderer:
+                    # The interactive window's own renderer tracks the OS window content area, which the OS may clamp
+                    # below the requested resolution (e.g. a viewport larger than a macOS runner can allocate). Force
+                    # it to the requested viewport size so the offscreen result matches what the caller asked for, then
+                    # restore the live window size so on-screen drawing keeps following the window.
+                    saved_viewport = (target.viewport_width, target.viewport_height)
+                    target.viewport_width, target.viewport_height = self._offscreen_viewport_size
+                    try:
+                        self.clear()
+                        retval = self._render(camera, target, normal)
+                    finally:
+                        target.viewport_width, target.viewport_height = saved_viewport
+                else:
+                    # A per-camera offscreen FBO is already sized to that camera's own resolution and is independent of
+                    # the window, so its viewport is authoritative and must not be overridden with the window size.
                     self.clear()
                     retval = self._render(camera, target, normal)
-                finally:
-                    target.viewport_width, target.viewport_height = saved_viewport
                 self._offscreen_result = retval if retval else (None, None)
                 self.render_flags["offscreen"] = False
                 self.render_flags["skip_markers"] = False
