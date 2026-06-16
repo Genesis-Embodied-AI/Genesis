@@ -7,6 +7,7 @@ rigid object / MPM object / FEM object.
 
 import os
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 from typing_extensions import Self
 
@@ -15,6 +16,7 @@ from pydantic import Field, StrictBool, StrictInt, model_validator
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.mjcf as mju
 import genesis.utils.misc as mu
 import genesis.utils.urdf as uu
 import genesis.ext.urdfpy as urdfpy
@@ -147,6 +149,10 @@ class Morph(Options):
     def model_post_init(self, context: Any) -> None:
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")
+
+    def _identifier(self) -> str:
+        # Short identifier used for entity naming and brief repr; defaults to the morph type name.
+        return type(self).__name__.lower()
 
 
 ############################ Nowhere ############################
@@ -578,7 +584,9 @@ class FileMorph(Morph):
         **This is only used for RigidEntity.**
     """
 
-    file: Any = ""
+    # Shown in the repr header via __repr_name__ (a bounded identifier for in-memory descriptions), so it is kept out
+    # of the field listing to avoid both duplicating it and dumping a whole inline document.
+    file: Any = Field(default="", repr=False)
     scale: Annotated[tuple[PositiveFloat, PositiveFloat, PositiveFloat], Field(strict=False)] | PositiveFloat = 1.0
     decimate: StrictBool | None = None
     decimate_face_num: PositiveInt = 500
@@ -651,8 +659,23 @@ class FileMorph(Morph):
         if scale.ndim > 1 or scale.size not in (1, 3):
             gs.raise_exception("`scale` should be a scalar sequence of length 1 or 3.")
 
+    def _identifier(self) -> str:
+        file = self.file
+        if not isinstance(file, str):
+            return file.name
+        if os.path.exists(file):
+            return Path(file).stem
+        # An in-memory description has no filename to fall back on; subclasses that embed a name (MJCF model,
+        # URDF robot) override this, otherwise the morph type name stands in for the document.
+        return super()._identifier()
+
     def __repr_name__(self):
-        return f"{super().__repr_name__()[:-1]}(file='{self.file}')>"
+        # A real file path is shown verbatim; an MJCF/URDF built in memory has no path on disk, so a bounded
+        # identifier stands in for the document rather than dumping it.
+        file = self.file
+        if isinstance(file, str) and not os.path.exists(file):
+            file = f"<inline {self._identifier()}>"
+        return f"{super().__repr_name__()[:-1]}(file='{file}')>"
 
     def is_format(self, format):
         if not isinstance(self.file, (str, os.PathLike)):
@@ -957,6 +980,11 @@ class MJCF(FileMorph):
         if not is_inline_xml and not self.is_format(MJCF_FORMAT):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
+    def _identifier(self) -> str:
+        if isinstance(self.file, str) and (name := mju.get_model_name(self.file)):
+            return name
+        return super()._identifier()
+
 
 class URDF(FileMorph):
     """
@@ -1093,6 +1121,14 @@ class URDF(FileMorph):
         if isinstance(self.file, urdfpy.URDF):
             return format == URDF_FORMAT
         return super().is_format(format)
+
+    def _identifier(self) -> str:
+        if isinstance(self.file, str):
+            try:
+                return uu.get_robot_name(self.file)
+            except (ValueError, ET.ParseError, FileNotFoundError, OSError):
+                pass
+        return super()._identifier()
 
 
 class Drone(FileMorph):
@@ -1384,6 +1420,9 @@ class Terrain(Morph):
         ):
             gs.raise_exception("`subterrain_size` should be divisible by `horizontal_scale`.")
 
+    def _identifier(self) -> str:
+        return self.name if self.name else super()._identifier()
+
     @property
     def default_params(self):
         return {
@@ -1644,5 +1683,10 @@ class USD(FileMorph):
 
             self.usd_ctx = UsdContext(self.file)
 
+    def _identifier(self) -> str:
+        if self.prim_path:
+            return self.prim_path.rstrip("/").split("/")[-1]
+        return super()._identifier()
+
     def __repr_name__(self):
-        return f"{super().__repr_name__()[:-1]}(file='{self.file}', prim_path='{self.prim_path}')>"
+        return f"{super().__repr_name__()[:-1]}, prim_path='{self.prim_path}')>"

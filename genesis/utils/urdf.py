@@ -28,7 +28,7 @@ def get_robot_name(file_path):
     Parameters
     ----------
     file_path : str or Path
-        Path to the URDF file.
+        Path to the URDF file, or inline URDF XML content.
 
     Returns
     -------
@@ -40,9 +40,11 @@ def get_robot_name(file_path):
     ValueError
         If the robot name attribute is missing or empty.
     """
-    path = os.path.join(get_assets_dir(), file_path)
-    tree = ET.parse(path)
-    root = tree.getroot()
+    try:
+        # Inline XML content parses directly; a file path does not and falls back to reading from disk.
+        root = ET.fromstring(file_path)
+    except ET.ParseError:
+        root = ET.parse(os.path.join(get_assets_dir(), file_path)).getroot()
     if root.tag == "robot":
         name = root.attrib.get("name")
         if name:
