@@ -2994,11 +2994,15 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_plan_path_with_entity_preserves_state_on_failure(backend, tol):
+@pytest.mark.parametrize("custom_start", [False, True])
+def test_plan_path_with_entity_preserves_state_on_failure(backend, custom_start, tol):
     # A failed plan_path(with_entity=...) must not move the attached object (#2715): the
     # failure early-return restored the robot qpos but not the carried object. The goal
     # below targets a pose under the floor, so the goal config is in collision and the
     # single planning attempt fails deterministically regardless of the planner's RNG.
+    # When ``custom_start`` passes a qpos_start that differs from the robot's current pose,
+    # the carry grasp transform is captured relative to qpos_start, so restoring the object
+    # requires its captured world pose rather than re-deriving it at the current pose.
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=0.01),
         rigid_options=gs.options.RigidOptions(box_box_detection=True),
@@ -3013,10 +3017,16 @@ def test_plan_path_with_entity_preserves_state_on_failure(backend, tol):
     qpos_goal = franka.inverse_kinematics(link=hand, pos=np.array([0.4, 0.0, -0.25]), quat=np.array([0, 1, 0, 0]))
     qpos_goal[-2:] = 0.0
 
+    qpos_start = None
+    if custom_start:
+        qpos_start = franka.get_qpos().clone()
+        qpos_start[1] += 0.5  # a start config that differs from the robot's current pose
+
     cube_pos = cube.get_pos().clone()
     cube_quat = cube.get_quat().clone()
     _, valid = franka.plan_path(
         qpos_goal=qpos_goal,
+        qpos_start=qpos_start,
         num_waypoints=50,
         max_retry=0,
         max_nodes=100,

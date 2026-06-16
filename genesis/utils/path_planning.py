@@ -78,6 +78,31 @@ class PathPlanner(ABC):
             self._solver.set_base_links_pos(trans, obj_link_idx)
             self._solver.set_base_links_quat(quat, obj_link_idx)
 
+    def get_object_pose(self, obj_link_idx, envs_idx):
+        """
+        Snapshot the carried object's world pose so a failed plan can restore it exactly.
+
+        The grasp transform returned by ``get_link_pose`` is relative to the robot at ``qpos_start``, so re-deriving
+        the object pose from it after the robot is reset to its current configuration would misplace the object
+        whenever ``qpos_start`` differs from the current pose. The planner restores this snapshot instead.
+        """
+        if self._solver.n_envs > 0:
+            pos = self._solver.get_links_pos(links_idx=obj_link_idx, envs_idx=envs_idx)
+            quat = self._solver.get_links_quat(links_idx=obj_link_idx, envs_idx=envs_idx)
+        else:
+            pos = self._solver.get_links_pos(links_idx=obj_link_idx)
+            quat = self._solver.get_links_quat(links_idx=obj_link_idx)
+        return pos.clone(), quat.clone()
+
+    def reset_object_pose(self, obj_link_idx, pos, quat, envs_idx):
+        """Restore the carried object to a world pose previously captured by ``get_object_pose``."""
+        if self._solver.n_envs > 0:
+            self._solver.set_base_links_pos(pos, obj_link_idx, envs_idx=envs_idx)
+            self._solver.set_base_links_quat(quat, obj_link_idx, envs_idx=envs_idx)
+        else:
+            self._solver.set_base_links_pos(pos, obj_link_idx)
+            self._solver.set_base_links_quat(quat, obj_link_idx)
+
     # ------------------------------------------------------------------------------------
     # ------------------------------ util funcs ------------------------------------------
     # ------------------------------------------------------------------------------------
@@ -523,6 +548,7 @@ class RRT(PathPlanner):
             obj_geom_end = obj_entity.geom_end
             obj_link_idx = obj_entity._links[0].idx
             _pos, _quat = self.get_link_pose(ee_link_idx, obj_link_idx, envs_idx)
+            obj_pos, obj_quat = self.get_object_pose(obj_link_idx, envs_idx)
 
         self._init_rrt_fields(max_nodes=max_nodes, max_step_size=resolution)
         self._reset_rrt_fields()
@@ -591,7 +617,7 @@ class RRT(PathPlanner):
             else:
                 self._entity.set_qpos(qpos_cur, zero_velocity=False)
             if is_plan_with_obj:
-                self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
+                self.reset_object_pose(obj_link_idx, obj_pos, obj_quat, envs_idx)
             sol = torch.zeros((num_waypoints, len(envs_idx), sol.shape[-1]), dtype=gs.tc_float, device=gs.device)
             return sol, is_invalid
 
@@ -912,6 +938,7 @@ class RRTConnect(PathPlanner):
             obj_geom_end = obj_entity.geom_end
             obj_link_idx = obj_entity._links[0].idx
             _pos, _quat = self.get_link_pose(ee_link_idx, obj_link_idx, envs_idx)
+            obj_pos, obj_quat = self.get_object_pose(obj_link_idx, envs_idx)
 
         self._init_rrt_connect_fields(max_nodes=max_nodes, max_step_size=resolution)
         self._reset_rrt_connect_fields()
@@ -997,7 +1024,7 @@ class RRTConnect(PathPlanner):
             else:
                 self._entity.set_qpos(qpos_cur, zero_velocity=False)
             if is_plan_with_obj:
-                self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
+                self.reset_object_pose(obj_link_idx, obj_pos, obj_quat, envs_idx)
             return torch.zeros(num_waypoints, len(envs_idx), sol.shape[-1], device=gs.device), is_invalid
 
         mask = rrt_connect_valid_mask(res_idx)
