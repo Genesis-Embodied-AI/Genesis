@@ -561,13 +561,18 @@ class IPCCoupler(RBC):
                 else:
                     self._ipc_no_collision_contact.apply_to(rigid_link_geom)
 
-                # FIXME: libuipc derives its own uniform-density COM/inertia from the mesh,
-                # silently overriding the URDF/MJCF <inertial> spec. Switching to
-                # `apply_to(sc, kappa, mass: ndarray, volume)` with a 12x12 matrix built via
-                # `uipc.geometry.affine_body.from_rigid_body(mass_val, mass_center, inertia)`
-                # would honor the URDF inertials, but the conversion appears to need a frame
-                # alignment that isn't a drop-in — it currently SIGABRTs inside libuipc. Tracked
-                # for follow-up; for now mesh bodies use uniform-density.
+                # FIXME: Genesis ↔ libuipc mass disagreement.
+                # The coupler passes `material.rho` to libuipc here, but Genesis's rigid solver
+                # honors the URDF's <mass> when specified (URDF wins in rigid_link.py). When they
+                # disagree — e.g. two_cube_revolute.urdf authors mass=1.0 but default RHO_ROBOT=1500
+                # for a 0.1m³ link gives libuipc mass=1.5 — the two solvers simulate different
+                # bodies for the same link. Principled fix: pass Genesis's URDF inertials to libuipc
+                # via `apply_to(sc, kappa, mass=abd_M12, volume)` overload-2, building abd_M12 via
+                # `uipc.geometry.affine_body.from_rigid_body(mass, com, inertia)`. Verified correct
+                # against libuipc tests 75_abd_mass_properties and 84_proxy_abd_gravity. Blocker:
+                # shared test URDFs author <mass> values inconsistent with default rho, so honoring
+                # URDF regresses test_single_joint[revolute-two_way_soft_constraint-False] without
+                # URDF or test re-calibration. Tracked for follow-up.
                 self._ipc_abd.apply_to(rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=rho)
 
             # Apply SoftTransformConstraint for coupled links
