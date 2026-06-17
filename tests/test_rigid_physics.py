@@ -5971,6 +5971,14 @@ def test_mesh_align(show_viewer, tol):
     )
     scene.build()
 
+    # A free-resting mango is an asymmetric ovoid: with no rolling resistance it can land in a
+    # near-undamped rocking limit-cycle about a horizontal axis (~0.05 rad/s on a base rotational
+    # DOF) instead of damping to rest. Which basin it reaches is hypersensitive to rounding-level
+    # trajectory differences, so the "at rest after 450 steps" assertion below otherwise bifurcates
+    # across machines (e.g. EPYC 9655 vs 9554 in FP32). A small angular damping on the free base
+    # rotational DOFs dissipates the rocking mode so settling is well-posed and machine-independent.
+    mango.set_dofs_damping([1e-3, 1e-3, 1e-3], dofs_idx_local=[3, 4, 5])
+
     # Alignment is transparent: geom/vgeom world-space pose must equal morph pos/quat regardless of align
     geom, vgeom = mango.geoms[0], mango.vgeoms[0]
     assert_allclose(geom.get_pos(), INIT_POS, atol=1e-3)
