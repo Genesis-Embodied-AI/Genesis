@@ -13,7 +13,7 @@ from genesis.engine.entities.rigid_entity.rigid_link import RHO_MUJOCO, RHO_OBJE
 from genesis.engine.materials.FEM.cloth import Cloth
 from genesis.options.solvers import IPCCouplerOptions, RigidOptions
 from genesis.repr_base import RBC
-from genesis.utils.mesh import are_meshes_overlapping
+from genesis.utils.mesh import are_meshes_overlapping, shrink_to_centroid
 from genesis.utils.misc import geometric_mean, harmonic_mean, qd_to_numpy, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
@@ -548,9 +548,9 @@ class IPCCoupler(RBC):
                 world_verts = (link_T_0[:3, :3] @ local_verts.T).T + link_T_0[:3, 3]
                 faces = rigid_link_geom.triangles().topo().view()[..., 0]
                 # Shrink 0.1% toward centroid to match rigid collider's neutral overlap check
-                centroid = world_verts.mean(axis=0, keepdims=True)
-                world_verts = centroid + (1.0 - 1e-3) * (world_verts - centroid)
-                self._abd_merged_meshes[link] = trimesh.Trimesh(vertices=world_verts, faces=faces, process=False)
+                self._abd_merged_meshes[link] = trimesh.Trimesh(
+                    vertices=shrink_to_centroid(world_verts), faces=faces, process=False
+                )
 
                 # Apply per-link contact element or no-collision marker
                 if self._coupling_collision_settings.get(entity, {}).get(link, True):

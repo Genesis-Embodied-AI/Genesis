@@ -1246,6 +1246,19 @@ NEUTRAL_OVERLAP_RES_ABS = 0.01
 NEUTRAL_OVERLAP_RES_REL = 0.05
 
 
+def shrink_to_centroid(verts: np.ndarray, factor: float = 1e-3) -> np.ndarray:
+    """Shrink verts isotropically toward their centroid by `factor` (multiplicative).
+
+    Used by the rigid collider's self-collision filter and the IPC coupler's merged-mesh
+    cache to avoid false-positive overlap on touching faces between adjacent links.
+
+    Operates on the second-to-last axis (so it accepts both ``(N_verts, 3)`` and batched
+    ``(N_envs, N_verts, 3)`` inputs).
+    """
+    centroid = verts.mean(axis=-2, keepdims=True)
+    return centroid + (1.0 - factor) * (verts - centroid)
+
+
 def are_meshes_overlapping(
     mesh_a: trimesh.Trimesh,
     mesh_b: trimesh.Trimesh,

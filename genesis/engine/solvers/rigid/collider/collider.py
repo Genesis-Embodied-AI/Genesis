@@ -361,7 +361,7 @@ class Collider:
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
         from genesis.engine.couplers import IPCCoupler
         from genesis.engine.couplers.ipc_coupler.data import COUPLING_TYPE
-        from genesis.utils.mesh import are_meshes_overlapping
+        from genesis.utils.mesh import are_meshes_overlapping, shrink_to_centroid
 
         n_geoms = self._solver.n_geoms
         geoms = self._solver.geoms
@@ -462,9 +462,7 @@ class Collider:
             for gi in self_root_geom_idxs:
                 verts = tensor_to_array(geoms[gi].get_verts())
                 verts = verts.reshape((-1, *verts.shape[-2:]))
-                centroid = verts.mean(axis=1, keepdims=True)
-                verts = centroid + (1.0 - 1e-3) * (verts - centroid)
-                geoms_verts[gi] = verts
+                geoms_verts[gi] = shrink_to_centroid(verts)
 
         if needs_self_check:
             self_root_indices = np.where(valid & same_root)[0]
