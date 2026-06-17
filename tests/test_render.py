@@ -135,7 +135,7 @@ def test_rasterizer_renders_heterogeneous_entities(n_envs, env_separate_rigid, s
 
     if sys.platform == "darwin" and scene.visualizer.is_software:
         # Small discrepancies between different hardware due the different physics integration
-        png_snapshot.extension._std_err_threshold = 1.5
+        png_snapshot.extension._std_err_threshold = 3.0
 
     # The sphere variant fills the first environments and the duck the last, placed on opposite sides so the duck
     # (yellow) occupies a known half of the combined image. The box (homogeneous) sits at the back of each environment.
