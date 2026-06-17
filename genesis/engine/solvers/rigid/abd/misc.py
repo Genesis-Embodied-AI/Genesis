@@ -106,7 +106,7 @@ def kernel_init_meaninertia(
     entities_info: array_class.EntitiesInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    n_dofs = rigid_global_info.mass_mat.shape[0]
+    n_dofs = rigid_global_info.mass_mat.shape[1]
     n_entities = entities_info.n_links.shape[0]
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
@@ -116,7 +116,7 @@ def kernel_init_meaninertia(
             for i_e in range(n_entities):
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
                     rigid_global_info.meaninertia[i_b] = (
-                        rigid_global_info.meaninertia[i_b] + rigid_global_info.mass_mat[i_d, i_d, i_b]
+                        rigid_global_info.meaninertia[i_b] + rigid_global_info.mass_mat[i_b, i_d, i_d]
                     )
                 rigid_global_info.meaninertia[i_b] = rigid_global_info.meaninertia[i_b] / n_dofs
         else:

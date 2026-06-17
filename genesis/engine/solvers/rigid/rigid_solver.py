@@ -679,7 +679,7 @@ class RigidSolver(KinematicSolver):
             mass_mat_L_inv = np.eye(self.n_dofs_)
             for i_d in range(self.n_dofs_):
                 for j_d in range(i_d):
-                    mass_mat_L_inv[i_d] -= mass_mat_L[i_d, j_d, i_b] * mass_mat_L_inv[j_d]
+                    mass_mat_L_inv[i_d] -= mass_mat_L[i_b, i_d, j_d] * mass_mat_L_inv[j_d]
             mass_mat_inv = (mass_mat_L_inv * mass_mat_D_inv[:, i_b]) @ mass_mat_L_inv.T
 
             # Compute links invweight if necessary
@@ -2727,7 +2727,8 @@ class RigidSolver(KinematicSolver):
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
 
     def get_mass_mat(self, dofs_idx=None, envs_idx=None, decompose=False):
-        tensor = qd_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=True, copy=True)
+        # Both mass_mat and mass_mat_L are now [env, row, col] — no transpose needed.
+        tensor = qd_to_torch(self.mass_mat_L if decompose else self.mass_mat, envs_idx, transpose=False, copy=True)
         if dofs_idx is not None:
             tensor = tensor[indices_to_mask(None, dofs_idx, dofs_idx)]
         if self.n_envs == 0:

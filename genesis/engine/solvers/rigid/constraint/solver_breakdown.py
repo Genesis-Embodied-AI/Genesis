@@ -138,7 +138,7 @@ def _func_decomp_linesearch_p0(
                 i_e = dofs_info.entity_idx[I_d1]
                 mv_val = gs.qd_float(0.0)
                 for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    mv_val = mv_val + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                    mv_val = mv_val + rigid_global_info.mass_mat[i_b, i_d1, i_d2] * constraint_state.search[i_d2, i_b]
                 constraint_state.mv[i_d1, i_b] = mv_val
                 i_d1 += _T
 

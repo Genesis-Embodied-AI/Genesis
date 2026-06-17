@@ -872,7 +872,7 @@ def _func_ls_init_p0_wc(
         while i_d1 < d_end:
             mv = gs.qd_float(0.0)
             for i_d2 in range(d_start, d_end):
-                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                mv = mv + rigid_global_info.mass_mat[i_b, i_d1, i_d2] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
             i_d1 = i_d1 + BLOCK_DIM
     qd.simt.block.sync()  # ensure mv is visible before quad_gauss_2 reads it
@@ -1529,7 +1529,7 @@ def _kernel_solve_body_wavecoop_amdgpu(
                             wp = msolve[p]
                             k = e_ds + tid
                             while k < p:
-                                msolve[k] = msolve[k] - rigid_global_info.mass_mat_L[p, k, i_b] * wp
+                                msolve[k] = msolve[k] - rigid_global_info.mass_mat_L[i_b, p, k] * wp
                                 k = k + BLOCK_DIM
                             qd.simt.block.sync()
 
@@ -1546,7 +1546,7 @@ def _kernel_solve_body_wavecoop_amdgpu(
                             wp = msolve[p]
                             k = p + 1 + tid
                             while k < e_de:
-                                msolve[k] = msolve[k] - rigid_global_info.mass_mat_L[k, p, i_b] * wp
+                                msolve[k] = msolve[k] - rigid_global_info.mass_mat_L[i_b, k, p] * wp
                                 k = k + BLOCK_DIM
                             qd.simt.block.sync()
 
@@ -1836,8 +1836,13 @@ def _func_ls_init_p0_twc(
     BLOCK_DIM = qd.static(_TWC_BLOCK_DIM)
     COOP = qd.static(_TWC_COOP_FACTOR)
     ENVS = qd.static(_TWC_ENVS_PER_BLOCK)
+    N_DOFS_STATIC = qd.static(static_rigid_sim_config.n_dofs_)
     init_red = qd.simt.block.SharedArray((8, BLOCK_DIM), gs.qd_float)
     init_bcast = qd.simt.block.SharedArray((ENVS, 6), gs.qd_float)
+    # Hoist search[] into LDS once so mass_mat and jac inner loops read
+    # LDS instead of HBM (search[d,i_b] is read n_dofs times in mv loop
+    # and n_con times in jv loop — both become fast LDS hits).
+    search_lds = qd.simt.block.SharedArray((ENVS, N_DOFS_STATIC), gs.qd_float)
 
     env_in_block = tid // COOP
     lane_in_env = tid % COOP
@@ -1848,7 +1853,15 @@ def _func_ls_init_p0_twc(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
+    # Load search[*,i_b] into LDS (8 lanes stride over n_dofs).
+    i_ds = lane_in_env
+    while i_ds < n_dofs:
+        search_lds[env_in_block, i_ds] = constraint_state.search[i_ds, i_b]
+        i_ds = i_ds + COOP
+    qd.simt.block.sync()
+
     # 1) mv[i_d1] = sum_d2 mass_mat[d1,d2] * search[d2] per entity.
+    # search[d2] is now read from LDS instead of HBM.
     for i_e in range(n_entities):
         d_start = entities_info.dof_start[i_e]
         d_end = entities_info.dof_end[i_e]
@@ -1856,17 +1869,18 @@ def _func_ls_init_p0_twc(
         while i_d1 < d_end:
             mv = gs.qd_float(0.0)
             for i_d2 in range(d_start, d_end):
-                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                mv = mv + rigid_global_info.mass_mat[i_b, i_d1, i_d2] * search_lds[env_in_block, i_d2]
             constraint_state.mv[i_d1, i_b] = mv
             i_d1 = i_d1 + COOP
     qd.simt.block.sync()
 
     # 2) jv[i_c] = sum_d jac[c,d] * search[d] (DENSE only).
+    # search[d] is read from LDS instead of HBM.
     i_c = lane_in_env
     while i_c < n_con:
         jv = gs.qd_float(0.0)
-        for i_d in range(n_dofs):
-            jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        for i_dj in range(n_dofs):
+            jv = jv + constraint_state.jac[i_c, i_dj, i_b] * search_lds[env_in_block, i_dj]
         constraint_state.jv[i_c, i_b] = jv
         i_c = i_c + COOP
     qd.simt.block.sync()
@@ -2762,16 +2776,25 @@ def _kernel_solve_body_tiled_wc_amdgpu(
                     qd.simt.block.sync()
 
                     # Step 1: solve L^T w = y (back-substitution, p high->low)
+                    # Software-pipelined: issue load for k+COOP while computing k,
+                    # hiding HBM latency (vmcnt(1) → 0 inside the inner loop).
                     for pp in range(e_n):
                         p = e_de - 1 - pp
                         if do_e:
                             wp = msolve_t[env_in_block, p]
                             k = e_ds + lane_in_env
+                            l_prefetch = gs.qd_float(0.0)
+                            if k < p:
+                                l_prefetch = rigid_global_info.mass_mat_L[i_b, p, k]
                             while k < p:
-                                msolve_t[env_in_block, k] = (
-                                    msolve_t[env_in_block, k] - rigid_global_info.mass_mat_L[p, k, i_b] * wp
-                                )
+                                l_cur = l_prefetch
                                 k = k + COOP
+                                l_prefetch = gs.qd_float(0.0)
+                                if k < p:
+                                    l_prefetch = rigid_global_info.mass_mat_L[i_b, p, k]
+                                msolve_t[env_in_block, k - COOP] = (
+                                    msolve_t[env_in_block, k - COOP] - l_cur * wp
+                                )
                         qd.simt.block.sync()
 
                     # Step 2: z = D^{-1} w
@@ -2785,16 +2808,24 @@ def _kernel_solve_body_tiled_wc_amdgpu(
                     qd.simt.block.sync()
 
                     # Step 3: solve L x = z (forward-substitution, p low->high)
+                    # Software-pipelined: same pattern as Step 1.
                     for pp in range(e_n):
                         p = e_ds + pp
                         if do_e:
                             wp = msolve_t[env_in_block, p]
                             k = p + 1 + lane_in_env
+                            l_prefetch = gs.qd_float(0.0)
+                            if k < e_de:
+                                l_prefetch = rigid_global_info.mass_mat_L[i_b, k, p]
                             while k < e_de:
-                                msolve_t[env_in_block, k] = (
-                                    msolve_t[env_in_block, k] - rigid_global_info.mass_mat_L[k, p, i_b] * wp
-                                )
+                                l_cur = l_prefetch
                                 k = k + COOP
+                                l_prefetch = gs.qd_float(0.0)
+                                if k < e_de:
+                                    l_prefetch = rigid_global_info.mass_mat_L[i_b, k, p]
+                                msolve_t[env_in_block, k - COOP] = (
+                                    msolve_t[env_in_block, k - COOP] - l_cur * wp
+                                )
                         qd.simt.block.sync()
 
                     # store x -> Mgrad
@@ -2833,19 +2864,29 @@ def _kernel_solve_body_tiled_wc_amdgpu(
             qd.simt.block.sync()
 
             env_improved = bcast[env_in_block, 2] > 0.5
+            # Split the CG-beta dot-product into two separate passes so only
+            # 3 streaming values are live at once (vs 4 in the fused version).
+            # Pass 1: my_beta = sum grad*(Mgrad - prev_Mgrad)
             if is_active_env and env_improved:
                 my_beta = gs.qd_float(0.0)
-                my_pgpm = gs.qd_float(0.0)
                 i_d = lane_in_env
                 while i_d < N_DOFS:
                     grad_d = constraint_state.grad[i_d, i_b]
                     Mgrad_d = constraint_state.Mgrad[i_d, i_b]
                     pMgrad_d = constraint_state.cg_prev_Mgrad[i_d, i_b]
-                    pgrad_d = constraint_state.cg_prev_grad[i_d, i_b]
                     my_beta = my_beta + grad_d * (Mgrad_d - pMgrad_d)
-                    my_pgpm = my_pgpm + pMgrad_d * pgrad_d
                     i_d = i_d + COOP
                 cost_red[tid] = my_beta
+            qd.simt.block.sync()
+            # Pass 2: my_pgpm = sum prev_Mgrad * prev_grad
+            if is_active_env and env_improved:
+                my_pgpm = gs.qd_float(0.0)
+                i_d = lane_in_env
+                while i_d < N_DOFS:
+                    pMgrad_d = constraint_state.cg_prev_Mgrad[i_d, i_b]
+                    pgrad_d = constraint_state.cg_prev_grad[i_d, i_b]
+                    my_pgpm = my_pgpm + pMgrad_d * pgrad_d
+                    i_d = i_d + COOP
                 gauss_red[tid] = my_pgpm
             qd.simt.block.sync()
             if is_active_env and env_improved and lane_in_env == 0:

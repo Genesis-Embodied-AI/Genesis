@@ -2912,6 +2912,137 @@ def test_mass_mat(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_mass_mat_symmetry(show_viewer, tol):
+    """mass_mat must be symmetric: M[i,j] == M[j,i] for all i, j.
+    Catches layout bugs where only one triangle is written correctly."""
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build()
+
+    M = robot.get_mass_mat(decompose=False)
+    assert_allclose(M, M.T, tol=1e-6)
+
+
+@pytest.mark.required
+def test_mass_mat_multi_env(show_viewer, tol):
+    """mass_mat must be consistent across environments and match per-env slices.
+
+    Uses n_envs=4 to exercise the env-major layout [n_envs, n_dofs, n_dofs]:
+    - get_mass_mat() with no args returns shape (n_envs, n_dofs, n_dofs)
+    - Each env's slice matches get_mass_mat(envs_idx=[i])
+    - All envs in the same rest configuration have identical mass matrices
+    """
+    n_envs = 4
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=n_envs)
+
+    # Full batch: shape (n_envs, n_dofs, n_dofs)
+    M_all = robot.get_mass_mat(decompose=False)
+    assert M_all.shape == (n_envs, robot.n_dofs, robot.n_dofs)
+
+    # Each env slice must match the full-batch result and be symmetric
+    for i in range(n_envs):
+        M_i = robot.get_mass_mat(decompose=False, envs_idx=[i])
+        assert M_i.shape == (1, robot.n_dofs, robot.n_dofs)
+        assert_allclose(M_all[i], M_i[0], tol=1e-6)
+        # Symmetry per env
+        assert_allclose(M_all[i], M_all[i].T, tol=1e-6)
+
+    # All envs in the same rest configuration must be identical
+    for i in range(1, n_envs):
+        assert_allclose(M_all[0], M_all[i], tol=1e-6)
+
+
+@pytest.mark.required
+def test_mass_mat_gpu_env_layout(show_viewer, tol):
+    """mass_mat env-major layout is correct on the GPU backend.
+
+    Builds n_envs=4 and verifies:
+    - The full batch shape is (n_envs, n_dofs, n_dofs)
+    - Every env has identical values when starting from the same rest configuration
+    - Slicing by envs_idx returns the right env's data (not always env 0)
+    - mass_mat is positive-definite (all eigenvalues > 0)
+    Catches any bug where the env dimension is read from the wrong axis.
+    """
+    n_envs = 4
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+        rigid_options=gs.options.RigidOptions(dt=0.01),
+    )
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=n_envs)
+
+    M_all = robot.get_mass_mat(decompose=False)
+    assert M_all.shape == (n_envs, robot.n_dofs, robot.n_dofs)
+
+    # All envs at rest must be identical
+    for i in range(1, n_envs):
+        assert_allclose(M_all[0], M_all[i], tol=1e-6)
+
+    # Per-env slice must match the full-batch result (not always read env 0)
+    for i in range(n_envs):
+        M_i = robot.get_mass_mat(decompose=False, envs_idx=[i])
+        assert_allclose(M_all[i], M_i[0], tol=1e-6)
+
+    # mass_mat must be positive-definite (all eigenvalues > 0)
+    M_np = tensor_to_array(M_all[0])
+    eigvals = np.linalg.eigvalsh(M_np)
+    assert np.all(eigvals > 0), f"mass_mat not positive-definite; min eigenvalue: {eigvals.min()}"
+
+
+@pytest.mark.required
+def test_mass_mat_decompose_multi_env(show_viewer, tol):
+    """Decomposed mass_mat (L, D_inv) must reconstruct M for each env.
+
+    Verifies the LDL^T factorization is correct across the env dimension,
+    catching any layout mismatch in mass_mat_L or mass_mat_D_inv storage.
+    """
+    n_envs = 3
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=n_envs)
+
+    M_direct = robot.get_mass_mat(decompose=False)   # (n_envs, n_dofs, n_dofs)
+    M_L, M_D_inv = robot.get_mass_mat(decompose=True)
+
+    for i in range(n_envs):
+        L_i = M_L[i] if M_L.ndim == 3 else M_L
+        D_inv_i = M_D_inv[i] if M_D_inv.ndim == 2 else M_D_inv
+        M_reconstructed = L_i.T @ torch.diag(1.0 / D_inv_i) @ L_i
+        assert_allclose(M_reconstructed, M_direct[i], tol=1e-5)
+
+
+@pytest.mark.required
+def test_mass_mat_decompose_serial_path(show_viewer, tol):
+    """LDL^T reconstruction correctness on the serial (non-tiled) factor_mass path.
+
+    n_envs > 16384 disables enable_tiled_cholesky_mass_matrix, forcing the serial
+    Cholesky back-substitution path. Catches any layout regression in mass_mat_L
+    that would only surface on that code path.
+    """
+    n_envs = 16385
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=n_envs)
+
+    M_direct = robot.get_mass_mat(decompose=False)   # (n_envs, n_dofs, n_dofs)
+    M_L, M_D_inv = robot.get_mass_mat(decompose=True)
+
+    for i in range(3):  # spot-check 3 envs
+        L_i = M_L[i] if M_L.ndim == 3 else M_L
+        D_inv_i = M_D_inv[i] if M_D_inv.ndim == 2 else M_D_inv
+        M_reconstructed = L_i.T @ torch.diag(1.0 / D_inv_i) @ L_i
+        assert_allclose(M_reconstructed, M_direct[i], tol=1e-5)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["hinge_slide"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])

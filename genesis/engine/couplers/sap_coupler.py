@@ -839,13 +839,13 @@ class SAPCoupler(RBC):
             if not self.batch_active[i_b]:
                 continue
             self.sap_state[i_b].gradient_norm += (
-                self.rigid_state_dof.gradient[i_b, i_d] ** 2 / rigid_global_info.mass_mat[i_d, i_d, i_b]
+                self.rigid_state_dof.gradient[i_b, i_d] ** 2 / rigid_global_info.mass_mat[i_b, i_d, i_d]
             )
             self.sap_state[i_b].momentum_norm += (
-                self.rigid_state_dof.v[i_b, i_d] ** 2 * rigid_global_info.mass_mat[i_d, i_d, i_b]
+                self.rigid_state_dof.v[i_b, i_d] ** 2 * rigid_global_info.mass_mat[i_b, i_d, i_d]
             )
             self.sap_state[i_b].impulse_norm += (
-                self.rigid_state_dof.impulse[i_b, i_d] ** 2 / rigid_global_info.mass_mat[i_d, i_d, i_b]
+                self.rigid_state_dof.impulse[i_b, i_d] ** 2 / rigid_global_info.mass_mat[i_b, i_d, i_d]
             )
 
     @qd.func
@@ -938,7 +938,7 @@ class SAPCoupler(RBC):
             if not self.batch_active[i_b]:
                 continue
             self.rigid_state_dof.gradient[i_b, i_d1] += (
-                rigid_global_info.mass_mat[i_d1, i_d0, i_b] * self.rigid_state_dof.v_diff[i_b, i_d0]
+                rigid_global_info.mass_mat[i_b, i_d1, i_d0] * self.rigid_state_dof.v_diff[i_b, i_d0]
             )
 
     @qd.kernel
@@ -1088,7 +1088,7 @@ class SAPCoupler(RBC):
         for i_b, i_d0, i_d1 in qd.ndrange(self._B, self.rigid_solver.n_dofs, self.rigid_solver.n_dofs):
             if not active[i_b]:
                 continue
-            out[i_b, i_d1] += rigid_global_info.mass_mat[i_d1, i_d0, i_b] * vec[i_b, i_d0]
+            out[i_b, i_d1] += rigid_global_info.mass_mat[i_b, i_d1, i_d0] * vec[i_b, i_d0]
 
     # FIXME: This following two rigid solves are duplicated with the one in rigid_solver.py:func_solve_mass_batched
     # Consider refactoring.
@@ -1111,7 +1111,7 @@ class SAPCoupler(RBC):
                 i_d = entity_dof_end - i_d_ - 1
                 out[i_b, i_d] = vec[i_b, i_d]
                 for j_d in range(i_d + 1, entity_dof_end):
-                    out[i_b, i_d] -= rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[i_b, j_d]
+                    out[i_b, i_d] -= rigid_global_info.mass_mat_L[i_b, j_d, i_d] * out[i_b, j_d]
 
         # Step 2: z = D^{-1} w
         for i_b, i_d in qd.ndrange(self._B, self.rigid_solver.n_dofs):
@@ -1128,7 +1128,7 @@ class SAPCoupler(RBC):
             n_dofs = entities_info.n_dofs[i_e]
             for i_d in range(entity_dof_start, entity_dof_end):
                 for j_d in range(entity_dof_start, i_d):
-                    out[i_b, i_d] -= rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[i_b, j_d]
+                    out[i_b, i_d] -= rigid_global_info.mass_mat_L[i_b, i_d, j_d] * out[i_b, j_d]
 
     @qd.func
     def rigid_solve_jacobian(
@@ -1151,7 +1151,7 @@ class SAPCoupler(RBC):
                 i_d = entity_dof_end - i_d_ - 1
                 out[i_p, i_d][k] = vec[i_p, i_d][k]
                 for j_d in range(i_d + 1, entity_dof_end):
-                    out[i_p, i_d][k] -= rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[i_p, j_d][k]
+                    out[i_p, i_d][k] -= rigid_global_info.mass_mat_L[i_b, j_d, i_d] * out[i_p, j_d][k]
 
         # Step 2: z = D^{-1} w
         for i_p, i_d, k in qd.ndrange(n_contact_pairs, self.rigid_solver.n_dofs, dim):
@@ -1166,7 +1166,7 @@ class SAPCoupler(RBC):
             n_dofs = entities_info.n_dofs[i_e]
             for i_d in range(entity_dof_start, entity_dof_end):
                 for j_d in range(entity_dof_start, i_d):
-                    out[i_p, i_d][k] -= rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[i_p, j_d][k]
+                    out[i_p, i_d][k] -= rigid_global_info.mass_mat_L[i_b, i_d, j_d] * out[i_p, j_d][k]
 
     @qd.func
     def init_rigid_pcg_solve(

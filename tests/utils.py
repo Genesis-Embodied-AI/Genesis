@@ -832,7 +832,7 @@ def check_mujoco_data_consistency(
     mj_crb_mass = mj_sim.data.crb[:, 9]
     assert_allclose(gs_crb_mass[gs_bodies_idx], mj_crb_mass[mj_bodies_idx], tol=tol)
 
-    gs_mass_mat = gs_sim.rigid_solver.mass_mat.to_numpy()[:, :, 0]
+    gs_mass_mat = gs_sim.rigid_solver.mass_mat.to_numpy()[0, :, :]
     mj_mass_mat = np.zeros((mj_sim.model.nv, mj_sim.model.nv))
     mujoco.mj_fullM(mj_sim.model, mj_mass_mat, mj_sim.data.qM)
     assert_allclose(gs_mass_mat[gs_dofs_idx][:, gs_dofs_idx], mj_mass_mat[mj_dofs_idx][:, mj_dofs_idx], tol=tol)

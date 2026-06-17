@@ -414,7 +414,7 @@ class ConstraintSolverIsland:
             i_e = self.contact_island.entity_id[i_e_, i_b]
             for i_d1 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                 for i_d2 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-                    self.nt_H[i_b, i_d1, i_d2] = self.nt_H[i_b, i_d1, i_d2] + self._solver.mass_mat[i_d1, i_d2, i_b]
+                    self.nt_H[i_b, i_d1, i_d2] = self.nt_H[i_b, i_d1, i_d2] + self._solver.mass_mat[i_b, i_d1, i_d2]
         self._func_nt_chol_factor(island, i_b)
 
     @qd.func
@@ -597,7 +597,7 @@ class ConstraintSolverIsland:
             for i_d1 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                 mv = gs.qd_float(0.0)
                 for i_d2 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-                    mv += self._solver.mass_mat[i_d1, i_d2, i_b] * self.search[i_d2, i_b]
+                    mv += self._solver.mass_mat[i_b, i_d1, i_d2] * self.search[i_d2, i_b]
                 self.mv[i_d1, i_b] = mv
 
         for i_c in range(self.n_constraints[i_b]):
@@ -1019,7 +1019,7 @@ class ConstraintSolverIsland:
             for i_d1 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
                 Ma_ = gs.qd_float(0.0)
                 for i_d2 in range(self.entities_info.dof_start[i_e], self.entities_info.dof_end[i_e]):
-                    Ma_ += self._solver.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+                    Ma_ += self._solver.mass_mat[i_b, i_d1, i_d2] * qacc[i_d2, i_b]
                 Ma[i_d1, i_b] = Ma_
 
     @qd.func

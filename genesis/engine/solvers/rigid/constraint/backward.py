@@ -27,7 +27,7 @@ def func_matvec_Ap(
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             acc = gs.qd_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                acc += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.bw_p[i_d2, i_b]
+                acc += rigid_global_info.mass_mat[i_b, i_d1, i_d2] * constraint_state.bw_p[i_d2, i_b]
             constraint_state.bw_Ap[i_d1, i_b] += acc
 
     # tmp = J v

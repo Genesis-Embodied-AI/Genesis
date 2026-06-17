@@ -1677,7 +1677,7 @@ def func_hessian_direct_batch(
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             for i_d2 in range(entities_info.dof_start[i_e], i_d1 + 1):
                 constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                    constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                    constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_b, i_d1, i_d2]
                 )
 
 
@@ -1785,9 +1785,13 @@ def func_hessian_direct_tiled(
                             i_d2 = i_d2_ + i_d2_start
                             coef = gs.qd_float(0.0)
                             if i_c_start == 0:
-                                coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                            for j_c_ in range(n_conts_tile):
-                                coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
+                                coef = rigid_global_info.mass_mat[i_b, i_d1, i_d2]
+                            if is_diag_tile:
+                                for j_c_ in range(n_conts_tile):
+                                    coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
+                            else:
+                                for j_c_ in range(n_conts_tile):
+                                    coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
                             if i_c_start == 0:
                                 constraint_state.nt_H[i_b, i_d1, i_d2] = coef
                             else:
@@ -1803,7 +1807,7 @@ def func_hessian_direct_tiled(
                             i_d2 = i_d2_ + i_d2_start
                             coef = gs.qd_float(0.0)
                             if i_c_start == 0:
-                                coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                                coef = rigid_global_info.mass_mat[i_b, i_d1, i_d2]
                             for j_c_ in range(n_conts_tile):
                                 coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
                             if i_c_start == 0:
@@ -1823,7 +1827,7 @@ def func_hessian_direct_tiled(
             i_pair = tid
             while i_pair < n_lower_tri:
                 i_d1, i_d2 = linear_to_lower_tri(i_pair)
-                constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_b, i_d1, i_d2]
                 i_pair = i_pair + BLOCK_DIM
 
 
@@ -2500,7 +2504,7 @@ def func_ls_init_and_eval_p0(
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             mv = gs.qd_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                mv = mv + rigid_global_info.mass_mat[i_b, i_d1, i_d2] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
 
     for i_c in range(n_con):
@@ -3773,20 +3777,19 @@ def initialize_Ma(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    _B = rigid_global_info.mass_mat.shape[2]
+    _B = rigid_global_info.mass_mat.shape[0]
     n_dofs = qacc.shape[0]
 
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        # Flipped mass_mat layout=(2,1,0): physical (_B, n_dofs, n_dofs) with i_d1 stride-1. Make i_d1 the innermost
-        # ndrange axis so adjacent lanes vary i_d1 -> coalesced reads of mass_mat[i_d1, i_d2, i_b]. qacc[i_d2, i_b] is
-        # constant within the warp -> broadcast load.
+        # mass_mat is [env, row, col] — (i_b, i_d1) ndrange makes i_d1 stride-1 in the inner i_d2 loop,
+        # coalescing reads across lanes that vary i_d1 with a fixed i_d2 broadcast.
         qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_b, i_d1 in qd.ndrange(_B, n_dofs):
             I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
             i_e = dofs_info.entity_idx[I_d1]
             Ma_ = gs.qd_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+                Ma_ = Ma_ + rigid_global_info.mass_mat[i_b, i_d1, i_d2] * qacc[i_d2, i_b]
             Ma[i_d1, i_b] = Ma_
     else:
         qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -3795,7 +3798,7 @@ def initialize_Ma(
             i_e = dofs_info.entity_idx[I_d1]
             Ma_ = gs.qd_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+                Ma_ = Ma_ + rigid_global_info.mass_mat[i_b, i_d1, i_d2] * qacc[i_d2, i_b]
             Ma[i_d1, i_b] = Ma_
 
 

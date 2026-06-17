@@ -302,7 +302,7 @@ def test_diff_solver(monkeypatch):
         rigid_solver.dofs_state.force.from_numpy(input_force)
 
         # Recompute acc_smooth from the updated input variables
-        updated_acc_smooth = np.linalg.solve(input_mass[..., 0], input_force[..., 0])
+        updated_acc_smooth = np.linalg.solve(input_mass[0], input_force[..., 0])
         rigid_solver.dofs_state.acc_smooth.from_numpy(updated_acc_smooth[..., None])
         constraint_solver.resolve()
 
@@ -356,7 +356,7 @@ def test_diff_solver(monkeypatch):
                 np.linalg.norm(rand_dx, axis=0 if x_type in ("force", "aref", "efc_D") else (0, 1)), gs.EPS
             )
             if x_type == "mass":
-                # Make rand_dx symmetric
+                # dL_dM and rand_dx use (n_dofs, n_dofs, n_envs) layout; symmetrize across those axes.
                 rand_dx = (rand_dx + np.moveaxis(rand_dx, 0, 1)) * 0.5
 
             dL = (rand_dx * dL_dx).sum()
@@ -377,7 +377,8 @@ def test_diff_solver(monkeypatch):
             elif x_type == "jac":
                 input_jac = init_input_jac + rand_dx * FD_EPS
             elif x_type == "mass":
-                input_mass = init_input_mass + rand_dx * FD_EPS
+                # mass_mat is [env,row,col]; rand_dx is [row,col,env] from dL_dM — transpose before perturbing.
+                input_mass = init_input_mass + np.moveaxis(rand_dx, 2, 0) * FD_EPS
             lossP1 = compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force)
 
             # -1 * eps
@@ -390,7 +391,7 @@ def test_diff_solver(monkeypatch):
             elif x_type == "jac":
                 input_jac = init_input_jac - rand_dx * FD_EPS
             elif x_type == "mass":
-                input_mass = init_input_mass - rand_dx * FD_EPS
+                input_mass = init_input_mass - np.moveaxis(rand_dx, 2, 0) * FD_EPS
 
             lossP2 = compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force)
             dL_fd = (lossP1 - lossP2) / (2 * FD_EPS)
@@ -544,3 +545,45 @@ def test_diff_sim_vs_solver_state_grad_parity(show_viewer):
         grads.append(grad)
 
     assert_allclose(*grads, atol=gs.EPS)
+
+
+@pytest.mark.parametrize("n_envs", [1, 4])
+def test_mass_mat_L_bw_gradient_correctness(show_viewer, n_envs):
+    """Regression test for mass_mat_L_bw env-major indexing bug.
+
+    Exercises the backward path through func_factor_mass (Cholesky factorization)
+    with requires_grad=True, multi-env, and constraints enabled — the exact
+    combination that was never covered and allowed the layout bug through.
+
+    Checks: gradients are finite and non-zero, confirming mass_mat_L_bw is
+    read/written at correct env-major offsets [slot, i_b, i_pr, j_pr].
+    """
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, requires_grad=True),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_self_collision=False,
+            use_hibernation=False,
+        ),
+        show_viewer=False,
+    )
+
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=n_envs)
+
+    init_qpos = gs.tensor(
+        [[0.0, -0.4, 0.0, -1.8, 0.0, 1.6, 0.8, 0.04, 0.04]] * n_envs,
+        requires_grad=True,
+    )
+    robot.set_qpos(init_qpos)
+
+    for _ in range(3):
+        scene.step()
+
+    qpos = robot.get_qpos()
+    loss = qpos.sum()
+    loss.backward()
+
+    assert init_qpos.grad is not None, "No gradient flowed back to init_qpos"
+    assert torch.isfinite(init_qpos.grad).all(), "Gradient contains NaN or Inf — mass_mat_L_bw indexing is wrong"
+    assert (init_qpos.grad.abs() > 0).any(), "Gradient is all-zero — backward pass did not run"

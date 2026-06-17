@@ -105,7 +105,7 @@ def func_solve_mass_entity_row(
             i_d = entity_dof_end - i_d_ - 1
             curr_out = buf[i_row, i_d, i_b]
             for j_d in range(i_d + 1, entity_dof_end):
-                curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * buf[i_row, j_d, i_b]
+                curr_out = curr_out - rigid_global_info.mass_mat_L[i_b, j_d, i_d] * buf[i_row, j_d, i_b]
             buf[i_row, i_d, i_b] = curr_out
 
         # Step 2: z = D^{-1} @ w
@@ -116,7 +116,7 @@ def func_solve_mass_entity_row(
         for i_d in range(entity_dof_start, entity_dof_end):
             curr_out = buf[i_row, i_d, i_b]
             for j_d in range(entity_dof_start, i_d):
-                curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * buf[i_row, j_d, i_b]
+                curr_out = curr_out - rigid_global_info.mass_mat_L[i_b, i_d, j_d] * buf[i_row, j_d, i_b]
             buf[i_row, i_d, i_b] = curr_out
 
 

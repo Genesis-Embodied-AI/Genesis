@@ -897,7 +897,8 @@ class IPCCoupler(RBC):
         if COUPLING_TYPE.EXTERNAL_ARTICULATION not in self._entities_by_coup_type:
             return
 
-        mass_matrix = qd_to_numpy(self.rigid_solver.mass_mat, transpose=True)
+        # mass_mat is stored [env, row, col]; transpose=True was for legacy [row, col, env].
+        mass_matrix = qd_to_numpy(self.rigid_solver.mass_mat, transpose=False)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Copy stored qpos to articulation_data.qpos_current

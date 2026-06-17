@@ -145,28 +145,31 @@ class RigidGlobalInfo:
 def get_rigid_global_info(solver, kinematic_only):
     _B = solver._B
 
-    mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
+    # mass_mat uses [env, row, col] layout for coalesced inner i_d2 loop access.
+    # Previously [row, col, env] gave i_d2 stride = n_envs*4B = 32KB — no coalescing.
+    mass_mat_shape = (_B, solver.n_dofs_, solver.n_dofs_)
     if math.prod(mass_mat_shape) > np.iinfo(np.int64).max:
         gs.raise_exception(
-            f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+            f"Mass matrix shape (n_envs={_B}, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}) is too large."
         )
+    # mass_mat_L uses [env, row, col] layout for coalesced inner k-loop access.
+    mass_mat_L_shape = (_B, solver.n_dofs_, solver.n_dofs_)
     requires_grad = solver._requires_grad
-    mass_mat_shape_bw = maybe_shape((2, *mass_mat_shape), requires_grad)
+    mass_mat_shape_bw = maybe_shape((2, *mass_mat_L_shape), requires_grad)
     if math.prod(mass_mat_shape_bw) > np.iinfo(np.int64).max:
         gs.raise_exception(
-            f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+            f"Mass matrix buffer shape (2, n_envs={_B}, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}) is too large."
         )
 
-    # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
-    # layout=(2, 1, 0): i_d1 becomes innermost / stride-1, which coalesces consumer kernels whose lanes stride i_d1
-    # with a serial inner i_d2 loop. The trade-off is regression on writer-side kernels that pair with cooperative
-    # rewrites to recover under the same constraint_layout_transposed flag.
+    # Flip mass_mat from canonical (_B, n_dofs(i_d1), n_dofs(i_d2)) to physical
+    # (_B, n_dofs(i_d2), n_dofs(i_d1)) via layout=(0, 2, 1). This keeps the env
+    # block outermost and makes i_d1 stride-1 for cooperative kernels whose lanes
+    # vary i_d1 while walking a serial inner i_d2 loop.
     #
-    # mass_mat_L stays canonical. Its dominant consumer is a serial Cholesky-style back-substitution that is already
-    # coalesced under (n_dofs, n_dofs, _B) with lanes varying i_b, so flipping L would regress that path more than
-    # the corresponding writer-side win on the tiled factor_mass.
+    # mass_mat_L is explicitly allocated in env-major canonical order too; no
+    # extra physical permutation is needed for its current solve/factor paths.
     mass_mat_layout = (
-        (2, 1, 0) if not kinematic_only and solver._static_rigid_sim_config.constraint_layout_transposed else None
+        (0, 2, 1) if not kinematic_only and solver._static_rigid_sim_config.constraint_layout_transposed else None
     )
 
     # FIXME: Add a better split between kinematic and Genesis
@@ -222,7 +225,7 @@ def get_rigid_global_info(solver, kinematic_only):
         links_T=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(solver.n_links_,)),
         geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_, 8)),
         mass_mat=V(dtype=gs.qd_float, shape=mass_mat_shape, layout=mass_mat_layout, needs_grad=requires_grad),
-        mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
+        mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_L_shape, needs_grad=requires_grad),
         mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
