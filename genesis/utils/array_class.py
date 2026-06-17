@@ -611,55 +611,6 @@ def get_agg_list(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class ContactIslandState:
-    ci_edges: qd.Tensor
-    edge_id: qd.Tensor
-    constraint_list: qd.Tensor
-    constraint_id: qd.Tensor
-    entity_edge: AggList
-    island_col: AggList
-    island_hibernated: qd.Tensor
-    island_entity: AggList
-    entity_id: qd.Tensor
-    n_edges: qd.Tensor
-    n_islands: qd.Tensor
-    n_stack: qd.Tensor
-    entity_island: qd.Tensor
-    stack: qd.Tensor
-    entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
-
-
-def get_contact_island_state(solver, collider):
-    _B = solver._B
-    max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
-    n_entities = max(solver.n_entities, 1)
-
-    # When hibernation is enabled, the island construction adds edges for hibernated entity chains
-    # in addition to contact edges. The chain construction is cyclic (last entity links back to first),
-    # so worst case: each entity contributes one hibernation edge, totaling n_entities hibernation edges.
-    max_hibernation_edges = n_entities if solver._use_hibernation else 0
-    max_edges = max_candidate_contacts + max_hibernation_edges
-
-    return ContactIslandState(
-        ci_edges=V(dtype=gs.qd_int, shape=(max_edges, 2, _B)),
-        edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
-        constraint_list=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
-        constraint_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts * 2, _B)),
-        entity_edge=get_agg_list(solver),
-        island_col=get_agg_list(solver),
-        island_hibernated=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_entity=get_agg_list(solver),
-        entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        n_edges=V(dtype=gs.qd_int, shape=(_B,)),
-        n_islands=V(dtype=gs.qd_int, shape=(_B,)),
-        n_stack=V(dtype=gs.qd_int, shape=(_B,)),
-        entity_island=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        stack=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-    )
-
-
-@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class IslandState:
     # Union-find partition of dof-carrying entities into islands (connected components of the
     # inter-entity coupling graph: contacts + equality constraints). entity_island is -1 for entities
@@ -696,6 +647,13 @@ class IslandState:
     # Tiles are keyed by their packed base, so islands solved concurrently by Mode B never collide.
     island_tile_start: qd.Tensor
     island_nt_H: qd.Tensor
+    # Hibernation (empty unless use_hibernation). island_hibernated[i_island, i_b] marks an island whose every
+    # dof-entity is asleep, set by the partition build. entity_idx_to_next_entity_idx_in_hibernated_island is the
+    # per-entity daisy chain that keeps a hibernated group together as one island across steps: sleeping bodies
+    # generate no live contacts, so the contact/equality union would otherwise fragment them. It is written at
+    # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
+    island_hibernated: qd.Tensor
+    entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
 
 
 def get_island_state(solver, collider):
@@ -736,6 +694,10 @@ def get_island_state(solver, collider):
         island_tile_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         # Packed island tiles fit n_dofs^2 slots per env (Sum_i n_i^2 <= n_dofs^2); empty otherwise.
         island_nt_H=V(dtype=gs.qd_float, shape=maybe_shape((_B, n_dofs * n_dofs), use_contact_island)),
+        island_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
+        entity_idx_to_next_entity_idx_in_hibernated_island=V(
+            dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)
+        ),
     )
 
 

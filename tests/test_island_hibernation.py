@@ -3,7 +3,7 @@ import pytest
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import qd_to_numpy
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from .utils import assert_allclose
 
@@ -49,6 +49,7 @@ def test_island_partition_groups_contacts_and_equalities():
     island_state = array_class.get_island_state(solver, solver.collider)
     kernel_build_islands(
         solver.entities_info,
+        solver.entities_state,
         solver.links_info,
         solver.joints_info,
         solver.equalities_info,
@@ -186,6 +187,7 @@ def test_island_partition_tracks_contact_changes():
     def n_islands_now():
         kernel_build_islands(
             solver.entities_info,
+            solver.entities_state,
             solver.links_info,
             solver.joints_info,
             solver.equalities_info,
@@ -283,10 +285,13 @@ def test_island_single_entity_disables_islands_and_settles():
 
 
 @pytest.mark.required
-def test_island_and_sparse_solve_route_to_one_block_solver():
-    # sparse-skyline and per-island both exploit the block-diagonal Hessian, so requesting both must NOT error
-    # and must NOT run both at once. The solver routes to the backend's winner: sparse on CPU (it supersedes
-    # islands), islands on GPU (sparse is dropped there).
+def test_island_and_sparse_solve_compose_on_cpu():
+    # The sparse Jacobian representation and per-island solve exploit the block-diagonal Hessian from
+    # complementary angles, so on CPU they compose: islands own the per-block factorization while the sparse
+    # Jacobian makes the per-iteration products and the constraint-to-island lookup O(nonzeros). The skyline
+    # envelope (the global-Hessian factorization) is the part islands supersede, so it is dropped. On GPU the
+    # dense tiled path is faster, so sparse is dropped and islands stand alone.
+    box_z0 = 0.3
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -299,18 +304,173 @@ def test_island_and_sparse_solve_route_to_one_block_solver():
         show_viewer=False,
     )
     scene.add_entity(gs.morphs.Plane())
-    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.1)))
-    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.1)))
+    box_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, box_z0)))
+    box_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, box_z0)))
     scene.build(n_envs=1)
-    for _ in range(10):
+    for _ in range(200):
         scene.step()
 
     solver = scene.rigid_solver
     sparse_active = solver._static_rigid_sim_config.sparse_solve
     islands_active = solver._use_contact_island
-    # Exactly one block-structure exploiter is active - never both, never an error.
-    assert sparse_active != islands_active
     if gs.backend == gs.cpu:
-        assert sparse_active and not islands_active
+        # Both block-structure exploiters compose on CPU.
+        assert sparse_active and islands_active
     else:
         assert islands_active and not sparse_active
+
+    # The two well-separated boxes (each its own island) settle on the plane: bottom face at z=0, so the
+    # 0.1-cube centers rest at z=0.05, with no ground penetration.
+    z_a = float(np.atleast_1d(tensor_to_array(box_a.get_pos())[..., 2])[0])
+    z_b = float(np.atleast_1d(tensor_to_array(box_b.get_pos())[..., 2])[0])
+    assert_allclose(z_a, 0.05, atol=2e-3)
+    assert_allclose(z_b, 0.05, atol=2e-3)
+
+
+@pytest.mark.performance_mode(True)
+def test_hibernation_settles_sleeps_and_wakes_per_island():
+    # Hibernation runs on the unified IslandState: each well-separated box is its own island, so once it
+    # settles it sleeps independently, and disturbing one island wakes only that island. Hibernation requires
+    # performance_mode (field storage), so this test runs only under GS_ENABLE_NDARRAY=0 and skips otherwise.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            gravity=(0.0, 0.0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.1)))
+    box_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.1)))
+    scene.build(n_envs=1)
+    solver = scene.rigid_solver
+
+    def hibernated():
+        # [B, n_entities] -> per-entity flag for env 0; entity 0 is the fixed plane.
+        return qd_to_numpy(solver.entities_state.hibernated, transpose=True).reshape(-1).astype(bool)
+
+    for _ in range(300):
+        scene.step()
+
+    # Both boxes settled on the plane (0.1-cube center rests at z=0.05) and went to sleep.
+    flags = hibernated()
+    assert flags[box_a.idx] and flags[box_b.idx]
+    z_a = float(np.atleast_1d(tensor_to_array(box_a.get_pos())[..., 2])[0])
+    z_b = float(np.atleast_1d(tensor_to_array(box_b.get_pos())[..., 2])[0])
+    assert_allclose(z_a, 0.05, atol=2e-3)
+    assert_allclose(z_b, 0.05, atol=2e-3)
+
+    # An upward control force on box_a wakes only its island; box_b stays asleep.
+    box_a.control_dofs_force(np.array([0.0, 0.0, 50.0, 0.0, 0.0, 0.0]))
+    scene.step()
+    flags = hibernated()
+    assert not flags[box_a.idx]
+    assert flags[box_b.idx]
+
+    # The woken box responds to the force and lifts off; the sleeping one does not move.
+    for _ in range(20):
+        scene.step()
+    assert float(np.atleast_1d(tensor_to_array(box_a.get_pos())[..., 2])[0]) > 0.1
+    assert_allclose(float(np.atleast_1d(tensor_to_array(box_b.get_pos())[..., 2])[0]), 0.05, atol=2e-3)
+
+
+@pytest.mark.performance_mode(True)
+def test_hibernation_wakeup_on_state_setters():
+    # Each user state-setter that mutates a sleeping body must revive it (and only its island), otherwise the
+    # input is silently dropped. Four well-separated boxes each form their own island; after they sleep, a
+    # different setter wakes each, leaving the others asleep.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            gravity=(0.0, 0.0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box_force = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.1)))
+    box_pos = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.1)))
+    box_vel = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(2.0, 0.0, 0.1)))
+    box_qpos = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(3.0, 0.0, 0.1)))
+    scene.build(n_envs=1)
+    solver = scene.rigid_solver
+
+    def asleep(entity):
+        return bool(qd_to_numpy(solver.entities_state.hibernated, transpose=True).reshape(-1)[entity.idx])
+
+    for _ in range(300):
+        scene.step()
+    assert asleep(box_force) and asleep(box_pos) and asleep(box_vel) and asleep(box_qpos)
+
+    # apply_links_external_force wakes its island only.
+    solver.apply_links_external_force(np.array([[0.0, 0.0, 30.0]]), links_idx=[box_force.base_link_idx])
+    scene.step()
+    assert not asleep(box_force)
+    assert asleep(box_pos) and asleep(box_vel) and asleep(box_qpos)
+
+    # set_dofs_position wakes its island only.
+    box_pos.set_dofs_position(np.array([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]))
+    scene.step()
+    assert not asleep(box_pos)
+    assert asleep(box_vel) and asleep(box_qpos)
+
+    # set_dofs_velocity wakes its island only.
+    box_vel.set_dofs_velocity(np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
+    scene.step()
+    assert not asleep(box_vel)
+    assert asleep(box_qpos)
+
+    # set_qpos wakes its island.
+    box_qpos.set_qpos(np.array([3.0, 0.0, 0.6, 1.0, 0.0, 0.0, 0.0]))
+    scene.step()
+    assert not asleep(box_qpos)
+
+
+@pytest.mark.performance_mode(True)
+def test_hibernation_wakeup_on_collision():
+    # An awake body colliding with a sleeping body must wake it so it responds dynamically instead of acting as an
+    # immovable obstacle (or being tunnelled through). This needs both the broad-phase sort-buffer refresh of awake
+    # geoms - so the awake-vs-sleeping contact is detected at all - and the wake-on-contact pass.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            gravity=(0.0, 0.0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box_rest = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
+    box_hit = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.22, 0.0, 0.05)))
+    scene.build(n_envs=1)
+    solver = scene.rigid_solver
+
+    def asleep(entity):
+        return bool(qd_to_numpy(solver.entities_state.hibernated, transpose=True).reshape(-1)[entity.idx])
+
+    for _ in range(300):
+        scene.step()
+    assert asleep(box_rest) and asleep(box_hit)
+    rest_x0 = float(np.atleast_1d(tensor_to_array(box_rest.get_pos())[..., 0])[0])
+
+    # Ram box_hit leftwards into the sleeping box_rest at a moderate speed (no tunnelling).
+    box_hit.set_dofs_velocity(np.array([-2.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    for _ in range(30):
+        scene.step()
+
+    # The struck sleeper woke and was knocked; the striker was stopped by it (did not pass through).
+    assert not asleep(box_rest)
+    rest_x1 = float(np.atleast_1d(tensor_to_array(box_rest.get_pos())[..., 0])[0])
+    hit_x1 = float(np.atleast_1d(tensor_to_array(box_hit.get_pos())[..., 0])[0])
+    assert rest_x1 < rest_x0 - 1e-3
+    assert hit_x1 > rest_x1

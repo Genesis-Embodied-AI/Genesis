@@ -94,14 +94,20 @@ def func_constraint_island(
     i_b,
     n_dofs,
     EPS,
+    static_rigid_sim_config: qd.template(),
 ):
     # A constraint couples dofs of a single island, so its island is that of its first nonzero
-    # Jacobian dof.
+    # Jacobian dof. With the sparse Jacobian representation that dof is jac_dofs_idx[i_c, 0] directly
+    # (O(1)); otherwise scan the dense Jacobian row for the first nonzero entry (O(n_dofs)).
     i_island = -1
-    for i_d in range(n_dofs):
-        if qd.abs(constraint_state.jac[i_c, i_d, i_b]) > EPS:
-            i_island = island_state.dof_island[i_d, i_b]
-            break
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        if constraint_state.jac_n_dofs[i_c, i_b] > 0:
+            i_island = island_state.dof_island[constraint_state.jac_dofs_idx[i_c, 0, i_b], i_b]
+    else:
+        for i_d in range(n_dofs):
+            if qd.abs(constraint_state.jac[i_c, i_d, i_b]) > EPS:
+                i_island = island_state.dof_island[i_d, i_b]
+                break
     return i_island
 
 
@@ -127,7 +133,9 @@ def kernel_group_constraints_by_island(
 
         n_con = constraint_state.n_constraints[i_b]
         for i_c in range(n_con):
-            i_island = func_constraint_island(constraint_state, island_state, i_c, i_b, n_dofs, EPS)
+            i_island = func_constraint_island(
+                constraint_state, island_state, i_c, i_b, n_dofs, EPS, static_rigid_sim_config
+            )
             if i_island >= 0:
                 island_state.island_constraint.n[i_island, i_b] = island_state.island_constraint.n[i_island, i_b] + 1
 
@@ -138,7 +146,9 @@ def kernel_group_constraints_by_island(
             con_list_start = con_list_start + island_state.island_constraint.n[i_island, i_b]
 
         for i_c in range(n_con):
-            i_island = func_constraint_island(constraint_state, island_state, i_c, i_b, n_dofs, EPS)
+            i_island = func_constraint_island(
+                constraint_state, island_state, i_c, i_b, n_dofs, EPS, static_rigid_sim_config
+            )
             if i_island >= 0:
                 island_state.constraint_id[island_state.island_constraint.curr[i_island, i_b], i_b] = i_c
                 island_state.island_constraint.curr[i_island, i_b] = (
@@ -149,6 +159,7 @@ def kernel_group_constraints_by_island(
 @qd.kernel
 def kernel_build_islands(
     entities_info: array_class.EntitiesInfo,
+    entities_state: array_class.EntitiesState,
     links_info: array_class.LinksInfo,
     joints_info: array_class.JointsInfo,
     equalities_info: array_class.EqualitiesInfo,
@@ -196,6 +207,15 @@ def kernel_build_islands(
             if ea >= 0 and eb >= 0 and entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0 and ea != eb:
                 func_union(island_state, ea, eb, i_b)
 
+        # Hibernated islands: re-union along the daisy chain so a sleeping group (which generates no live
+        # contacts to union it) stays one island across steps, matching the partition the wakeup walks.
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            for i_e in range(n_entities):
+                next_e = island_state.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
+                if 0 <= next_e < n_entities and next_e != i_e:
+                    if entities_info.n_dofs[i_e] > 0 and entities_info.n_dofs[next_e] > 0:
+                        func_union(island_state, i_e, next_e, i_b)
+
         # Label components: each root (min entity index of its component) gets the next island id.
         n_islands = 0
         for i_e in range(n_entities):
@@ -209,6 +229,16 @@ def kernel_build_islands(
             if entities_info.n_dofs[i_e] > 0:
                 root = func_find_root(island_state, i_e, i_b)
                 island_state.entity_island[i_e, i_b] = island_state.entity_island[root, i_b]
+
+        # Mark islands whose every dof-entity is asleep (read by the hibernation decision on the next step to
+        # skip already-sleeping islands). An island is hibernated unless it has at least one awake dof-entity.
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            for i_island in range(n_islands):
+                island_state.island_hibernated[i_island, i_b] = 1
+            for i_e in range(n_entities):
+                i_island = island_state.entity_island[i_e, i_b]
+                if i_island >= 0 and not entities_state.hibernated[i_e, i_b]:
+                    island_state.island_hibernated[i_island, i_b] = 0
 
         # Build the per-island entity list (island -> entity-idx ranges).
         for i_e in range(n_entities):

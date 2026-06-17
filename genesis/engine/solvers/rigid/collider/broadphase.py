@@ -196,7 +196,10 @@ def _func_broad_phase_sap(
             collider_state.first_time[i_b] = False
 
         else:
-            # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
+            # Warm start: refresh the sort-buffer extents from the current AABBs. Hibernated geoms do not move, so
+            # their entries stay valid and are skipped; refreshing the awake ones here (rather than relying solely
+            # on the hibernation decision kernel, which runs at substep end) ensures a body woken between substeps -
+            # e.g. by a state setter - is seen by the very next broad phase instead of lagging a step.
             if qd.static(not static_rigid_sim_config.use_hibernation):
                 for i in range(env_n_geoms * 2):
                     if collider_state.sort_buffer.is_max[i, i_b]:
@@ -207,6 +210,14 @@ def _func_broad_phase_sap(
                         collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[
                             collider_state.sort_buffer.i_g[i, i_b], i_b
                         ][axis]
+            else:
+                for i in range(env_n_geoms * 2):
+                    i_g = collider_state.sort_buffer.i_g[i, i_b]
+                    if not geoms_state.hibernated[i_g, i_b]:
+                        if collider_state.sort_buffer.is_max[i, i_b]:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
+                        else:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
 
         # insertion sort, which has complexity near O(n) for nearly sorted array
         for i in range(1, 2 * env_n_geoms):

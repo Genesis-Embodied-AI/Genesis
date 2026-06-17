@@ -129,6 +129,9 @@ from .abd.accessor import (
     kernel_set_links_COM_shift,
     kernel_set_links_inertial_mass,
     kernel_wake_up_entities_by_links,
+    kernel_wake_up_entities_by_dofs,
+    kernel_wake_up_entities_by_qs,
+    kernel_wake_up_entities_on_new_contact,
     kernel_set_geoms_friction_ratio,
     kernel_set_qpos,
     kernel_set_global_sol_params,
@@ -428,20 +431,33 @@ class RigidSolver(KinematicSolver):
                     "factorization is faster there. Use with caution."
                 )
 
-        # sparse-skyline and per-island are two implementations of the same idea - exploit the block-diagonal
-        # Hessian - so they never run together; the user need not choose between them. Route to the backend's
-        # winner: on CPU the skyline solver is faster than the per-island scalar path (and its dense per-island
-        # build could not read the sparse Jacobian anyway), so it supersedes islands; on GPU islands win and
-        # sparse is dropped regardless. An explicit sparse_solve=False still forces the island path on CPU.
-        if sparse_solve and gs.backend == gs.cpu:
+        # sparse-skyline and per-island exploit the block-diagonal Hessian from complementary angles, so on CPU
+        # they COMPOSE rather than compete: islands give each block its own cheap Hessian factorization, while the
+        # sparse Jacobian representation makes the per-iteration Jacobian-vector products, the constraint-to-island
+        # lookup, and the Hessian assembly cost O(nonzeros) instead of O(n_constraints * n_dofs). With both on, the
+        # many-small-bodies solve scales near-linearly in body count (measured ~2.7x faster than sparse alone and
+        # ~8x faster than islands alone at 256 boxes); the island Hessian branch naturally bypasses the skyline
+        # envelope factorization. The differentiable adjoint solve reads the dense Hessian, so the composition is
+        # restricted to the forward (non-grad) path. On GPU the dense tiled path is faster, so sparse is dropped and
+        # islands stand alone.
+        if gs.backend == gs.cpu and self._use_contact_island and sparse_solve and not self.sim.options.requires_grad:
+            pass  # compose islands + sparse Jacobian
+        elif sparse_solve and gs.backend == gs.cpu:
             self._use_contact_island = False
         elif self._use_contact_island:
             sparse_solve = False
 
         # The skyline-envelope factorization and its DOF reorder are CPU-only and incompatible with the differentiable
         # adjoint solve (which reuses nt_H with natural, dense indexing). Under requires_grad only the assembly-level
-        # sparsity applies, matching the pre-existing behaviour.
-        sparse_envelope = sparse_solve and gs.backend == gs.cpu and not self.sim.options.requires_grad
+        # sparsity applies, matching the pre-existing behaviour. When islands are also active (the CPU composition),
+        # the per-island Hessian branch factorizes each block directly and never reads the skyline envelope, so the
+        # O(n_dofs^2) per-step envelope computation would be pure waste - drop it and let islands own the factorization.
+        sparse_envelope = (
+            sparse_solve
+            and gs.backend == gs.cpu
+            and not self.sim.options.requires_grad
+            and not self._use_contact_island
+        )
 
         # The layout-flippable constraint-state tensors are stored batch-first either for the GPU cooperative kernels or
         # under serialized execution, where the env loop is outermost and per-env rows must be contiguous to avoid
@@ -1103,7 +1119,7 @@ class RigidSolver(KinematicSolver):
             self.entities_info,
             self._rigid_global_info,
             self._static_rigid_sim_config,
-            self.constraint_solver.contact_island.contact_island_state,
+            self.constraint_solver.island_state,
             self._is_forward_pos_updated,
             self._is_forward_vel_updated,
             self._is_backward,
@@ -1132,7 +1148,7 @@ class RigidSolver(KinematicSolver):
                 self.collider._collider_state,
                 self._rigid_global_info,
                 self._static_rigid_sim_config,
-                self.constraint_solver.contact_island.contact_island_state,
+                self.constraint_solver.island_state,
                 self._is_backward,
                 self._errno,
             )
@@ -1204,6 +1220,21 @@ class RigidSolver(KinematicSolver):
 
         if self._enable_collision:
             self.collider.detection()
+            # A collision against a sleeping body must wake it before the solve, so it joins the island partition
+            # and responds dynamically this step instead of letting the awake body pass through.
+            if self._use_hibernation:
+                kernel_wake_up_entities_on_new_contact(
+                    self.collider._collider_state,
+                    self.links_info,
+                    self.links_state,
+                    self.entities_state,
+                    self.entities_info,
+                    self.dofs_state,
+                    self.geoms_state,
+                    self._rigid_global_info,
+                    self.constraint_solver.island_state,
+                    self._static_rigid_sim_config,
+                )
 
         if not self._disable_constraint:
             self.constraint_solver.add_inequality_constraints()
@@ -1221,7 +1252,7 @@ class RigidSolver(KinematicSolver):
             self.geoms_state,
             self._rigid_global_info,
             self._static_rigid_sim_config,
-            self.constraint_solver.contact_island.contact_island_state,
+            self.constraint_solver.island_state,
         )
 
     def _func_update_acc(self):
@@ -1313,6 +1344,22 @@ class RigidSolver(KinematicSolver):
             raise ValueError("'local=True' not compatible with ref='root_com'.")
         ref_idx = self._convert_ref_to_idx(ref)
 
+        # A force on a sleeping body must revive it, otherwise the input is silently dropped.
+        if self._use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                island_state=self.constraint_solver.island_state,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
         kernel_apply_links_external_force(
             force, links_idx, envs_idx, ref_idx, 1 if local else 0, self.links_state, self._static_rigid_sim_config
         )
@@ -1355,6 +1402,22 @@ class RigidSolver(KinematicSolver):
         if ref == "root_com" and local:
             raise ValueError("'local=True' not compatible with ref='root_com'.")
         ref_idx = self._convert_ref_to_idx(ref)
+
+        # A torque on a sleeping body must revive it, otherwise the input is silently dropped.
+        if self._use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                island_state=self.constraint_solver.island_state,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
         kernel_apply_links_external_torque(
             torque, links_idx, envs_idx, ref_idx, 1 if local else 0, self.links_state, self._static_rigid_sim_config
@@ -1481,7 +1544,7 @@ class RigidSolver(KinematicSolver):
             collider_state=self.collider._collider_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            island_state=self.constraint_solver.island_state,
             is_backward=True,
             errno=self._errno,
         )
@@ -1520,7 +1583,7 @@ class RigidSolver(KinematicSolver):
             geoms_state=self.geoms_state,
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
-            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            island_state=self.constraint_solver.island_state,
             is_backward=True,
         )
 
@@ -1583,7 +1646,7 @@ class RigidSolver(KinematicSolver):
                 collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                island_state=self.constraint_solver.island_state,
                 is_backward=self._is_backward,
                 errno=self._errno,
             )
@@ -1916,7 +1979,7 @@ class RigidSolver(KinematicSolver):
                     dofs_state=self.dofs_state,
                     geoms_state=self.geoms_state,
                     rigid_global_info=self._rigid_global_info,
-                    contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                    island_state=self.constraint_solver.island_state,
                     static_rigid_sim_config=self._static_rigid_sim_config,
                 )
 
@@ -2070,7 +2133,7 @@ class RigidSolver(KinematicSolver):
                     dofs_state=self.dofs_state,
                     geoms_state=self.geoms_state,
                     rigid_global_info=self._rigid_global_info,
-                    contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+                    island_state=self.constraint_solver.island_state,
                     static_rigid_sim_config=self._static_rigid_sim_config,
                 )
 
@@ -2230,6 +2293,23 @@ class RigidSolver(KinematicSolver):
             )
             if self.n_envs == 0:
                 qpos = qpos[None]
+
+            # Teleporting a sleeping body must revive it, otherwise the new pose is silently dropped.
+            if self._use_hibernation:
+                kernel_wake_up_entities_by_qs(
+                    qs_idx,
+                    envs_idx,
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    entities_state=self.entities_state,
+                    entities_info=self.entities_info,
+                    dofs_state=self.dofs_state,
+                    geoms_state=self.geoms_state,
+                    rigid_global_info=self._rigid_global_info,
+                    island_state=self.constraint_solver.island_state,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
             kernel_set_zero(envs_idx, self._errno)
 
@@ -2456,6 +2536,23 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0:
             position = position[None]
+
+        # Setting a sleeping body's position must revive it, otherwise the write is silently dropped.
+        if self._use_hibernation:
+            kernel_wake_up_entities_by_dofs(
+                dofs_idx,
+                envs_idx,
+                dofs_info=self.dofs_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                island_state=self.constraint_solver.island_state,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
         kernel_set_dofs_position(
             position,
             dofs_idx,
@@ -2492,6 +2589,29 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
+
+    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
+        # Setting a sleeping body's velocity must revive it, otherwise the write is silently dropped. Wake the
+        # owning entities before delegating to the base setter (hibernation runs in field mode, so this always
+        # takes the kernel path the wakeup targets).
+        if self._use_hibernation:
+            _, wake_dofs_idx, wake_envs_idx = self._sanitize_io_variables(
+                velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+            )
+            kernel_wake_up_entities_by_dofs(
+                wake_dofs_idx,
+                wake_envs_idx,
+                dofs_info=self.dofs_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                island_state=self.constraint_solver.island_state,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+        super().set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy:
@@ -3045,7 +3165,7 @@ def kernel_step_1(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
     is_forward_pos_updated: qd.template(),
     is_forward_vel_updated: qd.template(),
     is_backward: qd.template(),
@@ -3090,7 +3210,7 @@ def kernel_step_1(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island_state=contact_island_state,
+        island_state=island_state,
         is_backward=is_backward,
     )
 
@@ -3110,7 +3230,7 @@ def kernel_step_2(
     collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
     is_backward: qd.template(),
     errno: qd.Tensor,
 ):
@@ -3160,7 +3280,7 @@ def kernel_step_2(
             unused__rigid_global_info=rigid_global_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
-            contact_island_state=contact_island_state,
+            island_state=island_state,
             errno=errno,
         )
         func_aggregate_awake_entities(

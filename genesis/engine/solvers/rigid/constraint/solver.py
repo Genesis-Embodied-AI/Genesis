@@ -12,7 +12,6 @@ import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
-from ..collider.contact_island import ContactIsland
 from ..island import kernel_build_islands, kernel_group_constraints_by_island
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
@@ -140,13 +139,14 @@ class ConstraintSolver:
 
         self.reset()
 
-        # Creating a dummy ContactIsland, needed as param for some functions,
-        # and not used when hibernation is not enabled.
-        self.contact_island = ContactIsland(self._collider)
-
-        # Island partition consumed by the per-island Newton solve (use_contact_island). Always
-        # allocated (a kernel param) but only populated and consumed when use_contact_island is set.
+        # Island partition consumed by the per-island Newton solve (use_contact_island) and, when hibernation is
+        # enabled, by the hibernation decision/wakeup. Always allocated (a kernel param) but only populated and
+        # consumed when use_contact_island is set.
         self.island_state = array_class.get_island_state(self._solver, self._collider)
+        # The hibernated-island daisy chain must start empty (-1 = no successor); it persists across steps,
+        # written when an island hibernates and cleared on wakeup.
+        if self._solver._use_hibernation:
+            self.island_state.entity_idx_to_next_entity_idx_in_hibernated_island.fill(-1)
 
         # Fill-reducing DOF permutation for the skyline Cholesky: a structural choice fixed once from the initial
         # body layout (forward kinematics has already run at this point), never recomputed in the step loop. The
@@ -264,6 +264,7 @@ class ConstraintSolver:
             # Built before func_solve_init because the initial Hessian factor is per-island too.
             kernel_build_islands(
                 self._solver.entities_info,
+                self._solver.entities_state,
                 self._solver.links_info,
                 self._solver.joints_info,
                 self._solver.equalities_info,

@@ -142,7 +142,7 @@ def func_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
     is_backward: qd.template(),
 ):
     func_compute_mass_matrix(
@@ -176,7 +176,7 @@ def func_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island_state=contact_island_state,
+        island_state=island_state,
         is_backward=is_backward,
     )
     func_update_acc(
@@ -226,7 +226,7 @@ def kernel_forward_dynamics(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
 ):
     func_forward_dynamics(
         links_state=links_state,
@@ -239,7 +239,7 @@ def kernel_forward_dynamics(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island_state=contact_island_state,
+        island_state=island_state,
         is_backward=False,
     )
 
@@ -898,7 +898,7 @@ def func_torque_and_passive_force(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
@@ -993,7 +993,6 @@ def func_torque_and_passive_force(
 
         if qd.static(static_rigid_sim_config.use_hibernation):
             if entities_state.hibernated[i_e, i_b] and wakeup:
-                # TODO: migrate this function
                 func_wakeup_entity_and_its_temp_island(
                     i_e,
                     i_b,
@@ -1003,7 +1002,7 @@ def func_torque_and_passive_force(
                     links_state,
                     geoms_state,
                     rigid_global_info,
-                    contact_island_state,
+                    island_state,
                 )
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -1508,7 +1507,7 @@ def kernel_forward_dynamics_without_qacc(
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
     is_backward: qd.template(),
 ):
     func_compute_mass_matrix(
@@ -1542,7 +1541,7 @@ def kernel_forward_dynamics_without_qacc(
         geoms_state=geoms_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
-        contact_island_state=contact_island_state,
+        island_state=island_state,
         is_backward=is_backward,
     )
     func_update_acc(
