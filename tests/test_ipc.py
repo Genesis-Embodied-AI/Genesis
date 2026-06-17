@@ -381,7 +381,6 @@ def test_needs_coup():
 @pytest.mark.required
 def test_link_filter_strict():
     """Verify that IPC link filter controls which links are actually added to IPC."""
-
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,
@@ -1061,7 +1060,6 @@ def verify_franka_ipc_setup(scene, franka, coup_type):
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_fem(coup_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
-
     BOX_POS = (0.65, 0.0, 0.03)
     scene, franka, DT = build_grasp_scene(coup_type, show_viewer)
 
@@ -1111,7 +1109,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_abd(coup_type, show_viewer):
     """Verify that robot can grasp and lift an ipc_only rigid cylinder."""
-
     CYL_POS = (0.65, 0.0, 0.025)
     scene, franka, DT = build_grasp_scene(coup_type, show_viewer)
 
@@ -1298,7 +1295,6 @@ def test_momentum_conservation(n_envs, show_viewer):
 @pytest.mark.parametrize("coup_type", ["ipc_only", "two_way_soft_constraint"])
 def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contact):
     """Verify collision pair delegation between IPC and rigid solver based on coup_type and ground contact."""
-
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=True,
@@ -1418,7 +1414,6 @@ def test_cloth_corner_drag(n_envs, show_viewer):
     Verify that FEM vertices near the gripped corner follow the imposed trajectory,
     while the rest of the cloth hangs freely under gravity.
     """
-
     DT = 0.01
     CLOTH_HALF = 0.5
     BOX_SIZE = 0.05
@@ -1769,7 +1764,6 @@ def test_set_object_qpos(coup_type):
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_set_robot_qpos(coup_type):
     """Verify set_qpos and set_dofs_position on an articulated robot with IPC coupling."""
-
     DT = 0.01
     TARGET_JOINT_POS = 0.5
 
@@ -1855,7 +1849,6 @@ def test_set_robot_qpos(coup_type):
 @pytest.mark.required
 def test_coup_collision_links():
     """Verify that coup_collision_links positive filter correctly limits IPC collision to named links."""
-
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,
