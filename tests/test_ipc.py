@@ -449,7 +449,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             newton_translation_tolerance=1e-2,
             linear_system_tolerance=1e-3,
             newton_semi_implicit_enable=False,
-            restitution=0.0,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 0.8),
@@ -1160,10 +1159,6 @@ def test_momentum_conservation(n_envs, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
-            # Restitution adds a one-sided velocity correction to the rigid body only,
-            # which breaks rigid+FEM momentum conservation. Disable it here to isolate
-            # IPC's internal momentum-conserving contact resolution.
-            restitution=0.0,
             # libuipc's default velocity_tol=0.05 stops Newton at ~2 iterations/step.
             # The residual gradient acts as a per-step ghost force; mesh-asymmetric
             # contact distribution biases its direction, so the bias accumulates
@@ -1551,9 +1546,10 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         show_viewer=show_viewer,
     )
 
+    asset_path = get_hf_dataset(pattern="IPC/grid21x21_c4.obj")
     cloth = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file="/tmp/grid_c4_parity.obj",
+            file=f"{asset_path}/IPC/grid21x21_c4.obj",
             scale=2 * CLOTH_HALF,
             pos=(0.0, 0.0, 0.0),
             euler=(90, 0, 0),

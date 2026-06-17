@@ -1070,7 +1070,9 @@ class IPCCoupler(RBC):
             return
 
         if qs_idx is not None:
-            if isinstance(qs_idx, slice):
+            if isinstance(qs_idx, int):
+                qs_idx = [qs_idx]
+            elif isinstance(qs_idx, slice):
                 qs_idx = range(*qs_idx.indices(len(self._q_to_abd_link)))
             for qi in qs_idx:
                 link = self._q_to_abd_link[int(qi)]
@@ -1078,7 +1080,9 @@ class IPCCoupler(RBC):
                     self._mark_abd_link_updated(link, env_set)
 
         if dofs_idx is not None:
-            if isinstance(dofs_idx, slice):
+            if isinstance(dofs_idx, int):
+                dofs_idx = [dofs_idx]
+            elif isinstance(dofs_idx, slice):
                 dofs_idx = range(*dofs_idx.indices(len(self._dof_to_abd_link)))
             for di in dofs_idx:
                 link = self._dof_to_abd_link[int(di)]
@@ -1338,10 +1342,6 @@ class IPCCoupler(RBC):
         For two_way_soft_constraint, non-fixed base links get their IPC-resolved transform
         written to qpos[0:7], and child link joint angles are back-computed from IPC transforms.
         For external_articulation (fixed base only), joint qpos comes from IPC delta_theta.
-
-        When restitution > 0, accumulates per-DOF velocity corrections during active contact
-        and flushes them as one-shot impulses when contact ends. This avoids the per-frame
-        compounding problem where e^N -> 0 for e<1 over N contact frames.
         """
         if not self._coup_type_by_entity:
             return
