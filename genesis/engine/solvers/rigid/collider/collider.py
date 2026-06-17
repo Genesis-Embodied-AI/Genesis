@@ -542,12 +542,18 @@ class Collider:
             # Minkowski difference. A sphere or ellipsoid has no flat facet, so a pair of them yields an everywhere
             # smoothly curved Minkowski boundary on which EPA never converges, and no contact is ever generated -
             # the bodies silently tunnel. Faceted partners (box, mesh) and the analytical plane branch are unaffected.
+            #
+            # Sphere-sphere is exempt: it is handled by the closed-form analytic path
+            # (func_sphere_sphere_contact + the analytic branch in func_differentiable_contact), which is exactly
+            # differentiable and never routes through diff_gjk's EPA. Ellipsoid-involving smooth pairs still fall
+            # through to diff_gjk and remain unsupported.
             if self._solver._requires_grad:
                 is_smooth_a = (valid_type_a == gs.GEOM_TYPE.SPHERE) | (valid_type_a == gs.GEOM_TYPE.ELLIPSOID)
                 is_smooth_b = (valid_type_b == gs.GEOM_TYPE.SPHERE) | (valid_type_b == gs.GEOM_TYPE.ELLIPSOID)
-                if np.any(both_convex & ~specialized & is_smooth_a & is_smooth_b):
+                is_sphere_sphere = (valid_type_a == gs.GEOM_TYPE.SPHERE) & (valid_type_b == gs.GEOM_TYPE.SPHERE)
+                if np.any(both_convex & ~specialized & is_smooth_a & is_smooth_b & ~is_sphere_sphere):
                     gs.raise_exception(
-                        "Differentiable contact detection is not supported for sphere-sphere, sphere-ellipsoid or "
+                        "Differentiable contact detection is not supported for sphere-ellipsoid or "
                         "ellipsoid-ellipsoid collision pairs (requires_grad=True). Approximate them with a faceted "
                         "geometry (e.g. a convex mesh) or disable requires_grad."
                     )

@@ -1,3 +1,5 @@
+import xml.etree.ElementTree as ET
+
 import numpy as np
 import pytest
 import torch
@@ -272,8 +274,24 @@ def test_diff_convex_contact_forward(show_viewer):
     assert_allclose(sort_idx, np.arange(n_contacts), atol=0)
 
 
+def _ellipsoid_mjcf_path(tmp_path, semi_axes=(0.2, 0.15, 0.1)):
+    a, b, c = semi_axes
+    mjcf = ET.Element("mujoco", model="ellipsoid")
+    ET.SubElement(mjcf, "compiler", angle="degree")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="ellipsoid", pos="0 0 0.5")
+    ET.SubElement(body, "geom", type="ellipsoid", size=f"{a} {b} {c}")
+    ET.SubElement(body, "joint", name="ellipsoid_joint", type="free")
+    path = tmp_path / "ellipsoid.xml"
+    ET.ElementTree(mjcf).write(path)
+    return str(path)
+
+
 @pytest.mark.required
-def test_diff_smooth_pair_raises():
+def test_diff_smooth_pair_raises(tmp_path):
+    # A sphere/ellipsoid (or ellipsoid/ellipsoid) pair has an everywhere-curved Minkowski boundary on which
+    # diff_gjk's EPA never converges, so it would silently tunnel and is rejected in differentiable mode.
+    # Sphere/sphere is exempt: it is handled by the closed-form analytic path (see test_diff_sphere_sphere_contact).
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             requires_grad=True,
@@ -288,16 +306,89 @@ def test_diff_smooth_pair_raises():
         ),
     )
     scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.2,
-            pos=(0.0, 0.0, 0.5),
-        ),
+        gs.morphs.MJCF(file=_ellipsoid_mjcf_path(tmp_path)),
     )
 
-    # A sphere/ellipsoid pair has an everywhere-curved Minkowski boundary on which diff_gjk's EPA never converges,
-    # so it would silently tunnel.
     with pytest.raises(gs.GenesisException):
         scene.build()
+
+
+# 64-bit precision is needed so the finite-difference perturbation is small enough to give a reliable gradient
+# estimate (same rationale as test_diff_solver).
+@pytest.mark.required
+@pytest.mark.precision("64")
+def test_diff_sphere_sphere_contact():
+    # Sphere-sphere is handled by the closed-form analytic path in both forward (func_sphere_sphere_contact)
+    # and backward (func_differentiable_sphere_contact), so it is fully supported in differentiable mode. Verify
+    # the analytic gradients of the contact w.r.t. the geom positions match finite differences.
+    RTOL = 1e-4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            requires_grad=True,
+        ),
+        show_viewer=False,
+    )
+    radius_0, radius_1 = 0.2, 0.15
+    sphere0 = scene.add_entity(gs.morphs.Sphere(radius=radius_0, pos=(0.0, 0.0, 0.2)))
+    sphere1 = scene.add_entity(gs.morphs.Sphere(radius=radius_1, pos=(0.0, 0.0, 0.5)))
+    scene.build()
+    solver = scene.sim.rigid_solver
+    collider = solver.collider
+
+    # Place the spheres so they overlap off-axis (centres 0.2611 apart, sum of radii 0.35 -> penetration 0.0889).
+    sphere0_init_pos = torch.as_tensor([0.0, 0.0, 0.2], dtype=sphere0.get_pos().dtype, device=sphere0.get_pos().device)
+    sphere1_init_pos = torch.as_tensor(
+        [0.02, 0.01, 0.46], dtype=sphere1.get_pos().dtype, device=sphere1.get_pos().device
+    )
+    sphere0.set_pos(sphere0_init_pos)
+    sphere1.set_pos(sphere1_init_pos)
+
+    # Forward contact must be the exact closed form (matches func_sphere_sphere_contact).
+    collider._collider_state.n_contacts.fill(0)
+    collider.detection()
+    contacts = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
+    assert contacts["penetration"].numel() == 1
+    delta = sphere0_init_pos - sphere1_init_pos
+    dist = delta.norm()
+    exp_pen = radius_0 + radius_1 - dist
+    exp_normal = (delta / dist).cpu()
+    assert_allclose(contacts["penetration"].flatten().cpu(), exp_pen.cpu(), tol=1e-4)
+    assert_allclose(contacts["normal"].reshape(-1, 3).cpu(), exp_normal, tol=1e-4)
+
+    # Backward: analytic gradients of the loss w.r.t. the geom positions.
+    normal = contacts["normal"].requires_grad_()
+    position = contacts["position"].requires_grad_()
+    penetration = contacts["penetration"].requires_grad_()
+    loss = ((normal * position).sum(dim=-1) * penetration).sum()
+    dL_dnormal = torch.autograd.grad(loss, normal, retain_graph=True)[0]
+    dL_dposition = torch.autograd.grad(loss, position, retain_graph=True)[0]
+    dL_dpenetration = torch.autograd.grad(loss, penetration)[0]
+
+    collider.backward(dL_dposition, dL_dnormal, dL_dpenetration)
+    dL_dpos = qd_to_torch(solver.geoms_state.pos.grad).reshape(2, 3)
+
+    # Directional finite-difference check.
+    FD_EPS = 1e-5
+    TRIALS = 50
+    dL_error_rel = 0.0
+    for _ in range(TRIALS):
+        rand_dx = torch.nn.functional.normalize(torch.randn_like(dL_dpos), dim=-1)
+        dL = (rand_dx * dL_dpos).sum()
+        lossPs = []
+        for sign in (1, -1):
+            sphere0.set_pos(sphere0_init_pos + sign * rand_dx[0] * FD_EPS)
+            sphere1.set_pos(sphere1_init_pos + sign * rand_dx[1] * FD_EPS)
+            collider._collider_state.n_contacts.fill(0)
+            collider.detection()
+            c = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
+            loss_fd = ((c["normal"] * c["position"]).sum(dim=-1) * c["penetration"]).sum()
+            lossPs.append(loss_fd)
+        dL_fd = (lossPs[0] - lossPs[1]) / (2 * FD_EPS)
+        dL_error_rel += (dL - dL_fd).abs() / max(dL.abs(), dL_fd.abs(), gs.EPS)
+    dL_error_rel /= TRIALS
+    assert_allclose(dL_error_rel, 0.0, atol=RTOL)
 
 
 # We need to use 64-bit precision for this test because we need to use sufficiently small perturbation to get reliable

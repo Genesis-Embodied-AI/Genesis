@@ -24,6 +24,7 @@ from .box_contact import (
 from .contact import (
     func_add_contact,
     func_add_diff_contact_input,
+    func_add_diff_contact_input_sphere,
     func_apply_smooth_refinement,
     func_compute_geom_pair_scale_mj,
     func_compute_geom_pair_scale,
@@ -2056,6 +2057,17 @@ def func_convex_convex_contact(
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
+                    # Sphere-sphere is handled by the closed-form analytic branch above, which never populates a
+                    # GJK Minkowski triangle. In differentiable mode, register a diff-contact-input entry (matched
+                    # by the analytic branch in func_differentiable_contact) so the backward pass reconstructs the
+                    # contact in closed form instead of from a degenerate triangle. Must run at the same contact
+                    # index as func_add_contact, i.e. before it increments n_contacts.
+                    if qd.static(static_rigid_sim_config.requires_grad):
+                        if (
+                            geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE
+                            and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
+                        ):
+                            func_add_diff_contact_input_sphere(i_ga, i_gb, i_b, collider_state, collider_info)
                     func_add_contact(
                         i_ga,
                         i_gb,
@@ -3192,10 +3204,19 @@ def func_narrow_phase_diff_convex_vs_convex(
             i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
 
             if is_ref:
-                ref_penetration = -1.0
-                contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-                )
+                contact_pos = qd.Vector.zero(gs.qd_float, 3)
+                contact_normal = qd.Vector.zero(gs.qd_float, 3)
+                penetration = gs.qd_float(0.0)
+                weight = gs.qd_float(0.0)
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_sphere_contact(
+                        geoms_state, geoms_info, i_ga, i_gb, i_b
+                    )
+                else:
+                    ref_penetration = -1.0
+                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
+                        geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+                    )
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
                 func_set_contact(
@@ -3222,10 +3243,19 @@ def func_narrow_phase_diff_convex_vs_convex(
             i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
 
             if not is_ref:
-                ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
-                contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-                )
+                contact_pos = qd.Vector.zero(gs.qd_float, 3)
+                contact_normal = qd.Vector.zero(gs.qd_float, 3)
+                penetration = gs.qd_float(0.0)
+                weight = gs.qd_float(0.0)
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_sphere_contact(
+                        geoms_state, geoms_info, i_ga, i_gb, i_b
+                    )
+                else:
+                    ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
+                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
+                        geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+                    )
 
                 func_set_contact(
                     i_ga,

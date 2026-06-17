@@ -749,6 +749,30 @@ def func_compute_minkowski_point(
 # These functions have minimal number of branches to align backward pass with forward pass.
 # --------------------------------------------------------------------------------------------
 @qd.func
+def func_differentiable_sphere_contact(
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    i_ga,
+    i_gb,
+    i_b,
+):
+    """
+    Closed-form differentiable sphere-sphere contact. The contact is a smooth function of the two geom centres, so
+    gradients flow directly through [geoms_state.pos] - unlike the Minkowski-triangle reconstruction in
+    func_differentiable_contact, which is degenerate for two smoothly-curved surfaces (where EPA never converges).
+    This must match func_sphere_sphere_contact in capsule_contact.py.
+    """
+    radius_a = geoms_info.data[i_ga][0]
+    radius_b = geoms_info.data[i_gb][0]
+    delta = geoms_state.pos[i_ga, i_b] - geoms_state.pos[i_gb, i_b]
+    dist = delta.norm()
+    contact_normal = delta / dist
+    penetration = radius_a + radius_b - dist
+    contact_pos = geoms_state.pos[i_ga, i_b] - (radius_a - 0.5 * penetration) * contact_normal
+    return contact_pos, contact_normal, penetration, gs.qd_float(1.0)
+
+
+@qd.func
 def func_differentiable_contact(
     geoms_state: array_class.GeomsState,
     diff_contact_input: array_class.DiffContactInput,
