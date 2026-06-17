@@ -92,6 +92,9 @@ class RigidEquality(RBC):
         """
         return self._idx
 
+    def _repr_brief(self):
+        return f"{self.__repr_name__()}, idx: {self.idx}"
+
     @property
     def idx_local(self):
         """

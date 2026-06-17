@@ -306,7 +306,9 @@ class RigidGeom(RBC):
         sdf_mesh = self.get_sdf_trimesh(color)
         if T is None:
             if pos is None:
-                T = gu.trans_quat_to_T(tensor_to_array(self.get_pos()), tensor_to_array(self.get_quat()))
+                T = gu.trans_quat_to_T(
+                    *map(tensor_to_array, (self.get_pos(relative=False), self.get_quat(relative=False)))
+                )
             else:
                 T = gu.trans_to_T(np.array(pos))
         else:
@@ -346,20 +348,24 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None):
+    def get_pos(self, envs_idx=None, *, relative=True):
         """
-        Get the position of the geom in world frame.
+        Get the position of the geom.
+
+        When 'relative' is True (default), the position is reported in the user frame, with the entity's morph pose
+        offset stripped, rather than the world frame used by the solver.
         """
-        tensor = qd_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
-        return tensor[0] if self._solver.n_envs == 0 else tensor
+        return self._solver.get_geoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None):
+    def get_quat(self, envs_idx=None, *, relative=True):
         """
-        Get the quaternion of the geom in world frame.
+        Get the quaternion of the geom.
+
+        When 'relative' is True (default), the orientation is reported in the user frame, with the entity's morph pose
+        offset stripped, rather than the world frame used by the solver.
         """
-        tensor = qd_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
-        return tensor[0] if self._solver.n_envs == 0 else tensor
+        return self._solver.get_geoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
     def get_verts(self):
@@ -872,20 +878,24 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None):
+    def get_pos(self, envs_idx=None, *, relative=True):
         """
-        Get the position of the geom in world frame.
+        Get the position of the visual geom.
+
+        When 'relative' is True (default), the position is reported in the user frame, with the entity's morph pose
+        offset stripped, rather than the world frame used by the solver.
         """
-        tensor = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
-        return tensor[0] if self._solver.n_envs == 0 else tensor
+        return self._solver.get_vgeoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None):
+    def get_quat(self, envs_idx=None, *, relative=True):
         """
-        Get the quaternion of the geom in world frame.
+        Get the quaternion of the visual geom.
+
+        When 'relative' is True (default), the orientation is reported in the user frame, with the entity's morph pose
+        offset stripped, rather than the world frame used by the solver.
         """
-        tensor = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
-        return tensor[0] if self._solver.n_envs == 0 else tensor
+        return self._solver.get_vgeoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
     def get_vAABB(self, envs_idx=None):
@@ -903,7 +913,10 @@ class RigidVisGeom(RBC):
             self._aabb_verts = torch.from_numpy(aabb_mesh.verts).to(dtype=gs.tc_float, device=gs.device)
 
         pos, quat = gu.transform_pos_quat_by_trans_quat(
-            self._init_pos_tc, self._init_quat_tc, self.link.get_pos(envs_idx), self.link.get_quat(envs_idx)
+            self._init_pos_tc,
+            self._init_quat_tc,
+            self.link.get_pos(envs_idx, relative=False),
+            self.link.get_quat(envs_idx, relative=False),
         )
         vverts_pos = pos[..., None, :] + gu.transform_by_quat(self._aabb_verts, quat[..., None, :])
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)

@@ -602,6 +602,8 @@ def test_glb_parse_material(glb_file):
 
 @pytest.mark.required
 def test_glb_shared_texture_not_duplicated(tmp_path):
+    from genesis.vis.batch_renderer import GenesisGeomRetriever
+
     n_submeshes = 16
     texture_size = 64
 
@@ -646,6 +648,12 @@ def test_glb_shared_texture_not_duplicated(tmp_path):
     # Hold every array alive before counting so that ids cannot be recycled by the garbage collector.
     rgba_arrays = [geom.surface.get_rgba().image_array for geom in vgeoms]
     assert len({id(array) for array in rgba_arrays}) == 1
+
+    scene.build()
+    retriever = GenesisGeomRetriever(scene.sim.rigid_solver, seg_level="entity")
+    retriever.build()
+    static_args = retriever.retrieve_rigid_meshes_static()
+    assert len(static_args["tex_widths"]) == 1
 
 
 @pytest.fixture

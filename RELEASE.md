@@ -1,8 +1,29 @@
 # Genesis Release Note
 
-This minor release mainly improves the robustness of rigid collision detection for both convex and non-convex geometries. It is no longer considered experimental to disable convex decomposition when higher fidelity is necessary.
+## 1.1.2
+
+This minor release introduces morph pose offset to finally provide a viable solution to the long-lasting inconstency of spatial accessors related to non-standard mesh axes conventions (0.3.13) and inertia alignment (0.4.4). Besides, fixed-size buffers are now sized more tightly to significantly reduce the default memory footprint.
+
+### Breaking changes
+
+* Add morph pose offset and relative-frame pose accessors for rigid bodies. (@duburcqa) (#2934)
+
+### New Features
+
+* Add pruning-aware sizing of contact constraint buffers using 'max_contacts' option. (@duburcqa) (#2928)
+
+### Bug Fixes
+
+* Fix island support in rigid body solver. (@duburcqa) (#2930)
+* Fix serialized batched simulation on CPU scaling sub-linearly. (@duburcqa) (#2929)
+
+### Miscellaneous
+
+* Allocate rigid entity Jacobian and IK fields lazily on first use. (@duburcqa) (#2933)
 
 ## 1.1.1
+
+This minor release mainly improves the robustness of rigid collision detection for both convex and non-convex geometries. It is no longer considered experimental to disable convex decomposition when higher fidelity is necessary.
 
 ### Bug Fixes
 

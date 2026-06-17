@@ -251,28 +251,34 @@ class KinematicLink(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None):
+    def get_pos(self, envs_idx=None, *, relative=True):
         """
-        Get the position of the link in the world frame.
+        Get the position of the link.
 
         Parameters
         ----------
         envs_idx : int or array of int, optional
             The indices of the environments to get the position. If None, get the position of all environments. Default is None.
+        relative : bool, optional
+            Whether to report the position in the user frame, with the entity's morph pose offset and inertial
+            alignment stripped, rather than the world frame used by the solver. Defaults to True.
         """
-        return self._solver.get_links_pos(self._idx, envs_idx)[..., 0, :]
+        return self._solver.get_links_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None):
+    def get_quat(self, envs_idx=None, *, relative=True):
         """
-        Get the quaternion of the link in the world frame.
+        Get the quaternion of the link.
 
         Parameters
         ----------
         envs_idx : int or array of int, optional
             The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
+        relative : bool, optional
+            Whether to report the orientation in the user frame, with the entity's morph pose offset and inertial
+            alignment stripped, rather than the world frame used by the solver. Defaults to True.
         """
-        return self._solver.get_links_quat(self._idx, envs_idx)[..., 0, :]
+        return self._solver.get_links_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
     def get_vel(self, envs_idx=None) -> torch.Tensor:

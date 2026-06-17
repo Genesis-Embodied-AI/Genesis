@@ -369,16 +369,23 @@ class FEMEntity(Entity):
         verts = verts.astype(gs.np_float, copy=False)
         elems = elems.astype(gs.np_int, copy=False)
 
-        # rotate
-        R = gu.quat_to_R(np.array(self.morph.quat, dtype=gs.np_float))
+        # Compose the morph pose offset (e.g. an up-axis conversion) onto the morph orientation, rotating the verts
+        # about their COM (the pre-existing morph.quat convention), then translate by the body-frame offset position
+        # R(morph.quat) @ offset_pos. NB: pivoting the orientation about the vertex COM differs from the rigid
+        # parent-child composition when the mesh COM is not at the morph origin.
+        morph_quat = np.array(self._morph.quat, dtype=gs.np_float)
+        init_quat = gu.transform_quat_by_quat(np.array(self._morph.offset_quat, dtype=gs.np_float), morph_quat)
+        R = gu.quat_to_R(init_quat)
         verts_COM = verts.mean(axis=0)
         init_positions = (verts - verts_COM) @ R.T + verts_COM
+        offset_shift = gu.transform_by_quat(np.array(self._morph.offset_pos, dtype=gs.np_float), morph_quat)
+        init_positions = init_positions + offset_shift
 
         if not init_positions.shape[0] > 0:
             gs.raise_exception("Entity has zero vertices.")
 
         self.init_positions = gs.tensor(init_positions)
-        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM)
+        self.init_positions_COM_offset = self.init_positions - gs.tensor(verts_COM + offset_shift)
 
         self.elems = elems
 
@@ -919,8 +926,8 @@ class FEMEntity(Entity):
         else:
             assert isinstance(link, RigidLink), "Only RigidLink is supported for vertex constraints."
             link_idx = link.idx
-            link_init_pos = link.get_pos()
-            link_init_quat = link.get_quat()
+            link_init_pos = link.get_pos(relative=False)
+            link_init_quat = link.get_quat(relative=False)
             if self._scene.n_envs == 0:
                 link_init_pos = link_init_pos[None]
                 link_init_quat = link_init_quat[None]

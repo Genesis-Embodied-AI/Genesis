@@ -441,13 +441,21 @@ class RasterizerContext:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
-                    geom_T = geoms_T[geom.idx][geom_envs_idx]
+                    # A heterogeneous variant is present in only a subset of environments. Render its full per-env pose
+                    # set with a per-env visibility mask, so the per-env draw places the variant in its own environment
+                    # instead of collapsing the subset of poses onto the wrong environments.
+                    active_envs = None
+                    if len(geom_envs_idx) < len(self.rendered_envs_idx):
+                        geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
+                        active_envs = np.isin(self.rendered_envs_idx, geom_envs_idx)
+                    else:
+                        geom_T = geoms_T[geom.idx][geom_envs_idx]
 
                     # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting,
-                    # unless they do not overlap.
-                    env_shared = not self.env_separate_rigid
-                    if not env_shared and isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                    # unless they do not overlap. Env-masked variants always take the per-env path.
+                    env_shared = active_envs is None and not self.env_separate_rigid
+                    if not env_shared and active_envs is None and isinstance(entity.main_morph, gs.morphs.Plane):
+                        plane_normal, plane_size = entity.main_morph.normal, entity.main_morph.plane_size
                         if (
                             abs(plane_normal[0]) < gs.EPS
                             and abs(plane_normal[1]) < gs.EPS
@@ -467,6 +475,7 @@ class RasterizerContext:
                         ),
                         is_floor=isinstance(entity._morph, gs.morphs.Plane),
                         env_shared=env_shared,
+                        active_envs=active_envs,
                         material=vis_materials.get(surface_key),
                     )
                     vis_materials.setdefault(surface_key, mesh_node.primitives[0].material)
@@ -562,11 +571,15 @@ class RasterizerContext:
                     if len(geom_envs_idx) == 0:
                         continue
 
-                    geom_T = geoms_T[geom.idx][geom_envs_idx]
+                    # Mirror on_rigid: full per-env poses for env-masked variants, compacted otherwise.
+                    if len(geom_envs_idx) < len(self.rendered_envs_idx):
+                        geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
+                    else:
+                        geom_T = geoms_T[geom.idx][geom_envs_idx]
 
                     # Keep single-instance for z-axis normal planes (see on_rigid)
-                    if isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                    if isinstance(entity.main_morph, gs.morphs.Plane):
+                        plane_normal, plane_size = entity.main_morph.normal, entity.main_morph.plane_size
                         if (
                             abs(plane_normal[0]) < gs.EPS
                             and abs(plane_normal[1]) < gs.EPS

@@ -6,6 +6,8 @@ rigid object / MPM object / FEM object.
 """
 
 import os
+import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 from typing_extensions import Self
 
@@ -14,6 +16,7 @@ from pydantic import Field, StrictBool, StrictInt, model_validator
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.mjcf as mju
 import genesis.utils.misc as mu
 import genesis.utils.urdf as uu
 import genesis.ext.urdfpy as urdfpy
@@ -81,6 +84,21 @@ class Morph(Options):
     quat : tuple, shape (4,), optional
         The initial quaternion (w-x-y-z convention) of the entity at creation time.
         If specified, `euler` will be ignored. Defaults to None.
+    offset_pos : tuple, shape (3,), optional
+        A fixed pose offset applied in the entity's own body frame on top of the `pos`/`euler` (or `pos`/`quat`) pose.
+        It shifts the world pose used internally by the solver but is stripped back out by the relative getters, so
+        `get_pos`/`get_quat` (which are relative by default) still report `pos`/`quat`. The morph pose and the offset
+        compound exactly like a parent and a child frame: the world pose is
+        `transform_pos_quat_by_trans_quat(offset_pos, offset_quat, pos, quat)`, i.e. the offset is expressed in the body
+        frame defined by `pos`/`quat`. So `offset_pos` rotates together with the orientation rather than being a
+        world-frame shift, and when the orientation is identity it simply adds to `pos`. Defaults to (0.0, 0.0, 0.0).
+    offset_euler : tuple, shape (3,), optional
+        The orientation offset `offset_quat` given as an euler angle in degrees (scipy extrinsic x-y-z convention).
+        Setting both `offset_euler` and `offset_quat` raises an error. Defaults to None.
+    offset_quat : tuple, shape (4,), optional
+        A fixed orientation offset (w-x-y-z convention); see `offset_pos` for how it compounds with `pos`/`quat` to
+        form the world pose. Up-axis conversions (e.g. loading a Z-up asset) are stored here.
+        Defaults to (1.0, 0.0, 0.0, 0.0).
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -99,6 +117,9 @@ class Morph(Options):
     pos: Vec3FType = (0.0, 0.0, 0.0)
     euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
     quat: UnitVec4FType | None = None
+    offset_pos: Vec3FType = (0.0, 0.0, 0.0)
+    offset_euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
+    offset_quat: UnitVec4FType = (1.0, 0.0, 0.0, 0.0)
     visualization: StrictBool = True
     collision: StrictBool = True
     requires_jac_and_IK: StrictBool = False
@@ -118,11 +139,20 @@ class Morph(Options):
             data["quat"] = tuple(gu.xyz_to_quat(np.array(euler), rpy=True, degrees=True))
         elif quat is None:
             data["quat"] = (1.0, 0.0, 0.0, 0.0)
+        offset_euler = data.get("offset_euler")
+        if offset_euler is not None and data.get("offset_quat") is not None:
+            gs.raise_exception("'offset_euler' and 'offset_quat' cannot both be set.")
+        if offset_euler is not None:
+            data["offset_quat"] = tuple(gu.xyz_to_quat(np.array(offset_euler), rpy=True, degrees=True))
         return data
 
     def model_post_init(self, context: Any) -> None:
         if not self.visualization and not self.collision:
             gs.raise_exception("`visualization` and `collision` cannot both be False.")
+
+    def _identifier(self) -> str:
+        # Short identifier used for entity naming and brief repr; defaults to the morph type name.
+        return type(self).__name__.lower()
 
 
 ############################ Nowhere ############################
@@ -554,7 +584,9 @@ class FileMorph(Morph):
         **This is only used for RigidEntity.**
     """
 
-    file: Any = ""
+    # Shown in the repr header via __repr_name__ (a bounded identifier for in-memory descriptions), so it is kept out
+    # of the field listing to avoid both duplicating it and dumping a whole inline document.
+    file: Any = Field(default="", repr=False)
     scale: Annotated[tuple[PositiveFloat, PositiveFloat, PositiveFloat], Field(strict=False)] | PositiveFloat = 1.0
     decimate: StrictBool | None = None
     decimate_face_num: PositiveInt = 500
@@ -583,12 +615,17 @@ class FileMorph(Morph):
 
         file = data.get("file", "")
         if isinstance(file, str) and file:
-            abs_file = os.path.abspath(file)
-            if not os.path.exists(abs_file):
-                abs_file = os.path.join(gs.utils.get_assets_dir(), file)
-            if not os.path.exists(abs_file):
-                gs.raise_exception(f"File not found in either current directory or assets directory: '{file}'.")
-            data["file"] = abs_file
+            # Inline XML content (a description built in-memory) parses directly and is passed through untouched to the
+            # loader. A path string does not parse as XML and is resolved against the working and assets directories.
+            try:
+                ET.fromstring(file)
+            except ET.ParseError:
+                abs_file = os.path.abspath(file)
+                if not os.path.exists(abs_file):
+                    abs_file = os.path.join(gs.utils.get_assets_dir(), file)
+                if not os.path.exists(abs_file):
+                    gs.raise_exception(f"File not found in either current directory or assets directory: '{file}'.")
+                data["file"] = abs_file
 
         return data
 
@@ -622,8 +659,23 @@ class FileMorph(Morph):
         if scale.ndim > 1 or scale.size not in (1, 3):
             gs.raise_exception("`scale` should be a scalar sequence of length 1 or 3.")
 
+    def _identifier(self) -> str:
+        file = self.file
+        if not isinstance(file, str):
+            return file.name
+        if os.path.exists(file):
+            return Path(file).stem
+        # An in-memory description has no filename to fall back on; subclasses that embed a name (MJCF model,
+        # URDF robot) override this, otherwise the morph type name stands in for the document.
+        return super()._identifier()
+
     def __repr_name__(self):
-        return f"{super().__repr_name__()[:-1]}(file='{self.file}')>"
+        # A real file path is shown verbatim; an MJCF/URDF built in memory has no path on disk, so a bounded
+        # identifier stands in for the document rather than dumping it.
+        file = self.file
+        if isinstance(file, str) and not os.path.exists(file):
+            file = f"<inline {self._identifier()}>"
+        return f"{super().__repr_name__()[:-1]}(file='{file}')>"
 
     def is_format(self, format):
         if not isinstance(self.file, (str, os.PathLike)):
@@ -767,19 +819,19 @@ class Mesh(FileMorph, TetGenMixin):
 
         if is_gltf:
             if self.file_meshes_are_zup:
-                gs.logger.warning(
-                    "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
-                    "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
+                # GLTF/GLB is Y-up by standard, so a Z-up claim is honored by recording the compensating rotation in
+                # 'offset_quat'. It is post-multiplied on the user orientation to form the world pose, while 'quat'
+                # stays clean and is what relative getters report.
+                gs.logger.info(
+                    "Honoring 'file_meshes_are_zup' for a GLTF/GLB file by recording a compensating rotation in "
+                    "'offset_quat'. Consider fixing your asset to use the standard Y-up convention instead."
                 )
                 y_up_quat = (1.0, -1.0, 0.0, 0.0)
-                if self.quat is None:
-                    self.quat = y_up_quat
-                else:
-                    self.quat = tuple(
-                        gu.transform_quat_by_quat(
-                            np.array(y_up_quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
-                        )
+                self.offset_quat = tuple(
+                    gu.transform_quat_by_quat(
+                        np.array(y_up_quat, dtype=gs.np_float), np.array(self.offset_quat, dtype=gs.np_float)
                     )
+                )
                 if self.scale is not None:
                     scale_arr = np.atleast_1d(np.array(self.scale))
                     if scale_arr.size == 3:
@@ -919,8 +971,19 @@ class MJCF(FileMorph):
         return data
 
     def model_post_init(self, context: Any) -> None:
-        if not self.is_format(MJCF_FORMAT):
+        # Inline XML content parses directly and bypasses the file extension check.
+        try:
+            ET.fromstring(self.file)
+            is_inline_xml = True
+        except (ET.ParseError, TypeError):
+            is_inline_xml = False
+        if not is_inline_xml and not self.is_format(MJCF_FORMAT):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
+
+    def _identifier(self) -> str:
+        if isinstance(self.file, str) and (name := mju.get_model_name(self.file)):
+            return name
+        return super()._identifier()
 
 
 class URDF(FileMorph):
@@ -1058,6 +1121,14 @@ class URDF(FileMorph):
         if isinstance(self.file, urdfpy.URDF):
             return format == URDF_FORMAT
         return super().is_format(format)
+
+    def _identifier(self) -> str:
+        if isinstance(self.file, str):
+            try:
+                return uu.get_robot_name(self.file)
+            except (ValueError, ET.ParseError, FileNotFoundError, OSError):
+                pass
+        return super()._identifier()
 
 
 class Drone(FileMorph):
@@ -1349,6 +1420,9 @@ class Terrain(Morph):
         ):
             gs.raise_exception("`subterrain_size` should be divisible by `horizontal_scale`.")
 
+    def _identifier(self) -> str:
+        return self.name if self.name else super()._identifier()
+
     @property
     def default_params(self):
         return {
@@ -1609,5 +1683,10 @@ class USD(FileMorph):
 
             self.usd_ctx = UsdContext(self.file)
 
+    def _identifier(self) -> str:
+        if self.prim_path:
+            return self.prim_path.rstrip("/").split("/")[-1]
+        return super()._identifier()
+
     def __repr_name__(self):
-        return f"{super().__repr_name__()[:-1]}(file='{self.file}', prim_path='{self.prim_path}')>"
+        return f"{super().__repr_name__()[:-1]}, prim_path='{self.prim_path}')>"

@@ -32,8 +32,14 @@ class ConstraintSolverIsland:
         self.sparse_solve: bool = True
 
         # 4 constraints per contact and 1 constraints per joint limit (upper and lower, if not inf)
+        # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
+        collider_info = self._collider._collider_info
+        if rigid_solver._options.max_contacts is not None:
+            collider_info.max_contacts[None] = min(
+                rigid_solver._options.max_contacts, collider_info.max_candidate_contacts[None]
+            )
         self.len_constraints = int(
-            4 * self._collider._collider_info.max_contact_pairs[None]
+            4 * collider_info.max_contacts[None]
             + np.logical_not(np.isinf(self._solver.dofs_info.limit.to_numpy()[:, 0])).sum()
         )
         self.len_constraints_ = max(1, self.len_constraints)
@@ -113,14 +119,33 @@ class ConstraintSolverIsland:
             self.n_constraints[i_b] = 0
 
     @qd.kernel
-    def resolve(self, entities_info: array_class.EntitiesInfo, rigid_global_info: array_class.RigidGlobalInfo):
+    def resolve(
+        self,
+        entities_state: array_class.EntitiesState,
+        entities_info: array_class.EntitiesInfo,
+        dofs_state: array_class.DofsState,
+        links_state: array_class.LinksState,
+        geoms_state: array_class.GeomsState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        contact_island_state: array_class.ContactIslandState,
+    ):
         for i_b in range(self._B):
             for i_island in range(self.contact_island.n_islands[i_b]):
                 is_active = True
                 if qd.static(self._solver._use_hibernation):
                     is_active = not self.contact_island.island_hibernated[i_island, i_b]
                 if is_active:
-                    self.add_collision_constraints_and_wakeup_entities(i_island, i_b)
+                    self.add_collision_constraints_and_wakeup_entities(
+                        i_island,
+                        i_b,
+                        entities_state,
+                        entities_info,
+                        dofs_state,
+                        links_state,
+                        geoms_state,
+                        rigid_global_info,
+                        contact_island_state,
+                    )
                     self.add_joint_limit_constraints(i_island, i_b)
                     self._func_init_solver(i_island, i_b, entities_info, rigid_global_info)
                     self._func_solve(i_island, i_b, entities_info, rigid_global_info)
@@ -131,7 +156,18 @@ class ConstraintSolverIsland:
         self.contact_island.construct()
 
     @qd.func
-    def add_collision_constraints_and_wakeup_entities(self, i_island: int, i_b: int):
+    def add_collision_constraints_and_wakeup_entities(
+        self,
+        i_island: int,
+        i_b: int,
+        entities_state: array_class.EntitiesState,
+        entities_info: array_class.EntitiesInfo,
+        dofs_state: array_class.DofsState,
+        links_state: array_class.LinksState,
+        geoms_state: array_class.GeomsState,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        contact_island_state: array_class.ContactIslandState,
+    ):
         self.n_constraints[i_b] = 0
         for i_island_col in range(self.contact_island.island_col.n[i_island, i_b]):
             i_col_ = self.contact_island.island_col.start[i_island, i_b] + i_island_col
@@ -217,8 +253,8 @@ class ConstraintSolverIsland:
                 entity_idx_a = self._solver.links_info.entity_idx[link_a_maybe_batch]
                 entity_idx_b = self._solver.links_info.entity_idx[link_b_maybe_batch]
 
-                is_entity_a_hibernated = self._solver.entities_state.hibernated[entity_idx_a, i_b]
-                is_entity_b_hibernated = self._solver.entities_state.hibernated[entity_idx_b, i_b]
+                is_entity_a_hibernated = entities_state.hibernated[entity_idx_a, i_b]
+                is_entity_b_hibernated = entities_state.hibernated[entity_idx_b, i_b]
                 if is_entity_a_hibernated or is_entity_b_hibernated:
                     # wake up entities
                     any_hibernated_entity_idx = entity_idx_a if is_entity_a_hibernated else entity_idx_b
@@ -226,13 +262,13 @@ class ConstraintSolverIsland:
                     func_wakeup_entity_and_its_temp_island(
                         any_hibernated_entity_idx,
                         i_b,
-                        self._solver.entities_state,
-                        self._solver.entities_info,
-                        self._solver.dofs_state,
-                        self._solver.links_state,
-                        self._solver.geoms_state,
-                        self._solver.data_manager.rigid_global_info,
-                        self.contact_island,
+                        entities_state,
+                        entities_info,
+                        dofs_state,
+                        links_state,
+                        geoms_state,
+                        rigid_global_info,
+                        contact_island_state,
                     )
 
     @qd.func

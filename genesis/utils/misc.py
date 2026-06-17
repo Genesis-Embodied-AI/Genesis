@@ -10,6 +10,7 @@ import random
 import sys
 from collections.abc import Callable
 from dataclasses import field
+from importlib import import_module
 from itertools import combinations
 from typing import Any, NoReturn, Optional, Sequence
 
@@ -408,19 +409,38 @@ def try_get_display_size() -> tuple[int | None, int | None, float | None]:
     screen_scale : float | None
         The scale of the screen.
     """
+    # Resolve pyglet's native display backend directly (under 'pyglet.canvas' before 2.0, 'pyglet.display' from 2.0 on),
+    # never the placeholder headless one whose finalizer calls eglTerminate on the EGL display the offscreen renderers
+    # share. A headless process then raises here, reported as no display - the fallback to a default size is the
+    # viewer's concern. Reuse a display pyglet already has open if any (the isinstance check skips a headless one).
+    native = {
+        "darwin": ("cocoa", "CocoaDisplay"),
+        "win32": ("win32", "Win32Display"),
+        "cygwin": ("win32", "Win32Display"),
+        "linux": ("xlib", "XlibDisplay"),
+    }.get(pyglet.compat_platform)
+    if native is None:
+        raise NotImplementedError(f"No display interface available for platform '{pyglet.compat_platform}'.")
+    # The backend submodule depends on the platform and pyglet version, and a foreign-platform one fails to import
+    # (e.g. 'win32' off Windows needs Windows-only ctypes), so it cannot be a top-level import; resolving it by
+    # computed name avoids a platform-by-version tree of local imports.
     if pyglet.version < "2.0":
-        display = pyglet.canvas.Display()
-        screen = display.get_default_screen()
+        Display = getattr(import_module(f"pyglet.canvas.{native[0]}"), native[1])
+        display = next((d for d in pyglet.canvas._displays if isinstance(d, Display)), None)
+    else:
+        Display = getattr(import_module(f"pyglet.display.{native[0]}"), native[1])
+        display = next((d for d in pyglet.display._displays if isinstance(d, Display)), None)
+    if display is None:
+        display = Display()
+
+    screen = display.get_default_screen()
+    if pyglet.version < "2.0":
         screen_scale = 1.0
     else:
-        display = pyglet.display.get_display()
-        screen = display.get_default_screen()
         try:
             screen_scale = screen.get_scale()
         except NotImplementedError:
-            # Probably some headless screen
             screen_scale = 1.0
-
     return screen.height, screen.width, screen_scale
 
 

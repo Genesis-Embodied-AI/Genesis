@@ -6,77 +6,74 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 
 
-@qd.kernel(fastcache=True)
-def kernel_build_efc_AR_b(
+@qd.func
+def func_build_efc_AR_b_batch(
+    i_b,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
+    # On the fused serialized path, efc_AR/efc_b are allocated with a single batch slot shared by all envs.
+    i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
+    nefc = constraint_state.n_constraints[i_b]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_b in range(_B):
-        nefc = constraint_state.n_constraints[i_b]
-        # zero AR
-        for i_row in range(nefc):
-            for i_col in range(nefc):
-                constraint_state.efc_AR[i_row, i_col, i_b] = gs.qd_float(0.0)
+    # build AR = J * inv(M) * J^T
+    # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp.
+    # No zeroing pass is needed: the symmetric lower-triangle fill writes every entry of [0, nefc)^2 and
+    # consumers never read beyond nefc.
+    for i_row in range(nefc):
+        # tmp = M^{-1} * Jr^T
+        if qd.static(static_rigid_sim_config.sparse_solve):
+            # Sparse: zero buffer, copy only relevant DOFs
+            for i_d in range(n_dofs):
+                constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
+            for i_d_ in range(constraint_state.jac_n_dofs[i_row, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_row, i_d_, i_b]
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
 
-        # build AR = J * inv(M) * J^T
-        # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp
-        for i_row in range(nefc):
-            # tmp = M^{-1} * Jr^T
+        rigid_solver.func_solve_mass_batch(
+            i_b,
+            constraint_state.Mgrad,
+            constraint_state.Mgrad,
+            None,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
+        )
+
+        # TODO: For consistency with other usages, migrate to either the lower or upper variant
+        # and update all remaining use cases that still read both.
+        # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
+        for i_col in range(i_row + 1):
+            s = gs.qd_float(0.0)
             if qd.static(static_rigid_sim_config.sparse_solve):
-                # Sparse: zero buffer, copy only relevant DOFs
-                for i_d in range(n_dofs):
-                    constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
-                for i_d_ in range(constraint_state.jac_n_dofs[i_row, i_b]):
-                    i_d = constraint_state.jac_dofs_idx[i_row, i_d_, i_b]
-                    constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+                for i_d_ in range(constraint_state.jac_n_dofs[i_col, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_col, i_d_, i_b]
+                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
             else:
                 for i_d in range(n_dofs):
-                    constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+            constraint_state.efc_AR[i_row, i_col, i_b_AR] = s
+            constraint_state.efc_AR[i_col, i_row, i_b_AR] = s
 
-            rigid_solver.func_solve_mass_batch(
-                i_b,
-                constraint_state.Mgrad,
-                constraint_state.Mgrad,
-                None,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                is_backward=False,
-            )
-
-            # TODO: For consistency with other usages, migrate to either the lower or upper variant
-            # and update all remaining use cases that still read both.
-            # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
-            for i_col in range(i_row + 1):
-                s = gs.qd_float(0.0)
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_dofs[i_col, i_b]):
-                        i_d = constraint_state.jac_dofs_idx[i_col, i_d_, i_b]
-                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
-                else:
-                    for i_d in range(n_dofs):
-                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
-                constraint_state.efc_AR[i_row, i_col, i_b] = s
-                constraint_state.efc_AR[i_col, i_row, i_b] = s
-
-        # Build efc_b
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            v = -constraint_state.aref[i_c, i_b]
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
-            constraint_state.efc_b[i_c, i_b] = v
+    # Build efc_b
+    for i_c in range(nefc):
+        v = -constraint_state.aref[i_c, i_b]
+        if qd.static(static_rigid_sim_config.sparse_solve):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+        constraint_state.efc_b[i_c, i_b_AR] = v
 
 
 @qd.func
@@ -120,18 +117,202 @@ def func_solve_mass_entity_row(
             buf[i_row, i_d, i_b] = curr_out
 
 
-@qd.kernel(fastcache=True)
-def kernel_compute_MinvJT(
+@qd.func
+def func_noslip_batch(
+    i_b,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    EPS = rigid_global_info.EPS[None]
+    n_dofs = constraint_state.jac.shape[1]
+    # On the fused serialized path, efc_AR/efc_b are allocated with a single batch slot shared by all envs.
+    i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
+
+    # temp variables
+    res = qd.Vector.zero(gs.qd_float, 5)
+    old_force = qd.Vector.zero(gs.qd_float, 5)
+    bc = qd.Vector.zero(gs.qd_float, 5)
+    Ac = qd.Vector.zero(gs.qd_float, 9)
+
+    n_con = collider_state.n_contacts[i_b]
+    ne = constraint_state.n_constraints_equality[i_b]
+    nf = constraint_state.n_constraints_frictionloss[i_b]
+    const_start = ne + nf
+
+    scale = 1.0 / (rigid_global_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
+
+    for i_iter in range(rigid_global_info.noslip_iterations[None]):
+        improvement = gs.qd_float(0.0)
+        if i_iter == 0:
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                improvement += 0.5 * constraint_state.efc_force[i_c, i_b] ** 2 * constraint_state.diag[i_c, i_b]
+
+        for i_c in range(ne, ne + nf):
+            res = func_residual_constraint_force(
+                res=res,
+                i_b=i_b,
+                i_efc=i_c,
+                dim=1,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+            old_force[0] = constraint_state.efc_force[i_c, i_b]
+            constraint_state.efc_force[i_c, i_b] -= res[0] / constraint_state.efc_AR[i_c, i_c, i_b_AR]
+            if constraint_state.efc_force[i_c, i_b] < -constraint_state.efc_frictionloss[i_c, i_b]:
+                constraint_state.efc_force[i_c, i_b] = -constraint_state.efc_frictionloss[i_c, i_b]
+            elif constraint_state.efc_force[i_c, i_b] > constraint_state.efc_frictionloss[i_c, i_b]:
+                constraint_state.efc_force[i_c, i_b] = constraint_state.efc_frictionloss[i_c, i_b]
+            delta = constraint_state.efc_force[i_c, i_b] - old_force[0]
+            improvement -= 0.5 * delta**2 / constraint_state.efc_AR[i_c, i_c, i_b_AR] + delta * res[0]
+
+        # Project contact friction (pyramidal 4-edge) with normal fixed
+        for i_col in range(n_con):
+            base = const_start + i_col * 4
+            for j2 in qd.static(range(2)):
+                j_efc = base + j2 * 2
+                res = func_residual_constraint_force(
+                    res=res,
+                    i_b=i_b,
+                    i_efc=j_efc,
+                    dim=2,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                for i2 in qd.static(range(2)):
+                    old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
+                Ac = func_extract_block_matrix_from_AR(
+                    Ac=Ac,
+                    i_b=i_b,
+                    start=j_efc,
+                    n=2,
+                    constraint_state=constraint_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                for j in qd.static(range(2)):
+                    bc[j] = res[j]
+                    for k in qd.static(range(2)):
+                        bc[j] -= Ac[j * 2 + k] * old_force[k]
+                mid = 0.5 * (constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b])
+                y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
+                K1 = Ac[0] + Ac[3] - Ac[1] - Ac[2]
+                K0 = mid * (Ac[0] - Ac[3]) + bc[0] - bc[1]
+                if K1 < EPS:
+                    constraint_state.efc_force[j_efc, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
+                else:
+                    y = -K0 / K1
+                    if y < -mid:
+                        constraint_state.efc_force[j_efc, i_b] = 0
+                        constraint_state.efc_force[j_efc + 1, i_b] = 2 * mid
+                    elif y > mid:
+                        constraint_state.efc_force[j_efc, i_b] = 2 * mid
+                        constraint_state.efc_force[j_efc + 1, i_b] = 0
+                    else:
+                        constraint_state.efc_force[j_efc, i_b] = mid + y
+                        constraint_state.efc_force[j_efc + 1, i_b] = mid - y
+                cost_change = func_cost_change(
+                    i_b=i_b,
+                    Ac=Ac,
+                    force=constraint_state.efc_force,
+                    force_start=j_efc,
+                    old_force=old_force,
+                    res=res,
+                    dim=2,
+                    eps=EPS,
+                )
+
+                improvement -= cost_change
+        improvement *= scale
+
+        if improvement < rigid_global_info.noslip_tolerance[None]:
+            break
+
+
+@qd.func
+def func_dual_finish_batch(
+    i_b,
+    dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute MinvJT[row, :, i_b] = M^{-1} @ J[row, :, i_b] for each constraint row.
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
 
-    Parallelized over (row, batch) via ndrange — each thread independently
-    copies J[row] into MinvJT[row] and solves M^{-1} in-place using the
-    row-indexed LDL^T substitution. No shared buffers between rows.
+    # zero
+    for i_d in range(n_dofs):
+        constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
+
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            constraint_state.qfrc_constraint[i_d, i_b] = (
+                constraint_state.qfrc_constraint[i_d, i_b]
+                + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            )
+
+    rigid_solver.func_solve_mass_batch(
+        i_b=i_b,
+        vec=constraint_state.qfrc_constraint,
+        out=constraint_state.qacc,
+        out_bw=None,
+        entities_info=entities_info,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+        is_backward=False,
+    )
+
+    for i_d in range(n_dofs):
+        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
+        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+
+        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+
+
+@qd.kernel(fastcache=True)
+def kernel_noslip_fused(
+    collider_state: array_class.ColliderState,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Serialized noslip pass: build AR/b, run the force-update sweep, and finish, one env at a time.
+
+    Processing each env end-to-end keeps its efc_AR block (written by the build, consumed by the sweep) cache-hot, and
+    allows efc_AR/efc_b to be allocated with a single batch slot shared by all envs.
+    """
+    _B = constraint_state.jac.shape[2]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_build_efc_AR_b_batch(
+            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
+        )
+        func_noslip_batch(i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        func_dual_finish_batch(
+            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
+        )
+
+
+@qd.kernel(fastcache=True)
+def kernel_noslip_decomposed(
+    collider_state: array_class.ColliderState,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Decomposed noslip pass: parallel MinvJT solve, parallel AR/b build, force-update sweep, and dual finish.
+
+    Each top-level loop is an independent offloaded task with its own launch shape, with implicit barriers in
+    between. The MinvJT solve runs one thread per (row, env): each thread copies J[row] into its own MinvJT row and
+    solves M^{-1} in place via the row-indexed LDL^T substitution, with no shared buffers between rows. The AR build
+    runs one thread per (row, col, env) - nefc^2 * n_envs independent threads (~490K for typical scenes) - computing
+    AR[row, col, i_b] = sum_d J[col, d, i_b] * MinvJT[row, d, i_b]. On the serialized path, kernel_noslip_fused is
+    used instead.
     """
     len_c = constraint_state.MinvJT.shape[0]
     _B = constraint_state.jac.shape[2]
@@ -156,27 +337,6 @@ def kernel_compute_MinvJT(
                 )
                 func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
 
-
-@qd.kernel(fastcache=True)
-def kernel_compute_AR_and_b(
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Phase 2: Compute AR = J @ MinvJT and efc_b (GPU multi-env only).
-
-    AR[row, col, i_b] = sum_d J[col, d, i_b] * MinvJT[row, d, i_b]
-
-    Uses ndrange for full GPU parallelism across (row, col, batch) — gives
-    nefc^2 * n_envs independent threads (~490K for typical scenes).
-
-    This kernel is only called when para_level >= PARA_LEVEL.ALL (GPU multi-env).
-    For CPU and GPU single-env, the fused kernel_build_efc_AR_b is used instead.
-    """
-    len_c = constraint_state.efc_AR.shape[0]
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
-
     for i_row, i_col, i_b in qd.ndrange(len_c, len_c, _B):
         nefc = constraint_state.n_constraints[i_b]
         if i_row < nefc and i_col < nefc:
@@ -187,6 +347,7 @@ def kernel_compute_AR_and_b(
         else:
             constraint_state.efc_AR[i_row, i_col, i_b] = gs.qd_float(0.0)
 
+    # Build efc_b
     for i_c, i_b in qd.ndrange(len_c, _B):
         if i_c < constraint_state.n_constraints[i_b]:
             v = -constraint_state.aref[i_c, i_b]
@@ -194,156 +355,15 @@ def kernel_compute_AR_and_b(
                 v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
             constraint_state.efc_b[i_c, i_b] = v
 
-
-@qd.kernel(fastcache=True)
-def kernel_noslip(
-    collider_state: array_class.ColliderState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    EPS = rigid_global_info.EPS[None]
-    _B = constraint_state.jac.shape[2]
-    n_dofs = constraint_state.jac.shape[1]
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        func_noslip_batch(i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        # temp variables
-        res = qd.Vector.zero(gs.qd_float, 5)
-        old_force = qd.Vector.zero(gs.qd_float, 5)
-        bc = qd.Vector.zero(gs.qd_float, 5)
-        Ac = qd.Vector.zero(gs.qd_float, 9)
-
-        n_con = collider_state.n_contacts[i_b]
-        ne = constraint_state.n_constraints_equality[i_b]
-        nf = constraint_state.n_constraints_frictionloss[i_b]
-        const_start = ne + nf
-
-        scale = 1.0 / (rigid_global_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
-
-        for i_iter in range(rigid_global_info.noslip_iterations[None]):
-            improvement = gs.qd_float(0.0)
-            if i_iter == 0:
-                for i_c in range(constraint_state.n_constraints[i_b]):
-                    improvement += 0.5 * constraint_state.efc_force[i_c, i_b] ** 2 * constraint_state.diag[i_c, i_b]
-
-            for i_c in range(ne, ne + nf):
-                res = func_residual_constraint_force(
-                    res=res,
-                    i_b=i_b,
-                    i_efc=i_c,
-                    dim=1,
-                    constraint_state=constraint_state,
-                )
-                old_force[0] = constraint_state.efc_force[i_c, i_b]
-                constraint_state.efc_force[i_c, i_b] -= res[0] / constraint_state.efc_AR[i_c, i_c, i_b]
-                if constraint_state.efc_force[i_c, i_b] < -constraint_state.efc_frictionloss[i_c, i_b]:
-                    constraint_state.efc_force[i_c, i_b] = -constraint_state.efc_frictionloss[i_c, i_b]
-                elif constraint_state.efc_force[i_c, i_b] > constraint_state.efc_frictionloss[i_c, i_b]:
-                    constraint_state.efc_force[i_c, i_b] = constraint_state.efc_frictionloss[i_c, i_b]
-                delta = constraint_state.efc_force[i_c, i_b] - old_force[0]
-                improvement -= 0.5 * delta**2 / constraint_state.efc_AR[i_c, i_c, i_b] + delta * res[0]
-
-            # Project contact friction (pyramidal 4-edge) with normal fixed
-            for i_col in range(n_con):
-                base = const_start + i_col * 4
-                for j2 in qd.static(range(2)):
-                    j_efc = base + j2 * 2
-                    res = func_residual_constraint_force(
-                        res=res,
-                        i_b=i_b,
-                        i_efc=j_efc,
-                        dim=2,
-                        constraint_state=constraint_state,
-                    )
-                    for i2 in qd.static(range(2)):
-                        old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
-                    Ac = func_extract_block_matrix_from_AR(
-                        Ac=Ac,
-                        i_b=i_b,
-                        start=j_efc,
-                        n=2,
-                        constraint_state=constraint_state,
-                    )
-                    for j in qd.static(range(2)):
-                        bc[j] = res[j]
-                        for k in qd.static(range(2)):
-                            bc[j] -= Ac[j * 2 + k] * old_force[k]
-                    mid = 0.5 * (constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b])
-                    y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
-                    K1 = Ac[0] + Ac[3] - Ac[1] - Ac[2]
-                    K0 = mid * (Ac[0] - Ac[3]) + bc[0] - bc[1]
-                    if K1 < EPS:
-                        constraint_state.efc_force[j_efc, i_b] = constraint_state.efc_force[j_efc + 1, i_b] = mid
-                    else:
-                        y = -K0 / K1
-                        if y < -mid:
-                            constraint_state.efc_force[j_efc, i_b] = 0
-                            constraint_state.efc_force[j_efc + 1, i_b] = 2 * mid
-                        elif y > mid:
-                            constraint_state.efc_force[j_efc, i_b] = 2 * mid
-                            constraint_state.efc_force[j_efc + 1, i_b] = 0
-                        else:
-                            constraint_state.efc_force[j_efc, i_b] = mid + y
-                            constraint_state.efc_force[j_efc + 1, i_b] = mid - y
-                    cost_change = func_cost_change(
-                        i_b=i_b,
-                        Ac=Ac,
-                        force=constraint_state.efc_force,
-                        force_start=j_efc,
-                        old_force=old_force,
-                        res=res,
-                        dim=2,
-                        eps=EPS,
-                    )
-
-                    improvement -= cost_change
-            improvement *= scale
-
-            if improvement < rigid_global_info.noslip_tolerance[None]:
-                break
-
-
-@qd.kernel(fastcache=True)
-def kernel_dual_finish(
-    dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    n_dofs = constraint_state.qfrc_constraint.shape[0]
-    _B = constraint_state.qfrc_constraint.shape[1]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        # zero
-        for i_d in range(n_dofs):
-            constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
-
-            for i_c in range(constraint_state.n_constraints[i_b]):
-                constraint_state.qfrc_constraint[i_d, i_b] = (
-                    constraint_state.qfrc_constraint[i_d, i_b]
-                    + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                )
-
-        rigid_solver.func_solve_mass_batch(
-            i_b=i_b,
-            vec=constraint_state.qfrc_constraint,
-            out=constraint_state.qacc,
-            out_bw=None,
-            entities_info=entities_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=False,
+        func_dual_finish_batch(
+            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
         )
-
-        for i_d in range(n_dofs):
-            constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
-            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-
-            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
 
 
 @qd.func
@@ -353,10 +373,13 @@ def func_extract_block_matrix_from_AR(
     start: int,
     n: int,
     constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
 ):
+    # On the fused serialized path, efc_AR/efc_b are allocated with a single batch slot shared by all envs.
+    i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
     for j in range(n):
         for k in range(n):
-            Ac[j * n + k] = constraint_state.efc_AR[start + j, start + k, i_b]
+            Ac[j * n + k] = constraint_state.efc_AR[start + j, start + k, i_b_AR]
     return Ac
 
 
@@ -367,11 +390,14 @@ def func_residual_constraint_force(
     i_efc: int,
     dim: int,
     constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
 ):
+    # On the fused serialized path, efc_AR/efc_b are allocated with a single batch slot shared by all envs.
+    i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
     for j in range(dim):
-        res[j] = constraint_state.efc_b[i_efc + j, i_b]
+        res[j] = constraint_state.efc_b[i_efc + j, i_b_AR]
         for k in range(constraint_state.n_constraints[i_b]):
-            res[j] += constraint_state.efc_AR[i_efc + j, k, i_b] * constraint_state.efc_force[k, i_b]
+            res[j] += constraint_state.efc_AR[i_efc + j, k, i_b_AR] * constraint_state.efc_force[k, i_b]
     return res
 
 

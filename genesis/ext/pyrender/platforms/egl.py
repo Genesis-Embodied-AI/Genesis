@@ -1,4 +1,5 @@
 import ctypes
+import functools
 import os
 
 import OpenGL.platform
@@ -264,11 +265,27 @@ class EGLPlatform(Platform):
         if self._egl_display is not None:
             eglMakeCurrent(self._egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)
 
+    def save_current_context(self):
+        # Capture the current context as a restore callable, returning None when nothing is current. EGL's
+        # 'make_uncurrent' releases the context, so our own context is never current here - only an external context
+        # (e.g. another renderer mid-render) or none. Use the module-level 'egl' alias rather than a local import so
+        # the returned callable stays valid during teardown, including at interpreter shutdown. Genesis EGL contexts
+        # are surfaceless, so only the display and context are needed to restore (matching 'make_current').
+        egl_display = egl.eglGetCurrentDisplay()
+        egl_context = egl.eglGetCurrentContext()
+        if not egl_context:
+            return None
+        return functools.partial(egl.eglMakeCurrent, egl_display, egl.EGL_NO_SURFACE, egl.EGL_NO_SURFACE, egl_context)
+
     def delete_context(self):
-        from OpenGL.EGL import eglDestroyContext
+        from OpenGL.EGL import eglDestroyContext, eglGetCurrentContext
 
         if self._egl_display is not None:
-            self.make_uncurrent()
+            # The EGL current context is per-thread and shared across renderers. Only release it if it is ours;
+            # otherwise another renderer (possibly mid-render) is current and tearing down this context must not
+            # strand it with no current context.
+            if self._egl_context is not None and eglGetCurrentContext() == self._egl_context:
+                self.make_uncurrent()
             if self._egl_context is not None:
                 eglDestroyContext(self._egl_display, self._egl_context)
                 self._egl_context = None

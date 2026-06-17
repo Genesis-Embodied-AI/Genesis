@@ -24,6 +24,59 @@ def test_coacd_options_pca_validation():
 
 
 @pytest.mark.required
+def test_repr_does_not_crash():
+    inline_mjcf = '<mujoco model="probe"><worldbody><body><geom type="box" size="1 1 1"/></body></worldbody></mujoco>'
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    panda = scene.add_entity(morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    inline = scene.add_entity(morph=gs.morphs.MJCF(file=inline_mjcf))
+    het = scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+            gs.morphs.Cylinder(radius=0.05, height=0.2),
+        ),
+    )
+    scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+            gs.morphs.Sphere(radius=0.1),
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    cam = scene.add_camera(
+        res=(64, 64),
+        pos=(1.0, 1.0, 1.0),
+        lookat=(0.0, 0.0, 0.0),
+    )
+    scene.build(n_envs=2)
+
+    # Every printable object renders without raising, across both the brief and the full colorized form.
+    for obj in (scene, scene.entities, cam, scene.sim.rigid_solver):
+        assert repr(obj)
+    for entity in scene.entities:
+        assert entity._repr_brief()
+        assert repr(entity)
+        for morph in entity.morphs:
+            assert repr(morph)
+        sub_objects = [*entity.links, *entity.joints, *entity.vgeoms]
+        if isinstance(entity, gs.engine.entities.RigidEntity):
+            sub_objects += list(entity.geoms)
+        for sub in sub_objects:
+            assert sub._repr_brief()
+            assert repr(sub)
+
+    # Sanity on the parts worth enforcing.
+    # A file-based morph shows its path; an in-memory description is identified by its model name, not dumped.
+    assert "panda.xml" in repr(panda.main_morph)
+    assert "<inline probe>" in inline.main_morph.__repr_name__()
+    assert inline_mjcf not in repr(inline.main_morph)
+    # A heterogeneous entity reports its variants instead of collapsing to a single ambiguous morph.
+    assert "morph variants" in het._repr_brief()
+
+
+@pytest.mark.required
 def test_scene_destroy_cleans_up_simulator():
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(morph=gs.morphs.Plane())

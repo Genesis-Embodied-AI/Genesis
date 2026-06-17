@@ -1,6 +1,7 @@
 """Screenshot integration test for ImGuiOverlayPlugin."""
 
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -9,7 +10,7 @@ import genesis as gs
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_pixel_match, rgb_array_to_png_bytes
 
 try:
     import imgui_bundle  # noqa: F401
@@ -17,6 +18,45 @@ try:
     _IMGUI_BUNDLE_AVAILABLE = True
 except ImportError:
     _IMGUI_BUNDLE_AVAILABLE = False
+
+
+@pytest.mark.required
+def test_imgui_overlay_capture_pending_entities_preserves_heterogeneous_morphs():
+    scene = gs.Scene(show_viewer=False)
+    single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
+    single_entity = scene.add_entity(
+        morph=single_morph,
+        visualize_contact=True,
+        name="single",
+    )
+    heterogeneous_morphs = (
+        gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+        gs.morphs.Cylinder(radius=0.05, height=0.2),
+    )
+    heterogeneous_entity = scene.add_entity(
+        morph=heterogeneous_morphs,
+        visualize_contact=True,
+        name="heterogeneous",
+    )
+
+    plugin = ImGuiOverlayPlugin.__new__(ImGuiOverlayPlugin)
+    plugin.scene = scene
+
+    plugin._capture_pending_entities_kwargs()
+
+    single_kwargs = plugin._pending_entities_kwargs[single_entity.name]
+    assert single_kwargs["morph"] is single_morph
+    assert single_kwargs["material"] is single_entity.material
+    assert single_kwargs["surface"] is single_entity.surface
+    assert single_kwargs["visualize_contact"] is True
+
+    heterogeneous_kwargs = plugin._pending_entities_kwargs[heterogeneous_entity.name]
+    assert heterogeneous_kwargs["morph"] == heterogeneous_morphs
+    assert heterogeneous_kwargs["morph"][0] is heterogeneous_morphs[0]
+    assert heterogeneous_kwargs["morph"][1] is heterogeneous_morphs[1]
+    assert heterogeneous_kwargs["material"] is heterogeneous_entity.material
+    assert heterogeneous_kwargs["surface"] is heterogeneous_entity.surface
+    assert heterogeneous_kwargs["visualize_contact"] is True
 
 
 def _apply_deterministic_imgui_overrides(monkeypatch):
@@ -92,7 +132,7 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
     monkeypatch.setattr(ImGuiOverlayPlugin, "_capture_pending_entities_kwargs", _capture_pending_entities_basename)
 
 
-def _build_default_scene(*, enable_gui):
+def _build_default_scene(*, enable_gui, run_in_thread=False):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             # Keep ``res`` small enough to fit the virtual display area of GitHub-hosted Apple M1 macos-15 runners:
@@ -100,10 +140,10 @@ def _build_default_scene(*, enable_gui):
             res=(640, 480),
             camera_pos=(4.5, -1.2, 2.5),
             camera_lookat=(0.0, -1.2, 0.5),
-            # The capture path at the end of this test calls ``pyrender_viewer.on_draw`` and reads the window
-            # framebuffer directly. That can only run on the thread that owns the GL context, so run the viewer
-            # in the test thread instead of its own background thread.
-            run_in_thread=False,
+            # The snapshot test keeps the default ``run_in_thread=False``: its capture path calls
+            # ``pyrender_viewer.on_draw`` and reads the window framebuffer directly, which can only run on the
+            # thread that owns the GL context.
+            run_in_thread=run_in_thread,
             # ``_render_help_text`` rasterizes "[i]: show keyboard instructions" via Genesis's own font path,
             # which is not byte-identical across software / hardware renderers; disable it so the captured
             # frame contains only the deterministic ImGui overlay.
@@ -300,7 +340,18 @@ def test_scene_rebuild():
     # enable_gui makes the overlay own an InteractiveScene and rebuild the scene in place: the same Scene
     # object (and its viewer) stay valid across a rebuild, driven entirely through scene.step() with no
     # manual InteractiveScene. A Rebuild click only queues the request; scene.step() applies it on its thread.
-    scene = _build_default_scene(enable_gui=True)
+    scene = _build_default_scene(enable_gui=True, run_in_thread=(sys.platform == "linux"))
+    # A UV-mapped mesh with an image texture, so the capture comparison below catches the renderer swap invalidating
+    # GL textures shared across the rebuild.
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck/duck.obj",
+            scale=0.001,
+            pos=(0.8, -0.8, 0.2),
+            fixed=True,
+        ),
+        name="duck",
+    )
     scene.build()
 
     scene_id = id(scene)
@@ -312,8 +363,15 @@ def test_scene_rebuild():
     window_before = scene.viewer._pyrender_viewer
     # Move the camera off its default so the rebuild has to restore the exact viewpoint (including roll),
     # not reset it to the ViewerOptions default.
-    scene.viewer.set_camera_pose(pos=np.array([2.0, 1.3, 1.7]), lookat=np.array([0.1, -0.2, 0.4]))
+    scene.viewer.set_camera_pose(pos=np.array([2.3, 1.5, 1.9]), lookat=np.array([0.1, -0.2, 0.1]))
     camera_pose_before = scene.viewer.camera_pose.copy()
+
+    # Pause so stepping only applies the rebuild without advancing the dynamics: the scene state must be identical
+    # for the pre/post-rebuild captures.
+    interactive.pause()
+    rgb_before, *_ = window_before.render_offscreen(
+        window_before._camera_node, window_before._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
 
     interactive.rebuild(entities_kwargs=plugin._pending_entities_kwargs)
     scene.step()
@@ -323,4 +381,17 @@ def test_scene_rebuild():
     assert scene.viewer._pyrender_viewer is window_before
     assert [entity.name for entity in scene.entities] == names_before
     assert_allclose(scene.viewer.camera_pose, camera_pose_before, atol=1e-4)
+    qpos_before = scene.rigid_solver.get_qpos()
+
+    rgb_after, *_ = window_before.render_offscreen(
+        window_before._camera_node, window_before._renderer, rgb=True, depth=False, seg=False, normal=False
+    )
+    assert not window_before._retired_renderers, "Retired renderer was not deleted on the render thread."
+    # The rebuilt scene is static, so the captures must match; a renderer retired after the rebuilt scene's first
+    # draw would leave the duck texture invalid and shift the image. Use the same blurred pixel-match comparison
+    # as the snapshot tests, which tolerates the few-pixel jitter software renderers produce on any platform while
+    # still catching a stale-texture regression (which shifts a whole region).
+    assert_pixel_match(rgb_after, rgb_before, err_msg="Rebuilt scene renders differently.")
+
     scene.step()
+    assert_allclose(scene.rigid_solver.get_qpos(), qpos_before, tol=gs.EPS)

@@ -2,6 +2,7 @@ from ..constants import TARGET_OPEN_GL_MAJOR, TARGET_OPEN_GL_MINOR, MIN_OPEN_GL_
 from .base import Platform
 
 import OpenGL
+import pyglet
 
 
 __all__ = ["PygletPlatform"]
@@ -17,8 +18,6 @@ class PygletPlatform(Platform):
         self._window = None
 
     def init_context(self):
-        import pyglet
-
         pyglet.options["shadow_window"] = False
 
         try:
@@ -73,11 +72,18 @@ class PygletPlatform(Platform):
 
     def make_uncurrent(self):
         try:
-            import pyglet
-
             pyglet.gl.xlib.glx.glXMakeContextCurrent(self._window.context.x_display, 0, 0, None)
         except Exception:
             pass
+        # The glx call above is a no-op off X11, so explicitly clear pyglet's current-context bookkeeping too. This
+        # keeps it accurate on every platform (e.g. Cocoa), so 'save_current_context' never mistakes this renderer's
+        # own context for an external one to restore, and the next 'make_current' rebinds rather than short-circuiting.
+        pyglet.gl.current_context = None
+
+    def save_current_context(self):
+        # 'set_current' is a bound method of the current Context, i.e. a self-contained zero-argument restore callable.
+        context = pyglet.gl.current_context
+        return context.set_current if context is not None else None
 
     def delete_context(self):
         if self._window is not None:

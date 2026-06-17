@@ -51,9 +51,11 @@ def get_model_name(file_path):
     OSError
         If there is an error reading the file.
     """
-    path = os.path.join(get_assets_dir(), file_path)
-    tree = ET.parse(path)
-    root = tree.getroot()
+    try:
+        # Inline XML content parses directly; a file path does not and falls back to reading from disk.
+        root = ET.fromstring(file_path)
+    except ET.ParseError:
+        root = ET.parse(os.path.join(get_assets_dir(), file_path)).getroot()
     if root.tag == "mujoco":
         return root.attrib.get("model")
     return None
@@ -82,8 +84,9 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             # Best guess for the search path
             asset_path = os.path.dirname(path) if is_valid_path else os.getcwd()
 
-            # Detect whether it is a URDF file or a Mujoco MJCF file
-            root = xml.getroot()
+            # Detect whether it is a URDF file or a Mujoco MJCF file. `ET.parse` yields an ElementTree, while
+            # `ET.fromstring` (inline XML content) yields the root Element directly.
+            root = xml.getroot() if isinstance(xml, ET.ElementTree) else xml
             is_urdf_file = root.tag == "robot"
             mjcf = ET.SubElement(root, "mujoco") if is_urdf_file else root
 

@@ -14,7 +14,11 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from .misc import func_apply_link_external_force, func_apply_link_external_torque
+from .misc import (
+    func_apply_link_external_force,
+    func_apply_link_external_torque,
+    func_wakeup_entity_and_its_temp_island,
+)
 
 
 @qd.kernel(fastcache=True)
@@ -215,7 +219,6 @@ def kernel_get_state_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_pos(
-    relative: qd.template(),
     pos: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -233,18 +236,10 @@ def kernel_set_links_pos(
         if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
             for j in qd.static(range(3)):
                 links_state.pos[i_l, i_b][j] = pos[i_b_, i_l_, j]
-            if qd.static(relative):
-                for j in qd.static(range(3)):
-                    links_state.pos[i_l, i_b][j] = links_state.pos[i_l, i_b][j] + links_info.pos[I_l][j]
         else:
             q_start = links_info.q_start[I_l]
             for j in qd.static(range(3)):
                 rigid_global_info.qpos[q_start + j, i_b] = pos[i_b_, i_l_, j]
-            if qd.static(relative):
-                for j in qd.static(range(3)):
-                    rigid_global_info.qpos[q_start + j, i_b] = (
-                        rigid_global_info.qpos[q_start + j, i_b] + rigid_global_info.qpos0[q_start + j, i_b]
-                    )
 
 
 @qd.kernel(fastcache=True)
@@ -258,9 +253,13 @@ def kernel_wake_up_entities_by_links(
     dofs_state: array_class.DofsState,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    contact_island_state: array_class.ContactIslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Wake up entities that own the specified links by setting their hibernated flags to False."""
+    """Wake up the entities owning the specified links, along with the other entities of their hibernated islands.
+
+    Waking up the whole island is necessary to clear its daisy-chain links, which would otherwise keep re-connecting
+    the woken entities to their previous islands at the next contact island construction."""
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -268,34 +267,22 @@ def kernel_wake_up_entities_by_links(
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         i_e = links_info.entity_idx[I_l]
 
-        # Wake up the entity and all its components
         if entities_state.hibernated[i_e, i_b]:
-            entities_state.hibernated[i_e, i_b] = False
-
-            # Add entity to awake_entities list
-            n_awake = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-            rigid_global_info.awake_entities[n_awake, i_b] = i_e
-
-            # Wake up all links of this entity and add to awake_links
-            for i_l2 in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-                links_state.hibernated[i_l2, i_b] = False
-                n_awake_links = qd.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
-                rigid_global_info.awake_links[n_awake_links, i_b] = i_l2
-
-            # Wake up all DOFs of this entity and add to awake_dofs
-            for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                dofs_state.hibernated[i_d, i_b] = False
-                n_awake_dofs = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], 1)
-                rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
-
-            # Wake up all geoms of this entity
-            for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
-                geoms_state.hibernated[i_g, i_b] = False
+            func_wakeup_entity_and_its_temp_island(
+                i_e,
+                i_b,
+                entities_state,
+                entities_info,
+                dofs_state,
+                links_state,
+                geoms_state,
+                rigid_global_info,
+                contact_island_state,
+            )
 
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_pos_grad(
-    relative: qd.i32,
     pos_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -323,7 +310,6 @@ def kernel_set_links_pos_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_quat(
-    relative: qd.template(),
     quat: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -338,45 +324,17 @@ def kernel_set_links_quat(
         i_l = links_idx[i_l_]
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-        if qd.static(relative):
-            quat_ = qd.Vector(
-                [
-                    quat[i_b_, i_l_, 0],
-                    quat[i_b_, i_l_, 1],
-                    quat[i_b_, i_l_, 2],
-                    quat[i_b_, i_l_, 3],
-                ],
-                dt=gs.qd_float,
-            )
-            if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
-                links_state.quat[i_l, i_b] = gu.qd_transform_quat_by_quat(links_info.quat[I_l], quat_)
-            else:
-                q_start = links_info.q_start[I_l]
-                quat0 = qd.Vector(
-                    [
-                        rigid_global_info.qpos0[q_start + 3, i_b],
-                        rigid_global_info.qpos0[q_start + 4, i_b],
-                        rigid_global_info.qpos0[q_start + 5, i_b],
-                        rigid_global_info.qpos0[q_start + 6, i_b],
-                    ],
-                    dt=gs.qd_float,
-                )
-                quat_ = gu.qd_transform_quat_by_quat(quat0, quat_)
-                for j in qd.static(range(4)):
-                    rigid_global_info.qpos[q_start + j + 3, i_b] = quat_[j]
+        if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
+            for j in qd.static(range(4)):
+                links_state.quat[i_l, i_b][j] = quat[i_b_, i_l_, j]
         else:
-            if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
-                for j in qd.static(range(4)):
-                    links_state.quat[i_l, i_b][j] = quat[i_b_, i_l_, j]
-            else:
-                q_start = links_info.q_start[I_l]
-                for j in qd.static(range(4)):
-                    rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
+            q_start = links_info.q_start[I_l]
+            for j in qd.static(range(4)):
+                rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
 
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_quat_grad(
-    relative: qd.template(),
     quat_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
