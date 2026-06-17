@@ -1789,6 +1789,17 @@ def func_convex_convex_contact(
                         geoms_info,
                         rigid_global_info,
                     )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+                    is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_sphere_contact(
+                        i_ga,
+                        i_gb,
+                        ga_pos_current,
+                        ga_quat_current,
+                        gb_pos_current,
+                        gb_quat_current,
+                        geoms_info,
+                        rigid_global_info,
+                    )
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                     is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
                         i_ga,
@@ -2199,6 +2210,17 @@ def _func_multicontact_run_detection(
 
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
+            i_ga,
+            i_gb,
+            ga_pos,
+            ga_quat,
+            gb_pos,
+            gb_quat,
+            geoms_info,
+            rigid_global_info,
+        )
+    elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_sphere_contact(
             i_ga,
             i_gb,
             ga_pos,
@@ -2868,6 +2890,17 @@ def _func_narrowphase_contact0(
 
             if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                 is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    geoms_info,
+                    rigid_global_info,
+                )
+            elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+                is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_sphere_contact(
                     i_ga,
                     i_gb,
                     ga_pos,

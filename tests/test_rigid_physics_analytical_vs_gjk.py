@@ -601,6 +601,36 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
     assert_allclose(contacts["normal"][0], (-1.0, 0.0, 0.0), tol=tol)
 
 
+def test_sphere_sphere_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: float):
+    """
+    Test that analytical sphere-sphere gives near-exact results for a simple case.
+    """
+    # Sphere 1: center at origin, radius=0.1
+    # Sphere 2: center at (0.18, 0, 0), radius=0.15
+    # Distance between centers: 0.18
+    # Sum of radii: 0.25
+    # Expected penetration: 0.25 - 0.18 = 0.07
+    # Normal points from B (sphere 2) to A (sphere 1): -x
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    _sphere1 = scene_add_sphere(tmp_path=tmp_path, scene=scene, radius=0.1)
+    sphere2 = scene_add_sphere(tmp_path=tmp_path, scene=scene, radius=0.15)
+    scene.build()
+    assert scene.rigid_solver.collider is not None
+
+    sphere2.set_pos((0.18, 0, 0))
+    scene.step()
+
+    contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+    assert len(contacts["geom_a"]) > 0
+
+    penetration = contacts["penetration"][0]
+    expected_pen = 0.07
+    assert_allclose(penetration, expected_pen, tol=POS_TOL, err_msg="Analytical solution not exact!")
+
+    assert_allclose(contacts["normal"][0], (-1.0, 0.0, 0.0), tol=tol)
+
+
 def create_sphere_mjcf(name, pos, radius):
     """Helper function to create an MJCF file with a single sphere."""
     mjcf = ET.Element("mujoco", model=name)
