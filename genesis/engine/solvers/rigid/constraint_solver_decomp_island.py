@@ -171,7 +171,7 @@ class ConstraintSolverIsland:
                         link_maybe_batch = [link, i_b] if ti.static(self._solver._options.batch_links_info) else link
 
                         # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
-                        for i_d_ in range(self._solver.links_info[link].n_dofs):
+                        for i_d_ in range(self._solver.links_info[link_maybe_batch].n_dofs):
                             i_d = self._solver.links_info[link_maybe_batch].dof_end - 1 - i_d_
 
                             cdof_ang = self._solver.dofs_state[i_d, i_b].cdof_ang
