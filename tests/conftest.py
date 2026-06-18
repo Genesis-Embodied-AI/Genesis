@@ -241,6 +241,25 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     os.environ["NUMBA_CACHE_DIR"] = str(basetemp / "numba-cache")
 
 
+def _nvidia_smi_list():
+    """Run `nvidia-smi -L` and parse it into ``[(idx, uuid), ...]``.
+
+    Used as a fallback when ``/proc/driver/nvidia/gpus/`` is not mounted (some
+    container/cloud images). Returns ``None`` if ``nvidia-smi`` is unavailable
+    or its output cannot be parsed.
+    """
+    try:
+        out = subprocess.check_output(["nvidia-smi", "-L"], stderr=subprocess.DEVNULL, encoding="utf-8", timeout=5.0)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    entries = []
+    for line in out.splitlines():
+        match = re.match(r"GPU\s+(\d+):.*\(UUID:\s+(GPU-[0-9a-fA-F-]+)\)", line)
+        if match:
+            entries.append((int(match.group(1)), match.group(2)))
+    return entries or None
+
+
 def _get_gpu_indices():
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
     if cuda_visible_devices is not None:
@@ -251,9 +270,13 @@ def _get_gpu_indices():
         try:
             return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
         except FileNotFoundError:
+            entries = _nvidia_smi_list()
+            if entries is not None:
+                return tuple(idx for idx, _ in entries)
             warnings.warn(
-                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
-                "on WSL2 where the NVIDIA proc interface is not mounted.",
+                f"'{nvidia_gpu_interface_path}' is not available and `nvidia-smi -L` was not usable. "
+                "Multi-GPU support will be disabled. This is expected on WSL2 where the NVIDIA proc "
+                "interface is not mounted.",
                 stacklevel=2,
             )
 
@@ -277,9 +300,17 @@ def _torch_get_gpu_idx(device):
             else:
                 return -1
         except FileNotFoundError:
+            entries = _nvidia_smi_list()
+            if entries is not None:
+                target = f"GPU-{device_uuid}".lower()
+                for idx, uuid in entries:
+                    if uuid.lower() == target:
+                        return idx
+                return -1
             warnings.warn(
-                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
-                "on WSL2 where the NVIDIA proc interface is not mounted.",
+                f"'{nvidia_gpu_interface_path}' is not available and `nvidia-smi -L` was not usable. "
+                "Multi-GPU support will be disabled. This is expected on WSL2 where the NVIDIA proc "
+                "interface is not mounted.",
                 stacklevel=2,
             )
 
