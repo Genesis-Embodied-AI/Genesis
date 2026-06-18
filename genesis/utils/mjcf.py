@@ -217,7 +217,8 @@ def parse_xml(morph, surface):
     #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    discard_ground_plane = isinstance(morph, gs.morphs.MJCF) and morph.discard_ground_plane
+    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file, discard_ground_plane=discard_ground_plane)
 
     # Parse all bodies (links and joints)
     l_infos, links_j_infos = parse_links(mj, morph.scale)
@@ -628,13 +629,18 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     return info
 
 
-def parse_geoms(mj, scale, surface, xml_path):
+def parse_geoms(mj, scale, surface, xml_path, *, discard_ground_plane=False):
     links_g_info = [[] for _ in range(mj.nbody)]
 
     # Loop over all geometries sequentially
     is_any_col = False
     for i_g in range(mj.ngeom):
         if mj.geom_bodyid[i_g] < 0:
+            continue
+
+        # Optionally drop ground-plane geometry attached to the world body so the MJCF can coexist with a scene-level
+        # `gs.morphs.Plane()` without overlapping floors (see issue #2782).
+        if discard_ground_plane and mj.geom_bodyid[i_g] == 0 and mj.geom_type[i_g] == mujoco.mjtGeom.mjGEOM_PLANE:
             continue
 
         # try parsing a given geometry

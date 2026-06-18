@@ -952,12 +952,17 @@ class MJCF(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    discard_ground_plane : bool, optional
+        Whether to skip loading any geom of type ``plane`` attached to the world body. Many MJCF examples (e.g. the
+        MuJoCo ant) ship their own ground plane that overlaps with the scene-level ``gs.morphs.Plane()``, causing
+        root links to spawn embedded in the floor and trigger NaNs. Defaults to False.
     """
 
     pos: Vec3FType | None = None
     quat: UnitVec4FType | None = None
     requires_jac_and_IK: StrictBool = True
     default_armature: float | None = Field(default=0.1, ge=0)
+    discard_ground_plane: StrictBool = False
 
     @model_validator(mode="before")
     @classmethod
