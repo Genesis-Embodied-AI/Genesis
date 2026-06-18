@@ -183,7 +183,7 @@ class Collider:
         # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
         # Disabled outright when use_contact_island is True: pruning produces a logical permutation in contact_sort_idx
         # that the contact-island construction kernel does not honor (it reads contact_data in physical order).
-        if self._solver._options.use_contact_island:
+        if self._solver._use_contact_island:
             has_prunable_contacts = False
         elif has_nonconvex_nonterrain or has_terrain:
             has_prunable_contacts = True
@@ -221,7 +221,7 @@ class Collider:
         spatial_sort_supported = (
             has_non_box_plane_convex_convex
             and gs.backend != gs.cpu
-            and not self._solver._options.use_contact_island
+            and not self._solver._use_contact_island
             and not self._solver._requires_grad
         )
 

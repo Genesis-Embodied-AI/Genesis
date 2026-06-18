@@ -473,7 +473,10 @@ class RigidOptions(Options):
         constraint. This parameter is called 'timeconst' in Mujoco
         (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
-        Whether to use contact island to speed up contact resolving. Defaults to False.
+        Whether to partition the constraint solve into independent per-island blocks. Defaults to None (auto:
+        enabled on CPU and Metal, where it speeds up scenes with several independent bodies; disabled on CUDA,
+        where the on-GPU solver already saturates the device for the common many-environment workload). Enable
+        explicitly on CUDA for large single- or few-environment scenes. Forced on when `use_hibernation` is True.
     use_hibernation : bool, optional
         Whether to enable hibernation. Defaults to False.
     hibernation_thresh_vel : float, optional
@@ -525,7 +528,7 @@ class RigidOptions(Options):
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
     constraint_timeconst: PositiveFloat = 0.01
-    use_contact_island: StrictBool = False
+    use_contact_island: StrictBool | None = None
     box_box_detection: StrictBool = False
 
     # hibernation threshold

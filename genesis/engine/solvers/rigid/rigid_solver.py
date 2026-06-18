@@ -252,9 +252,17 @@ class RigidSolver(KinematicSolver):
         self._requires_grad = self._sim.options.requires_grad
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
 
-        self._use_contact_island = options.use_contact_island
-        self._use_hibernation = options.use_hibernation and options.use_contact_island
-        if options.use_hibernation and not options.use_contact_island:
+        # use_contact_island=None resolves per backend: the per-island block solve speeds up multi-body scenes on
+        # CPU (composes with sparse) and Metal (cooperative arm), but on CUDA the on-GPU graph solve already
+        # saturates the device for the common many-environment workload, so it is off by default there (enable
+        # explicitly for large single-/few-environment scenes). Hibernation requires islands, so it forces them on.
+        self._use_contact_island_is_auto = options.use_contact_island is None
+        if self._use_contact_island_is_auto:
+            self._use_contact_island = gs.backend != gs.cuda or options.use_hibernation
+        else:
+            self._use_contact_island = options.use_contact_island
+        self._use_hibernation = options.use_hibernation and self._use_contact_island
+        if options.use_hibernation and not self._use_contact_island:
             gs.logger.warning(
                 "`use_hibernation` is set to False because `use_contact_island=False`. Please set "
                 "`use_contact_island=True` if you want to use hibernation"
@@ -416,6 +424,21 @@ class RigidSolver(KinematicSolver):
         # disable it in computation even if the user opted in - the same way contact pruning is skipped when it is
         # determinably irrelevant.
         self._use_contact_island = self._use_contact_island and has_multi_island_structure
+
+        # Auto-enabled islands yield to link-pair pruning: a scene with compound bodies (several collision geoms on
+        # one link, e.g. a convex decomposition) or nonconvex/terrain geoms accumulates many contacts per link-pair
+        # that pruning collapses, and pruning is mutually exclusive with islands (both reorder contacts). An explicit
+        # use_contact_island=True still forces islands; hibernation also keeps them. This mirrors the collider's
+        # prunability criteria - the collider computes the authoritative has_prunable_contacts, but
+        # use_contact_island must be resolved into the static config before the collider is built.
+        if self._use_contact_island and self._use_contact_island_is_auto and not self._use_hibernation:
+            scene_is_prunable = any(link.geom_end - link.geom_start > 1 for link in self.links) or any(
+                not geom.is_convex for geom in self.geoms
+            )
+            # The noslip friction-refinement pass is not island-aware (it reuses the global constraint structures
+            # the per-island solve does not populate), so auto-islands also yield to it.
+            if scene_is_prunable or self._options.noslip_iterations > 0:
+                self._use_contact_island = False
 
         # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene
         # has block structure, whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An
@@ -598,12 +621,18 @@ class RigidSolver(KinematicSolver):
                     # every scale measured on both CUDA (1.5-4.8x) and Metal (2-18x).
                     static_rigid_sim_config["prefer_decomposed_solver"] = 1
                 elif self._use_contact_island:
-                    # Newton islands: the warp-cooperative per-island arm is host-orchestrated (a Python-side
-                    # per-iteration launch loop), so on CUDA it forgoes the graph-batched Newton loop and loses to
-                    # the on-GPU monolith (1024x64: 262 vs 857 ms). On Metal there are no CUDA graphs, so the
-                    # cooperative arm's per-island parallelism wins instead. The flip is fully predictable from the
-                    # backend, so pin it rather than autotune: monolith on CUDA, cooperative-decomposed elsewhere.
-                    static_rigid_sim_config["prefer_decomposed_solver"] = 0 if gs.backend == gs.cuda else 1
+                    # Newton islands. The warp-cooperative arm parallelizes the small per-island solves across warps;
+                    # the monolith serializes them within a single per-env block. On Metal (no CUDA graphs) the
+                    # cooperative arm always wins. On CUDA it depends on env saturation: with few envs the device is
+                    # otherwise idle and the cooperative arm's per-island parallelism wins at high dofs (256 boxes,
+                    # 1 env: 909 vs 1223 ms, and the monolith degrades to ~24 s at 1024 boxes); with many envs the
+                    # per-env monolith already saturates the device and the cooperative arm's host-orchestrated
+                    # per-iteration launches lose (1024 envs x 64 bodies: 262 vs 857 ms). The regime is predictable
+                    # from envs_undersaturate, so pin it rather than autotune.
+                    if gs.backend == gs.cuda:
+                        static_rigid_sim_config["prefer_decomposed_solver"] = 1 if envs_undersaturate else 0
+                    else:
+                        static_rigid_sim_config["prefer_decomposed_solver"] = 1
                 # Newton non-island stays on the autotuner: monolith vs decomposed is a small (~15%), env-count-
                 # dependent margin with a hardware-dependent crossover - not reliably predictable in advance.
 
@@ -1055,8 +1084,6 @@ class RigidSolver(KinematicSolver):
                 equalities_info=self.equalities_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
-            if self._use_contact_island:
-                gs.logger.warn("contact island is not supported for equality constraints yet")
 
     def _init_collider(self):
         self.collider = Collider(self)
