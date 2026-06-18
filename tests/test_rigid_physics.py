@@ -712,8 +712,18 @@ def test_dynamic_weld_scene_reset():
         ),
         show_viewer=False,
     )
-    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
-    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.2, 0, 0.5)))
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.2, 0, 0.5),
+        )
+    )
     scene.build(n_envs=2)
 
     solver = scene.rigid_solver
@@ -5328,7 +5338,12 @@ def test_get_constraints_api(show_viewer, tol):
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
-    cube = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.2, 0.0, 0.05)))
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=(0.2, 0.0, 0.05),
+        )
+    )
     scene.build(n_envs=2)
 
     link_a, link_b = robot.base_link.idx, cube.base_link.idx
@@ -6887,9 +6902,16 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
     sphere_drop_height = 0.08
 
     # Run homogeneous simulation with box only
-    scene_box = gs.Scene(show_viewer=False)
+    scene_box = gs.Scene(
+        show_viewer=False,
+    )
     scene_box.add_entity(gs.morphs.Plane())
-    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, box_drop_height)))
+    box_obj = scene_box.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.0, 0.0, box_drop_height),
+        )
+    )
     scene_box.build()
     for _ in range(n_steps):
         scene_box.step()
@@ -6897,7 +6919,9 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
     box_vel = tensor_to_array(box_obj.get_vel())
 
     # Run homogeneous simulation with sphere only
-    scene_sphere = gs.Scene(show_viewer=False)
+    scene_sphere = gs.Scene(
+        show_viewer=False,
+    )
     scene_sphere.add_entity(gs.morphs.Plane())
     sphere_obj = scene_sphere.add_entity(
         gs.morphs.Sphere(
@@ -6913,7 +6937,9 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
 
     # Run heterogeneous simulation with both variants (different sizes AND positions)
     # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
-    scene_het = gs.Scene(show_viewer=show_viewer)
+    scene_het = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene_het.add_entity(gs.morphs.Plane())
     # Divergent per-variant yaw offsets, irrelevant to the dynamics of these symmetric primitives dropped flat (so
     # the world references still match) but stripped per environment by the relative getters.
@@ -6982,7 +7008,9 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
 @pytest.mark.required
 def test_heterogeneous_invalid_material_raises():
     """Test that heterogeneous morphs with unsupported material raises an exception."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
 
     morphs_heterogeneous = (
         gs.morphs.Box(size=(1.0, 1.0, 1.0)),
@@ -7043,7 +7071,9 @@ def test_heterogeneous_fewer_envs_than_variants():
         - Environment 1 -> Variant 1 (second morph in list)
         - Variants 2 and 3 are unused
     """
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())
 
     # 4 variants with different positions but only 2 environments
@@ -7066,9 +7096,12 @@ def test_heterogeneous_fewer_envs_than_variants():
 
 
 @pytest.mark.required
-def test_heterogeneous_mass_setters(tol):
-    """Test entity/link mass setters with heterogeneous morphs."""
-    scene = gs.Scene(show_viewer=False)
+def test_mass_setters(tol):
+    # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
+    # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     het_obj = scene.add_entity(
         morph=[
             gs.morphs.Box(size=(0.01, 0.01, 0.01)),
@@ -7078,36 +7111,31 @@ def test_heterogeneous_mass_setters(tol):
         ],
     )
     scene.build(n_envs=4)
-
     link = next(link for link in het_obj.links if not link.is_fixed)
-
-    # Invalid shape should raise before any per-env state is set.
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0))
-
     het_obj.set_mass(1.0)
     assert_allclose(het_obj.get_mass(), 1.0, tol=tol)
-
-    # Link-level setter should support per-environment mass targets.
     target_mass = (0.2, 0.4, 0.6, 0.8)
     link.set_mass(target_mass)
     assert_allclose(link.get_mass(), target_mass, tol=tol)
 
-
-@pytest.mark.required
-def test_non_batched_mass_setters(tol):
-    """Test link mass setter with non-batched links info (batch_links_info=False)."""
-    scene = gs.Scene(show_viewer=False, rigid_options=gs.options.RigidOptions(batch_links_info=False))
-    obj = scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
+    scene = gs.Scene(
+        show_viewer=False,
+        rigid_options=gs.options.RigidOptions(
+            batch_links_info=False,
+        ),
+    )
+    obj = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
     scene.build(n_envs=4)
-
     link = next(link for link in obj.links if not link.is_fixed)
-
-    # Scalar set_mass should work and apply uniformly across all envs.
     link.set_mass(2.0)
     assert_allclose(link.get_mass(), 2.0, tol=tol)
-
-    # Per-env array mass should raise a clear exception.
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0, 3.0, 4.0))
 

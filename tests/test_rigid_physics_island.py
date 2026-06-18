@@ -30,11 +30,36 @@ def test_partition_logics(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box_bottom = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
-    box_top = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.16)))
-    box_weld_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.05)))
-    box_weld_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.3, 0.0, 0.05)))
-    box_alone = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(2.0, 0.0, 0.05)))
+    box_bottom = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.05),
+        )
+    )
+    box_top = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.16),
+        )
+    )
+    box_weld_a = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(1.0, 0.0, 0.05),
+        )
+    )
+    box_weld_b = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(1.3, 0.0, 0.05),
+        )
+    )
+    box_alone = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(2.0, 0.0, 0.05),
+        )
+    )
     scene.build(n_envs=1)
 
     scene.rigid_solver.add_weld_constraint(box_weld_a.base_link_idx, box_weld_b.base_link_idx)
@@ -121,8 +146,18 @@ def test_partition_track_changes(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box_lower = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
-    box_upper = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.40)))
+    box_lower = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.05),
+        )
+    )
+    box_upper = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.40),
+        )
+    )
     scene.build(n_envs=1)
 
     from genesis.engine.solvers.rigid.island import kernel_build_islands
@@ -180,11 +215,36 @@ def test_solve_correctness(show_viewer, noslip_iterations):
             show_viewer=show_viewer,
         )
         scene.add_entity(gs.morphs.Plane())
-        box_bottom = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
-        box_top = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.16)))
-        box_weld_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.05)))
-        box_weld_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.3, 0.0, 0.05)))
-        box_alone = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(2.0, 0.0, 0.05)))
+        box_bottom = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(0.0, 0.0, 0.05),
+            )
+        )
+        box_top = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(0.0, 0.0, 0.16),
+            )
+        )
+        box_weld_a = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(1.0, 0.0, 0.05),
+            )
+        )
+        box_weld_b = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(1.3, 0.0, 0.05),
+            )
+        )
+        box_alone = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(2.0, 0.0, 0.05),
+            )
+        )
         scene.build(n_envs=1)
         scene.rigid_solver.add_weld_constraint(box_weld_a.base_link_idx, box_weld_b.base_link_idx)
         for _ in range(80):
@@ -223,7 +283,15 @@ def test_pruning(show_viewer):
         mesh = trimesh.creation.box(extents=(2 / 3 * half,) * 3)
         mesh.apply_translation((2 / 3 * sx * half, 2 / 3 * sy * half, 2 / 3 * sz * half))
         sub_meshes.append(mesh)
-    boxes = [scene.add_entity(gs.morphs.MeshSet(files=sub_meshes, pos=(i * 0.5, 0.0, 0.3))) for i in range(3)]
+    boxes = [
+        scene.add_entity(
+            gs.morphs.MeshSet(
+                files=sub_meshes,
+                pos=(i * 0.5, 0.0, 0.3),
+            )
+        )
+        for i in range(3)
+    ]
     scene.build(n_envs=1)
 
     solver = scene.rigid_solver
@@ -254,8 +322,19 @@ def test_weld_coupling(show_viewer):
         ),
         show_viewer=show_viewer,
     )
-    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 1.0), fixed=True))
-    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.3, 0.0, 1.0)))
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 1.0),
+            fixed=True,
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.3, 0.0, 1.0),
+        )
+    )
     scene.build(n_envs=1)
 
     scene.rigid_solver.add_weld_constraint(box1.base_link_idx, box2.base_link_idx)
@@ -288,8 +367,18 @@ def test_sparsity(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.3)))
-    box_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.3)))
+    box_a = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.3),
+        )
+    )
+    box_b = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(1.0, 0.0, 0.3),
+        )
+    )
     scene.build(n_envs=1)
     for _ in range(200):
         scene.step()
@@ -327,13 +416,48 @@ def test_hibernation_wakes_on_user_input(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box_force = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.1)))
-    box_pos = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(1.0, 0.0, 0.1)))
-    box_vel = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(2.0, 0.0, 0.1)))
-    box_qpos = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(3.0, 0.0, 0.1)))
-    box_cforce = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(4.0, 0.0, 0.1)))
-    box_cvel = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(5.0, 0.0, 0.1)))
-    box_cpos = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(6.0, 0.0, 0.1)))
+    box_force = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.1),
+        )
+    )
+    box_pos = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(1.0, 0.0, 0.1),
+        )
+    )
+    box_vel = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(2.0, 0.0, 0.1),
+        )
+    )
+    box_qpos = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(3.0, 0.0, 0.1),
+        )
+    )
+    box_cforce = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(4.0, 0.0, 0.1),
+        )
+    )
+    box_cvel = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(5.0, 0.0, 0.1),
+        )
+    )
+    box_cpos = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(6.0, 0.0, 0.1),
+        )
+    )
     scene.build(n_envs=1)
     solver = scene.rigid_solver
 
@@ -427,8 +551,18 @@ def test_hibernation_wakes_on_collision(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box_rest = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
-    box_hit = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.22, 0.0, 0.05)))
+    box_rest = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.05),
+        )
+    )
+    box_hit = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.22, 0.0, 0.05),
+        )
+    )
     scene.build(n_envs=1)
     solver = scene.rigid_solver
 
@@ -472,9 +606,24 @@ def test_hibernation_wakes_on_daisy_chain(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
-    box_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.3, 0.0, 0.05)))
-    box_far = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(2.0, 0.0, 0.05)))
+    box_a = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.05),
+        )
+    )
+    box_b = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.3, 0.0, 0.05),
+        )
+    )
+    box_far = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(2.0, 0.0, 0.05),
+        )
+    )
     scene.build(n_envs=1)
     solver = scene.rigid_solver
 
@@ -511,8 +660,18 @@ def test_hibernation_repartitioning(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(-0.3, 0.0, 0.15)))
-    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.3, 0.0, 0.15)))
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(-0.3, 0.0, 0.15),
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.3, 0.0, 0.15),
+        )
+    )
     scene.build()
 
     solver = scene.sim.rigid_solver
