@@ -7636,7 +7636,7 @@ def test_hibernation_and_contact_islands(show_viewer):
 
     assert solver.entities_state.hibernated[box1_idx, 0]
     assert solver.entities_state.hibernated[box2_idx, 0]
-    assert solver.constraint_solver.contact_island.n_islands[0] == 2
+    assert solver.constraint_solver.island_state.n_islands[0] == 2
 
     # Phase 2: Move box1 above box2 (this should wake up box1)
     offset = 0.01
@@ -7665,7 +7665,7 @@ def test_hibernation_and_contact_islands(show_viewer):
     assert solver.entities_state.hibernated[box2_idx, 0]
 
     # Stacked boxes should form 1 contact island
-    assert solver.constraint_solver.contact_island.n_islands[0] == 1
+    assert solver.constraint_solver.island_state.n_islands[0] == 1
 
     # Phase 4: Move box1 off the hibernated stack. The whole island must wake up, otherwise the stale hibernated
     # island daisy-chain would keep re-connecting both boxes at every contact island construction.
@@ -7681,7 +7681,7 @@ def test_hibernation_and_contact_islands(show_viewer):
 
     assert solver.entities_state.hibernated[box1_idx, 0]
     assert solver.entities_state.hibernated[box2_idx, 0]
-    assert solver.constraint_solver.contact_island.n_islands[0] == 2
+    assert solver.constraint_solver.island_state.n_islands[0] == 2
 
 
 @pytest.mark.required

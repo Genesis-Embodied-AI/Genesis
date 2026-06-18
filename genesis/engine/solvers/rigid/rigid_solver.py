@@ -422,8 +422,9 @@ class RigidSolver(KinematicSolver):
         # Islands only reduce work when the scene splits into several blocks. With a single dense-coupled tree (one
         # island) the partition is pure overhead and the lone island would not even fit the cooperative tile, so
         # disable it in computation even if the user opted in - the same way contact pruning is skipped when it is
-        # determinably irrelevant.
-        self._use_contact_island = self._use_contact_island and has_multi_island_structure
+        # determinably irrelevant. The differentiable solve reads the dense global Hessian (nt_H), not the per-island
+        # tiles, so islands are also disabled under requires_grad.
+        self._use_contact_island = self._use_contact_island and has_multi_island_structure and not self._requires_grad
 
         # Auto-enabled islands yield to link-pair pruning: a scene with compound bodies (several collision geoms on
         # one link, e.g. a convex decomposition) or nonconvex/terrain geoms accumulates many contacts per link-pair
