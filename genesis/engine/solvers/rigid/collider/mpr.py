@@ -248,7 +248,13 @@ def mpr_refine_portal(
     quat_b: qd.types.vector(4),
 ):
     ret = 1
+    iterations = gs.qd_int(0)
     while True:
+        if iterations > mpr_info.CCD_ITERATIONS[None]:
+            ret = -1
+            break
+        iterations = iterations + 1
+
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
 
         if mpr_portal_encapsules_origin(mpr_state, mpr_info, direction, i_ga, i_gb, i_b):
