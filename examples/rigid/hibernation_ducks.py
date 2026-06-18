@@ -19,6 +19,8 @@ from genesis.utils.tools import FPSTracker
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-g", "--grid", type=int, default=12, help="Ducks per horizontal side; 1 to 20.")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer.")
+    parser.add_argument("-r", "--record", action="store_true", help="Record the scene to hibernation_ducks.mp4.")
     args = parser.parse_args()
     if not 1 <= args.grid <= 20:
         raise ValueError(f"--grid must be between 1 and 20 (got {args.grid}).")
@@ -47,7 +49,7 @@ def main():
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
-        show_viewer=False,
+        show_viewer=args.vis,
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -71,14 +73,16 @@ def main():
                     ),
                 )
 
-    span = n_side * spacing
-    camera = scene.add_camera(
-        res=(1280, 720),
-        pos=(1.1 * span, 1.1 * span, 0.7 * span),
-        lookat=(0.0, 0.0, 0.1),
-        fov=42,
-        GUI=False,
-    )
+    camera = None
+    if args.record:
+        span = n_side * spacing
+        camera = scene.add_camera(
+            res=(1280, 720),
+            pos=(1.1 * span, 1.1 * span, 0.7 * span),
+            lookat=(0.0, 0.0, 0.1),
+            fov=42,
+            GUI=False,
+        )
 
     # The step rate climbs as ducks fall asleep; stream it to a live line plot.
     fps_tracker = FPSTracker(n_envs=0, alpha=0.7)
@@ -97,7 +101,8 @@ def main():
 
     # camera.start_recording stores each rendered frame and encodes them all at stop_recording, so rendering never
     # enters the timed region and the reported step rate stays the physics-only rate.
-    camera.start_recording()
+    if args.record:
+        camera.start_recording()
     sim_clock = 0.0
     n_steps = int(7.0 / dt)
     render_every = max(1, round((1.0 / dt) / 30.0))
@@ -108,9 +113,10 @@ def main():
         measured = fps_tracker.step(sim_clock)
         if measured is not None:
             step_rate[0] = measured
-        if i_step % render_every == 0:
+        if args.record and i_step % render_every == 0:
             camera.render()
-    camera.stop_recording(save_to_filename="hibernation_ducks.mp4", fps=30)
+    if args.record:
+        camera.stop_recording(save_to_filename="hibernation_ducks.mp4", fps=30)
 
     n_asleep = int(qd_to_numpy(solver.entities_state.is_hibernated, transpose=True).sum())
     gs.logger.info(f"{n_asleep}/{n_ducks} ducks hibernated; final step rate {step_rate[0]:,.0f} steps/s.")
