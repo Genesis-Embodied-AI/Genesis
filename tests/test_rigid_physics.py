@@ -7588,6 +7588,7 @@ def test_heterogeneous_articulated_structure_mismatch():
 
 
 @pytest.mark.required
+@pytest.mark.hibernation
 @pytest.mark.parametrize("performance_mode", [True])
 def test_hibernation_and_contact_islands(show_viewer):
     """
@@ -7601,8 +7602,6 @@ def test_hibernation_and_contact_islands(show_viewer):
     5. Move one box off the hibernated stack using set_pos -> the whole island wakes up
     6. Boxes settle separately and hibernate -> 2 contact islands (split)
     """
-    if gs.use_ndarray:
-        pytest.skip("Hibernation does not support dynamic array mode.")
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

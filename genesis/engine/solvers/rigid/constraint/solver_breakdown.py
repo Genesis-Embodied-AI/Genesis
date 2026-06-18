@@ -1118,7 +1118,7 @@ def func_solve_decomposed(
                 dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
             kernel_build_island_worklist(island_state)
-            solver.kernel_solve_islands_cooperative(
+            solver.kernel_solve_islands_coop(
                 island_state,
                 entities_info,
                 constraint_state,

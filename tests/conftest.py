@@ -716,8 +716,13 @@ def debug(request):
     return debug
 
 
+@pytest.fixture
+def hibernation(request):
+    return any(request.node.iter_markers("hibernation"))
+
+
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache, hibernation):
     import genesis as gs
 
     # Early return if backend is None
@@ -791,6 +796,21 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
                 _RigidSimStaticConfig_init_orig(self, *args, **kwargs)
 
             monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
+
+        # Hibernation is on by default in production, but a sleeping body silently ignores most state changes, which
+        # would mask bugs in tests that do not expect it. So unless a test opts in with the 'hibernation' marker, the
+        # default is flipped back to off here; a test that sets use_hibernation explicitly is still honored.
+        if not is_benchmarks and not hibernation:
+            from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+
+            _RigidSolver_init_orig = RigidSolver.__init__
+
+            def _RigidSolver_init(self, scene, sim, options):
+                if options.use_hibernation is None:
+                    options = options.model_copy(update={"use_hibernation": False})
+                _RigidSolver_init_orig(self, scene, sim, options)
+
+            monkeypatch.setattr(RigidSolver, "__init__", _RigidSolver_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
             device_idx = _torch_get_gpu_idx(gs.device.index)

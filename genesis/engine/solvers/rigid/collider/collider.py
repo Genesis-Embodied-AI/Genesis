@@ -225,16 +225,6 @@ class Collider:
             and not self._solver._requires_grad
         )
 
-        # Hibernation (func_collision_clear / func_collider_clear_env in this module's siblings) advects carried
-        # contacts by walking physical slots [0, n_contacts), which only matches the live set when sort_idx is the
-        # identity. The use_hibernation -> use_contact_island chain in RigidSolver already enforces that pruning and
-        # spatial sort are off, so this is a defensive assertion meant to fail loudly if either gate is loosened.
-        if self._solver._use_hibernation and (has_prunable_contacts or spatial_sort_supported):
-            gs.raise_exception(
-                "Hibernation is incompatible with link-pair pruning and spatial sort: both reorder logical contacts "
-                "via contact_sort_idx, but the hibernation advect loop reads contact_data in physical order."
-            )
-
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.ColliderStaticConfig(

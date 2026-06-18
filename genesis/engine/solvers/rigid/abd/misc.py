@@ -19,16 +19,16 @@ def func_wakeup_entity_and_its_temp_island(
 ):
     # Note: Original function handled non-hibernated & fixed entities.
     # Now, we require a properly hibernated entity to be passed in.
-    island_idx = island_state.entity_island[i_e, i_b]
+    island_idx = island_state.entities_island_idx[i_e, i_b]
 
-    for ei in range(island_state.island_entity.n[island_idx, i_b]):
-        entity_ref = island_state.island_entity.start[island_idx, i_b] + ei
+    for ei in range(island_state.entity_slices.n[island_idx, i_b]):
+        entity_ref = island_state.entity_slices.start[island_idx, i_b] + ei
         entity_idx = island_state.entity_id[entity_ref, i_b]
 
         is_entity_hibernated = entities_state.is_hibernated[entity_idx, i_b]
 
         if is_entity_hibernated:
-            island_state.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = -1
+            island_state.hibernated_next_entity[entity_idx, i_b] = -1
 
             entities_state.is_hibernated[entity_idx, i_b] = False
             n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)

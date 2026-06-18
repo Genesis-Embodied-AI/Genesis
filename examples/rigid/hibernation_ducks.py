@@ -9,6 +9,7 @@ The step rate is streamed to a live plot through the recorder facilities and the
 """
 
 import argparse
+import os
 import time
 
 import genesis as gs
@@ -71,6 +72,7 @@ def main():
                         pos=(i * spacing - offset, j * spacing - offset, z_floor + k * layer_gap),
                         euler=(90.0, 0.0, (i * 37 + j * 53 + k * 71) % 360),
                     ),
+                    vis_mode="collision",
                 )
 
     camera = None
@@ -78,14 +80,14 @@ def main():
         span = n_side * spacing
         camera = scene.add_camera(
             res=(1280, 720),
-            pos=(1.1 * span, 1.1 * span, 0.7 * span),
-            lookat=(0.0, 0.0, 0.1),
+            pos=(0.8 * span, 0.8 * span, 0.5 * span),
+            lookat=(0.0, 0.0, -0.1 * span),
             fov=42,
             GUI=False,
         )
 
     # The step rate climbs as ducks fall asleep; stream it to a live line plot.
-    fps_tracker = FPSTracker(n_envs=0, alpha=0.7)
+    fps_tracker = FPSTracker(n_envs=0, alpha=0.0)
     step_rate = [0.0]
 
     def step_rate_data():
@@ -93,18 +95,17 @@ def main():
 
     scene.start_recording(
         step_rate_data,
-        gs.recorders.MPLLinePlot(title="Simulation step rate", labels={"step_rate": ["steps/s"]}, hz=20.0),
+        gs.recorders.MPLLinePlot(title="Simulation step rate", labels={"step_rate": ["steps/s"]}, history_length=10000),
     )
 
     scene.build(n_envs=1)
-    solver = scene.rigid_solver
 
     # camera.start_recording stores each rendered frame and encodes them all at stop_recording, so rendering never
     # enters the timed region and the reported step rate stays the physics-only rate.
     if args.record:
         camera.start_recording()
     sim_clock = 0.0
-    n_steps = int(7.0 / dt)
+    n_steps = int(7.0 / dt) if "PYTEST_VERSION" not in os.environ else 5
     render_every = max(1, round((1.0 / dt) / 30.0))
     for i_step in range(n_steps):
         tic = time.perf_counter()
@@ -118,7 +119,7 @@ def main():
     if args.record:
         camera.stop_recording(save_to_filename="hibernation_ducks.mp4", fps=30)
 
-    n_asleep = int(qd_to_numpy(solver.entities_state.is_hibernated, transpose=True).sum())
+    n_asleep = int(qd_to_numpy(scene.rigid_solver.entities_state.is_hibernated, transpose=True).sum())
     gs.logger.info(f"{n_asleep}/{n_ducks} ducks hibernated; final step rate {step_rate[0]:,.0f} steps/s.")
 
 

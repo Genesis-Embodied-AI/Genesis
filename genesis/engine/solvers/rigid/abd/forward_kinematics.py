@@ -1247,12 +1247,12 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         for island_idx in range(island_state.n_islands[i_b]):
-            was_island_is_hibernated = island_state.island_is_hibernated[island_idx, i_b]
+            was_island_hibernated = island_state.is_hibernated[island_idx, i_b]
 
-            if not was_island_is_hibernated:
+            if not was_island_hibernated:
                 are_all_entities_okay_for_hibernation = True
-                entity_ref_n = island_state.island_entity.n[island_idx, i_b]
-                entity_ref_start = island_state.island_entity.start[island_idx, i_b]
+                entity_ref_n = island_state.entity_slices.n[island_idx, i_b]
+                entity_ref_start = island_state.entity_slices.start[island_idx, i_b]
 
                 # Invariant check: ensure entity_id access won't exceed buffer
                 if entity_ref_start + entity_ref_n > island_state.entity_id.shape[0]:
@@ -1300,9 +1300,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                         )
 
                         # store entities in the hibernated islands by daisy chaining them
-                        island_state.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = (
-                            entity_idx
-                        )
+                        island_state.hibernated_next_entity[prev_entity_idx, i_b] = entity_idx
                         prev_entity_idx = entity_idx
 
 

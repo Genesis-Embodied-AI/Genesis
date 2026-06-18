@@ -368,9 +368,9 @@ def get_constraint_state(constraint_solver, solver):
     dof_vec_layout = (1, 0) if batch_first else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update sweep.
-    # The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes its
-    # AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
+    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update
+    # sweep. The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes
+    # its AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
     # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
     noslip = solver._options.noslip_iterations > 0
     noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
@@ -593,17 +593,20 @@ def get_contact_cache(solver, n_possible_pairs):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class AggList:
+class IslandSlices:
+    # Per-(island, env) slices into a packed id array: island i_island's items are id[start[i_island, i_b] :
+    # start + n[i_island, i_b]]. curr is the write cursor the partition build advances while filling each slice; once
+    # built, curr == start + n. Indexed [n_entities, B] since an env has at most n_entities islands.
     curr: qd.Tensor
     n: qd.Tensor
     start: qd.Tensor
 
 
-def get_agg_list(solver):
+def get_slices(solver):
     _B = solver._B
     n_entities = max(solver.n_entities, 1)
 
-    return AggList(
+    return IslandSlices(
         curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
@@ -612,24 +615,23 @@ def get_agg_list(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class IslandState:
-    # Union-find partition of dof-carrying entities into islands (connected components of the
-    # inter-entity coupling graph: contacts + equality constraints). entity_island is -1 for entities
-    # with no dofs (fixed bodies), which are never solved and never couple two dof-entities.
-    # island_entity maps island -> entity-idx range in entity_id; island_dof maps island -> local-dof
-    # range in dof_id (dof_id[local] -> global dof). The dof list is the block-gather map the
-    # per-island solve uses to assemble a dense local Hessian tile.
-    entity_parent: qd.Tensor
-    entity_island: qd.Tensor
+    # Union-find partition of dof-carrying entities into islands (connected components of the inter-entity coupling
+    # graph: contacts + equality constraints). entities_island_idx is -1 for entities with no dofs (fixed bodies),
+    # which are never solved and never couple two dof-entities. entity_slices maps island -> entity-idx slice in
+    # entity_id; dof_slices maps island -> local-dof slice in dof_id (dof_id[local] -> global dof,
+    # dofs_local_idx[global] -> local). The dof list is the block-gather map for the per-island Hessian tile.
+    entities_parent_idx: qd.Tensor
+    entities_island_idx: qd.Tensor
     n_islands: qd.Tensor
-    island_entity: AggList
+    entity_slices: IslandSlices
     entity_id: qd.Tensor
-    island_dof: AggList
+    dof_slices: IslandSlices
     dof_id: qd.Tensor
-    dof_iisland: qd.Tensor
-    dof_island: qd.Tensor
-    island_contact: AggList
+    dofs_local_idx: qd.Tensor
+    dofs_island_idx: qd.Tensor
+    contact_slices: IslandSlices
     contact_id: qd.Tensor
-    island_constraint: AggList
+    constraint_slices: IslandSlices
     constraint_id: qd.Tensor
     # Flat (env, island) work-list for the decomposed arm's warp-cooperative per-island dispatch. work_i_b[k] /
     # work_i_island[k] identify the k-th island across all envs; work_size[0] is the total island count
@@ -639,21 +641,21 @@ class IslandState:
     work_i_island: qd.Tensor
     work_size: qd.Tensor
     work_counter: qd.Tensor
-    # Packed per-island dense Hessian/Cholesky scratch. All of an env's island tiles are packed contiguously
-    # into one flat [B, n_dofs * n_dofs] buffer: island i_island's n_i x n_i row-major tile starts at
-    # island_tile_start[i_island, i_b], so element (ld1, ld2) lives at that base + ld1 * n_i + ld2. Because
-    # Sum_i n_i^2 <= (Sum_i n_i)^2 = n_dofs^2, n_dofs^2 slots per env always suffice - the same footprint as a
-    # single global Hessian, with zero extra memory for islands and room for one island spanning the whole env.
-    # Tiles are keyed by their packed base, so islands solved concurrently by Mode B never collide.
-    island_tile_start: qd.Tensor
-    island_nt_H: qd.Tensor
-    # Hibernation (empty unless use_hibernation). island_is_hibernated[i_island, i_b] marks an island whose every
-    # dof-entity is asleep, set by the partition build. entity_idx_to_next_entity_idx_in_hibernated_island is the
-    # per-entity daisy chain that keeps a hibernated group together as one island across steps: sleeping bodies
-    # generate no live contacts, so the contact/equality union would otherwise fragment them. It is written at
-    # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
-    island_is_hibernated: qd.Tensor
-    entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
+    # Packed per-island dense Hessian/Cholesky scratch. All of an env's island tiles are packed contiguously into one
+    # flat [B, n_dofs * n_dofs] buffer: island i_island's n_i x n_i row-major tile starts at tile_start[i_island, i_b],
+    # so element (i_d, j_d) lives at that base + i_d * n_i + j_d. Because Sum_i n_i^2 <= (Sum_i n_i)^2 = n_dofs^2,
+    # n_dofs^2 slots per env always suffice - the same footprint as a single global Hessian, with zero extra memory for
+    # islands and room for one island spanning the whole env. Tiles are keyed by their packed base, so islands solved
+    # concurrently by the decomposed arm never collide.
+    tile_start: qd.Tensor
+    nt_H: qd.Tensor
+    # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every dof-entity is
+    # asleep, set by the partition build. hibernated_next_entity is the per-entity daisy chain that keeps a hibernated
+    # group together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
+    # union would otherwise fragment them. It is written at hibernation time, walked at wakeup, and re-unioned by the
+    # partition build before labeling.
+    is_hibernated: qd.Tensor
+    hibernated_next_entity: qd.Tensor
 
 
 def get_island_state(solver, collider):
@@ -665,22 +667,24 @@ def get_island_state(solver, collider):
     # non-island simulations pay no extra memory.
     use_contact_island = solver._static_rigid_sim_config.use_contact_island
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
-    # Safe upper bound on active constraints: 4 per contact + joint-limit/frictionloss (<= n_dofs each)
-    # + equality rows (<= 6 per equality, e.g. weld).
-    n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver._n_equalities, 1) * 6, 1)
+    # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
+    # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
+    # candidate count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise
+    # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
+    n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
     return IslandState(
-        entity_parent=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        entity_island=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        entities_parent_idx=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        entities_island_idx=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         n_islands=V(dtype=gs.qd_int, shape=(_B,)),
-        island_entity=get_agg_list(solver),
+        entity_slices=get_slices(solver),
         entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_dof=get_agg_list(solver),
+        dof_slices=get_slices(solver),
         dof_id=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        dof_iisland=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        dof_island=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        island_contact=get_agg_list(solver),
+        dofs_local_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
+        dofs_island_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
+        contact_slices=get_slices(solver),
         contact_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
-        island_constraint=get_agg_list(solver),
+        constraint_slices=get_slices(solver),
         constraint_id=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
         # Work-list spans every (env, island); at most n_entities islands per env.
         work_i_b=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
@@ -688,16 +692,14 @@ def get_island_state(solver, collider):
         work_size=V(dtype=gs.qd_int, shape=(1,)),
         work_counter=V(dtype=gs.qd_int, shape=(1,)),
         # Each env has at most n_entities islands (every dof-entity isolated), so n_entities slots always
-        # suffice and the island count can never overflow. island_tile_start is partitioner output (written by
+        # suffice and the island count can never overflow. tile_start is partitioner output (written by
         # kernel_build_islands), so allocate it always, like dof_id/entity_id; only the large packed Hessian
         # scratch below is gated on use_contact_island.
-        island_tile_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        tile_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         # Packed island tiles fit n_dofs^2 slots per env (Sum_i n_i^2 <= n_dofs^2); empty otherwise.
-        island_nt_H=V(dtype=gs.qd_float, shape=maybe_shape((_B, n_dofs * n_dofs), use_contact_island)),
-        island_is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(
-            dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)
-        ),
+        nt_H=V(dtype=gs.qd_float, shape=maybe_shape((_B, n_dofs * n_dofs), use_contact_island)),
+        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
+        hibernated_next_entity=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
     )
 
 

@@ -478,7 +478,11 @@ class RigidOptions(Options):
         where the on-GPU solver already saturates the device for the common many-environment workload). Enable
         explicitly on CUDA for large single- or few-environment scenes. Forced on when `use_hibernation` is True.
     use_hibernation : bool, optional
-        Whether to enable hibernation. Defaults to False.
+        Whether to put bodies that have come to rest to sleep, so the solver skips them until they are disturbed.
+        Defaults to None (auto: enabled wherever `use_contact_island` resolves to True, i.e. CPU and Metal but not
+        CUDA, since hibernation builds on islands). Set False to disable, or True to require it (which errors if
+        islands are off). It quietly has no effect on a body that is differentiable, prunable, or under no-slip
+        friction.
     hibernation_thresh_vel : float, optional
         Velocity threshold for hibernation. Defaults to 1e-3.
     hibernation_thresh_acc : float, optional
@@ -532,7 +536,7 @@ class RigidOptions(Options):
     box_box_detection: StrictBool = False
 
     # hibernation threshold
-    use_hibernation: StrictBool = False
+    use_hibernation: StrictBool | None = None
     hibernation_thresh_vel: PositiveFloat = 1e-3
     hibernation_thresh_acc: PositiveFloat = 1e-2
 

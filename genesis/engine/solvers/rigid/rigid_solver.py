@@ -258,15 +258,21 @@ class RigidSolver(KinematicSolver):
         # explicitly for large single-/few-environment scenes). Hibernation requires islands, so it forces them on.
         self._use_contact_island_is_auto = options.use_contact_island is None
         if self._use_contact_island_is_auto:
-            self._use_contact_island = gs.backend != gs.cuda or options.use_hibernation
+            # Islands default on everywhere but CUDA; an explicit hibernation request forces them on there too.
+            self._use_contact_island = gs.backend != gs.cuda or options.use_hibernation is True
         else:
             self._use_contact_island = options.use_contact_island
-        self._use_hibernation = options.use_hibernation and self._use_contact_island
-        if options.use_hibernation and not self._use_contact_island:
-            gs.logger.warning(
-                "`use_hibernation` is set to False because `use_contact_island=False`. Please set "
-                "`use_contact_island=True` if you want to use hibernation"
-            )
+        # Hibernation builds on islands. Left unset it follows islands - on wherever islands resolve on, so turning
+        # islands off (explicitly or per backend) also disables hibernation. An explicit value is honored, erroring
+        # only when it asks for hibernation while islands are off (a genuine conflict).
+        if options.use_hibernation is None:
+            self._use_hibernation = self._use_contact_island
+        else:
+            self._use_hibernation = options.use_hibernation
+            if self._use_hibernation and not self._use_contact_island:
+                gs.raise_exception(
+                    "`use_hibernation=True` requires `use_contact_island=True`, as hibernation builds on islands."
+                )
 
         self._hibernation_thresh_vel = options.hibernation_thresh_vel
         self._hibernation_thresh_acc = options.hibernation_thresh_acc
@@ -420,11 +426,16 @@ class RigidSolver(KinematicSolver):
         has_multi_island_structure = n_dof_entities >= 2 or n_free_joints >= 2
 
         # Islands only reduce work when the scene splits into several blocks. With a single dense-coupled tree (one
-        # island) the partition is pure overhead and the lone island would not even fit the cooperative tile, so
-        # disable it in computation even if the user opted in - the same way contact pruning is skipped when it is
-        # determinably irrelevant. The differentiable solve reads the dense global Hessian (nt_H), not the per-island
-        # tiles, so islands are also disabled under requires_grad.
-        self._use_contact_island = self._use_contact_island and has_multi_island_structure and not self._requires_grad
+        # island) the partition is pure overhead, so disable it in computation even if the user opted in - the same way
+        # contact pruning is skipped when it is determinably irrelevant. Hibernation is the exception: it builds on the
+        # island partition (the per-island is_hibernated flags), so it keeps islands on even for a single island, which
+        # then takes the serial tile-fallback path. The differentiable solve reads the dense global Hessian (nt_H), not
+        # the per-island tiles, so islands stay off under requires_grad regardless.
+        self._use_contact_island = (
+            self._use_contact_island
+            and (has_multi_island_structure or self._use_hibernation)
+            and not self._requires_grad
+        )
 
         # Auto-enabled islands yield to link-pair pruning: a scene with compound bodies (several collision geoms on
         # one link, e.g. a convex decomposition) or nonconvex/terrain geoms accumulates many contacts per link-pair
@@ -440,6 +451,10 @@ class RigidSolver(KinematicSolver):
             # the per-island solve does not populate), so auto-islands also yield to it.
             if scene_is_prunable or self._options.noslip_iterations > 0:
                 self._use_contact_island = False
+
+        # Hibernation builds on the island partition, so it cannot outlive islands being turned off by any gate above
+        # (e.g. requires_grad). Re-sync it to the final island decision so the two never disagree.
+        self._use_hibernation = self._use_hibernation and self._use_contact_island
 
         # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene
         # has block structure, whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An
@@ -2558,21 +2573,7 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             position = position[None]
 
-        # Setting a sleeping body's position must revive it, otherwise the write is silently dropped.
-        if self._use_hibernation:
-            kernel_wake_up_entities_by_dofs(
-                dofs_idx,
-                envs_idx,
-                dofs_info=self.dofs_info,
-                links_state=self.links_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                dofs_state=self.dofs_state,
-                geoms_state=self.geoms_state,
-                rigid_global_info=self._rigid_global_info,
-                island_state=self.constraint_solver.island_state,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+        self._wake_dofs(dofs_idx, envs_idx)
 
         kernel_set_dofs_position(
             position,
@@ -2611,17 +2612,14 @@ class RigidSolver(KinematicSolver):
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
 
-    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
-        # Setting a sleeping body's velocity must revive it, otherwise the write is silently dropped. Wake the
-        # owning entities before delegating to the base setter (hibernation runs in field mode, so this always
-        # takes the kernel path the wakeup targets).
+    def _wake_dofs(self, dofs_idx, envs_idx):
+        # Revive any hibernated entity owning these (already sanitized) dofs before an input is written to or
+        # targeted at them; forward dynamics and integration act only on awake dofs, so an input applied to a
+        # sleeping body would otherwise be silently dropped until it is woken by some other means.
         if self._use_hibernation:
-            _, wake_dofs_idx, wake_envs_idx = self._sanitize_io_variables(
-                velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
-            )
             kernel_wake_up_entities_by_dofs(
-                wake_dofs_idx,
-                wake_envs_idx,
+                dofs_idx,
+                envs_idx,
                 dofs_info=self.dofs_info,
                 links_state=self.links_state,
                 entities_state=self.entities_state,
@@ -2632,10 +2630,18 @@ class RigidSolver(KinematicSolver):
                 island_state=self.constraint_solver.island_state,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+
+    def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
+        # Wake the owning entities before delegating to the base setter, which re-sanitizes and applies the write.
+        if self._use_hibernation:
+            _, wake_dofs_idx, wake_envs_idx = self._sanitize_io_variables(
+                velocity, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+            )
+            self._wake_dofs(wake_dofs_idx, wake_envs_idx)
         super().set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None):
-        if gs.use_zerocopy:
+        if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.FORCE
@@ -2651,10 +2657,11 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             force = force[None]
 
+        self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_force(force, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None):
-        if gs.use_zerocopy:
+        if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.VELOCITY
@@ -2672,10 +2679,11 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             velocity = velocity[None]
 
+        self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_velocity(velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None):
-        if gs.use_zerocopy:
+        if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.POSITION
@@ -2693,10 +2701,11 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             position = position[None]
 
+        self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_position(position, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config)
 
     def control_dofs_position_velocity(self, position, velocity, dofs_idx=None, envs_idx=None):
-        if gs.use_zerocopy:
+        if gs.use_zerocopy and not self._use_hibernation:
             mask = (0, *indices_to_mask(dofs_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, dofs_idx)
             ctrl_mode = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
             ctrl_mode[mask] = gs.CTRL_MODE.POSITION
@@ -2718,6 +2727,7 @@ class RigidSolver(KinematicSolver):
             position = position[None]
             velocity = velocity[None]
 
+        self._wake_dofs(dofs_idx, envs_idx)
         kernel_control_dofs_position_velocity(
             position, velocity, dofs_idx, envs_idx, self.dofs_state, self._static_rigid_sim_config
         )
