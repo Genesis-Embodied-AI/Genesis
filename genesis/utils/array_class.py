@@ -618,8 +618,8 @@ class IslandState:
     # Union-find partition of dof-carrying entities into islands (connected components of the inter-entity coupling
     # graph: contacts + equality constraints). entities_island_idx is -1 for entities with no dofs (fixed bodies),
     # which are never solved and never couple two dof-entities. entity_slices maps island -> entity-idx slice in
-    # entity_id; dof_slices maps island -> local-dof slice in dof_id (dof_id[local] -> global dof,
-    # dofs_local_idx[global] -> local). The dof list is the block-gather map for the per-island Hessian tile.
+    # entity_id; dof_slices maps island -> local-dof slice in dof_id (dof_id[local] -> global dof, ascending). The
+    # per-island Hessian block is assembled and factored in place at those global DOF rows/cols in constraint_state.nt_H.
     entities_parent_idx: qd.Tensor
     entities_island_idx: qd.Tensor
     n_islands: qd.Tensor
@@ -627,7 +627,6 @@ class IslandState:
     entity_id: qd.Tensor
     dof_slices: IslandSlices
     dof_id: qd.Tensor
-    dofs_local_idx: qd.Tensor
     dofs_island_idx: qd.Tensor
     contact_slices: IslandSlices
     contact_id: qd.Tensor
@@ -641,14 +640,6 @@ class IslandState:
     work_i_island: qd.Tensor
     work_size: qd.Tensor
     work_counter: qd.Tensor
-    # Packed per-island dense Hessian/Cholesky scratch. All of an env's island tiles are packed contiguously into one
-    # flat [B, n_dofs * n_dofs] buffer: island i_island's n_i x n_i row-major tile starts at tile_start[i_island, i_b],
-    # so element (i_d, j_d) lives at that base + i_d * n_i + j_d. Because Sum_i n_i^2 <= (Sum_i n_i)^2 = n_dofs^2,
-    # n_dofs^2 slots per env always suffice - the same footprint as a single global Hessian, with zero extra memory for
-    # islands and room for one island spanning the whole env. Tiles are keyed by their packed base, so islands solved
-    # concurrently by the decomposed arm never collide.
-    tile_start: qd.Tensor
-    nt_H: qd.Tensor
     # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every dof-entity is
     # asleep, set by the partition build. hibernated_next_entity is the per-entity daisy chain that keeps a hibernated
     # group together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
@@ -662,10 +653,8 @@ def get_island_state(solver, collider):
     _B = solver._B
     n_entities = max(solver.n_entities, 1)
     n_dofs = max(solver.n_dofs, 1)
-    # island_state is always allocated (it is a kernel parameter), but the dense per-island Newton tile is
-    # large and only consumed when use_contact_island is set; shrink it to a placeholder otherwise so
-    # non-island simulations pay no extra memory.
-    use_contact_island = solver._static_rigid_sim_config.use_contact_island
+    # island_state is always allocated (it is a kernel parameter). The per-island Hessian is assembled and factored
+    # in place in constraint_state.nt_H (block-diagonal), so island_state itself holds only the partition maps.
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
     # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
@@ -680,7 +669,6 @@ def get_island_state(solver, collider):
         entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         dof_slices=get_slices(solver),
         dof_id=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        dofs_local_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
         dofs_island_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
         contact_slices=get_slices(solver),
         contact_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
@@ -691,13 +679,6 @@ def get_island_state(solver, collider):
         work_i_island=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
         work_size=V(dtype=gs.qd_int, shape=(1,)),
         work_counter=V(dtype=gs.qd_int, shape=(1,)),
-        # Each env has at most n_entities islands (every dof-entity isolated), so n_entities slots always
-        # suffice and the island count can never overflow. tile_start is partitioner output (written by
-        # kernel_build_islands), so allocate it always, like dof_id/entity_id; only the large packed Hessian
-        # scratch below is gated on use_contact_island.
-        tile_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        # Packed island tiles fit n_dofs^2 slots per env (Sum_i n_i^2 <= n_dofs^2); empty otherwise.
-        nt_H=V(dtype=gs.qd_float, shape=maybe_shape((_B, n_dofs * n_dofs), use_contact_island)),
         is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
         hibernated_next_entity=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
     )

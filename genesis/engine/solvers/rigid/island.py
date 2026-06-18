@@ -259,34 +259,26 @@ def kernel_build_islands(
                 island_state.entity_id[island_state.entity_slices.curr[i_island, i_b], i_b] = i_e
                 island_state.entity_slices.curr[i_island, i_b] = island_state.entity_slices.curr[i_island, i_b] + 1
 
-        # Build the per-island dof list (the block-gather map: local dof -> global dof). dof_id is grouped by island;
-        # for the monolith (one island over all entities in order) it is the identity permutation.
+        # Build the per-island dof list (the block-gather map: local dof -> global dof, ascending). dof_id is grouped
+        # by island; for the monolith (one island over all entities in order) it is the identity permutation. Entities
+        # are visited in ascending index order, so each island's global DOFs end up ascending - which is what lets the
+        # per-island Hessian block live in the lower triangle of constraint_state.nt_H at those global rows/cols.
         for i_e in range(n_entities):
             i_island = island_state.entities_island_idx[i_e, i_b]
             if i_island >= 0:
                 island_state.dof_slices.n[i_island, i_b] = (
                     island_state.dof_slices.n[i_island, i_b] + entities_info.n_dofs[i_e]
                 )
-        # dof_list_start lays the block-gather dof_id contiguously; tile_start packs each island's dense
-        # n_i x n_i Hessian tile contiguously into the shared n_dofs^2 buffer (offset = running Sum n_j^2).
         dof_list_start = 0
-        tile_start = 0
         for i_island in range(n_islands):
             island_state.dof_slices.start[i_island, i_b] = dof_list_start
             island_state.dof_slices.curr[i_island, i_b] = dof_list_start
-            island_state.tile_start[i_island, i_b] = tile_start
-            n_isl_dofs = island_state.dof_slices.n[i_island, i_b]
-            dof_list_start = dof_list_start + n_isl_dofs
-            tile_start = tile_start + n_isl_dofs * n_isl_dofs
+            dof_list_start = dof_list_start + island_state.dof_slices.n[i_island, i_b]
         for i_e in range(n_entities):
             i_island = island_state.entities_island_idx[i_e, i_b]
             if i_island >= 0:
                 for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    i_local_dof = (
-                        island_state.dof_slices.curr[i_island, i_b] - island_state.dof_slices.start[i_island, i_b]
-                    )
                     island_state.dof_id[island_state.dof_slices.curr[i_island, i_b], i_b] = i_d
-                    island_state.dofs_local_idx[i_d, i_b] = i_local_dof
                     island_state.dofs_island_idx[i_d, i_b] = i_island
                     island_state.dof_slices.curr[i_island, i_b] = island_state.dof_slices.curr[i_island, i_b] + 1
 
