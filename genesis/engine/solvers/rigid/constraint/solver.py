@@ -4582,7 +4582,13 @@ def func_solve_body_monolith(
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0:
+        # A fully-asleep env has no awake DOF to move, so its Newton solve is a no-op (every island is
+        # hibernated and skipped per-island anyway). Skip the whole iteration loop so step time tracks the
+        # awake set, not the total body count.
+        has_awake_work = constraint_state.n_constraints[i_b] > 0
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
+        if has_awake_work:
             for _ in range(rigid_global_info.iterations[None]):
                 func_solve_iter(
                     i_b,
