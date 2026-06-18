@@ -181,11 +181,10 @@ class Collider:
         # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
         # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
         # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
-        # Disabled outright when use_contact_island is True: pruning produces a logical permutation in contact_sort_idx
-        # that the contact-island construction kernel does not honor (it reads contact_data in physical order).
-        if self._solver._use_contact_island:
-            has_prunable_contacts = False
-        elif has_nonconvex_nonterrain or has_terrain:
+        # Composes with contact islands: pruning writes a logical permutation into contact_sort_idx, and the island
+        # construction reads contacts through that permutation, so pruning collapses the contacts before islands
+        # partition the (smaller) solve.
+        if has_nonconvex_nonterrain or has_terrain:
             has_prunable_contacts = True
         else:
             has_prunable_contacts = False
@@ -209,20 +208,14 @@ class Collider:
                             has_prunable_contacts = True
 
         # Spatial sort by x-position (with a geom-pair tie-break) only runs on GPU for convex-convex scenes whose
-        # contacts could benefit from locality. Disabled when use_contact_island is True for the same reason as
-        # pruning. Also disabled in autodiff mode: the sort permutes the logical contact order via contact_sort_idx,
-        # get_contacts applies that permutation, but func_set_upstream_grad writes upstream gradients back by physical
-        # index, so a non-identity permutation would attach gradients to the wrong contacts.
-        #
-        # FIXME: this sort is also what makes the contact order run-independent on GPU, where the narrowphase reserves
-        # contact slots via atomic_add and so produces a non-deterministic physical layout. When it is disabled (under
-        # autodiff, or with use_contact_island, which reads contact_data in physical order and ignores the
-        # contact_sort_idx permutation), bit-reproducible simulation is not guaranteed.
+        # contacts could benefit from locality, and is also what makes the GPU contact order run-independent: the
+        # narrowphase reserves contact slots via atomic_add (a non-deterministic physical layout), and the sort writes
+        # a deterministic permutation into contact_sort_idx that every downstream consumer - including the island
+        # construction - reads through. Disabled only in autodiff mode: get_contacts applies the permutation but
+        # func_set_upstream_grad writes upstream gradients back by physical index, so a non-identity permutation would
+        # attach gradients to the wrong contacts.
         spatial_sort_supported = (
-            has_non_box_plane_convex_convex
-            and gs.backend != gs.cpu
-            and not self._solver._use_contact_island
-            and not self._solver._requires_grad
+            has_non_box_plane_convex_convex and gs.backend != gs.cpu and not self._solver._requires_grad
         )
 
         # Initialize the static config, which stores every data that are compile-time constants.

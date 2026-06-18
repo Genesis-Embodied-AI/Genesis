@@ -208,7 +208,6 @@ markers = [
     # '@pytest.mark.slow("gpu")' or '@pytest.mark.slow("cpu", "gpu")', restricts the flag to those backends only
     # (resolved per item in tests/conftest.py against the parametrized or session backend).
     "slow: tests that are slow to run (>= 150s); optional args restrict it to specific backends.",
-    "hibernation: tests that exercise body hibernation; it stays enabled for them and is force-disabled elsewhere.",
 ]
 log_cli_level = "WARNING"
 

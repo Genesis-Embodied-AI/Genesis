@@ -256,8 +256,7 @@ class RigidSolver(KinematicSolver):
         # CPU (composes with sparse) and Metal (cooperative arm), but on CUDA the on-GPU graph solve already
         # saturates the device for the common many-environment workload, so it is off by default there (enable
         # explicitly for large single-/few-environment scenes). Hibernation requires islands, so it forces them on.
-        self._use_contact_island_is_auto = options.use_contact_island is None
-        if self._use_contact_island_is_auto:
+        if options.use_contact_island is None:
             # Islands default on everywhere but CUDA; an explicit hibernation request forces them on there too.
             self._use_contact_island = gs.backend != gs.cuda or options.use_hibernation is True
         else:
@@ -426,34 +425,18 @@ class RigidSolver(KinematicSolver):
         has_multi_island_structure = n_dof_entities >= 2 or n_free_joints >= 2
 
         # Islands only reduce work when the scene splits into several blocks. With a single dense-coupled tree (one
-        # island) the partition is pure overhead, so disable it in computation even if the user opted in - the same way
-        # contact pruning is skipped when it is determinably irrelevant. Hibernation is the exception: it builds on the
-        # island partition (the per-island is_hibernated flags), so it keeps islands on even for a single island, which
-        # then takes the serial tile-fallback path. The differentiable solve reads the dense global Hessian (nt_H), not
-        # the per-island tiles, so islands stay off under requires_grad regardless.
+        # island) the partition is pure overhead, so disable it in computation even if the user opted in. Hibernation
+        # is the exception: it builds on the island partition (the per-island is_hibernated flags), so it keeps islands
+        # on even for a single island, which then takes the serial tile-fallback path. The differentiable solve reads
+        # the dense global Hessian (nt_H), not the per-island tiles, so islands stay off under requires_grad regardless.
         self._use_contact_island = (
             self._use_contact_island
             and (has_multi_island_structure or self._use_hibernation)
             and not self._requires_grad
         )
 
-        # Auto-enabled islands yield to link-pair pruning: a scene with compound bodies (several collision geoms on
-        # one link, e.g. a convex decomposition) or nonconvex/terrain geoms accumulates many contacts per link-pair
-        # that pruning collapses, and pruning is mutually exclusive with islands (both reorder contacts). An explicit
-        # use_contact_island=True still forces islands; hibernation also keeps them. This mirrors the collider's
-        # prunability criteria - the collider computes the authoritative has_prunable_contacts, but
-        # use_contact_island must be resolved into the static config before the collider is built.
-        if self._use_contact_island and self._use_contact_island_is_auto and not self._use_hibernation:
-            scene_is_prunable = any(link.geom_end - link.geom_start > 1 for link in self.links) or any(
-                not geom.is_convex for geom in self.geoms
-            )
-            # The noslip friction-refinement pass is not island-aware (it reuses the global constraint structures
-            # the per-island solve does not populate), so auto-islands also yield to it.
-            if scene_is_prunable or self._options.noslip_iterations > 0:
-                self._use_contact_island = False
-
-        # Hibernation builds on the island partition, so it cannot outlive islands being turned off by any gate above
-        # (e.g. requires_grad). Re-sync it to the final island decision so the two never disagree.
+        # Hibernation builds on the island partition, so it cannot outlive islands being turned off by any gate above.
+        # Re-sync it to the final island decision so the two never disagree.
         self._use_hibernation = self._use_hibernation and self._use_contact_island
 
         # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene

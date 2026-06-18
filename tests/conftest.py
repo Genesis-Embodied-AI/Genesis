@@ -716,13 +716,8 @@ def debug(request):
     return debug
 
 
-@pytest.fixture
-def hibernation(request):
-    return any(request.node.iter_markers("hibernation"))
-
-
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache, hibernation):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -798,9 +793,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
         # Hibernation is on by default in production, but a sleeping body silently ignores most state changes, which
-        # would mask bugs in tests that do not expect it. So unless a test opts in with the 'hibernation' marker, the
-        # default is flipped back to off here; a test that sets use_hibernation explicitly is still honored.
-        if not is_benchmarks and not hibernation:
+        # would mask bugs in tests that do not expect it. So the default is flipped back to off here; a test that wants
+        # it sets use_hibernation=True explicitly, which is honored (only the None default is overridden).
+        if not is_benchmarks:
             from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
             _RigidSolver_init_orig = RigidSolver.__init__
