@@ -654,13 +654,6 @@ class RigidSolver(KinematicSolver):
 
         self._static_rigid_sim_config = array_class.RigidSimStaticConfig(**static_rigid_sim_config)
 
-        if self._static_rigid_sim_config.use_hibernation:
-            if gs.use_ndarray:
-                gs.raise_exception(
-                    "Hibernation is not yet supported with dynamic array mode. "
-                    "Please set performance_mode=True or use_hibernation=False."
-                )
-
         if self._static_rigid_sim_config.requires_grad:
             if self._static_rigid_sim_config.use_hibernation:
                 gs.raise_exception("Hibernation is not supported yet when requires_grad is True")

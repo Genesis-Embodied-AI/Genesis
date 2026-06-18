@@ -234,11 +234,11 @@ def kernel_build_islands(
         # skip already-sleeping islands). An island is hibernated unless it has at least one awake dof-entity.
         if qd.static(static_rigid_sim_config.use_hibernation):
             for i_island in range(n_islands):
-                island_state.island_hibernated[i_island, i_b] = 1
+                island_state.island_is_hibernated[i_island, i_b] = 1
             for i_e in range(n_entities):
                 i_island = island_state.entity_island[i_e, i_b]
-                if i_island >= 0 and not entities_state.hibernated[i_e, i_b]:
-                    island_state.island_hibernated[i_island, i_b] = 0
+                if i_island >= 0 and not entities_state.is_hibernated[i_e, i_b]:
+                    island_state.island_is_hibernated[i_island, i_b] = 0
 
         # Build the per-island entity list (island -> entity-idx ranges).
         for i_e in range(n_entities):

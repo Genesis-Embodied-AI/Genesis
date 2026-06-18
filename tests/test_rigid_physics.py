@@ -7631,11 +7631,11 @@ def test_hibernation_and_contact_islands(show_viewer):
     # Phase 1: Let boxes settle and hibernate separately
     for step in range(200):
         scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
+        if solver.entities_state.is_hibernated[box1_idx, 0] and solver.entities_state.is_hibernated[box2_idx, 0]:
             break
 
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
+    assert solver.entities_state.is_hibernated[box1_idx, 0]
+    assert solver.entities_state.is_hibernated[box2_idx, 0]
     assert solver.constraint_solver.island_state.n_islands[0] == 2
 
     # Phase 2: Move box1 above box2 (this should wake up box1)
@@ -7644,7 +7644,7 @@ def test_hibernation_and_contact_islands(show_viewer):
     box1.set_pos(np.array([float(box2_pos[0]) + offset, float(box2_pos[1]) + offset, 0.3]))
 
     # Verify box1 woke up and position was set
-    assert not solver.entities_state.hibernated[box1_idx, 0]
+    assert not solver.entities_state.is_hibernated[box1_idx, 0]
     assert float(box1.get_pos()[2]) > 0.2
 
     # Let box1 fall and collide with box2
@@ -7652,17 +7652,17 @@ def test_hibernation_and_contact_islands(show_viewer):
         scene.step()
 
     # Both boxes should be awake shortly after collision (before they re-hibernate)
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert not solver.entities_state.hibernated[box2_idx, 0]
+    assert not solver.entities_state.is_hibernated[box1_idx, 0]
+    assert not solver.entities_state.is_hibernated[box2_idx, 0]
 
     # Phase 3: Let stacked boxes settle and hibernate
     for step in range(200):
         scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
+        if solver.entities_state.is_hibernated[box1_idx, 0] and solver.entities_state.is_hibernated[box2_idx, 0]:
             break
 
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
+    assert solver.entities_state.is_hibernated[box1_idx, 0]
+    assert solver.entities_state.is_hibernated[box2_idx, 0]
 
     # Stacked boxes should form 1 contact island
     assert solver.constraint_solver.island_state.n_islands[0] == 1
@@ -7670,17 +7670,17 @@ def test_hibernation_and_contact_islands(show_viewer):
     # Phase 4: Move box1 off the hibernated stack. The whole island must wake up, otherwise the stale hibernated
     # island daisy-chain would keep re-connecting both boxes at every contact island construction.
     box1.set_pos(np.array([1.0, 0.0, 0.15]))
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert not solver.entities_state.hibernated[box2_idx, 0]
+    assert not solver.entities_state.is_hibernated[box1_idx, 0]
+    assert not solver.entities_state.is_hibernated[box2_idx, 0]
 
     # Phase 5: Let both boxes settle far apart and hibernate as 2 distinct contact islands
     for step in range(500):
         scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
+        if solver.entities_state.is_hibernated[box1_idx, 0] and solver.entities_state.is_hibernated[box2_idx, 0]:
             break
 
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
+    assert solver.entities_state.is_hibernated[box1_idx, 0]
+    assert solver.entities_state.is_hibernated[box2_idx, 0]
     assert solver.constraint_solver.island_state.n_islands[0] == 2
 
 

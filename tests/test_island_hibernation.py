@@ -327,7 +327,6 @@ def test_island_and_sparse_solve_compose_on_cpu():
     assert_allclose(z_b, 0.05, atol=2e-3)
 
 
-@pytest.mark.performance_mode(True)
 def test_hibernation_settles_sleeps_and_wakes_per_island():
     # Hibernation runs on the unified IslandState: each well-separated box is its own island, so once it
     # settles it sleeps independently, and disturbing one island wakes only that island. Hibernation requires
@@ -351,7 +350,7 @@ def test_hibernation_settles_sleeps_and_wakes_per_island():
 
     def hibernated():
         # [B, n_entities] -> per-entity flag for env 0; entity 0 is the fixed plane.
-        return qd_to_numpy(solver.entities_state.hibernated, transpose=True).reshape(-1).astype(bool)
+        return qd_to_numpy(solver.entities_state.is_hibernated, transpose=True).reshape(-1).astype(bool)
 
     for _ in range(300):
         scene.step()
@@ -378,15 +377,18 @@ def test_hibernation_settles_sleeps_and_wakes_per_island():
     assert_allclose(float(np.atleast_1d(tensor_to_array(box_b.get_pos())[..., 2])[0]), 0.05, atol=2e-3)
 
 
-@pytest.mark.performance_mode(True)
 def test_hibernation_wakeup_on_state_setters():
-    # Each user state-setter that mutates a sleeping body must revive it (and only its island), otherwise the
-    # input is silently dropped. Four well-separated boxes each form their own island; after they sleep, a
-    # different setter wakes each, leaving the others asleep.
+    # Each user state-setter that mutates a sleeping body must revive it (and only its island) AND leave it
+    # dynamically correct afterwards. The motion checks are the real regression: a body woken by set_dofs_position
+    # that hangs frozen in mid-air - its gravity cancelled by a sleeping neighbour's stale constraint force leaking
+    # into its dofs - would still read "awake". Four well-separated boxes each form their own island, so a setter
+    # wakes exactly one; the others must neither move nor perturb it.
+    G = 9.8
+    DT = 1.0 / 60.0
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1.0 / 60.0,
-            gravity=(0.0, 0.0, -9.8),
+            dt=DT,
+            gravity=(0.0, 0.0, -G),
         ),
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
@@ -403,37 +405,57 @@ def test_hibernation_wakeup_on_state_setters():
     solver = scene.rigid_solver
 
     def asleep(entity):
-        return bool(qd_to_numpy(solver.entities_state.hibernated, transpose=True).reshape(-1)[entity.idx])
+        return bool(qd_to_numpy(solver.entities_state.is_hibernated, transpose=True).reshape(-1)[entity.idx])
+
+    def z_of(entity):
+        return float(np.atleast_1d(tensor_to_array(entity.get_pos())[..., 2])[0])
+
+    # Free-fall from rest over n steps with semi-implicit Euler: each box stays its own column above empty floor,
+    # so a woken body must drop by this much. A frozen (force-cancelled) body drops ~0, a healthy one ~free-fall.
+    n_fall = 8
+    free_fall_drop = 0.5 * G * (n_fall * DT) ** 2
 
     for _ in range(300):
         scene.step()
     assert asleep(box_force) and asleep(box_pos) and asleep(box_vel) and asleep(box_qpos)
 
-    # apply_links_external_force wakes its island only.
-    solver.apply_links_external_force(np.array([[0.0, 0.0, 30.0]]), links_idx=[box_force.base_link_idx])
-    scene.step()
+    # apply_links_external_force wakes box_force's island; a sustained upward thrust then lifts it off the floor,
+    # confirming the force reaches the dynamics rather than being absorbed by a still-sleeping body.
+    z_force0 = z_of(box_force)
+    for _ in range(6):
+        solver.apply_links_external_force(np.array([[0.0, 0.0, 40.0]]), links_idx=[box_force.base_link_idx])
+        scene.step()
     assert not asleep(box_force)
+    assert z_of(box_force) > z_force0 + 0.02
     assert asleep(box_pos) and asleep(box_vel) and asleep(box_qpos)
 
-    # set_dofs_position wakes its island only.
-    box_pos.set_dofs_position(np.array([0.0, 0.0, 0.5, 0.0, 0.0, 0.0]))
-    scene.step()
+    # set_dofs_position lifts box_pos into the air; with its island awake and isolated it must free-fall, not hang.
+    box_pos.set_dofs_position(np.array([1.0, 0.0, 0.5, 0.0, 0.0, 0.0]))
     assert not asleep(box_pos)
+    z_pos0 = z_of(box_pos)
+    for _ in range(n_fall):
+        scene.step()
+    assert_allclose(z_pos0 - z_of(box_pos), free_fall_drop, rtol=0.2)
     assert asleep(box_vel) and asleep(box_qpos)
 
-    # set_dofs_velocity wakes its island only.
-    box_vel.set_dofs_velocity(np.array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
-    scene.step()
+    # set_dofs_velocity gives box_vel an upward velocity; it must lift off, proving the velocity took effect.
+    box_vel.set_dofs_velocity(np.array([0.0, 0.0, 2.0, 0.0, 0.0, 0.0]))
     assert not asleep(box_vel)
+    z_vel0 = z_of(box_vel)
+    for _ in range(5):
+        scene.step()
+    assert z_of(box_vel) > z_vel0 + 0.05
     assert asleep(box_qpos)
 
-    # set_qpos wakes its island.
+    # set_qpos teleports box_qpos up; it must then free-fall from the new height.
     box_qpos.set_qpos(np.array([3.0, 0.0, 0.6, 1.0, 0.0, 0.0, 0.0]))
-    scene.step()
     assert not asleep(box_qpos)
+    z_qpos0 = z_of(box_qpos)
+    for _ in range(n_fall):
+        scene.step()
+    assert_allclose(z_qpos0 - z_of(box_qpos), free_fall_drop, rtol=0.2)
 
 
-@pytest.mark.performance_mode(True)
 def test_hibernation_wakeup_on_collision():
     # An awake body colliding with a sleeping body must wake it so it responds dynamically instead of acting as an
     # immovable obstacle (or being tunnelled through). This needs both the broad-phase sort-buffer refresh of awake
@@ -456,7 +478,7 @@ def test_hibernation_wakeup_on_collision():
     solver = scene.rigid_solver
 
     def asleep(entity):
-        return bool(qd_to_numpy(solver.entities_state.hibernated, transpose=True).reshape(-1)[entity.idx])
+        return bool(qd_to_numpy(solver.entities_state.is_hibernated, transpose=True).reshape(-1)[entity.idx])
 
     for _ in range(300):
         scene.step()
@@ -474,3 +496,46 @@ def test_hibernation_wakeup_on_collision():
     hit_x1 = float(np.atleast_1d(tensor_to_array(box_hit.get_pos())[..., 0])[0])
     assert rest_x1 < rest_x0 - 1e-3
     assert hit_x1 > rest_x1
+
+
+def test_hibernation_wakes_whole_island_through_daisy_chain():
+    # Two coupled bodies sleep as ONE island, chained together so the partition survives across steps. Disturbing
+    # just one of them (an external force on box_a) must wake the WHOLE island via the daisy chain: waking only the
+    # directly addressed body would leave its coupled partner frozen, so a constraint would be solved against a
+    # sleeping body. The pair is joined by a weld (a stable coupling that reliably sleeps, unlike a contact stack
+    # whose micro-settling keeps it awake); a separated third box is its own island and stays asleep.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            gravity=(0.0, 0.0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box_a = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.05)))
+    box_b = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.3, 0.0, 0.05)))
+    box_far = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(2.0, 0.0, 0.05)))
+    scene.build(n_envs=1)
+    solver = scene.rigid_solver
+
+    solver.add_weld_constraint(box_a.base_link_idx, box_b.base_link_idx)
+
+    def asleep(entity):
+        return bool(qd_to_numpy(solver.entities_state.is_hibernated, transpose=True).reshape(-1)[entity.idx])
+
+    # The welded pair and the lone box all settle and go to sleep.
+    for _ in range(400):
+        scene.step()
+    assert asleep(box_a) and asleep(box_b) and asleep(box_far)
+
+    # A shove on box_a must wake both members of its weld-coupled island.
+    solver.apply_links_external_force(np.array([[20.0, 0.0, 0.0]]), links_idx=[box_a.base_link_idx])
+    scene.step()
+    assert not asleep(box_a)
+    assert not asleep(box_b)
+    # The separated box is a different island and stays asleep.
+    assert asleep(box_far)

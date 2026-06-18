@@ -1242,14 +1242,14 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     island_state: array_class.IslandState,
     errno: qd.Tensor,
 ):
-    _B = entities_state.hibernated.shape[1]
+    _B = entities_state.is_hibernated.shape[1]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         for island_idx in range(island_state.n_islands[i_b]):
-            was_island_hibernated = island_state.island_hibernated[island_idx, i_b]
+            was_island_is_hibernated = island_state.island_is_hibernated[island_idx, i_b]
 
-            if not was_island_hibernated:
+            if not was_island_is_hibernated:
                 are_all_entities_okay_for_hibernation = True
                 entity_ref_n = island_state.island_entity.n[island_idx, i_b]
                 entity_ref_start = island_state.island_entity.start[island_idx, i_b]
@@ -1264,7 +1264,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     entity_idx = island_state.entity_id[entity_ref, i_b]
 
                     # Hibernated entities already have zero dofs_state.acc/vel
-                    is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
+                    is_entity_hibernated = entities_state.is_hibernated[entity_idx, i_b]
                     if is_entity_hibernated:
                         continue
 
@@ -1278,42 +1278,32 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     if not are_all_entities_okay_for_hibernation:
                         break
 
-                if not are_all_entities_okay_for_hibernation:
-                    # update collider sort_buffer with aabb extents along x-axis
+                # Hibernate the whole island once all its entities are at rest. The awake-island sort-buffer refresh
+                # that used to live in the other branch is now handled by the broad phase, which refreshes every awake
+                # geom's extents each step regardless of hibernation.
+                if are_all_entities_okay_for_hibernation and entity_ref_n > 0:
+                    prev_entity_ref = entity_ref_start + entity_ref_n - 1
+                    prev_entity_idx = island_state.entity_id[prev_entity_ref, i_b]
+
                     for i_entity_ref_offset_ in range(entity_ref_n):
                         entity_ref = entity_ref_start + i_entity_ref_offset_
                         entity_idx = island_state.entity_id[entity_ref, i_b]
-                        for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
-                            min_idx, min_val = geoms_state.min_buffer_idx[i_g, i_b], geoms_state.aabb_min[i_g, i_b][0]
-                            max_idx, max_val = geoms_state.max_buffer_idx[i_g, i_b], geoms_state.aabb_max[i_g, i_b][0]
-                            collider_state.sort_buffer.value[min_idx, i_b] = min_val
-                            collider_state.sort_buffer.value[max_idx, i_b] = max_val
-                else:
-                    # perform hibernation
-                    # Guard: only process if there are entities in this island
-                    if entity_ref_n > 0:
-                        prev_entity_ref = entity_ref_start + entity_ref_n - 1
-                        prev_entity_idx = island_state.entity_id[prev_entity_ref, i_b]
 
-                        for i_entity_ref_offset_ in range(entity_ref_n):
-                            entity_ref = entity_ref_start + i_entity_ref_offset_
-                            entity_idx = island_state.entity_id[entity_ref, i_b]
+                        func_hibernate_entity_and_zero_dof_velocities(
+                            entity_idx,
+                            i_b,
+                            entities_state=entities_state,
+                            entities_info=entities_info,
+                            dofs_state=dofs_state,
+                            links_state=links_state,
+                            geoms_state=geoms_state,
+                        )
 
-                            func_hibernate_entity_and_zero_dof_velocities(
-                                entity_idx,
-                                i_b,
-                                entities_state=entities_state,
-                                entities_info=entities_info,
-                                dofs_state=dofs_state,
-                                links_state=links_state,
-                                geoms_state=geoms_state,
-                            )
-
-                            # store entities in the hibernated islands by daisy chaining them
-                            island_state.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = (
-                                entity_idx
-                            )
-                            prev_entity_idx = entity_idx
+                        # store entities in the hibernated islands by daisy chaining them
+                        island_state.entity_idx_to_next_entity_idx_in_hibernated_island[prev_entity_idx, i_b] = (
+                            entity_idx
+                        )
+                        prev_entity_idx = entity_idx
 
 
 @qd.func
@@ -1323,8 +1313,8 @@ def func_aggregate_awake_entities(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    n_entities = entities_state.hibernated.shape[0]
-    _B = entities_state.hibernated.shape[1]
+    n_entities = entities_state.is_hibernated.shape[0]
+    _B = entities_state.is_hibernated.shape[1]
 
     # Reset counts once per batch (not per entity!)
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -1336,7 +1326,7 @@ def func_aggregate_awake_entities(
     # Count awake entities
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_e, i_b in qd.ndrange(n_entities, _B):
-        if entities_state.hibernated[i_e, i_b] or entities_info.n_dofs[i_e] == 0:
+        if entities_state.is_hibernated[i_e, i_b] or entities_info.n_dofs[i_e] == 0:
             continue
 
         next_awake_entity_idx = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
@@ -1370,18 +1360,18 @@ def func_hibernate_entity_and_zero_dof_velocities(
 
     Also, zero out DOF velocitities and accelerations.
     """
-    entities_state.hibernated[i_e, i_b] = True
+    entities_state.is_hibernated[i_e, i_b] = True
 
     for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-        dofs_state.hibernated[i_d, i_b] = True
+        dofs_state.is_hibernated[i_d, i_b] = True
         dofs_state.vel[i_d, i_b] = 0.0
         dofs_state.acc[i_d, i_b] = 0.0
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-        links_state.hibernated[i_l, i_b] = True
+        links_state.is_hibernated[i_l, i_b] = True
 
     for i_g in range(entities_info.geom_start[i_e], entities_info.geom_end[i_e]):
-        geoms_state.hibernated[i_g, i_b] = True
+        geoms_state.is_hibernated[i_g, i_b] = True
 
 
 @qd.func

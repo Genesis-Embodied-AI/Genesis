@@ -647,12 +647,12 @@ class IslandState:
     # Tiles are keyed by their packed base, so islands solved concurrently by Mode B never collide.
     island_tile_start: qd.Tensor
     island_nt_H: qd.Tensor
-    # Hibernation (empty unless use_hibernation). island_hibernated[i_island, i_b] marks an island whose every
+    # Hibernation (empty unless use_hibernation). island_is_hibernated[i_island, i_b] marks an island whose every
     # dof-entity is asleep, set by the partition build. entity_idx_to_next_entity_idx_in_hibernated_island is the
     # per-entity daisy chain that keeps a hibernated group together as one island across steps: sleeping bodies
     # generate no live contacts, so the contact/equality union would otherwise fragment them. It is written at
     # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
-    island_hibernated: qd.Tensor
+    island_is_hibernated: qd.Tensor
     entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
 
 
@@ -694,7 +694,7 @@ def get_island_state(solver, collider):
         island_tile_start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         # Packed island tiles fit n_dofs^2 slots per env (Sum_i n_i^2 <= n_dofs^2); empty otherwise.
         island_nt_H=V(dtype=gs.qd_float, shape=maybe_shape((_B, n_dofs * n_dofs), use_contact_island)),
-        island_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
+        island_is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
         entity_idx_to_next_entity_idx_in_hibernated_island=V(
             dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)
         ),
@@ -1545,7 +1545,7 @@ class DofsState:
     ctrl_pos: qd.Tensor
     ctrl_vel: qd.Tensor
     ctrl_mode: qd.Tensor
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
 
 
 def get_dofs_state(solver):
@@ -1582,7 +1582,7 @@ def get_dofs_state(solver):
         ctrl_pos=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         ctrl_vel=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         ctrl_mode=V(dtype=gs.qd_int, shape=shape),
-        hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=shape),
     )
 
 
@@ -1633,7 +1633,7 @@ class LinksState:
     cfrc_coupling_ang: qd.Tensor
     cfrc_coupling_vel: qd.Tensor
     contact_force: qd.Tensor
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
 
 
 def get_links_state(solver):
@@ -1684,7 +1684,7 @@ def get_links_state(solver):
         cfrc_coupling_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_coupling_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         contact_force=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
-        hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=shape),
     )
 
 
@@ -1870,7 +1870,7 @@ class GeomsState:
     verts_updated: qd.Tensor
     min_buffer_idx: qd.Tensor
     max_buffer_idx: qd.Tensor
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
     friction_ratio: qd.Tensor
 
 
@@ -1886,7 +1886,7 @@ def get_geoms_state(solver):
         verts_updated=V(dtype=gs.qd_bool, shape=shape),
         min_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
-        hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=shape),
         friction_ratio=V(dtype=gs.qd_float, shape=shape),
     )
 
@@ -2151,12 +2151,12 @@ def get_entities_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EntitiesState:
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
 
 
 def get_entities_state(solver):
     return EntitiesState(
-        hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
+        is_hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
     )
 
 

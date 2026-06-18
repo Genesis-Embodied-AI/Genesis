@@ -817,6 +817,33 @@ def _add_collision_constraints_per_contact(
             link_a_maybe_batch = [link_a, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link_b
 
+            # A contact whose endpoints are all dormant (hibernated or fixed) needs no constraint: no awake
+            # DOF-carrying body acts on it and the states are frozen. A sleeper struck by an awake body was already
+            # woken in the broad phase, so it is not dormant here. The slots are reused by index across steps, so a
+            # dormant contact must actively clear its slots and mark them inert; leaving the stale jac of a prior
+            # step (when those dofs were awake and in contact) would leak that contact force into qfrc_constraint of
+            # a since-woken body sharing the slot.
+            if qd.static(static_rigid_sim_config.use_hibernation):
+                a_dormant = links_info.is_fixed[link_a_maybe_batch] or links_state.is_hibernated[link_a, i_b]
+                b_dormant = (
+                    link_b < 0 or links_info.is_fixed[link_b_maybe_batch] or links_state.is_hibernated[link_b, i_b]
+                )
+                if a_dormant and b_dormant:
+                    for i_friction in range(4):
+                        n_con = collision_con_start + i_col_ * 4 + i_friction
+                        if qd.static(static_rigid_sim_config.sparse_solve):
+                            for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
+                                i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
+                                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+                            constraint_state.jac_n_dofs[n_con, i_b] = 0
+                        else:
+                            for i_d in range(n_dofs):
+                                constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+                        constraint_state.diag[n_con, i_b] = gs.qd_float(1.0)
+                        constraint_state.aref[n_con, i_b] = gs.qd_float(0.0)
+                        constraint_state.efc_D[n_con, i_b] = gs.qd_float(0.0)
+                    continue
+
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
 
             invweight = links_info.invweight[link_a_maybe_batch][0]
@@ -3958,6 +3985,9 @@ def func_update_gradient_batch(
         if qd.static(static_rigid_sim_config.use_contact_island):
             # Mgrad = H^{-1} @ grad solved per island on each island's local tile (factored above).
             for i_island in range(island_state.n_islands[i_b]):
+                if qd.static(static_rigid_sim_config.use_hibernation):
+                    if island_state.island_is_hibernated[i_island, i_b]:
+                        continue
                 func_cholesky_solve_batch(i_b, i_island, island_state, constraint_state, static_rigid_sim_config)
         else:
             func_cholesky_solve_batch(i_b, 0, island_state, constraint_state, static_rigid_sim_config)
@@ -4349,6 +4379,9 @@ def func_solve_init(
             qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
             for i_b in range(_B_isl):
                 for i_island in range(island_state.n_islands[i_b]):
+                    if qd.static(static_rigid_sim_config.use_hibernation):
+                        if island_state.island_is_hibernated[i_island, i_b]:
+                            continue
                     func_hessian_direct_batch(
                         i_b,
                         i_island,
@@ -4436,8 +4469,13 @@ def func_solve_iter(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             if qd.static(static_rigid_sim_config.use_contact_island):
                 # Per-island Hessian + factor into each island's local tile (the solve follows in
-                # func_update_gradient_batch). Islands are independent, so this loop is the Mode-B seam.
+                # func_update_gradient_batch). Islands are independent, so this loop is the Mode-B seam. Hibernated
+                # islands are at rest with frozen (zeroed) accelerations, so their solve output would be discarded -
+                # skip them.
                 for i_island in range(island_state.n_islands[i_b]):
+                    if qd.static(static_rigid_sim_config.use_hibernation):
+                        if island_state.island_is_hibernated[i_island, i_b]:
+                            continue
                     func_hessian_direct_batch(
                         i_b,
                         i_island,

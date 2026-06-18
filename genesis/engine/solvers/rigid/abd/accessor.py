@@ -267,7 +267,7 @@ def kernel_wake_up_entities_by_links(
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         i_e = links_info.entity_idx[I_l]
 
-        if entities_state.hibernated[i_e, i_b]:
+        if entities_state.is_hibernated[i_e, i_b]:
             func_wakeup_entity_and_its_temp_island(
                 i_e,
                 i_b,
@@ -306,7 +306,7 @@ def kernel_wake_up_entities_by_dofs(
         I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
         i_e = dofs_info.entity_idx[I_d]
 
-        if entities_state.hibernated[i_e, i_b]:
+        if entities_state.is_hibernated[i_e, i_b]:
             func_wakeup_entity_and_its_temp_island(
                 i_e,
                 i_b,
@@ -345,7 +345,7 @@ def kernel_wake_up_entities_by_qs(
             I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
             if links_info.q_start[I_l] <= i_q and i_q < links_info.q_end[I_l]:
                 i_e = links_info.entity_idx[I_l]
-                if entities_state.hibernated[i_e, i_b]:
+                if entities_state.is_hibernated[i_e, i_b]:
                     func_wakeup_entity_and_its_temp_island(
                         i_e,
                         i_b,
@@ -387,11 +387,11 @@ def kernel_wake_up_entities_on_new_contact(
             I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
             i_ea = links_info.entity_idx[I_la]
             i_eb = links_info.entity_idx[I_lb]
-            a_hibernated = entities_state.hibernated[i_ea, i_b]
-            b_hibernated = entities_state.hibernated[i_eb, i_b]
+            is_a_hibernated = entities_state.is_hibernated[i_ea, i_b]
+            is_b_hibernated = entities_state.is_hibernated[i_eb, i_b]
 
             # Wake the sleeping side only when its partner is an awake dynamic body.
-            if a_hibernated and not b_hibernated and not links_info.is_fixed[I_lb]:
+            if is_a_hibernated and not is_b_hibernated and not links_info.is_fixed[I_lb]:
                 func_wakeup_entity_and_its_temp_island(
                     i_ea,
                     i_b,
@@ -403,7 +403,7 @@ def kernel_wake_up_entities_on_new_contact(
                     rigid_global_info,
                     island_state,
                 )
-            if b_hibernated and not a_hibernated and not links_info.is_fixed[I_la]:
+            if is_b_hibernated and not is_a_hibernated and not links_info.is_fixed[I_la]:
                 func_wakeup_entity_and_its_temp_island(
                     i_eb,
                     i_b,

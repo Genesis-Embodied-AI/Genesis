@@ -62,8 +62,8 @@ def func_check_collision_valid(
             I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
             I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-            if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+            if (links_state.is_hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                links_state.is_hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
             ):
                 is_valid = False
 
@@ -94,8 +94,8 @@ def func_collision_clear(
                 # Pair of hibernated-fixed links -> hibernated contact
                 # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
                 # once a new collision is detected
-                if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                    links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+                if (links_state.is_hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                    links_state.is_hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
@@ -213,7 +213,7 @@ def _func_broad_phase_sap(
             else:
                 for i in range(env_n_geoms * 2):
                     i_g = collider_state.sort_buffer.i_g[i, i_b]
-                    if not geoms_state.hibernated[i_g, i_b]:
+                    if not geoms_state.is_hibernated[i_g, i_b]:
                         if collider_state.sort_buffer.is_max[i, i_b]:
                             collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
                         else:
@@ -306,7 +306,7 @@ def _func_broad_phase_sap(
                 n_active_awake = 0
                 n_active_hib = 0
                 for i in range(2 * env_n_geoms):
-                    is_incoming_geom_hibernated = geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
+                    is_incoming_geom_hibernated = geoms_state.is_hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
 
                     if not collider_state.sort_buffer.is_max[i, i_b]:
                         # both awake and hibernated geom check with active awake geoms

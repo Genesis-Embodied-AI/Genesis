@@ -194,8 +194,8 @@ def func_collider_clear_env(
             I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
             I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-            if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+            if (links_state.is_hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                links_state.is_hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
             ):
                 i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                 if i_c != i_c_hibernated:

@@ -992,7 +992,7 @@ def func_torque_and_passive_force(
                             wakeup = True
 
         if qd.static(static_rigid_sim_config.use_hibernation):
-            if entities_state.hibernated[i_e, i_b] and wakeup:
+            if entities_state.is_hibernated[i_e, i_b] and wakeup:
                 func_wakeup_entity_and_its_temp_island(
                     i_e,
                     i_b,

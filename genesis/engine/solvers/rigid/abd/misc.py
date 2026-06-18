@@ -25,12 +25,12 @@ def func_wakeup_entity_and_its_temp_island(
         entity_ref = island_state.island_entity.start[island_idx, i_b] + ei
         entity_idx = island_state.entity_id[entity_ref, i_b]
 
-        is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
+        is_entity_hibernated = entities_state.is_hibernated[entity_idx, i_b]
 
         if is_entity_hibernated:
             island_state.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = -1
 
-            entities_state.hibernated[entity_idx, i_b] = False
+            entities_state.is_hibernated[entity_idx, i_b] = False
             n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
             rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
 
@@ -39,7 +39,7 @@ def func_wakeup_entity_and_its_temp_island(
             base_awake_dof_idx = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
             for i in range(n_dofs):
                 i_d = base_entity_dof_idx + i
-                dofs_state.hibernated[i_d, i_b] = False
+                dofs_state.is_hibernated[i_d, i_b] = False
                 rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
 
             n_links = entities_info.n_links[entity_idx]
@@ -47,11 +47,11 @@ def func_wakeup_entity_and_its_temp_island(
             base_awake_link_idx = qd.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
             for i in range(n_links):
                 i_l = base_entity_link_idx + i
-                links_state.hibernated[i_l, i_b] = False
+                links_state.is_hibernated[i_l, i_b] = False
                 rigid_global_info.awake_links[base_awake_link_idx + i, i_b] = i_l
 
             for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
-                geoms_state.hibernated[i_g, i_b] = False
+                geoms_state.is_hibernated[i_g, i_b] = False
 
 
 # --------------------------------------------------------------------------------------
@@ -175,7 +175,7 @@ def kernel_init_dof_fields(
     if qd.static(static_rigid_sim_config.use_hibernation):
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_d, i_b in qd.ndrange(n_dofs, _B):
-            dofs_state.hibernated[i_d, i_b] = False
+            dofs_state.is_hibernated[i_d, i_b] = False
             rigid_global_info.awake_dofs[i_d, i_b] = i_d
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -267,7 +267,7 @@ def kernel_init_link_fields(
     if qd.static(static_rigid_sim_config.use_hibernation):
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_l, i_b in qd.ndrange(n_links, _B):
-            links_state.hibernated[i_l, i_b] = False
+            links_state.is_hibernated[i_l, i_b] = False
             rigid_global_info.awake_links[i_l, i_b] = i_l
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -616,7 +616,7 @@ def kernel_init_entity_fields(
     static_rigid_sim_config: qd.template(),
 ):
     n_entities = entities_dof_start.shape[0]
-    _B = entities_state.hibernated.shape[1]
+    _B = entities_state.is_hibernated.shape[1]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_e in range(n_entities):
@@ -638,7 +638,7 @@ def kernel_init_entity_fields(
     if qd.static(static_rigid_sim_config.use_hibernation):
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_e, i_b in qd.ndrange(n_entities, _B):
-            entities_state.hibernated[i_e, i_b] = False
+            entities_state.is_hibernated[i_e, i_b] = False
             rigid_global_info.awake_entities[i_e, i_b] = i_e
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
