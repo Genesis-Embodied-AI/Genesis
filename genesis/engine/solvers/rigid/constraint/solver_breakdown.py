@@ -5,8 +5,8 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.engine.solvers.rigid.constraint import solver
-from genesis.engine.solvers.rigid.island import kernel_build_island_worklist
+from . import solver
+from .island import kernel_build_island_worklist
 
 # --- Parallel linesearch constants ---
 # Number of candidate step sizes evaluated simultaneously per env.

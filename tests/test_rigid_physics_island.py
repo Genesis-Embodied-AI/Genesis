@@ -68,7 +68,7 @@ def test_partition_logics(show_viewer):
         scene.step()
 
     # Deferred import: the solver package executes module-scope dtype code (gs.qd_float) that only exists after gs.init.
-    from genesis.engine.solvers.rigid.island import kernel_build_islands, kernel_group_constraints_by_island
+    from genesis.engine.solvers.rigid.constraint.island import kernel_build_islands, kernel_group_constraints_by_island
 
     solver = scene.rigid_solver
     island_state = array_class.get_island_state(solver, solver.collider)
@@ -160,7 +160,7 @@ def test_partition_track_changes(show_viewer):
     )
     scene.build(n_envs=1)
 
-    from genesis.engine.solvers.rigid.island import kernel_build_islands
+    from genesis.engine.solvers.rigid.constraint.island import kernel_build_islands
 
     solver = scene.rigid_solver
     island_state = array_class.get_island_state(solver, solver.collider)

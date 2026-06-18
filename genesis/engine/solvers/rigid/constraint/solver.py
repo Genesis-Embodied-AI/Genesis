@@ -12,7 +12,7 @@ import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
-from ..island import kernel_build_islands, kernel_group_constraints_by_island
+from .island import kernel_build_islands, kernel_group_constraints_by_island
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
 
