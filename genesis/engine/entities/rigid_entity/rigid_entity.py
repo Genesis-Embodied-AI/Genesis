@@ -1498,7 +1498,9 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the position in the user frame, with the morph pose offset and inertial alignment
-            stripped, rather than the world frame used by the solver. Defaults to True.
+            stripped, rather than the world frame used by the solver. With ``relative=True`` the returned value is
+            the position *relative to the morph's initial pose*, i.e. the inverse of ``set_pos(..., relative=True)``;
+            this is the canonical form for domain randomization. Defaults to True.
 
         Returns
         -------
@@ -1518,7 +1520,9 @@ class KinematicEntity(Entity):
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         relative : bool, optional
             Whether to report the orientation in the user frame, with the morph pose offset and inertial alignment
-            stripped, rather than the world frame used by the solver. Defaults to True.
+            stripped, rather than the world frame used by the solver. With ``relative=True`` the returned value is
+            the orientation *relative to the morph's initial pose*, i.e. the inverse of
+            ``set_quat(..., relative=True)``; this is the canonical form for domain randomization. Defaults to True.
 
         Returns
         -------
@@ -1699,7 +1703,9 @@ class KinematicEntity(Entity):
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
             Whether 'pos' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            top to reach the world frame used by the solver, rather than directly in the world frame. With
+            ``relative=True`` the argument is interpreted *relative to the morph's initial pose* (the canonical form
+            for domain randomization); ``get_pos(..., relative=True)`` is its inverse. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting position. Defaults to False.
         """
@@ -1730,7 +1736,9 @@ class KinematicEntity(Entity):
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
             Whether 'quat' is expressed in the user frame, with the morph pose offset and inertial alignment applied on
-            top to reach the world frame used by the solver, rather than directly in the world frame. Defaults to True.
+            top to reach the world frame used by the solver, rather than directly in the world frame. With
+            ``relative=True`` the argument is interpreted *relative to the morph's initial pose* (the canonical form
+            for domain randomization); ``get_quat(..., relative=True)`` is its inverse. Defaults to True.
         skip_forward : bool, optional
             Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
