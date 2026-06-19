@@ -13,11 +13,15 @@ from .utils import assert_allclose, assert_equal
 
 @pytest.fixture
 def multi_free_body_path(tmp_path):
-    # A single MJCF entity holding several free bodies (b0, b1, b2) is extremely common. b1 also carries a hinge child
-    # b1c to check that a kinematic edge keeps a child in its parent's island.
+    # A single MJCF entity holding several free bodies (b0, b1, b2) is extremely common (e.g. mujoco's dominos.xml). b1
+    # also carries a hinge child b1c to check that a kinematic edge keeps a child in its parent's island. The ground
+    # plane lives in the entity's worldbody (a 0-dof link of this same dof-carrying entity), reproducing the failure
+    # mode where a per-entity dof check would treat every body's ground contact as dynamic and merge them all into one
+    # island through that shared static link.
     mjcf = ET.Element("mujoco", model="multi_free_body")
     ET.SubElement(mjcf, "option", timestep="0.01")
     worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", type="plane", size="5 5 0.01")
     b0 = ET.SubElement(worldbody, "body", name="b0", pos="0.0 0.0 0.3")
     ET.SubElement(b0, "freejoint")
     ET.SubElement(b0, "geom", type="box", size="0.05 0.05 0.05")
@@ -121,8 +125,9 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
     assert (island_of["weld_a"] != island_of["alone"]).all()
 
     # The multi-free-body entity splits into one island per free body (b0, b1, b2), each distinct from the others and
-    # from the box islands. Its hinge child b1c lands in its parent b1's island via the kinematic edge.
-    multibody_bases = [link for link in multibody.links if link.parent_idx == -1]
+    # from the box islands; the entity's static ground link joins no island. Its hinge child b1c lands in its parent
+    # b1's island via the kinematic edge.
+    multibody_bases = [link for link in multibody.links if link.parent_idx == -1 and link.n_dofs > 0]
     assert len(multibody_bases) == 3
     base_islands = [island_idx[link.idx] for link in multibody_bases]
     assert all((isl >= 0).all() for isl in base_islands)
@@ -162,8 +167,8 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
 
     # The per-component solve keeps the free bodies stable: they settle on the plane (half-extent 0.05) rather than
     # exploding or sinking through it.
-    multibody_z = np.stack([np.atleast_1d(link.get_pos()[..., 2]) for link in multibody.links])
-    assert ((multibody_z > 0.0) & (multibody_z < 0.5)).all()
+    free_body_z = np.stack([np.atleast_1d(link.get_pos()[..., 2]) for link in multibody.links if link.n_dofs > 0])
+    assert ((free_body_z > 0.0) & (free_body_z < 0.5)).all()
 
 
 @pytest.mark.required
@@ -598,7 +603,7 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, multi_free_body_pat
     assert (hit_x1 > rest_x1).all()
 
     # The undisturbed entity's free bodies all settled and slept independently; disturbing one wakes only its island.
-    multibody_bases = [link for link in multibody.links if link.parent_idx == -1]
+    multibody_bases = [link for link in multibody.links if link.parent_idx == -1 and link.n_dofs > 0]
     assert all(link_asleep(link) for link in multibody_bases)
     disturbed = multibody_bases[0]
     solver.set_dofs_velocity(

@@ -263,7 +263,6 @@ class ConstraintSolver:
             # constraints per island, so the Newton solve factors each island's block independently.
             # Built before func_solve_init because the initial Hessian factor is per-island too.
             kernel_build_islands(
-                self._solver.entities_info,
                 self._solver.links_info,
                 self._solver.links_state,
                 self._solver.joints_info,

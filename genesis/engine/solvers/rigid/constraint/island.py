@@ -37,12 +37,6 @@ def func_union(island_state: array_class.IslandState, i_la, i_lb, i_b):
 
 
 @qd.func
-def func_link_entity(links_info: array_class.LinksInfo, i_link, i_b, static_rigid_sim_config: qd.template()):
-    link_idx = [i_link, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_link
-    return links_info.entity_idx[link_idx]
-
-
-@qd.func
 def func_joint_link(
     joints_info: array_class.JointsInfo,
     links_info: array_class.LinksInfo,
@@ -173,7 +167,6 @@ def kernel_group_constraints_by_island(
 
 @qd.kernel
 def kernel_build_islands(
-    entities_info: array_class.EntitiesInfo,
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
     joints_info: array_class.JointsInfo,
@@ -205,15 +198,24 @@ def kernel_build_islands(
             if i_p >= 0:
                 func_union(island_state, i_l, i_p, i_b)
 
-        # Edges from contacts (read through contact_sort_idx so pruning/sorting is honored). Only couple two links of
-        # dof-carrying entities; a contact against a fixed body adds no edge.
+        # Mark each kinematic component that carries at least one dof as dynamic (links_island_idx[root] = -2, a
+        # transient marker overwritten by the labeling pass below). A contact/equality couples two links only when
+        # BOTH sit in a dynamic component: a contact against a static link adds no edge - even a 0-dof link that
+        # belongs to a dof-carrying entity (e.g. a plane geom welded to the worldbody of a multi-free-body entity),
+        # which an entity-level dof check would wrongly treat as dynamic and merge every body through it.
+        for i_l in range(n_links):
+            link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            if links_info.n_dofs[link_idx] > 0:
+                island_state.links_island_idx[func_find_root(island_state, i_l, i_b), i_b] = -2
+
+        # Edges from contacts (read through contact_sort_idx so pruning/sorting is honored).
         for i_c in range(collider_state.n_contacts[i_b]):
             i_col = collider_state.contact_sort_idx[i_c, i_b]
             link_a = collider_state.contact_data.link_a[i_col, i_b]
             link_b = collider_state.contact_data.link_b[i_col, i_b]
-            ea = func_link_entity(links_info, link_a, i_b, static_rigid_sim_config)
-            eb = func_link_entity(links_info, link_b, i_b, static_rigid_sim_config)
-            if entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0:
+            root_a = func_find_root(island_state, link_a, i_b)
+            root_b = func_find_root(island_state, link_b, i_b)
+            if island_state.links_island_idx[root_a, i_b] == -2 and island_state.links_island_idx[root_b, i_b] == -2:
                 func_union(island_state, link_a, link_b, i_b)
 
         # Edges from equality constraints (model + dynamically registered welds).
@@ -228,9 +230,12 @@ def kernel_build_islands(
                 static_rigid_sim_config,
             )
             if la >= 0 and lb >= 0:
-                ea = func_link_entity(links_info, la, i_b, static_rigid_sim_config)
-                eb = func_link_entity(links_info, lb, i_b, static_rigid_sim_config)
-                if entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0:
+                root_a = func_find_root(island_state, la, i_b)
+                root_b = func_find_root(island_state, lb, i_b)
+                if (
+                    island_state.links_island_idx[root_a, i_b] == -2
+                    and island_state.links_island_idx[root_b, i_b] == -2
+                ):
                     func_union(island_state, la, lb, i_b)
 
         # Hibernated islands: re-union along the daisy chain so a sleeping group (which generates no live
@@ -241,16 +246,16 @@ def kernel_build_islands(
                 if 0 <= i_next_l < n_links and i_next_l != i_l:
                     func_union(island_state, i_l, i_next_l, i_b)
 
-        # Label components carrying at least one dof. A component (root = min link index) is labeled the first time a
-        # dof-link in it is seen, in ascending link order, so labels are deterministic and each island's gathered
-        # global DOFs end up ascending - which lets the per-island Hessian block live in the lower triangle of
+        # Label each dynamic component (root marked -2 above). A component (root = min link index) is labeled the first
+        # time one of its dof-links is seen, in ascending link order, so labels are deterministic and each island's
+        # gathered global DOFs end up ascending - which lets the per-island Hessian block live in the lower triangle of
         # constraint_state.nt_H at those global rows/cols.
         n_islands = 0
         for i_l in range(n_links):
             link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
             if links_info.n_dofs[link_idx] > 0:
                 root = func_find_root(island_state, i_l, i_b)
-                if island_state.links_island_idx[root, i_b] == -1:
+                if island_state.links_island_idx[root, i_b] == -2:
                     island_state.links_island_idx[root, i_b] = n_islands
                     n_islands = n_islands + 1
         island_state.n_islands[i_b] = n_islands
