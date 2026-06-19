@@ -863,7 +863,7 @@ def kernel_set_dofs_velocity_grad(
     dofs_state: array_class.DofsState,
     static_rigid_sim_config: qd.template(),
 ):
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         velocity_grad[i_b_, i_d_] = dofs_state.vel.grad[dofs_idx[i_d_], envs_idx[i_b_]]
         dofs_state.vel.grad[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
@@ -1012,7 +1012,7 @@ def kernel_control_dofs_position_velocity(
     dofs_state: array_class.DofsState,
     static_rigid_sim_config: qd.template(),
 ):
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         i_d = dofs_idx[i_d_]
         i_b = envs_idx[i_b_]
@@ -1202,7 +1202,7 @@ def kernel_set_vverts(
     n_envs_in = envs_idx.shape[0]
     n_vverts_in = vverts.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_, i_vv_ in qd.ndrange(n_envs_in, n_vverts_in):
         i_b = envs_idx[i_b_]
         i_vv = vvert_start + i_vv_

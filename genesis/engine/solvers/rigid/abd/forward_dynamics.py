@@ -457,14 +457,14 @@ def func_compute_mass_matrix(
                             rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
 
     # Take into account motor armature
-    qd.loop_config(name="armature", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="armature", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
         I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
         func_add_safe_backward(rigid_global_info.mass_mat, (i_d, i_d, i_b), dofs_info.armature[I_d], BW)
 
     # Take into account first-order correction terms for implicit integration scheme right away
     if qd.static(implicit_damping):
-        qd.loop_config(name="impint_order_1_corr", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="impint_order_1_corr", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
             I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
             rigid_global_info.mass_mat[i_d, i_d, i_b] = (
@@ -904,7 +904,7 @@ def func_torque_and_passive_force(
     BW = qd.static(is_backward)
 
     # compute force based on each dof's ctrl mode
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
         EPS = rigid_global_info.EPS[None]
 
@@ -1235,7 +1235,7 @@ def func_update_force(
                         func_add_safe_backward(links_state.cfrc_ang, I_p, links_state.cfrc_ang[i_l, i_b], BW)
 
     # Clear coupling forces after use
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for I in qd.grouped(qd.ndrange(*links_state.cfrc_coupling_ang.shape)):
         links_state.cfrc_coupling_ang[I] = qd.Vector.zero(gs.qd_float, 3)
         links_state.cfrc_coupling_vel[I] = qd.Vector.zero(gs.qd_float, 3)
@@ -1246,7 +1246,7 @@ def func_actuation(self):
     if qd.static(self._use_hibernation):
         pass
     else:
-        qd.loop_config(serialize=self._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self._para_level < gs.PARA_LEVEL.PARTIAL)
         for i_l, i_b in qd.ndrange(self.n_links, self._B):
             I_l = [i_l, i_b] if qd.static(self._options.batch_links_info) else i_l
             for i_j in range(self.links_info.joint_start[I_l], self.links_info.joint_end[I_l]):
@@ -1598,7 +1598,7 @@ def func_implicit_damping(
         for i_e, i_b in qd.ndrange(n_entities, _B):
             rigid_global_info.mass_mat_mask[i_e, i_b] = False
 
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_e, i_b in qd.ndrange(n_entities, _B):
             entity_dof_start = entities_info.dof_start[i_e]
             entity_dof_end = entities_info.dof_end[i_e]

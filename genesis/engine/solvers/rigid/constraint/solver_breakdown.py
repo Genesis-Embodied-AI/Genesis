@@ -913,7 +913,9 @@ def _func_update_gradient_no_solve(
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
-    qd.loop_config(name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+    )
     for i_d, i_b in qd.ndrange(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
     ):

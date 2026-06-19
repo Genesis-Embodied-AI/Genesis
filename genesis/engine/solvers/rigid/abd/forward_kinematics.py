@@ -1161,7 +1161,7 @@ def kernel_update_geom_aabbs(
     n_geoms = geoms_state.pos.shape[0]
     _B = geoms_state.pos.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g, i_b in qd.ndrange(n_geoms, _B):
         g_pos = geoms_state.pos[i_g, i_b]
         g_quat = geoms_state.quat[i_g, i_b]
@@ -1190,7 +1190,7 @@ def kernel_update_vgeoms(
     n_vgeoms = vgeoms_info.link_idx.shape[0]
     _B = links_state.pos.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g, i_b in qd.ndrange(n_vgeoms, _B):
         i_l = vgeoms_info.link_idx[i_g]
         vgeoms_state.pos[i_g, i_b], vgeoms_state.quat[i_g, i_b] = gu.qd_transform_pos_quat_by_trans_quat(
@@ -1215,7 +1215,7 @@ def kernel_update_vverts_for_vgeoms(
     n_vgeoms_in = vgeoms_idx.shape[0]
     _B = vgeoms_state.pos.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_vg_, i_b in qd.ndrange(n_vgeoms_in, _B):
         i_vg = vgeoms_idx[i_vg_]
         v_start = vgeoms_info.vvert_start[i_vg]
@@ -1322,7 +1322,7 @@ def func_aggregate_awake_entities(
         rigid_global_info.n_awake_dofs[i_b] = 0
 
     # Count awake entities
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in qd.ndrange(n_entities, _B):
         if entities_state.is_hibernated[i_e, i_b] or entities_info.n_dofs[i_e] == 0:
             continue

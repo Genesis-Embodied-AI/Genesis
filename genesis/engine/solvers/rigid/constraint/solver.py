@@ -754,7 +754,9 @@ def _add_collision_constraints_per_friction(
     _B = dofs_state.ctrl_mode.shape[1]
     max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
 
-    qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+    )
     for flat_idx in range(_B * max_candidate_contacts * 4):
         slot = flat_idx % (max_candidate_contacts * 4)
         i_b = flat_idx // (max_candidate_contacts * 4)
@@ -793,7 +795,9 @@ def _add_collision_constraints_per_contact(
 
     # Iteration order follows the jac layout: batch-outer keeps every write within one env's batch-first block, while
     # the batch-inner order keeps consecutive GPU threads on consecutive envs (coalesced batch-last).
-    qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+    )
     for i_col_, i_b in qd.ndrange(
         max_candidate_contacts,
         _B,
@@ -3784,7 +3788,9 @@ def _func_update_efc_force(
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
-    qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(
+        name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+    )
     for i_c, i_b in qd.ndrange(
         len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4005,7 +4011,7 @@ def func_update_gradient_tiled(
     # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const.
     # Under the DOF-vec flip, 3 of 4 in-loop accesses (grad, Ma, qfrc_constraint) are flipped and one (dofs_state.force)
     # is canonical — swap the ndrange so adjacent lanes vary i_d.
-    qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4210,7 +4216,7 @@ def _initialize_Jaref_parallel(
 
     # Innermost ndrange axis matches the stride-1 axis of jac so jac loads coalesce: i_c-innermost under the flipped
     # layout, i_b-innermost under canonical.
-    qd.loop_config(name="init_jaref_parallel", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="init_jaref_parallel", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_c, i_b in qd.ndrange(
         len_constraints, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4321,7 +4327,7 @@ def func_solve_init(
 
         # Pick the best starting point between current state and warmstart
         qd.loop_config(
-            name="solve_init_pick_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
+            name="solve_init_pick_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
         )
         for i_d, i_b in qd.ndrange(n_dofs, _B):
             if constraint_state.cost_ws[i_b] < constraint_state.cost[i_b]:
@@ -4334,7 +4340,7 @@ def func_solve_init(
         # Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap the ndrange so adjacent lanes vary i_d
         # to coalesce those writes/reads. The dofs_state.acc_smooth read remains canonical (small per-env working
         # set, dominated by the qacc write).
-        qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
         for i_d, i_b in qd.ndrange(
             n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
         ):
@@ -4412,7 +4418,7 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
@@ -4620,7 +4626,7 @@ def func_update_contact_force(
     n_links = links_state.contact_force.shape[0]
     _B = links_state.contact_force.shape[1]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_l, i_b in qd.ndrange(n_links, _B):
         links_state.contact_force[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
@@ -4663,7 +4669,7 @@ def func_update_qacc(
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
