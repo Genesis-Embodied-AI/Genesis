@@ -383,8 +383,10 @@ def get_constraint_state(constraint_solver, solver):
     noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_decomposed else 1), noslip)
     efc_b_shape = maybe_shape((len_constraints_, _B if noslip_decomposed else 1), noslip)
-    jac_dofs_idx_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
-    jac_n_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
+    # The sparse-Jacobian representation is always active, so its index buffers are always allocated. The skyline DOF
+    # permutation/envelope buffers stay gated on sparse_solve (CPU-only skyline Cholesky).
+    jac_dofs_idx_shape = jac_shape
+    jac_n_dofs_shape = (len_constraints_, _B)
     sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
 
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
@@ -457,11 +459,7 @@ def get_constraint_state(constraint_solver, solver):
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
-        jac_dofs_idx=V(
-            dtype=gs.qd_int,
-            shape=jac_dofs_idx_shape,
-            layout=jac_layout if constraint_solver.sparse_solve else None,
-        ),
+        jac_dofs_idx=V(dtype=gs.qd_int, shape=jac_dofs_idx_shape, layout=jac_layout),
         jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape, layout=serial_layout if jac_n_dofs_shape else None),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),

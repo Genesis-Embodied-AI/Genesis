@@ -143,17 +143,13 @@ def _func_decomp_linesearch_p0(
                 constraint_state.mv[i_d1, i_b] = mv_val
                 i_d1 += _T
 
-            # === Phase 0b: Compute jv = J @ search (cooperative over constraints) ===
+            # === Phase 0b: Compute jv = J @ search (cooperative over constraints, sparse over each constraint's DOFs) ===
             i_c = tid
             while i_c < n_con:
                 jv_val = gs.qd_float(0.0)
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                        i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                        jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-                else:
-                    for i_d in range(n_dofs):
-                        jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                    jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
                 constraint_state.jv[i_c, i_b] = jv_val
                 i_c += _T
 

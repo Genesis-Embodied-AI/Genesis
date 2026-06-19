@@ -591,9 +591,8 @@ def func_clear_constraint_at_env(
     constraint_state.qd_n_equalities[i_b] = rigid_global_info.n_equalities[None]
     for i_d, i_c in qd.ndrange(n_dofs, len_constraints):
         constraint_state.jac[i_c, i_d, i_b] = 0.0
-    if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_c in range(len_constraints):
-            constraint_state.jac_n_dofs[i_c, i_b] = 0
+    for i_c in range(len_constraints):
+        constraint_state.jac_n_dofs[i_c, i_b] = 0
 
 
 @qd.kernel(fastcache=True)
@@ -714,15 +713,13 @@ def _add_friction_constraint(
                 jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
-                    con_n_dofs = con_n_dofs + 1
+                constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                con_n_dofs = con_n_dofs + 1
 
             link = links_info.parent_idx[link_maybe_batch]
 
-    if qd.static(static_rigid_sim_config.sparse_solve):
-        constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
+    constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
     imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
 
     diag = invweight + contact_data_friction * contact_data_friction * invweight
@@ -894,15 +891,13 @@ def _add_collision_constraints_per_contact(
                             jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                             constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                            if qd.static(static_rigid_sim_config.sparse_solve):
-                                constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
-                                con_n_dofs = con_n_dofs + 1
+                            constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                            con_n_dofs = con_n_dofs + 1
 
                         link = links_info.parent_idx[link_maybe_batch]
 
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-                    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
+                constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+                _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
                 imp, aref = gu.imp_aref(
                     contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                 )
@@ -1045,17 +1040,15 @@ def func_equality_connect(
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                    if qd.static(static_rigid_sim_config.sparse_solve):
-                        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
-                        con_n_dofs = con_n_dofs + 1
+                    constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                    con_n_dofs = con_n_dofs + 1
 
                 link = links_info.parent_idx[link_maybe_batch]
 
-        if qd.static(static_rigid_sim_config.sparse_solve):
-            constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-            # Sort needed: DOFs from two entities are only descending within each
-            # entity. Incremental Cholesky requires globally descending order.
-            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
+        constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+        # Sort needed: DOFs from two entities are only descending within each
+        # entity. Incremental Cholesky requires globally descending order.
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
 
         pos_diff = global_anchor1 - global_anchor2
         penetration = pos_diff.norm()
@@ -1148,18 +1141,16 @@ def func_equality_joint(
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
-    # Populate jac_dofs_idx for this joint-equality constraint.
-    # Without this, sparse iterations see 0 relevant DOFs and produce
-    # zero forces, leading to NaN in the solver.
-    if qd.static(static_rigid_sim_config.sparse_solve):
-        con_n_dofs = 0
-        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof1
+    # Populate jac_dofs_idx for this joint-equality constraint, so the sparse-Jacobian iterations see its relevant
+    # DOFs (otherwise they would see 0 and produce zero forces, leading to NaN in the solver).
+    con_n_dofs = 0
+    constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof1
+    con_n_dofs += 1
+    if i_dof2 != i_dof1:
+        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof2
         con_n_dofs += 1
-        if i_dof2 != i_dof1:
-            constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof2
-            con_n_dofs += 1
-        constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
+    constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
 
 
 @qd.kernel(fastcache=True)
@@ -1385,14 +1376,12 @@ def func_equality_weld(
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                    if qd.static(static_rigid_sim_config.sparse_solve):
-                        constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
-                        con_n_dofs = con_n_dofs + 1
+                    constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_d
+                    con_n_dofs = con_n_dofs + 1
                 link = links_info.parent_idx[link_maybe_batch]
 
-        if qd.static(static_rigid_sim_config.sparse_solve):
-            constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
+        constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b)
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
         diag = qd.max(invweight[0] * (1 - imp) / imp, EPS)
@@ -1426,10 +1415,9 @@ def func_equality_weld(
 
                 # The 3 orientation constraints share the same support (the DOFs along both kinematic chains); record
                 # it so sparse assembly does not drop them. (The position part above does the same per constraint.)
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    for i_con in range(n_con, n_con + 3):
-                        constraint_state.jac_dofs_idx[i_con, con_n_dofs, i_b] = i_d
-                    con_n_dofs = con_n_dofs + 1
+                for i_con in range(n_con, n_con + 3):
+                    constraint_state.jac_dofs_idx[i_con, con_n_dofs, i_b] = i_d
+                con_n_dofs = con_n_dofs + 1
             link = links_info.parent_idx[link_maybe_batch]
 
     jac_qvel = qd.Vector([0.0, 0.0, 0.0])
@@ -1452,10 +1440,9 @@ def func_equality_weld(
                 jac_qvel[i_con - n_con] + constraint_state.jac[i_con, i_d, i_b] * dofs_state.vel[i_d, i_b]
             )
 
-    if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_con in range(n_con, n_con + 3):
-            constraint_state.jac_n_dofs[i_con, i_b] = con_n_dofs
-            _sort_relevant_dofs_descending(constraint_state, i_con, con_n_dofs, i_b)
+    for i_con in range(n_con, n_con + 3):
+        constraint_state.jac_n_dofs[i_con, i_b] = con_n_dofs
+        _sort_relevant_dofs_descending(constraint_state, i_con, con_n_dofs, i_b)
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
@@ -1521,9 +1508,8 @@ def add_joint_limit_constraints(
                                 constraint_state.jac[n_con, i_d2, i_b] = gs.qd_float(0.0)
                         constraint_state.jac[n_con, i_d, i_b] = jac
 
-                        if qd.static(static_rigid_sim_config.sparse_solve):
-                            constraint_state.jac_n_dofs[n_con, i_b] = 1
-                            constraint_state.jac_dofs_idx[n_con, 0, i_b] = i_d
+                        constraint_state.jac_n_dofs[n_con, i_b] = 1
+                        constraint_state.jac_dofs_idx[n_con, 0, i_b] = i_d
 
 
 @qd.func
@@ -1580,9 +1566,8 @@ def add_frictionloss_constraints(
                             constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
                         constraint_state.jac[i_con, i_d, i_b] = jac
 
-                        if qd.static(static_rigid_sim_config.sparse_solve):
-                            constraint_state.jac_dofs_idx[i_con, 0, i_b] = i_d
-                            constraint_state.jac_n_dofs[i_con, i_b] = 1
+                        constraint_state.jac_dofs_idx[i_con, 0, i_b] = i_d
+                        constraint_state.jac_n_dofs[i_con, i_b] = 1
 
 
 # ====================================== Runtime User-Specified Weld Constraints ======================================
@@ -2960,22 +2945,23 @@ def func_ls_init_and_eval_p0(
     n_con = constraint_state.n_constraints[i_b]
 
     # -- mv and jv (same as original func_ls_init) --
+    # mv = M @ search. Mass couples only DOFs within the same kinematic-tree block, so restrict the inner loop to
+    # i_d1's block (cross-block entries are zero). For one entity holding many free bodies this is the difference
+    # between O(entity_dofs^2) and the sum of per-tree blocks.
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             mv = gs.qd_float(0.0)
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+            for i_d2 in range(
+                rigid_global_info.dofs_mass_block_start[i_d1], rigid_global_info.dofs_mass_block_end[i_d1]
+            ):
                 mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
 
     for i_c in range(n_con):
         jv = gs.qd_float(0.0)
-        if qd.static(static_rigid_sim_config.sparse_solve):
-            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-        else:
-            for i_d in range(n_dofs):
-                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+            jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         constraint_state.jv[i_c, i_b] = jv
 
     # -- quad_gauss (same as original func_ls_init) --
@@ -3705,24 +3691,16 @@ def func_update_constraint_batch(
             -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         )
 
-    if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_d in range(n_dofs):
-            constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                constraint_state.qfrc_constraint[i_d, i_b] = (
-                    constraint_state.qfrc_constraint[i_d, i_b]
-                    + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                )
-    else:
-        for i_d in range(n_dofs):
-            qfrc_constraint = gs.qd_float(0.0)
-            for i_c in range(constraint_state.n_constraints[i_b]):
-                qfrc_constraint = (
-                    qfrc_constraint + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                )
-            constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
+    # qfrc_constraint = J^T @ efc_force, accumulated over each constraint's actual DOFs (jac_dofs_idx).
+    for i_d in range(n_dofs):
+        constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+            constraint_state.qfrc_constraint[i_d, i_b] = (
+                constraint_state.qfrc_constraint[i_d, i_b]
+                + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            )
 
     # (Mx - Mx') * (x - x')
     for i_d in range(n_dofs):
@@ -4181,13 +4159,9 @@ def _initialize_Jaref_body(
     static_rigid_sim_config: qd.template(),
 ):
     Jaref = -constraint_state.aref[i_c, i_b]
-    if qd.static(static_rigid_sim_config.sparse_solve):
-        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-    else:
-        for i_d in range(n_dofs):
-            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+        i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+        Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
     constraint_state.Jaref[i_c, i_b] = Jaref
 
 
@@ -4246,10 +4220,9 @@ def initialize_Ma(
     for i_d1, i_b in qd.ndrange(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None)
     ):
-        I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
-        i_e = dofs_info.entity_idx[I_d1]
         Ma_ = gs.qd_float(0.0)
-        for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+        # Mass couples only DOFs within the same kinematic-tree block, so restrict to i_d1's block (cross-block is zero).
+        for i_d2 in range(rigid_global_info.dofs_mass_block_start[i_d1], rigid_global_info.dofs_mass_block_end[i_d1]):
             Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
         Ma[i_d1, i_b] = Ma_
 
