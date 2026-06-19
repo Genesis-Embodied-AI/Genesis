@@ -632,6 +632,9 @@ class IslandState:
     contact_id: qd.Tensor
     constraint_slices: IslandSlices
     constraint_id: qd.Tensor
+    # Per-constraint island label (-1 if the constraint touches no dof-island), resolved in parallel by the
+    # constraint scan so the serial per-island grouping can read it in O(1) instead of rescanning the Jacobian.
+    constraint_island_idx: qd.Tensor
     # Flat (env, island) work-list for the decomposed arm's warp-cooperative per-island dispatch. work_i_b[k] /
     # work_i_island[k] identify the k-th island across all envs; work_size[0] is the total island count
     # (Sum_b n_islands[b]); work_counter[0] is the atomic steal cursor. Only consumed when the decomposed arm
@@ -674,6 +677,7 @@ def get_island_state(solver, collider):
         contact_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
         constraint_slices=get_slices(solver),
         constraint_id=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
+        constraint_island_idx=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
         # Work-list spans every (env, island); at most n_entities islands per env.
         work_i_b=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
         work_i_island=V(dtype=gs.qd_int, shape=(n_entities * _B,)),

@@ -127,7 +127,23 @@ def kernel_group_constraints_by_island(
     EPS = rigid_global_info.EPS[None]
     n_dofs = constraint_state.jac.shape[1]
     _B = constraint_state.n_constraints.shape[0]
+    capacity = island_state.constraint_island_idx.shape[0]
 
+    # Resolve each constraint's island over a flat (env, constraint) index. The per-constraint island lookup scans
+    # the dense Jacobian row for its first nonzero dof (O(n_dofs)) and is the dominant cost. Each constraint writes
+    # its own slot (no cross-iteration dependency), so this is always parallelized - even when the env loop below
+    # is serialized (e.g. single env) - which is what removes the previous O(n_constraints * n_dofs) serial sweep.
+    qd.loop_config(serialize=False)
+    for i_flat in range(_B * capacity):
+        i_b = i_flat // capacity
+        i_c = i_flat % capacity
+        if i_c < constraint_state.n_constraints[i_b]:
+            island_state.constraint_island_idx[i_c, i_b] = func_constraint_island(
+                constraint_state, island_state, i_c, i_b, n_dofs, EPS, static_rigid_sim_config
+            )
+
+    # Group constraints into contiguous per-island ranges in constraint_id. The island label is read in O(1), and
+    # the fill walks constraints in index order, so each island's constraint list stays order-deterministic.
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         n_islands = island_state.n_islands[i_b]
@@ -136,9 +152,7 @@ def kernel_group_constraints_by_island(
 
         n_con = constraint_state.n_constraints[i_b]
         for i_c in range(n_con):
-            i_island = func_constraint_island(
-                constraint_state, island_state, i_c, i_b, n_dofs, EPS, static_rigid_sim_config
-            )
+            i_island = island_state.constraint_island_idx[i_c, i_b]
             if i_island >= 0:
                 island_state.constraint_slices.n[i_island, i_b] = island_state.constraint_slices.n[i_island, i_b] + 1
 
@@ -149,9 +163,7 @@ def kernel_group_constraints_by_island(
             con_list_start = con_list_start + island_state.constraint_slices.n[i_island, i_b]
 
         for i_c in range(n_con):
-            i_island = func_constraint_island(
-                constraint_state, island_state, i_c, i_b, n_dofs, EPS, static_rigid_sim_config
-            )
+            i_island = island_state.constraint_island_idx[i_c, i_b]
             if i_island >= 0:
                 island_state.constraint_id[island_state.constraint_slices.curr[i_island, i_b], i_b] = i_c
                 island_state.constraint_slices.curr[i_island, i_b] = (
