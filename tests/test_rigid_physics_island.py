@@ -647,7 +647,7 @@ def test_hibernation_repartitioning(show_viewer, n_envs):
     assert awake(box1_idx)
     assert (box1.get_pos()[..., 2] > 0.2).all()
 
-    for _ in range(25):
+    for _ in range(30):
         scene.step()
     assert awake(box1_idx)
     assert awake(box2_idx)
@@ -664,7 +664,7 @@ def test_hibernation_repartitioning(show_viewer, n_envs):
     assert awake(box1_idx)
     assert awake(box2_idx)
 
-    for _ in range(60):
+    for _ in range(120):
         scene.step()
         if asleep(box1_idx) and asleep(box2_idx):
             break

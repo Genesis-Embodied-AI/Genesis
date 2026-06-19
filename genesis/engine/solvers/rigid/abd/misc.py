@@ -25,12 +25,16 @@ def func_wakeup_entity_and_its_temp_island(
         entity_ref = island_state.entity_slices.start[island_idx, i_b] + ei
         entity_idx = island_state.entity_id[entity_ref, i_b]
 
-        is_entity_hibernated = entities_state.is_hibernated[entity_idx, i_b]
+        # Atomically claim the entity by clearing its hibernation flag and reading the previous value. Only the
+        # caller that observes the True->False transition appends it to the awake lists. A plain read-check-set
+        # would let several wake threads targeting the same entity (multiple qs/dofs/links of one entity, or the
+        # redundant grid threads a backend may launch for the wake kernel) all pass the guard and append the island
+        # dofs once each, corrupting the awake-list counts.
+        was_hibernated = qd.atomic_exchange(entities_state.is_hibernated[entity_idx, i_b], 0)
 
-        if is_entity_hibernated:
+        if was_hibernated:
             island_state.hibernated_next_entity[entity_idx, i_b] = -1
 
-            entities_state.is_hibernated[entity_idx, i_b] = False
             n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
             rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
 
