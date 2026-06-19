@@ -620,18 +620,29 @@ class RigidSolver(KinematicSolver):
                     # every scale measured on both CUDA (1.5-4.8x) and Metal (2-18x).
                     static_rigid_sim_config["prefer_decomposed_solver"] = 1
                 elif self._use_contact_island:
-                    # Newton islands. The warp-cooperative arm parallelizes the small per-island solves across warps;
-                    # the monolith serializes them within a single per-env block. On Metal (no CUDA graphs) the
-                    # cooperative arm always wins. On CUDA it depends on env saturation: with few envs the device is
-                    # otherwise idle and the cooperative arm's per-island parallelism wins at high dofs (256 boxes,
-                    # 1 env: 909 vs 1223 ms, and the monolith degrades to ~24 s at 1024 boxes); with many envs the
-                    # per-env monolith already saturates the device and the cooperative arm's host-orchestrated
-                    # per-iteration launches lose (1024 envs x 64 bodies: 262 vs 857 ms). The regime is predictable
-                    # from envs_undersaturate, so pin it rather than autotune.
-                    if gs.backend == gs.cuda:
-                        static_rigid_sim_config["prefer_decomposed_solver"] = 1 if envs_undersaturate else 0
-                    else:
+                    # Newton islands. Pinning the arm is what makes the simulation deterministic - the per-step
+                    # autotuner picks by timing, which varies run to run and breaks bitwise reproducibility - so pin
+                    # every regime where the A/B gives a confident winner, and fall through to the autotuner only in
+                    # the genuinely undeterminable band. The warp-cooperative arm parallelizes the per-island solves;
+                    # the monolith does them serially inside one per-env block. Confident regimes (box-grid A/B,
+                    # max_islands = build-time upper bound on the partition = dof-carrying components):
+                    #  - Few islands -> monolith: the cooperative arm's fixed launch overhead is never amortized.
+                    #  - Many islands -> decomposed: the monolith's serial per-island loop dominates (5-27x).
+                    #  - Otherwise the env count decides: few envs expose the monolith's serial loop (decomposed wins),
+                    #    many envs hide it so the cooperative launch overhead loses (monolith wins). The many-env
+                    #    monolith pin is CUDA-only - the Metal monolith has a ~10x slowdown bug past ~1024 envs - and
+                    #    the mid-env crossover (env count grows with island count, hardware dependent) is left to the
+                    #    autotuner.
+                    max_islands = sum(1 for entity in self.entities if entity.n_dofs > 0)
+                    if max_islands <= 16:
+                        static_rigid_sim_config["prefer_decomposed_solver"] = 0
+                    elif max_islands >= 256:
                         static_rigid_sim_config["prefer_decomposed_solver"] = 1
+                    elif self._sim._B <= 64:
+                        static_rigid_sim_config["prefer_decomposed_solver"] = 1
+                    elif gs.backend == gs.cuda and self._sim._B > 512:
+                        static_rigid_sim_config["prefer_decomposed_solver"] = 0
+                    # else (17-255 islands, 64 < n_envs <= 512, or Metal many-env): autotune (non-deterministic)
                 # Newton non-island stays on the autotuner: monolith vs decomposed is a small (~15%), env-count-
                 # dependent margin with a hardware-dependent crossover - not reliably predictable in advance.
 
