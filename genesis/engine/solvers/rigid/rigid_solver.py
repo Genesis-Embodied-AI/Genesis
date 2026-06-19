@@ -42,7 +42,6 @@ from .abd.misc import (
     func_check_index_range,
     func_clear_external_force,
     func_read_field_if,
-    func_wakeup_entity_and_its_temp_island,
     func_write_field_if,
     func_write_and_read_field_if,
     kernel_init_invweight,
@@ -74,7 +73,6 @@ from .abd.forward_kinematics import (
     func_forward_velocity_entity,
     func_forward_velocity_batch,
     func_forward_velocity,
-    func_hibernate_entity_and_zero_dof_velocities,
     func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer,
     func_update_geoms_entity,
     func_update_geoms_batch,
@@ -633,7 +631,18 @@ class RigidSolver(KinematicSolver):
                     #    monolith pin is CUDA-only - the Metal monolith has a ~10x slowdown bug past ~1024 envs - and
                     #    the mid-env crossover (env count grows with island count, hardware dependent) is left to the
                     #    autotuner.
-                    max_islands = sum(1 for entity in self.entities if entity.n_dofs > 0)
+                    # A component is a floating-base subtree (links connected by parent-child edges); it becomes an
+                    # island iff it carries at least one DOF. A single Genesis entity holding several free bodies thus
+                    # contributes one island per free body, so count dof-bearing component roots, not dof-entities.
+                    links_by_idx = {link.idx: link for link in self.links}
+                    dof_component_roots = set()
+                    for link in self.links:
+                        if link.n_dofs > 0:
+                            root = link
+                            while root.parent_idx != -1:
+                                root = links_by_idx[root.parent_idx]
+                            dof_component_roots.add(root.idx)
+                    max_islands = len(dof_component_roots)
                     if max_islands <= 16:
                         static_rigid_sim_config["prefer_decomposed_solver"] = 0
                     elif max_islands >= 256:
@@ -2614,7 +2623,7 @@ class RigidSolver(KinematicSolver):
             kernel_wake_up_entities_by_dofs(
                 dofs_idx,
                 envs_idx,
-                dofs_info=self.dofs_info,
+                links_info=self.links_info,
                 links_state=self.links_state,
                 entities_state=self.entities_state,
                 entities_info=self.entities_info,
@@ -3299,6 +3308,7 @@ def kernel_step_2(
             dofs_state=dofs_state,
             entities_state=entities_state,
             entities_info=entities_info,
+            links_info=links_info,
             links_state=links_state,
             geoms_state=geoms_state,
             collider_state=collider_state,
@@ -3311,6 +3321,8 @@ def kernel_step_2(
         func_aggregate_awake_entities(
             entities_state=entities_state,
             entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
         )

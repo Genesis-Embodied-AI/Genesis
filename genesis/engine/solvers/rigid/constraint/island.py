@@ -4,35 +4,36 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 
 
-# Partition dof-carrying entities into islands: connected components of the inter-entity coupling graph. Edges come
-# from ALL couplings that put two entities in the same constraint block - contacts and equality constraints
-# (CONNECT/WELD on links, JOINT on joints) - so each island is an exactly decoupled (block-diagonal) sub-problem of the
-# constraint solve. Union-by-min makes the labels independent of edge-processing order, which keeps per-island solving
-# deterministic.
+# Partition LINKS into islands: connected components of the coupling graph whose edges are (1) kinematic - every link
+# to its parent, so a floating-base subtree collapses to one component - plus (2) contacts and (3) equality constraints
+# (CONNECT/WELD on links, JOINT on joints). A single Genesis entity holding several free bodies (common in MJCF) thus
+# splits into one island per free body, while an articulated body's links stay one island. Each island is an exactly
+# decoupled (block-diagonal) sub-problem of the constraint solve. Union-by-min makes the labels independent of
+# edge-processing order, which keeps per-island solving deterministic.
 
 
 @qd.func
-def func_find_root(island_state: array_class.IslandState, i_e, i_b):
-    # Path-halving find.
-    root = i_e
-    while island_state.entities_parent_idx[root, i_b] != root:
-        island_state.entities_parent_idx[root, i_b] = island_state.entities_parent_idx[
-            island_state.entities_parent_idx[root, i_b], i_b
+def func_find_root(island_state: array_class.IslandState, i_l, i_b):
+    # Path-halving find (over links).
+    root = i_l
+    while island_state.links_parent_idx[root, i_b] != root:
+        island_state.links_parent_idx[root, i_b] = island_state.links_parent_idx[
+            island_state.links_parent_idx[root, i_b], i_b
         ]
-        root = island_state.entities_parent_idx[root, i_b]
+        root = island_state.links_parent_idx[root, i_b]
     return root
 
 
 @qd.func
-def func_union(island_state: array_class.IslandState, i_ea, i_eb, i_b):
-    # Union by minimum index: the root of a component is its smallest entity index, regardless of the order edges are
+def func_union(island_state: array_class.IslandState, i_la, i_lb, i_b):
+    # Union by minimum index: the root of a component is its smallest link index, regardless of the order edges are
     # processed.
-    root_a = func_find_root(island_state, i_ea, i_b)
-    root_b = func_find_root(island_state, i_eb, i_b)
+    root_a = func_find_root(island_state, i_la, i_b)
+    root_b = func_find_root(island_state, i_lb, i_b)
     if root_a < root_b:
-        island_state.entities_parent_idx[root_b, i_b] = root_a
+        island_state.links_parent_idx[root_b, i_b] = root_a
     elif root_b < root_a:
-        island_state.entities_parent_idx[root_a, i_b] = root_b
+        island_state.links_parent_idx[root_a, i_b] = root_b
 
 
 @qd.func
@@ -42,51 +43,50 @@ def func_link_entity(links_info: array_class.LinksInfo, i_link, i_b, static_rigi
 
 
 @qd.func
-def func_joint_entity(
+def func_joint_link(
     joints_info: array_class.JointsInfo,
-    entities_info: array_class.EntitiesInfo,
+    links_info: array_class.LinksInfo,
     i_joint,
     i_b,
-    n_entities,
+    n_links,
     static_rigid_sim_config: qd.template(),
 ):
-    # JointsInfo carries no entity/link mapping, so locate the entity whose dof range owns the joint's first dof.
-    # Joint equalities are rare and entity counts are small, so the linear scan is cheap.
+    # JointsInfo carries no link mapping, so locate the link whose dof range owns the joint's first dof. Joint
+    # equalities are rare and link counts are small, so the linear scan is cheap.
     joint_idx = [i_joint, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_joint
     i_dof = joints_info.dof_start[joint_idx]
-    entity = -1
-    for i_e in range(n_entities):
-        if entities_info.dof_start[i_e] <= i_dof < entities_info.dof_end[i_e]:
-            entity = i_e
+    link = -1
+    for i_l in range(n_links):
+        link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        if links_info.dof_start[link_idx] <= i_dof < links_info.dof_end[link_idx]:
+            link = i_l
             break
-    return entity
+    return link
 
 
 @qd.func
-def func_equality_entities(
+def func_equality_links(
     equalities_info: array_class.EqualitiesInfo,
     joints_info: array_class.JointsInfo,
-    entities_info: array_class.EntitiesInfo,
     links_info: array_class.LinksInfo,
     i_eq,
     i_b,
-    n_entities,
+    n_links,
     static_rigid_sim_config: qd.template(),
 ):
-    # Map an equality constraint to the pair of entities it couples. CONNECT/WELD reference links; JOINT references
-    # joints.
+    # Map an equality constraint to the pair of links it couples. CONNECT/WELD reference links; JOINT references joints.
     obj1 = equalities_info.eq_obj1id[i_eq, i_b]
     obj2 = equalities_info.eq_obj2id[i_eq, i_b]
     eq_type = equalities_info.eq_type[i_eq, i_b]
-    ea = -1
-    eb = -1
+    la = -1
+    lb = -1
     if eq_type == gs.EQUALITY_TYPE.JOINT:
-        ea = func_joint_entity(joints_info, entities_info, obj1, i_b, n_entities, static_rigid_sim_config)
-        eb = func_joint_entity(joints_info, entities_info, obj2, i_b, n_entities, static_rigid_sim_config)
+        la = func_joint_link(joints_info, links_info, obj1, i_b, n_links, static_rigid_sim_config)
+        lb = func_joint_link(joints_info, links_info, obj2, i_b, n_links, static_rigid_sim_config)
     else:
-        ea = func_link_entity(links_info, obj1, i_b, static_rigid_sim_config)
-        eb = func_link_entity(links_info, obj2, i_b, static_rigid_sim_config)
-    return ea, eb
+        la = obj1
+        lb = obj2
+    return la, lb
 
 
 @qd.func
@@ -174,8 +174,8 @@ def kernel_group_constraints_by_island(
 @qd.kernel
 def kernel_build_islands(
     entities_info: array_class.EntitiesInfo,
-    entities_state: array_class.EntitiesState,
     links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
     joints_info: array_class.JointsInfo,
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
@@ -183,113 +183,130 @@ def kernel_build_islands(
     island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    n_entities = entities_info.n_dofs.shape[0]
-    _B = island_state.entities_island_idx.shape[1]
+    n_links = island_state.links_island_idx.shape[0]
+    _B = island_state.links_island_idx.shape[1]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
-        # Init: every dof-entity is its own component; fixed (0-dof) entities are not partitioned.
-        for i_e in range(n_entities):
-            island_state.entities_parent_idx[i_e, i_b] = i_e
-            island_state.entities_island_idx[i_e, i_b] = -1
-            island_state.entity_slices.n[i_e, i_b] = 0
-            island_state.dof_slices.n[i_e, i_b] = 0
-            island_state.contact_slices.n[i_e, i_b] = 0
+        # Init: every link is its own component.
+        for i_l in range(n_links):
+            island_state.links_parent_idx[i_l, i_b] = i_l
+            island_state.links_island_idx[i_l, i_b] = -1
+            island_state.link_slices.n[i_l, i_b] = 0
+            island_state.dof_slices.n[i_l, i_b] = 0
+            island_state.contact_slices.n[i_l, i_b] = 0
 
-        # Edges from contacts (read through contact_sort_idx so pruning/sorting is honored). Only couple two
-        # dof-entities; a contact against a fixed body adds no edge.
+        # Kinematic edges: union every link with its parent. This collapses an articulated body (and a free body's
+        # subtree) into one component, while sibling free bodies (parent_idx == -1) stay separate components - so a
+        # single Genesis entity holding several free bodies splits into one island per free body.
+        for i_l in range(n_links):
+            link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            i_p = links_info.parent_idx[link_idx]
+            if i_p >= 0:
+                func_union(island_state, i_l, i_p, i_b)
+
+        # Edges from contacts (read through contact_sort_idx so pruning/sorting is honored). Only couple two links of
+        # dof-carrying entities; a contact against a fixed body adds no edge.
         for i_c in range(collider_state.n_contacts[i_b]):
             i_col = collider_state.contact_sort_idx[i_c, i_b]
             link_a = collider_state.contact_data.link_a[i_col, i_b]
             link_b = collider_state.contact_data.link_b[i_col, i_b]
             ea = func_link_entity(links_info, link_a, i_b, static_rigid_sim_config)
             eb = func_link_entity(links_info, link_b, i_b, static_rigid_sim_config)
-            if entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0 and ea != eb:
-                func_union(island_state, ea, eb, i_b)
+            if entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0:
+                func_union(island_state, link_a, link_b, i_b)
 
         # Edges from equality constraints (model + dynamically registered welds).
         for i_eq in range(constraint_state.qd_n_equalities[i_b]):
-            ea, eb = func_equality_entities(
+            la, lb = func_equality_links(
                 equalities_info,
                 joints_info,
-                entities_info,
                 links_info,
                 i_eq,
                 i_b,
-                n_entities,
+                n_links,
                 static_rigid_sim_config,
             )
-            if ea >= 0 and eb >= 0 and entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0 and ea != eb:
-                func_union(island_state, ea, eb, i_b)
+            if la >= 0 and lb >= 0:
+                ea = func_link_entity(links_info, la, i_b, static_rigid_sim_config)
+                eb = func_link_entity(links_info, lb, i_b, static_rigid_sim_config)
+                if entities_info.n_dofs[ea] > 0 and entities_info.n_dofs[eb] > 0:
+                    func_union(island_state, la, lb, i_b)
 
         # Hibernated islands: re-union along the daisy chain so a sleeping group (which generates no live
         # contacts to union it) stays one island across steps, matching the partition the wakeup walks.
         if qd.static(static_rigid_sim_config.use_hibernation):
-            for i_e in range(n_entities):
-                i_next_e = island_state.hibernated_next_entity[i_e, i_b]
-                if 0 <= i_next_e < n_entities and i_next_e != i_e:
-                    if entities_info.n_dofs[i_e] > 0 and entities_info.n_dofs[i_next_e] > 0:
-                        func_union(island_state, i_e, i_next_e, i_b)
+            for i_l in range(n_links):
+                i_next_l = island_state.hibernated_next_link[i_l, i_b]
+                if 0 <= i_next_l < n_links and i_next_l != i_l:
+                    func_union(island_state, i_l, i_next_l, i_b)
 
-        # Label components: each root (min entity index of its component) gets the next island id.
+        # Label components carrying at least one dof. A component (root = min link index) is labeled the first time a
+        # dof-link in it is seen, in ascending link order, so labels are deterministic and each island's gathered
+        # global DOFs end up ascending - which lets the per-island Hessian block live in the lower triangle of
+        # constraint_state.nt_H at those global rows/cols.
         n_islands = 0
-        for i_e in range(n_entities):
-            if entities_info.n_dofs[i_e] > 0 and func_find_root(island_state, i_e, i_b) == i_e:
-                island_state.entities_island_idx[i_e, i_b] = n_islands
-                n_islands = n_islands + 1
+        for i_l in range(n_links):
+            link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            if links_info.n_dofs[link_idx] > 0:
+                root = func_find_root(island_state, i_l, i_b)
+                if island_state.links_island_idx[root, i_b] == -1:
+                    island_state.links_island_idx[root, i_b] = n_islands
+                    n_islands = n_islands + 1
         island_state.n_islands[i_b] = n_islands
 
-        # Propagate the root's label to every dof-entity in its component.
-        for i_e in range(n_entities):
-            if entities_info.n_dofs[i_e] > 0:
-                root = func_find_root(island_state, i_e, i_b)
-                island_state.entities_island_idx[i_e, i_b] = island_state.entities_island_idx[root, i_b]
+        # Propagate the root's label to every link in its component (links in dof-less components stay -1).
+        for i_l in range(n_links):
+            root = func_find_root(island_state, i_l, i_b)
+            island_state.links_island_idx[i_l, i_b] = island_state.links_island_idx[root, i_b]
 
-        # Mark islands whose every dof-entity is asleep (read by the hibernation decision on the next step to
-        # skip already-sleeping islands). An island is hibernated unless it has at least one awake dof-entity.
+        # Mark islands whose every link is asleep (read by the hibernation decision on the next step to skip
+        # already-sleeping islands). An island is hibernated unless it has at least one awake link.
         if qd.static(static_rigid_sim_config.use_hibernation):
             for i_island in range(n_islands):
                 island_state.is_hibernated[i_island, i_b] = 1
-            for i_e in range(n_entities):
-                i_island = island_state.entities_island_idx[i_e, i_b]
-                if i_island >= 0 and not entities_state.is_hibernated[i_e, i_b]:
+            for i_l in range(n_links):
+                i_island = island_state.links_island_idx[i_l, i_b]
+                if i_island >= 0 and not links_state.is_hibernated[i_l, i_b]:
                     island_state.is_hibernated[i_island, i_b] = 0
 
-        # Build the per-island entity list (island -> entity-idx ranges).
-        for i_e in range(n_entities):
-            i_island = island_state.entities_island_idx[i_e, i_b]
+        # Build the per-island link list (island -> link-idx ranges).
+        for i_l in range(n_links):
+            i_island = island_state.links_island_idx[i_l, i_b]
             if i_island >= 0:
-                island_state.entity_slices.n[i_island, i_b] = island_state.entity_slices.n[i_island, i_b] + 1
-        entity_list_start = 0
+                island_state.link_slices.n[i_island, i_b] = island_state.link_slices.n[i_island, i_b] + 1
+        link_list_start = 0
         for i_island in range(n_islands):
-            island_state.entity_slices.start[i_island, i_b] = entity_list_start
-            island_state.entity_slices.curr[i_island, i_b] = entity_list_start
-            entity_list_start = entity_list_start + island_state.entity_slices.n[i_island, i_b]
-        for i_e in range(n_entities):
-            i_island = island_state.entities_island_idx[i_e, i_b]
+            island_state.link_slices.start[i_island, i_b] = link_list_start
+            island_state.link_slices.curr[i_island, i_b] = link_list_start
+            link_list_start = link_list_start + island_state.link_slices.n[i_island, i_b]
+        for i_l in range(n_links):
+            i_island = island_state.links_island_idx[i_l, i_b]
             if i_island >= 0:
-                island_state.entity_id[island_state.entity_slices.curr[i_island, i_b], i_b] = i_e
-                island_state.entity_slices.curr[i_island, i_b] = island_state.entity_slices.curr[i_island, i_b] + 1
+                island_state.link_id[island_state.link_slices.curr[i_island, i_b], i_b] = i_l
+                island_state.link_slices.curr[i_island, i_b] = island_state.link_slices.curr[i_island, i_b] + 1
 
         # Build the per-island dof list (the block-gather map: local dof -> global dof, ascending). dof_id is grouped
-        # by island; for the monolith (one island over all entities in order) it is the identity permutation. Entities
-        # are visited in ascending index order, so each island's global DOFs end up ascending - which is what lets the
-        # per-island Hessian block live in the lower triangle of constraint_state.nt_H at those global rows/cols.
-        for i_e in range(n_entities):
-            i_island = island_state.entities_island_idx[i_e, i_b]
+        # by island; for the monolith (one island over all dofs in order) it is the identity permutation. Links are
+        # visited in ascending index order and dof ranges grow with link index, so each island's global DOFs end up
+        # ascending even when a component's links are non-contiguous (e.g. an entity's free bodies interleaved).
+        for i_l in range(n_links):
+            i_island = island_state.links_island_idx[i_l, i_b]
             if i_island >= 0:
+                link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
                 island_state.dof_slices.n[i_island, i_b] = (
-                    island_state.dof_slices.n[i_island, i_b] + entities_info.n_dofs[i_e]
+                    island_state.dof_slices.n[i_island, i_b] + links_info.n_dofs[link_idx]
                 )
         dof_list_start = 0
         for i_island in range(n_islands):
             island_state.dof_slices.start[i_island, i_b] = dof_list_start
             island_state.dof_slices.curr[i_island, i_b] = dof_list_start
             dof_list_start = dof_list_start + island_state.dof_slices.n[i_island, i_b]
-        for i_e in range(n_entities):
-            i_island = island_state.entities_island_idx[i_e, i_b]
+        for i_l in range(n_links):
+            i_island = island_state.links_island_idx[i_l, i_b]
             if i_island >= 0:
-                for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                for i_d in range(links_info.dof_start[link_idx], links_info.dof_end[link_idx]):
                     island_state.dof_id[island_state.dof_slices.curr[i_island, i_b], i_b] = i_d
                     island_state.dofs_island_idx[i_d, i_b] = i_island
                     island_state.dof_slices.curr[i_island, i_b] = island_state.dof_slices.curr[i_island, i_b] + 1
@@ -299,15 +316,11 @@ def kernel_build_islands(
         # them; otherwise one side is a fixed body).
         for i_c in range(collider_state.n_contacts[i_b]):
             i_col = collider_state.contact_sort_idx[i_c, i_b]
-            ea = func_link_entity(
-                links_info, collider_state.contact_data.link_a[i_col, i_b], i_b, static_rigid_sim_config
-            )
-            eb = func_link_entity(
-                links_info, collider_state.contact_data.link_b[i_col, i_b], i_b, static_rigid_sim_config
-            )
-            i_island = island_state.entities_island_idx[ea, i_b]
+            link_a = collider_state.contact_data.link_a[i_col, i_b]
+            link_b = collider_state.contact_data.link_b[i_col, i_b]
+            i_island = island_state.links_island_idx[link_a, i_b]
             if i_island < 0:
-                i_island = island_state.entities_island_idx[eb, i_b]
+                i_island = island_state.links_island_idx[link_b, i_b]
             if i_island >= 0:
                 island_state.contact_slices.n[i_island, i_b] = island_state.contact_slices.n[i_island, i_b] + 1
         contact_list_start = 0
@@ -317,15 +330,11 @@ def kernel_build_islands(
             contact_list_start = contact_list_start + island_state.contact_slices.n[i_island, i_b]
         for i_c in range(collider_state.n_contacts[i_b]):
             i_col = collider_state.contact_sort_idx[i_c, i_b]
-            ea = func_link_entity(
-                links_info, collider_state.contact_data.link_a[i_col, i_b], i_b, static_rigid_sim_config
-            )
-            eb = func_link_entity(
-                links_info, collider_state.contact_data.link_b[i_col, i_b], i_b, static_rigid_sim_config
-            )
-            i_island = island_state.entities_island_idx[ea, i_b]
+            link_a = collider_state.contact_data.link_a[i_col, i_b]
+            link_b = collider_state.contact_data.link_b[i_col, i_b]
+            i_island = island_state.links_island_idx[link_a, i_b]
             if i_island < 0:
-                i_island = island_state.entities_island_idx[eb, i_b]
+                i_island = island_state.links_island_idx[link_b, i_b]
             if i_island >= 0:
                 island_state.contact_id[island_state.contact_slices.curr[i_island, i_b], i_b] = i_col
                 island_state.contact_slices.curr[i_island, i_b] = island_state.contact_slices.curr[i_island, i_b] + 1

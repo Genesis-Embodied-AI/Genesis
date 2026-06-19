@@ -6,56 +6,59 @@ import genesis.utils.geom as gu
 
 
 @qd.func
-def func_wakeup_entity_and_its_temp_island(
-    i_e,
+def func_wakeup_island(
+    island_idx,
     i_b,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
+    links_info: array_class.LinksInfo,
     dofs_state: array_class.DofsState,
     links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     island_state: array_class.IslandState,
+    static_rigid_sim_config: qd.template(),
 ):
-    # Note: Original function handled non-hibernated & fixed entities.
-    # Now, we require a properly hibernated entity to be passed in.
-    island_idx = island_state.entities_island_idx[i_e, i_b]
+    # Wake a hibernated component-island as a unit: every link in the island (and its DOFs and geoms) is revived and
+    # appended to the awake lists, and the owning entities' flags are cleared. Waking the whole island clears its
+    # daisy-chain links, which would otherwise keep re-connecting the woken links to their previous island at the next
+    # partition build.
+    if island_idx >= 0:
+        for li in range(island_state.link_slices.n[island_idx, i_b]):
+            link_ref = island_state.link_slices.start[island_idx, i_b] + li
+            i_l = island_state.link_id[link_ref, i_b]
 
-    for ei in range(island_state.entity_slices.n[island_idx, i_b]):
-        entity_ref = island_state.entity_slices.start[island_idx, i_b] + ei
-        entity_idx = island_state.entity_id[entity_ref, i_b]
+            # Atomically claim the link by clearing its hibernation flag and reading the previous value. Only the
+            # caller that observes the True->False transition appends it to the awake lists. A plain read-check-set
+            # would let several wake threads targeting the same link (redundant grid threads a backend may launch, or
+            # several triggers in one step) all pass the guard and append the link/DOFs once each, corrupting counts.
+            was_hibernated = qd.atomic_exchange(links_state.is_hibernated[i_l, i_b], 0)
 
-        # Atomically claim the entity by clearing its hibernation flag and reading the previous value. Only the
-        # caller that observes the True->False transition appends it to the awake lists. A plain read-check-set
-        # would let several wake threads targeting the same entity (multiple qs/dofs/links of one entity, or the
-        # redundant grid threads a backend may launch for the wake kernel) all pass the guard and append the island
-        # dofs once each, corrupting the awake-list counts.
-        was_hibernated = qd.atomic_exchange(entities_state.is_hibernated[entity_idx, i_b], 0)
+            if was_hibernated:
+                island_state.hibernated_next_link[i_l, i_b] = -1
 
-        if was_hibernated:
-            island_state.hibernated_next_entity[entity_idx, i_b] = -1
+                n_awake_links = qd.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
+                rigid_global_info.awake_links[n_awake_links, i_b] = i_l
 
-            n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-            rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
+                link_I = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                n_dofs = links_info.n_dofs[link_I]
+                if n_dofs > 0:
+                    base_dof_idx = links_info.dof_start[link_I]
+                    base_awake_dof_idx = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
+                    for i in range(n_dofs):
+                        i_d = base_dof_idx + i
+                        dofs_state.is_hibernated[i_d, i_b] = False
+                        rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
 
-            n_dofs = entities_info.n_dofs[entity_idx]
-            base_entity_dof_idx = entities_info.dof_start[entity_idx]
-            base_awake_dof_idx = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
-            for i in range(n_dofs):
-                i_d = base_entity_dof_idx + i
-                dofs_state.is_hibernated[i_d, i_b] = False
-                rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
+                for i_g in range(links_info.geom_start[link_I], links_info.geom_end[link_I]):
+                    geoms_state.is_hibernated[i_g, i_b] = False
 
-            n_links = entities_info.n_links[entity_idx]
-            base_entity_link_idx = entities_info.link_start[entity_idx]
-            base_awake_link_idx = qd.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
-            for i in range(n_links):
-                i_l = base_entity_link_idx + i
-                links_state.is_hibernated[i_l, i_b] = False
-                rigid_global_info.awake_links[base_awake_link_idx + i, i_b] = i_l
-
-            for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
-                geoms_state.is_hibernated[i_g, i_b] = False
+                # The entity owning this link now has an awake link; claim it for awake_entities exactly once.
+                i_e = links_info.entity_idx[link_I]
+                was_entity_hibernated = qd.atomic_exchange(entities_state.is_hibernated[i_e, i_b], 0)
+                if was_entity_hibernated:
+                    n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+                    rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
 
 
 # --------------------------------------------------------------------------------------

@@ -146,7 +146,7 @@ class ConstraintSolver:
         # The hibernated-island daisy chain must start empty (-1 = no successor); it persists across steps,
         # written when an island hibernates and cleared on wakeup.
         if self._solver._use_hibernation:
-            self.island_state.hibernated_next_entity.fill(-1)
+            self.island_state.hibernated_next_link.fill(-1)
 
         # Fill-reducing DOF permutation for the skyline Cholesky: a structural choice fixed once from the initial
         # body layout (forward kinematics has already run at this point), never recomputed in the step loop. The
@@ -264,8 +264,8 @@ class ConstraintSolver:
             # Built before func_solve_init because the initial Hessian factor is per-island too.
             kernel_build_islands(
                 self._solver.entities_info,
-                self._solver.entities_state,
                 self._solver.links_info,
+                self._solver.links_state,
                 self._solver.joints_info,
                 self._solver.equalities_info,
                 self.constraint_state,
@@ -1842,16 +1842,17 @@ def func_hessian_direct_batch(
                             * constraint_state.efc_D[i_c, i_b]
                             * constraint_state.active[i_c, i_b]
                         )
-        # H += M, restricted to the island's entities (mass couples only DOFs within the same entity).
-        n_isl_entities = island_state.entity_slices.n[i_island, i_b]
-        ent_base = island_state.entity_slices.start[i_island, i_b]
-        for i_le in range(n_isl_entities):
-            i_e = island_state.entity_id[ent_base + i_le, i_b]
-            for i_dg in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                for j_dg in range(entities_info.dof_start[i_e], i_dg + 1):
-                    constraint_state.nt_H[i_b, i_dg, j_dg] = (
-                        constraint_state.nt_H[i_b, i_dg, j_dg] + rigid_global_info.mass_mat[i_dg, j_dg, i_b]
-                    )
+        # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same component (one island), so
+        # the block is dense over the island's gathered DOFs and never reaches another island's block. Iterating the
+        # gathered dof_id (rather than an entity's contiguous range) keeps the add inside this island even when a
+        # component's DOFs are non-contiguous (e.g. an entity whose free bodies interleave in DOF order).
+        for i_d in range(n):
+            i_dg = island_state.dof_id[dof_base + i_d, i_b]
+            for j_d in range(i_d + 1):
+                j_dg = island_state.dof_id[dof_base + j_d, i_b]
+                constraint_state.nt_H[i_b, i_dg, j_dg] = (
+                    constraint_state.nt_H[i_b, i_dg, j_dg] + rigid_global_info.mass_mat[i_dg, j_dg, i_b]
+                )
         return
 
     n_dofs = constraint_state.nt_H.shape[1]

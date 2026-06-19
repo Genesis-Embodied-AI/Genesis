@@ -1,3 +1,4 @@
+import xml.etree.ElementTree as ET
 from itertools import product
 
 import numpy as np
@@ -10,11 +11,37 @@ from genesis.utils.misc import qd_to_numpy, tensor_to_array
 from .utils import assert_allclose, assert_equal
 
 
+@pytest.fixture
+def multi_free_body_path(tmp_path):
+    # A single MJCF entity holding several free bodies (b0, b1, b2) is extremely common. b1 also carries a hinge child
+    # b1c to check that a kinematic edge keeps a child in its parent's island.
+    mjcf = ET.Element("mujoco", model="multi_free_body")
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    b0 = ET.SubElement(worldbody, "body", name="b0", pos="0.0 0.0 0.3")
+    ET.SubElement(b0, "freejoint")
+    ET.SubElement(b0, "geom", type="box", size="0.05 0.05 0.05")
+    b1 = ET.SubElement(worldbody, "body", name="b1", pos="0.5 0.0 0.3")
+    ET.SubElement(b1, "freejoint")
+    ET.SubElement(b1, "geom", type="box", size="0.05 0.05 0.05")
+    b1c = ET.SubElement(b1, "body", name="b1c", pos="0.0 0.0 0.12")
+    ET.SubElement(b1c, "joint", type="hinge", axis="0 0 1")
+    ET.SubElement(b1c, "geom", type="box", size="0.05 0.05 0.05")
+    b2 = ET.SubElement(worldbody, "body", name="b2", pos="1.0 0.0 0.3")
+    ET.SubElement(b2, "freejoint")
+    ET.SubElement(b2, "geom", type="box", size="0.05 0.05 0.05")
+    file_path = str(tmp_path / "multi_free_body.xml")
+    ET.ElementTree(mjcf).write(file_path, encoding="utf-8", xml_declaration=True)
+    return file_path
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_partition_logics(show_viewer, n_envs):
+def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
     # The welded pair never touches, so only the equality edge couples them: without it the partition would split them
-    # and the weld would be solved across two islands. A fixed body carries no dofs and joins no island.
+    # and the weld would be solved across two islands. A fixed body carries no dofs and joins no island. The
+    # multi-free-body MJCF entity (offset clear of the boxes) is a single Genesis entity that must split into one island
+    # per free-body subtree, never one dense block - its hinge child stays in its parent's island via a kinematic edge.
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
@@ -57,6 +84,12 @@ def test_partition_logics(show_viewer, n_envs):
             pos=(2.0, 0.0, 0.05),
         )
     )
+    multibody = scene.add_entity(
+        gs.morphs.MJCF(
+            file=multi_free_body_path,
+            pos=(0.0, 5.0, 0.0),
+        )
+    )
     scene.build(n_envs=n_envs)
 
     scene.rigid_solver.add_weld_constraint(box_weld_a.base_link_idx, box_weld_b.base_link_idx)
@@ -68,9 +101,9 @@ def test_partition_logics(show_viewer, n_envs):
     solver = scene.rigid_solver
     island_state = solver.constraint_solver.island_state
 
-    island_idx = qd_to_numpy(island_state.entities_island_idx)
+    island_idx = qd_to_numpy(island_state.links_island_idx)
     island_of = {
-        name: island_idx[entity.idx]
+        name: island_idx[entity.base_link_idx]
         for name, entity in (
             ("bottom", box_bottom),
             ("top", box_top),
@@ -86,10 +119,27 @@ def test_partition_logics(show_viewer, n_envs):
     assert (island_of["bottom"] != island_of["weld_a"]).all()
     assert (island_of["bottom"] != island_of["alone"]).all()
     assert (island_of["weld_a"] != island_of["alone"]).all()
-    assert_equal(qd_to_numpy(island_state.n_islands), 3)
 
-    # Per env: each free box has 6 dofs (stack and welded pair hold 12 each, lone box 6); per-island contact and
-    # constraint counts sum back to the env total; and the lone island holds exactly the lone box's dofs.
+    # The multi-free-body entity splits into one island per free body (b0, b1, b2), each distinct from the others and
+    # from the box islands. Its hinge child b1c lands in its parent b1's island via the kinematic edge.
+    multibody_bases = [link for link in multibody.links if link.parent_idx == -1]
+    assert len(multibody_bases) == 3
+    base_islands = [island_idx[link.idx] for link in multibody_bases]
+    assert all((isl >= 0).all() for isl in base_islands)
+    for i, isl_a in enumerate(base_islands):
+        for isl_b in base_islands[i + 1 :]:
+            assert (isl_a != isl_b).all()
+        for box_island in island_of.values():
+            assert (isl_a != box_island).all()
+    b1c = next(link for link in multibody.links if link.parent_idx != -1)
+    assert_equal(island_idx[b1c.idx], island_idx[b1c.parent_idx])
+
+    # Three box islands plus three free-body islands.
+    assert_equal(qd_to_numpy(island_state.n_islands), 6)
+
+    # Per env: each free box has 6 dofs (stack and welded pair hold 12 each, lone box 6; the free bodies hold 6, 7 with
+    # the hinge child, and 6); per-island contact and constraint counts sum back to the env total; and the lone island
+    # holds exactly the lone box's dofs.
     n_islands = qd_to_numpy(island_state.n_islands)
     island_dof_n = qd_to_numpy(island_state.dof_slices.n)
     island_dof_start = qd_to_numpy(island_state.dof_slices.start)
@@ -101,7 +151,7 @@ def test_partition_logics(show_viewer, n_envs):
     alone_dofs = list(range(box_alone.dof_start, box_alone.dof_start + box_alone.n_dofs))
     for i_env in range(island_idx.shape[1]):
         n = n_islands[i_env]
-        assert sorted(island_dof_n[:n, i_env].tolist()) == [6, 12, 12]
+        assert sorted(island_dof_n[:n, i_env].tolist()) == [6, 6, 6, 7, 12, 12]
         assert island_contact_n[:n, i_env].sum() == n_contacts[i_env]
         assert island_constraint_n[:n, i_env].sum() == n_constraints[i_env]
         assert island_contact_n[island_of["bottom"][i_env], i_env] >= 1
@@ -109,6 +159,11 @@ def test_partition_logics(show_viewer, n_envs):
         k = island_of["alone"][i_env]
         seg = dof_id[island_dof_start[k, i_env] : island_dof_start[k, i_env] + island_dof_n[k, i_env], i_env]
         assert sorted(seg.tolist()) == alone_dofs
+
+    # The per-component solve keeps the free bodies stable: they settle on the plane (half-extent 0.05) rather than
+    # exploding or sinking through it.
+    multibody_z = np.stack([np.atleast_1d(link.get_pos()[..., 2]) for link in multibody.links])
+    assert ((multibody_z > 0.0) & (multibody_z < 0.5)).all()
 
 
 @pytest.mark.required
@@ -480,10 +535,12 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_hibernation_wakes_on_collision(show_viewer, n_envs):
+def test_hibernation_wakes_on_collision(show_viewer, n_envs, multi_free_body_path):
     # An awake body striking a sleeping one must wake it so it responds instead of acting as an immovable obstacle.
     # This needs the broad-phase sort-buffer refresh of awake geoms (so the contact is detected) and the wake-on-contact
-    # pass.
+    # pass. The multi-free-body entity (offset clear of the boxes) checks per-component hibernation: its free bodies
+    # sleep independently and disturbing one wakes only its island, which needs the wake/daisy chain to act per link
+    # rather than per entity.
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
@@ -508,12 +565,21 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs):
             pos=(0.22, 0.0, 0.05),
         )
     )
+    multibody = scene.add_entity(
+        gs.morphs.MJCF(
+            file=multi_free_body_path,
+            pos=(0.0, 5.0, 0.0),
+        )
+    )
     scene.build(n_envs=n_envs)
 
     solver = scene.rigid_solver
 
     def asleep(entity):
         return qd_to_numpy(solver.entities_state.is_hibernated, entity.idx).all()
+
+    def link_asleep(link):
+        return qd_to_numpy(solver.links_state.is_hibernated, link.idx).all()
 
     for _ in range(50):
         scene.step()
@@ -530,6 +596,17 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs):
     hit_x1 = box_hit.get_pos()[..., 0]
     assert (rest_x1 < rest_x0 - 1e-3).all()
     assert (hit_x1 > rest_x1).all()
+
+    # The undisturbed entity's free bodies all settled and slept independently; disturbing one wakes only its island.
+    multibody_bases = [link for link in multibody.links if link.parent_idx == -1]
+    assert all(link_asleep(link) for link in multibody_bases)
+    disturbed = multibody_bases[0]
+    solver.set_dofs_velocity(
+        [2.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        list(range(disturbed.dof_start, disturbed.dof_start + disturbed.n_dofs)),
+    )
+    assert not link_asleep(disturbed)
+    assert all(link_asleep(link) for link in multibody_bases[1:])
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])

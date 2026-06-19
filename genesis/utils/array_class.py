@@ -604,27 +604,33 @@ class IslandSlices:
 
 def get_slices(solver):
     _B = solver._B
-    n_entities = max(solver.n_entities, 1)
+    # An island is a dynamic component (a floating-base kinematic subtree), so there are at most n_links islands
+    # (each link can be its own component). Slices are therefore indexed by island in [0, n_links).
+    n_links = max(solver.n_links, 1)
 
     return IslandSlices(
-        curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        curr=V(dtype=gs.qd_int, shape=(n_links, _B)),
+        n=V(dtype=gs.qd_int, shape=(n_links, _B)),
+        start=V(dtype=gs.qd_int, shape=(n_links, _B)),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class IslandState:
-    # Union-find partition of dof-carrying entities into islands (connected components of the inter-entity coupling
-    # graph: contacts + equality constraints). entities_island_idx is -1 for entities with no dofs (fixed bodies),
-    # which are never solved and never couple two dof-entities. entity_slices maps island -> entity-idx slice in
-    # entity_id; dof_slices maps island -> local-dof slice in dof_id (dof_id[local] -> global dof, ascending). The
-    # per-island Hessian block is assembled and factored in place at those global DOF rows/cols in constraint_state.nt_H.
-    entities_parent_idx: qd.Tensor
-    entities_island_idx: qd.Tensor
+    # Union-find partition of LINKS into islands. An island is a dynamic component: a maximal set of links connected
+    # through the kinematic tree (a floating-base subtree) plus any contact/equality couplings. The union-find is over
+    # links, with kinematic edges (link <-> parent) added alongside contact/equality edges - so a single Genesis entity
+    # holding several free bodies (common in MJCF) splits into one island per free body, while an articulated body's
+    # links collapse to one island. links_island_idx is -1 for links whose component carries no dofs (fixed bodies),
+    # which are never solved. link_slices maps island -> link-idx slice in link_id; dof_slices maps island -> local-dof
+    # slice in dof_id (dof_id[local] -> global dof, ascending). The per-island Hessian block is assembled/factored at
+    # those global DOF rows/cols in constraint_state.nt_H (the dofs may be non-contiguous globally; the cooperative arm
+    # gathers them into a contiguous shared tile).
+    links_parent_idx: qd.Tensor
+    links_island_idx: qd.Tensor
     n_islands: qd.Tensor
-    entity_slices: IslandSlices
-    entity_id: qd.Tensor
+    link_slices: IslandSlices
+    link_id: qd.Tensor
     dof_slices: IslandSlices
     dof_id: qd.Tensor
     dofs_island_idx: qd.Tensor
@@ -643,18 +649,18 @@ class IslandState:
     work_i_island: qd.Tensor
     work_size: qd.Tensor
     work_counter: qd.Tensor
-    # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every dof-entity is
-    # asleep, set by the partition build. hibernated_next_entity is the per-entity daisy chain that keeps a hibernated
-    # group together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
-    # union would otherwise fragment them. It is written at hibernation time, walked at wakeup, and re-unioned by the
-    # partition build before labeling.
+    # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every link is
+    # asleep, set by the partition build. hibernated_next_link is the per-link daisy chain that keeps a hibernated
+    # component together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
+    # union would otherwise fragment them (the kinematic edges still hold within a component). It is written at
+    # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
     is_hibernated: qd.Tensor
-    hibernated_next_entity: qd.Tensor
+    hibernated_next_link: qd.Tensor
 
 
 def get_island_state(solver, collider):
     _B = solver._B
-    n_entities = max(solver.n_entities, 1)
+    n_links = max(solver.n_links, 1)
     n_dofs = max(solver.n_dofs, 1)
     # island_state is always allocated (it is a kernel parameter). The per-island Hessian is assembled and factored
     # in place in constraint_state.nt_H (block-diagonal), so island_state itself holds only the partition maps.
@@ -665,11 +671,11 @@ def get_island_state(solver, collider):
     # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
     n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
     return IslandState(
-        entities_parent_idx=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        entities_island_idx=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        links_parent_idx=V(dtype=gs.qd_int, shape=(n_links, _B)),
+        links_island_idx=V(dtype=gs.qd_int, shape=(n_links, _B)),
         n_islands=V(dtype=gs.qd_int, shape=(_B,)),
-        entity_slices=get_slices(solver),
-        entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+        link_slices=get_slices(solver),
+        link_id=V(dtype=gs.qd_int, shape=(n_links, _B)),
         dof_slices=get_slices(solver),
         dof_id=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
         dofs_island_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
@@ -678,13 +684,13 @@ def get_island_state(solver, collider):
         constraint_slices=get_slices(solver),
         constraint_id=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
         constraint_island_idx=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
-        # Work-list spans every (env, island); at most n_entities islands per env.
-        work_i_b=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
-        work_i_island=V(dtype=gs.qd_int, shape=(n_entities * _B,)),
+        # Work-list spans every (env, island); at most n_links islands per env.
+        work_i_b=V(dtype=gs.qd_int, shape=(n_links * _B,)),
+        work_i_island=V(dtype=gs.qd_int, shape=(n_links * _B,)),
         work_size=V(dtype=gs.qd_int, shape=(1,)),
         work_counter=V(dtype=gs.qd_int, shape=(1,)),
-        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
-        hibernated_next_entity=V(dtype=gs.qd_int, shape=maybe_shape((n_entities, _B), solver._use_hibernation)),
+        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
+        hibernated_next_link=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
     )
 
 

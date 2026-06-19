@@ -17,7 +17,7 @@ import genesis.utils.array_class as array_class
 from .misc import (
     func_apply_link_external_force,
     func_apply_link_external_torque,
-    func_wakeup_entity_and_its_temp_island,
+    func_wakeup_island,
 )
 
 
@@ -264,20 +264,19 @@ def kernel_wake_up_entities_by_links(
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_l = links_idx[i_l_]
-        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
-        i_e = links_info.entity_idx[I_l]
-
-        if entities_state.is_hibernated[i_e, i_b]:
-            func_wakeup_entity_and_its_temp_island(
-                i_e,
+        if links_state.is_hibernated[i_l, i_b]:
+            func_wakeup_island(
+                island_state.links_island_idx[i_l, i_b],
                 i_b,
                 entities_state,
                 entities_info,
+                links_info,
                 dofs_state,
                 links_state,
                 geoms_state,
                 rigid_global_info,
                 island_state,
+                static_rigid_sim_config,
             )
 
 
@@ -285,7 +284,7 @@ def kernel_wake_up_entities_by_links(
 def kernel_wake_up_entities_by_dofs(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    dofs_info: array_class.DofsInfo,
+    links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
@@ -295,28 +294,27 @@ def kernel_wake_up_entities_by_dofs(
     island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Wake up the entities owning the specified DOFs, along with the other entities of their hibernated islands.
-
-    The by-DOF analogue of kernel_wake_up_entities_by_links, used by the DOF-level state setters so that writing a
-    sleeping body's position or velocity revives it (and clears its daisy chain) rather than being silently dropped."""
+    """Wake up the component-island owning each specified DOF, so writing a sleeping body's position or velocity
+    revives it (and clears its daisy chain) rather than being silently dropped. The by-DOF analogue of
+    kernel_wake_up_entities_by_links, used by the DOF-level state setters."""
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         i_d = dofs_idx[i_d_]
-        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-        i_e = dofs_info.entity_idx[I_d]
 
-        if entities_state.is_hibernated[i_e, i_b]:
-            func_wakeup_entity_and_its_temp_island(
-                i_e,
+        if dofs_state.is_hibernated[i_d, i_b]:
+            func_wakeup_island(
+                island_state.dofs_island_idx[i_d, i_b],
                 i_b,
                 entities_state,
                 entities_info,
+                links_info,
                 dofs_state,
                 links_state,
                 geoms_state,
                 rigid_global_info,
                 island_state,
+                static_rigid_sim_config,
             )
 
 
@@ -344,18 +342,19 @@ def kernel_wake_up_entities_by_qs(
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
             if links_info.q_start[I_l] <= i_q and i_q < links_info.q_end[I_l]:
-                i_e = links_info.entity_idx[I_l]
-                if entities_state.is_hibernated[i_e, i_b]:
-                    func_wakeup_entity_and_its_temp_island(
-                        i_e,
+                if links_state.is_hibernated[i_l, i_b]:
+                    func_wakeup_island(
+                        island_state.links_island_idx[i_l, i_b],
                         i_b,
                         entities_state,
                         entities_info,
+                        links_info,
                         dofs_state,
                         links_state,
                         geoms_state,
                         rigid_global_info,
                         island_state,
+                        static_rigid_sim_config,
                     )
 
 
@@ -385,35 +384,39 @@ def kernel_wake_up_entities_on_new_contact(
             i_lb = collider_state.contact_data.link_b[i_c, i_b]
             I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
             I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
-            i_ea = links_info.entity_idx[I_la]
-            i_eb = links_info.entity_idx[I_lb]
-            is_a_hibernated = entities_state.is_hibernated[i_ea, i_b]
-            is_b_hibernated = entities_state.is_hibernated[i_eb, i_b]
+            is_a_hibernated = links_state.is_hibernated[i_la, i_b]
+            is_b_hibernated = links_state.is_hibernated[i_lb, i_b]
 
-            # Wake the sleeping side only when its partner is an awake dynamic body.
+            # Wake the sleeping side only when its partner is an awake dynamic body. Checking the per-link flag (not the
+            # owning entity's) is what lets a single Genesis entity's settled free body wake when another of its free
+            # bodies - or any awake body - strikes it.
             if is_a_hibernated and not is_b_hibernated and not links_info.is_fixed[I_lb]:
-                func_wakeup_entity_and_its_temp_island(
-                    i_ea,
+                func_wakeup_island(
+                    island_state.links_island_idx[i_la, i_b],
                     i_b,
                     entities_state,
                     entities_info,
+                    links_info,
                     dofs_state,
                     links_state,
                     geoms_state,
                     rigid_global_info,
                     island_state,
+                    static_rigid_sim_config,
                 )
             if is_b_hibernated and not is_a_hibernated and not links_info.is_fixed[I_la]:
-                func_wakeup_entity_and_its_temp_island(
-                    i_eb,
+                func_wakeup_island(
+                    island_state.links_island_idx[i_lb, i_b],
                     i_b,
                     entities_state,
                     entities_info,
+                    links_info,
                     dofs_state,
                     links_state,
                     geoms_state,
                     rigid_global_info,
                     island_state,
+                    static_rigid_sim_config,
                 )
 
 

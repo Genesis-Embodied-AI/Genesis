@@ -20,7 +20,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from .misc import (
-    func_wakeup_entity_and_its_temp_island,
+    func_wakeup_island,
     func_check_index_range,
     func_add_safe_backward,
 )
@@ -992,18 +992,24 @@ def func_torque_and_passive_force(
                             wakeup = True
 
         if qd.static(static_rigid_sim_config.use_hibernation):
-            if entities_state.is_hibernated[i_e, i_b] and wakeup:
-                func_wakeup_entity_and_its_temp_island(
-                    i_e,
-                    i_b,
-                    entities_state,
-                    entities_info,
-                    dofs_state,
-                    links_state,
-                    geoms_state,
-                    rigid_global_info,
-                    island_state,
-                )
+            if wakeup:
+                # Actuation may target any sleeping component of this entity; wake each one's island (a single call
+                # revives the whole island, so already-awake links are skipped).
+                for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+                    if links_state.is_hibernated[i_l, i_b]:
+                        func_wakeup_island(
+                            island_state.links_island_idx[i_l, i_b],
+                            i_b,
+                            entities_state,
+                            entities_info,
+                            links_info,
+                            dofs_state,
+                            links_state,
+                            geoms_state,
+                            rigid_global_info,
+                            island_state,
+                            static_rigid_sim_config,
+                        )
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
