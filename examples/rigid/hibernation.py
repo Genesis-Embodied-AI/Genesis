@@ -83,7 +83,10 @@ def main():
     else:
         # One MJCF entity whose worldbody holds the ground plane and a chain of free-body dominoes; the leading domino
         # is tilted so gravity alone kicks off the cascade.
-        scene.add_entity(gs.morphs.MJCF(file="xml/dominos.xml"))
+        scene.add_entity(
+            gs.morphs.MJCF(file="xml/dominos.xml"),
+            vis_mode="collision",
+        )
         camera_pos = (1.2, -2.2, 1.6)
         camera_lookat = (1.2, 0.0, 0.0)
 

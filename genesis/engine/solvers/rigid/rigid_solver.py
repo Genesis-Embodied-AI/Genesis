@@ -907,6 +907,36 @@ class RigidSolver(KinematicSolver):
                 j_l = self.links[j_l].parent_idx
         self._rigid_global_info.mass_parent_mask.from_numpy(mass_parent_mask)
 
+        # Partition each entity's DOFs into contiguous, independently-factorable blocks. The mass matrix is
+        # block-diagonal across kinematic trees, so the per-block bounds let the assemble/factor/solve restrict to one
+        # tree's DOFs instead of the whole (possibly multi-free-body) entity. Trees are merged into one block only when
+        # their DOF intervals interleave (so a block stays a contiguous range); a single-tree entity yields one block
+        # spanning the whole entity, leaving its behavior unchanged.
+        links_by_idx = {link.idx: link for link in self.links}
+        tree_lo: dict[int, int] = {}
+        tree_hi: dict[int, int] = {}
+        for link in self.links:
+            if link.n_dofs == 0:
+                continue
+            root = link
+            while root.parent_idx != -1:
+                root = links_by_idx[root.parent_idx]
+            tree_lo[root.idx] = min(tree_lo.get(root.idx, link.dof_start), link.dof_start)
+            tree_hi[root.idx] = max(tree_hi.get(root.idx, link.dof_end), link.dof_end)
+        block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
+        block_end = np.arange(1, self.n_dofs_ + 1, dtype=gs.np_int)
+        merged: list[list[int]] = []
+        for lo, hi in sorted(zip(tree_lo.values(), tree_hi.values())):
+            if merged and lo < merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        for lo, hi in merged:
+            block_start[lo:hi] = lo
+            block_end[lo:hi] = hi
+        self._rigid_global_info.dofs_mass_block_start.from_numpy(block_start)
+        self._rigid_global_info.dofs_mass_block_end.from_numpy(block_end)
+
         self._rigid_global_info.gravity.from_numpy(self.gravity)
 
     def _dispatch_heterogeneous_vgeoms(self):

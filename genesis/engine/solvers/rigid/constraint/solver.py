@@ -1768,9 +1768,11 @@ def func_compute_sparsity_pattern(
     for p in range(n_dofs):
         constraint_state.nt_H_env_start[i_b, p] = p
 
-    # M part: kinematic-tree coupling (same branch), scatter-min onto the permuted positions.
+    # M part: kinematic-tree coupling (same branch), scatter-min onto the permuted positions. The mass matrix is
+    # block-diagonal per kinematic tree, so coupling only occurs within a DOF's block; restricting the inner loop to
+    # that block makes this scale with the sum of per-tree blocks instead of the whole env.
     for i_d in range(n_dofs):
-        for j_d in range(n_dofs):
+        for j_d in range(rigid_global_info.dofs_mass_block_start[i_d], rigid_global_info.dofs_mass_block_end[i_d]):
             if rigid_global_info.mass_parent_mask[i_d, j_d] > 0.5:
                 p_i = constraint_state.dof_iperm[i_b, i_d]
                 p_j = constraint_state.dof_iperm[i_b, j_d]
@@ -1900,7 +1902,8 @@ def func_hessian_direct_batch(
     # (dof_iperm is only populated on the sparse path).
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            for i_d2 in range(entities_info.dof_start[i_e], i_d1 + 1):
+            # Mass couples only DOFs within the same kinematic-tree block, so cross-block entries are zero and skipped.
+            for i_d2 in range(rigid_global_info.dofs_mass_block_start[i_d1], i_d1 + 1):
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     p1 = constraint_state.dof_iperm[i_b, i_d1]
                     p2 = constraint_state.dof_iperm[i_b, i_d2]

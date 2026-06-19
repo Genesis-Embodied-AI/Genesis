@@ -112,6 +112,12 @@ class RigidGlobalInfo:
     mass_mat_L_bw: qd.Tensor
     mass_mat_D_inv: qd.Tensor
     mass_mat_mask: qd.Tensor
+    # Per-DOF bounds of the contiguous, independently-factorable mass-matrix block the DOF belongs to (a kinematic
+    # tree, or merged trees whose DOF intervals interleave). The mass matrix is block-diagonal across these blocks, so
+    # the assemble/factor/solve restrict to [block_start, block_end) instead of the full entity DOF range - making a
+    # multi-tree entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent separate entities.
+    dofs_mass_block_start: qd.Tensor
+    dofs_mass_block_end: qd.Tensor
     meaninertia: qd.Tensor
     mass_parent_mask: qd.Tensor
     gravity: qd.Tensor
@@ -180,6 +186,8 @@ def get_rigid_global_info(solver, kinematic_only):
             mass_mat_L_bw=V(dtype=gs.qd_float, shape=()),
             mass_mat_D_inv=V(dtype=gs.qd_float, shape=()),
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
+            dofs_mass_block_start=V(dtype=gs.qd_int, shape=()),
+            dofs_mass_block_end=V(dtype=gs.qd_int, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
             substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
@@ -214,6 +222,8 @@ def get_rigid_global_info(solver, kinematic_only):
         mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
+        dofs_mass_block_start=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
+        dofs_mass_block_end=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
         mass_parent_mask=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._substep_dt),
         iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.iterations),

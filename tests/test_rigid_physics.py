@@ -429,6 +429,72 @@ def compound_joint():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def depth_first_tree_mjcf():
+    # A kinematic tree where breadth-first and depth-first orderings differ: root A has a child A1, and a sibling root
+    # B has none, so depth-first visits A, A1, B (A's subtree contiguous) while breadth-first would give A, B, A1.
+    mjcf = ET.Element("mujoco", model="depth_first_tree")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    a = ET.SubElement(worldbody, "body", name="A", pos="0 0 1")
+    ET.SubElement(a, "freejoint")
+    ET.SubElement(a, "geom", type="box", size="0.05 0.05 0.05")
+    a1 = ET.SubElement(a, "body", name="A1", pos="0.15 0 0")
+    ET.SubElement(a1, "joint", type="hinge", axis="0 0 1")
+    ET.SubElement(a1, "geom", type="box", size="0.05 0.05 0.05")
+    b = ET.SubElement(worldbody, "body", name="B", pos="1 0 1")
+    ET.SubElement(b, "freejoint")
+    ET.SubElement(b, "geom", type="box", size="0.05 0.05 0.05")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def depth_first_tree_urdf():
+    # Same shape as depth_first_tree_mjcf but single-rooted (URDF): base -> {A, B}, A -> A1.
+    robot = ET.Element("robot", name="depth_first_tree")
+    for name in ("base", "A", "A1", "B"):
+        link = ET.SubElement(robot, "link", name=name)
+        inertial = ET.SubElement(link, "inertial")
+        ET.SubElement(inertial, "mass", value="1.0")
+        ET.SubElement(inertial, "inertia", ixx="0.01", iyy="0.01", izz="0.01", ixy="0", ixz="0", iyz="0")
+        collision = ET.SubElement(link, "collision")
+        ET.SubElement(ET.SubElement(collision, "geometry"), "box", size="0.1 0.1 0.1")
+    for joint_name, parent, child in (("j_A", "base", "A"), ("j_A1", "A", "A1"), ("j_B", "base", "B")):
+        joint = ET.SubElement(robot, "joint", name=joint_name, type="revolute")
+        ET.SubElement(joint, "parent", link=parent)
+        ET.SubElement(joint, "child", link=child)
+        ET.SubElement(joint, "origin", xyz="0 0 0.2")
+        ET.SubElement(joint, "axis", xyz="0 0 1")
+        ET.SubElement(joint, "limit", lower="-1", upper="1", effort="10", velocity="10")
+    return robot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["depth_first_tree_mjcf", "depth_first_tree_urdf"])
+def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
+    # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index
+    # range. The per-tree mass-matrix factorization relies on this so a multi-body file costs the same as the
+    # equivalent separate entities.
+    scene = gs.Scene(show_viewer=show_viewer)
+    morph = gs.morphs.MJCF(file=xml_path) if model_name.endswith("mjcf") else gs.morphs.URDF(file=xml_path, fixed=True)
+    entity = scene.add_entity(morph)
+    scene.build(n_envs=0)
+
+    parents = [link.parent_idx for link in entity.links]
+    n_links = len(parents)
+    children: dict[int, list[int]] = {i: [] for i in range(n_links)}
+    for i, parent in enumerate(parents):
+        if parent != -1:
+            children[parent].append(i)
+    for i in range(n_links):
+        subtree = []
+        stack = [i]
+        while stack:
+            link = stack.pop()
+            subtree.append(link)
+            stack.extend(children[link])
+        assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])

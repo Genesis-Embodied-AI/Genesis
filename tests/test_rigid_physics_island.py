@@ -166,7 +166,9 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
 
     # The per-component solve keeps the free bodies stable: they settle on the plane (half-extent 0.05) rather than
     # exploding or sinking through it.
-    free_body_z = np.stack([np.atleast_1d(link.get_pos()[..., 2]) for link in multibody.links if link.n_dofs > 0])
+    free_body_z = np.stack(
+        [np.atleast_1d(tensor_to_array(link.get_pos())[..., 2]) for link in multibody.links if link.n_dofs > 0]
+    )
     assert ((free_body_z > 0.0) & (free_body_z < 0.5)).all()
 
 

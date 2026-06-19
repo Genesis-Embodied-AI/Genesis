@@ -97,11 +97,12 @@ def func_solve_mass_entity_row(
         entity_dof_end = entities_info.dof_end[i_e]
         n_dofs = entities_info.n_dofs[i_e]
 
-        # Step 1: Solve w s.t. L^T @ w = y (backward substitution)
+        # Step 1: Solve w s.t. L^T @ w = y (backward substitution). The mass matrix is block-diagonal per kinematic
+        # tree, so each row only couples to dofs within its own block.
         for i_d_ in range(n_dofs):
             i_d = entity_dof_end - i_d_ - 1
             curr_out = buf[i_row, i_d, i_b]
-            for j_d in range(i_d + 1, entity_dof_end):
+            for j_d in range(i_d + 1, rigid_global_info.dofs_mass_block_end[i_d]):
                 curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * buf[i_row, j_d, i_b]
             buf[i_row, i_d, i_b] = curr_out
 
@@ -112,7 +113,7 @@ def func_solve_mass_entity_row(
         # Step 3: Solve x s.t. L @ x = z (forward substitution)
         for i_d in range(entity_dof_start, entity_dof_end):
             curr_out = buf[i_row, i_d, i_b]
-            for j_d in range(entity_dof_start, i_d):
+            for j_d in range(rigid_global_info.dofs_mass_block_start[i_d], i_d):
                 curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * buf[i_row, j_d, i_b]
             buf[i_row, i_d, i_b] = curr_out
 
