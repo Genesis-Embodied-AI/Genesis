@@ -345,10 +345,16 @@ def func_COM_links_entity(
     i_b = qd.cast(i_b, qd.i32)
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         links_state.root_COM_bw[i_l, i_b].fill(0.0)
         links_state.mass_sum[i_l, i_b] = 0.0
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
         mass = links_info.inertial_mass[I_l] + links_state.mass_shift[i_l, i_b]
@@ -367,6 +373,9 @@ def func_COM_links_entity(
         qd.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
         i_r = links_info.root_idx[I_l]
@@ -378,12 +387,18 @@ def func_COM_links_entity(
                 links_state.root_COM[i_l, i_b] = links_state.i_pos_bw[i_r, i_b]
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
         i_r = links_info.root_idx[I_l]
         links_state.root_COM[i_l, i_b] = links_state.root_COM[i_r, i_b]
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
         i_r = links_info.root_idx[I_l]
@@ -405,6 +420,9 @@ def func_COM_links_entity(
         )
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
         if links_info.n_dofs[I_l] > 0:
@@ -460,6 +478,9 @@ def func_COM_links_entity(
                 links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
 
     for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
         if links_info.n_dofs[I_l] > 0:
@@ -520,6 +541,11 @@ def func_forward_kinematics_entity(
 
     for i_l_ in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
         i_l = gs.qd_int(i_l_)
+        # A hibernated link's pose is frozen and still valid, so skip recomputing it. All links of a component sleep
+        # together, so a hibernated link never has an awake child whose pose depends on it.
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
 
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         I_l0 = (i_l, 0, i_b)
@@ -752,6 +778,9 @@ def func_update_geoms_entity(
         else qd.static(range(static_rigid_sim_config.max_n_geoms_per_entity))  # Static inner loop for backward pass
     ):
         i_g = entities_info.geom_start[i_e] + i_g_
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if geoms_state.is_hibernated[i_g, i_b]:
+                continue
         if func_check_index_range(i_g, entities_info.geom_start[i_e], entities_info.geom_end[i_e], BW):
             if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
                 (
@@ -903,6 +932,11 @@ def func_forward_velocity_entity(
 
     for i_l_ in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
         i_l = gs.qd_int(i_l_)
+        # A hibernated link's velocity is zero and frozen; skip it. Components sleep as a unit, so a hibernated link
+        # never has an awake child whose velocity propagates from it.
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if links_state.is_hibernated[i_l, i_b]:
+                continue
 
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
@@ -1326,12 +1360,15 @@ def func_aggregate_awake_entities(
     _B = entities_state.is_hibernated.shape[1]
 
     # Recompute each entity's hibernation flag from its links: with per-component islands a single entity's free bodies
-    # can sleep independently, so the entity is hibernated only when every one of its links is.
+    # can sleep independently, so the entity is hibernated only when every one of its movable links is. Fixed (welded
+    # to the world) links never hibernate, so they are ignored - otherwise a ground plane living in a multi-free-body
+    # entity's worldbody would keep that entity awake forever and force its whole forward-kinematics pass every step.
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in qd.ndrange(n_entities, _B):
         are_all_links_hibernated = True
         for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-            if not links_state.is_hibernated[i_l, i_b]:
+            link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            if not links_info.is_fixed[link_idx] and not links_state.is_hibernated[i_l, i_b]:
                 are_all_links_hibernated = False
                 break
         entities_state.is_hibernated[i_e, i_b] = are_all_links_hibernated
