@@ -13,11 +13,10 @@ from .utils import assert_allclose, assert_equal
 
 @pytest.fixture
 def multi_free_body_path(tmp_path):
-    # A single MJCF entity holding several free bodies (b0, b1, b2) is extremely common (e.g. mujoco's dominos.xml). b1
-    # also carries a hinge child b1c to check that a kinematic edge keeps a child in its parent's island. The ground
-    # plane lives in the entity's worldbody (a 0-dof link of this same dof-carrying entity), reproducing the failure
-    # mode where a per-entity dof check would treat every body's ground contact as dynamic and merge them all into one
-    # island through that shared static link.
+    # A single MJCF entity holding several free bodies (b0, b1, b2) is common. b1 carries a hinge child b1c, so a
+    # kinematic edge must keep the child in its parent's island. The ground plane lives in the entity's worldbody: the
+    # entity owns a 0-dof static link that every free body contacts, yet each free body must remain its own island -
+    # the shared static link must not couple them.
     mjcf = ET.Element("mujoco", model="multi_free_body")
     ET.SubElement(mjcf, "option", timestep="0.01")
     worldbody = ET.SubElement(mjcf, "worldbody")
