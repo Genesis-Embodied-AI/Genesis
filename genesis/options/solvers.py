@@ -484,9 +484,9 @@ class RigidOptions(Options):
         islands are off). It quietly has no effect on a body that is differentiable, prunable, or under no-slip
         friction.
     hibernation_thresh_vel : float, optional
-        Velocity threshold for hibernation. Defaults to 1e-3.
-    hibernation_thresh_acc : float, optional
-        Acceleration threshold for hibernation. Defaults to 1e-2.
+        Velocity tolerance for hibernation: a body sleeps once its maximum absolute DOF velocity stays below this for
+        a few consecutive steps, and a whole island sleeps once all its bodies are ready. If None, it is set to the
+        residual-velocity floor of the solver's float precision: 1e-4 at 64-bit, 5e-3 at 32-bit. Defaults to None.
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     use_gjk_collision: bool, optional
@@ -537,8 +537,7 @@ class RigidOptions(Options):
 
     # hibernation threshold
     use_hibernation: StrictBool | None = None
-    hibernation_thresh_vel: PositiveFloat = 1e-3
-    hibernation_thresh_acc: PositiveFloat = 1e-2
+    hibernation_thresh_vel: PositiveFloat | None = None
 
     # for dynamic properties
     max_dynamic_constraints: NonNegativeInt = 8

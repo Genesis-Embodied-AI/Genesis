@@ -125,7 +125,6 @@ class RigidGlobalInfo:
     noslip_tolerance: qd.Tensor
     n_equalities: qd.Tensor
     n_candidate_equalities: qd.Tensor
-    hibernation_thresh_acc: qd.Tensor
     hibernation_thresh_vel: qd.Tensor
     EPS: qd.Tensor
 
@@ -191,7 +190,6 @@ def get_rigid_global_info(solver, kinematic_only):
             noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
-            hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
         )
@@ -226,7 +224,6 @@ def get_rigid_global_info(solver, kinematic_only):
         noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.noslip_tolerance),
         n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._n_equalities),
         n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver.n_candidate_equalities_),
-        hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._hibernation_thresh_acc),
         hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._hibernation_thresh_vel),
         EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
     )
@@ -1627,6 +1624,7 @@ class LinksState:
     cfrc_coupling_vel: qd.Tensor
     contact_force: qd.Tensor
     is_hibernated: qd.Tensor
+    awake_steps: qd.Tensor
 
 
 def get_links_state(solver):
@@ -1678,6 +1676,7 @@ def get_links_state(solver):
         cfrc_coupling_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         contact_force=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         is_hibernated=V(dtype=gs.qd_int, shape=shape),
+        awake_steps=V(dtype=gs.qd_int, shape=shape),
     )
 
 
@@ -2204,6 +2203,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     requires_grad: bool
     prefer_decomposed_solver: int = -1  # -1 = None (auto), 0 = False, 1 = True
     use_contact_island: bool = False  # per-island Newton solve (gated; the legacy island solver is retired)
+    # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
+    # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
+    hibernation_min_steps: int = 10
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False

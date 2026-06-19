@@ -271,8 +271,12 @@ class RigidSolver(KinematicSolver):
                     "`use_hibernation=True` requires `use_contact_island=True`, as hibernation builds on islands."
                 )
 
-        self._hibernation_thresh_vel = options.hibernation_thresh_vel
-        self._hibernation_thresh_acc = options.hibernation_thresh_acc
+        # Resolve the hibernation velocity tolerance to the residual-velocity floor of the float precision: 32-bit
+        # contact solves leave a larger resting-velocity jitter than 64-bit, so a body settles below a coarser floor.
+        if options.hibernation_thresh_vel is None:
+            self._hibernation_thresh_vel = 5e-3 if gs.qd_float == qd.f32 else 1e-4
+        else:
+            self._hibernation_thresh_vel = options.hibernation_thresh_vel
 
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)

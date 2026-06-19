@@ -36,6 +36,7 @@ def func_wakeup_island(
 
             if was_hibernated:
                 island_state.hibernated_next_link[i_l, i_b] = -1
+                links_state.awake_steps[i_l, i_b] = 0
 
                 n_awake_links = qd.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
                 rigid_global_info.awake_links[n_awake_links, i_b] = i_l

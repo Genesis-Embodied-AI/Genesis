@@ -1251,7 +1251,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
             was_island_hibernated = island_state.is_hibernated[island_idx, i_b]
 
             if not was_island_hibernated:
-                are_all_links_okay_for_hibernation = True
+                are_all_links_ready_to_sleep = True
                 link_ref_n = island_state.link_slices.n[island_idx, i_b]
                 link_ref_start = island_state.link_slices.start[island_idx, i_b]
 
@@ -1260,29 +1260,37 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS
                     continue
 
+                max_vel_thresh = rigid_global_info.hibernation_thresh_vel[None]
                 for i_link_ref_offset_ in range(link_ref_n):
                     link_ref = link_ref_start + i_link_ref_offset_
                     link_idx = island_state.link_id[link_ref, i_b]
 
-                    # Hibernated links already have zero dofs_state.acc/vel
+                    # Hibernated links already have zero velocity.
                     if links_state.is_hibernated[link_idx, i_b]:
                         continue
 
+                    # A link is ready to sleep once its maximum absolute DOF velocity has stayed below the tolerance
+                    # for hibernation_min_steps consecutive steps. Every awake link is visited each step so its counter
+                    # stays current even when its island will not sleep this step; the loop never breaks early.
+                    min_steps = qd.static(static_rigid_sim_config.hibernation_min_steps)
                     link_I = [link_idx, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link_idx
+                    max_vel = gs.qd_float(0.0)
                     for i_d in range(links_info.dof_start[link_I], links_info.dof_end[link_I]):
-                        max_acc = rigid_global_info.hibernation_thresh_acc[None]
-                        max_vel = rigid_global_info.hibernation_thresh_vel[None]
-                        if qd.abs(dofs_state.acc[i_d, i_b]) > max_acc or qd.abs(dofs_state.vel[i_d, i_b]) > max_vel:
-                            are_all_links_okay_for_hibernation = False
-                            break
+                        max_vel = qd.max(max_vel, qd.abs(dofs_state.vel[i_d, i_b]))
 
-                    if not are_all_links_okay_for_hibernation:
-                        break
+                    if max_vel < max_vel_thresh:
+                        if links_state.awake_steps[link_idx, i_b] < min_steps:
+                            links_state.awake_steps[link_idx, i_b] = links_state.awake_steps[link_idx, i_b] + 1
+                    else:
+                        links_state.awake_steps[link_idx, i_b] = 0
 
-                # Hibernate the whole island (component) once all its links are at rest. The awake-island sort-buffer
-                # refresh that used to live in the other branch is now handled by the broad phase, which refreshes every
-                # awake geom's extents each step regardless of hibernation.
-                if are_all_links_okay_for_hibernation and link_ref_n > 0:
+                    if links_state.awake_steps[link_idx, i_b] < min_steps:
+                        are_all_links_ready_to_sleep = False
+
+                # Hibernate the whole island (component) once all its links are ready to sleep. The awake-island
+                # sort-buffer refresh that used to live in the other branch is now handled by the broad phase, which
+                # refreshes every awake geom's extents each step regardless of hibernation.
+                if are_all_links_ready_to_sleep and link_ref_n > 0:
                     prev_link_idx = island_state.link_id[link_ref_start + link_ref_n - 1, i_b]
 
                     for i_link_ref_offset_ in range(link_ref_n):
