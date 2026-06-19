@@ -572,13 +572,18 @@ def _func_update_constraint_forces(
 @qd.func
 def _func_update_qfrc_constraint_per_dof(
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env), each summing serially over i_c.
+    """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env).
+
+    With islands, a DOF only couples to constraints in its own island (a constraint touching the DOF is always in
+    its island), so the sum runs over that island's constraints (constraint_id) rather than all n_con - identical
+    result, but O(nnz) instead of O(n_dofs * n_con). The per-step constraint order is fixed, so the sum stays
+    deterministic. Without islands it falls back to the dense scan over all constraints.
 
     Under ``enable_cooperative_constraint_kernels`` the outer ndrange is swapped so adjacent lanes vary i_d: the
-    qfrc_constraint write coalesces under the flipped DOF-vec layout. (jac and efc_force are both in the Tier-1 /
-    jac-flip set, so the inner serial reads see the same stride pattern either way.)
+    qfrc_constraint write coalesces under the flipped DOF-vec layout.
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
@@ -588,10 +593,19 @@ def _func_update_qfrc_constraint_per_dof(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
     ):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            n_con = constraint_state.n_constraints[i_b]
             qfrc = gs.qd_float(0.0)
-            for i_c in range(n_con):
-                qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            if qd.static(static_rigid_sim_config.use_contact_island):
+                i_island = island_state.dofs_island_idx[i_d, i_b]
+                if i_island >= 0:
+                    con_base = island_state.constraint_slices.start[i_island, i_b]
+                    con_n = island_state.constraint_slices.n[i_island, i_b]
+                    for i_lcon in range(con_n):
+                        i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+                        qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            else:
+                n_con = constraint_state.n_constraints[i_b]
+                for i_c in range(n_con):
+                    qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 
 
@@ -1003,7 +1017,7 @@ def _kernel_solve_graph(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
-        _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
+        _func_update_qfrc_constraint_per_dof(constraint_state, island_state, static_rigid_sim_config)
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
@@ -1042,6 +1056,7 @@ def _kernel_island_presolve(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     # The per-env vector ops of one Newton iteration up to (but not including) the matrix solve: linesearch,
@@ -1052,7 +1067,7 @@ def _kernel_island_presolve(
     )
     _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
     _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
-    _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
+    _func_update_qfrc_constraint_per_dof(constraint_state, island_state, static_rigid_sim_config)
     _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
     _func_update_gradient_no_solve(
         entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
@@ -1113,7 +1128,13 @@ def func_solve_decomposed(
         max_items_per_thread = (work_max + n_warps - 1) // n_warps
         for _ in range(_n_iterations):
             _kernel_island_presolve(
-                dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                dofs_info,
+                entities_info,
+                dofs_state,
+                constraint_state,
+                rigid_global_info,
+                island_state,
+                static_rigid_sim_config,
             )
             kernel_build_island_worklist(island_state)
             solver.kernel_solve_islands_coop(
