@@ -2605,14 +2605,37 @@ def func_hessian_and_cholesky_factor_direct_batch(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    compute_envelope: qd.template() = False,
 ):
-    # Non-island combined build + factor over the whole env (the work-unit i_island = 0 is the full-env unit).
-    func_hessian_direct_batch(
-        i_b, 0, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
-    )
-    func_cholesky_factor_direct_batch(
-        i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
-    )
+    # Combined Hessian build + Cholesky factor for one env. With islands the block-diagonal Hessian is assembled and
+    # factored per island; otherwise the whole env is the single work-unit i_island = 0. compute_envelope sets each
+    # island's structural skyline envelope first (callers do this once per step, then leave it False).
+    if qd.static(static_rigid_sim_config.use_contact_island):
+        for i_island in range(island_state.n_islands[i_b]):
+            if qd.static(static_rigid_sim_config.use_hibernation):
+                if island_state.is_hibernated[i_island, i_b]:
+                    continue
+            if qd.static(compute_envelope):
+                func_compute_island_envelope(i_b, i_island, island_state, constraint_state, rigid_global_info)
+            func_hessian_direct_batch(
+                i_b,
+                i_island,
+                island_state,
+                entities_info,
+                constraint_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+            )
+            func_cholesky_factor_direct_batch(
+                i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+    else:
+        func_hessian_direct_batch(
+            i_b, 0, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+        func_cholesky_factor_direct_batch(
+            i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
 
 
 @qd.func
@@ -2622,19 +2645,51 @@ def func_hessian_and_cholesky_factor_direct(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    compute_envelope: qd.template() = False,
 ):
     """
     Unified implementation of Hessian matrix computation with Cholesky factorization optimized for both CPU and GPU
     backends.
 
-    The tiled optimization is only supported on GPU backend and specifically optimized for it, falling back to the
-    classical batched implementation when running on CPU backend.
+    With contact islands the Hessian is block-diagonal, so each island's block is assembled and factored independently,
+    parallelized over the flat (env, island) grid. Otherwise the whole env is one work-unit, factored by the GPU tiled
+    path or the CPU batched path (the sparse skyline-envelope factor is CPU-only and runs through the batched path).
 
-    Note that the sparse skyline-envelope factor is CPU-only and runs through the batched path.
+    compute_envelope computes each island's structural skyline envelope before factoring; it is structural, so callers
+    set it once per step (func_solve_init) and leave it False for the per-iteration re-factorizations.
     """
     _B = constraint_state.jac.shape[2]
 
-    if qd.static(static_rigid_sim_config.backend == gs.cpu):
+    if qd.static(static_rigid_sim_config.use_contact_island):
+        # The block-diagonal Hessian factors per island; spread the islands across the (env, island) grid so they run
+        # concurrently rather than serially within each env. max_islands bounds the per-env island count (at most one
+        # island per link); the guard skips the unused tail.
+        max_islands = island_state.dof_slices.start.shape[0]
+        qd.loop_config(
+            name="hess_cholesky_factor_direct_island",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+            block_dim=32,
+        )
+        for i_b, i_island in qd.ndrange(_B, max_islands):
+            if i_island < island_state.n_islands[i_b]:
+                if qd.static(static_rigid_sim_config.use_hibernation):
+                    if island_state.is_hibernated[i_island, i_b]:
+                        continue
+                if qd.static(compute_envelope):
+                    func_compute_island_envelope(i_b, i_island, island_state, constraint_state, rigid_global_info)
+                func_hessian_direct_batch(
+                    i_b,
+                    i_island,
+                    island_state,
+                    entities_info,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                )
+                func_cholesky_factor_direct_batch(
+                    i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                )
+    elif qd.static(static_rigid_sim_config.backend == gs.cpu):
         # CPU
         qd.loop_config(
             name="hess_cholesky_factor_direct",
@@ -2781,10 +2836,20 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
 @qd.func
 def func_hessian_and_cholesky_factor_incremental_batch(
     i_b,
+    island_state: array_class.IslandState,
+    entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ) -> bool:
+    # The incremental rank-1 update assumes a single dense system, so with islands the block-diagonal Hessian is
+    # rebuilt and factored directly per island instead (never degenerate).
+    if qd.static(static_rigid_sim_config.use_contact_island):
+        func_hessian_and_cholesky_factor_direct_batch(
+            i_b, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+        return False
+    func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
     is_degenerated = False
     if qd.static(static_rigid_sim_config.sparse_solve):
         is_degenerated = func_hessian_and_cholesky_factor_incremental_sparse_batch(
@@ -4431,37 +4496,16 @@ def func_solve_init(
     constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        if qd.static(static_rigid_sim_config.use_contact_island):
-            _B_isl = constraint_state.grad.shape[1]
-            qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-            for i_b in range(_B_isl):
-                for i_island in range(island_state.n_islands[i_b]):
-                    if qd.static(static_rigid_sim_config.use_hibernation):
-                        if island_state.is_hibernated[i_island, i_b]:
-                            continue
-                    # The envelope is structural (per partition), so compute it once here and reuse it across the
-                    # Newton iterations' re-assembly and re-factorization in func_solve_iter.
-                    func_compute_island_envelope(i_b, i_island, island_state, constraint_state, rigid_global_info)
-                    func_hessian_direct_batch(
-                        i_b,
-                        i_island,
-                        island_state,
-                        entities_info,
-                        constraint_state,
-                        rigid_global_info,
-                        static_rigid_sim_config,
-                    )
-                    func_cholesky_factor_direct_batch(
-                        i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
-                    )
-        else:
-            func_hessian_and_cholesky_factor_direct(
-                island_state=island_state,
-                entities_info=entities_info,
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
+        # Islands (if any) are handled inside, parallelized over (env, island). compute_envelope=True computes each
+        # island's structural skyline envelope once here, reused across the per-iteration re-factorizations.
+        func_hessian_and_cholesky_factor_direct(
+            island_state=island_state,
+            entities_info=entities_info,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            compute_envelope=True,
+        )
 
     func_update_gradient(
         dofs_state=dofs_state,
@@ -4527,33 +4571,29 @@ def func_solve_iter(
         )
 
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            if qd.static(static_rigid_sim_config.use_contact_island):
-                # Per-island Hessian + factor into each island's local tile (the solve follows in
-                # func_update_gradient_batch). Islands are independent, so this loop is the Mode-B seam. Hibernated
-                # islands are at rest with frozen (zeroed) accelerations, so their solve output would be discarded -
-                # skip them.
-                for i_island in range(island_state.n_islands[i_b]):
-                    if qd.static(static_rigid_sim_config.use_hibernation):
-                        if island_state.is_hibernated[i_island, i_b]:
-                            continue
-                    func_hessian_direct_batch(
-                        i_b,
-                        i_island,
-                        island_state,
-                        entities_info,
-                        constraint_state,
-                        rigid_global_info,
-                        static_rigid_sim_config,
-                    )
-                    func_cholesky_factor_direct_batch(
-                        i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
-                    )
+            # Islands (if any) are handled inside the per-env factor funcs. The sparse path always rebuilds the
+            # Hessian directly (the incremental rank-1 update assumes globally descending DOF order in jac_dofs_idx,
+            # which does not hold for cross-entity constraints); the dense path uses the incremental update, falling
+            # back to a direct rebuild when it degenerates.
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                func_hessian_and_cholesky_factor_direct_batch(
+                    i_b,
+                    island_state=island_state,
+                    entities_info=entities_info,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
             else:
-                func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    # Bypass incremental Cholesky when sparse_solve=True. The incremental rank-1 update
-                    # assumes globally descending DOF order in jac_dofs_idx, which doesn't hold
-                    # for cross-entity constraints. Always use direct Hessian rebuild which has the max/min fix.
+                is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
+                    i_b,
+                    island_state=island_state,
+                    entities_info=entities_info,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                if is_degenerated:
                     func_hessian_and_cholesky_factor_direct_batch(
                         i_b,
                         island_state=island_state,
@@ -4562,22 +4602,6 @@ def func_solve_iter(
                         rigid_global_info=rigid_global_info,
                         static_rigid_sim_config=static_rigid_sim_config,
                     )
-                else:
-                    is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
-                        i_b,
-                        constraint_state=constraint_state,
-                        rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                    )
-                    if is_degenerated:
-                        func_hessian_and_cholesky_factor_direct_batch(
-                            i_b,
-                            island_state=island_state,
-                            entities_info=entities_info,
-                            constraint_state=constraint_state,
-                            rigid_global_info=rigid_global_info,
-                            static_rigid_sim_config=static_rigid_sim_config,
-                        )
 
         func_update_gradient_batch(
             i_b,
