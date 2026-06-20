@@ -935,20 +935,6 @@ def _func_update_gradient_no_solve(
 
 
 @qd.func
-def _func_cholesky_and_solve_fused(
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Fused Cholesky factorization + solve. L stays in shared memory."""
-    solver.func_cholesky_and_solve_fused_tiled(
-        constraint_state=constraint_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
-
-
-@qd.func
 def _func_update_search_direction(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -1019,15 +1005,22 @@ def _kernel_solve_graph(
         _func_update_qfrc_constraint_per_dof(constraint_state, island_state, static_rigid_sim_config)
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
-            static_rigid_sim_config.use_contact_island
-            and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and (
+                static_rigid_sim_config.use_contact_island
+                or (
+                    static_rigid_sim_config.enable_tiled_cholesky_hessian
+                    and static_rigid_sim_config.hessian_fits_shared
+                )
+            )
         ):
-            # Unified island path: the SAME incremental Hessian assembly as the non-island fused path (full rebuild
-            # when the active set changed a lot, delta patch otherwise), then a per-island barrier-free tiled factor +
-            # solve that READS the maintained nt_H. Each changed constraint's J^T D J lands inside its island's diagonal
-            # block since no constraint couples DOFs across islands, so the patch is island-correct unchanged. For an
-            # unpartitioned env (one island spanning every dof) this is exactly the non-island fused path, so islands
-            # ON/OFF differ only in how dofs are grouped, not in the solve.
+            # Unified Newton path (islands ON, and islands OFF when the whole-env Hessian fits shared): the SAME
+            # incremental assembly - full rebuild when the active set changed a lot, delta patch otherwise - then a
+            # per-island barrier-free tiled factor + solve that READS the maintained nt_H. Each changed constraint's
+            # J^T D J lands inside its island's diagonal block since no constraint couples DOFs across islands, so the
+            # patch is island-correct unchanged. An unpartitioned env is a single island spanning every dof, so islands
+            # ON/OFF differ only in how dofs are grouped, not in the solve. A whole-env Hessian too big for shared
+            # falls through to the non-fused path below.
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
             _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
             _func_patch_hessian_delta(constraint_state, rigid_global_info)
@@ -1052,19 +1045,6 @@ def _kernel_solve_graph(
                     static_rigid_sim_config,
                     qd.simt.Tile16x16,
                 )
-        elif qd.static(
-            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-            and static_rigid_sim_config.enable_tiled_cholesky_hessian
-            and static_rigid_sim_config.hessian_fits_shared
-        ):
-            # Fused path: H patching + fused Cholesky+Solve (L in shmem, H preserved in nt_H)
-            _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
-            _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
-            _func_patch_hessian_delta(constraint_state, rigid_global_info)
-            _func_update_gradient_no_solve(
-                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
-            )
-            _func_cholesky_and_solve_fused(constraint_state, rigid_global_info, static_rigid_sim_config)
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
             # so H patching is not possible)
