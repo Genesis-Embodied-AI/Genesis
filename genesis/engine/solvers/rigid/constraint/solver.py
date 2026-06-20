@@ -4582,12 +4582,13 @@ def func_solve_init(
         constraint_state.use_full_hessian[i_b] = 1
     constraint_state.solver_iter_counter[()] = 0
 
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        # Factor the initial Hessian here, uniformly for every backend and arm and for islands ON and OFF. The
-        # factor's internal branch (block-diagonal per island vs whole-env) is the only partition effect; the solve
-        # structure does not depend on use_contact_island. The decomposed arm re-factors inside its graph loop, so this
-        # initial factor only seeds its first search direction. compute_envelope=True computes each island's structural
-        # skyline envelope once, reused across iterations.
+    if qd.static(
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton and static_rigid_sim_config.backend == gs.cpu
+    ):
+        # CPU Newton factors the initial Hessian here (CPU runs only the monolith arm). The GPU arms factor in their own
+        # solve body so the autotuner measures each arm's true cost: the decomposed arm re-factors (tiled) inside its
+        # graph loop and would be charged twice for a factor here, and the monolith self-inits per-env at the start of
+        # its loop. compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
             entities_info=entities_info,
@@ -4597,15 +4598,22 @@ def func_solve_init(
             compute_envelope=True,
         )
 
-    # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG): needed by every arm's first search direction.
-    func_update_gradient(
-        dofs_state=dofs_state,
-        entities_info=entities_info,
-        constraint_state=constraint_state,
-        rigid_global_info=rigid_global_info,
-        island_state=island_state,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
+    if qd.static(
+        not (
+            static_rigid_sim_config.backend != gs.cpu
+            and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        )
+    ):
+        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). The GPU Newton arms recompute it in their own
+        # solve body (decomposed in its graph loop, monolith at the start of its loop), so it is skipped here.
+        func_update_gradient(
+            dofs_state=dofs_state,
+            entities_info=entities_info,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            island_state=island_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
 
     qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(
@@ -4754,6 +4762,7 @@ def func_solve_body_monolith(
     island_state: array_class.IslandState,
 ):
     _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.qacc.shape[0]
 
     # The monolith arm solves each env whole (32 envs packed per warp); islands change only the per-env factor's block
     # structure, handled inside func_solve_iter, not the iteration scheme. Per-island parallelism is the decomposed
@@ -4766,6 +4775,33 @@ def func_solve_body_monolith(
         if qd.static(static_rigid_sim_config.use_hibernation):
             has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
         if has_awake_work:
+            if qd.static(
+                static_rigid_sim_config.backend != gs.cpu
+                and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            ):
+                # func_solve_init does no GPU factor, so seed this env's initial factor + gradient + search here,
+                # identically for islands ON and OFF (the factor branches block-diagonal vs whole-env inside, the one
+                # partition effect). Gives the first linesearch a valid Newton direction; once per step, then iterate.
+                func_hessian_and_cholesky_factor_direct_batch(
+                    i_b,
+                    island_state=island_state,
+                    entities_info=entities_info,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    compute_envelope=True,
+                )
+                func_update_gradient_batch(
+                    i_b,
+                    dofs_state=dofs_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    island_state=island_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                for i_d in range(n_dofs):
+                    constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
             for _ in range(rigid_global_info.iterations[None]):
                 func_solve_iter(
                     i_b,
