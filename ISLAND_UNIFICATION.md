@@ -191,6 +191,21 @@ Grid island-count scaling (1 env, islands ON, ms) 8/32/128 bodies:
   decomposed: 0.76 / 1.16 / 3.13   (near-flat, tiled per-island — THE GOAL)
   monolith:   2.2  / 8.0  / 38.7   (per-island scalar, scales linearly; was 3.1/45/1853 with force_whole_env)
 
+## ARM SELECTION (verified 2026-06-20 - resolves the "monolith for ON" confusion)
+- The running arm is `prefer_decomposed_solver` -> perf_dispatch is_compatible (monolith `!=1`, decomposed
+  `not grad and !=0`). With `prefer=1` only decomposed is compatible; the dispatcher runs it unconditionally
+  (lang/_perf_dispatch.py:305 - NO correctness/NaN fallback).
+- CONFTEST forces `prefer = int(backend != cpu)` = 1 on gpu => decomposed for BOTH islands ON and OFF.
+- The island ARM-PINNING block in rigid_solver.py (~629 `elif False: # self._use_contact_island`) is DISABLED.
+  If it were ENABLED, `max_islands <= 16 -> prefer=0` (monolith) for small-island scenes.
+- **The earlier "ON runs monolith (dec=0)" trace was a STALE CLUSTER rigid_solver.py** (pinning enabled in the
+  stale copy -> ON=monolith for <=16 islands, OFF=decomposed). I had not scp'd rigid_solver.py this session.
+  After syncing the current file (pinning disabled), ARM-PROBE confirms `prefer=1` and the dispatcher logs
+  "chose func_solve_decomposed ... Only 1 was compatible" for BOTH ON and OFF on CUDA and Metal. LESSON
+  (again): sync ALL touched files to the cluster before trusting a run (feedback_verify_runs_not_frugal).
+- NET: current code runs the DECOMPOSED arm for islands ON and OFF in the unit tests; the always-seed fix is
+  correctly exercised (26/26).
+
 ## EXPERIMENT LOG (chronological; DO NOT repeat these)
 1. Route islands through `_kernel_solve_graph` + delete dead host-loop island solver. WORKS (d17e8343b).
 2. Port incremental H-patch to decomposed island path (do_assemble flag, factor-only reads nt_H). WORKS (6fb3c37a4).
