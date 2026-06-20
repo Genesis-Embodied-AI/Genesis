@@ -1001,6 +1001,12 @@ class Collider:
                 sort_idx_view = qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
                 gather_idx_flat = sort_idx_view[:, :n_contacts_max]
                 gather_idx_vec = gather_idx_flat.unsqueeze(-1).expand(-1, -1, 3)
+                # Gather indices past each env's n_contacts are stale (the permutation only fills the live range), so
+                # the dense (n_envs, n_contacts_max) tensor has padding columns to reset to the per-field sentinel.
+                # The mask is field-independent, so build it once and broadcast over scalar and vector fields alike.
+                pad_mask = None
+                if as_tensor and n_envs > 0:
+                    pad_mask = torch.arange(n_contacts_max, device=sort_idx_view.device)[None, :] >= n_contacts[:, None]
 
             for key, data in self._contact_data.items():
                 if zerocopy_aligned:
@@ -1017,6 +1023,9 @@ class Collider:
                     # data shape is (_B, max_candidate_contacts) for scalars, with a trailing 3 axis for vectors.
                     gidx = gather_idx_vec if data.dim() == 3 else gather_idx_flat
                     data = data.gather(dim=1, index=gidx)
+                    if pad_mask is not None:
+                        mask = pad_mask if data.dim() == 2 else pad_mask[..., None]
+                        data.masked_fill_(mask, -1 if data.dtype == gs.tc_int else 0)
                     if n_envs == 0 and not keep_batch_dim:
                         data = data[0]
                     if not to_torch:
