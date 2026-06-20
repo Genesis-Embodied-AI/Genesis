@@ -169,6 +169,20 @@ Two things keyed on `use_contact_island` that shouldn't be:
   the arm that actually ran).
 - The FULL monolith parity for many islands / requires_grad needs the (env,island)-tiled factor in the
   monolith = converging onto the decomposed body (Python-loop _kernel_solve_graph). Substantial; deferred.
+- **Step 3 [ATTEMPTED, BROKE, REVERTED c2526d8e5 -> back to a42db7707]**: drop the decomposed seed factor by
+  rotating the graph to direction-first (factor->search->linesearch->apply->refresh). BROKE CUDA (14 fail,
+  forced-decomposed probe diverges 0.049->0.029) AND Metal (14 fail). ROOT CAUSE (verified): the convergence
+  check lives in `func_terminate_or_update_descent_batch` (solver.py ~4315) which sets
+  `improved = grad_norm>tol AND improvement>tol` where `improvement = prev_cost - cost`. It is
+  IMPROVEMENT-BASED, so it MUST run AFTER the move (linesearch) to measure cost reduction. Direction-first
+  runs it BEFORE the move => improvement=0 => improved=False => search never updates => linesearch gated off
+  => divergence. To make direction-first work you must SPLIT terminate_or_update_descent into (a) update-search
+  (after factor) + (b) check-termination (after move) and re-thread the `improved` gate across iterations -
+  another invasive change to the convergence core, for a payoff of ONE factor (~0.1ms on an already-0.8ms arm).
+  NOT WORTH IT this session. DEFERRED. The seed factor is NOT wasted per se - the linesearch-first structure
+  pairs it with the improvement-based termination cleanly. If revisited: do the split, validate on BOTH CUDA
+  and Metal (Metal must not regress - user requirement), use benchmarks/probe_decomp.py (forced decomposed,
+  hibernation OFF) for the divergence check.
 
 ## VALIDATION RECIPE (cluster)
 - Code is editable locally; the decomposed/tiled path is GPU-only -> validate on CUDA cluster.
