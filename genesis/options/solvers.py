@@ -559,22 +559,12 @@ class RigidOptions(Options):
 
     def model_post_init(self, context):
         super().model_post_init(context)
-        if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL and self.use_hibernation:
-            gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
         if self.contact_pruning_tolerance is not None and self.enable_mujoco_compatibility:
             if "contact_pruning_tolerance" in self.model_fields_set:
                 gs.raise_exception(
                     "'contact_pruning_tolerance' is not supported when 'enable_mujoco_compatibility' is True"
                 )
             # User did not explicitly request pruning, silently disable to guarantee mujoco compatibility
-            self.contact_pruning_tolerance = None
-        if self.contact_pruning_tolerance is not None and self.use_contact_island:
-            if "contact_pruning_tolerance" in self.model_fields_set:
-                gs.raise_exception(
-                    "'contact_pruning_tolerance' is not supported when 'use_contact_island' is True. The contact "
-                    "island path consumes contacts in physical layout and does not honor the logical permutation "
-                    "that link-pair pruning produces."
-                )
             self.contact_pruning_tolerance = None
 
 

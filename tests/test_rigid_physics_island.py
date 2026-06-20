@@ -324,6 +324,54 @@ def test_pruning(show_viewer, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_hibernation_with_pruning(show_viewer, n_envs):
+    # A convexified duck is a compound body whose many ground contacts pile into one (duck, plane) link-pair bucket,
+    # so link-pair pruning collapses them into a logical permutation in contact_sort_idx. Islands read contacts through
+    # that permutation and hibernation advects the resting contacts while the body sleeps, so pruning, islands and
+    # hibernation all run together. contact_pruning_tolerance is set explicitly to keep pruning on alongside islands.
+    # The duck must reach the plane without tunnelling, hibernate, and then stay frozen in place.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 100.0,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+            contact_pruning_tolerance=0.02,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    duck = scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.02,
+            pos=(0.0, 0.0, 0.1),
+            euler=(90.0, 0.0, 0.0),
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    solver = scene.rigid_solver
+
+    def asleep():
+        return qd_to_numpy(solver.entities_state.is_hibernated, duck.idx).all()
+
+    for _ in range(200):
+        scene.step()
+        assert (tensor_to_array(duck.get_pos())[..., 2] > -0.05).all()
+        if asleep():
+            break
+    assert asleep()
+    z_rest = tensor_to_array(duck.get_pos())[..., 2]
+
+    for _ in range(100):
+        scene.step()
+    assert asleep()
+    assert_allclose(duck.get_pos()[..., 2], z_rest, atol=1e-5)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_weld_coupling(show_viewer, n_envs):
     # box2 hangs from a weld onto the anchored box1 at a horizontal offset, never touching it. Without the equality
     # edge in the partition the two land in different islands and the weld is dropped, letting box2 free-fall.
@@ -541,16 +589,20 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_hibernation_wakes_on_collision(show_viewer, n_envs, multi_free_body_path):
+@pytest.mark.parametrize("broadphase_traversal", [None, gs.broadphase_traversal.ALL_VS_ALL], ids=["sap", "allvsall"])
+def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversal, multi_free_body_path):
     # An awake body striking a sleeping one must wake it so it responds instead of acting as an immovable obstacle.
     # This needs the broad-phase sort-buffer refresh of awake geoms (so the contact is detected) and the wake-on-contact
     # pass. The multi-free-body entity (offset clear of the boxes) checks per-component hibernation: its free bodies
     # sleep independently and disturbing one wakes only its island, which needs the wake/daisy chain to act per link
-    # rather than per entity.
+    # rather than per entity. ALL_VS_ALL exercises hibernation under the non-default traversal: it advects and skips
+    # hibernated-fixed pairs exactly like SAP, and the hibernated-vs-hibernated pairs it traverses instead of skipping
+    # are inert (both bodies frozen).
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
             use_hibernation=True,
+            broadphase_traversal=broadphase_traversal,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.1, -4.0, 2.5),
