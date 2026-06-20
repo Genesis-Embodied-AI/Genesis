@@ -23,6 +23,27 @@ Make the rigid constraint solver behave identically for islands ON vs OFF, with 
 Rule from the user: **NOTHING may be forced whole-env.** Everything parallel over (env, island).
 
 ## TL;DR CURRENT STATE (update each session)
+- **2026-06-21 (SESSION: BOTH FIXES IMPLEMENTED + VALIDATED).** The single-island ON penalty (scalar
+  one-thread-per-island init factor, ~2.2ms) is FIXED on BOTH arms by routing the GPU-island seed through the
+  TILED PER-ISLAND factor (`func_island_tiled_factor_solve_all`, the same factor the decomposed graph already
+  runs each iteration) instead of the scalar `func_hessian_and_cholesky_factor_direct` island branch.
+  - DECOMPOSED: func_solve_init GPU-island branch -> no-solve gradient + `func_island_tiled_factor_solve_all(
+    do_assemble=True, write_L=False)`. Init factor 2.209ms -> 0.605ms (CUDA, single 48-dof island). The graph
+    rebuilds nt_H so the seed need not persist L.
+  - MONOLITH: same seed branch with write_L=True (persists L into nt_H for the incremental rank-1 iterations);
+    the scalar in-body self-init is dropped for the fits_shared case. Mirrors the existing NON-island monolith
+    fused init (`enable_fused_factor_solve_init` + `write_L_to_nt_H`, rigid_solver.py:593).
+  - GATE: `Newton and use_contact_island and gpu and hessian_fits_shared`. Above the shared cap or CPU it falls
+    back to the existing scalar path (decomposed graph also uses its non-fused scalar path there, so consistent).
+  - NEW: `write_L` template on `func_island_assemble_factor_solve_tiled` + `func_island_tiled_factor_solve_all`;
+    `func_update_gradient_no_solve` moved solver_breakdown -> solver.py (shared by graph + seed).
+  - VALIDATED: CUDA suite 26/26 (decomposed); physics bitwise ON==OFF (max|z_ON-z_OFF|=0.000000) for mono+dec,
+    stack(1 island)+grid(16 islands), on BOTH CUDA and Metal (headless check_monolith_island.py). Metal pytest
+    suite blocked by macOS visualizer/display flakiness (cocoa screens[0] IndexError at "Building visualizer",
+    AFTER "Compiling simulation kernels" succeeds) - environmental, NOT solver code; the headless physics checks
+    cover Metal correctness.
+  - PENDING: arm-crossover sweep (re-tune rigid_solver.py pin from fresh numbers); commit+push.
+
 - HEAD `a42db7707` (Step 2). **Decomposed arm now correctly seeded by func_solve_init for ON and OFF.**
   CONFIRMED CUDA: suite 26/26; forced-decomposed probe ON and OFF both REST (~0.049, was sinking 0.049->0.029
   i.e. diverging). This fixed BOTH the Step-1 OFF regression AND a PRE-EXISTING latent divergence in the
@@ -91,6 +112,81 @@ Rule from the user: **NOTHING may be forced whole-env.** Everything parallel ove
   COMPLICATION: the tiled factor is whole-env/cooperative; needs an n_islands==1 route that does NOT send
   many-island envs whole-env (cubic). Mixed batches (some envs single, some multi island) are the hard case.
   Expect both arms single-island ON ~3.3ms -> ~1.1ms. NOT yet implemented - confirm approach (cubic risk).
+
+## REFINED FIX (2026-06-21, user steer "why not TILED PER-ISLAND?") - resolves the cubic risk
+- The correct factor is NOT "tiled whole-env vs scalar per-island" - it is the THIRD variant that already
+  exists: TILED PER-ISLAND `func_island_assemble_factor_solve_tiled` (solver.py:1982), driven over the
+  (env,island) grid by `func_island_tiled_factor_solve_all` (solver.py:2130). It is the SAME register-streaming
+  TileTxT Cholesky as the whole-env tiled factor, applied to each island's contiguous [gbase,gbase+n) block
+  with T lanes cooperating PER ISLAND. So: single island spanning the env == whole-env tiled (ON==OFF); many
+  small islands == each block factored by its own tile (NO cubic, NO whole-env cap). This is EXACTLY what the
+  decomposed graph already runs every iteration (solver_breakdown.py:1024). NO n_islands==1 special-case, NO
+  mixed-batch hard case, NO cubic risk. The scalar per-island was simply the wrong choice wired into the seed.
+- VERIFIED L-WRITEBACK: `func_island_assemble_factor_solve_tiled` reads nt_H, factors into shared L_sh, solves
+  grad->Mgrad (global), and does NOT write L back to nt_H (docstring:2008). The two arms maintain nt_H
+  differently, so this matters:
+    DECOMPOSED graph keeps nt_H = raw H (do_assemble=False per iter; re-assembled by _func_newton_only_nt_hessian
+      on full-rebuild iters, delta-patched otherwise). It must NOT find L in nt_H. => tiled per-island with NO
+      L-writeback is a PERFECT drop-in. The seed's nt_H is discarded by the graph's iter-0 full rebuild; the
+      seed only needs to produce Mgrad/search.
+    MONOLITH per-iter incremental rank-1 (func_hessian_and_cholesky_factor_incremental_batch) reads L IN PLACE
+      from nt_H. => it needs L persisted, i.e. tiled per-island WITH an L-writeback. Also: the cooperative tiled
+      factor cannot live inside the scalar env-packed _kernel_solve_monolith body - it must be hoisted to a
+      separate cooperative kernel (like the seed already is), and the monolith body drops its scalar self-init.
+- IMPLEMENTATION (step 1 = decomposed, clean; step 2 = monolith):
+    STEP 1 (decomposed, in func_solve_init): when Newton and use_contact_island and gpu and hessian_fits_shared
+      and is_decomposed, replace the scalar factor (func_hessian_and_cholesky_factor_direct) + scalar gradient
+      (func_update_gradient) with: no-solve gradient (grad=Ma-force-qfrc) then
+      func_island_tiled_factor_solve_all(do_assemble=True). The seed only runs for the DECOMPOSED arm in the
+      island+gpu case (monolith skips it), so this only affects decomposed. Dedup: move
+      _func_update_gradient_no_solve (breakdown.py:911) -> solver.func_update_gradient_no_solve so both call it.
+    STEP 2 (monolith): add write_L template to func_island_assemble_factor_solve_tiled; let the monolith use the
+      hoisted seed with write_L=True and drop its in-body scalar self-init. Gate on hessian_fits_shared (matches
+      the graph's fused gate). Mixed/over-cap envs fall back to the existing scalar path (unchanged).
+
+## BENCHMARK 2026-06-21 (BOTH fixes in; forced-arm A/B; grid = N single-box islands, 1 env)
+Tiled per-island SEED win (single 48-dof island, CUDA, func_solve_init factor): scalar 2.209ms -> tiled 0.605ms.
+Monolith single-island ON init now tiled too (kernel_15 0.614ms + body 0.438ms), was scalar 2.2ms.
+
+Forced-arm crossover, island ON, ms/step (mono = prefer 0, dec = prefer 1):
+| bodies | islands | n_dofs | tiled_fits | CUDA mono | CUDA dec | Metal mono | Metal dec |
+|---|---|---|---|---|---|---|---|
+|   4 |   4 |  24 | True  |  0.83 |  0.81 |  1.69 |  1.78 |
+|  16 |  16 |  96 | True  |  2.18 |  1.57 |  4.72 |  3.91 |
+|  36 |  36 | 216 | False |  7.26 |  6.88 | 10.01 | 14.06 |
+|  64 |  64 | 384 | False | 14.49 | 26.36 | 19.03 | 56.93 |
+| 100 | 100 | 600 | False | 22.34 | 90.93 | 28.79 | 195.29 |
+Stack (1 big island, 8 boxes, 48 dofs, tiled_fits=True): CUDA 1env mono 1.74 / dec 1.55; 256env mono 3.78 / dec 2.65.
+OFF reference stack: CUDA 1env mono 1.09 / dec 0.96; 256env mono 2.31 / dec 1.24.
+
+READING: tiled_fits=True (whole-env <= ~96 dofs) -> decomposed slightly faster or tied (both arms tiled). Past the
+shared cap (tiled_fits=False) the DECOMPOSED arm degrades badly with island count (up to 4x CUDA / 6.8x Metal SLOWER
+than monolith). BOTH backends agree. This INVERTS the old report (decomposed-wins-at-scale).
+
+## !!! NEXT TARGET: decomposed many-island tiled_fits=False regression (NOT YET FIXED) !!!
+ROOT (CUDA grid-100 profile, decomposed): `func_solve_init ... hess_cholesky_factor_direct_island` = 10.257ms (67%).
+That is func_solve_init's SCALAR per-island seed (`func_hessian_and_cholesky_factor_direct` island branch), taken
+because the tiled seed is gated on `hessian_fits_shared` (WHOLE-ENV cap, False at 600 dofs) even though every island
+is 6 dofs. The monolith stays per-island via its incremental rank-1 update, so it does not pay this and wins.
+PROPOSED FIX (the real N-island linear-scaling fix; aligns with "nothing whole-env"): the per-island tiled factor's
+shared tile is sized `MAX_DOFS = tiled_n_dofs` (whole-env) in `func_island_tiled_factor_solve_all`; it should be
+`tiled_n_island_dofs` (per-island; rigid_solver.py:568 already computes it and documents it as "always usable
+because islands are small"). Then:
+  - size L_sh/v_sh to tiled_n_island_dofs (per-island, fits shared even when whole-env does not),
+  - add a runtime guard in func_island_assemble_factor_solve_tiled: island n > tiled_n_island_dofs -> scalar fallback
+    (a big single island still degrades to scalar, but that is rare and unavoidable; many SMALL islands get tiled),
+  - gate the seed + the decomposed graph (solver_breakdown.py:1009) on a per-island-fits flag instead of
+    hessian_fits_shared; the graph's tiled_fits=False branch (`_func_newton_only_nt_hessian_and_cholesky`, whole-env
+    func_hessian_direct_tiled + func_cholesky_factor_direct_tiled) becomes a fallback only for big islands.
+RISK: reworks the decomposed hot-path factor dispatch + shared sizing for ALL island runs; needs bitwise ON==OFF +
+suite + determinism re-validation on both backends. tiled_fits=True cases are UNAFFECTED (tiled_n_island_dofs ==
+tiled_n_dofs there). DEFERRED to a joint step with the user (hot-path + determinism sensitivity).
+
+## PIN RE-TUNE (rigid_solver.py elif False) - PENDING the above fix
+The fresh crossover would pin MONOLITH for tiled_fits=False islands and decomposed for tiled_fits=True. But that
+encodes a WORKAROUND for the scalar-seed regression above; once the per-island-sizing fix lands, decomposed should
+win broadly and the pin simplifies to "decomposed for islands". So the pin re-tune should FOLLOW the fix, not the
+current (bugged) crossover. Left disabled (islands on the autotuner) for now.
 
 ## ARCHITECTURE (read before touching anything)
 Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in solver_breakdown.py):

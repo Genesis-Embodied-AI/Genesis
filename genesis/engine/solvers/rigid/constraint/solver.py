@@ -1992,6 +1992,7 @@ def func_island_assemble_factor_solve_tiled(
     static_rigid_sim_config: qd.template(),
     do_assemble: qd.template(),
     TileCls: qd.template(),
+    write_L: qd.template() = False,
 ):
     """Barrier-free tiled Cholesky factor + triangular solve of one island's Newton system.
 
@@ -2007,6 +2008,10 @@ def func_island_assemble_factor_solve_tiled(
 
     L stays in the shared tile L_sh (local island indices); grad/Mgrad are global, reached at gbase + local. block.sync
     fences the assembly before the cooperative factor and the result before the caller's termination test.
+
+    write_L persists L from L_sh back into the island's nt_H block, needed when a later step reads L from nt_H rather
+    than re-factoring (the monolith's incremental rank-1 iterations); the decomposed graph re-factors every iteration
+    so it leaves write_L False and keeps nt_H holding the raw Hessian.
     """
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     LOG2_T = qd.static(T.bit_length() - 1)
@@ -2112,6 +2117,17 @@ def func_island_assemble_factor_solve_tiled(
             constraint_state.Mgrad[gbase + k, i_b] = v_sh[k]
             k = k + T
         qd.simt.block.sync()
+
+        # Persist the factor: store L's lower triangle (local L_sh) into the island's nt_H block so a caller that
+        # reads L from nt_H instead of re-factoring (the monolith's incremental rank-1 iterations) finds it there.
+        if qd.static(write_L):
+            i_r = tid
+            while i_r < n:
+                gi = gbase + i_r
+                for j in range(i_r + 1):
+                    constraint_state.nt_H[i_b, gi, gbase + j] = L_sh[i_r, j]
+                i_r = i_r + T
+            qd.simt.block.sync()
     else:
         # Rare non-contiguous island (gathered DOFs not a single ascending run): scalar per-island solve on lane 0,
         # which writes Mgrad directly via func_cholesky_solve_batch.
@@ -2134,11 +2150,16 @@ def func_island_tiled_factor_solve_all(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     TileCls: qd.template(),
+    do_assemble: qd.template() = False,
+    write_L: qd.template() = False,
 ):
     # Barrier-free per-island factor + solve over the whole (env, island) grid: one T-lane tile per (env, island)
     # work-item. Drives func_island_assemble_factor_solve_tiled, which for a single island spanning the whole env is
-    # exactly the non-island whole-env tiled factor - so an unpartitioned (1-island) env solves identically to the
-    # legacy non-island path. grad must already hold M*acc - force - qfrc (the no-solve gradient).
+    # exactly the non-island whole-env tiled factor - so an unpartitioned (1-island) island solves identically to the
+    # legacy non-island path. grad must already hold M*acc - force - qfrc (the no-solve gradient). do_assemble=True
+    # builds each island's Hessian block into nt_H first (used by the seed, where nt_H is not yet populated); the graph
+    # leaves it False because it maintains nt_H incrementally before calling this. write_L persists L into nt_H for a
+    # caller that reads the factor back (the monolith seed); the graph re-factors so it leaves it False.
     _B = constraint_state.grad.shape[1]
     max_islands = island_state.dof_slices.start.shape[0]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
@@ -2170,8 +2191,9 @@ def func_island_tiled_factor_solve_all(
                             island_state,
                             rigid_global_info,
                             static_rigid_sim_config,
-                            False,
+                            do_assemble,
                             TileCls,
+                            write_L,
                         )
 
 
@@ -4207,6 +4229,33 @@ def func_update_gradient_batch(
 
 
 @qd.func
+def func_update_gradient_no_solve(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute the gradient only (no Cholesky solve), used with a fused factor+solve that consumes grad directly.
+
+    Under enable_cooperative_constraint_kernels the ndrange is swapped so adjacent lanes vary i_d - 3 of 4 in-loop
+    accesses (grad, Ma, qfrc_constraint) are DOF-vec flipped; only dofs_state.force stays canonical.
+    """
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.grad.shape[0]
+    qd.loop_config(
+        name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+    )
+    for i_d, i_b in qd.ndrange(
+        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
+    ):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            )
+
+
+@qd.func
 def func_update_gradient_tiled(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -4590,45 +4639,76 @@ def func_solve_init(
 
     if qd.static(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-        and (
-            is_decomposed
-            or not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
-        )
+        and static_rigid_sim_config.use_contact_island
+        and static_rigid_sim_config.backend != gs.cpu
+        and static_rigid_sim_config.hessian_fits_shared
     ):
-        # Seed the initial Hessian factor. The decomposed arm has no self-init: its graph is linesearch-first, so its
-        # first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the graph
-        # then computes each subsequent direction at the end of an iteration). So it ALWAYS needs this seed, islands
-        # on or off. The monolith seeds it here only for non-island / CPU-island; for the GPU island case the monolith
-        # self-inits the factor per-env in its own body, so this is skipped there.
-        # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
-        func_hessian_and_cholesky_factor_direct(
-            island_state=island_state,
+        # GPU-island seed (both arms): the per-island tiled assemble+factor+solve - the same barrier-free factor the
+        # decomposed graph runs every iteration. A single island spanning the env factors with the full T-lane tile
+        # (identical to islands-off), so the single-island seed costs the same as islands-off instead of the scalar
+        # one-thread-per-island Cholesky; many small islands each factor in their own tile (no whole-env cubic). It
+        # solves grad -> Mgrad directly, subsuming the separate gradient solve. The monolith reads L back from nt_H in
+        # its incremental iterations so it persists L (write_L=True); the decomposed graph re-factors each iteration so
+        # it keeps nt_H holding the raw Hessian (write_L=False).
+        func_update_gradient_no_solve(
             entities_info=entities_info,
-            constraint_state=constraint_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            compute_envelope=True,
-        )
-
-    if qd.static(
-        not (
-            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-            and not is_decomposed
-            and static_rigid_sim_config.use_contact_island
-            and static_rigid_sim_config.backend != gs.cpu
-        )
-    ):
-        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Seeds the decomposed arm's first search
-        # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU island monolith, which
-        # self-inits the gradient per-env in its own body.
-        func_update_gradient(
             dofs_state=dofs_state,
-            entities_info=entities_info,
             constraint_state=constraint_state,
             rigid_global_info=rigid_global_info,
-            island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
+        func_island_tiled_factor_solve_all(
+            entities_info,
+            constraint_state,
+            island_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+            qd.simt.Tile32x32 if qd.static(static_rigid_sim_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
+            True,
+            qd.static(not is_decomposed),
+        )
+    else:
+        if qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and (
+                is_decomposed
+                or not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
+            )
+        ):
+            # Seed the initial Hessian factor. The decomposed arm has no self-init: its graph is linesearch-first, so
+            # its first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the
+            # graph then computes each subsequent direction at the end of an iteration). So it ALWAYS needs this seed,
+            # islands on or off. The monolith seeds it here only for non-island / CPU-island; for the GPU island case
+            # the monolith self-inits the factor per-env in its own body, so this is skipped there.
+            # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
+            func_hessian_and_cholesky_factor_direct(
+                island_state=island_state,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                compute_envelope=True,
+            )
+
+        if qd.static(
+            not (
+                static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+                and not is_decomposed
+                and static_rigid_sim_config.use_contact_island
+                and static_rigid_sim_config.backend != gs.cpu
+            )
+        ):
+            # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Seeds the decomposed arm's first search
+            # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU island monolith,
+            # which self-inits the gradient per-env in its own body.
+            func_update_gradient(
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                island_state=island_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
     qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(
@@ -4787,10 +4867,12 @@ def _kernel_solve_monolith(
                 static_rigid_sim_config.use_contact_island
                 and static_rigid_sim_config.backend != gs.cpu
                 and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+                and not static_rigid_sim_config.hessian_fits_shared
             ):
-                # func_solve_init skips the factor for the GPU island arms, so the monolith seeds this env's initial
-                # per-island factor + gradient + search here (it replaces the removed warp-per-env body; mirrors the
-                # CPU island init). Gives the first linesearch a valid Newton direction; once per step, then iterate.
+                # When the per-island tiled factor does not fit shared memory, func_solve_init skips the GPU-island
+                # seed, so the monolith seeds this env's initial scalar per-island factor + gradient + search here.
+                # Gives the first linesearch a valid Newton direction; once per step, then iterate. When it fits,
+                # func_solve_init already seeded the factor (L persisted to nt_H) and the search direction.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     island_state=island_state,

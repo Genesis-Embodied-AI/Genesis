@@ -908,33 +908,6 @@ def _func_update_gradient(
 
 
 @qd.func
-def _func_update_gradient_no_solve(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Compute gradient only (no Cholesky solve) — used with fused Cholesky+Solve.
-
-    Under ``enable_cooperative_constraint_kernels`` the ndrange is swapped so adjacent lanes vary i_d - 3 of 4 in-loop
-    accesses (grad, Ma, qfrc_constraint) are flipped DOF-vec; only dofs_state.force stays canonical.
-    """
-    _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.grad.shape[0]
-    qd.loop_config(
-        name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
-    )
-    for i_d, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
-    ):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_state.grad[i_d, i_b] = (
-                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
-            )
-
-
-@qd.func
 def _func_update_search_direction(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -1018,7 +991,7 @@ def _kernel_solve_graph(
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
             _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
             _func_patch_hessian_delta(constraint_state, rigid_global_info)
-            _func_update_gradient_no_solve(
+            solver.func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
             if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
