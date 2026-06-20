@@ -4590,18 +4590,16 @@ def func_solve_init(
 
     if qd.static(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-        and not (
-            not is_decomposed
-            and static_rigid_sim_config.use_contact_island
-            and static_rigid_sim_config.backend != gs.cpu
-            and static_rigid_sim_config.requires_grad
+        and (
+            is_decomposed
+            or not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
         )
     ):
-        # Seed the initial Hessian factor with the TILED factor. The decomposed arm has no self-init and consumes the
-        # search direction seeded here; the monolith consumes nt_H = L here too, including the GPU island case (this
-        # tiled per-island factor replaces a slow scalar one-thread-per-env self-init). The ONE exception is the
-        # differentiable GPU island monolith (requires_grad): the island tiled factor has never run under autodiff, so
-        # that case still seeds the scalar per-env factor in _kernel_solve_monolith.
+        # Seed the initial Hessian factor. The decomposed arm has no self-init: its graph is linesearch-first, so its
+        # first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the graph
+        # then computes each subsequent direction at the end of an iteration). So it ALWAYS needs this seed, islands
+        # on or off. The monolith seeds it here only for non-island / CPU-island; for the GPU island case the monolith
+        # self-inits the factor per-env in its own body, so this is skipped there.
         # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
@@ -4618,11 +4616,11 @@ def func_solve_init(
             and not is_decomposed
             and static_rigid_sim_config.use_contact_island
             and static_rigid_sim_config.backend != gs.cpu
-            and static_rigid_sim_config.requires_grad
         )
     ):
-        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Skipped only for the differentiable GPU island
-        # monolith, which self-inits the gradient per-env in its own body; every other case is seeded here.
+        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Seeds the decomposed arm's first search
+        # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU island monolith, which
+        # self-inits the gradient per-env in its own body.
         func_update_gradient(
             dofs_state=dofs_state,
             entities_info=entities_info,
@@ -4789,11 +4787,10 @@ def _kernel_solve_monolith(
                 static_rigid_sim_config.use_contact_island
                 and static_rigid_sim_config.backend != gs.cpu
                 and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-                and static_rigid_sim_config.requires_grad
             ):
-                # Differentiable GPU island monolith only. For every other case func_solve_init seeds the fast tiled
-                # factor; but the island tiled factor has never run under autodiff, so here (requires_grad) seed the
-                # scalar per-env factor + gradient + search instead. Gives the first linesearch a valid Newton direction.
+                # func_solve_init skips the factor for the GPU island arms, so the monolith seeds this env's initial
+                # per-island factor + gradient + search here (it replaces the removed warp-per-env body; mirrors the
+                # CPU island init). Gives the first linesearch a valid Newton direction; once per step, then iterate.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     island_state=island_state,
