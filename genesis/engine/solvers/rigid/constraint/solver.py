@@ -4590,12 +4590,16 @@ def func_solve_init(
 
     if qd.static(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-        and not is_decomposed
-        and not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
+        and (
+            is_decomposed
+            or not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
+        )
     ):
-        # Monolith arm only (is_decomposed False). The decomposed arm always rebuilds the Hessian on its first graph
-        # iteration, so it never needs the init factor. The monolith still skips it for the GPU island case (it
-        # self-inits per-env in its body); it is done here for non-island (any backend) and CPU-island Newton.
+        # Seed the initial Hessian factor. The decomposed arm has no self-init: its graph is linesearch-first, so its
+        # first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the graph
+        # then computes each subsequent direction at the end of an iteration). So it ALWAYS needs this seed, islands
+        # on or off. The monolith seeds it here only for non-island / CPU-island; for the GPU island case the monolith
+        # self-inits the factor per-env in its own body, so this is skipped there.
         # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
@@ -4609,14 +4613,14 @@ def func_solve_init(
     if qd.static(
         not (
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-            and (
-                is_decomposed
-                or (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
-            )
+            and not is_decomposed
+            and static_rigid_sim_config.use_contact_island
+            and static_rigid_sim_config.backend != gs.cpu
         )
     ):
-        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Skipped for the decomposed arm (recomputes it
-        # in its graph loop) and for the GPU island monolith (self-inits the gradient per-env in its body).
+        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Seeds the decomposed arm's first search
+        # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU island monolith, which
+        # self-inits the gradient per-env in its own body.
         func_update_gradient(
             dofs_state=dofs_state,
             entities_info=entities_info,

@@ -69,13 +69,36 @@ Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in
 - **Hibernation needs the per-island factor.** The per-island path SKIPS hibernated islands
   (`is_hibernated`). A whole-env factor includes asleep dofs and MOVES them -> boxes wake -> hibernation
   tests fail. (This broke commit f6f7f2ffc.)
-- **[VERIFIED, exp #6 #10] The decomposed arm re-factors in its graph loop, BUT OFF still NEEDS
-  func_solve_init's factor.** Skipping it for OFF makes the decomposed arm DIVERGE (boxes free-fall). ON
-  tolerates the skip (works 26/26 with it skipped); OFF does NOT. The asymmetry is REAL and currently
-  UNEXPLAINED - do NOT skip the OFF init again until a probe explains why ON survives the skip and OFF does
-  not. (Leading hypothesis, UNVERIFIED: the per-step partition kernels that run only for ON reset
-  Mgrad/search/qacc state that the decomposed graph's first iteration relies on; for OFF that state is stale
-  garbage -> bad first step -> divergence. MUST be confirmed by probe before acting.)
+- **[VERIFIED BY PROBE 2026-06-20] The decomposed arm has NO self-init; it free-rides on func_solve_init for
+  its initial Newton direction.** The graph (solver_breakdown.py _kernel_solve_graph) does the LINESEARCH
+  FIRST (line ~997, consumes constraint_state.search) and only computes the direction at the END of each
+  iteration (_func_update_search_direction ~1061). So iteration 1's linesearch uses func_solve_init's search.
+  If func_solve_init skips the gradient (is_decomposed=True), search==0 -> DEGENERATE first linesearch ->
+  cost explodes (probe: 47k->13M over ~16 steps) -> bodies fall. The MONOLITH is immune because its kernel
+  SELF-INITS the direction (factor_batch+gradient_batch+search, solver.py ~4789) before iterating.
+  PROBE METHOD that finally worked: instrument func_solve_init to dump i_b=0 (use qd_to_torch / read fields
+  host-side and print at END, NOT in-kernel print() - that forces a per-step GPU sync) and run the REAL test
+  (conftest disables hibernation + sets prefer_decomposed_solver=int(backend!=cpu)). Earlier standalone probe
+  FAILED to repro because it left hibernation ON (default), which froze the bodies and masked divergence
+  (full-then-strip: I stripped the conftest conditions). The dump also showed dec=0 for ON / dec=1 for OFF,
+  i.e. the test runs the MONOLITH for islands-ON and the DECOMPOSED arm for OFF (arm pinning, see
+  rigid_solver.py ~615) - so the failure is the decomposed arm lacking a self-init, NOT an ON/OFF asymmetry.
+- **THE IDEA IS STILL VALID (user, explicit): forward is_decomposed and let the decomposed arm own its init.**
+- **[VERIFIED BY PROBE 2026-06-20, forced decomposed + hibernation OFF] ON and OFF are BIT-IDENTICAL and BOTH
+  DIVERGE with the init skipped** (z 0.0490->0.0294 sinking+accelerating, both). So the decomposed ON/OFF
+  invariant HOLDS; "island ON works in the test" is ARM SELECTION (test runs the MONOLITH for ON), NOT the
+  decomposed arm tolerating the skip. COROLLARY: the decomposed island-ON path had a PRE-EXISTING latent
+  divergence before Step 1 too (func_solve_init already skipped its seed for GPU-island) - masked by tests
+  using the monolith for ON + benchmarks not asserting physics. The old "decomposed ON 0.78 < OFF 0.96" was a
+  DIVERGING step vs a CORRECT step, not a parity gap. func_solve_init's factor is NOT redundant: graph is
+  linesearch-first, so func_solve_init = iteration-0 seeding iter-1's linesearch; graph iter-1 seeds iter-2.
+- **FIX (commit pending): func_solve_init ALWAYS seeds the decomposed arm.** Factor gate
+  `Newton and (is_decomposed or not(use_contact_island and backend!=cpu))`; gradient gate skip only
+  `Newton and not is_decomposed and use_contact_island and backend!=cpu` (monolith GPU-island self-inits).
+  Fixes Step-1 OFF regression AND the pre-existing decomposed ON latent divergence => correct ON==OFF parity.
+  Perf note: decomposed ON goes 0.78 (diverging) -> ~0.96 (correct, seeded). The seed factor is genuinely
+  needed (no self-init in the decomposed kernel). A FOLLOW-UP could make the graph self-seed (compute
+  direction before the first linesearch) to drop the seed factor - separate, riskier, optimize later.
 - **The env-packed monolith CANNOT host the `block_dim=T` cooperative tiled factor** in its per-env loop.
 - **CPU has no tiled factor** (tiled = GPU). So tiled-path changes are CUDA-only-validatable.
 - On CUDA, `use_contact_island` defaults FALSE (rigid_solver.py ~259, `gs.backend != gs.cuda`); on CPU/Metal
@@ -178,9 +201,22 @@ Grid island-count scaling (1 env, islands ON, ms) 8/32/128 bodies:
 10. [BROKE, REVERTED] Q2: skip func_solve_init factor+gradient also when prefer_decomposed_solver==1, on the
     theory the decomposed arm's init is redundant. 4 fail (test_solve_correctness OFF free-falls). DIRECTLY
     CONTRADICTED exp #6 (already logged: OFF needs the init). Reverted both gates. Premise was a guess.
-11. (NEXT) Do NOT touch the solve path without a probe. To actually answer Q2: instrument func_solve_init /
-    the decomposed graph's first iteration to capture Mgrad/search/qacc for ON vs OFF when the init is skipped,
-    and find what ON's partition resets that OFF lacks. Only then decide if OFF can safely skip.
+11. [DONE Step 1, CPU 10/10, CUDA pending - commit 2282e0cd3] is_decomposed plumbing (user-approved arch).
+    func_solve_init gains `is_decomposed: qd.template()`; the init launch moved OUT of resolve() INTO the two
+    dispatch entrypoints, each forwarding its hardcoded constant:
+      - func_solve_body_monolith is now a PYTHON WRAPPER: func_solve_init(is_decomposed=False) -> _kernel_solve_monolith
+        (renamed from the old kernel). Monolith factor/gradient gate unchanged (still skips GPU-island where it
+        self-inits) => monolith behavior IDENTICAL to before. Zero monolith risk.
+      - func_solve_decomposed: func_solve_init(is_decomposed=True) -> skips init factor+gradient (graph rebuilds
+        iter-1 regardless). Same for ON and OFF => decomposed ON==OFF (OFF no longer pays the redundant init).
+    KEY CORRECTION to exp #6/#10: the earlier breaks were NOT "decomposed OFF needs the init". They were the
+    skip applied to a PRE-DISPATCH kernel while the dispatcher actually ran the MONOLITH (which needs it). With
+    the bool forwarded from the real entrypoint, each arm's init matches the arm that runs - no warmup race.
+    EXPECTED CUDA: 26/26; decomposed stack OFF drops from 0.96/1.20 to ~ON (0.77/0.86); monolith unchanged.
+12. (NEXT, Step 2) Unify the monolith init onto func_solve_init's tiled func_hessian_and_cholesky_factor_direct
+    (it HAS a GPU island branch, hibernation-aware, at solver.py:2750) and DELETE the monolith self-init
+    (~solver.py:4786). Needs a FORCED-MONOLITH (prefer_decomposed_solver=0) CUDA correctness check vs OFF - the
+    suite uses decomposed for ON so it does NOT cover the monolith GPU-island init path.
 
 GIT: history has the bad commits + reverts (6b04a5e7a, f6f7f2ffc + reverts, ff4109086 Q1+Q2, then Q2 revert).
 SQUASH before pushing. NOT pushed.
