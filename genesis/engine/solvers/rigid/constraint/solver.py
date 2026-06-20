@@ -4312,26 +4312,35 @@ def func_update_gradient(
 
 
 @qd.func
-def func_terminate_or_update_descent_batch(
+def func_check_convergence_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
 ):
+    # Check convergence, i.e. whether the cost function is no longer decreasing or the gradient is flat. Sets
+    # improved; kept separate from the descent update so the decomposed arm can run it BEFORE its tiled Cholesky and
+    # skip that Cholesky (and the unused descent direction) on the converging iteration.
     n_dofs = constraint_state.jac.shape[1]
-
-    # Check convergence, i.e. whether the cost function is not longer decreasing or the gradient is flat
     tol_scaled = (rigid_global_info.meaninertia[i_b] * qd.max(1, n_dofs)) * rigid_global_info.tolerance[None]
     improvement = constraint_state.prev_cost[i_b] - constraint_state.cost[i_b]
     grad_norm = gs.qd_float(0.0)
     for i_d in range(n_dofs):
         grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
     grad_norm = qd.sqrt(grad_norm)
-    improved = grad_norm > tol_scaled and improvement > tol_scaled
-    constraint_state.improved[i_b] = improved
+    constraint_state.improved[i_b] = grad_norm > tol_scaled and improvement > tol_scaled
 
-    # Update search direction if necessary
-    if improved:
+
+@qd.func
+def func_update_descent_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Update the descent direction from the (just-solved) Mgrad. Gated on improved, which func_check_convergence_batch
+    # must have set for this iteration.
+    n_dofs = constraint_state.jac.shape[1]
+    if constraint_state.improved[i_b]:
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             for i_d in range(n_dofs):
                 constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
@@ -4355,6 +4364,19 @@ def func_terminate_or_update_descent_batch(
                 constraint_state.search[i_d, i_b] = (
                     -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
                 )
+
+
+@qd.func
+def func_terminate_or_update_descent_batch(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Combined check + descent update, used by the monolith and the non-fused / CG decomposed paths (where the factor
+    # is not a separate skippable step). The fused decomposed path calls the two halves separately around its Cholesky.
+    func_check_convergence_batch(i_b, constraint_state, rigid_global_info)
+    func_update_descent_batch(i_b, constraint_state, rigid_global_info, static_rigid_sim_config)
 
 
 @qd.func

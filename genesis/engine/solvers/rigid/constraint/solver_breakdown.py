@@ -956,6 +956,47 @@ def _func_update_search_direction(
 
 
 @qd.func
+def _func_check_convergence(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Convergence test only (sets improved). Run BEFORE the fused tiled Cholesky so a converging env skips it."""
+    _B = constraint_state.grad.shape[1]
+    qd.loop_config(
+        name="check_convergence", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+    )
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            solver.func_check_convergence_batch(
+                i_b, constraint_state=constraint_state, rigid_global_info=rigid_global_info
+            )
+
+
+@qd.func
+def _func_update_descent(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Descent-direction update from the just-solved Mgrad. Run AFTER the tiled Cholesky; gated on improved, so it is
+    skipped for envs that func_check_convergence flagged as converged this iteration (their Cholesky was also skipped).
+    """
+    _B = constraint_state.grad.shape[1]
+    qd.loop_config(
+        name="update_descent", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+    )
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            solver.func_update_descent_batch(
+                i_b,
+                rigid_global_info=rigid_global_info,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+
+
+@qd.func
 def _func_check_early_exit(
     constraint_state: array_class.ConstraintState,
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
@@ -1021,6 +1062,10 @@ def _kernel_solve_graph(
             _func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
+            # Convergence test BEFORE the tiled Cholesky: an env that has converged this iteration skips both the
+            # Cholesky+solve and the (then-unused) descent-direction update, since func_island_tiled_factor_solve_all
+            # and _func_update_descent both gate on improved. This avoids wasting a factor on the converging iteration.
+            _func_check_convergence(constraint_state, rigid_global_info, static_rigid_sim_config)
             if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
                 solver.func_island_tiled_factor_solve_all(
                     entities_info,
@@ -1039,20 +1084,24 @@ def _kernel_solve_graph(
                     static_rigid_sim_config,
                     qd.simt.Tile16x16,
                 )
+            _func_update_descent(constraint_state, rigid_global_info, static_rigid_sim_config)
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
-            # so H patching is not possible)
+            # so H patching is not possible). The Cholesky is fused into the gradient solve here, so it cannot be
+            # skipped on convergence the way the fused path's separate tiled factor can - the combined check+update runs
+            # after.
             _func_newton_only_nt_hessian_and_cholesky(
                 island_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
             _func_update_gradient(
                 entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
+            _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
         else:
             _func_update_gradient(
                 entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
-        _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
+            _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
 
 

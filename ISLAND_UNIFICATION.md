@@ -183,6 +183,15 @@ Two things keyed on `use_contact_island` that shouldn't be:
   pairs it with the improvement-based termination cleanly. If revisited: do the split, validate on BOTH CUDA
   and Metal (Metal must not regress - user requirement), use benchmarks/probe_decomp.py (forced decomposed,
   hibernation OFF) for the divergence check.
+- **Step 4 [the RIGHT optimization, no rotation]**: the rotation insight was wrong - the factor count is M+1
+  either way. The actual waste is the Cholesky+solve on the CONVERGING iteration (its direction is computed
+  then discarded because we converged). Fix WITHOUT rotation: split func_terminate_or_update_descent_batch
+  into func_check_convergence_batch (sets improved) + func_update_descent_batch (search from Mgrad, gated on
+  improved); keep a combined wrapper for the monolith + non-fused/CG. In the FUSED decomposed graph path run
+  _func_check_convergence BEFORE func_island_tiled_factor_solve_all - both the tiled factor and _func_update_descent
+  gate on improved, so a converged env skips the Cholesky and the unused descent update. Convergence decision
+  is identical (check reads grad/cost, which the Cholesky does not change). Stays linesearch-first - no loop
+  rotation, no CG/early-exit phase issues. Validate CUDA (suite + probe + bench) AND Metal (suite).
 
 ## VALIDATION RECIPE (cluster)
 - Code is editable locally; the decomposed/tiled path is GPU-only -> validate on CUDA cluster.
