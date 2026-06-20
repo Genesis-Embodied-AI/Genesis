@@ -764,8 +764,8 @@ def _func_build_changed_and_decide_hessian_mode(
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-            # First graph iteration must do full rebuild: nt_H contains L from func_solve_init's Cholesky, not H.
-            # Patching L would be wrong.
+            # First graph iteration must do a full rebuild: func_solve_init only sets up state for the decomposed arm
+            # (it does not factor), so nt_H holds no valid Hessian yet - there is nothing to delta-patch against.
             if iter_count <= 1:
                 constraint_state.use_full_hessian[i_b] = 1
             else:
@@ -993,17 +993,14 @@ def _kernel_solve_graph(
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
 ):
     while qd.graph_do_while(graph_counter):
-        # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost
-        _func_decomp_linesearch_p0(
-            dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
-        )
-        # Fused: refinement + apply alpha
-        _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
+        # Direction-first iteration: compute the Newton/CG step at the CURRENT state, then linesearch along it, then
+        # refresh the constraint state at the new qacc for the next iteration. Iteration 1 uses the state that
+        # func_solve_init set up (qacc/Ma/Jaref/forces/qfrc/cost), so the decomposed arm needs NO separate seed factor
+        # - func_solve_init only sets up state for this arm, it does not factor (the monolith, which is linesearch-
+        # first, still seeds in func_solve_init). The cost/improved refresh stays at the END so early-exit sees this
+        # iteration's progress with no phase offset, and the per-env improved gate skips the factor for converged envs.
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
-        _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
-        _func_update_qfrc_constraint_per_dof(constraint_state, island_state, static_rigid_sim_config)
-        _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.hessian_fits_shared
@@ -1053,6 +1050,16 @@ def _kernel_solve_graph(
                 entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
         _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
+        # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost (linesearch along the direction just computed)
+        _func_decomp_linesearch_p0(
+            dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+        # Fused: refinement + apply alpha
+        _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
+        # Refresh constraint state at the new qacc: feeds the next iteration's factor and sets improved for early-exit.
+        _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
+        _func_update_qfrc_constraint_per_dof(constraint_state, island_state, static_rigid_sim_config)
+        _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
 
 
