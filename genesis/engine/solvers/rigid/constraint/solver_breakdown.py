@@ -1086,10 +1086,9 @@ def _kernel_solve_graph(
                 )
             _func_update_descent(constraint_state, rigid_global_info, static_rigid_sim_config)
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
-            # so H patching is not possible). The Cholesky is fused into the gradient solve here, so it cannot be
-            # skipped on convergence the way the fused path's separate tiled factor can - the combined check+update runs
-            # after.
+            # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L, so H
+            # patching is not possible). The Cholesky is fused into the gradient solve here, so it cannot be skipped on
+            # convergence the way the fused path's separate tiled factor can - the combined check+update runs after.
             _func_newton_only_nt_hessian_and_cholesky(
                 island_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
