@@ -1860,7 +1860,6 @@ def func_hessian_direct_batch(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    force_whole_env: qd.template() = False,
 ):
     """Compute the Hessian H = M + J.T @ D @ J of one work-unit. Only the lower triangle is written (H is
     symmetric); the solver always reads from the lower triangle.
@@ -1873,7 +1872,7 @@ def func_hessian_direct_batch(
     """
     EPS = rigid_global_info.EPS[None]
 
-    if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+    if qd.static(static_rigid_sim_config.use_contact_island):
         n = island_state.dof_slices.n[i_island, i_b]
         dof_base = island_state.dof_slices.start[i_island, i_b]
         con_base = island_state.constraint_slices.start[i_island, i_b]
@@ -2337,7 +2336,6 @@ def func_cholesky_factor_direct_batch(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    force_whole_env: qd.template() = False,
 ):
     """Compute the Cholesky factorization L of one work-unit's Hessian H = L @ L.T in place.
 
@@ -2351,7 +2349,7 @@ def func_cholesky_factor_direct_batch(
     """
     EPS = rigid_global_info.EPS[None]
 
-    if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+    if qd.static(static_rigid_sim_config.use_contact_island):
         n = island_state.dof_slices.n[i_island, i_b]
         dof_base = island_state.dof_slices.start[i_island, i_b]
         # Factor the island's block in place at its global DOF rows/cols (dof_id is ascending, so all accesses below
@@ -2695,12 +2693,11 @@ def func_hessian_and_cholesky_factor_direct_batch(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     compute_envelope: qd.template() = False,
-    force_whole_env: qd.template() = False,
 ):
     # Combined Hessian build + Cholesky factor for one env. With islands the block-diagonal Hessian is assembled and
     # factored per island; otherwise the whole env is the single work-unit i_island = 0. compute_envelope sets each
     # island's structural skyline envelope first (callers do this once per step, then leave it False).
-    if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+    if qd.static(static_rigid_sim_config.use_contact_island):
         for i_island in range(island_state.n_islands[i_b]):
             if qd.static(static_rigid_sim_config.use_hibernation):
                 if island_state.is_hibernated[i_island, i_b]:
@@ -2721,17 +2718,10 @@ def func_hessian_and_cholesky_factor_direct_batch(
             )
     else:
         func_hessian_direct_batch(
-            i_b,
-            0,
-            island_state,
-            entities_info,
-            constraint_state,
-            rigid_global_info,
-            static_rigid_sim_config,
-            force_whole_env,
+            i_b, 0, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
         )
         func_cholesky_factor_direct_batch(
-            i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config, force_whole_env
+            i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
         )
 
 
@@ -2743,7 +2733,6 @@ def func_hessian_and_cholesky_factor_direct(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     compute_envelope: qd.template() = False,
-    force_whole_env: qd.template() = False,
 ):
     """
     Unified implementation of Hessian matrix computation with Cholesky factorization optimized for both CPU and GPU
@@ -2758,7 +2747,7 @@ def func_hessian_and_cholesky_factor_direct(
     """
     _B = constraint_state.jac.shape[2]
 
-    if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+    if qd.static(static_rigid_sim_config.use_contact_island):
         # The block-diagonal Hessian factors per island; spread the islands across the (env, island) grid so they run
         # concurrently rather than serially within each env. max_islands bounds the per-env island count (at most one
         # island per link); the guard skips the unused tail.
@@ -2802,7 +2791,6 @@ def func_hessian_and_cholesky_factor_direct(
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
-                force_whole_env=force_whole_env,
             )
     else:
         # GPU
@@ -2821,7 +2809,7 @@ def func_hessian_and_cholesky_factor_direct(
             qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
                 func_cholesky_factor_direct_batch(
-                    i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config, force_whole_env
+                    i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
                 )
 
 
@@ -2940,11 +2928,10 @@ def func_hessian_and_cholesky_factor_incremental_batch(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    force_whole_env: qd.template() = False,
 ) -> bool:
     # The incremental rank-1 update assumes a single dense system, so with islands the block-diagonal Hessian is
     # rebuilt and factored directly per island instead (never degenerate).
-    if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+    if qd.static(static_rigid_sim_config.use_contact_island):
         func_hessian_and_cholesky_factor_direct_batch(
             i_b, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
         )
@@ -2972,7 +2959,6 @@ def func_cholesky_solve_batch(
     island_state: array_class.IslandState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
-    force_whole_env: qd.template() = False,
 ):
     # Solve L @ L.T @ Mgrad = grad for one work-unit. With islands, the unit is island i_island: its factored
     # L is the packed n x n tile at tile_start, and grad/Mgrad stay global-indexed via the block-gather
@@ -2980,7 +2966,7 @@ def func_cholesky_solve_batch(
     # solve is independent and equals the single dense solve. Without islands, the unit is the whole env and
     # i_island is unused: L is in nt_H (in-place factorization), and with the skyline envelope the triangular
     # solves visit only the envelope of L (its nonzeros match the factorization's).
-    if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+    if qd.static(static_rigid_sim_config.use_contact_island):
         n = island_state.dof_slices.n[i_island, i_b]
         dof_base = island_state.dof_slices.start[i_island, i_b]
         # L is stored in the island's block of nt_H at its global DOF rows/cols (dof_id ascending -> lower
@@ -4187,7 +4173,6 @@ def func_update_gradient_batch(
     rigid_global_info: array_class.RigidGlobalInfo,
     island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
-    force_whole_env: qd.template() = False,
 ):
     n_dofs = constraint_state.grad.shape[0]
 
@@ -4209,7 +4194,7 @@ def func_update_gradient_batch(
         )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        if qd.static(static_rigid_sim_config.use_contact_island and not force_whole_env):
+        if qd.static(static_rigid_sim_config.use_contact_island):
             # Mgrad = H^{-1} @ grad solved per island on each island's local tile (factored above).
             for i_island in range(island_state.n_islands[i_b]):
                 if qd.static(static_rigid_sim_config.use_hibernation):
@@ -4217,7 +4202,7 @@ def func_update_gradient_batch(
                         continue
                 func_cholesky_solve_batch(i_b, i_island, island_state, constraint_state, static_rigid_sim_config)
         else:
-            func_cholesky_solve_batch(i_b, 0, island_state, constraint_state, static_rigid_sim_config, force_whole_env)
+            func_cholesky_solve_batch(i_b, 0, island_state, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -4278,7 +4263,6 @@ def func_update_gradient(
     rigid_global_info: array_class.RigidGlobalInfo,
     island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
-    force_whole_env: qd.template() = False,
 ):
     """
     Unified implementation of gradient updated optimized for both CPU and GPU backends.
@@ -4313,7 +4297,6 @@ def func_update_gradient(
                 rigid_global_info=rigid_global_info,
                 island_state=island_state,
                 static_rigid_sim_config=static_rigid_sim_config,
-                force_whole_env=force_whole_env,
             )
     else:
         # GPU
@@ -4615,7 +4598,6 @@ def func_solve_init(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             compute_envelope=True,
-            force_whole_env=True,
         )
 
     if qd.static(
@@ -4634,7 +4616,6 @@ def func_solve_init(
             rigid_global_info=rigid_global_info,
             island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
-            force_whole_env=True,
         )
 
     qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -4704,7 +4685,6 @@ def func_solve_iter(
                     constraint_state=constraint_state,
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
-                    force_whole_env=True,
                 )
             else:
                 is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
@@ -4714,7 +4694,6 @@ def func_solve_iter(
                     constraint_state=constraint_state,
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
-                    force_whole_env=True,
                 )
                 if is_degenerated:
                     func_hessian_and_cholesky_factor_direct_batch(
@@ -4724,7 +4703,6 @@ def func_solve_iter(
                         constraint_state=constraint_state,
                         rigid_global_info=rigid_global_info,
                         static_rigid_sim_config=static_rigid_sim_config,
-                        force_whole_env=True,
                     )
 
         func_update_gradient_batch(
@@ -4735,7 +4713,6 @@ def func_solve_iter(
             constraint_state=constraint_state,
             island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
-            force_whole_env=True,
         )
 
         func_terminate_or_update_descent_batch(
@@ -4817,7 +4794,6 @@ def func_solve_body_monolith(
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                     compute_envelope=True,
-                    force_whole_env=True,
                 )
                 func_update_gradient_batch(
                     i_b,
@@ -4827,7 +4803,6 @@ def func_solve_body_monolith(
                     constraint_state=constraint_state,
                     island_state=island_state,
                     static_rigid_sim_config=static_rigid_sim_config,
-                    force_whole_env=True,
                 )
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
