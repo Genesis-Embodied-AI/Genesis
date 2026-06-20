@@ -4583,12 +4583,14 @@ def func_solve_init(
     constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(
-        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton and static_rigid_sim_config.backend == gs.cpu
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        and not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
     ):
-        # CPU Newton factors the initial Hessian here (CPU runs only the monolith arm). The GPU arms factor in their own
-        # solve body so the autotuner measures each arm's true cost: the decomposed arm re-factors (tiled) inside its
-        # graph loop and would be charged twice for a factor here, and the monolith self-inits per-env at the start of
-        # its loop. compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
+        # Factor the initial Hessian here for non-island (any backend) and CPU-island Newton. The GPU island arms skip
+        # it: the decomposed arm re-factors (tiled) inside its graph loop and the redundant scalar per-island factor
+        # here would cost ~5x, and the monolith self-inits per-env at the start of its loop. The non-island whole-env
+        # factor stays here for both arms (cheap, and the decomposed arm needs its first search direction seeded).
+        # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
             entities_info=entities_info,
@@ -4600,12 +4602,13 @@ def func_solve_init(
 
     if qd.static(
         not (
-            static_rigid_sim_config.backend != gs.cpu
+            static_rigid_sim_config.use_contact_island
+            and static_rigid_sim_config.backend != gs.cpu
             and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
         )
     ):
-        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). The GPU Newton arms recompute it in their own
-        # solve body (decomposed in its graph loop, monolith at the start of its loop), so it is skipped here.
+        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). The GPU island Newton arms recompute it in their
+        # own solve body (decomposed in its graph loop, monolith at the start of its loop), so it is skipped here.
         func_update_gradient(
             dofs_state=dofs_state,
             entities_info=entities_info,
@@ -4776,12 +4779,13 @@ def func_solve_body_monolith(
             has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
         if has_awake_work:
             if qd.static(
-                static_rigid_sim_config.backend != gs.cpu
+                static_rigid_sim_config.use_contact_island
+                and static_rigid_sim_config.backend != gs.cpu
                 and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             ):
-                # func_solve_init does no GPU factor, so seed this env's initial factor + gradient + search here,
-                # identically for islands ON and OFF (the factor branches block-diagonal vs whole-env inside, the one
-                # partition effect). Gives the first linesearch a valid Newton direction; once per step, then iterate.
+                # func_solve_init skips the factor for the GPU island arms, so the monolith seeds this env's initial
+                # per-island factor + gradient + search here (it replaces the removed warp-per-env body; mirrors the
+                # CPU island init). Gives the first linesearch a valid Newton direction; once per step, then iterate.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     island_state=island_state,
