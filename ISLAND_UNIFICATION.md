@@ -73,9 +73,24 @@ Rule from the user: **NOTHING may be forced whole-env.** Everything parallel ove
   env. This mirrors Q1 exactly (single island -> whole-env incremental iterations). Keep per-island only for
   multi-island / hibernation (where asleep islands must be skipped and the whole-env factor would move them).
   Expect monolith single-island ON ~3.3ms -> ~1.1ms (== OFF).
-- DECOMPOSED 3.4x is SEPARATE + still open: it uses the TILED func_island_tiled_factor_solve_all (not the
-  scalar path) and runs in an opaque graph_do_while the profiler can't sub-divide. Its ON penalty is a
-  different mechanism; needs graph-level dbg-counter instrumentation, not the profiler.
+- DECOMPOSED 3.4x RESOLVED (2026-06-21) - SAME ROOT CAUSE as the monolith. Full decomposed-ON profile:
+  `func_solve_init ... hess_cholesky_factor_direct_island` = 2.209ms (73%). That is func_solve_init's
+  always-seed factor taking the SCALAR per-island branch (func_hessian_direct_batch + func_cholesky_factor_
+  direct_batch, solver.py 2748-2771) - the SAME scalar single-big-island Cholesky as the monolith. For the
+  decomposed it is also DOUBLY WASTED: the graph re-factors per-island per iteration, so the seed factor's L
+  is thrown away (only its gradient/search seed is used).
+- ROOT (both arms): scalar ONE-THREAD-PER-ISLAND Cholesky of a SINGLE 48-dof island ~2.2ms; OFF uses the
+  32-lane TILED whole-env factor ~0.13ms. This is bad ONLY for a single big island - for many small islands
+  the per-island scalar is fine (tiny blocks, parallel over (env,island)) and whole-env there = the O(n^3)
+  cubic blowup (the force_whole_env catastrophe). So the fix MUST gate on n_islands==1.
+- ONE FIX (both arms, proposed): when n_islands==1 (single island = whole env) and not hibernation, use the
+  TILED whole-env factor + gradient (func_hessian_direct_tiled + func_cholesky_factor_direct_tiled +
+  func_update_gradient_tiled) instead of the scalar per-island path, in func_hessian_and_cholesky_factor_direct
+  + func_update_gradient. Decomposed: seed becomes tiled (graph still re-factors per-island - per-iteration
+  scaling unchanged). Monolith: single-island init becomes tiled (iter already whole-env incremental via Q1).
+  COMPLICATION: the tiled factor is whole-env/cooperative; needs an n_islands==1 route that does NOT send
+  many-island envs whole-env (cubic). Mixed batches (some envs single, some multi island) are the hard case.
+  Expect both arms single-island ON ~3.3ms -> ~1.1ms. NOT yet implemented - confirm approach (cubic risk).
 
 ## ARCHITECTURE (read before touching anything)
 Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in solver_breakdown.py):
