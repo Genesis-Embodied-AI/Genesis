@@ -1006,21 +1006,15 @@ def _kernel_solve_graph(
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-            and (
-                static_rigid_sim_config.use_contact_island
-                or (
-                    static_rigid_sim_config.enable_tiled_cholesky_hessian
-                    and static_rigid_sim_config.hessian_fits_shared
-                )
-            )
+            and static_rigid_sim_config.hessian_fits_shared
         ):
-            # Unified Newton path (islands ON, and islands OFF when the whole-env Hessian fits shared): the SAME
-            # incremental assembly - full rebuild when the active set changed a lot, delta patch otherwise - then a
-            # per-island barrier-free tiled factor + solve that READS the maintained nt_H. Each changed constraint's
-            # J^T D J lands inside its island's diagonal block since no constraint couples DOFs across islands, so the
-            # patch is island-correct unchanged. An unpartitioned env is a single island spanning every dof, so islands
-            # ON/OFF differ only in how dofs are grouped, not in the solve. A whole-env Hessian too big for shared
-            # falls through to the non-fused path below.
+            # Unified Newton path, identical for islands ON and OFF: the SAME incremental assembly - full rebuild when
+            # the active set changed a lot, delta patch otherwise - then a per-island barrier-free tiled factor + solve
+            # that READS the maintained nt_H. Gated only on whether the tiled L fits shared memory, never on
+            # use_contact_island, so ON and OFF run the exact same solver and differ only in the partition (OFF is a
+            # single island spanning every dof). Each changed constraint's J^T D J lands inside its island's diagonal
+            # block since no constraint couples DOFs across islands, so the patch is island-correct unchanged. A
+            # whole-env Hessian too big for shared falls through to the non-fused path below.
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
             _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
             _func_patch_hessian_delta(constraint_state, rigid_global_info)

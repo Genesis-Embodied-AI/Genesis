@@ -4583,10 +4583,11 @@ def func_solve_init(
     constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(
-        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-        and not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton and static_rigid_sim_config.backend == gs.cpu
     ):
-        # Non-island and CPU-island Newton: factor the whole-env (tiled/sparse) or per-island (scalar) Hessian here.
+        # CPU Newton factors the initial Hessian here (CPU runs only the monolith arm). Both GPU arms factor in their
+        # own solve body instead - decomposed in its graph loop, monolith at the start of its per-env loop - identically
+        # for islands ON and OFF, so func_solve_init never does a GPU factor the autotuner might discard.
         # compute_envelope=True computes each island's structural skyline envelope once, reused across iterations.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
@@ -4599,13 +4600,12 @@ def func_solve_init(
 
     if qd.static(
         not (
-            static_rigid_sim_config.use_contact_island
-            and static_rigid_sim_config.backend != gs.cpu
+            static_rigid_sim_config.backend != gs.cpu
             and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
         )
     ):
-        # The island GPU Newton arm computes the initial gradient + cooperative per-island factor/solve in the
-        # warp-per-env solve body instead, so it is skipped here to avoid a scalar one-thread-per-island factor.
+        # Both GPU Newton arms compute the initial gradient in their own solve body (decomposed in its graph loop,
+        # monolith at the start of its per-env loop), so it is skipped here. CPU Newton and the CG solver compute it.
         func_update_gradient(
             dofs_state=dofs_state,
             entities_info=entities_info,
@@ -4743,209 +4743,9 @@ def func_solve_body(
 ) -> None: ...
 
 
-@qd.func
-def func_island_factor_solve_all_coop(
-    i_b,
-    tid,
-    L_sh,
-    v_sh,
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    island_state: array_class.IslandState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-    TileCls: qd.template(),
-):
-    # Factor + solve every awake island of env i_b: the T lanes of the tile work one island after another, each
-    # island's Hessian assembled, factored and solved across all lanes with the barrier-free register-streaming tiles
-    # (the same path as the non-island whole-env factor). Hibernated islands are skipped. Ends with a warp barrier so
-    # the freshly written Mgrad is visible to lane 0.
-    for i_island in range(island_state.n_islands[i_b]):
-        do_island = True
-        if qd.static(static_rigid_sim_config.use_hibernation):
-            if island_state.is_hibernated[i_island, i_b]:
-                do_island = False
-        if do_island:
-            func_island_assemble_factor_solve_tiled(
-                i_b,
-                i_island,
-                tid,
-                L_sh,
-                v_sh,
-                entities_info,
-                constraint_state,
-                island_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-                True,
-                TileCls,
-            )
-    qd.simt.block.sync()
-
-
-@qd.func
-def func_solve_iter_warp(
-    i_b,
-    tid,
-    L_sh,
-    v_sh,
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    island_state: array_class.IslandState,
-    static_rigid_sim_config: qd.template(),
-    TileCls: qd.template(),
-):
-    # One Newton iteration for env i_b run by a T-lane tile. The per-env vector ops (linesearch, the qacc/Ma/Jaref
-    # step, the constraint/cost refresh, the gradient, the termination test) are serial and run on lane 0 exactly as
-    # in the scalar arm. The per-island Hessian assemble + factor + solve - the only step that was a one-thread-per-
-    # island scalar factor - runs across all T lanes with the barrier-free tiled path (func_island_factor_solve_all_coop
-    # -> func_island_assemble_factor_solve_tiled), one island after another. block.sync fences lane 0's global writes
-    # before the cooperative read, and the cooperative writes before the termination test.
-    n_dofs = constraint_state.qacc.shape[0]
-    if tid == 0:
-        alpha = func_linesearch_batch(
-            i_b,
-            entities_info=entities_info,
-            dofs_state=dofs_state,
-            rigid_global_info=rigid_global_info,
-            constraint_state=constraint_state,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-        if qd.abs(alpha) < rigid_global_info.EPS[None]:
-            constraint_state.improved[i_b] = False
-        else:
-            for i_d in range(n_dofs):
-                constraint_state.qacc[i_d, i_b] = (
-                    constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
-                )
-                constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
-            for i_c in range(constraint_state.n_constraints[i_b]):
-                constraint_state.Jaref[i_c, i_b] = (
-                    constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
-                )
-            func_update_constraint_batch(
-                i_b,
-                qacc=constraint_state.qacc,
-                Ma=constraint_state.Ma,
-                cost=constraint_state.cost,
-                dofs_state=dofs_state,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            # grad = Ma - force - qfrc_constraint (the gradient part of func_update_gradient_batch; the per-island
-            # cooperative factor+solve below produces Mgrad = H^-1 grad).
-            for i_d in range(n_dofs):
-                constraint_state.grad[i_d, i_b] = (
-                    constraint_state.Ma[i_d, i_b]
-                    - dofs_state.force[i_d, i_b]
-                    - constraint_state.qfrc_constraint[i_d, i_b]
-                )
-    qd.simt.block.sync()
-
-    if constraint_state.improved[i_b]:
-        func_island_factor_solve_all_coop(
-            i_b,
-            tid,
-            L_sh,
-            v_sh,
-            entities_info,
-            constraint_state,
-            island_state,
-            rigid_global_info,
-            static_rigid_sim_config,
-            TileCls,
-        )
-        if tid == 0:
-            func_terminate_or_update_descent_batch(
-                i_b,
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-    qd.simt.block.sync()
-
-
-@qd.func
-def func_solve_islands_tiled_body(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    island_state: array_class.IslandState,
-    static_rigid_sim_config: qd.template(),
-    TileCls: qd.template(),
-):
-    # Island Newton on GPU: one T-lane tile per env (T = cholesky_tile_size). Per-env steps run on lane 0; each
-    # island's Hessian assemble + factor + solve run across all T lanes with the barrier-free register-streaming tiled
-    # path on the island's contiguous DOF block - so a single island spanning the whole env is factored exactly as the
-    # non-island whole-env tiled factor (islands-on == islands-off), and multiple islands are factored one after
-    # another, each on its own contiguous block. No one-thread-per-island scalar factor.
-    _B = constraint_state.grad.shape[1]
-    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
-    T = qd.static(static_rigid_sim_config.cholesky_tile_size)
-    qd.loop_config(block_dim=T)
-    for i in range(_B * T):
-        i_b = i // T
-        tid = i % T
-        # +1 column padding avoids shared-memory bank conflicts on column-wise access during factor/solve.
-        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
-        v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
-        n_dofs = constraint_state.qacc.shape[0]
-        has_awake_work = constraint_state.n_constraints[i_b] > 0
-        if qd.static(static_rigid_sim_config.use_hibernation):
-            has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
-        if has_awake_work:
-            # Initial factor + solve at the warmstart point. func_solve_init deferred the island factor/gradient to
-            # here: lane 0 computes the gradient, the tile factors and solves each island, then lane 0 sets search.
-            if tid == 0:
-                for i_d in range(n_dofs):
-                    constraint_state.grad[i_d, i_b] = (
-                        constraint_state.Ma[i_d, i_b]
-                        - dofs_state.force[i_d, i_b]
-                        - constraint_state.qfrc_constraint[i_d, i_b]
-                    )
-            qd.simt.block.sync()
-            func_island_factor_solve_all_coop(
-                i_b,
-                tid,
-                L_sh,
-                v_sh,
-                entities_info,
-                constraint_state,
-                island_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-                TileCls,
-            )
-            if tid == 0:
-                for i_d in range(n_dofs):
-                    constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
-            qd.simt.block.sync()
-            for _ in range(rigid_global_info.iterations[None]):
-                func_solve_iter_warp(
-                    i_b,
-                    tid,
-                    L_sh,
-                    v_sh,
-                    entities_info,
-                    dofs_state,
-                    rigid_global_info,
-                    constraint_state,
-                    island_state,
-                    static_rigid_sim_config,
-                    TileCls,
-                )
-                if not constraint_state.improved[i_b]:
-                    break
-        elif tid == 0:
-            constraint_state.improved[i_b] = False
-
-
 @func_solve_body.register(
-    # Runs whenever the decomposed arm is not specifically preferred. Both arms carry the per-island Newton solve
-    # (monolith scalar, decomposed warp-cooperative); prefer_decomposed_solver selects between them.
+    # Runs whenever the decomposed arm is not specifically preferred. Solves each env whole with 32 envs packed per
+    # warp; islands only reshape the per-env factor into block-diagonal blocks, they do not change the solve scheme.
     is_compatible=lambda *args, **kwargs: (
         (static_rigid_sim_config := _get_static_config(*args, **kwargs)).prefer_decomposed_solver != 1
     )
@@ -4962,58 +4762,61 @@ def func_solve_body_monolith(
     island_state: array_class.IslandState,
 ):
     _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.qacc.shape[0]
 
-    if qd.static(
-        static_rigid_sim_config.use_contact_island
-        and static_rigid_sim_config.backend != gs.cpu
-        and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-    ):
-        # Island Newton on GPU: a Tile class cannot be selected into a local via ternary (it must be a template arg),
-        # so dispatch on the tile size and run the tiled per-island solve body.
-        if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
-            func_solve_islands_tiled_body(
-                entities_info,
-                dofs_state,
-                rigid_global_info,
-                constraint_state,
-                island_state,
-                static_rigid_sim_config,
-                qd.simt.Tile32x32,
-            )
+    # The monolith arm solves each env whole (32 envs packed per warp); islands change only the per-env factor's block
+    # structure, handled inside func_solve_iter, not the iteration scheme. Per-island parallelism is the decomposed
+    # arm's job, so there is no separate island body here - ON and OFF run the identical packed-env solve.
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    for i_b in range(_B):
+        # A fully-asleep env has no awake DOF to move, so its Newton solve is a no-op. Skip the whole iteration loop
+        # so step time tracks the awake set, not the total body count.
+        has_awake_work = constraint_state.n_constraints[i_b] > 0
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
+        if has_awake_work:
+            if qd.static(
+                static_rigid_sim_config.backend != gs.cpu
+                and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            ):
+                # func_solve_init does no GPU factor, so the monolith does this env's initial factor + gradient +
+                # search here, identically for islands ON and OFF (the factor is block-diagonal when partitioned, dense
+                # otherwise - the one partition effect). Gives the first linesearch a valid Newton direction; run once
+                # per step, func_solve_iter handles the rest.
+                func_hessian_and_cholesky_factor_direct_batch(
+                    i_b,
+                    island_state=island_state,
+                    entities_info=entities_info,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    compute_envelope=True,
+                )
+                func_update_gradient_batch(
+                    i_b,
+                    dofs_state=dofs_state,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    island_state=island_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                for i_d in range(n_dofs):
+                    constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+            for _ in range(rigid_global_info.iterations[None]):
+                func_solve_iter(
+                    i_b,
+                    entities_info=entities_info,
+                    dofs_state=dofs_state,
+                    rigid_global_info=rigid_global_info,
+                    constraint_state=constraint_state,
+                    island_state=island_state,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                if not constraint_state.improved[i_b]:
+                    break
         else:
-            func_solve_islands_tiled_body(
-                entities_info,
-                dofs_state,
-                rigid_global_info,
-                constraint_state,
-                island_state,
-                static_rigid_sim_config,
-                qd.simt.Tile16x16,
-            )
-    else:
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-        for i_b in range(_B):
-            # A fully-asleep env has no awake DOF to move, so its Newton solve is a no-op (every island is
-            # hibernated and skipped per-island anyway). Skip the whole iteration loop so step time tracks the
-            # awake set, not the total body count.
-            has_awake_work = constraint_state.n_constraints[i_b] > 0
-            if qd.static(static_rigid_sim_config.use_hibernation):
-                has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
-            if has_awake_work:
-                for _ in range(rigid_global_info.iterations[None]):
-                    func_solve_iter(
-                        i_b,
-                        entities_info=entities_info,
-                        dofs_state=dofs_state,
-                        rigid_global_info=rigid_global_info,
-                        constraint_state=constraint_state,
-                        island_state=island_state,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                    )
-                    if not constraint_state.improved[i_b]:
-                        break
-            else:
-                constraint_state.improved[i_b] = False
+            constraint_state.improved[i_b] = False
 
 
 # =====================================================================================================================
