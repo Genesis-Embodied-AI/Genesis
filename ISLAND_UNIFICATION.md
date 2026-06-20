@@ -47,6 +47,35 @@ Rule from the user: **NOTHING may be forced whole-env.** Everything parallel ove
   (probably the per-step partition resets state ON relies on), while OFF correctly does it. WHY ON tolerates
   the skip but OFF can't is NOT understood - do not retry the skip without answering that first.
 
+## PERF FINDINGS + MONOLITH SINGLE-ISLAND FIX (2026-06-21)
+- Split fix (Step 4, skip the converging-iteration Cholesky) was REVERTED: A/B showed ~1-3% (within noise),
+  and it increased complexity (1 func -> 3, two loop patterns). NOT worth it. The ~15% I floated was wrong -
+  computed vs the 0.8ms DIVERGING baseline; settled solves do 1 iteration/step (probe confirmed), so there is
+  no "extra" converging-iteration Cholesky to skip.
+- Q1 ANSWERED + original Q2 wording MOOT. Both questions were about single-island ON-vs-OFF speed. Data
+  (BENCH_ARM forces the arm; stack 8 = single connected island; settled = 1 Newton iter/step both ON and OFF):
+    monolith   stack8 1env  OFF 1.09ms  ON 3.27ms (3.0x)
+    decomposed stack8 1env  OFF 0.96ms  ON 3.26ms (3.4x)
+  So monolith ~= decomposed, and the ~3x ON penalty is the SAME on both arms. NOT iteration count (1 both),
+  NOT the partition (kernel_build_islands + group ~0.1ms total).
+- MONOLITH per-kernel profile (qd.profiler DOES break down per-loop within a kernel) is decisive:
+    _kernel_solve_monolith   OFF 0.366ms   ON 2.558ms (7x)
+    func_solve_init hessian_direct_tiled (0.075) + cholesky_fused_tiled (0.057) = 0.13ms  -> present OFF, ABSENT ON
+  MECHANISM: OFF gets the fast TILED init factor from func_solve_init; the kernel then just iterates. ON
+  (GPU island) SKIPS that tiled factor (old gate), so _kernel_solve_monolith does a SCALAR one-thread-per-env
+  self-init (func_hessian_and_cholesky_factor_direct_batch + gradient_batch) - that scalar 48-dof Cholesky is
+  the ~2.2ms. Confirmed by the tiled-factor segments literally vanishing from the ON profile.
+- FIX (commit pending): func_solve_init now runs its TILED factor for the monolith GPU-island case too (proven
+  safe - the decomposed arm already uses that exact tiled island factor on GPU), and the scalar self-init in
+  _kernel_solve_monolith is gated OFF except for requires_grad. So factor/gradient gates skip ONLY
+  `not is_decomposed and use_contact_island and backend!=cpu and requires_grad`; the self-init branch gets the
+  same `and requires_grad`. requires_grad keeps the scalar self-init because the island tiled factor has never
+  run under autodiff (decomposed excludes grad). Expect monolith ON ~3.3ms -> ~1.1ms (== OFF). Validate CPU +
+  CUDA + Metal + re-measure.
+- DECOMPOSED 3.4x STILL OPEN: its init is already tiled (func_solve_init seeds it) and its solve runs in an
+  opaque graph_do_while the profiler can't sub-divide, so the decomposed ON penalty is a DIFFERENT mechanism -
+  needs graph-level dbg-counter instrumentation, not the profiler. Separate follow-up.
+
 ## ARCHITECTURE (read before touching anything)
 Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in solver_breakdown.py):
 - **monolith** (`func_solve_body_monolith`, solver.py): ONE @qd.kernel, env-packed (`block_dim=32`, 32
