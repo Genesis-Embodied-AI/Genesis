@@ -343,24 +343,3 @@ def kernel_build_islands(
             if i_island >= 0:
                 island_state.contact_id[island_state.contact_slices.curr[i_island, i_b], i_b] = i_col
                 island_state.contact_slices.curr[i_island, i_b] = island_state.contact_slices.curr[i_island, i_b] + 1
-
-
-@qd.kernel
-def kernel_build_island_worklist(island_state: array_class.IslandState):
-    """Flatten the per-env islands into a single (env, island) work-list for the decomposed arm's warp-cooperative
-    per-island dispatch.
-
-    Runs serially in one thread (cheap: one write per island) so the running cursor stays consistent; the dispatch does
-    not depend on ordering. Resets the atomic steal cursor for the step.
-    """
-    _B = island_state.n_islands.shape[0]
-    i_work = gs.qd_int(0)
-
-    qd.loop_config(serialize=True)
-    for i_b in range(_B):
-        for i_island in range(island_state.n_islands[i_b]):
-            island_state.work_i_b[i_work] = i_b
-            island_state.work_i_island[i_work] = i_island
-            i_work = i_work + 1
-    island_state.work_size[0] = i_work
-    island_state.work_counter[0] = 0

@@ -652,14 +652,6 @@ class IslandState:
     # Per-constraint island label (-1 if the constraint touches no dof-island), resolved in parallel by the
     # constraint scan so the serial per-island grouping can read it in O(1) instead of rescanning the Jacobian.
     constraint_island_idx: qd.Tensor
-    # Flat (env, island) work-list for the decomposed arm's warp-cooperative per-island dispatch. work_i_b[k] /
-    # work_i_island[k] identify the k-th island across all envs; work_size[0] is the total island count
-    # (Sum_b n_islands[b]); work_counter[0] is the atomic steal cursor. Only consumed when the decomposed arm
-    # solves islands; the monolith arm walks islands directly without the work-list.
-    work_i_b: qd.Tensor
-    work_i_island: qd.Tensor
-    work_size: qd.Tensor
-    work_counter: qd.Tensor
     # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every link is
     # asleep, set by the partition build. hibernated_next_link is the per-link daisy chain that keeps a hibernated
     # component together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
@@ -696,11 +688,6 @@ def get_island_state(solver, collider):
         constraint_slices=get_slices(solver),
         constraint_id=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
         constraint_island_idx=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
-        # Work-list spans every (env, island); at most n_links islands per env.
-        work_i_b=V(dtype=gs.qd_int, shape=(n_links * _B,)),
-        work_i_island=V(dtype=gs.qd_int, shape=(n_links * _B,)),
-        work_size=V(dtype=gs.qd_int, shape=(1,)),
-        work_counter=V(dtype=gs.qd_int, shape=(1,)),
         is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
         hibernated_next_link=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
     )
