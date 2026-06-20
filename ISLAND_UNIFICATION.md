@@ -23,7 +23,18 @@ Make the rigid constraint solver behave identically for islands ON vs OFF, with 
 Rule from the user: **NOTHING may be forced whole-env.** Everything parallel over (env, island).
 
 ## TL;DR CURRENT STATE (update each session)
-- HEAD has **Q1 only** (single-island monolith uses incremental factor). Q2 was attempted and REVERTED (wrong).
+- HEAD `a42db7707` (Step 2). **Decomposed arm now correctly seeded by func_solve_init for ON and OFF.**
+  CONFIRMED CUDA: suite 26/26; forced-decomposed probe ON and OFF both REST (~0.049, was sinking 0.049->0.029
+  i.e. diverging). This fixed BOTH the Step-1 OFF regression AND a PRE-EXISTING latent divergence in the
+  decomposed island-ON path (its GPU-island seed had always been skipped; masked by tests using the monolith
+  for ON + benchmarks not asserting physics). Original "decomposed ON 0.78 < OFF 0.96" = diverging vs correct,
+  NOT a parity gap. Now both ~0.96 (correct). Monolith unchanged. Plus Q1 (single-island monolith incremental).
+- REMAINING: monolith ON vs OFF parity for one big island (Q1 helped, gap remains ~13.6 vs 2.8 @256env -
+  needs Step-2-monolith: unify monolith init onto tiled factor / address scalar self-init); monolith CPU/GPU
+  scaling check; OPTIONAL perf: make the decomposed graph self-seed (direction before first linesearch) to
+  drop the seed factor (~0.96 -> faster). See FIX PLAN.
+- Earlier: Q1 (single-island monolith uses incremental factor). Q2-skip-decomposed-init was attempted, found
+  to cause divergence (decomposed has no self-init), and resolved by the always-seed fix above (NOT reverted).
 - **Decomposed arm already meets the goal**: (env,island)-tiled, 1 island = OFF, scales near-flat
   (8/32/128 islands grid @1env: 0.78/1.16/3.14 ms). Autotuner picks it for islands in production.
 - **Q1 (DONE, partial)**: single awake island now uses incremental dense in the monolith (CPU-correct, 10/10).
