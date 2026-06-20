@@ -4592,15 +4592,12 @@ def func_solve_init(
 
     if qd.static(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-        and not (
-            (static_rigid_sim_config.use_contact_island or static_rigid_sim_config.prefer_decomposed_solver == 1)
-            and static_rigid_sim_config.backend != gs.cpu
-        )
+        and not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
     ):
-        # Factor the initial Hessian here for CPU and the GPU monolith arm. Skip it on GPU when islands are on (the
-        # monolith self-inits per-env, the decomposed arm re-factors in its graph loop) or when the decomposed arm is
-        # forced (prefer_decomposed_solver == 1; it always re-factors in-loop) - the init factor is redundant there.
-        # This keeps the decomposed arm symmetric for islands ON and OFF (both skip), so neither pays a redundant init.
+        # Factor the initial Hessian here for non-island (any backend) and CPU-island Newton. The GPU island arms skip
+        # it: the decomposed arm re-factors (tiled) inside its graph loop and the redundant scalar per-island factor
+        # here would cost ~5x, and the monolith self-inits per-env at the start of its loop. The non-island whole-env
+        # factor stays here for both arms (the decomposed arm DOES need it - skipping it for OFF makes it diverge).
         # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
@@ -4613,13 +4610,13 @@ def func_solve_init(
 
     if qd.static(
         not (
-            (static_rigid_sim_config.use_contact_island or static_rigid_sim_config.prefer_decomposed_solver == 1)
+            static_rigid_sim_config.use_contact_island
             and static_rigid_sim_config.backend != gs.cpu
             and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
         )
     ):
-        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Skipped for the GPU island arms and the forced
-        # GPU decomposed arm, which recompute it in their own solve body - keeps the decomposed arm symmetric ON/OFF.
+        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). The GPU island Newton arms recompute it in their
+        # own solve body (decomposed in its graph loop, monolith at the start of its loop), so it is skipped here.
         func_update_gradient(
             dofs_state=dofs_state,
             entities_info=entities_info,

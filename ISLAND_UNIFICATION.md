@@ -4,6 +4,18 @@
 > Branch: `island_hibernation_reboot`. Keep this file updated EVERY session. Read it FIRST.
 > Companion (private) memory note: `project_monolith_host_orchestration_regression.md`.
 
+## !!! DISCIPLINE (read before touching ANY code) !!!
+- **HEED THE EXPERIMENT LOG.** Q2 (2026-06-20) failed because it directly contradicted experiment #6, which
+  was ALREADY in this file: "skipping the OFF init makes OFF free-fall, OFF needs the seeded first search."
+  The log was right; I ignored it and re-broke it. ALWAYS scan VERIFIED INVARIANTS + EXPERIMENT LOG first.
+- **Separate VERIFIED from THEORIZED.** Anything not confirmed by a passing test or a kernel-print/probe is a
+  THEORY - label it. Never state a theory as an invariant. Q2's premise ("OFF init is redundant") was an
+  unverified theory written as an invariant; it was false.
+- **INSTRUMENT BEFORE FIXING.** No code change to the solve path without probe/print evidence of which branch
+  fires and what values it sees. Guessing has cost two full break-revert cycles (Q2, force_whole_env).
+- **CPU green != GPU correct.** Decomposed/tiled is GPU-only. The monolith arm is NOT exercised by the CUDA
+  suite for islands ON (autotuner picks decomposed), so a CUDA suite pass does NOT validate monolith-ON.
+
 ## GOAL
 Make the rigid constraint solver behave identically for islands ON vs OFF, with two required properties:
 1. **1 island ⇒ identical to islands OFF** (a single island spanning the whole env is the same problem).
@@ -11,11 +23,18 @@ Make the rigid constraint solver behave identically for islands ON vs OFF, with 
 Rule from the user: **NOTHING may be forced whole-env.** Everything parallel over (env, island).
 
 ## TL;DR CURRENT STATE (update each session)
-- HEAD `2fe9093e9` == content of `f24eede76`. Compiles, **26/26 CUDA** island tests.
-- **Decomposed arm already meets the goal**: (env,island)-tiled, 1 island = OFF (0.78ms), scales near-flat
-  (8/32/128 islands grid @1env: 0.76/1.16/3.13 ms). Autotuner picks it for islands in production.
-- **Open**: monolith ON ≠ OFF for 1 island (Q1); decomposed ON < OFF for 1 island (Q2). Both diagnosed
-  (see MECHANISMS) with CONTAINED fixes (see FIX PLAN).
+- HEAD has **Q1 only** (single-island monolith uses incremental factor). Q2 was attempted and REVERTED (wrong).
+- **Decomposed arm already meets the goal**: (env,island)-tiled, 1 island = OFF, scales near-flat
+  (8/32/128 islands grid @1env: 0.78/1.16/3.14 ms). Autotuner picks it for islands in production.
+- **Q1 (DONE, partial)**: single awake island now uses incremental dense in the monolith (CPU-correct, 10/10).
+  Helped monolith stack 4.5/20.6 -> 4.02/13.59 ms (1env/256env) but did NOT close the gap to OFF (1.30/2.78).
+  Residual = scalar self-init + per-island indirection in the monolith's vector ops, both incremental.
+- **Q2 (REVERTED, premise was WRONG)**: I theorized func_solve_init's factor is redundant for the decomposed
+  arm so OFF could skip it. FALSE - skipping the OFF init makes the decomposed arm DIVERGE (boxes free-fall;
+  test_solve_correctness[*-0]/[*-5] fail, ACTUAL rests, DESIRED=OFF at -0.96). ON tolerates the skip, OFF does
+  NOT. The OFF init is REQUIRED. So decomposed ON<OFF is because ON skips a NEEDED init and gets away with it
+  (probably the per-step partition resets state ON relies on), while OFF correctly does it. WHY ON tolerates
+  the skip but OFF can't is NOT understood - do not retry the skip without answering that first.
 
 ## ARCHITECTURE (read before touching anything)
 Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in solver_breakdown.py):
@@ -34,8 +53,13 @@ Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in
 - **Hibernation needs the per-island factor.** The per-island path SKIPS hibernated islands
   (`is_hibernated`). A whole-env factor includes asleep dofs and MOVES them -> boxes wake -> hibernation
   tests fail. (This broke commit f6f7f2ffc.)
-- **Decomposed arm re-factors in its graph loop**, so `func_solve_init`'s factor is REDUNDANT for it; the
-  decomposed arm tolerates a skipped init (stale/zero first search). The monolith NEEDS the init.
+- **[VERIFIED, exp #6 #10] The decomposed arm re-factors in its graph loop, BUT OFF still NEEDS
+  func_solve_init's factor.** Skipping it for OFF makes the decomposed arm DIVERGE (boxes free-fall). ON
+  tolerates the skip (works 26/26 with it skipped); OFF does NOT. The asymmetry is REAL and currently
+  UNEXPLAINED - do NOT skip the OFF init again until a probe explains why ON survives the skip and OFF does
+  not. (Leading hypothesis, UNVERIFIED: the per-step partition kernels that run only for ON reset
+  Mgrad/search/qacc state that the decomposed graph's first iteration relies on; for OFF that state is stale
+  garbage -> bad first step -> divergence. MUST be confirmed by probe before acting.)
 - **The env-packed monolith CANNOT host the `block_dim=T` cooperative tiled factor** in its per-env loop.
 - **CPU has no tiled factor** (tiled = GPU). So tiled-path changes are CUDA-only-validatable.
 - On CUDA, `use_contact_island` defaults FALSE (rigid_solver.py ~259, `gs.backend != gs.cuda`); on CPU/Metal
@@ -59,10 +83,11 @@ DATA: stack 1 island, monolith ON 4.5ms(1env)/20.6ms(256env) vs OFF 1.09/2.78. A
 Decomposed Newton branch is gated on `hessian_fits_shared` (NOT use_contact_island), so ON and OFF take the
 IDENTICAL per-island tiled solve in the graph loop. The only difference is `func_solve_init`: its factor gate
 is `Newton and not(use_contact_island and backend != cpu)`. For OFF (use_contact_island=False) it RUNS a
-whole-env tiled factor+gradient; for ON (GPU island) it SKIPS. But the graph re-factors in-loop regardless,
-so OFF's init factor is REDUNDANT (overwritten). OFF pays ~0.18ms redundant init that ON skips => ON < OFF.
-NOT magic — OFF does extra work.
+whole-env tiled factor+gradient; for ON (GPU island) it SKIPS. So ON does ~0.18ms LESS work per step => ON<OFF.
 DATA: decomposed ON 0.78/0.85 vs OFF 0.96/1.20 (1env/256env), gap ~ the init factor cost.
+[CORRECTION 2026-06-20] That init is NOT redundant for OFF: skipping it (exp #10) makes OFF DIVERGE. So OFF
+does that work because it MUST; ON skips it and survives for an as-yet-UNEXPLAINED reason (see VERIFIED
+invariant on the asymmetry). Closing the gap requires understanding that asymmetry by PROBE, not skipping.
 
 ### SHARED ROOT
 Two things keyed on `use_contact_island` that shouldn't be:
@@ -71,14 +96,14 @@ Two things keyed on `use_contact_island` that shouldn't be:
 2. `func_solve_init` init-factor skip keyed on islands not on the ARM (Q2) — the factor is always redundant
    for the decomposed arm, always needed by the monolith.
 
-## FIX PLAN (contained; in progress)
-- **Q2 fix**: add `or prefer_decomposed_solver == 1` to func_solve_init's factor+gradient skip conditions, so
-  forced-decomposed OFF also skips the redundant init => decomposed ON==OFF. (Decomposed tolerates skip,
-  proven by ON already skipping.) Does NOT regress production islands (ON still skips via use_contact_island).
-- **Q1 fix**: in func_hessian_and_cholesky_factor_incremental_batch, gate the per-island full-rebuild on
-  `n_islands[i_b] > 1 OR use_hibernation` (use incremental dense when single island & no hibernation) => the
-  monolith's single-island iterations match OFF. Multi-island keeps per-island rebuild (scales). Hibernation
-  keeps per-island (skips asleep). Residual: monolith self-init still scalar (once/step) — minor.
+## FIX PLAN
+- **Q1 [DONE, partial, KEPT]**: in func_hessian_and_cholesky_factor_incremental_batch,
+  `do_full_rebuild = (n_islands[i_b] > 1) or use_hibernation`; else incremental dense (single island = single
+  dense system). CPU-correct (10/10). Monolith stack 4.5/20.6 -> 4.02/13.59 ms. Gap to OFF NOT closed; residual
+  is the scalar self-init + per-island indirection in the monolith vector ops. NEEDS forced-monolith CUDA
+  correctness check (suite uses decomposed for ON).
+- **Q2 [REVERTED - was a guess]**: do NOT skip the OFF init. See DISCIPLINE + the VERIFIED asymmetry invariant.
+  The next legitimate step is a PROBE (exp #11), not a code change.
 - The FULL monolith parity for many islands / requires_grad needs the (env,island)-tiled factor in the
   monolith = converging onto the decomposed body (Python-loop _kernel_solve_graph). Substantial; deferred.
 
@@ -117,6 +142,16 @@ Grid island-count scaling (1 env, islands ON, ms) 8/32/128 bodies:
 8. [BAD PERF] 6b04a5e7a: force_whole_env template threaded through 8 factor funcs so monolith factors whole-env.
    26/26 but monolith grid CATASTROPHIC O(total_dofs^3): 128 islands = 1853 ms. REVERTED (2fe9093e9).
    LESSON: "nothing forced whole-env" — whole-env is cubic in TOTAL dofs; per-island is the point.
-9. (NEXT) Q1+Q2 contained fixes (see FIX PLAN).
+9. [KEPT, partial] Q1: single awake island uses incremental dense in the monolith (not per-iter full rebuild).
+   func_hessian_and_cholesky_factor_incremental_batch: do_full_rebuild = (n_islands>1) or use_hibernation.
+   CPU-correct (10/10). Monolith stack 4.5/20.6 -> 4.02/13.59 ms. Did NOT close the gap to OFF (1.30/2.78).
+   NOT yet validated for monolith correctness on CUDA (suite uses decomposed for ON - see DISCIPLINE).
+10. [BROKE, REVERTED] Q2: skip func_solve_init factor+gradient also when prefer_decomposed_solver==1, on the
+    theory the decomposed arm's init is redundant. 4 fail (test_solve_correctness OFF free-falls). DIRECTLY
+    CONTRADICTED exp #6 (already logged: OFF needs the init). Reverted both gates. Premise was a guess.
+11. (NEXT) Do NOT touch the solve path without a probe. To actually answer Q2: instrument func_solve_init /
+    the decomposed graph's first iteration to capture Mgrad/search/qacc for ON vs OFF when the init is skipped,
+    and find what ON's partition resets that OFF lacks. Only then decide if OFF can safely skip.
 
-GIT: history has the bad commits + reverts (6b04a5e7a, f6f7f2ffc + reverts). SQUASH before pushing. NOT pushed.
+GIT: history has the bad commits + reverts (6b04a5e7a, f6f7f2ffc + reverts, ff4109086 Q1+Q2, then Q2 revert).
+SQUASH before pushing. NOT pushed.
