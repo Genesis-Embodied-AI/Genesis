@@ -44,8 +44,24 @@ Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in
 - **decomposed** (`func_solve_decomposed` -> `_kernel_solve_graph`, solver_breakdown.py): `graph_do_while`
   GPU-side loop; per-iteration (env,island)-tiled factor `func_island_tiled_factor_solve_all`. Cooperative
   (lane-parallel) vector ops. Used when `not requires_grad and prefer_decomposed != 0`. THE island solver.
-- `prefer_decomposed_solver` (RigidSimStaticConfig): -1 auto, 0 monolith forced, 1 decomposed forced.
-  Bench forces it via `BENCH_ARM`. Resolved at build in rigid_solver.py.
+- `prefer_decomposed_solver` (RigidSimStaticConfig): -1 auto, 0 monolith, 1 decomposed. It ONLY gates which
+  candidates are REGISTERED/compatible (monolith is_compatible: `!= 1`; decomposed: `not requires_grad and
+  != 0`). It is NOT the running arm and MUST NOT be used to detect it (see PERF_DISPATCH below).
+
+### !!! PERF_DISPATCH ARM SELECTION (the fact I kept getting wrong) !!!
+- The running arm is chosen by `@qd.perf_dispatch func_solve_body` (quadrants lang/_perf_dispatch.py). For
+  `prefer == -1` BOTH arms are compatible and the autotuner picks the FASTEST after timing them.
+- **During warmup the dispatcher runs DIFFERENT arms on consecutive steps** (to time each). So across steps
+  the arm VARIES for the same config.
+- **`func_solve_init` (solver.py:300) is launched in `resolve()` BEFORE the dispatch (solver.py:310), so it
+  CANNOT know which arm runs this step - the arm may even differ step-to-step during warmup. `func_solve_init`
+  MUST be arm-INDEPENDENT.** Branching it on the arm (my Q2: `prefer == 1`) is incoherent and breaks whichever
+  arm the autotuner actually ran. Forcing the arm for tests/bench is via `QD_PERFDISPATCH_FORCE`
+  (env, read at import) or by registration gating, NOT by reading prefer_decomposed_solver at runtime.
+- **CORRECT pattern (per user):** each dispatch ENTRYPOINT (`func_solve_body_monolith`, `func_solve_decomposed`)
+  statically KNOWS its arm. Anything arm-dependent must be reached FROM the entrypoint, forwarding a hardcoded
+  `qd.static` bool downstream. `func_solve_init` is pre-dispatch => it can hold only arm-INDEPENDENT work; any
+  arm-specific init must live in / be owned by the entrypoint.
 
 ### KEY INVARIANTS / GOTCHAS (these bit me repeatedly)
 - **Tests default to CPU.** Decomposed arm is GPU-only (uses `block.sync`, fails on `Arch.arm64`). So CPU
@@ -102,8 +118,21 @@ Two things keyed on `use_contact_island` that shouldn't be:
   dense system). CPU-correct (10/10). Monolith stack 4.5/20.6 -> 4.02/13.59 ms. Gap to OFF NOT closed; residual
   is the scalar self-init + per-island indirection in the monolith vector ops. NEEDS forced-monolith CUDA
   correctness check (suite uses decomposed for ON).
-- **Q2 [REVERTED - was a guess]**: do NOT skip the OFF init. See DISCIPLINE + the VERIFIED asymmetry invariant.
-  The next legitimate step is a PROBE (exp #11), not a code change.
+- **Q2 [CONFIRMED PLAN 2026-06-20, user-approved]**: the init is arm-specific but func_solve_init is
+  pre-dispatch (can't know the arm). FIX = move the func_solve_init launch OUT of resolve() INTO the two
+  dispatch entrypoints, each forwarding a hardcoded `is_decomposed: qd.template()`:
+    * func_solve_decomposed (Python): func_solve_init(is_decomposed=True) -> skip factor+gradient (the graph
+      rebuilds on its first iteration regardless - see solver_breakdown.py:767). Identical for ON and OFF =>
+      decomposed ON==OFF.
+    * func_solve_body_monolith: convert to a thin PYTHON WRAPPER (like func_solve_decomposed) that launches
+      func_solve_init(is_decomposed=False) -> TILED factor+gradient -> then the renamed _kernel_solve_monolith.
+      This REPLACES the monolith's scalar GPU-island self-init (~solver.py:4794) with the tiled init for BOTH
+      ON and OFF (also helps Q1's monolith stack residual).
+  func_solve_init factor gate becomes `Newton and not is_decomposed`; gradient gate `not (is_decomposed and
+  Newton)`. Partition stays in resolve() (arm-independent). The init becomes PART of each candidate, so it
+  matches the arm the dispatcher actually runs - even mid-warmup. This is exp #6 done CORRECTLY (it broke
+  before because the skip was applied to a pre-dispatch kernel while the monolith - needing the factor - was
+  the arm that actually ran).
 - The FULL monolith parity for many islands / requires_grad needs the (env,island)-tiled factor in the
   monolith = converging onto the decomposed body (Python-loop _kernel_solve_graph). Substantial; deferred.
 

@@ -1085,6 +1085,20 @@ def func_solve_decomposed(
     (env, island) grid, while an unpartitioned env is a single island spanning every dof. Early exits when all batch
     elements have converged (no improved[i_b] is True).
     """
+    # This entrypoint statically IS the decomposed arm, so it owns its init: it forwards is_decomposed=True to
+    # func_solve_init, which then skips the init Hessian factor + gradient entirely. The graph rebuilds the Hessian
+    # on its first iteration regardless (iter_count <= 1 -> use_full_hessian), so the init factor would be pure waste,
+    # and skipping it makes the decomposed arm behave identically for islands ON and OFF.
+    solver.func_solve_init(
+        dofs_info,
+        dofs_state,
+        entities_info,
+        constraint_state,
+        rigid_global_info,
+        island_state,
+        static_rigid_sim_config,
+        is_decomposed=True,
+    )
     if _n_iterations <= 0:
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))

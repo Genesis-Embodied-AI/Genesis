@@ -297,16 +297,9 @@ class ConstraintSolver:
                 self._solver._static_rigid_sim_config,
             )
 
-        func_solve_init(
-            self._solver.dofs_info,
-            self._solver.dofs_state,
-            self._solver.entities_info,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self.island_state,
-            self._solver._static_rigid_sim_config,
-        )
-
+        # func_solve_init is launched by each dispatch entrypoint (func_solve_body_monolith / func_solve_decomposed),
+        # not here: only the entrypoint statically knows its arm, which determines whether the init factor/gradient is
+        # done (monolith) or skipped (decomposed re-factors in-loop). The island partition above stays arm-independent.
         func_solve_body(
             self._solver.entities_info,
             self._solver.dofs_info,
@@ -4474,7 +4467,12 @@ def func_solve_init(
     rigid_global_info: array_class.RigidGlobalInfo,
     island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
+    is_decomposed: qd.template(),
 ):
+    # is_decomposed is a hardcoded constant forwarded by the dispatch entrypoint that calls this (the decomposed arm
+    # passes True, the monolith passes False). func_solve_init runs as a separate kernel before the perf-dispatcher
+    # picks an arm, so it CANNOT detect the arm itself - the entrypoint must declare it. The decomposed arm rebuilds
+    # the Hessian on its first graph iteration regardless, so it skips the init factor/gradient here entirely.
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
 
@@ -4592,12 +4590,12 @@ def func_solve_init(
 
     if qd.static(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        and not is_decomposed
         and not (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
     ):
-        # Factor the initial Hessian here for non-island (any backend) and CPU-island Newton. The GPU island arms skip
-        # it: the decomposed arm re-factors (tiled) inside its graph loop and the redundant scalar per-island factor
-        # here would cost ~5x, and the monolith self-inits per-env at the start of its loop. The non-island whole-env
-        # factor stays here for both arms (the decomposed arm DOES need it - skipping it for OFF makes it diverge).
+        # Monolith arm only (is_decomposed False). The decomposed arm always rebuilds the Hessian on its first graph
+        # iteration, so it never needs the init factor. The monolith still skips it for the GPU island case (it
+        # self-inits per-env in its body); it is done here for non-island (any backend) and CPU-island Newton.
         # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
         func_hessian_and_cholesky_factor_direct(
             island_state=island_state,
@@ -4610,13 +4608,15 @@ def func_solve_init(
 
     if qd.static(
         not (
-            static_rigid_sim_config.use_contact_island
-            and static_rigid_sim_config.backend != gs.cpu
-            and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and (
+                is_decomposed
+                or (static_rigid_sim_config.use_contact_island and static_rigid_sim_config.backend != gs.cpu)
+            )
         )
     ):
-        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). The GPU island Newton arms recompute it in their
-        # own solve body (decomposed in its graph loop, monolith at the start of its loop), so it is skipped here.
+        # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Skipped for the decomposed arm (recomputes it
+        # in its graph loop) and for the GPU island monolith (self-inits the gradient per-env in its body).
         func_update_gradient(
             dofs_state=dofs_state,
             entities_info=entities_info,
@@ -4754,15 +4754,8 @@ def func_solve_body(
 ) -> None: ...
 
 
-@func_solve_body.register(
-    # Runs whenever the decomposed arm is not specifically preferred. Solves each env whole with 32 envs packed per
-    # warp; islands only reshape the per-env factor into block-diagonal blocks, they do not change the solve scheme.
-    is_compatible=lambda *args, **kwargs: (
-        (static_rigid_sim_config := _get_static_config(*args, **kwargs)).prefer_decomposed_solver != 1
-    )
-)
 @qd.kernel(fastcache=True)
-def func_solve_body_monolith(
+def _kernel_solve_monolith(
     entities_info: array_class.EntitiesInfo,
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
@@ -4828,6 +4821,49 @@ def func_solve_body_monolith(
                     break
         else:
             constraint_state.improved[i_b] = False
+
+
+@func_solve_body.register(
+    # Runs whenever the decomposed arm is not specifically preferred. Solves each env whole with 32 envs packed per
+    # warp; islands only reshape the per-env factor into block-diagonal blocks, they do not change the solve scheme.
+    is_compatible=lambda *args, **kwargs: (
+        (static_rigid_sim_config := _get_static_config(*args, **kwargs)).prefer_decomposed_solver != 1
+    )
+)
+def func_solve_body_monolith(
+    entities_info,
+    dofs_info,
+    dofs_state,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+    _n_iterations,
+    island_state,
+):
+    # This entrypoint statically IS the monolith arm, so it owns its init: it forwards is_decomposed=False to
+    # func_solve_init (which factors + seeds the gradient the packed-env body consumes), then runs the solve kernel.
+    # Keeping the init inside the entrypoint (rather than in resolve, before the dispatch) is what lets each arm
+    # declare its own init behavior - the dispatcher may run a different arm on the next step during autotuning.
+    func_solve_init(
+        dofs_info,
+        dofs_state,
+        entities_info,
+        constraint_state,
+        rigid_global_info,
+        island_state,
+        static_rigid_sim_config,
+        is_decomposed=False,
+    )
+    _kernel_solve_monolith(
+        entities_info,
+        dofs_info,
+        dofs_state,
+        constraint_state,
+        rigid_global_info,
+        static_rigid_sim_config,
+        _n_iterations,
+        island_state,
+    )
 
 
 # =====================================================================================================================
