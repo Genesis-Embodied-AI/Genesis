@@ -47,6 +47,36 @@ Rule from the user: **NOTHING may be forced whole-env.** Everything parallel ove
   (probably the per-step partition resets state ON relies on), while OFF correctly does it. WHY ON tolerates
   the skip but OFF can't is NOT understood - do not retry the skip without answering that first.
 
+## PERF FINDINGS (2026-06-21) - MONOLITH single-island ON cause + the REAL fix
+- Split fix (Step 4, skip converging-iteration Cholesky): REVERTED. A/B ~1-3% (noise); settled solves do 1
+  iter/step (probe), so there is no extra Cholesky to skip. Increased complexity for ~0 gain.
+- Monolith perf (BENCH_ARM=0 forces the arm; stack 8 = single connected island; settled = 1 iter/step):
+    monolith   stack8 1env  OFF 1.09ms  ON 3.27ms (3.0x)   256env OFF 2.32 ON 11.0
+    decomposed stack8 1env  OFF 0.96ms  ON 3.26ms (3.4x)
+  monolith ~= decomposed; the ~3x ON penalty is the SAME on both arms. NOT iteration count (1 both), NOT the
+  partition (kernel_build_islands+group ~0.1ms).
+- MONOLITH per-segment profile (qd.profiler DOES break down per-loop in a kernel) is DECISIVE:
+    OFF: func_solve_init hessian_direct_TILED 0.075 + cholesky_fused_TILED 0.057 = 0.13ms ; _kernel_solve_monolith 0.37ms
+    ON : _kernel_solve_monolith 2.56ms  (the tiled segments are ABSENT)
+  MECHANISM: for islands ON the init factor takes the SCALAR per-island branch of
+  func_hessian_and_cholesky_factor_direct (func_hessian_direct_batch + func_cholesky_factor_direct_batch,
+  solver.py ~2748-2771, one thread per island). For a single 48-dof island that is a ONE-THREAD scalar
+  Cholesky ~2.2ms; OFF uses the 32-lane TILED whole-env factor (func_hessian_direct_tiled +
+  func_cholesky_factor_direct_tiled, ~0.13ms). The tiled path is the NON-island GPU branch (~2788) only.
+- ATTEMPTED FIX (9c2fa478c, REVERTED): move the monolith GPU-island factor into func_solve_init. NO GAIN -
+  re-profile showed the 2.2ms just relocated to `func_solve_init ... hess_cholesky_factor_direct_island`
+  (the island branch is the SAME scalar code). Confirmed func_solve_init's island branch == scalar per-island.
+- REAL FIX (proposed, NOT yet done): the MONOLITH is env-packed - it does NOT parallelize over islands, so the
+  per-island factor buys it nothing and the scalar one-thread-per-island Cholesky is pure loss. For a SINGLE
+  island (n_islands==1, no hibernation) the monolith should factor the WHOLE ENV with the TILED path
+  (func_hessian_direct_tiled + func_cholesky_factor_direct_tiled) - identical to OFF - because 1 island = whole
+  env. This mirrors Q1 exactly (single island -> whole-env incremental iterations). Keep per-island only for
+  multi-island / hibernation (where asleep islands must be skipped and the whole-env factor would move them).
+  Expect monolith single-island ON ~3.3ms -> ~1.1ms (== OFF).
+- DECOMPOSED 3.4x is SEPARATE + still open: it uses the TILED func_island_tiled_factor_solve_all (not the
+  scalar path) and runs in an opaque graph_do_while the profiler can't sub-divide. Its ON penalty is a
+  different mechanism; needs graph-level dbg-counter instrumentation, not the profiler.
+
 ## ARCHITECTURE (read before touching anything)
 Two solve "arms", selected by `@qd.perf_dispatch func_solve_body` (registered in solver_breakdown.py):
 - **monolith** (`func_solve_body_monolith`, solver.py): ONE @qd.kernel, env-packed (`block_dim=32`, 32
