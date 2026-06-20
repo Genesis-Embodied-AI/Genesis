@@ -639,6 +639,12 @@ class IslandState:
     dof_slices: IslandSlices
     dof_id: qd.Tensor
     dofs_island_idx: qd.Tensor
+    # Per-island skyline envelope: dof_env_start_local[dof_slices.start[i] + ld] is the smallest island-local column
+    # that can be structurally nonzero in local row ld of island i's Hessian block (from constraint supports and mass
+    # coupling). The per-island assembly, Cholesky factor and triangular solve visit only [env_start, ld], so a large
+    # island (e.g. a tall stack of bodies coupled into one island) factors with its band instead of densely. Defaults
+    # to 0 (dense) when uncomputed, so any path that does not fill it stays correct.
+    dof_env_start_local: qd.Tensor
     contact_slices: IslandSlices
     contact_id: qd.Tensor
     constraint_slices: IslandSlices
@@ -684,6 +690,7 @@ def get_island_state(solver, collider):
         dof_slices=get_slices(solver),
         dof_id=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
         dofs_island_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
+        dof_env_start_local=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
         contact_slices=get_slices(solver),
         contact_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
         constraint_slices=get_slices(solver),

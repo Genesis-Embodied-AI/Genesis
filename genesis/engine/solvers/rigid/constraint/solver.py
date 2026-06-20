@@ -1785,6 +1785,59 @@ def func_compute_sparsity_pattern(
 
 
 @qd.func
+def func_compute_island_envelope(
+    i_b,
+    i_island,
+    island_state: array_class.IslandState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Compute one island's skyline envelope: the smallest island-local column that can be structurally nonzero in
+    each local row of its Hessian block H = M + J.T @ D @ J. The two coupling sources are known a priori:
+    - constraint supports: a constraint couples all DOFs in its support, so its smallest local DOF bounds the others;
+    - mass: the kinematic tree (mass_parent_mask) couples a DOF with its ancestors and same-link DOFs.
+
+    The island's DOFs are gathered in ascending global order (dof_id), so local order matches global order and the
+    envelope is a valid band. Computed once per step (structural) and reused across Newton iterations.
+    """
+    EPS = rigid_global_info.EPS[None]
+    n = island_state.dof_slices.n[i_island, i_b]
+    dof_base = island_state.dof_slices.start[i_island, i_b]
+    con_base = island_state.constraint_slices.start[i_island, i_b]
+    con_n = island_state.constraint_slices.n[i_island, i_b]
+
+    for ld in range(n):
+        island_state.dof_env_start_local[dof_base + ld, i_b] = ld
+
+    # Constraint coupling: scanning the island's DOFs in ascending order, the first DOF a constraint touches is its
+    # smallest local column and bounds the envelope of every other DOF it touches.
+    for i_lcon in range(con_n):
+        i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+        col_min = n
+        for ld in range(n):
+            i_dg = island_state.dof_id[dof_base + ld, i_b]
+            if qd.abs(constraint_state.jac[i_c, i_dg, i_b]) > EPS:
+                if col_min == n:
+                    col_min = ld
+                elif col_min < island_state.dof_env_start_local[dof_base + ld, i_b]:
+                    island_state.dof_env_start_local[dof_base + ld, i_b] = col_min
+
+    # Mass coupling: the kinematic-tree mask is directional (descendant -> ancestor) plus full intra-link, so check
+    # both orientations. DOFs are ascending, so the first coupled lower column is the smallest.
+    for ld in range(n):
+        i_dg = island_state.dof_id[dof_base + ld, i_b]
+        for ld2 in range(ld):
+            j_dg = island_state.dof_id[dof_base + ld2, i_b]
+            if (
+                rigid_global_info.mass_parent_mask[i_dg, j_dg] > 0.5
+                or rigid_global_info.mass_parent_mask[j_dg, i_dg] > 0.5
+            ):
+                if ld2 < island_state.dof_env_start_local[dof_base + ld, i_b]:
+                    island_state.dof_env_start_local[dof_base + ld, i_b] = ld2
+                break
+
+
+@qd.func
 def func_hessian_direct_batch(
     i_b,
     i_island,
@@ -1813,22 +1866,32 @@ def func_hessian_direct_batch(
         # The island's DOFs are gathered in ascending global order (dof_id), so its block lives in the lower
         # triangle of nt_H at those global rows/cols. Off-block (cross-island) entries are left untouched: the
         # Hessian is block-diagonal by island and the per-island factor/solve only ever read within the block.
+        # All three passes visit only the row's skyline envelope [env_start, i_d]: entries below env_start are
+        # structurally zero (no constraint or mass coupling reaches them), so zeroing, the J.T D J add and the mass
+        # add can all skip them. The factor and solve read within the same band, so the block factors as a band.
         for i_d in range(n):
             i_dg = island_state.dof_id[dof_base + i_d, i_b]
-            for j_d in range(i_d + 1):
+            env_i = island_state.dof_env_start_local[dof_base + i_d, i_b]
+            for j_d in range(env_i, i_d + 1):
                 j_dg = island_state.dof_id[dof_base + j_d, i_b]
                 constraint_state.nt_H[i_b, i_dg, j_dg] = gs.qd_float(0.0)
-        for i_d in range(n):
-            i_dg = island_state.dof_id[dof_base + i_d, i_b]
-            for i_lcon in range(con_n):
-                i_c = island_state.constraint_id[con_base + i_lcon, i_b]
-                if qd.abs(constraint_state.jac[i_c, i_dg, i_b]) > EPS:
-                    for j_d in range(i_d + 1):
-                        j_dg = island_state.dof_id[dof_base + j_d, i_b]
-                        constraint_state.nt_H[i_b, i_dg, j_dg] = (
-                            constraint_state.nt_H[i_b, i_dg, j_dg]
-                            + constraint_state.jac[i_c, j_dg, i_b]
-                            * constraint_state.jac[i_c, i_dg, i_b]
+        # H += J.T @ D @ J by scattering each island constraint's rank update over the DOF pairs in its support
+        # (jac_dofs_idx), writing the lower triangle at global rows/cols. This is O(sum n_support^2) instead of the
+        # O(n_dofs * n_constraints) row-by-constraint scan, which matters when an island carries many contacts.
+        for i_lcon in range(con_n):
+            i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+            jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+            for i_d1_ in range(jac_n):
+                i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+                if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
+                    for i_d2_ in range(i_d1_, jac_n):
+                        i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                        row = qd.max(i_d1, i_d2)
+                        col = qd.min(i_d1, i_d2)
+                        constraint_state.nt_H[i_b, row, col] = (
+                            constraint_state.nt_H[i_b, row, col]
+                            + constraint_state.jac[i_c, i_d1, i_b]
+                            * constraint_state.jac[i_c, i_d2, i_b]
                             * constraint_state.efc_D[i_c, i_b]
                             * constraint_state.active[i_c, i_b]
                         )
@@ -1838,7 +1901,8 @@ def func_hessian_direct_batch(
         # component's DOFs are non-contiguous (e.g. an entity whose free bodies interleave in DOF order).
         for i_d in range(n):
             i_dg = island_state.dof_id[dof_base + i_d, i_b]
-            for j_d in range(i_d + 1):
+            env_i = island_state.dof_env_start_local[dof_base + i_d, i_b]
+            for j_d in range(env_i, i_d + 1):
                 j_dg = island_state.dof_id[dof_base + j_d, i_b]
                 constraint_state.nt_H[i_b, i_dg, j_dg] = (
                     constraint_state.nt_H[i_b, i_dg, j_dg] + rigid_global_info.mass_mat[i_dg, j_dg, i_b]
@@ -2198,23 +2262,28 @@ def func_cholesky_factor_direct_batch(
     if qd.static(static_rigid_sim_config.use_contact_island):
         n = island_state.dof_slices.n[i_island, i_b]
         dof_base = island_state.dof_slices.start[i_island, i_b]
-        # Factor the island's block in place at its global DOF rows/cols (dof_id is ascending, so all accesses
-        # below stay in the lower triangle). The block is dense; the off-block entries are not touched.
+        # Factor the island's block in place at its global DOF rows/cols (dof_id is ascending, so all accesses below
+        # stay in the lower triangle). The factorization is confined to each row's skyline envelope
+        # (dof_env_start_local): a row's columns below its envelope start are structurally zero and fill-in stays
+        # within the envelope, so a large island factors as a band instead of densely.
         for i_d in range(n):
             i_dg = island_state.dof_id[dof_base + i_d, i_b]
+            i_start = island_state.dof_env_start_local[dof_base + i_d, i_b]
             tmp = constraint_state.nt_H[i_b, i_dg, i_dg]
-            for j_d in range(i_d):
+            for j_d in range(i_start, i_d):
                 j_dg = island_state.dof_id[dof_base + j_d, i_b]
                 tmp = tmp - constraint_state.nt_H[i_b, i_dg, j_dg] ** 2
             constraint_state.nt_H[i_b, i_dg, i_dg] = qd.sqrt(qd.max(tmp, EPS))
             inv = 1.0 / constraint_state.nt_H[i_b, i_dg, i_dg]
             for j_d in range(i_d + 1, n):
-                j_dg = island_state.dof_id[dof_base + j_d, i_b]
-                dot = gs.qd_float(0.0)
-                for k_d in range(i_d):
-                    k_dg = island_state.dof_id[dof_base + k_d, i_b]
-                    dot = dot + (constraint_state.nt_H[i_b, j_dg, k_dg] * constraint_state.nt_H[i_b, i_dg, k_dg])
-                constraint_state.nt_H[i_b, j_dg, i_dg] = (constraint_state.nt_H[i_b, j_dg, i_dg] - dot) * inv
+                j_start = island_state.dof_env_start_local[dof_base + j_d, i_b]
+                if j_start <= i_d:
+                    j_dg = island_state.dof_id[dof_base + j_d, i_b]
+                    dot = gs.qd_float(0.0)
+                    for k_d in range(qd.max(i_start, j_start), i_d):
+                        k_dg = island_state.dof_id[dof_base + k_d, i_b]
+                        dot = dot + (constraint_state.nt_H[i_b, j_dg, k_dg] * constraint_state.nt_H[i_b, i_dg, k_dg])
+                    constraint_state.nt_H[i_b, j_dg, i_dg] = (constraint_state.nt_H[i_b, j_dg, i_dg] - dot) * inv
         return
 
     n_dofs = constraint_state.nt_H.shape[1]
@@ -2751,10 +2820,11 @@ def func_cholesky_solve_batch(
         # L is stored in the island's block of nt_H at its global DOF rows/cols (dof_id ascending -> lower
         # triangle). grad/Mgrad stay global-indexed; the global Hessian is block-diagonal so this island solve
         # is independent and equals the single dense solve.
+        # Forward then backward substitution, confined to L's skyline envelope (matching the factorization).
         for ld in range(n):
             gd = island_state.dof_id[dof_base + ld, i_b]
             curr_out = constraint_state.grad[gd, i_b]
-            for j_d in range(ld):
+            for j_d in range(island_state.dof_env_start_local[dof_base + ld, i_b], ld):
                 g_jd = island_state.dof_id[dof_base + j_d, i_b]
                 curr_out = curr_out - constraint_state.nt_H[i_b, gd, g_jd] * constraint_state.Mgrad[g_jd, i_b]
             constraint_state.Mgrad[gd, i_b] = curr_out / constraint_state.nt_H[i_b, gd, gd]
@@ -2763,8 +2833,9 @@ def func_cholesky_solve_batch(
             gd = island_state.dof_id[dof_base + ld, i_b]
             curr_out = constraint_state.Mgrad[gd, i_b]
             for j_d in range(ld + 1, n):
-                g_jd = island_state.dof_id[dof_base + j_d, i_b]
-                curr_out = curr_out - constraint_state.nt_H[i_b, g_jd, gd] * constraint_state.Mgrad[g_jd, i_b]
+                if island_state.dof_env_start_local[dof_base + j_d, i_b] <= ld:
+                    g_jd = island_state.dof_id[dof_base + j_d, i_b]
+                    curr_out = curr_out - constraint_state.nt_H[i_b, g_jd, gd] * constraint_state.Mgrad[g_jd, i_b]
             constraint_state.Mgrad[gd, i_b] = curr_out / constraint_state.nt_H[i_b, gd, gd]
     elif qd.static(static_rigid_sim_config.sparse_envelope):
         n_dofs = constraint_state.Mgrad.shape[0]
@@ -4368,6 +4439,9 @@ def func_solve_init(
                     if qd.static(static_rigid_sim_config.use_hibernation):
                         if island_state.is_hibernated[i_island, i_b]:
                             continue
+                    # The envelope is structural (per partition), so compute it once here and reuse it across the
+                    # Newton iterations' re-assembly and re-factorization in func_solve_iter.
+                    func_compute_island_envelope(i_b, i_island, island_state, constraint_state, rigid_global_info)
                     func_hessian_direct_batch(
                         i_b,
                         i_island,
