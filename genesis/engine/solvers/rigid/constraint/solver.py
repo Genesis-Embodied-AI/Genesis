@@ -1983,15 +1983,20 @@ def func_island_assemble_factor_solve_tiled(
     island_state: array_class.IslandState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    do_assemble: qd.template(),
     TileCls: qd.template(),
 ):
-    """Barrier-free tiled assemble + Cholesky factor + triangular solve of one island's Newton system.
+    """Barrier-free tiled Cholesky factor + triangular solve of one island's Newton system.
 
     Operates on the island's contiguous block [gbase, gbase+n) of nt_H with the same register-streaming TileTxT
     primitives as the non-island whole-env factor (func_cholesky_factor_direct_tiled). For a single island spanning
     the whole env this IS that path, so islands-on matches islands-off; for multiple islands each contiguous block is
     factored independently. The rare non-contiguous island (a connected cluster whose gathered DOFs are not a single
     ascending run) falls back to the scalar per-island solve on lane 0.
+
+    When do_assemble is True the contiguous block is assembled from jac/efc into nt_H first (the caller has not built
+    H); when False nt_H already holds the incrementally maintained Hessian and only the factor + solve run. The scalar
+    fallback always assembles, as its scattered DOFs are not a readable contiguous block.
 
     L stays in the shared tile L_sh (local island indices); grad/Mgrad are global, reached at gbase + local. block.sync
     fences the assembly before the cooperative factor and the result before the caller's termination test.
@@ -2010,28 +2015,29 @@ def func_island_assemble_factor_solve_tiled(
     # Quadrants forbids `return` inside a runtime branch, so the tiled path and the scalar fallback are an if/else.
     if island_state.dof_id[dof_base + n - 1, i_b] == gbase + n - 1:
         # --- Assemble the full lower triangle of the island block into nt_H (T threads, row-striped) ---
-        i_d = tid
-        while i_d < n:
-            gi = gbase + i_d
-            for j in range(i_d + 1):
-                constraint_state.nt_H[i_b, gi, gbase + j] = gs.qd_float(0.0)
-            for i_lcon in range(con_n):
-                i_c = island_state.constraint_id[con_base + i_lcon, i_b]
-                jac_i = constraint_state.jac[i_c, gi, i_b]
-                if qd.abs(jac_i) > EPS:
-                    w = jac_i * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-                    for j in range(i_d + 1):
-                        gj = gbase + j
-                        constraint_state.nt_H[i_b, gi, gj] = (
-                            constraint_state.nt_H[i_b, gi, gj] + constraint_state.jac[i_c, gj, i_b] * w
-                        )
-            for j in range(i_d + 1):
-                gj = gbase + j
-                constraint_state.nt_H[i_b, gi, gj] = (
-                    constraint_state.nt_H[i_b, gi, gj] + rigid_global_info.mass_mat[gi, gj, i_b]
-                )
-            i_d = i_d + T
-        qd.simt.block.sync()
+        if qd.static(do_assemble):
+            i_d = tid
+            while i_d < n:
+                gi = gbase + i_d
+                for j in range(i_d + 1):
+                    constraint_state.nt_H[i_b, gi, gbase + j] = gs.qd_float(0.0)
+                for i_lcon in range(con_n):
+                    i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+                    jac_i = constraint_state.jac[i_c, gi, i_b]
+                    if qd.abs(jac_i) > EPS:
+                        w = jac_i * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+                        for j in range(i_d + 1):
+                            gj = gbase + j
+                            constraint_state.nt_H[i_b, gi, gj] = (
+                                constraint_state.nt_H[i_b, gi, gj] + constraint_state.jac[i_c, gj, i_b] * w
+                            )
+                for j in range(i_d + 1):
+                    gj = gbase + j
+                    constraint_state.nt_H[i_b, gi, gj] = (
+                        constraint_state.nt_H[i_b, gi, gj] + rigid_global_info.mass_mat[gi, gj, i_b]
+                    )
+                i_d = i_d + T
+            qd.simt.block.sync()
 
         # --- Blocked left-looking Cholesky into L_sh (register tiles, no block sync), reading the island block ---
         N_BLOCKS = (n + T - 1) // T
@@ -2157,6 +2163,7 @@ def func_island_tiled_factor_solve_all(
                             island_state,
                             rigid_global_info,
                             static_rigid_sim_config,
+                            False,
                             TileCls,
                         )
 
@@ -4756,6 +4763,7 @@ def func_island_factor_solve_all_coop(
                 island_state,
                 rigid_global_info,
                 static_rigid_sim_config,
+                True,
                 TileCls,
             )
     qd.simt.block.sync()

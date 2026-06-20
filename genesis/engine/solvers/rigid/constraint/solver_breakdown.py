@@ -1022,9 +1022,15 @@ def _kernel_solve_graph(
             static_rigid_sim_config.use_contact_island
             and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
         ):
-            # Unified island path: per-island barrier-free tiled factor + solve over the (env, island) grid. For an
-            # unpartitioned env (single island spanning every dof) this is exactly the non-island whole-env tiled
-            # factor, so islands ON/OFF differ only in how dofs are grouped, not in the solve itself.
+            # Unified island path: the SAME incremental Hessian assembly as the non-island fused path (full rebuild
+            # when the active set changed a lot, delta patch otherwise), then a per-island barrier-free tiled factor +
+            # solve that READS the maintained nt_H. Each changed constraint's J^T D J lands inside its island's diagonal
+            # block since no constraint couples DOFs across islands, so the patch is island-correct unchanged. For an
+            # unpartitioned env (one island spanning every dof) this is exactly the non-island fused path, so islands
+            # ON/OFF differ only in how dofs are grouped, not in the solve.
+            _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
+            _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
+            _func_patch_hessian_delta(constraint_state, rigid_global_info)
             _func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
