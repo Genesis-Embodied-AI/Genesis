@@ -756,7 +756,7 @@ class ColliderState:
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
     # Per-bucket lex sort permutation used by the cooperative dedup kernel
-    # (func_clamp_prune_and_sort_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_candidate_contacts because
+    # (func_clamp_prune_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_candidate_contacts because
     # each env writes its own permutation.
     contact_lex_idx: qd.Tensor
 
@@ -910,13 +910,14 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_nonconvex_nonterrain: bool
     # True when link-pair contact pruning can ever do useful work. False when every link has at most one convex geom and
     # no terrain is present (each (link_a, link_b) bucket then holds at most one geom-pair's contacts, capped at
-    # n_contacts_per_convex_pair, so the 2D hull is at best a marginal reduction), or when use_contact_island is True
-    # (the contact-island path consumes contact_data in physical layout and does not honor the sort_idx indirection).
-    # Lets us skip the pruning kernel call and its scratch buffers entirely.
+    # n_contacts_per_convex_pair, so the 2D hull is at best a marginal reduction). Lets us skip the pruning kernel call
+    # and its scratch buffers entirely. Composes with contact islands: pruning writes a logical permutation into
+    # contact_sort_idx and the island construction reads contacts through it, so pruning collapses the contacts first.
     has_prunable_contacts: bool
-    # True when func_clamp_prune_and_sort_contacts should also spatial-sort contacts by x-position. Gated by both
-    # narrowphase configuration (only meaningful when has_non_box_plane_convex_convex on GPU) and use_contact_island
-    # (the island path does not honor the resulting sort_idx permutation).
+    # True when contacts are ordered deterministically by position in add_inequality_constraints (per-island when
+    # use_contact_island, else a single global pass), making the contact order independent of the racy atomic_add
+    # narrowphase layout. Only meaningful when has_non_box_plane_convex_convex on GPU; disabled in autodiff (the
+    # gradient writeback indexes contacts by physical layout, so a non-identity permutation would misattach gradients).
     spatial_sort_supported: bool
     # maximum number of contact pairs per collision pair
     n_contacts_per_convex_pair: int

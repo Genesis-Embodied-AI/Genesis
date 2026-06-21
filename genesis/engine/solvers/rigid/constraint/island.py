@@ -316,3 +316,61 @@ def func_build_islands(
         if i_island >= 0:
             island_state.contact_id[island_state.contact_slices.curr[i_island, i_b], i_b] = i_col
             island_state.contact_slices.curr[i_island, i_b] = island_state.contact_slices.curr[i_island, i_b] + 1
+
+
+@qd.func
+def _sort_island_contacts(
+    i_b,
+    start,
+    n,
+    contact_idx: qd.Tensor,
+    contacts_pos: qd.Tensor,
+    contacts_geom_a: qd.Tensor,
+    contacts_geom_b: qd.Tensor,
+):
+    """Insertion-sort the contact-index slice contact_idx[start : start + n] by a deterministic total order.
+
+    The order (pos_x, geom_a, geom_b, pos_y, pos_z) is a pure function of contact data, so it is independent of the
+    racy atomic_add narrowphase layout. contact_idx is island_state.contact_id for the per-island sort (disjoint
+    island slices sort concurrently, one warp lane per island) or collider_state.contact_sort_idx for the global
+    islands-off sort. The contact-data tensors are passed as leaves rather than the whole collider_state struct so
+    that contact_sort_idx can be sorted in place without the struct-expansion aliasing its own field.
+    """
+    for i_s in range(start + 1, start + n):
+        i_p = contact_idx[i_s, i_b]
+        pos_p = contacts_pos[i_p, i_b]
+        geom_a_p = contacts_geom_a[i_p, i_b]
+        geom_b_p = contacts_geom_b[i_p, i_b]
+        j_s = i_s - 1
+        while j_s >= start:
+            i_q = contact_idx[j_s, i_b]
+            pos_q = contacts_pos[i_q, i_b]
+            precedes = pos_q[0] < pos_p[0]
+            if not precedes and pos_q[0] == pos_p[0]:
+                geom_a_q = contacts_geom_a[i_q, i_b]
+                if geom_a_q < geom_a_p:
+                    precedes = True
+                elif geom_a_q == geom_a_p:
+                    geom_b_q = contacts_geom_b[i_q, i_b]
+                    if geom_b_q < geom_b_p:
+                        precedes = True
+                    elif geom_b_q == geom_b_p:
+                        if pos_q[1] < pos_p[1]:
+                            precedes = True
+                        elif pos_q[1] == pos_p[1]:
+                            precedes = pos_q[2] <= pos_p[2]
+            if precedes:
+                break
+            contact_idx[j_s + 1, i_b] = i_q
+            j_s = j_s - 1
+        contact_idx[j_s + 1, i_b] = i_p
+
+
+@qd.func
+def func_island_contacts_total(i_b, island_state: array_class.IslandState):
+    # Total in-island contact count = sum of per-island contact slice sizes (== n_contacts when every contact touches a
+    # dof-carrying body, which holds whenever a static-static pair is not collided).
+    total = 0
+    for i_island in range(island_state.n_islands[i_b]):
+        total = total + island_state.contact_slices.n[i_island, i_b]
+    return total

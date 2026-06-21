@@ -12,7 +12,13 @@ import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
-from .island import func_build_islands, func_constraint_island, func_group_constraints_by_island
+from .island import (
+    _sort_island_contacts,
+    func_build_islands,
+    func_constraint_island,
+    func_group_constraints_by_island,
+    func_island_contacts_total,
+)
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
 
@@ -269,10 +275,13 @@ class ConstraintSolver:
             self._solver.dofs_state,
             self._solver.dofs_info,
             self._solver.joints_info,
+            self._solver.equalities_info,
             self.constraint_state,
             self._collider._collider_state,
+            self.island_state,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
+            self._collider._collider_static_config,
         )
 
     def resolve(self, entities_info=None, rigid_global_info=None):
@@ -1210,6 +1219,107 @@ def add_equality_constraints(
                 )
 
 
+@qd.func
+def _sort_contacts_per_island(
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    joints_info: array_class.JointsInfo,
+    equalities_info: array_class.EqualitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    collider_state: array_class.ColliderState,
+    island_state: array_class.IslandState,
+    static_rigid_sim_config: qd.template(),
+    collider_static_config: qd.template(),
+):
+    """Build the island partition, order each island's contacts, and gather them into contact_sort_idx.
+
+    The island build always runs (the per-island solve needs it) and the gather always runs (the solve reads contacts
+    island-grouped); only the sort is gated on spatial_sort_supported. This makes the contact order match the
+    islands-off path exactly when there is a single island: per-island grouping in physical scan order then equals the
+    identity order the off path keeps, and the same comparator orders both.
+    """
+    _B = constraint_state.jac.shape[2]
+    if qd.static(static_rigid_sim_config.enable_cooperative_constraint_kernels):
+        # Warp-per-env: union-find island construction is serial per env, so lane 0 builds the partition; the per-island
+        # contact sorts are independent (disjoint contact_id slices) so the warp's lanes take one island each in
+        # parallel; then the island-grouped permutation is gathered back into contact_sort_idx (lane-strided).
+        # block.sync fences each phase. The constraints assembled by the caller read the result.
+        _K = qd.static(32)
+        qd.loop_config(name="build_and_sort_islands", block_dim=_K)
+        for i_flat in range(_B * _K):
+            tid = i_flat % _K
+            i_b = i_flat // _K
+            if tid == 0:
+                func_build_islands(
+                    i_b,
+                    links_info,
+                    links_state,
+                    joints_info,
+                    equalities_info,
+                    constraint_state,
+                    collider_state,
+                    island_state,
+                    static_rigid_sim_config,
+                )
+            qd.simt.block.sync()
+            if qd.static(collider_static_config.spatial_sort_supported):
+                i_island = tid
+                while i_island < island_state.n_islands[i_b]:
+                    _sort_island_contacts(
+                        i_b,
+                        island_state.contact_slices.start[i_island, i_b],
+                        island_state.contact_slices.n[i_island, i_b],
+                        island_state.contact_id,
+                        collider_state.contact_data.pos,
+                        collider_state.contact_data.geom_a,
+                        collider_state.contact_data.geom_b,
+                    )
+                    i_island = i_island + _K
+                qd.simt.block.sync()
+            total = func_island_contacts_total(i_b, island_state)
+            i_c = tid
+            while i_c < total:
+                collider_state.contact_sort_idx[i_c, i_b] = island_state.contact_id[i_c, i_b]
+                i_c = i_c + _K
+            if tid == 0:
+                collider_state.n_contacts[i_b] = total
+    else:
+        # CPU / non-cooperative: one thread per env builds the partition and sorts each island serially, then gathers
+        # the permutation. Same result as the warp-per-env path (the lanes only parallelize independent islands), so the
+        # contact order is identical regardless of backend.
+        qd.loop_config(
+            name="build_and_sort_islands",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL),
+        )
+        for i_b in range(_B):
+            func_build_islands(
+                i_b,
+                links_info,
+                links_state,
+                joints_info,
+                equalities_info,
+                constraint_state,
+                collider_state,
+                island_state,
+                static_rigid_sim_config,
+            )
+            if qd.static(collider_static_config.spatial_sort_supported):
+                for i_island in range(island_state.n_islands[i_b]):
+                    _sort_island_contacts(
+                        i_b,
+                        island_state.contact_slices.start[i_island, i_b],
+                        island_state.contact_slices.n[i_island, i_b],
+                        island_state.contact_id,
+                        collider_state.contact_data.pos,
+                        collider_state.contact_data.geom_a,
+                        collider_state.contact_data.geom_b,
+                    )
+            total = func_island_contacts_total(i_b, island_state)
+            for i_c in range(total):
+                collider_state.contact_sort_idx[i_c, i_b] = island_state.contact_id[i_c, i_b]
+            collider_state.n_contacts[i_b] = total
+
+
 @qd.kernel(fastcache=True)
 def add_inequality_constraints(
     links_info: array_class.LinksInfo,
@@ -1217,11 +1327,50 @@ def add_inequality_constraints(
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
     joints_info: array_class.JointsInfo,
+    equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
+    island_state: array_class.IslandState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    collider_static_config: qd.template(),
 ):
+    # Order the contacts deterministically BEFORE assembling the contact constraints below: the contact-constraint
+    # index i_c follows the logical contact order (contact_sort_idx), so fixing that order here makes both the solve
+    # order and get_contacts deterministic despite the racy atomic_add narrowphase layout. Done here rather than in the
+    # collider (which has no notion of constraints) or in func_solve_init (too late - contacts are consumed just below).
+    # With islands the order is built per-island (O(sum island^2)); without islands it is a single global pass. Both are
+    # gated on spatial_sort_supported, and both use the same comparator, so a single island matches the off path
+    # exactly. The off path still builds nothing - the collider's compacted contact_sort_idx is sorted in place.
+    if qd.static(static_rigid_sim_config.use_contact_island):
+        _sort_contacts_per_island(
+            links_info,
+            links_state,
+            joints_info,
+            equalities_info,
+            constraint_state,
+            collider_state,
+            island_state,
+            static_rigid_sim_config,
+            collider_static_config,
+        )
+    elif qd.static(collider_static_config.spatial_sort_supported):
+        _B = constraint_state.jac.shape[2]
+        qd.loop_config(
+            name="sort_contacts",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL),
+        )
+        for i_b in range(_B):
+            _sort_island_contacts(
+                i_b,
+                0,
+                collider_state.n_contacts[i_b],
+                collider_state.contact_sort_idx,
+                collider_state.contact_data.pos,
+                collider_state.contact_data.geom_a,
+                collider_state.contact_data.geom_b,
+            )
+
     add_frictionloss_constraints(
         links_info=links_info,
         joints_info=joints_info,
@@ -4510,28 +4659,13 @@ def func_solve_init(
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
 
-    # Build the island partition first - the per-island init factor below needs it. Folded in from two standalone
-    # kernels (kernel_build_islands + kernel_group_constraints_by_island) so it runs inside this launch instead of
-    # paying two extra kernel dispatches per step. Three passes: per-env union-find + list build, then a parallel
-    # per-(env, constraint) island resolution, then a per-env grouping into contiguous constraint ranges.
+    # Group the assembled constraints by island. The island partition itself (links_island_idx / dof_id / contact
+    # ordering) is built earlier, in add_inequality_constraints, before the contact constraints are assembled; here we
+    # only resolve each constraint's island (parallel per-(env, constraint)) and gather them into contiguous per-island
+    # ranges (per-env), which needs the assembled jac and so cannot move earlier.
     if qd.static(static_rigid_sim_config.use_contact_island):
         EPS = rigid_global_info.EPS[None]
         capacity = island_state.constraint_island_idx.shape[0]
-        qd.loop_config(
-            name="build_islands", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        )
-        for i_b in range(_B):
-            func_build_islands(
-                i_b,
-                links_info,
-                links_state,
-                joints_info,
-                equalities_info,
-                constraint_state,
-                collider_state,
-                island_state,
-                static_rigid_sim_config,
-            )
         qd.loop_config(name="resolve_constraint_island", serialize=False)
         for i_flat in range(_B * capacity):
             i_b = i_flat // capacity

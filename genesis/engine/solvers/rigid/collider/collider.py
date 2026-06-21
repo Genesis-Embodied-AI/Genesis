@@ -47,8 +47,8 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
-    func_clamp_prune_and_sort_contacts,
-    func_clamp_prune_and_sort_contacts_coop,
+    func_clamp_prune_contacts,
+    func_clamp_prune_contacts_coop,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -946,22 +946,20 @@ class Collider:
         # SMs (the serial fused kernel wins above that threshold).
         ran_fused_dedup_coop = (
             gs.backend != gs.cpu
-            and self._collider_static_config.has_prunable_contacts
             and not self._solver._static_rigid_sim_config.requires_grad
+            and self._collider_static_config.has_prunable_contacts
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
         )
         if ran_fused_dedup_coop:
-            func_clamp_prune_and_sort_contacts_coop(
+            func_clamp_prune_contacts_coop(
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-                self._collider_static_config,
                 self._solver._errno,
             )
         else:
-            func_clamp_prune_and_sort_contacts(
+            func_clamp_prune_contacts(
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,
