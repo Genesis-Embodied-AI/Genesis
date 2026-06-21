@@ -1056,11 +1056,6 @@ def func_solve_decomposed(
     static_rigid_sim_config,
     _n_iterations,
     island_state,
-    links_info,
-    links_state,
-    joints_info,
-    equalities_info,
-    collider_state,
 ):
     """
     GPU graph accelerated solver loop with parallel grid-search linesearch and GPU-side iteration via graph_do_while.
@@ -1086,11 +1081,6 @@ def func_solve_decomposed(
         constraint_state,
         rigid_global_info,
         island_state,
-        links_info,
-        links_state,
-        joints_info,
-        equalities_info,
-        collider_state,
         static_rigid_sim_config,
         is_decomposed=True,
     )

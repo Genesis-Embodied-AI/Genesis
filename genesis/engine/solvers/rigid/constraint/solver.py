@@ -287,9 +287,7 @@ class ConstraintSolver:
     def resolve(self, entities_info=None, rigid_global_info=None):
         # func_solve_init is launched by each dispatch entrypoint (func_solve_body_monolith / func_solve_decomposed),
         # not here: only the entrypoint statically knows its arm, which determines whether the init factor/gradient is
-        # done (monolith) or skipped (decomposed re-factors in-loop). With islands, func_solve_init also builds the
-        # island partition (folded in from two standalone kernels to avoid their per-step launch overhead), so the
-        # extra link/joint/equality/collider inputs are forwarded through here.
+        # done (monolith) or skipped (decomposed re-factors in-loop).
         func_solve_body(
             self._solver.entities_info,
             self._solver.dofs_info,
@@ -299,11 +297,6 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
             self._n_iterations,
             self.island_state,
-            self._solver.links_info,
-            self._solver.links_state,
-            self._solver.joints_info,
-            self._solver.equalities_info,
-            self._collider._collider_state,
         )
 
         func_update_qacc(
@@ -4644,11 +4637,6 @@ def func_solve_init(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     island_state: array_class.IslandState,
-    links_info: array_class.LinksInfo,
-    links_state: array_class.LinksState,
-    joints_info: array_class.JointsInfo,
-    equalities_info: array_class.EqualitiesInfo,
-    collider_state: array_class.ColliderState,
     static_rigid_sim_config: qd.template(),
     is_decomposed: qd.template(),
 ):
@@ -4992,11 +4980,6 @@ def func_solve_body(
     static_rigid_sim_config: qd.template(),
     _n_iterations: int,
     island_state: array_class.IslandState,
-    links_info: array_class.LinksInfo,
-    links_state: array_class.LinksState,
-    joints_info: array_class.JointsInfo,
-    equalities_info: array_class.EqualitiesInfo,
-    collider_state: array_class.ColliderState,
 ) -> None: ...
 
 
@@ -5087,17 +5070,12 @@ def func_solve_body_monolith(
     static_rigid_sim_config,
     _n_iterations,
     island_state,
-    links_info,
-    links_state,
-    joints_info,
-    equalities_info,
-    collider_state,
 ):
     # This entrypoint statically IS the monolith arm, so it owns its init: it forwards is_decomposed=False to
-    # func_solve_init (which builds the island partition, factors, and seeds the gradient the packed-env body consumes),
-    # then runs the solve kernel. Keeping the init inside the entrypoint (rather than in resolve, before the dispatch)
-    # is what lets each arm declare its own init behavior - the dispatcher may run a different arm on the next step
-    # during autotuning.
+    # func_solve_init (which groups the constraints by island, factors, and seeds the gradient the packed-env body
+    # consumes), then runs the solve kernel. Keeping the init inside the entrypoint (rather than in resolve, before the
+    # dispatch) is what lets each arm declare its own init behavior - the dispatcher may run a different arm on the next
+    # step during autotuning.
     func_solve_init(
         dofs_info,
         dofs_state,
@@ -5105,11 +5083,6 @@ def func_solve_body_monolith(
         constraint_state,
         rigid_global_info,
         island_state,
-        links_info,
-        links_state,
-        joints_info,
-        equalities_info,
-        collider_state,
         static_rigid_sim_config,
         is_decomposed=False,
     )
