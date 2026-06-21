@@ -150,28 +150,13 @@ class ConstraintSolver:
         self.reset()
 
         # Island partition consumed by the per-island Newton solve (use_contact_island) and, when hibernation is
-        # enabled, by the hibernation decision/wakeup. Always allocated (a kernel param) but only populated and
-        # consumed when use_contact_island is set.
+        # enabled, by the hibernation decision/wakeup. Every field is read only inside qd.static(use_contact_island)
+        # branches, so with islands off it is allocated as scalars (see get_island_state) and never touched.
         self.island_state = array_class.get_island_state(self._solver, self._collider)
-        if self._solver._use_contact_island:
-            # The hibernated-island daisy chain must start empty (-1 = no successor); it persists across steps,
-            # written when an island hibernates and cleared on wakeup.
-            if self._solver._use_hibernation:
-                self.island_state.hibernated_next_link.fill(-1)
-        else:
-            # Island partitioning disabled: install the static whole-env single-island partition on the host once (it
-            # never changes - DOF topology is fixed at build) so the unified per-island Newton solve runs the env as one
-            # contiguous block (island 0, identity dof_id, gbase = 0, n = n_dofs).
-            n_dofs = self._solver.n_dofs
-            _B = self._solver._B
-            n_links = max(self._solver.n_links, 1)
-            dof_slices_n = np.zeros((n_links, _B), dtype=np.int32)
-            dof_slices_n[0, :] = n_dofs
-            self.island_state.n_islands.from_numpy(np.ones((_B,), dtype=np.int32))
-            self.island_state.dof_slices.start.from_numpy(np.zeros((n_links, _B), dtype=np.int32))
-            self.island_state.dof_slices.n.from_numpy(dof_slices_n)
-            if n_dofs > 0:
-                self.island_state.dof_id.from_numpy(np.tile(np.arange(n_dofs, dtype=np.int32)[:, None], (1, _B)))
+        # The hibernated-island daisy chain must start empty (-1 = no successor); it persists across steps, written
+        # when an island hibernates and cleared on wakeup.
+        if self._solver._use_hibernation:
+            self.island_state.hibernated_next_link.fill(-1)
 
         # Fill-reducing DOF permutation for the skyline Cholesky: a structural choice fixed once from the initial
         # body layout (forward kinematics has already run at this point), never recomputed in the step loop. The

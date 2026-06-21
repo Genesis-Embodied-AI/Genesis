@@ -607,16 +607,16 @@ class IslandSlices:
     start: qd.Tensor
 
 
-def get_slices(solver):
+def get_slices(solver, is_active=True):
     _B = solver._B
     # An island is a dynamic component (a floating-base kinematic subtree), so there are at most n_links islands
     # (each link can be its own component). Slices are therefore indexed by island in [0, n_links).
     n_links = max(solver.n_links, 1)
 
     return IslandSlices(
-        curr=V(dtype=gs.qd_int, shape=(n_links, _B)),
-        n=V(dtype=gs.qd_int, shape=(n_links, _B)),
-        start=V(dtype=gs.qd_int, shape=(n_links, _B)),
+        curr=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        n=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        start=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
     )
 
 
@@ -665,8 +665,13 @@ def get_island_state(solver, collider):
     _B = solver._B
     n_links = max(solver.n_links, 1)
     n_dofs = max(solver.n_dofs, 1)
-    # island_state is always allocated (it is a kernel parameter). The per-island Hessian is assembled and factored
-    # in place in constraint_state.nt_H (block-diagonal), so island_state itself holds only the partition maps.
+    # island_state is a kernel parameter, so it always exists, but every field is read only inside
+    # `qd.static(use_contact_island)` branches (the per-island Newton solve and the partition build). When islands are
+    # off the whole partition is dead, so each field collapses to a scalar (maybe_shape -> ()): the kernel param stays
+    # valid while the per-env arrays - which scale with n_links/n_dofs/n_contacts * n_envs - cost nothing. The
+    # per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), so island_state
+    # itself holds only the partition maps.
+    is_active = solver._use_contact_island
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
     # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
@@ -674,20 +679,20 @@ def get_island_state(solver, collider):
     # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
     n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
     return IslandState(
-        links_parent_idx=V(dtype=gs.qd_int, shape=(n_links, _B)),
-        links_island_idx=V(dtype=gs.qd_int, shape=(n_links, _B)),
-        n_islands=V(dtype=gs.qd_int, shape=(_B,)),
-        link_slices=get_slices(solver),
-        link_id=V(dtype=gs.qd_int, shape=(n_links, _B)),
-        dof_slices=get_slices(solver),
-        dof_id=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        dofs_island_idx=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        dof_env_start_local=V(dtype=gs.qd_int, shape=(n_dofs, _B)),
-        contact_slices=get_slices(solver),
-        contact_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
-        constraint_slices=get_slices(solver),
-        constraint_id=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
-        constraint_island_idx=V(dtype=gs.qd_int, shape=(n_constraints_max, _B)),
+        links_parent_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        links_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        n_islands=V(dtype=gs.qd_int, shape=maybe_shape((_B,), is_active)),
+        link_slices=get_slices(solver, is_active),
+        link_id=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        dof_slices=get_slices(solver, is_active),
+        dof_id=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dofs_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dof_env_start_local=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        contact_slices=get_slices(solver, is_active),
+        contact_id=V(dtype=gs.qd_int, shape=maybe_shape((max_candidate_contacts, _B), is_active)),
+        constraint_slices=get_slices(solver, is_active),
+        constraint_id=V(dtype=gs.qd_int, shape=maybe_shape((n_constraints_max, _B), is_active)),
+        constraint_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_constraints_max, _B), is_active)),
         is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
         hibernated_next_link=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
     )
