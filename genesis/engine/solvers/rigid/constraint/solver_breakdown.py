@@ -142,13 +142,19 @@ def _func_decomp_linesearch_p0(
                 constraint_state.mv[i_d1, i_b] = mv_val
                 i_d1 += _T
 
-            # === Phase 0b: Compute jv = J @ search (cooperative over constraints, sparse over each constraint's DOFs) ===
+            # === Phase 0b: Compute jv = J @ search (cooperative over constraints). Sparse over each constraint's
+            # coupled DOFs (jac_dofs_idx) for CPU skyline / per-island GPU; islands-OFF GPU iterates dense to keep
+            # the per-lane trip count uniform (no warp divergence), matching the non-island baseline. ===
             i_c = tid
             while i_c < n_con:
                 jv_val = gs.qd_float(0.0)
-                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                    jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.use_contact_island):
+                    for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                        jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                else:
+                    for i_d in range(n_dofs):
+                        jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
                 constraint_state.jv[i_c, i_b] = jv_val
                 i_c += _T
 
@@ -1009,13 +1015,14 @@ def _kernel_solve_graph(
                 solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         elif qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and static_rigid_sim_config.use_contact_island
             and static_rigid_sim_config.enable_cooperative_constraint_kernels
         ):
-            # Whole-env Hessian too big for shared, but each island's block fits the per-island tile: assemble + factor
-            # + solve each island in its own tile (do_assemble=True), with NO whole-env Hessian touched. This keeps the
-            # cost at sum-of-per-island-blocks instead of the whole-env O(n_dofs^3) factor the non-fused path below
-            # would do - the regime of many small islands whose total dof count exceeds the shared cap. An island
-            # larger than the per-island tile falls back to the scalar per-island solve inside the factor.
+            # Islands ON, whole-env Hessian too big for shared but each island's block fits the per-island tile:
+            # assemble + factor + solve each island in its own tile (do_assemble=True), with NO whole-env Hessian
+            # touched. This keeps the cost at sum-of-per-island-blocks instead of the whole-env O(n_dofs^3) factor the
+            # non-fused path below would do - the regime of many small islands whose total dof count exceeds the shared
+            # cap. An island larger than the per-island tile falls back to the scalar per-island solve inside the factor.
             solver.func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
@@ -1029,9 +1036,10 @@ def _kernel_solve_graph(
                 do_assemble=True,
             )
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
-            # so H patching is not possible). Reached only without the cooperative kernels (tiny n_dofs or huge env
-            # count), where the whole-env factor is cheap or the monolith is selected instead.
+            # Non-fused path: full whole-env H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H
+            # with L, so H patching is not possible). Reached when the whole-env Hessian does not fit shared and either
+            # islands are OFF (a single whole-env factor, matching the non-island baseline) or the cooperative kernels
+            # are disabled (tiny n_dofs or huge env count), where the whole-env factor is cheap or the monolith wins.
             _func_newton_only_nt_hessian_and_cholesky(
                 island_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )

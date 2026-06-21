@@ -237,14 +237,14 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     compile_time = time.time() - time_start
 
     ctrl_pos = torch.tensor(
-        [0.0, 0.0, 0.0, 0.0, 0.8, 0.8, 1.0, 1.0, -1.5, -1.5, -1.5, -1.5],
+        [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5],
         dtype=gs.tc_float,
         device=gs.device,
     )
     robot.control_dofs_position(ctrl_pos, dofs_idx_local=slice(6, None))
 
     init_qpos = torch.tensor(
-        [[0.0, 0.0, 0.42, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.8, 0.8, 1.0, 1.0, -1.5, -1.5, -1.5, -1.5]],
+        [[0.0, 0.0, 0.42, 1.0, 0.0, 0.0, 0.0, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 1.0, -1.5, 0.0, 1.0, -1.5]],
         dtype=gs.tc_float,
         device=gs.device,
     ).repeat((scene.n_envs, 1))

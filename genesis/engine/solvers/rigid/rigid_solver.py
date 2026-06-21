@@ -606,17 +606,6 @@ class RigidSolver(KinematicSolver):
                     # No cooperative layout (n_envs > 8192 already saturates the GPU, or n_dofs < 16): the decomposed
                     # arm has nothing to exploit, so the scalar one-thread-per-env monolith is the clear winner.
                     static_rigid_sim_config["prefer_decomposed_solver"] = 0
-                elif self._options.constraint_solver == gs.constraint_solver.CG:
-                    # CG spends its time in the linesearch and never factors a Hessian, so the decomposed arm's
-                    # parallel grid-search linesearch (an on-GPU graph_do_while loop) beats the scalar monolith at
-                    # every scale measured on both CUDA (1.5-4.8x) and Metal (2-18x).
-                    static_rigid_sim_config["prefer_decomposed_solver"] = 1
-                # Newton (islands and non-island) falls through to the per-step autotuner. The monolith-vs-decomposed
-                # winner is not determinable in advance: it depends on the runtime island structure (many small islands
-                # favor the warp-cooperative decomposed arm; a single island that overflows the per-island shared tile
-                # falls back to a scalar factor and favors the monolith's incremental update), the tiled-fits boundary
-                # is backend-dependent, and the non-island margin is a small env-count-dependent one. The autotuner
-                # times both arms per config and picks, which is more reliable than any build-time heuristic.
 
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:

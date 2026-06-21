@@ -3347,9 +3347,13 @@ def func_ls_init_and_eval_p0(
 
     for i_c in range(n_con):
         jv = gs.qd_float(0.0)
-        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-            jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.use_contact_island):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         constraint_state.jv[i_c, i_b] = jv
 
     # -- quad_gauss (same as original func_ls_init) --
@@ -4079,16 +4083,27 @@ def func_update_constraint_batch(
             -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         )
 
-    # qfrc_constraint = J^T @ efc_force, accumulated over each constraint's actual DOFs (jac_dofs_idx).
-    for i_d in range(n_dofs):
-        constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-            constraint_state.qfrc_constraint[i_d, i_b] = (
-                constraint_state.qfrc_constraint[i_d, i_b]
-                + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-            )
+    # qfrc_constraint = J^T @ efc_force. Sparse scatter over each constraint's coupled DOFs (jac_dofs_idx) when that
+    # helps (CPU skyline / per-island GPU); islands-OFF GPU gathers per-DOF (bit-identical to the non-island baseline)
+    # to keep the 32-env-packed warp's trip count uniform.
+    if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.use_contact_island):
+        for i_d in range(n_dofs):
+            constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                constraint_state.qfrc_constraint[i_d, i_b] = (
+                    constraint_state.qfrc_constraint[i_d, i_b]
+                    + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                )
+    else:
+        for i_d in range(n_dofs):
+            qfrc_constraint = gs.qd_float(0.0)
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                qfrc_constraint = (
+                    qfrc_constraint + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                )
+            constraint_state.qfrc_constraint[i_d, i_b] = qfrc_constraint
 
     # (Mx - Mx') * (x - x')
     for i_d in range(n_dofs):
@@ -4559,9 +4574,15 @@ def _initialize_Jaref_body(
     static_rigid_sim_config: qd.template(),
 ):
     Jaref = -constraint_state.aref[i_c, i_b]
-    for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-        i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-        Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    # Sparse support (jac_dofs_idx) helps the CPU skyline solve and the per-island GPU solve, but its variable trip
+    # count diverges the 32-env-packed warp; islands-OFF GPU iterates dense (uniform), matching the non-island baseline.
+    if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.use_contact_island):
+        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    else:
+        for i_d in range(n_dofs):
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
     constraint_state.Jaref[i_c, i_b] = Jaref
 
 
@@ -4647,23 +4668,6 @@ def func_solve_init(
     # the Hessian on its first graph iteration regardless, so it skips the init factor/gradient here entirely.
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
-
-    if qd.static(static_rigid_sim_config.requires_grad and not static_rigid_sim_config.sparse_solve):
-        # FIXME: Force the forward jac-vector products to iterate every DOF (via a full jac_dofs_idx), matching the
-        # differentiable adjoint backward which iterates densely when sparse_solve is off. Ideally the forward AND the
-        # backward would both iterate the sparse support (jac_dofs_idx), which is faster and is what the non-grad path
-        # does; keeping that sparse pair consistent across every forward solve path (Jaref, qfrc, Hessian, line search)
-        # turned out to be error-prone, so the rarely-used differentiable path falls back to a dense forward instead.
-        # Uncoupled DOFs have a zero jac entry (the assembly zeroes the whole row when sparse_solve is off), so widening
-        # the support to all DOFs leaves every forward quantity unchanged while making the analytical gradient match.
-        max_constraints = constraint_state.jac_dofs_idx.shape[0]
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
-        for i_c, i_b in qd.ndrange(max_constraints, _B):
-            if i_c < constraint_state.n_constraints[i_b]:
-                constraint_state.jac_n_dofs[i_c, i_b] = n_dofs
-                # jac_dofs_idx is kept strictly descending, so place DOF i_d at slot (n_dofs - 1 - i_d).
-                for i_d in range(n_dofs):
-                    constraint_state.jac_dofs_idx[i_c, n_dofs - 1 - i_d, i_b] = i_d
 
     # Group the assembled constraints by island. The island partition itself (links_island_idx / dof_id / contact
     # ordering) is built earlier, in add_inequality_constraints, before the contact constraints are assembled; here we
