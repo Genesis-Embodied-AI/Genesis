@@ -4029,50 +4029,35 @@ def _func_update_qfrc_constraint_coop(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute qfrc_constraint = J^T @ efc_force using one cooperating warp per env.
+    """Compute qfrc_constraint = J^T @ efc_force with one cooperating warp per (env, dof).
 
     32 lanes stride i_c so adjacent reads of jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped
-    jac and flipped efc_force layouts. Outer loop is over i_d; each i_d does one warp-reduce.
+    jac and flipped efc_force layouts; each (env, dof) warp reduces over its constraints with one warp-reduce.
 
-    ``efc_force[i_c, i_b]`` is invariant across the inner ``i_d`` loop, so we hoist a small per-lane register window
-    of it before the ``i_d`` loop and reuse those values across all dofs, dropping ``n_dofs - 1`` global re-reads per
-    cached constraint. ``MAX_CACHE_PER_LANE = 2`` covers ``n_con <= 64`` fully; larger ``n_con`` falls back to the
-    global re-read on the tail (same code path as before). Tuned against the Tile32x32 Cholesky register budget.
+    Gridding over (env, dof) - one warp per dof rather than one warp per env looping all dofs - keeps the GPU busy when
+    the env count alone does not fill it (a single env with many dofs leaves all but one warp idle in the per-env
+    layout). The per-lane summation order is unchanged, so the result is bit-identical to the per-env loop.
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
-    MAX_CACHE_PER_LANE = qd.static(2)
 
     qd.loop_config(name="update_constraint_qfrc", block_dim=_K)
-    for i_flat in range(_B * _K):
+    for i_flat in range(_B * n_dofs * _K):
         tid = i_flat % _K
-        i_b = i_flat // _K
+        work = i_flat // _K
+        i_d = work % n_dofs
+        i_b = work // n_dofs
         n_con = constraint_state.n_constraints[i_b]
 
-        # Phase 1: load up to MAX_CACHE_PER_LANE of this lane's efc_force entries into registers. Coalesced under
-        # the flipped efc_force layout (stride-1 over i_c for fixed i_b across warp lanes).
-        efc_local = qd.Vector([0.0] * MAX_CACHE_PER_LANE, dt=gs.qd_float)
-        for k in range(MAX_CACHE_PER_LANE):
-            i_c_k = tid + k * _K
-            if i_c_k < n_con:
-                efc_local[k] = constraint_state.efc_force[i_c_k, i_b]
-
-        # Phase 2: i_d loop reads jac fresh (varies per i_d) but reuses cached ``efc_local`` for the head. The tail
-        # re-reads efc_force from global (only triggered when ``n_con > MAX_CACHE_PER_LANE * _K``).
-        for i_d in range(n_dofs):
-            qfrc_lane = gs.qd_float(0.0)
-            for k in range(MAX_CACHE_PER_LANE):
-                i_c_k = tid + k * _K
-                if i_c_k < n_con:
-                    qfrc_lane = qfrc_lane + constraint_state.jac[i_c_k, i_d, i_b] * efc_local[k]
-            i_c = tid + MAX_CACHE_PER_LANE * _K
-            while i_c < n_con:
-                qfrc_lane = qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                i_c = i_c + _K
-            qfrc_total = qd.simt.subgroup.reduce_all_add_tiled(qfrc_lane, 5)
-            if tid == 0:
-                constraint_state.qfrc_constraint[i_d, i_b] = qfrc_total
+        qfrc_lane = gs.qd_float(0.0)
+        i_c = tid
+        while i_c < n_con:
+            qfrc_lane = qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            i_c = i_c + _K
+        qfrc_total = qd.simt.subgroup.reduce_all_add_tiled(qfrc_lane, 5)
+        if tid == 0:
+            constraint_state.qfrc_constraint[i_d, i_b] = qfrc_total
 
 
 @qd.func
