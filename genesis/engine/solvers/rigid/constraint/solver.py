@@ -4702,8 +4702,8 @@ def func_solve_init(
             rigid_global_info,
             static_rigid_sim_config,
             qd.simt.Tile32x32 if qd.static(static_rigid_sim_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
-            True,
-            qd.static(not is_decomposed),
+            do_assemble=True,
+            write_L=qd.static(not is_decomposed),
         )
     else:
         if qd.static(
