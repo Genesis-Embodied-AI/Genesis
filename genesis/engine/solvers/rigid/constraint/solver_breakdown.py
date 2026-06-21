@@ -981,27 +981,32 @@ def _kernel_solve_graph(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.hessian_fits_shared
         ):
-            # Unified Newton path, identical for islands ON and OFF: the SAME incremental assembly - full rebuild when
-            # the active set changed a lot, delta patch otherwise - then a per-island barrier-free tiled factor + solve
-            # that READS the maintained nt_H. Gated only on whether the tiled L fits shared memory, never on
-            # use_contact_island, so ON and OFF run the exact same solver and differ only in the partition (OFF is a
-            # single island spanning every dof). Each changed constraint's J^T D J lands inside its island's diagonal
-            # block since no constraint couples DOFs across islands, so the patch is island-correct unchanged. A
-            # whole-env Hessian too big for shared falls through to the non-fused path below.
+            # Incremental Hessian assembly - full rebuild when the active set changed a lot, delta patch otherwise -
+            # then a tiled factor + solve reading the maintained nt_H. Each changed constraint's J^T D J lands inside
+            # its island's diagonal block (no constraint couples DOFs across islands), so the patch is island-correct.
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
             _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
             _func_patch_hessian_delta(constraint_state, rigid_global_info)
             solver.func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
-            solver.func_island_tiled_factor_solve_all(
-                entities_info,
-                constraint_state,
-                island_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-                qd.simt.Tile32x32 if qd.static(static_rigid_sim_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
-            )
+            if qd.static(static_rigid_sim_config.use_contact_island):
+                # Islands ON: factor + solve each island in its own tile over the (env, island) grid.
+                solver.func_island_tiled_factor_solve_all(
+                    entities_info,
+                    constraint_state,
+                    island_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    qd.simt.Tile32x32
+                    if qd.static(static_rigid_sim_config.cholesky_tile_size == 32)
+                    else qd.simt.Tile16x16,
+                )
+            else:
+                # Islands OFF: the whole env is a single island, which solves fastest through the dedicated whole-env
+                # fused Cholesky+solve (L kept in shared memory). The per-island grid path adds per-(env, island)
+                # indirection and grid overhead that is pure cost when there is exactly one island spanning every DOF.
+                solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         elif qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_cooperative_constraint_kernels
