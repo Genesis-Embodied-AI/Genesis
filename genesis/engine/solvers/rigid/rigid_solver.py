@@ -250,13 +250,12 @@ class RigidSolver(KinematicSolver):
         self._requires_grad = self._sim.options.requires_grad
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
 
-        # use_contact_island=None resolves per backend: the per-island block solve speeds up multi-body scenes on
-        # CPU (composes with sparse) and Metal (cooperative arm), but on CUDA the on-GPU graph solve already
-        # saturates the device for the common many-environment workload, so it is off by default there (enable
-        # explicitly for large single-/few-environment scenes). Hibernation requires islands, so it forces them on.
+        # use_contact_island=None defaults on for every backend: the per-island block solve speeds up multi-body
+        # scenes (CPU composes with sparse_solve, Metal and CUDA use the cooperative/graph arms). The gate below still
+        # disables it under requires_grad (the differentiable adjoint reads the dense global Hessian) and for
+        # single-island scenes (where the partition is pure overhead, unless hibernation needs it).
         if options.use_contact_island is None:
-            # Islands default on everywhere but CUDA; an explicit hibernation request forces them on there too.
-            self._use_contact_island = gs.backend != gs.cuda or options.use_hibernation is True
+            self._use_contact_island = True
         else:
             self._use_contact_island = options.use_contact_island
         # Hibernation builds on islands. Left unset it follows islands - on wherever islands resolve on, so turning
