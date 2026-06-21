@@ -989,9 +989,11 @@ def func_clamp_prune_and_sort_contacts(
             errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CONTACTS
 
         # === Spatial sort by x-position with geom-pair grouping. Gated on collider_static_config.
-        # spatial_sort_supported, which combines the narrowphase condition (has_non_box_plane_convex_convex on GPU)
-        # with the use_contact_island override (forced off when the island path consumes contacts). Permutes
-        # contact_sort_idx only; contact_data is never written.
+        # spatial_sort_supported (has_non_box_plane_convex_convex on GPU, not requires_grad). This also makes the GPU
+        # contact order deterministic - the narrowphase reserves slots via atomic_add (non-deterministic physical
+        # layout) and this writes a deterministic permutation into contact_sort_idx that every downstream consumer,
+        # including island construction, reads through - so it runs for islands too. Permutes contact_sort_idx only;
+        # contact_data is never written.
         if qd.static(collider_static_config.spatial_sort_supported):
             n_con = collider_state.n_contacts[i_b]
             # Per-contact spatial key (own x-position). The key is a pure function of contact data, so the logical
