@@ -1044,6 +1044,11 @@ def func_solve_decomposed(
     static_rigid_sim_config,
     _n_iterations,
     island_state,
+    links_info,
+    links_state,
+    joints_info,
+    equalities_info,
+    collider_state,
 ):
     """
     GPU graph accelerated solver loop with parallel grid-search linesearch and GPU-side iteration via graph_do_while.
@@ -1059,9 +1064,9 @@ def func_solve_decomposed(
     elements have converged (no improved[i_b] is True).
     """
     # This entrypoint statically IS the decomposed arm, so it owns its init: it forwards is_decomposed=True to
-    # func_solve_init, which then skips the init Hessian factor + gradient entirely. The graph rebuilds the Hessian
-    # on its first iteration regardless (iter_count <= 1 -> use_full_hessian), so the init factor would be pure waste,
-    # and skipping it makes the decomposed arm behave identically for islands ON and OFF.
+    # func_solve_init, which builds the island partition but then skips the init Hessian factor + gradient. The graph
+    # rebuilds the Hessian on its first iteration regardless (iter_count <= 1 -> use_full_hessian), so the init factor
+    # would be pure waste, and skipping it makes the decomposed arm behave identically for islands ON and OFF.
     solver.func_solve_init(
         dofs_info,
         dofs_state,
@@ -1069,6 +1074,11 @@ def func_solve_decomposed(
         constraint_state,
         rigid_global_info,
         island_state,
+        links_info,
+        links_state,
+        joints_info,
+        equalities_info,
+        collider_state,
         static_rigid_sim_config,
         is_decomposed=True,
     )

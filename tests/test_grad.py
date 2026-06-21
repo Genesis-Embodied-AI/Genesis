@@ -346,7 +346,13 @@ def test_diff_solver(monkeypatch):
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
             island_state=constraint_solver.island_state,
+            links_info=rigid_solver.links_info,
+            links_state=rigid_solver.links_state,
+            joints_info=rigid_solver.joints_info,
+            equalities_info=rigid_solver.equalities_info,
+            collider_state=constraint_solver._collider._collider_state,
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            is_decomposed=False,
         )
         func_solve_body(
             entities_info=rigid_solver.entities_info,
@@ -357,6 +363,11 @@ def test_diff_solver(monkeypatch):
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
             _n_iterations=constraint_solver._n_iterations,
             island_state=constraint_solver.island_state,
+            links_info=rigid_solver.links_info,
+            links_state=rigid_solver.links_state,
+            joints_info=rigid_solver.joints_info,
+            equalities_info=rigid_solver.equalities_info,
+            collider_state=constraint_solver._collider._collider_state,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)

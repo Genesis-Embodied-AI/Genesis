@@ -12,7 +12,7 @@ import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
-from .island import kernel_build_islands, kernel_group_constraints_by_island
+from .island import func_build_islands, func_constraint_island, func_group_constraints_by_island
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
 
@@ -276,30 +276,11 @@ class ConstraintSolver:
         )
 
     def resolve(self, entities_info=None, rigid_global_info=None):
-        if self._solver._use_contact_island:
-            # Partition entities into islands (contacts + equalities) and group the just-assembled
-            # constraints per island, so the Newton solve factors each island's block independently.
-            # Built before func_solve_init because the initial Hessian factor is per-island too.
-            kernel_build_islands(
-                self._solver.links_info,
-                self._solver.links_state,
-                self._solver.joints_info,
-                self._solver.equalities_info,
-                self.constraint_state,
-                self._collider._collider_state,
-                self.island_state,
-                self._solver._static_rigid_sim_config,
-            )
-            kernel_group_constraints_by_island(
-                self.island_state,
-                self.constraint_state,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
-
         # func_solve_init is launched by each dispatch entrypoint (func_solve_body_monolith / func_solve_decomposed),
         # not here: only the entrypoint statically knows its arm, which determines whether the init factor/gradient is
-        # done (monolith) or skipped (decomposed re-factors in-loop). The island partition above stays arm-independent.
+        # done (monolith) or skipped (decomposed re-factors in-loop). With islands, func_solve_init also builds the
+        # island partition (folded in from two standalone kernels to avoid their per-step launch overhead), so the
+        # extra link/joint/equality/collider inputs are forwarded through here.
         func_solve_body(
             self._solver.entities_info,
             self._solver.dofs_info,
@@ -309,6 +290,11 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
             self._n_iterations,
             self.island_state,
+            self._solver.links_info,
+            self._solver.links_state,
+            self._solver.joints_info,
+            self._solver.equalities_info,
+            self._collider._collider_state,
         )
 
         func_update_qacc(
@@ -2024,8 +2010,12 @@ def func_island_assemble_factor_solve_tiled(
     gbase = island_state.dof_id[dof_base, i_b]
 
     # The island's gathered DOFs are ascending, so the block is contiguous iff first and last span exactly n indices.
-    # Quadrants forbids `return` inside a runtime branch, so the tiled path and the scalar fallback are an if/else.
-    if island_state.dof_id[dof_base + n - 1, i_b] == gbase + n - 1:
+    # The cooperative tiled path also requires the block to fit the shared tile (n <= tiled_n_island_dofs); a larger
+    # island, or a non-contiguous one, falls back to the scalar per-island solve. Quadrants forbids `return` inside a
+    # runtime branch, so the tiled path and the scalar fallback are an if/else.
+    if island_state.dof_id[dof_base + n - 1, i_b] == gbase + n - 1 and n <= qd.static(
+        static_rigid_sim_config.tiled_n_island_dofs
+    ):
         # --- Assemble the full lower triangle of the island block into nt_H (T threads, row-striped) ---
         if qd.static(do_assemble):
             i_d = tid
@@ -2129,8 +2119,9 @@ def func_island_assemble_factor_solve_tiled(
                 i_r = i_r + T
             qd.simt.block.sync()
     else:
-        # Rare non-contiguous island (gathered DOFs not a single ascending run): scalar per-island solve on lane 0,
-        # which writes Mgrad directly via func_cholesky_solve_batch.
+        # Island that cannot take the cooperative tiled path - non-contiguous DOFs (not a single ascending run), or
+        # larger than the shared-tile capacity tiled_n_island_dofs: scalar per-island solve on lane 0, which writes
+        # both L (func_cholesky_factor_direct_batch) and Mgrad (func_cholesky_solve_batch) directly to global memory.
         if tid == 0:
             func_hessian_direct_batch(
                 i_b, i_island, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
@@ -2162,7 +2153,11 @@ def func_island_tiled_factor_solve_all(
     # caller that reads the factor back (the monolith seed); the graph re-factors so it leaves it False.
     _B = constraint_state.grad.shape[1]
     max_islands = island_state.dof_slices.start.shape[0]
-    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+    # The shared tile holds ONE island at a time (one work-item per (env, island)), so it is sized to the per-island
+    # capacity tiled_n_island_dofs (always fits shared) rather than the whole-env tiled_n_dofs. This is what lets the
+    # cooperative per-island factor run for many small islands even when the whole env exceeds shared memory. An island
+    # larger than this cap falls back to the scalar per-island solve inside func_island_assemble_factor_solve_tiled.
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_island_dofs)
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     qd.loop_config(block_dim=T)
     for i in range(_B * max_islands * T):
@@ -4515,6 +4510,11 @@ def func_solve_init(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     island_state: array_class.IslandState,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    joints_info: array_class.JointsInfo,
+    equalities_info: array_class.EqualitiesInfo,
+    collider_state: array_class.ColliderState,
     static_rigid_sim_config: qd.template(),
     is_decomposed: qd.template(),
 ):
@@ -4524,6 +4524,43 @@ def func_solve_init(
     # the Hessian on its first graph iteration regardless, so it skips the init factor/gradient here entirely.
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
+
+    # Build the island partition first - the per-island init factor below needs it. Folded in from two standalone
+    # kernels (kernel_build_islands + kernel_group_constraints_by_island) so it runs inside this launch instead of
+    # paying two extra kernel dispatches per step. Three passes: per-env union-find + list build, then a parallel
+    # per-(env, constraint) island resolution, then a per-env grouping into contiguous constraint ranges.
+    if qd.static(static_rigid_sim_config.use_contact_island):
+        EPS = rigid_global_info.EPS[None]
+        capacity = island_state.constraint_island_idx.shape[0]
+        qd.loop_config(
+            name="build_islands", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        )
+        for i_b in range(_B):
+            func_build_islands(
+                i_b,
+                links_info,
+                links_state,
+                joints_info,
+                equalities_info,
+                constraint_state,
+                collider_state,
+                island_state,
+                static_rigid_sim_config,
+            )
+        qd.loop_config(name="resolve_constraint_island", serialize=False)
+        for i_flat in range(_B * capacity):
+            i_b = i_flat // capacity
+            i_c = i_flat % capacity
+            if i_c < constraint_state.n_constraints[i_b]:
+                island_state.constraint_island_idx[i_c, i_b] = func_constraint_island(
+                    constraint_state, island_state, i_c, i_b, n_dofs, EPS, static_rigid_sim_config
+                )
+        qd.loop_config(
+            name="group_constraints_by_island",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL),
+        )
+        for i_b in range(_B):
+            func_group_constraints_by_island(i_b, island_state, constraint_state, static_rigid_sim_config)
 
     # Skyline envelope for the CPU sparse Cholesky, recomputed each step (the fill-reducing DOF permutation it builds
     # on is fixed at build time). Folded here rather than a standalone kernel to avoid a per-step launch.
@@ -4640,13 +4677,14 @@ def func_solve_init(
     if qd.static(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
         and static_rigid_sim_config.use_contact_island
-        and static_rigid_sim_config.backend != gs.cpu
-        and static_rigid_sim_config.hessian_fits_shared
+        and static_rigid_sim_config.enable_cooperative_constraint_kernels
     ):
         # GPU-island seed (both arms): the per-island tiled assemble+factor+solve - the same barrier-free factor the
-        # decomposed graph runs every iteration. A single island spanning the env factors with the full T-lane tile
-        # (identical to islands-off), so the single-island seed costs the same as islands-off instead of the scalar
-        # one-thread-per-island Cholesky; many small islands each factor in their own tile (no whole-env cubic). It
+        # decomposed graph runs every iteration. The shared tile is sized per-island (tiled_n_island_dofs), so this runs
+        # whenever the cooperative kernels are enabled, NOT only when the whole env fits shared - many small islands all
+        # factor in their own tile even when the whole env is large (no whole-env cubic). A single island spanning the
+        # env factors with the full T-lane tile (identical to islands-off); an island exceeding the per-island shared
+        # capacity falls back to the scalar per-island solve inside the factor. It
         # solves grad -> Mgrad directly, subsuming the separate gradient solve. The monolith reads L back from nt_H in
         # its incremental iterations so it persists L (write_L=True); the decomposed graph re-factors each iteration so
         # it keeps nt_H holding the raw Hessian (write_L=False).
@@ -4835,6 +4873,11 @@ def func_solve_body(
     static_rigid_sim_config: qd.template(),
     _n_iterations: int,
     island_state: array_class.IslandState,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    joints_info: array_class.JointsInfo,
+    equalities_info: array_class.EqualitiesInfo,
+    collider_state: array_class.ColliderState,
 ) -> None: ...
 
 
@@ -4867,11 +4910,11 @@ def _kernel_solve_monolith(
                 static_rigid_sim_config.use_contact_island
                 and static_rigid_sim_config.backend != gs.cpu
                 and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-                and not static_rigid_sim_config.hessian_fits_shared
+                and not static_rigid_sim_config.enable_cooperative_constraint_kernels
             ):
-                # When the per-island tiled factor does not fit shared memory, func_solve_init skips the GPU-island
-                # seed, so the monolith seeds this env's initial scalar per-island factor + gradient + search here.
-                # Gives the first linesearch a valid Newton direction; once per step, then iterate. When it fits,
+                # Without the cooperative kernels, func_solve_init skips the GPU-island tiled seed, so the monolith
+                # seeds this env's initial scalar per-island factor + gradient + search here. Gives the first
+                # linesearch a valid Newton direction; once per step, then iterate. With cooperative kernels enabled,
                 # func_solve_init already seeded the factor (L persisted to nt_H) and the search direction.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
@@ -4925,11 +4968,17 @@ def func_solve_body_monolith(
     static_rigid_sim_config,
     _n_iterations,
     island_state,
+    links_info,
+    links_state,
+    joints_info,
+    equalities_info,
+    collider_state,
 ):
     # This entrypoint statically IS the monolith arm, so it owns its init: it forwards is_decomposed=False to
-    # func_solve_init (which factors + seeds the gradient the packed-env body consumes), then runs the solve kernel.
-    # Keeping the init inside the entrypoint (rather than in resolve, before the dispatch) is what lets each arm
-    # declare its own init behavior - the dispatcher may run a different arm on the next step during autotuning.
+    # func_solve_init (which builds the island partition, factors, and seeds the gradient the packed-env body consumes),
+    # then runs the solve kernel. Keeping the init inside the entrypoint (rather than in resolve, before the dispatch)
+    # is what lets each arm declare its own init behavior - the dispatcher may run a different arm on the next step
+    # during autotuning.
     func_solve_init(
         dofs_info,
         dofs_state,
@@ -4937,6 +4986,11 @@ def func_solve_body_monolith(
         constraint_state,
         rigid_global_info,
         island_state,
+        links_info,
+        links_state,
+        joints_info,
+        equalities_info,
+        collider_state,
         static_rigid_sim_config,
         is_decomposed=False,
     )
