@@ -4648,6 +4648,23 @@ def func_solve_init(
     _B = dofs_state.acc_smooth.shape[1]
     n_dofs = dofs_state.acc_smooth.shape[0]
 
+    if qd.static(static_rigid_sim_config.requires_grad and not static_rigid_sim_config.sparse_solve):
+        # FIXME: Force the forward jac-vector products to iterate every DOF (via a full jac_dofs_idx), matching the
+        # differentiable adjoint backward which iterates densely when sparse_solve is off. Ideally the forward AND the
+        # backward would both iterate the sparse support (jac_dofs_idx), which is faster and is what the non-grad path
+        # does; keeping that sparse pair consistent across every forward solve path (Jaref, qfrc, Hessian, line search)
+        # turned out to be error-prone, so the rarely-used differentiable path falls back to a dense forward instead.
+        # Uncoupled DOFs have a zero jac entry (the assembly zeroes the whole row when sparse_solve is off), so widening
+        # the support to all DOFs leaves every forward quantity unchanged while making the analytical gradient match.
+        max_constraints = constraint_state.jac_dofs_idx.shape[0]
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+        for i_c, i_b in qd.ndrange(max_constraints, _B):
+            if i_c < constraint_state.n_constraints[i_b]:
+                constraint_state.jac_n_dofs[i_c, i_b] = n_dofs
+                # jac_dofs_idx is kept strictly descending, so place DOF i_d at slot (n_dofs - 1 - i_d).
+                for i_d in range(n_dofs):
+                    constraint_state.jac_dofs_idx[i_c, n_dofs - 1 - i_d, i_b] = i_d
+
     # Group the assembled constraints by island. The island partition itself (links_island_idx / dof_id / contact
     # ordering) is built earlier, in add_inequality_constraints, before the contact constraints are assembled; here we
     # only resolve each constraint's island (parallel per-(env, constraint)) and gather them into contiguous per-island
