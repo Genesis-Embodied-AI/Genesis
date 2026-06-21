@@ -1012,9 +1012,42 @@ def _kernel_solve_graph(
                     static_rigid_sim_config,
                     qd.simt.Tile16x16,
                 )
+        elif qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and static_rigid_sim_config.enable_cooperative_constraint_kernels
+        ):
+            # Whole-env Hessian too big for shared, but each island's block fits the per-island tile: assemble + factor
+            # + solve each island in its own tile (do_assemble=True), with NO whole-env Hessian touched. This keeps the
+            # cost at sum-of-per-island-blocks instead of the whole-env O(n_dofs^3) factor the non-fused path below
+            # would do - the regime of many small islands whose total dof count exceeds the shared cap. An island
+            # larger than the per-island tile falls back to the scalar per-island solve inside the factor.
+            solver.func_update_gradient_no_solve(
+                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            if qd.static(static_rigid_sim_config.cholesky_tile_size == 32):
+                solver.func_island_tiled_factor_solve_all(
+                    entities_info,
+                    constraint_state,
+                    island_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    qd.simt.Tile32x32,
+                    True,
+                )
+            else:
+                solver.func_island_tiled_factor_solve_all(
+                    entities_info,
+                    constraint_state,
+                    island_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    qd.simt.Tile16x16,
+                    True,
+                )
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
-            # so H patching is not possible)
+            # so H patching is not possible). Reached only without the cooperative kernels (tiny n_dofs or huge env
+            # count), where the whole-env factor is cheap or the monolith is selected instead.
             _func_newton_only_nt_hessian_and_cholesky(
                 island_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
