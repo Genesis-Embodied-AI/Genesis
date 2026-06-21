@@ -250,25 +250,16 @@ class RigidSolver(KinematicSolver):
         self._requires_grad = self._sim.options.requires_grad
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
 
-        # use_contact_island=None defaults on for every backend: the per-island block solve speeds up multi-body
-        # scenes (CPU composes with sparse_solve, Metal and CUDA use the cooperative/graph arms). The gate below still
-        # disables it under requires_grad (the differentiable adjoint reads the dense global Hessian) and for
-        # single-island scenes (where the partition is pure overhead, unless hibernation needs it).
-        if options.use_contact_island is None:
-            self._use_contact_island = True
-        else:
-            self._use_contact_island = options.use_contact_island
-        # Hibernation builds on islands. Left unset it follows islands - on wherever islands resolve on, so turning
-        # islands off (explicitly or per backend) also disables hibernation. An explicit value is honored, erroring
-        # only when it asks for hibernation while islands are off (a genuine conflict).
-        if options.use_hibernation is None:
-            self._use_hibernation = self._use_contact_island
-        else:
-            self._use_hibernation = options.use_hibernation
-            if self._use_hibernation and not self._use_contact_island:
-                gs.raise_exception(
-                    "`use_hibernation=True` requires `use_contact_island=True`, as hibernation builds on islands."
-                )
+        # Contact islands are off by default (opt in explicitly). The gate further below still disables them under
+        # requires_grad (the differentiable adjoint reads the dense global Hessian) and for single-island scenes
+        # (where the partition is pure overhead, unless hibernation needs it).
+        self._use_contact_island = options.use_contact_island
+        # Hibernation builds on islands, so requesting it without islands is a genuine conflict.
+        self._use_hibernation = options.use_hibernation
+        if self._use_hibernation and not self._use_contact_island:
+            gs.raise_exception(
+                "`use_hibernation=True` requires `use_contact_island=True`, as hibernation builds on islands."
+            )
 
         # Resolve the hibernation velocity tolerance to the residual-velocity floor of the float precision: 32-bit
         # contact solves leave a larger resting-velocity jitter than 64-bit, so a body settles below a coarser floor.
