@@ -621,43 +621,12 @@ class RigidSolver(KinematicSolver):
                     # parallel grid-search linesearch (an on-GPU graph_do_while loop) beats the scalar monolith at
                     # every scale measured on both CUDA (1.5-4.8x) and Metal (2-18x).
                     static_rigid_sim_config["prefer_decomposed_solver"] = 1
-                elif self._use_contact_island:
-                    # Newton islands. Pinning the arm is what makes the simulation deterministic - the per-step
-                    # autotuner picks by timing, which varies run to run and breaks bitwise reproducibility - so pin
-                    # every regime where the A/B gives a confident winner, and fall through to the autotuner only in
-                    # the genuinely undeterminable band. The warp-cooperative arm parallelizes the per-island solves;
-                    # the monolith does them serially inside one per-env block. Confident regimes (box-grid A/B,
-                    # max_islands = build-time upper bound on the partition = dof-carrying components):
-                    #  - Few islands -> monolith: the cooperative arm's fixed launch overhead is never amortized.
-                    #  - Many islands -> decomposed: the monolith's serial per-island loop dominates (5-27x).
-                    #  - Otherwise the env count decides: few envs expose the monolith's serial loop (decomposed wins),
-                    #    many envs hide it so the cooperative launch overhead loses (monolith wins). The many-env
-                    #    monolith pin is CUDA-only - the Metal monolith has a ~10x slowdown bug past ~1024 envs - and
-                    #    the mid-env crossover (env count grows with island count, hardware dependent) is left to the
-                    #    autotuner.
-                    # A component is a floating-base subtree (links connected by parent-child edges); it becomes an
-                    # island iff it carries at least one DOF. A single Genesis entity holding several free bodies thus
-                    # contributes one island per free body, so count dof-bearing component roots, not dof-entities.
-                    links_by_idx = {link.idx: link for link in self.links}
-                    dof_component_roots = set()
-                    for link in self.links:
-                        if link.n_dofs > 0:
-                            root = link
-                            while root.parent_idx != -1:
-                                root = links_by_idx[root.parent_idx]
-                            dof_component_roots.add(root.idx)
-                    max_islands = len(dof_component_roots)
-                    if max_islands <= 16:
-                        static_rigid_sim_config["prefer_decomposed_solver"] = 0
-                    elif max_islands >= 256:
-                        static_rigid_sim_config["prefer_decomposed_solver"] = 1
-                    elif self._sim._B <= 64:
-                        static_rigid_sim_config["prefer_decomposed_solver"] = 1
-                    elif gs.backend == gs.cuda and self._sim._B > 512:
-                        static_rigid_sim_config["prefer_decomposed_solver"] = 0
-                    # else (17-255 islands, 64 < n_envs <= 512, or Metal many-env): autotune (non-deterministic)
-                # Newton non-island stays on the autotuner: monolith vs decomposed is a small (~15%), env-count-
-                # dependent margin with a hardware-dependent crossover - not reliably predictable in advance.
+                # Newton (islands and non-island) falls through to the per-step autotuner. The monolith-vs-decomposed
+                # winner is not determinable in advance: it depends on the runtime island structure (many small islands
+                # favor the warp-cooperative decomposed arm; a single island that overflows the per-island shared tile
+                # falls back to a scalar factor and favors the monolith's incremental update), the tiled-fits boundary
+                # is backend-dependent, and the non-island margin is a small env-count-dependent one. The autotuner
+                # times both arms per config and picks, which is more reliable than any build-time heuristic.
 
             # Add terms for static inner loops, use -1 if not requires_grad to avoid re-compilation
             if self.sim.options.requires_grad:
