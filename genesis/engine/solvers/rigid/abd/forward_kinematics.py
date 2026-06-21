@@ -1281,13 +1281,13 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
-        for island_idx in range(island_state.n_islands[i_b]):
-            was_island_hibernated = island_state.is_hibernated[island_idx, i_b]
+        for i_island in range(island_state.n_islands[i_b]):
+            was_island_hibernated = island_state.is_hibernated[i_island, i_b]
 
             if not was_island_hibernated:
                 are_all_links_ready_to_sleep = True
-                link_ref_n = island_state.link_slices.n[island_idx, i_b]
-                link_ref_start = island_state.link_slices.start[island_idx, i_b]
+                link_ref_n = island_state.link_slices.n[i_island, i_b]
+                link_ref_start = island_state.link_slices.start[i_island, i_b]
 
                 # Invariant check: ensure link_id access won't exceed buffer
                 if link_ref_start + link_ref_n > island_state.link_id.shape[0]:

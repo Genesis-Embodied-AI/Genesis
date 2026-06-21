@@ -7,7 +7,7 @@ import genesis.utils.geom as gu
 
 @qd.func
 def func_wakeup_island(
-    island_idx,
+    i_island,
     i_b,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
@@ -23,9 +23,9 @@ def func_wakeup_island(
     # appended to the awake lists, and the owning entities' flags are cleared. Waking the whole island clears its
     # daisy-chain links, which would otherwise keep re-connecting the woken links to their previous island at the next
     # partition build.
-    if island_idx >= 0:
-        for li in range(island_state.link_slices.n[island_idx, i_b]):
-            link_ref = island_state.link_slices.start[island_idx, i_b] + li
+    if i_island >= 0:
+        for li in range(island_state.link_slices.n[i_island, i_b]):
+            link_ref = island_state.link_slices.start[i_island, i_b] + li
             i_l = island_state.link_id[link_ref, i_b]
 
             # Atomically claim the link by clearing its hibernation flag and reading the previous value. Only the
