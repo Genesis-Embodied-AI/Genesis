@@ -170,10 +170,6 @@ class ConstraintSolver:
             self.island_state.n_islands.from_numpy(np.ones((_B,), dtype=np.int32))
             self.island_state.dof_slices.start.from_numpy(np.zeros((n_links, _B), dtype=np.int32))
             self.island_state.dof_slices.n.from_numpy(dof_slices_n)
-            # Skip the dof_id identity map when the scene has no rigid DOFs (e.g. a fluid-only scene with just a fixed
-            # plane). The dof_id field is allocated with shape (n_dofs, _B); some backends floor a zero-size dim to 1,
-            # so from_numpy of a (0, _B) array would raise a shape mismatch. Island 0 then has dof_slices.n == 0, so
-            # dof_id is never read - leaving it at its default is correct.
             if n_dofs > 0:
                 self.island_state.dof_id.from_numpy(np.tile(np.arange(n_dofs, dtype=np.int32)[:, None], (1, _B)))
 
