@@ -6402,7 +6402,7 @@ def test_mesh_align(show_viewer, tol):
         morph=(
             gs.morphs.Mesh(
                 file=f"{bowl_path}/glb/orange_plastic_bowl.glb",
-                scale=0.1,
+                scale=0.5,
                 pos=HET_POS,
                 offset_euler=(30.0, 0.0, 0.0),
                 align=True,
@@ -6476,7 +6476,9 @@ def test_mesh_align(show_viewer, tol):
     for _ in range(600):
         scene.step()
 
-    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.06)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(0, 1, 2)), 0, tol=0.01)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.05)
+    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
     min_z = mango.get_AABB()[:, 0, 2]
     assert ((-0.005 < min_z) & (min_z < 0.0)).all()
 
