@@ -1526,6 +1526,7 @@ class DofsInfo:
     act_gain: qd.Tensor
     act_bias: qd.Tensor
     force_range: qd.Tensor
+    dof_length: qd.Tensor
 
 
 def get_dofs_info(solver):
@@ -1544,6 +1545,7 @@ def get_dofs_info(solver):
         act_gain=V(dtype=gs.qd_float, shape=shape),
         act_bias=V(dtype=gs.qd_vec3, shape=shape),
         force_range=V(dtype=gs.qd_vec2, shape=shape),
+        dof_length=V(dtype=gs.qd_float, shape=shape),
     )
 
 

@@ -419,7 +419,8 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     # so link-pair pruning collapses them into a logical permutation in contact_sort_idx. Islands read contacts through
     # that permutation and hibernation advects the resting contacts while the body sleeps, so pruning, islands and
     # hibernation all run together. contact_pruning_tolerance is set explicitly to keep pruning on alongside islands.
-    # The duck must reach the plane without tunnelling, hibernate, and then stay frozen in place.
+    # Two separated ducks give two islands (hibernation does not keep a single-island scene partitioned). Each duck
+    # must reach the plane without tunnelling, hibernate, and then stay frozen in place.
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 100.0,
@@ -432,32 +433,76 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    duck = scene.add_entity(
-        gs.morphs.Mesh(
-            file="meshes/duck.obj",
-            scale=0.02,
-            pos=(0.0, 0.0, 0.1),
-            euler=(90.0, 0.0, 0.0),
-        ),
-    )
+    ducks = [
+        scene.add_entity(
+            gs.morphs.Mesh(
+                file="meshes/duck.obj",
+                scale=0.02,
+                pos=(0.4 * i, 0.0, 0.1),
+                euler=(90.0, 0.0, 0.0),
+            ),
+        )
+        for i in range(2)
+    ]
     scene.build(n_envs=n_envs)
     solver = scene.rigid_solver
 
     def asleep():
-        return qd_to_numpy(solver.entities_state.is_hibernated, duck.idx).all()
+        return all(qd_to_numpy(solver.entities_state.is_hibernated, duck.idx).all() for duck in ducks)
 
     for _ in range(200):
         scene.step()
-        assert (tensor_to_array(duck.get_pos())[..., 2] > -0.05).all()
+        assert all((tensor_to_array(duck.get_pos())[..., 2] > -0.05).all() for duck in ducks)
         if asleep():
             break
     assert asleep()
-    z_rest = tensor_to_array(duck.get_pos())[..., 2]
+    z_rest = [tensor_to_array(duck.get_pos())[..., 2] for duck in ducks]
 
     for _ in range(100):
         scene.step()
     assert asleep()
-    assert_allclose(duck.get_pos()[..., 2], z_rest, atol=1e-5)
+    for duck, z in zip(ducks, z_rest):
+        assert_allclose(duck.get_pos()[..., 2], z, atol=1e-5)
+
+    # Resetting wakes every body: the restored state is a discontinuity, so a body left hibernated would stay frozen
+    # and never be resimulated. After reset the ducks are awake again, with their flags cleared and awake counter zeroed.
+    scene.reset()
+    assert not any(qd_to_numpy(solver.entities_state.is_hibernated, duck.idx).any() for duck in ducks)
+    assert (qd_to_numpy(solver.links_state.awake_steps) == 0).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("mujoco_compatibility", [False, True])
+def test_dof_length_scales_with_body_size(mujoco_compatibility):
+    # dof_length puts each rotational dof velocity on a linear (m/s) scale by the body radius (1 for translation), so
+    # the same angular velocity reads as a larger surface speed on a larger body. A free sphere gets a rotational
+    # dof_length equal to its radius - both with our per-axis swept radius and with MuJoCo's COM bounding sphere
+    # (gated behind mujoco_compatibility), since the two coincide for a sphere. dof_length is stored per environment,
+    # so a heterogeneous entity gets a different radius per variant (each variant's geoms are active only in its own
+    # envs). The two sphere variants map to envs 0-1 and 2-3; the homogeneous spheres make the scene multi-island so
+    # hibernation (and thus dof_length) is active.
+    radii = (0.1, 0.3)
+    variant_radii = (0.02, 0.06)
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+            enable_mujoco_compatibility=mujoco_compatibility,
+        ),
+        show_viewer=False,
+    )
+    spheres = [scene.add_entity(gs.morphs.Sphere(radius=r, pos=(2.0 * i, 0.0, 1.0))) for i, r in enumerate(radii)]
+    het = scene.add_entity(morph=tuple(gs.morphs.Sphere(radius=r, pos=(0.0, 2.0, 1.0)) for r in variant_radii))
+    scene.build(n_envs=4)
+
+    dof_length = qd_to_numpy(scene.rigid_solver.dofs_info.dof_length)
+    for sphere, radius in zip(spheres, radii):
+        dof_length_sphere = dof_length[sphere.dof_start : sphere.dof_start + sphere.n_dofs]
+        assert_allclose(dof_length_sphere[:3], 1.0, tol=gs.EPS)
+        assert_allclose(dof_length_sphere[3:], radius, tol=gs.EPS)
+    rotational = dof_length[het.dof_start + 3 : het.dof_start + 6]  # (3, n_envs)
+    assert_allclose(rotational[:, [0, 1]], variant_radii[0], tol=gs.EPS)
+    assert_allclose(rotational[:, [2, 3]], variant_radii[1], tol=gs.EPS)
 
 
 @pytest.mark.required

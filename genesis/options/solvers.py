@@ -480,9 +480,11 @@ class RigidOptions(Options):
         Whether to put bodies that have come to rest to sleep, so the solver skips them until they are disturbed. It
         quietly has no effect on a body that is differentiable, prunable, or under no-slip friction. Defaults to False.
     hibernation_thresh_vel : float, optional
-        Velocity tolerance for hibernation: a body sleeps once its maximum absolute DOF velocity stays below this for
-        a few consecutive steps, and a whole island sleeps once all its bodies are ready. If None, it is set to the
-        residual-velocity floor of the solver's float precision: 1e-4 at 64-bit, 5e-3 at 32-bit. Defaults to None.
+        Velocity tolerance for hibernation, in meters per second: a body sleeps once its maximum DOF speed stays below
+        this for a few consecutive steps, and a whole island sleeps once all its bodies are ready. Each rotational DOF
+        is weighted by the body's swept radius, so the tolerance is a single linear speed that applies uniformly to
+        translation and rotation. If None, it is set to 1e-4 when MuJoCo compatibility is enabled (matching MuJoCo's
+        default) and 2e-3 otherwise. Defaults to None.
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     use_gjk_collision: bool, optional

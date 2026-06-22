@@ -218,6 +218,54 @@ def kernel_init_dof_fields(
 
 
 @qd.kernel(fastcache=True)
+def kernel_reset_hibernation(
+    envs_idx: qd.types.ndarray(),
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
+    geoms_state: array_class.GeomsState,
+    entities_state: array_class.EntitiesState,
+    island_state: array_class.IslandState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Wake every body in the given envs and rebuild the compact awake lists. A scene whose state is set (reset or
+    # set_state) must resume fully awake: the restored positions and velocities are a discontinuity, and any body left
+    # hibernated would stay frozen and never be re-simulated. DOFs are gathered per link (so a DOF-less scene reports
+    # zero awake DOFs even though its DOF buffers are padded to at least one slot).
+    n_links = links_state.is_hibernated.shape[0]
+    n_geoms = geoms_state.is_hibernated.shape[0]
+    n_entities = entities_state.is_hibernated.shape[0]
+    max_islands = island_state.is_hibernated.shape[0]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        n_awake_dofs = 0
+        for i_l in range(n_links):
+            links_state.is_hibernated[i_l, i_b] = False
+            links_state.awake_steps[i_l, i_b] = 0
+            island_state.hibernated_next_link[i_l, i_b] = -1
+            rigid_global_info.awake_links[i_l, i_b] = i_l
+            link_I = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            for i_d_ in range(links_info.n_dofs[link_I]):
+                i_d = links_info.dof_start[link_I] + i_d_
+                dofs_state.is_hibernated[i_d, i_b] = False
+                rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+                n_awake_dofs = n_awake_dofs + 1
+        rigid_global_info.n_awake_links[i_b] = n_links
+        rigid_global_info.n_awake_dofs[i_b] = n_awake_dofs
+        for i_g in range(n_geoms):
+            geoms_state.is_hibernated[i_g, i_b] = False
+        for i_e in range(n_entities):
+            entities_state.is_hibernated[i_e, i_b] = False
+            rigid_global_info.awake_entities[i_e, i_b] = i_e
+        rigid_global_info.n_awake_entities[i_b] = n_entities
+        for i_island in range(max_islands):
+            island_state.is_hibernated[i_island, i_b] = 0
+
+
+@qd.kernel(fastcache=True)
 def kernel_init_link_fields(
     links_parent_idx: qd.types.ndarray(),
     links_root_idx: qd.types.ndarray(),

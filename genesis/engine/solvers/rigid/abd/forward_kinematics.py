@@ -1265,6 +1265,7 @@ def kernel_update_vverts_for_vgeoms(
 @qd.func
 def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
     dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
     links_info: array_class.LinksInfo,
@@ -1303,14 +1304,18 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                     if links_state.is_hibernated[link_idx, i_b]:
                         continue
 
-                    # A link is ready to sleep once its maximum absolute DOF velocity has stayed below the tolerance
-                    # for hibernation_min_steps consecutive steps. Every awake link is visited each step so its counter
-                    # stays current even when its island will not sleep this step; the loop never breaks early.
+                    # A link is ready to sleep once its maximum DOF speed has stayed below the tolerance for
+                    # hibernation_min_steps consecutive steps. Every awake link is visited each step so its counter
+                    # stays current even when its island will not sleep this step; the loop never breaks early. Each
+                    # DOF velocity is weighted by dofs_info.dof_length (1 for translation, the swept radius for
+                    # rotation) so the tolerance is a single linear speed across mixed DOFs: rotational jitter of a
+                    # small body produces a tiny surface speed and no longer keeps it awake.
                     min_steps = qd.static(static_rigid_sim_config.hibernation_min_steps)
                     link_I = [link_idx, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link_idx
                     max_vel = gs.qd_float(0.0)
                     for i_d in range(links_info.dof_start[link_I], links_info.dof_end[link_I]):
-                        max_vel = qd.max(max_vel, qd.abs(dofs_state.vel[i_d, i_b]))
+                        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        max_vel = qd.max(max_vel, dofs_info.dof_length[I_d] * qd.abs(dofs_state.vel[i_d, i_b]))
 
                     if max_vel < max_vel_thresh:
                         if links_state.awake_steps[link_idx, i_b] < min_steps:

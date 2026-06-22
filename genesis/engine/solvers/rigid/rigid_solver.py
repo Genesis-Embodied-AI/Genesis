@@ -47,6 +47,7 @@ from .abd.misc import (
     kernel_init_invweight,
     kernel_init_meaninertia,
     kernel_init_dof_fields,
+    kernel_reset_hibernation,
     kernel_init_link_fields,
     kernel_update_heterogeneous_link_info,
     kernel_init_joint_fields,
@@ -261,10 +262,11 @@ class RigidSolver(KinematicSolver):
                 "`use_hibernation=True` requires `use_contact_island=True`, as hibernation builds on islands."
             )
 
-        # Resolve the hibernation velocity tolerance to the residual-velocity floor of the float precision: 32-bit
-        # contact solves leave a larger resting-velocity jitter than 64-bit, so a body settles below a coarser floor.
+        # Resolve the hibernation velocity tolerance. MuJoCo compatibility uses MuJoCo's own default (1e-4); otherwise
+        # use a coarser floor that a body reliably settles below across float precisions and dense contact piles, where
+        # the contact solve leaves a larger residual resting-velocity jitter.
         if options.hibernation_thresh_vel is None:
-            self._hibernation_thresh_vel = 5e-3 if gs.qd_float == qd.f32 else 1e-4
+            self._hibernation_thresh_vel = 1e-4 if self._enable_mujoco_compatibility else 2e-3
         else:
             self._hibernation_thresh_vel = options.hibernation_thresh_vel
 
@@ -363,6 +365,7 @@ class RigidSolver(KinematicSolver):
         self._init_vert_fields()
         self._init_geom_fields()
         self._init_equality_fields()
+        self._init_dof_length()
 
         self._init_invweight_and_meaninertia(force_update=False)
         self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
@@ -418,18 +421,21 @@ class RigidSolver(KinematicSolver):
 
         # Islands only reduce work when the scene splits into several blocks. With a single dense-coupled tree (one
         # island) the partition is pure overhead, so disable it in computation even if the user opted in. Hibernation
-        # is the exception: it builds on the island partition (the per-island is_hibernated flags), so it keeps islands
-        # on even for a single island, which then takes the serial tile-fallback path. The differentiable solve reads
-        # the dense global Hessian (nt_H), not the per-island tiles, so islands stay off under requires_grad regardless.
-        self._use_contact_island = (
-            self._use_contact_island
-            and (has_multi_island_structure or self._use_hibernation)
-            and not self._requires_grad
-        )
+        # does not force islands on (a scene with no island structure has nothing to gain from sleeping a lone tree);
+        # use_hibernation is gated off below to follow this decision. The differentiable solve reads the dense global
+        # Hessian (nt_H), not the per-island tiles, so islands stay off under requires_grad regardless.
+        self._use_contact_island = self._use_contact_island and has_multi_island_structure and not self._requires_grad
 
         # Hibernation builds on the island partition, so it cannot outlive islands being turned off by any gate above.
         # Re-sync it to the final island decision so the two never disagree.
         self._use_hibernation = self._use_hibernation and self._use_contact_island
+
+        # A heterogeneous entity has a different body size (hence rotational dof_length) per variant, so its dof_length
+        # is genuinely per-env and dofs_info must be batched to hold it. dof_length is read only by the hibernation
+        # rest test, so this is needed exactly when both features are active. We must update options because
+        # get_dofs_info reads from solver._options.batch_dofs_info.
+        if self._enable_heterogeneous and self._use_hibernation:
+            self._options.batch_dofs_info = True
 
         # sparse_solve=None resolves automatically: the skyline-envelope solver pays off on CPU only when the scene
         # has block structure, whereas a single dense-coupled tree gains nothing and pays the per-step envelope tax. An
@@ -993,6 +999,25 @@ class RigidSolver(KinematicSolver):
                 edges_info=self.edges_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+
+    def _init_dof_length(self):
+        # Characteristic length of each dof (1 for translation, the body radius for rotation), used to weight dof
+        # velocities in the hibernation rest test. Computed here, after geom dispatch, because a heterogeneous entity's
+        # per-variant geoms (and hence body radius) are only assigned to environments at that point. Only needed when
+        # hibernation is on, which already implies use_contact_island and a non-differentiable solve.
+        if not self._use_hibernation:
+            return
+
+        joints = self.joints
+        if sum(joint.n_dofs for joint in joints) == 0:
+            return
+
+        # dofs_length is per-env only for a heterogeneous entity; broadcast the shared row across envs when dofs_info
+        # is batched (always so for a heterogeneous entity, optionally for a homogeneous one).
+        dof_length = np.concatenate([joint.dofs_length for joint in joints], axis=0)
+        if self._options.batch_dofs_info and dof_length.ndim == 1:
+            dof_length = np.broadcast_to(dof_length[:, None], (len(dof_length), self._B))
+        self.dofs_info.dof_length.from_numpy(dof_length)
 
     def _init_geom_fields(self):
         self.geoms_info: array_class.GeomsInfo = self.data_manager.geoms_info
@@ -1771,6 +1796,31 @@ class RigidSolver(KinematicSolver):
             cfrc_ang_dst = qd_to_torch(self.links_state.cfrc_applied_ang, transpose=True, copy=False)
             mass_dst = qd_to_torch(self.links_state.mass_shift, transpose=True, copy=False)
             fric_dst = qd_to_torch(self.geoms_state.friction_ratio, transpose=True, copy=False)
+            # Setting the state is a discontinuity: wake every body in the affected envs (a body left hibernated would
+            # stay frozen), restoring the flags and the compact awake lists alongside the other state buffers.
+            if self._use_hibernation:
+                links_hibernated_dst = qd_to_torch(self.links_state.is_hibernated, transpose=True, copy=False)
+                awake_steps_dst = qd_to_torch(self.links_state.awake_steps, transpose=True, copy=False)
+                dofs_hibernated_dst = qd_to_torch(self.dofs_state.is_hibernated, transpose=True, copy=False)
+                geoms_hibernated_dst = qd_to_torch(self.geoms_state.is_hibernated, transpose=True, copy=False)
+                entities_hibernated_dst = qd_to_torch(self.entities_state.is_hibernated, transpose=True, copy=False)
+                islands_hibernated_dst = qd_to_torch(
+                    self.constraint_solver.island_state.is_hibernated, transpose=True, copy=False
+                )
+                islands_next_link_dst = qd_to_torch(
+                    self.constraint_solver.island_state.hibernated_next_link, transpose=True, copy=False
+                )
+                awake_links_dst = qd_to_torch(self._rigid_global_info.awake_links, transpose=True, copy=False)
+                awake_dofs_dst = qd_to_torch(self._rigid_global_info.awake_dofs, transpose=True, copy=False)
+                awake_entities_dst = qd_to_torch(self._rigid_global_info.awake_entities, transpose=True, copy=False)
+                n_awake_links_dst = qd_to_torch(self._rigid_global_info.n_awake_links, copy=False)
+                n_awake_dofs_dst = qd_to_torch(self._rigid_global_info.n_awake_dofs, copy=False)
+                n_awake_entities_dst = qd_to_torch(self._rigid_global_info.n_awake_entities, copy=False)
+                # Fill to the padded buffer capacity but keep n_awake at the real count below, so a scene with no
+                # DOFs writes its padded slot yet reports zero awake DOFs.
+                awake_links_src = torch.arange(self.n_links_, device=gs.device, dtype=gs.tc_int)
+                awake_dofs_src = torch.arange(self.n_dofs_, device=gs.device, dtype=gs.tc_int)
+                awake_entities_src = torch.arange(self.n_entities_, device=gs.device, dtype=gs.tc_int)
 
             if envs_idx is not None and not isinstance(envs_idx, torch.Tensor):
                 (envs_idx,) = indices_to_mask(envs_idx)
@@ -1796,6 +1846,20 @@ class RigidSolver(KinematicSolver):
                 torch.where(envs_mask[:, None], state.mass_shift, mass_dst, out=mass_dst)
                 if self.n_geoms:
                     torch.where(envs_mask[:, None], state.friction_ratio, fric_dst, out=fric_dst)
+                if self._use_hibernation:
+                    links_hibernated_dst.masked_fill_(envs_mask[:, None], 0)
+                    awake_steps_dst.masked_fill_(envs_mask[:, None], 0)
+                    dofs_hibernated_dst.masked_fill_(envs_mask[:, None], 0)
+                    geoms_hibernated_dst.masked_fill_(envs_mask[:, None], 0)
+                    entities_hibernated_dst.masked_fill_(envs_mask[:, None], 0)
+                    islands_hibernated_dst.masked_fill_(envs_mask[:, None], 0)
+                    islands_next_link_dst.masked_fill_(envs_mask[:, None], -1)
+                    torch.where(envs_mask[:, None], awake_links_src, awake_links_dst, out=awake_links_dst)
+                    torch.where(envs_mask[:, None], awake_dofs_src, awake_dofs_dst, out=awake_dofs_dst)
+                    torch.where(envs_mask[:, None], awake_entities_src, awake_entities_dst, out=awake_entities_dst)
+                    n_awake_links_dst.masked_fill_(envs_mask, self.n_links)
+                    n_awake_dofs_dst.masked_fill_(envs_mask, self.n_dofs)
+                    n_awake_entities_dst.masked_fill_(envs_mask, self.n_entities)
             else:
                 if self.n_qs:
                     errno[envs_idx] = 0
@@ -1812,6 +1876,20 @@ class RigidSolver(KinematicSolver):
                 mass_dst[envs_idx] = state.mass_shift[envs_idx]
                 if self.n_geoms:
                     fric_dst[envs_idx] = state.friction_ratio[envs_idx]
+                if self._use_hibernation:
+                    links_hibernated_dst[envs_idx] = 0
+                    awake_steps_dst[envs_idx] = 0
+                    dofs_hibernated_dst[envs_idx] = 0
+                    geoms_hibernated_dst[envs_idx] = 0
+                    entities_hibernated_dst[envs_idx] = 0
+                    islands_hibernated_dst[envs_idx] = 0
+                    islands_next_link_dst[envs_idx] = -1
+                    awake_links_dst[envs_idx] = awake_links_src
+                    awake_dofs_dst[envs_idx] = awake_dofs_src
+                    awake_entities_dst[envs_idx] = awake_entities_src
+                    n_awake_links_dst[envs_idx] = self.n_links
+                    n_awake_dofs_dst[envs_idx] = self.n_dofs
+                    n_awake_entities_dst[envs_idx] = self.n_entities
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
@@ -1833,6 +1911,18 @@ class RigidSolver(KinematicSolver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            if self._use_hibernation:
+                kernel_reset_hibernation(
+                    envs_idx,
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    dofs_state=self.dofs_state,
+                    geoms_state=self.geoms_state,
+                    entities_state=self.entities_state,
+                    island_state=self.constraint_solver.island_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
 
         if not partial:
             if not isinstance(envs_idx, torch.Tensor):
@@ -3308,6 +3398,7 @@ def kernel_step_2(
     if qd.static(static_rigid_sim_config.use_hibernation):
         func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
             dofs_state=dofs_state,
+            dofs_info=dofs_info,
             entities_state=entities_state,
             entities_info=entities_info,
             links_info=links_info,
