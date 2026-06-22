@@ -624,7 +624,6 @@ def kernel_init_entity_fields(
     static_rigid_sim_config: qd.template(),
 ):
     n_entities = entities_dof_start.shape[0]
-    _B = entities_state.is_hibernated.shape[1]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e in range(n_entities):
@@ -644,6 +643,8 @@ def kernel_init_entity_fields(
         entities_info.is_local_collision_mask[i_e] = entities_is_local_collision_mask[i_e]
 
     if qd.static(static_rigid_sim_config.use_hibernation):
+        _B = entities_state.is_hibernated.shape[1]
+
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_e, i_b in qd.ndrange(n_entities, _B):
             entities_state.is_hibernated[i_e, i_b] = False

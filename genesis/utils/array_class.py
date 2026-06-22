@@ -459,7 +459,11 @@ def get_constraint_state(constraint_solver, solver):
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
-        jac_dofs_idx=V(dtype=gs.qd_int, shape=jac_dofs_idx_shape, layout=jac_layout),
+        jac_dofs_idx=V(
+            dtype=gs.qd_int,
+            shape=jac_dofs_idx_shape,
+            layout=jac_layout if constraint_solver.sparse_solve else None,
+        ),
         jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape, layout=serial_layout if jac_n_dofs_shape else None),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
@@ -1546,7 +1550,7 @@ class DofsState:
     is_hibernated: qd.Tensor
 
 
-def get_dofs_state(solver):
+def get_dofs_state(solver, kinematic_only):
     shape = (solver.n_dofs_, solver._B)
     requires_grad = solver._requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
@@ -1580,7 +1584,7 @@ def get_dofs_state(solver):
         ctrl_pos=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         ctrl_vel=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         ctrl_mode=V(dtype=gs.qd_int, shape=shape),
-        is_hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape(shape, not kinematic_only and solver._use_hibernation)),
     )
 
 
@@ -1635,7 +1639,7 @@ class LinksState:
     awake_steps: qd.Tensor
 
 
-def get_links_state(solver):
+def get_links_state(solver, kinematic_only):
     max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = (solver.n_links_, solver._B)
     requires_grad = solver._requires_grad
@@ -1683,8 +1687,8 @@ def get_links_state(solver):
         cfrc_coupling_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_coupling_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         contact_force=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
-        is_hibernated=V(dtype=gs.qd_int, shape=shape),
-        awake_steps=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape(shape, not kinematic_only and solver._use_hibernation)),
+        awake_steps=V(dtype=gs.qd_int, shape=maybe_shape(shape, not kinematic_only and solver._use_hibernation)),
     )
 
 
@@ -1886,7 +1890,7 @@ def get_geoms_state(solver):
         verts_updated=V(dtype=gs.qd_bool, shape=shape),
         min_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
-        is_hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape(shape, solver._use_hibernation)),
         friction_ratio=V(dtype=gs.qd_float, shape=shape),
     )
 
@@ -2154,9 +2158,12 @@ class EntitiesState:
     is_hibernated: qd.Tensor
 
 
-def get_entities_state(solver):
+def get_entities_state(solver, kinematic_only):
     return EntitiesState(
-        is_hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
+        is_hibernated=V(
+            dtype=gs.qd_int,
+            shape=maybe_shape((solver.n_entities_, solver._B), not kinematic_only and solver._use_hibernation),
+        ),
     )
 
 
@@ -2264,14 +2271,14 @@ class DataManager:
         self.rigid_global_info = get_rigid_global_info(solver, kinematic_only)
 
         self.dofs_info = get_dofs_info(solver)
-        self.dofs_state = get_dofs_state(solver)
+        self.dofs_state = get_dofs_state(solver, kinematic_only)
         self.links_info = get_links_info(solver)
-        self.links_state = get_links_state(solver)
+        self.links_state = get_links_state(solver, kinematic_only)
         self.joints_info = get_joints_info(solver)
         self.joints_state = get_joints_state(solver)
 
         self.entities_info = get_entities_info(solver)
-        self.entities_state = get_entities_state(solver)
+        self.entities_state = get_entities_state(solver, kinematic_only)
 
         self.vverts_info = get_vverts_info(solver)
         self.vverts_state = get_vverts_state(solver)
@@ -2295,8 +2302,8 @@ class DataManager:
 
         if solver._static_rigid_sim_config.requires_grad:
             # Data structures required for backward pass
-            self.dofs_state_adjoint_cache = get_dofs_state(solver)
-            self.links_state_adjoint_cache = get_links_state(solver)
+            self.dofs_state_adjoint_cache = get_dofs_state(solver, kinematic_only)
+            self.links_state_adjoint_cache = get_links_state(solver, kinematic_only)
             self.joints_state_adjoint_cache = get_joints_state(solver)
             self.geoms_state_adjoint_cache = get_geoms_state(solver)
 
