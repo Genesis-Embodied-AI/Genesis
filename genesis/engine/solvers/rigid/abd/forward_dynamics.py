@@ -485,6 +485,159 @@ def func_compute_mass_matrix(
 
 
 @qd.func
+def func_factor_mass_tiled(
+    implicit_damping: qd.template(),
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    TileCls: qd.template(),
+):
+    """Register-streaming tiled per-entity mass factor for the >shared-cap branch (GPU forward only).
+
+    Replaces the shared-pivot cooperative LDL^T when an entity's mass submatrix exceeds GPU shared memory. M is
+    block-diagonal per kinematic tree, so one warp of T lanes factors each of the entity's mass blocks independently
+    (a single-tree entity has just one block spanning it) via the same qd.simt.TileNxN blocked Cholesky as the
+    constraint Hessian.
+
+    func_solve_mass consumes the LTDL form M = L^T D L (L unit-lower), produced by eliminating DOFs last-to-first, not
+    the standard L D L^T. The tile primitive does forward Cholesky M = G G^T, so each block's reverse-indexed matrix
+    M_rev[a, b] = M[n-1-a, n-1-b] (n the block size) is factored and its factor mapped back to the block's LTDL factor:
+      L[i,j] = G_rev[n-1-j, n-1-i] / G_rev[n-1-i, n-1-i]  (i > j),  D_inv[i] = 1 / G_rev[n-1-i, n-1-i]^2,  diag(L) = 1.
+    See test_rigid_physics for the parity check against the cooperative factor.
+
+    The qd.simt tile ops are batch-first while mass_mat_L is canonical batch-last (n_dofs, n_dofs, _B), so the
+    factorization runs in each mass block's region of the batch-first scratch
+    rigid_global_info.mass_mat_tiled_scratch and is scattered into mass_mat_L / mass_mat_D_inv. To avoid a dedicated
+    allocation, that scratch aliases the constraint Hessian buffer nt_H (same shape, and free at mass-factor time since
+    the constraint solve only populates it later in the step); see get_constraint_state. The scratch and mass_mat_L are
+    distinct buffers, so the scatter is race-free. Backward keeps its own branch in func_factor_mass.
+    """
+    # Reuse the Hessian's tile width; TileCls is dispatched to match it at the call site, so T and the tile class stay
+    # consistent for either value. In practice this path only runs for per-entity blocks exceeding shared memory (total
+    # n_dofs > 48), where the rule lands on 32.
+    T = qd.static(static_rigid_sim_config.cholesky_tile_size)
+    EPS = rigid_global_info.EPS[None]
+
+    n_entities = entities_info.n_links.shape[0]
+    _B = dofs_state.ctrl_mode.shape[1]
+
+    qd.loop_config(name="factor_mass", block_dim=T)
+    for i in range(n_entities * _B * T):
+        tid = i % T
+        i_e = (i // T) % n_entities
+        i_b = i // (T * n_entities)
+        if i_b >= _B:
+            continue
+        # Skip hibernated entities: their mass matrix is unchanged, so the factor from the last awake step stays valid.
+        # The slot remaps to an awake entity, so the work scales with the awake entity count. Distinct (awake) entities
+        # own disjoint DOF ranges, so their mass_mat_tiled_scratch block-diagonal scratch regions never alias.
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            if i_e >= rigid_global_info.n_awake_entities[i_b]:
+                continue
+            i_e = rigid_global_info.awake_entities[i_e, i_b]
+        if not rigid_global_info.mass_mat_mask[i_e, i_b]:
+            continue
+
+        # Factor each mass block (kinematic tree) independently: a multi-tree entity has several blocks, a single-tree
+        # entity (the common case) just one spanning the whole entity. This matches the cooperative path, which likewise
+        # restricts to [block_start, block_end). The block's M and factor live at its own DOFs [block_start, ...), but
+        # the tile workspace reuses the entity's region [d_s, d_s + n_block_dofs) across the entity's blocks (processed
+        # sequentially by this warp; disjoint from other entities' regions), keeping the scratch indices short.
+        d_s = entities_info.dof_start[i_e]
+        entity_dof_end = entities_info.dof_end[i_e]
+        block_start = d_s
+        while block_start < entity_dof_end:
+            n_block_dofs = rigid_global_info.dofs_mass_block_end[block_start] - block_start
+            n_blocks = (n_block_dofs + T - 1) // T
+
+            # Phase 1: copy the reverse-indexed symmetric M block (+ implicit damping) into the scratch workspace.
+            # mass_mat stores M's lower triangle, so M[ri_, rj_] with ri_ <= rj_ is read from the stored M[rj_, ri_].
+            i_d_ = tid
+            while i_d_ < n_block_dofs:
+                ri_ = n_block_dofs - 1 - i_d_
+                for j_d_ in range(i_d_ + 1):
+                    rj_ = n_block_dofs - 1 - j_d_  # i_d_ >= j_d_  =>  ri_ <= rj_
+                    m = rigid_global_info.mass_mat[block_start + rj_, block_start + ri_, i_b]
+                    rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i_d_, d_s + j_d_] = m
+                    rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + j_d_, d_s + i_d_] = m
+                if qd.static(implicit_damping):
+                    # Reverse-diagonal slot i_d_ holds M[ri_, ri_]; damping/act_bias index the original DOF.
+                    i_d = block_start + ri_
+                    I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                    rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i_d_, d_s + i_d_] = (
+                        rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i_d_, d_s + i_d_]
+                        + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+                    )
+                    if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
+                        if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
+                            rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i_d_, d_s + i_d_] = (
+                                rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i_d_, d_s + i_d_]
+                                - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
+                            )
+                i_d_ = i_d_ + T
+            qd.simt.block.sync()
+
+            # Phase 2: blocked Cholesky G_rev G_rev^T = M_rev in the scratch workspace (mirrors the constraint Hessian's
+            # func_cholesky_factor_direct_tiled; the tile ops are warp-synchronous, so no sync inside the loop).
+            for kb in range(n_blocks):
+                k0 = kb * T
+                k1 = qd.min(k0 + T, n_block_dofs)
+
+                L_kk = TileCls.eye(dtype=gs.qd_float)  # rows past n_block_dofs stay identity
+                L_kk[:] = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + k0 : d_s + k1, d_s + k0 : d_s + k1]
+                for jb in range(kb):
+                    j0 = jb * T
+                    for t in range(T):
+                        v = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + k0 : d_s + k1, d_s + j0 + t]
+                        L_kk -= qd.outer(v, v)
+                L_kk.cholesky_(EPS)
+
+                for ib in range(kb + 1, n_blocks):
+                    i0 = ib * T
+                    i1 = qd.min(i0 + T, n_block_dofs)
+
+                    L_ik = TileCls.zeros(dtype=gs.qd_float)
+                    L_ik[:] = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i0 : d_s + i1, d_s + k0 : d_s + k1]
+                    for jb in range(kb):
+                        j0 = jb * T
+                        for t in range(T):
+                            v_own = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i0 : d_s + i1, d_s + j0 + t]
+                            v_diag = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + k0 : d_s + k1, d_s + j0 + t]
+                            L_ik -= qd.outer(v_own, v_diag)
+                    L_kk.solve_triangular_(L_ik)
+                    rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + i0 : d_s + i1, d_s + k0 : d_s + k1] = L_ik
+
+                rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + k0 : d_s + k1, d_s + k0 : d_s + k1] = L_kk
+            qd.simt.block.sync()
+
+            # Phase 3: scatter the LTDL factor of M from G_rev (scratch) into canonical mass_mat_L / mass_mat_D_inv.
+            # Reads the scratch, writes the distinct mass_mat_L (no in-place hazard). Only the strict-lower triangle and
+            # unit diagonal are meaningful to the solve; the upper triangle is left untouched.
+            n_strict_lower = n_block_dofs * (n_block_dofs - 1) // 2
+            i_pair = tid
+            while i_pair < n_strict_lower:
+                i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
+                ri_ = n_block_dofs - 1 - i_d_
+                rj_ = n_block_dofs - 1 - j_d_  # i_d_ > j_d_  =>  rj_ > ri_  (a lower G_rev entry)
+                g_num = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + rj_, d_s + ri_]
+                g_den = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + ri_, d_s + ri_]
+                rigid_global_info.mass_mat_L[block_start + i_d_, block_start + j_d_, i_b] = g_num / g_den
+                i_pair = i_pair + T
+
+            i_d_ = tid
+            while i_d_ < n_block_dofs:
+                ri_ = n_block_dofs - 1 - i_d_
+                g_den = rigid_global_info.mass_mat_tiled_scratch[i_b, d_s + ri_, d_s + ri_]
+                rigid_global_info.mass_mat_D_inv[block_start + i_d_, i_b] = 1.0 / (g_den * g_den)
+                rigid_global_info.mass_mat_L[block_start + i_d_, block_start + i_d_, i_b] = 1.0
+                i_d_ = i_d_ + T
+
+            block_start = rigid_global_info.dofs_mass_block_end[block_start]
+
+
+@qd.func
 def func_factor_mass(
     implicit_damping: qd.template(),
     entities_info: array_class.EntitiesInfo,
@@ -500,7 +653,20 @@ def func_factor_mass(
         n_entities = entities_info.n_links.shape[0]
         _B = dofs_state.ctrl_mode.shape[1]
 
-        if qd.static(
+        if qd.static(static_rigid_sim_config.enable_register_tiled_mass):
+            # Register-streaming tiled per-entity factor for the >shared-cap path (same primitive as the constraint
+            # Hessian). Implies enable_tiled_cholesky_mass_matrix and not mass_matrix_fits_shared; see
+            # func_factor_mass_tiled. Replaces the cooperative LDL^T in the elif below.
+            func_factor_mass_tiled(
+                implicit_damping,
+                entities_info,
+                dofs_state,
+                dofs_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                qd.simt.Tile32x32 if qd.static(static_rigid_sim_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
+            )
+        elif qd.static(
             static_rigid_sim_config.enable_tiled_cholesky_mass_matrix
             and not static_rigid_sim_config.mass_matrix_fits_shared
         ):

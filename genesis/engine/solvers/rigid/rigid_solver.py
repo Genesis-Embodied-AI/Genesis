@@ -582,6 +582,14 @@ class RigidSolver(KinematicSolver):
                     not mass_matrix_fits_shared or envs_undersaturate
                 )
 
+                # Register-streaming tiled mass factor for the >shared-cap forward GPU path: it factors each mass block
+                # (kinematic tree) in registers via the same primitive as the Hessian, and is faster than and
+                # numerically matches the cooperative LDL^T. Reuses cholesky_tile_size (always 32 here, since the path
+                # needs a per-entity block exceeding shared memory).
+                enable_register_tiled_mass = (
+                    enable_tiled_cholesky_mass_matrix and not mass_matrix_fits_shared and not self._requires_grad
+                )
+
                 # Route the per-step warm-start factor+solve through the fused kernel whenever the shared tiled solve is
                 # available (factor tiled and L fits shared). The monolith body's incremental rank-1 update needs L in
                 # nt_H, so the fused kernel also writes L back via the ``write_L_to_nt_H`` argument; see
@@ -595,6 +603,7 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
                     mass_matrix_fits_shared=mass_matrix_fits_shared,
+                    enable_register_tiled_mass=enable_register_tiled_mass,
                     enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
                     hessian_fits_shared=hessian_fits_shared,
                     cholesky_tile_size=cholesky_tile_size,

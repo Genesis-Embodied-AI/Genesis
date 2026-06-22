@@ -111,6 +111,7 @@ class RigidGlobalInfo:
     mass_mat_L: qd.Tensor
     mass_mat_L_bw: qd.Tensor
     mass_mat_D_inv: qd.Tensor
+    mass_mat_tiled_scratch: qd.Tensor
     mass_mat_mask: qd.Tensor
     # Per-DOF bounds of the contiguous, independently-factorable mass-matrix block the DOF belongs to (a kinematic
     # tree, or merged trees whose DOF intervals interleave). The mass matrix is block-diagonal across these blocks, so
@@ -150,6 +151,14 @@ def get_rigid_global_info(solver, kinematic_only):
             f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
 
+    # Batch-first scratch for the register-tiled mass factor (qd.simt tile ops are batch-first, so the factorization
+    # cannot run in place on the batch-last mass_mat_L). Allocated only when that path is enabled, with the constraint
+    # Hessian's shape so nt_H can alias it (get_constraint_state) instead of allocating a second buffer; the factor only
+    # touches it before the constraint solve repopulates it in the same step. Empty otherwise.
+    mass_mat_tiled_scratch_shape = ()
+    if not kinematic_only and solver._static_rigid_sim_config.enable_register_tiled_mass:
+        mass_mat_tiled_scratch_shape = (_B, solver.n_dofs_, solver.n_dofs_)
+
     # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
     # layout=(2, 1, 0): i_d1 becomes innermost / stride-1, which coalesces consumer kernels whose lanes stride i_d1
     # with a serial inner i_d2 loop. The trade-off is regression on writer-side kernels that pair with cooperative
@@ -185,6 +194,7 @@ def get_rigid_global_info(solver, kinematic_only):
             mass_mat_L=V(dtype=gs.qd_float, shape=()),
             mass_mat_L_bw=V(dtype=gs.qd_float, shape=()),
             mass_mat_D_inv=V(dtype=gs.qd_float, shape=()),
+            mass_mat_tiled_scratch=V(dtype=gs.qd_float, shape=()),
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
             dofs_mass_block_start=V(dtype=gs.qd_int, shape=()),
             dofs_mass_block_end=V(dtype=gs.qd_int, shape=()),
@@ -221,6 +231,7 @@ def get_rigid_global_info(solver, kinematic_only):
         mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
+        mass_mat_tiled_scratch=V(dtype=gs.qd_float, shape=mass_mat_tiled_scratch_shape),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
         dofs_mass_block_start=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
         dofs_mass_block_end=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
@@ -437,7 +448,14 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        nt_H=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
+        # When the register-tiled mass factor is on, reuse its scratch (rigid_global_info.mass_mat_tiled_scratch,
+        # allocated with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only
+        # writes it before the constraint solve repopulates it in the same step.
+        nt_H=(
+            solver._rigid_global_info.mass_mat_tiled_scratch
+            if solver._static_rigid_sim_config.enable_register_tiled_mass
+            else V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_))
+        ),
         nt_H_env_start=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_iperm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
@@ -2241,6 +2259,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
+    # Register-streaming tiled per-entity mass factor for the >shared-cap branch of func_factor_mass (GPU forward
+    # only). When True, each entity's single-mass-block submatrix factors in registers via the same TileNxN Cholesky
+    # primitive as the Hessian, instead of the shared-pivot cooperative LDL^T. Only enabled when every entity is a
+    # single mass block (the common case: one kinematic tree). The tile width is always 32: the path is only taken
+    # when the per-entity block exceeds shared memory, which on any real GPU means well over 48 DOFs.
+    enable_register_tiled_mass: bool = False
     # When True, the warm-start factor+solve in ``func_solve_init`` is dispatched through
     # ``func_cholesky_and_solve_fused_tiled`` (single kernel, L kept in shared memory) instead of the separate
     # ``func_cholesky_factor_direct_tiled`` + ``func_cholesky_solve_tiled`` pair. Requires

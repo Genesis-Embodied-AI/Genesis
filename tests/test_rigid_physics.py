@@ -3361,6 +3361,13 @@ def test_mass_mat(xml_path, show_viewer, tol):
     assert_allclose(mass_mat_chain, mass_mat_chain.T, tol=tol)
     assert np.linalg.eigvalsh(0.5 * (mass_mat_chain + mass_mat_chain.T)).min() > 0.0
 
+    # On GPU the high-DOF chain factors through the register-tiled path (auto-enabled above the shared-memory cap when
+    # RigidOptions.register_tiled_mass is left to its default); its LTDL factor must reconstruct the mass matrix to the
+    # same accuracy as the under-cap path.
+    mass_mat_chain_L, mass_mat_chain_D_inv = long_chain.get_mass_mat(decompose=True)
+    mass_mat_chain_rec = mass_mat_chain_L.T @ torch.diag(1.0 / mass_mat_chain_D_inv) @ mass_mat_chain_L
+    assert_allclose(mass_mat_chain_rec, mass_mat_chain, tol=tol)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["hinge_slide"])
