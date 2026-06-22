@@ -500,6 +500,200 @@ def func_COM_links_entity(
 
 
 @qd.func
+def func_fk_link(
+    i_l,
+    i_b,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Forward kinematics for a SINGLE link: its world pose from its parent's.
+
+    Depends only on the parent link (already finalized one tree level up), so links
+    at the same depth are independent and can run in parallel -- see
+    func_fk_levels_split. The body is identical to the old per-link loop iteration in
+    func_forward_kinematics_entity.
+    """
+    BW = qd.static(is_backward)
+    W = qd.static(func_write_field_if)
+    R = qd.static(func_read_field_if)
+    WR = qd.static(func_write_and_read_field_if)
+    i_b = qd.cast(i_b, qd.i32)
+
+    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+    I_l0 = (i_l, 0, i_b)
+
+    pos = W(links_state.pos_bw, I_l0, links_info.pos[I_l], BW)
+    quat = W(links_state.quat_bw, I_l0, links_info.quat[I_l], BW)
+    if links_info.parent_idx[I_l] != -1:
+        parent_pos = links_state.pos[links_info.parent_idx[I_l], i_b]
+        parent_quat = links_state.quat[links_info.parent_idx[I_l], i_b]
+        pos_ = parent_pos + gu.qd_transform_by_quat(links_info.pos[I_l], parent_quat)
+        quat_ = gu.qd_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
+
+        pos = W(links_state.pos_bw, I_l0, pos_, BW)
+        quat = W(links_state.quat_bw, I_l0, quat_, BW)
+
+    n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
+
+    for i_j_ in range(n_joints):
+        i_j = i_j_ + links_info.joint_start[I_l]
+
+        curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
+        next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
+
+        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+        joint_type = joints_info.type[I_j]
+        q_start = joints_info.q_start[I_j]
+        dof_start = joints_info.dof_start[I_j]
+        I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
+
+        # compute axis and anchor
+        if joint_type == gs.JOINT_TYPE.FREE:
+            joints_state.xanchor[i_j, i_b] = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                ]
+            )
+            joints_state.xaxis[i_j, i_b] = qd.Vector([0.0, 0.0, 1.0])
+        elif joint_type == gs.JOINT_TYPE.FIXED:
+            pass
+        else:
+            axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+            if joint_type == gs.JOINT_TYPE.REVOLUTE:
+                axis = dofs_info.motion_ang[I_d]
+            elif joint_type == gs.JOINT_TYPE.PRISMATIC:
+                axis = dofs_info.motion_vel[I_d]
+
+            pos_ = R(links_state.pos_bw, curr_I, pos, BW)
+            quat_ = R(links_state.quat_bw, curr_I, quat, BW)
+
+            joints_state.xanchor[i_j, i_b] = gu.qd_transform_by_quat(joints_info.pos[I_j], quat_) + pos_
+            joints_state.xaxis[i_j, i_b] = gu.qd_transform_by_quat(axis, quat_)
+
+        if joint_type == gs.JOINT_TYPE.FREE:
+            pos_ = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                ],
+                dt=gs.qd_float,
+            )
+            quat_ = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start + 3, i_b],
+                    rigid_global_info.qpos[q_start + 4, i_b],
+                    rigid_global_info.qpos[q_start + 5, i_b],
+                    rigid_global_info.qpos[q_start + 6, i_b],
+                ],
+                dt=gs.qd_float,
+            )
+            quat_ = quat_ / quat_.norm()
+            pos = WR(links_state.pos_bw, next_I, pos_, BW)
+            quat = WR(links_state.quat_bw, next_I, quat_, BW)
+
+            xyz = gu.qd_quat_to_xyz(quat, rigid_global_info.EPS[None])
+            for j in qd.static(range(3)):
+                dofs_state.pos[dof_start + j, i_b] = pos[j]
+                dofs_state.pos[dof_start + 3 + j, i_b] = xyz[j]
+        elif joint_type == gs.JOINT_TYPE.FIXED:
+            pass
+        elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+            qloc = qd.Vector(
+                [
+                    rigid_global_info.qpos[q_start, i_b],
+                    rigid_global_info.qpos[q_start + 1, i_b],
+                    rigid_global_info.qpos[q_start + 2, i_b],
+                    rigid_global_info.qpos[q_start + 3, i_b],
+                ],
+                dt=gs.qd_float,
+            )
+            xyz = gu.qd_quat_to_xyz(qloc, rigid_global_info.EPS[None])
+            for j in qd.static(range(3)):
+                dofs_state.pos[dof_start + j, i_b] = xyz[j]
+            quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
+            quat = WR(links_state.quat_bw, next_I, quat_, BW)
+            pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
+            pos = W(links_state.pos_bw, next_I, pos_, BW)
+        elif joint_type == gs.JOINT_TYPE.REVOLUTE:
+            axis = dofs_info.motion_ang[I_d]
+            dofs_state.pos[dof_start, i_b] = (
+                rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+            )
+            qloc = gu.qd_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], rigid_global_info.EPS[None])
+            quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
+            quat = WR(links_state.quat_bw, next_I, quat_, BW)
+            pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
+            pos = W(links_state.pos_bw, next_I, pos_, BW)
+        else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
+            dofs_state.pos[dof_start, i_b] = (
+                rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
+            )
+            pos_ = (
+                R(links_state.pos_bw, curr_I, pos, BW)
+                + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
+            )
+            pos = W(links_state.pos_bw, next_I, pos_, BW)
+
+    # Skip link pose update for fixed root links to let users manually overwrite them
+    I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
+    if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
+        links_state.pos[i_l, i_b] = R(links_state.pos_bw, I_jf, pos, BW)
+        links_state.quat[i_l, i_b] = R(links_state.quat_bw, I_jf, quat, BW)
+
+
+@qd.func
+def func_fk_levels_split(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    static_rigid_sim_config: qd.template(),
+    rigid_global_info: array_class.RigidGlobalInfo,
+    is_backward: qd.template(),
+):
+    """Level-scheduled forward kinematics: one per-(link, env)-parallel pass per tree
+    depth, with the implicit kernel barrier between passes ordering parent before
+    child. Replaces the one-thread-per-env serial chain walk for the (non-hibernation)
+    forward pass; raises occupancy from ~1 thread/env to n_links*n_envs."""
+    n_links = links_state.pos.shape[0]
+    _B = links_state.pos.shape[1]
+    for d in qd.static(range(static_rigid_sim_config.max_link_depth + 1)):
+        qd.loop_config(
+            name="fk_level",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+            block_dim=64,
+        )
+        for i_l, i_b in qd.ndrange(n_links, _B):
+            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            if links_info.depth[I_l] == d:
+                func_fk_link(
+                    i_l,
+                    i_b,
+                    links_state,
+                    links_info,
+                    joints_state,
+                    joints_info,
+                    dofs_state,
+                    dofs_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    is_backward,
+                )
+
+
+@qd.func
 def func_forward_kinematics_entity(
     i_e,
     i_b,
@@ -514,138 +708,21 @@ def func_forward_kinematics_entity(
     static_rigid_sim_config: qd.template(),
     is_backward: qd.template(),
 ):
-    BW = qd.static(is_backward)
-    W = qd.static(func_write_field_if)
-    R = qd.static(func_read_field_if)
-    WR = qd.static(func_write_and_read_field_if)
     i_b = qd.cast(i_b, qd.i32)
-
     for i_l_ in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
-        i_l = gs.qd_int(i_l_)
-
-        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
-        I_l0 = (i_l, 0, i_b)
-
-        pos = W(links_state.pos_bw, I_l0, links_info.pos[I_l], BW)
-        quat = W(links_state.quat_bw, I_l0, links_info.quat[I_l], BW)
-        if links_info.parent_idx[I_l] != -1:
-            parent_pos = links_state.pos[links_info.parent_idx[I_l], i_b]
-            parent_quat = links_state.quat[links_info.parent_idx[I_l], i_b]
-            pos_ = parent_pos + gu.qd_transform_by_quat(links_info.pos[I_l], parent_quat)
-            quat_ = gu.qd_transform_quat_by_quat(links_info.quat[I_l], parent_quat)
-
-            pos = W(links_state.pos_bw, I_l0, pos_, BW)
-            quat = W(links_state.quat_bw, I_l0, quat_, BW)
-
-        n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
-
-        for i_j_ in range(n_joints):
-            i_j = i_j_ + links_info.joint_start[I_l]
-
-            curr_I = (i_l, 0 if qd.static(not BW) else i_j_, i_b)
-            next_I = (i_l, 0 if qd.static(not BW) else i_j_ + 1, i_b)
-
-            I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
-            joint_type = joints_info.type[I_j]
-            q_start = joints_info.q_start[I_j]
-            dof_start = joints_info.dof_start[I_j]
-            I_d = [dof_start, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else dof_start
-
-            # compute axis and anchor
-            if joint_type == gs.JOINT_TYPE.FREE:
-                joints_state.xanchor[i_j, i_b] = qd.Vector(
-                    [
-                        rigid_global_info.qpos[q_start, i_b],
-                        rigid_global_info.qpos[q_start + 1, i_b],
-                        rigid_global_info.qpos[q_start + 2, i_b],
-                    ]
-                )
-                joints_state.xaxis[i_j, i_b] = qd.Vector([0.0, 0.0, 1.0])
-            elif joint_type == gs.JOINT_TYPE.FIXED:
-                pass
-            else:
-                axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
-                if joint_type == gs.JOINT_TYPE.REVOLUTE:
-                    axis = dofs_info.motion_ang[I_d]
-                elif joint_type == gs.JOINT_TYPE.PRISMATIC:
-                    axis = dofs_info.motion_vel[I_d]
-
-                pos_ = R(links_state.pos_bw, curr_I, pos, BW)
-                quat_ = R(links_state.quat_bw, curr_I, quat, BW)
-
-                joints_state.xanchor[i_j, i_b] = gu.qd_transform_by_quat(joints_info.pos[I_j], quat_) + pos_
-                joints_state.xaxis[i_j, i_b] = gu.qd_transform_by_quat(axis, quat_)
-
-            if joint_type == gs.JOINT_TYPE.FREE:
-                pos_ = qd.Vector(
-                    [
-                        rigid_global_info.qpos[q_start, i_b],
-                        rigid_global_info.qpos[q_start + 1, i_b],
-                        rigid_global_info.qpos[q_start + 2, i_b],
-                    ],
-                    dt=gs.qd_float,
-                )
-                quat_ = qd.Vector(
-                    [
-                        rigid_global_info.qpos[q_start + 3, i_b],
-                        rigid_global_info.qpos[q_start + 4, i_b],
-                        rigid_global_info.qpos[q_start + 5, i_b],
-                        rigid_global_info.qpos[q_start + 6, i_b],
-                    ],
-                    dt=gs.qd_float,
-                )
-                quat_ = quat_ / quat_.norm()
-                pos = WR(links_state.pos_bw, next_I, pos_, BW)
-                quat = WR(links_state.quat_bw, next_I, quat_, BW)
-
-                xyz = gu.qd_quat_to_xyz(quat, rigid_global_info.EPS[None])
-                for j in qd.static(range(3)):
-                    dofs_state.pos[dof_start + j, i_b] = pos[j]
-                    dofs_state.pos[dof_start + 3 + j, i_b] = xyz[j]
-            elif joint_type == gs.JOINT_TYPE.FIXED:
-                pass
-            elif joint_type == gs.JOINT_TYPE.SPHERICAL:
-                qloc = qd.Vector(
-                    [
-                        rigid_global_info.qpos[q_start, i_b],
-                        rigid_global_info.qpos[q_start + 1, i_b],
-                        rigid_global_info.qpos[q_start + 2, i_b],
-                        rigid_global_info.qpos[q_start + 3, i_b],
-                    ],
-                    dt=gs.qd_float,
-                )
-                xyz = gu.qd_quat_to_xyz(qloc, rigid_global_info.EPS[None])
-                for j in qd.static(range(3)):
-                    dofs_state.pos[dof_start + j, i_b] = xyz[j]
-                quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
-                quat = WR(links_state.quat_bw, next_I, quat_, BW)
-                pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
-                pos = W(links_state.pos_bw, next_I, pos_, BW)
-            elif joint_type == gs.JOINT_TYPE.REVOLUTE:
-                axis = dofs_info.motion_ang[I_d]
-                dofs_state.pos[dof_start, i_b] = (
-                    rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
-                )
-                qloc = gu.qd_rotvec_to_quat(axis * dofs_state.pos[dof_start, i_b], rigid_global_info.EPS[None])
-                quat_ = gu.qd_transform_quat_by_quat(qloc, R(links_state.quat_bw, curr_I, quat, BW))
-                quat = WR(links_state.quat_bw, next_I, quat_, BW)
-                pos_ = joints_state.xanchor[i_j, i_b] - gu.qd_transform_by_quat(joints_info.pos[I_j], quat)
-                pos = W(links_state.pos_bw, next_I, pos_, BW)
-            else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
-                dofs_state.pos[dof_start, i_b] = (
-                    rigid_global_info.qpos[q_start, i_b] - rigid_global_info.qpos0[q_start, i_b]
-                )
-                pos_ = (
-                    R(links_state.pos_bw, curr_I, pos, BW)
-                    + joints_state.xaxis[i_j, i_b] * dofs_state.pos[dof_start, i_b]
-                )
-                pos = W(links_state.pos_bw, next_I, pos_, BW)
-
-        # Skip link pose update for fixed root links to let users manually overwrite them
-        I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
-        if not (links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]):
-            links_state.pos[i_l, i_b] = R(links_state.pos_bw, I_jf, pos, BW)
-            links_state.quat[i_l, i_b] = R(links_state.quat_bw, I_jf, quat, BW)
+        func_fk_link(
+            gs.qd_int(i_l_),
+            i_b,
+            links_state,
+            links_info,
+            joints_state,
+            joints_info,
+            dofs_state,
+            dofs_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            is_backward,
+        )
 
 
 @qd.func
@@ -1774,21 +1851,27 @@ def func_update_cartesian_space_entity(
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
     include_com: qd.template(),
+    include_geoms: qd.template(),
+    include_fk: qd.template(),
 ):
-    func_forward_kinematics_entity(
-        i_e,
-        i_b,
-        links_state=links_state,
-        links_info=links_info,
-        joints_state=joints_state,
-        joints_info=joints_info,
-        dofs_state=dofs_state,
-        dofs_info=dofs_info,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
-    )
+    # The non-hibernation forward launch level-schedules FK (func_fk_levels_split) for
+    # higher occupancy and skips it here (include_fk=False); the serial chain walk is
+    # kept for the autodiff backward pass and the hibernation path.
+    if qd.static(include_fk):
+        func_forward_kinematics_entity(
+            i_e,
+            i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
     # The non-hibernation cartesian-update launch moves CoM out of this per-entity device
     # function and runs it afterwards as 7 per-link-parallel sub-kernels via
     # ``func_com_links_split`` (much higher occupancy than one thread per entity). Only the
@@ -1808,18 +1891,23 @@ def func_update_cartesian_space_entity(
             static_rigid_sim_config=static_rigid_sim_config,
             is_backward=is_backward,
         )
-    func_update_geoms_entity(
-        i_e,
-        i_b,
-        entities_info=entities_info,
-        geoms_state=geoms_state,
-        geoms_info=geoms_info,
-        links_state=links_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        force_update_fixed_geoms=force_update_fixed_geoms,
-        is_backward=is_backward,
-    )
+    # Geom-pose update is dependency-free (each geom transformed by its link's already
+    # computed pose); the non-hibernation forward launch skips it here (include_geoms=
+    # False) and runs it afterwards as a per-geom-parallel sub-kernel for much higher
+    # occupancy, mirroring the CoM split above.
+    if qd.static(include_geoms):
+        func_update_geoms_entity(
+            i_e,
+            i_b,
+            entities_info=entities_info,
+            geoms_state=geoms_state,
+            geoms_info=geoms_info,
+            links_state=links_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            force_update_fixed_geoms=force_update_fixed_geoms,
+            is_backward=is_backward,
+        )
 
 
 @qd.func
@@ -1867,7 +1955,9 @@ def func_update_cartesian_space_batch(
             static_rigid_sim_config,
             force_update_fixed_geoms,
             is_backward,
-            True,
+            True,  # include_com
+            True,  # include_geoms
+            True,  # include_fk
         )
 
 
@@ -1912,8 +2002,22 @@ def func_update_cartesian_space(
                 is_backward,
             )
     else:
-        # FIXME: Implement parallelization at tree-level (based on root_idx) instead of entity-level
-        # FK + geoms run per-entity (with CoM moved out below); block_dim=64 matches the G68 baseline.
+        # Forward pass: level-schedule FK (one per-(link,env)-parallel pass per tree
+        # depth) instead of the one-thread-per-env serial chain walk. The backward pass
+        # keeps the serial walk (via include_fk below). CoM is split out further down.
+        if qd.static(not BW):
+            func_fk_levels_split(
+                links_state,
+                links_info,
+                joints_state,
+                joints_info,
+                dofs_state,
+                dofs_info,
+                static_rigid_sim_config,
+                rigid_global_info,
+                is_backward,
+            )
+        # Per-entity pass for geom poses (and the serial FK on the backward pass).
         qd.loop_config(
             name="update_cartesian_space",
             serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
@@ -1944,6 +2048,12 @@ def func_update_cartesian_space(
                             force_update_fixed_geoms,
                             is_backward,
                             False,
+                            # include_geoms: inline only on the backward pass (the per-geom
+                            # split below covers the forward pass).
+                            is_backward,
+                            # include_fk: serial chain walk only on the backward pass;
+                            # the forward pass is handled by func_fk_levels_split above.
+                            is_backward,
                         )
 
         # CoM split into per-link-parallel sub-kernels (passes 1, 3-7) plus the bit-exact
@@ -1960,6 +2070,26 @@ def func_update_cartesian_space(
             static_rigid_sim_config=static_rigid_sim_config,
             is_backward=is_backward,
         )
+
+        # Geom-pose update as a per-geom-parallel sub-kernel (forward pass). The poses
+        # only depend on the already-computed link transforms, so this launches
+        # n_geoms * n_envs threads instead of the one-thread-per-entity inline update,
+        # which was severely under-occupied at large batch sizes.
+        if qd.static(not BW):
+            qd.loop_config(
+                name="update_geoms_split",
+                serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+                block_dim=64,
+            )
+            for i_g, i_b in qd.ndrange(geoms_state.pos.shape[0], links_state.pos.shape[1]):
+                if force_update_fixed_geoms or not geoms_info.is_fixed[i_g]:
+                    geoms_state.pos[i_g, i_b], geoms_state.quat[i_g, i_b] = gu.qd_transform_pos_quat_by_trans_quat(
+                        geoms_info.pos[i_g],
+                        geoms_info.quat[i_g],
+                        links_state.pos[geoms_info.link_idx[i_g], i_b],
+                        links_state.quat[geoms_info.link_idx[i_g], i_b],
+                    )
+                    geoms_state.verts_updated[i_g, i_b] = False
 
 
 @qd.kernel(fastcache=True)

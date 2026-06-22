@@ -9,7 +9,11 @@ import genesis as gs
 
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.engine.solvers.rigid.abd import (
+    func_solve_mass_batch,
+    func_solve_mass_coop_tiled,
+    COOP_MASS_SOLVE_MAX_DOFS,
+)
 from genesis.utils._tile16 import Tile16x16Cholesky
 from genesis.utils._tile32 import Tile32x32Cholesky
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
@@ -3565,20 +3569,44 @@ def func_update_gradient_tiled(
             )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-        qd.loop_config(
-            name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
-        )
-        for i_b in range(_B):
-            func_solve_mass_batch(
-                i_b,
+        if qd.static(
+            static_rigid_sim_config.backend == gs.amdgpu
+            and static_rigid_sim_config.para_level == gs.PARA_LEVEL.ALL
+            and static_rigid_sim_config.n_dofs_ <= COOP_MASS_SOLVE_MAX_DOFS
+        ):
+            # Cooperative tiled M^-1 solve (8 envs/block x 8 lanes/env). Block-cooperative,
+            # so gated to fully-parallel (batched, para_level==ALL) launches; non-batched
+            # scenes fall back to the serial path below. Also bounded to
+            # n_dofs_ <= COOP_MASS_SOLVE_MAX_DOFS so large-DOF / multi-entity batched
+            # scenes fall back rather than allocate an oversized LDS tile. The serial
+            # 1-thread/env solve below leaves the GPU at ~2.6% occupancy at 8192
+            # envs (idle on the dependent triangular-solve chain); the cooperative
+            # tiling launches 8x the wavefronts with coalesced, pipelined
+            # mass_mat_L reads. See func_solve_mass_coop_tiled.
+            func_solve_mass_coop_tiled(
                 constraint_state.grad,
                 constraint_state.Mgrad,
-                None,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                is_backward=False,
+                entities_info,
+                rigid_global_info,
+                static_rigid_sim_config,
             )
+        else:
+            qd.loop_config(
+                name="update_gradient_tiled",
+                serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
+                block_dim=32,
+            )
+            for i_b in range(_B):
+                func_solve_mass_batch(
+                    i_b,
+                    constraint_state.grad,
+                    constraint_state.Mgrad,
+                    None,
+                    entities_info=entities_info,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                    is_backward=False,
+                )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         # Warm-start path: dispatch through the fused factor+solve kernel so L stays in shared memory between factor

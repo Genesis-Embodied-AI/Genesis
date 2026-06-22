@@ -1658,6 +1658,11 @@ def get_links_state(solver):
 class LinksInfo:
     parent_idx: qd.Tensor
     root_idx: qd.Tensor
+    # Tree depth (root=0, child=parent+1). Same-depth links are independent, so the
+    # forward-dynamics tree sweeps (FK / spatial velocity / acceleration / CRBA / RNEA)
+    # can be level-scheduled (process one depth at a time, links within a depth in
+    # parallel) instead of walked one-thread-per-env down the chain.
+    depth: qd.Tensor
     q_start: qd.Tensor
     dof_start: qd.Tensor
     joint_start: qd.Tensor
@@ -1687,6 +1692,7 @@ def get_links_info(solver):
     return LinksInfo(
         parent_idx=V(dtype=gs.qd_int, shape=links_info_shape),
         root_idx=V(dtype=gs.qd_int, shape=links_info_shape),
+        depth=V(dtype=gs.qd_int, shape=links_info_shape),
         q_start=V(dtype=gs.qd_int, shape=links_info_shape),
         dof_start=V(dtype=gs.qd_int, shape=links_info_shape),
         joint_start=V(dtype=gs.qd_int, shape=links_info_shape),
@@ -2217,6 +2223,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     n_geoms_: int = -1
     n_dofs_: int = -1
     n_envs: int = -1
+    # Max kinematic-tree depth (root=0). Compile-time bound on the number of level
+    # passes for the level-scheduled forward-dynamics tree sweeps.
+    max_link_depth: int = -1
 
 
 # =========================================== DataManager ===========================================

@@ -439,6 +439,17 @@ class RigidSolver(KinematicSolver):
         return n_envs <= 8192 and n_dofs >= 16
 
     def _build_static_config(self):
+        # Max kinematic-tree depth (root=0, child=parent+1); links are stored
+        # parent-before-child so a single forward sweep over parent_idx computes it.
+        # Bounds the compile-time level count for the level-scheduled tree sweeps.
+        max_link_depth = 0
+        if self.links:
+            _depth = [0] * len(self.links)
+            for _i_l, _link in enumerate(self.links):
+                if _link.parent_idx != -1:
+                    _depth[_i_l] = _depth[_link.parent_idx] + 1
+            max_link_depth = max(_depth)
+
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -466,6 +477,7 @@ class RigidSolver(KinematicSolver):
             n_geoms_=self.n_geoms_,
             n_dofs_=self.n_dofs_,
             n_envs=self._B,
+            max_link_depth=max_link_depth,
             broadphase_traversal=self._resolve_broadphase_traversal(),
             parallel_init=self._should_use_parallel_init(),
             constraint_layout_transposed=self._should_transpose_constraint_layout(),

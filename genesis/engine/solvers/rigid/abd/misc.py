@@ -187,6 +187,7 @@ def kernel_init_dof_fields(
 def kernel_init_link_fields(
     links_parent_idx: qd.types.ndarray(),
     links_root_idx: qd.types.ndarray(),
+    links_depth: qd.types.ndarray(),
     links_q_start: qd.types.ndarray(),
     links_dof_start: qd.types.ndarray(),
     links_joint_start: qd.types.ndarray(),
@@ -220,6 +221,7 @@ def kernel_init_link_fields(
 
         links_info.parent_idx[I_l] = links_parent_idx[i_l]
         links_info.root_idx[I_l] = links_root_idx[i_l]
+        links_info.depth[I_l] = links_depth[i_l]
         links_info.q_start[I_l] = links_q_start[i_l]
         links_info.joint_start[I_l] = links_joint_start[i_l]
         links_info.dof_start[I_l] = links_dof_start[i_l]

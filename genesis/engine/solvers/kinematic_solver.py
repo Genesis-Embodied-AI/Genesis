@@ -303,9 +303,19 @@ class KinematicSolver(Solver):
 
         if self.links:
             links = self.links
+            # Per-link tree depth (root=0, child=parent+1). Links are stored
+            # parent-before-child (parent_idx < child idx), so a single forward sweep
+            # over parent_idx computes it. Consumed by the level-scheduled tree sweeps.
+            _parent_idx = np.array([link.parent_idx for link in links], dtype=gs.np_int)
+            _links_depth = np.zeros(len(links), dtype=gs.np_int)
+            for _i_l in range(len(links)):
+                _p = _parent_idx[_i_l]
+                if _p != -1:
+                    _links_depth[_i_l] = _links_depth[_p] + 1
             kernel_init_link_fields(
-                links_parent_idx=np.array([link.parent_idx for link in links], dtype=gs.np_int),
+                links_parent_idx=_parent_idx,
                 links_root_idx=np.array([link.root_idx for link in links], dtype=gs.np_int),
+                links_depth=_links_depth,
                 links_q_start=np.array([link.q_start for link in links], dtype=gs.np_int),
                 links_dof_start=np.array([link.dof_start for link in links], dtype=gs.np_int),
                 links_joint_start=np.array([link.joint_start for link in links], dtype=gs.np_int),

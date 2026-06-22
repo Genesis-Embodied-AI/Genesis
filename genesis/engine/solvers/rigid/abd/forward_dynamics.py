@@ -349,8 +349,12 @@ def func_compute_mass_matrix_lds(
         f_vel_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
         cdof_ang_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
         cdof_vel_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
+        # Packed lower-triangular storage. Only the lower triangle of this tile is ever
+        # written or read (the symmetric mirror below reads global memory, not this LDS),
+        # so storing n(n+1)/2 instead of n*n ~halves the dominant LDS term, raising
+        # occupancy (this kernel is occupancy/latency-bound: VALU ~19%, LDS-capped).
         mass_mat_local = qd.simt.block.SharedArray(
-            (KERNEL_MAX_DOFS_PER_ENTITY, KERNEL_MAX_DOFS_PER_ENTITY), gs.qd_float
+            (KERNEL_MAX_DOFS_PER_ENTITY * (KERNEL_MAX_DOFS_PER_ENTITY + 1) // 2,), gs.qd_float
         )
 
         # Cooperative loading into LDS
@@ -395,8 +399,8 @@ def func_compute_mass_matrix_lds(
                       f_vel_cache[i_d_, 1] * cdof_vel_cache[j_d_, 1] +
                       f_vel_cache[i_d_, 2] * cdof_vel_cache[j_d_, 2])
 
-            # Store in local matrix
-            mass_mat_local[i_d_, j_d_] = ang_dot + vel_dot
+            # Store in packed lower-triangular LDS (pair_idx == i_d_*(i_d_+1)/2 + j_d_)
+            mass_mat_local[pair_idx] = ang_dot + vel_dot
             pair_idx += BLOCK_DIM
 
         qd.simt.block.sync()
@@ -412,9 +416,9 @@ def func_compute_mass_matrix_lds(
             i_d_global = entity_dof_start + i_d_
             j_d_global = entity_dof_start + j_d_
 
-            # Apply masking and store
+            # Apply masking and store (global_pair_idx == i_d_*(i_d_+1)/2 + j_d_ = packed index)
             rigid_global_info.mass_mat[i_b, i_d_global, j_d_global] = (
-                mass_mat_local[i_d_, j_d_] * rigid_global_info.mass_parent_mask[i_d_global, j_d_global]
+                mass_mat_local[global_pair_idx] * rigid_global_info.mass_parent_mask[i_d_global, j_d_global]
             )
 
             global_pair_idx += BLOCK_DIM
@@ -1090,6 +1094,120 @@ def func_solve_mass(
         )
 
 
+# Upper bound on total scene DOFs for the cooperative tiled M^-1 solve. The kernel
+# stages the whole flat DOF vector for 8 envs in LDS (msolve = 8 x n_dofs_ floats =
+# 32 * n_dofs_ bytes). gfx942 has 64 KB LDS/workgroup, so at n_dofs_ > 2048 the tile
+# no longer fits (launch/compile failure) and well before that it caps occupancy
+# (n_dofs_=512 -> 16 KB -> 4 WG/CU). Large-DOF / multi-entity batched scenes above
+# this bound fall back to the serial func_solve_mass / func_solve_mass_batch, which
+# use no oversized LDS and handle arbitrary DOF counts. 512 keeps the tile <=16 KB
+# (>=4 WG/CU on LDS) while comfortably covering the single-/few-robot batched regime.
+COOP_MASS_SOLVE_MAX_DOFS = 512
+
+
+@qd.func
+def func_solve_mass_coop_tiled(
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Cooperative tiled forward M^-1 solve for AMDGPU (out = M^-1 @ vec).
+
+    The serial `func_solve_mass` launches 1 thread/env -> only ~n_envs/32
+    wavefronts (~2.6% occupancy at 8192 envs), leaving the GPU idle on the
+    dependent triangular-solve chain. This tiles 8 envs/block x 8 lanes/env (8x
+    the wavefronts) and reads mass_mat_L[i_b, p, k] with lanes over column k
+    (coalesced under the [env,row,col] layout), software-pipelined -- mirroring
+    the tiled_wc Phase 5b solve. Forward-only (no autodiff backward path).
+    """
+    BLOCK_DIM = qd.static(64)
+    COOP = qd.static(8)
+    ENVS = qd.static(8)
+    N_DOFS = qd.static(static_rigid_sim_config.n_dofs_)
+    N_BLOCKS = qd.static((static_rigid_sim_config.n_envs + 8 - 1) // 8)
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=BLOCK_DIM)
+    for i_t in range(N_BLOCKS * BLOCK_DIM):
+        tid = i_t % BLOCK_DIM
+        block_id = i_t // BLOCK_DIM
+        env_in_block = tid // COOP
+        lane_in_env = tid % COOP
+        i_b = block_id * ENVS + env_in_block
+        msolve = qd.simt.block.SharedArray((ENVS, N_DOFS), gs.qd_float)
+        # OOB guard: never `continue` (would deadlock the workgroup syncs).
+        oob = i_b >= static_rigid_sim_config.n_envs
+
+        for i_e in range(qd.static(static_rigid_sim_config.n_entities_)):
+            e_ds = entities_info.dof_start[i_e]
+            e_de = entities_info.dof_end[i_e]
+            e_n = e_de - e_ds
+            do_e = False
+            if not oob:
+                do_e = bool(rigid_global_info.mass_mat_mask[i_e, i_b])
+
+            # load y -> LDS stripe
+            if do_e:
+                i_d = e_ds + lane_in_env
+                while i_d < e_de:
+                    msolve[env_in_block, i_d] = vec[i_d, i_b]
+                    i_d = i_d + COOP
+            qd.simt.block.sync()
+
+            # Step 1: solve L^T w = y (back-substitution), software-pipelined
+            for pp in range(e_n):
+                p = e_de - 1 - pp
+                if do_e:
+                    wp = msolve[env_in_block, p]
+                    k = e_ds + lane_in_env
+                    l_pf = gs.qd_float(0.0)
+                    if k < p:
+                        l_pf = rigid_global_info.mass_mat_L[i_b, p, k]
+                    while k < p:
+                        l_cur = l_pf
+                        k = k + COOP
+                        l_pf = gs.qd_float(0.0)
+                        if k < p:
+                            l_pf = rigid_global_info.mass_mat_L[i_b, p, k]
+                        msolve[env_in_block, k - COOP] = msolve[env_in_block, k - COOP] - l_cur * wp
+                qd.simt.block.sync()
+
+            # Step 2: z = D^{-1} w
+            if do_e:
+                i_d = e_ds + lane_in_env
+                while i_d < e_de:
+                    msolve[env_in_block, i_d] = msolve[env_in_block, i_d] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+                    i_d = i_d + COOP
+            qd.simt.block.sync()
+
+            # Step 3: solve L x = z (forward-substitution), software-pipelined
+            for pp in range(e_n):
+                p = e_ds + pp
+                if do_e:
+                    wp = msolve[env_in_block, p]
+                    k = p + 1 + lane_in_env
+                    l_pf = gs.qd_float(0.0)
+                    if k < e_de:
+                        l_pf = rigid_global_info.mass_mat_L[i_b, k, p]
+                    while k < e_de:
+                        l_cur = l_pf
+                        k = k + COOP
+                        l_pf = gs.qd_float(0.0)
+                        if k < e_de:
+                            l_pf = rigid_global_info.mass_mat_L[i_b, k, p]
+                        msolve[env_in_block, k - COOP] = msolve[env_in_block, k - COOP] - l_cur * wp
+                qd.simt.block.sync()
+
+            # store x -> out
+            if do_e:
+                i_d = e_ds + lane_in_env
+                while i_d < e_de:
+                    out[i_d, i_b] = msolve[env_in_block, i_d]
+                    i_d = i_d + COOP
+            qd.simt.block.sync()
+
+
 @qd.func
 def func_torque_and_passive_force(
     entities_state: array_class.EntitiesState,
@@ -1107,13 +1225,26 @@ def func_torque_and_passive_force(
 ):
     BW = qd.static(is_backward)
 
-    # compute force based on each dof's ctrl mode
+    # compute force based on each dof's ctrl mode. The non-hibernation launch runs
+    # this per-link-parallel (ndrange(n_links, _B)) instead of one-thread-per-entity
+    # walking every link serially -- much higher occupancy at large batch sizes, and
+    # the per-link applied force is independent so this is a flat relaunch (no extra
+    # launches, no cross-link dependency). The hibernation path keeps the per-entity
+    # walk because it needs the per-entity wakeup reduction.
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1]):
+    for i_x, i_b in (
+        qd.ndrange(entities_info.n_links.shape[0], dofs_state.ctrl_mode.shape[1])
+        if qd.static(static_rigid_sim_config.use_hibernation)
+        else qd.ndrange(links_info.root_idx.shape[0], dofs_state.ctrl_mode.shape[1])
+    ):
         EPS = rigid_global_info.EPS[None]
 
         wakeup = False
-        for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
+        for i_l in (
+            range(entities_info.link_start[i_x], entities_info.link_end[i_x])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else range(i_x, i_x + 1)
+        ):
             I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
             if links_info.n_dofs[I_l] > 0:
                 i_j = links_info.joint_start[I_l]
@@ -1196,10 +1327,10 @@ def func_torque_and_passive_force(
                             wakeup = True
 
         if qd.static(static_rigid_sim_config.use_hibernation):
-            if entities_state.hibernated[i_e, i_b] and wakeup:
+            if entities_state.hibernated[i_x, i_b] and wakeup:
                 # TODO: migrate this function
                 func_wakeup_entity_and_its_temp_island(
-                    i_e,
+                    i_x,
                     i_b,
                     entities_state,
                     entities_info,
@@ -1542,15 +1673,36 @@ def func_compute_qacc(
 ):
     BW = qd.static(is_backward)
 
-    func_solve_mass(
-        vec=dofs_state.force,
-        out=dofs_state.acc_smooth,
-        out_bw=dofs_state.acc_smooth_bw,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
-    )
+    # Forward acc_smooth = M^-1 @ force. On AMDGPU the serial 1-thread/env solve
+    # is severely under-occupied (~2.6% at 8192 envs); use the cooperative tiled
+    # solve. It is a block-cooperative kernel (block_dim + shared memory + block
+    # syncs), so it is only correct under a fully parallel launch (para_level == ALL,
+    # i.e. batched scenes); non-batched scenes (PARTIAL) would serialize it and break
+    # the cooperative reduction. Keep the serial path there, for the autodiff backward
+    # pass (cooperative version is forward-only), and for non-AMDGPU backends.
+    if qd.static(
+        static_rigid_sim_config.backend == gs.amdgpu
+        and not is_backward
+        and static_rigid_sim_config.para_level == gs.PARA_LEVEL.ALL
+        and static_rigid_sim_config.n_dofs_ <= COOP_MASS_SOLVE_MAX_DOFS
+    ):
+        func_solve_mass_coop_tiled(
+            dofs_state.force,
+            dofs_state.acc_smooth,
+            entities_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+    else:
+        func_solve_mass(
+            vec=dofs_state.force,
+            out=dofs_state.acc_smooth,
+            out_bw=dofs_state.acc_smooth_bw,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
 
     # Assume this is the outermost loop
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
