@@ -459,7 +459,11 @@ def get_constraint_state(constraint_solver, solver):
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
-        jac_dofs_idx=V(dtype=gs.qd_int, shape=jac_dofs_idx_shape, layout=jac_layout),
+        jac_dofs_idx=V(
+            dtype=gs.qd_int,
+            shape=jac_dofs_idx_shape,
+            layout=jac_layout if constraint_solver.sparse_solve else None,
+        ),
         jac_n_dofs=V(dtype=gs.qd_int, shape=jac_n_dofs_shape, layout=serial_layout if jac_n_dofs_shape else None),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
@@ -659,6 +663,16 @@ class IslandState:
     # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
     is_hibernated: qd.Tensor
     hibernated_next_link: qd.Tensor
+    # Compact (env, island) work-list for the cooperative per-island factor+solve. factor_worklist_size[0] is the total
+    # island count across all envs (atomic-built by the partition pass); factor_worklist_i_b / factor_worklist_i_island
+    # hold the env and island index of each work item. The cooperative kernel launches a static block grid and
+    # grid-strides over [0, size), so the block count does not scale with the env count - a small batch with many
+    # islands fans its islands out across blocks rather than serializing them inside a single block-per-env. Order is
+    # racy (atomic reservation), which is fine: islands are independent (block-diagonal Hessian) so the result does not
+    # depend on which block solves which island.
+    factor_worklist_i_b: qd.Tensor
+    factor_worklist_i_island: qd.Tensor
+    factor_worklist_size: qd.Tensor
 
 
 def get_island_state(solver, collider):
@@ -695,6 +709,9 @@ def get_island_state(solver, collider):
         constraint_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_constraints_max, _B), is_active)),
         is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
         hibernated_next_link=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
+        factor_worklist_i_b=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
+        factor_worklist_i_island=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
+        factor_worklist_size=V(dtype=gs.qd_int, shape=maybe_shape((1,), is_active)),
     )
 
 
@@ -2229,6 +2246,14 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # ``func_cholesky_factor_direct_tiled`` + ``func_cholesky_solve_tiled`` pair. Requires
     # ``enable_tiled_cholesky_hessian`` for the fused kernel to be available.
     enable_fused_factor_solve_init: bool = False
+    # True exactly when the per-island Newton solve path is actually exercised: the partition drives the per-island
+    # Hessian factor, the per-island triangular solve, and the sparse jv / qfrc / Jaref. The whole-env Cholesky of the
+    # block-diagonal (by island) Hessian is the exact per-island result, and once the env dimension saturates the GPU
+    # the whole-env factor beats the per-island grid - so with islands ON but the whole-env Hessian fitting shared and
+    # no hibernation this is False and every per-island kernel takes the dense whole-env (islands-OFF) branch. It is
+    # True only when hibernation needs per-island skipping, or the whole-env Hessian does not fit shared (where the
+    # per-island blocks avoid the whole-env shared cap and cubic and the large-DOF sparse jv/qfrc beats dense).
+    enable_per_island_solve: bool = False
     # When True, the constraint solver uses the GPU subgroup-cooperative kernel variants (warp-cooperative linesearch
     # refinement, per-friction constraint builder, cooperative mass-matrix assembly), together with the batch-first
     # tensor layouts they expect, eg (_B, len_constraints_) for Jaref / efc_D / ... which unlocks coalesced cross-lane
@@ -2243,6 +2268,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
+    # Number of persistent T-lane blocks the cooperative per-island factor+solve launches. The grid is static (for
+    # CUDA-graph capture) and the blocks grid-stride over the materialized (env, island) work-list, so the block count
+    # is decoupled from the env count: a small batch with many islands still spreads its islands across many blocks
+    # instead of serializing them inside one block-per-env. Sized to saturate the GPU (gpu_cores // tile_size) but no
+    # larger than the worst-case work-list (n_links * n_envs), so tiny problems do not launch idle blocks.
+    island_factor_n_blocks: int = 1
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1

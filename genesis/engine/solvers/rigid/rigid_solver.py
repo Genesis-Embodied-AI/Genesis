@@ -510,6 +510,10 @@ class RigidSolver(KinematicSolver):
             enable_joint_limit=self._enable_joint_limit,
             box_box_detection=self._box_box_detection,
             use_contact_island=self._use_contact_island,
+            # The per-island solve engages wherever islands are on by default (CPU, where it composes with the sparse
+            # skyline). The GPU block below narrows it to exclude the whole-env-fits-shared no-hibernation case, which
+            # factors faster through the whole-env path (its block-diagonal Cholesky is the exact per-island result).
+            enable_per_island_solve=self._use_contact_island,
             sparse_solve=sparse_solve,
             sparse_envelope=sparse_envelope,
             integrator=self._integrator,
@@ -595,9 +599,20 @@ class RigidSolver(KinematicSolver):
                     hessian_fits_shared=hessian_fits_shared,
                     cholesky_tile_size=cholesky_tile_size,
                     enable_fused_factor_solve_init=enable_fused_factor_solve_init,
+                    enable_per_island_solve=(
+                        self._use_contact_island and (self._use_hibernation or not hessian_fits_shared)
+                    ),
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
                     tiled_n_dofs=tiled_n_dofs,
                     tiled_n_island_dofs=tiled_n_island_dofs,
+                    # Persistent block grid for the cooperative per-island factor+solve: enough T-lane blocks to fill the
+                    # GPU (one block ~= one tile = cholesky_tile_size lanes). The blocks grid-stride over the (env,
+                    # island) work-list, so a small batch with many islands fans out across blocks instead of
+                    # serializing inside one block-per-env. The count is independent of the body/env count (only the GPU
+                    # size and cholesky_tile_size, which already varies the kernels via n_dofs): an ndarray-mode kernel
+                    # must compile once and run for any n_objs/n_envs, and a block with no work exits at the grid-stride
+                    # guard (blk >= work_size) within the same scheduling wave, so over-launching a tiny work-list is free.
+                    island_factor_n_blocks=max(1, max_tiled_envs // cholesky_tile_size),
                 )
 
                 # Manually pin the solve arm only where the winner is determinable in advance AND confirmed across

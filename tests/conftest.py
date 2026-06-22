@@ -599,7 +599,10 @@ def precision(request, backend):
                 pytest.fail("'precision' can only be specified once.")
             (precision,) = mark.args
     if precision is None:
-        precision = "64" if backend == gs.cpu else "32"
+        # Only default to 64bits precision when running the unit tests on CPU backend
+        expr = Expression.compile(request.config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        precision = "64" if not is_benchmarks and backend == gs.cpu else "32"
     return precision
 
 

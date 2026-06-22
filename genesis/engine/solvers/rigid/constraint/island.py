@@ -120,26 +120,40 @@ def func_group_constraints_by_island(
     # island label is read in O(1), and the fill walks constraints in index order, so each island's constraint list
     # stays order-deterministic.
     n_islands = island_state.n_islands[i_b]
-    for i_island in range(n_islands):
-        island_state.constraint_slices.n[i_island, i_b] = 0
-
     n_con = constraint_state.n_constraints[i_b]
-    for i_c in range(n_con):
-        i_island = island_state.constraint_island_idx[i_c, i_b]
-        if i_island >= 0:
-            island_state.constraint_slices.n[i_island, i_b] = island_state.constraint_slices.n[i_island, i_b] + 1
+    if n_islands == 1:
+        # A single island spans the whole env, so every constraint belongs to island 0 in index order: the grouping is
+        # the identity. Skip the per-constraint island lookup and the two-pass bucketing (the caller also skips the
+        # per-constraint resolve pass for this env). Any constraint that touches no DOF carries jac == 0, so listing it
+        # in island 0 is harmless. This is the common case for a scene whose free bodies have settled into one contact
+        # component, where the per-island bookkeeping would otherwise be pure overhead.
+        island_state.constraint_slices.start[0, i_b] = 0
+        island_state.constraint_slices.n[0, i_b] = n_con
+        island_state.constraint_slices.curr[0, i_b] = n_con
+        for i_c in range(n_con):
+            island_state.constraint_id[i_c, i_b] = i_c
+    else:
+        for i_island in range(n_islands):
+            island_state.constraint_slices.n[i_island, i_b] = 0
 
-    con_list_start = 0
-    for i_island in range(n_islands):
-        island_state.constraint_slices.start[i_island, i_b] = con_list_start
-        island_state.constraint_slices.curr[i_island, i_b] = con_list_start
-        con_list_start = con_list_start + island_state.constraint_slices.n[i_island, i_b]
+        for i_c in range(n_con):
+            i_island = island_state.constraint_island_idx[i_c, i_b]
+            if i_island >= 0:
+                island_state.constraint_slices.n[i_island, i_b] = island_state.constraint_slices.n[i_island, i_b] + 1
 
-    for i_c in range(n_con):
-        i_island = island_state.constraint_island_idx[i_c, i_b]
-        if i_island >= 0:
-            island_state.constraint_id[island_state.constraint_slices.curr[i_island, i_b], i_b] = i_c
-            island_state.constraint_slices.curr[i_island, i_b] = island_state.constraint_slices.curr[i_island, i_b] + 1
+        con_list_start = 0
+        for i_island in range(n_islands):
+            island_state.constraint_slices.start[i_island, i_b] = con_list_start
+            island_state.constraint_slices.curr[i_island, i_b] = con_list_start
+            con_list_start = con_list_start + island_state.constraint_slices.n[i_island, i_b]
+
+        for i_c in range(n_con):
+            i_island = island_state.constraint_island_idx[i_c, i_b]
+            if i_island >= 0:
+                island_state.constraint_id[island_state.constraint_slices.curr[i_island, i_b], i_b] = i_c
+                island_state.constraint_slices.curr[i_island, i_b] = (
+                    island_state.constraint_slices.curr[i_island, i_b] + 1
+                )
 
 
 @qd.func

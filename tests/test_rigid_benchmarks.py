@@ -1109,7 +1109,6 @@ def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
             "env": runnable,
             "batch_size": n_envs,
             **({"constraint_solver": solver} if solver is not None else {}),
-            "use_contact_island": False,
             **({"gjk_collision": gjk} if gjk is not None else {}),
         }
     ) as logger:

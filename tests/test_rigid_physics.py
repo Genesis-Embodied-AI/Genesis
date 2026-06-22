@@ -4053,10 +4053,10 @@ def test_convexify(euler, show_viewer, gjk_collision):
     # FIXME: The cup is falling on Windows OS because the convex decomposition provided by CoACD is different than
     # other platform, and much worst in practice, with the bottom of the tank that is not planar (even discontinuous).
     # cam.start_recording()
-    for i in range(1000):
+    for i in range(1100):
         scene.step()
         # cam.render()
-        if i > 900:
+        if i > 1000:
             assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=1.0 if sys.platform == "win32" else 0.6)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 

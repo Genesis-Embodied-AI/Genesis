@@ -40,11 +40,26 @@ def multi_free_body_path(tmp_path):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
+def test_partition_logics(show_viewer, n_envs, multi_free_body_path, monkeypatch):
     # The welded pair never touches, so only the equality edge couples them: without it the partition would split them
     # and the weld would be solved across two islands. A fixed body carries no dofs and joins no island. The
     # multi-free-body MJCF entity (offset clear of the boxes) is a single Genesis entity that must split into one island
     # per free-body subtree, never one dense block - its hinge child stays in its parent's island via a kinematic edge.
+    #
+    # This scene is small and fits-shared, so in production the GPU solve runs whole-env and never builds the island
+    # partition this test asserts (enable_per_island_solve is False without hibernation). Force the per-island path on
+    # so the partition is built; this patch only exists to keep this partition-structure test backend-agnostic.
+    from genesis.utils.array_class import RigidSimStaticConfig
+
+    _orig_static_config_init = RigidSimStaticConfig.__init__
+
+    def _force_per_island_solve(self, *args, **kwargs):
+        if kwargs.get("use_contact_island"):
+            kwargs["enable_per_island_solve"] = True
+        _orig_static_config_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(RigidSimStaticConfig, "__init__", _force_per_island_solve)
+
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
@@ -174,8 +189,23 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_partition_track_changes(show_viewer, n_envs):
+def test_partition_track_changes(show_viewer, n_envs, monkeypatch):
     # The partition is rebuilt every step, so it must track contacts forming (merge) and breaking (split).
+    #
+    # This scene is small and fits-shared, so in production the GPU solve runs whole-env and never builds the island
+    # partition this test asserts (enable_per_island_solve is False without hibernation). Force the per-island path on
+    # so the partition is built; this patch only exists to keep this partition-structure test backend-agnostic.
+    from genesis.utils.array_class import RigidSimStaticConfig
+
+    _orig_static_config_init = RigidSimStaticConfig.__init__
+
+    def _force_per_island_solve(self, *args, **kwargs):
+        if kwargs.get("use_contact_island"):
+            kwargs["enable_per_island_solve"] = True
+        _orig_static_config_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(RigidSimStaticConfig, "__init__", _force_per_island_solve)
+
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
@@ -280,6 +310,66 @@ def test_solve_correctness(show_viewer, noslip_iterations, n_envs):
     # Loose tol: the monolith's incremental Cholesky vs the island path's direct rebuild are both exact in theory, but
     # 80 steps of a chaotic stack drift apart at fp-accumulation level.
     assert_allclose(positions[1], positions[0], tol=5e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_island_monolith_seed_oversaturated(show_viewer, monkeypatch):
+    # The GPU island monolith leaves its initial factor + gradient to func_solve_init, except when its body self-inits
+    # them per-env - which it only does when the cooperative kernels are disabled. With them enabled, func_solve_init
+    # must seed: for a shared-fitting Hessian at an env count that oversaturates the GPU, neither the fused nor the
+    # per-island seed branch fires, so the fallback factor+gradient must run, else Mgrad stays stale and the solve
+    # makes no progress (the boxes fall through the floor). Faking GPU saturation (get_gpu_core_count -> 1) reaches the
+    # oversaturated path at 2 envs instead of the thousands a real GPU would need.
+    import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
+    from genesis.utils.array_class import RigidSimStaticConfig
+
+    monkeypatch.setattr(rigid_solver, "get_gpu_core_count", lambda: 1)
+    # The gap is in the monolith arm's init path, so pin the arm (otherwise the autotuner might pick the decomposed
+    # arm, which always seeds and would hide the regression).
+    _orig_static_config_init = RigidSimStaticConfig.__init__
+
+    def _force_monolith(self, *args, **kwargs):
+        kwargs["prefer_decomposed_solver"] = 0
+        _orig_static_config_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(RigidSimStaticConfig, "__init__", _force_monolith)
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    # Four spaced free boxes: 24 dofs (>= 16, so the cooperative kernels engage) that fit the shared tile, and four
+    # independent islands - exactly the shared-fitting multi-island case the seed branches gate out.
+    boxes = [
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(0.4 * i, 0.0, 0.2),
+            )
+        )
+        for i in range(4)
+    ]
+    scene.build(n_envs=2)
+
+    cfg = scene.rigid_solver._static_rigid_sim_config
+    # Guard against the test silently ceasing to exercise the gap (e.g. if the saturation heuristic changes).
+    assert cfg.enable_cooperative_constraint_kernels
+    assert not cfg.enable_fused_factor_solve_init
+    assert not cfg.enable_per_island_solve
+
+    for _ in range(150):
+        scene.step()
+
+    z = np.stack([tensor_to_array(box.get_pos())[..., 2] for box in boxes])
+    vel = tensor_to_array(scene.rigid_solver.get_dofs_velocity())
+    assert not np.isnan(z).any()
+    # The boxes rest on the floor at half their size; a stale seed would never apply the contact response.
+    assert_allclose(z, 0.05, tol=5e-3)
+    assert np.abs(vel).max() < 0.1
 
 
 @pytest.mark.required

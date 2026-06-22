@@ -148,7 +148,7 @@ def _func_decomp_linesearch_p0(
             i_c = tid
             while i_c < n_con:
                 jv_val = gs.qd_float(0.0)
-                if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.use_contact_island):
+                if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.enable_per_island_solve):
                     for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
                         i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                         jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
@@ -599,7 +599,7 @@ def _func_update_qfrc_constraint_per_dof(
     ):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             qfrc = gs.qd_float(0.0)
-            if qd.static(static_rigid_sim_config.use_contact_island):
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
                 i_island = island_state.dofs_island_idx[i_d, i_b]
                 if i_island >= 0:
                     con_base = island_state.constraint_slices.start[i_island, i_b]
@@ -996,8 +996,9 @@ def _kernel_solve_graph(
             solver.func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
-            if qd.static(static_rigid_sim_config.use_contact_island):
-                # Islands ON: factor + solve each island in its own tile over the (env, island) grid.
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                # Hibernation needs the per-island grid to skip asleep islands, so factor + solve each awake island in
+                # its own tile over the (env, island) grid.
                 solver.func_island_tiled_factor_solve_all(
                     entities_info,
                     constraint_state,
@@ -1009,16 +1010,19 @@ def _kernel_solve_graph(
                     else qd.simt.Tile16x16,
                 )
             else:
-                # Islands OFF: the whole env is a single island, which solves fastest through the dedicated whole-env
-                # fused Cholesky+solve (L kept in shared memory). The per-island grid path adds per-(env, island)
-                # indirection and grid overhead that is pure cost when there is exactly one island spanning every DOF.
+                # Islands OFF, or islands ON without hibernation: the whole-env Hessian is block-diagonal by island, so
+                # its Cholesky is itself block-diagonal - the whole-env fused factor+solve (L in shared memory) yields
+                # the exact per-island result with none of the per-(env, island) grid/indirection overhead, which is
+                # pure cost at the env counts where the env dimension alone already saturates the GPU. The per-island
+                # grid only pays off when the whole-env Hessian does not fit shared (the cooperative branch below).
                 solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
         elif qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-            and static_rigid_sim_config.use_contact_island
+            and static_rigid_sim_config.enable_per_island_solve
             and static_rigid_sim_config.enable_cooperative_constraint_kernels
         ):
-            # Islands ON, whole-env Hessian too big for shared but each island's block fits the per-island tile:
+            # Hibernation with a whole-env Hessian too big for shared but each island's block fitting the per-island
+            # tile: assemble + factor + solve each awake island in its own tile (do_assemble=True), with NO whole-env
             # assemble + factor + solve each island in its own tile (do_assemble=True), with NO whole-env Hessian
             # touched. This keeps the cost at sum-of-per-island-blocks instead of the whole-env O(n_dofs^3) factor the
             # non-fused path below would do - the regime of many small islands whose total dof count exceeds the shared

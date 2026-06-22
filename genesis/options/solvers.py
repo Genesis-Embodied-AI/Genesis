@@ -473,7 +473,9 @@ class RigidOptions(Options):
         constraint. This parameter is called 'timeconst' in Mujoco
         (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
-        Whether to partition the constraint solve into independent per-island blocks. Defaults to False.
+        Whether to partition the constraint solve into independent per-island blocks. It has no effect on a scene that
+        is a single dense-coupled tree (one island) or is differentiable, where the dense whole-scene solve is used
+        regardless. Defaults to True.
     use_hibernation : bool, optional
         Whether to put bodies that have come to rest to sleep, so the solver skips them until they are disturbed. It
         quietly has no effect on a body that is differentiable, prunable, or under no-slip friction. Defaults to False.
@@ -526,7 +528,7 @@ class RigidOptions(Options):
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
     constraint_timeconst: PositiveFloat = 0.01
-    use_contact_island: StrictBool = False
+    use_contact_island: StrictBool = True
     box_box_detection: StrictBool = False
 
     # hibernation threshold
