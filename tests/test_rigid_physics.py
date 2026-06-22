@@ -351,6 +351,23 @@ def double_ball_pendulum():
 
 
 @pytest.fixture(scope="session")
+def long_chain():
+    # Single kinematic tree with enough DOFs that its mass submatrix exceeds GPU shared memory, so the cooperative
+    # >shared-cap mass assemble runs - the path whose lower-triangular linear-index inversion must stay exact on GPUs
+    # with an imprecise sqrt.
+    mjcf = ET.Element("mujoco", model="long_chain")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="root", pos="0 0 2")
+    ET.SubElement(body, "geom", type="sphere", size="0.03", density="500")
+    for i in range(128):
+        body = ET.SubElement(body, "body", name=f"l{i}", pos="0 0 0.1")
+        ET.SubElement(body, "joint", name=f"j{i}", type="hinge", axis=("1 0 0", "0 1 0", "0 0 1")[i % 3], damping="0.1")
+        ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.1", size="0.02", density="500")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def hinge_slide():
     mjcf = ET.Element("mujoco", model="hinge_slide")
 
@@ -3292,7 +3309,8 @@ def test_apply_external_forces(xml_path, show_viewer):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-def test_mass_mat(show_viewer, tol):
+@pytest.mark.parametrize("model_name", ["long_chain"])
+def test_mass_mat(xml_path, show_viewer, tol):
     # Create and build the scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -3315,8 +3333,17 @@ def test_mass_mat(show_viewer, tol):
         vis_mode="collision",
         visualize_contact=True,
     )
+    # High-DOF single tree: its mass submatrix exceeds GPU shared memory, exercising the cooperative >shared-cap
+    # assemble (the low-DOF frankas exercise the under-cap shared-memory factor instead).
+    long_chain = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            pos=(5, 0, 2),
+        ),
+    )
     scene.build()
 
+    # Two identical entities must yield identical mass matrices, and the LTDL factor must reconstruct it.
     mass_mat_1 = franka1.get_mass_mat(decompose=False)
     mass_mat_2 = franka2.get_mass_mat(decompose=False)
     assert mass_mat_1.shape == (franka1.n_dofs, franka1.n_dofs)
@@ -3325,6 +3352,14 @@ def test_mass_mat(show_viewer, tol):
     mass_mat_L, mass_mat_D_inv = franka1.get_mass_mat(decompose=True)
     mass_mat = mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L
     assert_allclose(mass_mat, mass_mat_1, tol=tol)
+
+    # The cooperative >shared-cap assemble maps a flat lane index to a lower-triangular (row, col) via a float sqrt;
+    # on GPUs whose sqrt undershoots perfect squares (Apple Metal: sqrt(15129) -> 122.999 instead of 123) a naive
+    # inversion lands one row short on every j=0 boundary and silently drops the long-range coupling entries, leaving
+    # the assembled mass matrix indefinite. A real joint-space mass matrix is always symmetric positive-definite.
+    mass_mat_chain = tensor_to_array(long_chain.get_mass_mat(decompose=False))
+    assert_allclose(mass_mat_chain, mass_mat_chain.T, tol=tol)
+    assert np.linalg.eigvalsh(0.5 * (mass_mat_chain + mass_mat_chain.T)).min() > 0.0
 
 
 @pytest.mark.required

@@ -23,6 +23,7 @@ from .misc import (
     func_wakeup_island,
     func_check_index_range,
     func_add_safe_backward,
+    linear_to_lower_tri,
 )
 
 # Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
@@ -407,9 +408,9 @@ def func_compute_mass_matrix(
             i_pair = tid
             while i_pair < n_lower_tri:
                 # Compressed lower-tri-inclusive index (matches tiled func_factor_mass): i_pair = i_d_ * (i_d_ + 1) / 2
-                # + j_d_, with j_d_ in [0, i_d_].
-                i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
-                j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
+                # + j_d_, with j_d_ in [0, i_d_]. The fast-math-robust inversion is required here: a raw sqrt drops the
+                # j=0 entry of every perfect-square row on GPU, leaving M missing long-range coupling -> indefinite.
+                i_d_, j_d_ = linear_to_lower_tri(i_pair)
                 i_d = d_s + i_d_
                 j_d = d_s + j_d_
                 # The mass matrix is block-diagonal per kinematic tree, so only within-block (j_d in i_d's block) pairs
@@ -673,8 +674,7 @@ def func_factor_mass(
 
                     i_pair = tid
                     while i_pair < n_lower_tri:
-                        i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
-                        j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
+                        i_d_, j_d_ = linear_to_lower_tri(i_pair)
                         i_d = entity_dof_start + i_d_
                         j_d = entity_dof_start + j_d_
                         mass_mat[i_d_, j_d_] = rigid_global_info.mass_mat[i_d, j_d, i_b]
@@ -729,8 +729,7 @@ def func_factor_mass(
                     i_pair = tid
                     n_strict_lower_tri = n_dofs * (n_dofs - 1) // 2
                     while i_pair < n_strict_lower_tri:
-                        i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) + 1) // 2, qd.i32)
-                        j_d_ = i_pair - i_d_ * (i_d_ - 1) // 2
+                        i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
                         i_d = entity_dof_start + i_d_
                         j_d = entity_dof_start + j_d_
                         rigid_global_info.mass_mat_L[i_d, j_d, i_b] = mass_mat[i_d_, j_d_]

@@ -10,6 +10,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.engine.solvers.rigid.abd.misc import linear_to_lower_tri
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
 from .island import (
@@ -1791,24 +1792,6 @@ def kernel_delete_weld_constraint(
 # =====================================================================================================================
 
 # ====================================== Hessian Matrix & Cholesky Factorization ======================================
-
-
-@qd.func
-def linear_to_lower_tri(i_pair: qd.i32):
-    """Convert a linear index into (row, col) of a lower-triangular matrix.
-
-    Maps i_pair -> (i_d1, i_d2) such that the linear sequence 0,1,2,... visits
-    (0,0), (1,0), (1,1), (2,0), (2,1), (2,2), ...
-
-    Uses a float sqrt approximation with an integer post-correction to handle
-    GPUs whose sqrt is not correctly rounded for perfect squares (observed on
-    Apple Metal where e.g. sqrt(11881) returns ~108.999 instead of 109).
-    """
-    i_d1 = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * i_pair + 1, gs.qd_float)) - 1.0) / 2.0), qd.i32)
-    if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
-        i_d1 = i_d1 + 1
-    i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
-    return i_d1, i_d2
 
 
 @qd.kernel

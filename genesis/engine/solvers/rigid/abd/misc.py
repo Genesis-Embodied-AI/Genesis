@@ -6,6 +6,32 @@ import genesis.utils.geom as gu
 
 
 @qd.func
+def linear_to_lower_tri(i_pair: qd.i32, strict: qd.template() = False):
+    """Convert a linear index into (row, col) of a lower-triangular matrix.
+
+    Maps i_pair -> (i_d1, i_d2) over the lower triangle in the order (0,0), (1,0), (1,1), (2,0), ...
+    (i_pair = i_d1 * (i_d1 + 1) / 2 + i_d2, i_d2 in [0, i_d1]). When ``strict`` the diagonal is excluded, mapping over
+    the strict lower triangle (1,0), (2,0), (2,1), (3,0), ... (i_pair = i_d1 * (i_d1 - 1) / 2 + i_d2, i_d2 in [0, i_d1)).
+
+    Uses a float sqrt with an integer post-correction to handle GPUs whose sqrt is not correctly rounded for perfect
+    squares (observed on Apple Metal where e.g. sqrt(11881) returns ~108.999 instead of 109). Without it the row index
+    lands one short on every j=0 boundary, silently dropping those matrix entries.
+    """
+    offset = qd.static(1.0 if strict else -1.0)
+    i_d1 = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * i_pair + 1, gs.qd_float)) + offset) / 2.0), qd.i32)
+    i_d2 = qd.i32(0)
+    if qd.static(strict):
+        if (i_d1 + 1) * i_d1 // 2 <= i_pair:
+            i_d1 = i_d1 + 1
+        i_d2 = i_pair - i_d1 * (i_d1 - 1) // 2
+    else:
+        if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
+            i_d1 = i_d1 + 1
+        i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+    return i_d1, i_d2
+
+
+@qd.func
 def func_wakeup_island(
     i_island,
     i_b,
