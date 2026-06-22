@@ -8,6 +8,7 @@ import numbers
 import os
 import random
 import sys
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import field
 from importlib import import_module
@@ -301,6 +302,69 @@ def get_exr_cache_dir():
 
 def get_usd_cache_dir():
     return os.path.join(get_cache_dir(), "usd")
+
+
+_CLEARABLE_CACHES: list[Callable[[], None]] = []
+
+
+def register_cache_clear(cache_clear: Callable[[], None]) -> None:
+    """Register a callback that drops a module-level cache, invoked by clear_caches on genesis teardown.
+
+    Pass the cache's own clearing method, e.g. the cache_clear of a functools.lru_cache or the clear of a manual dict
+    cache. This lets module-level asset caches (parsed meshes, baked textures, ...) release the large arrays they hold
+    for destroyed scenes without the teardown path having to know about each one.
+    """
+    _CLEARABLE_CACHES.append(cache_clear)
+
+
+def clear_caches() -> None:
+    """Drop every cache registered through register_cache_clear."""
+    for cache_clear in _CLEARABLE_CACHES:
+        cache_clear()
+
+
+class SizeCappedCache:
+    """An LRU cache bounded by the total byte footprint of its values rather than by their count.
+
+    Each value is stored together with an explicit size in bytes; once the running total exceeds max_bytes the
+    least-recently-used entries are evicted until it fits again (the most-recent entry is always kept). This suits
+    caching a handful of large, scene-independent arrays - such as processed collision geometry - where the number of
+    distinct entries is a poor proxy for the memory actually held. An optional max_entries also caps the entry count,
+    so values whose reported size is small or zero (e.g. flat-color textures) cannot accumulate without bound. It
+    registers itself with register_cache_clear so it is dropped together with the other asset caches on genesis
+    teardown.
+    """
+
+    def __init__(self, max_bytes: int, max_entries: "int | None" = None) -> None:
+        self._max_bytes = max_bytes
+        self._max_entries = max_entries
+        self._store: "OrderedDict[Any, tuple[Any, int]]" = OrderedDict()
+        self._total_bytes = 0
+        register_cache_clear(self.clear)
+
+    def get(self, key: Any) -> Any:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        self._store.move_to_end(key)
+        return entry[0]
+
+    def put(self, key: Any, value: Any, n_bytes: int) -> None:
+        previous = self._store.pop(key, None)
+        if previous is not None:
+            self._total_bytes -= previous[1]
+        self._store[key] = (value, n_bytes)
+        self._total_bytes += n_bytes
+        while len(self._store) > 1 and (
+            self._total_bytes > self._max_bytes
+            or (self._max_entries is not None and len(self._store) > self._max_entries)
+        ):
+            _, (_, evicted_bytes) = self._store.popitem(last=False)
+            self._total_bytes -= evicted_bytes
+
+    def clear(self) -> None:
+        self._store.clear()
+        self._total_bytes = 0
 
 
 def geometric_mean(a, b):

@@ -19,6 +19,8 @@ import genesis as gs
 
 from . import geom as gu
 from .misc import (
+    SizeCappedCache,
+    register_cache_clear,
     get_assets_dir,
     get_cvx_cache_dir,
     get_exr_cache_dir,
@@ -326,7 +328,96 @@ def convex_decompose(mesh, coacd_options):
     return mesh_parts
 
 
+# 512 MiB of processed collision geometry. Sized by the geometry footprint actually retained (vertices and faces of
+# the cached meshes), so a few large assets or many small ones are both bounded without an arbitrary entry count.
+_COLLISION_GEOMS_CACHE = SizeCappedCache(max_bytes=512 * 1024 * 1024)
+
+
 def postprocess_collision_geoms(
+    g_infos,
+    decimate,
+    decimate_face_num,
+    decimate_aggressiveness,
+    convexify,
+    decompose_error_threshold,
+    coacd_options,
+    watertighten,
+):
+    # Convexification / decomposition of a collision mesh (convex hull and coacd decomposition) is the dominant cost of
+    # adding a file-based entity, and a scene built from many copies of the same asset would otherwise redo it for every
+    # entity. The result is memoized on the geometry of the input collision meshes (quantized vertices and faces) and on
+    # every option / per-geom field that can change the outcome. The processed meshes are immutable (their vertices are
+    # only read downstream, alignment is folded into the link frame), so the cached ones are shared across entities,
+    # which also collapses their memory footprint. Only fresh g_info dicts are handed back so the caller can re-express
+    # the per-geom pose in place without corrupting the template.
+    if not g_infos:
+        return []
+
+    key_parts = [
+        bool(decimate),
+        int(decimate_face_num),
+        int(decimate_aggressiveness),
+        bool(convexify),
+        float(decompose_error_threshold),
+        -1 if watertighten is None else int(watertighten),
+        coacd_options.model_dump(),
+    ]
+    for g_info in g_infos:
+        mesh = g_info["mesh"]
+        geom_type = g_info.get("type")
+        friction = g_info.get("friction")
+        sol_params = g_info.get("sol_params")
+        key_parts += [
+            discretize_array_for_hashing(mesh.verts),
+            np.ascontiguousarray(mesh.faces),
+            -1 if geom_type is None else int(geom_type),
+            int(g_info.get("contype", 0)),
+            int(g_info.get("conaffinity", 0)),
+            float("nan") if friction is None else float(friction),
+            np.zeros(0) if sol_params is None else np.ascontiguousarray(sol_params, dtype=np.float64),
+            np.ascontiguousarray(g_info.get("pos", gu.zero_pos()), dtype=np.float64),
+            np.ascontiguousarray(g_info.get("quat", gu.identity_quat()), dtype=np.float64),
+        ]
+    key = get_hashkey(*key_parts)
+
+    cached = _COLLISION_GEOMS_CACHE.get(key)
+    if cached is None:
+        cached = _postprocess_collision_geoms_impl(
+            g_infos,
+            decimate,
+            decimate_face_num,
+            decimate_aggressiveness,
+            convexify,
+            decompose_error_threshold,
+            coacd_options,
+            watertighten,
+        )
+        n_bytes = sum(g_info["mesh"].verts.nbytes + g_info["mesh"].faces.nbytes for g_info in cached)
+        _COLLISION_GEOMS_CACHE.put(key, cached, n_bytes)
+
+    # Hand back per-entity geoms that share the cached geometry and its derived data (edges, vertex adjacency, inertia)
+    # with the template, but own their trimesh and surface. This keeps appearance per-entity (each entity gets an
+    # independent, e.g. randomized, collision color) while the heavy geometry is computed once and its arrays are
+    # shared. Edges and adjacency are always needed, so they are populated up front; inertia is queried lazily through
+    # the template (only entities that align their link frame need it) to avoid eager convex-hull work.
+    result = []
+    for g_info in cached:
+        template = g_info["mesh"]
+        template_tmesh = template.trimesh
+        mesh = gs.Mesh(
+            mesh=trimesh.Trimesh(vertices=template_tmesh.vertices, faces=template_tmesh.faces, process=False),
+            surface=gs.surfaces.Collision(),
+            uvs=template.uvs,
+            metadata=template.metadata.copy(),
+        )
+        mesh._unique_edges = template.get_unique_edges()
+        mesh._vert_adjacency = template.get_vert_adjacency()
+        mesh._inertial_info_source = template
+        result.append({**g_info, "mesh": mesh})
+    return result
+
+
+def _postprocess_collision_geoms_impl(
     g_infos,
     decimate,
     decimate_face_num,
@@ -538,7 +629,7 @@ def postprocess_collision_geoms(
 
         # Try again to convexify then apply convex decomposition if not possible
         if must_decompose and is_merged:
-            return postprocess_collision_geoms(
+            return _postprocess_collision_geoms_impl(
                 g_infos,
                 decimate,
                 decimate_face_num,
@@ -627,9 +718,22 @@ def postprocess_collision_geoms(
     return _g_infos
 
 
+@lru_cache(maxsize=32)
+def _load_trimesh_scene_cached(path, group_by_material, mtime) -> "trimesh.Scene":
+    # Parsing a mesh file from disk (read + decode) is by far the dominant cost of adding a file-based entity, and a
+    # scene built from many copies of the same asset (e.g. a grid of identical objects) would otherwise re-parse the
+    # exact same bytes for every entity. The result is keyed by file modification time so an edited asset is reloaded.
+    # The returned scene is treated as an immutable template - callers copy each geometry out before applying scale or
+    # surface - so it is never mutated and is safe to share across entities.
+    return trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+
+
+register_cache_clear(_load_trimesh_scene_cached.cache_clear)
+
+
 def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface) -> "list[gs.Mesh]":
     meshes: list[gs.Mesh] = []
-    scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
+    scene = _load_trimesh_scene_cached(path, group_by_material, os.path.getmtime(path))
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")

@@ -1,6 +1,5 @@
 import os
 import pickle as pkl
-from itertools import chain
 from typing import TYPE_CHECKING
 
 import igl
@@ -119,13 +118,9 @@ class RigidGeom(RBC):
                 "decimation. (see FileMorph options)"
             )
 
-        # Compute adjacency graph
-        tmesh = trimesh.Trimesh(vertices=self._init_verts, faces=self._init_faces, process=False)
-        all_vert_neighbors_list = tmesh.vertex_neighbors
-        assert self.n_verts == len(all_vert_neighbors_list)
-        self.vert_neighbors = np.array(tuple(chain.from_iterable(all_vert_neighbors_list)), dtype=gs.np_int)
-        self.vert_n_neighbors = np.array(tuple(map(len, all_vert_neighbors_list)), dtype=gs.np_int)
-        self.vert_neighbor_start = np.array((0, *np.cumsum(self.vert_n_neighbors)[:-1]), dtype=gs.np_int)
+        # Adjacency graph, shared by reference with sibling geoms that back the same processed geometry.
+        self.vert_neighbors, self.vert_n_neighbors, self.vert_neighbor_start = mesh.get_vert_adjacency()
+        assert self.n_verts == len(self.vert_n_neighbors)
 
         # NOTE: sdf size is from the center of the lower voxel cell to the center of the upper voxel cell. Add
         # padding. The cell size is anisotropic - each axis is sized independently to its own extent - so a thin
@@ -140,6 +135,9 @@ class RigidGeom(RBC):
         per_axis_upper = grid_size / max(self._material.sdf_min_res - 1, 2)
         self._sdf_cell_size = gs.EPS + np.clip(self._material.sdf_cell_size, per_axis_lower, per_axis_upper)
         self._sdf_res = np.ceil(grid_size / self._sdf_cell_size).astype(gs.np_int) + 1
+        # Constant once the SDF resolution is fixed. Cached because the solver re-reads it for every geom on each
+        # 'add_entity' (to lay out cell offsets), which would otherwise recompute the product for every prior geom.
+        self._n_cells = int(np.prod(self._sdf_res))
         self._sdf_grad_delta = (
             np.zeros(3, dtype=gs.np_float) if self.type == gs.GEOM_TYPE.TERRAIN else self._sdf_cell_size * 1e-2
         )
@@ -698,7 +696,7 @@ class RigidGeom(RBC):
         """
         Number of cells in the geom's signed distance field (SDF).
         """
-        return np.prod(self.sdf_res)
+        return self._n_cells
 
     @property
     def n_verts(self) -> int:

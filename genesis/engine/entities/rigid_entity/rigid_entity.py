@@ -104,15 +104,13 @@ def _align_geoms_to_inertia(cg_infos, vg_infos, file_inertial):
         for cg_info in cg_infos:
             if not (cg_info.get("contype", 0) or cg_info.get("conaffinity", 0)):
                 continue
-            tmesh = cg_info["mesh"].trimesh
-            if not tmesh.is_watertight:
-                tmesh = tmesh.convex_hull
-            if tmesh.volume > 0:
+            mesh_inertial_info = cg_info["mesh"].get_inertial_info()
+            if mesh_inertial_info.volume > 0:
                 geoms_inertial_info.append(
                     (
-                        tmesh.mass,
-                        tmesh.center_mass,
-                        tmesh.moment_inertia,
+                        mesh_inertial_info.mass,
+                        mesh_inertial_info.center_mass,
+                        mesh_inertial_info.moment_inertia,
                         np.array(cg_info.get("pos", gu.zero_pos())),
                         np.array(cg_info.get("quat", gu.identity_quat())),
                     )
