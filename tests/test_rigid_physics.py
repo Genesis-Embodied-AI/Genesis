@@ -368,6 +368,23 @@ def long_chain():
 
 
 @pytest.fixture(scope="session")
+def two_fixed_branches():
+    # One entity whose worldbody holds two independent chains, each rigidly attached to the (fixed) world. Their DOFs
+    # are kinematically decoupled, so the mass matrix is block-diagonal and must partition into one block per branch.
+    mjcf = ET.Element("mujoco", model="two_fixed_branches")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    for name, x in (("a", 0.0), ("b", 1.0)):
+        body = ET.SubElement(worldbody, "body", name=f"{name}root", pos=f"{x} 0 1")
+        ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.06", size="0.02", density="500")
+        for i in range(4):
+            body = ET.SubElement(body, "body", name=f"{name}{i}", pos="0 0 0.06")
+            ET.SubElement(body, "joint", name=f"j{name}{i}", type="hinge", axis="0 1 0", damping="0.1")
+            ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.06", size="0.02", density="500")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def hinge_slide():
     mjcf = ET.Element("mujoco", model="hinge_slide")
 
@@ -3367,6 +3384,38 @@ def test_mass_mat(xml_path, show_viewer, tol):
     mass_mat_chain_L, mass_mat_chain_D_inv = long_chain.get_mass_mat(decompose=True)
     mass_mat_chain_rec = mass_mat_chain_L.T @ torch.diag(1.0 / mass_mat_chain_D_inv) @ mass_mat_chain_L
     assert_allclose(mass_mat_chain_rec, mass_mat_chain, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["two_fixed_branches"])
+def test_mass_block_partition(xml_path, show_viewer, tol):
+    # Two chains rigidly attached to the fixed world are kinematically independent: the mass matrix is block-diagonal,
+    # so it must partition into one mass block per branch (factoring two n/2 blocks instead of one dense n block).
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+        ),
+    )
+    scene.build(n_envs=0)
+
+    n_dofs = entity.n_dofs
+    branch = n_dofs // 2
+    block_start = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_start)
+    block_end = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_end)
+    assert_allclose(block_start, [0] * branch + [branch] * branch, tol=0)
+    assert_allclose(block_end, [branch] * branch + [n_dofs] * branch, tol=0)
+
+    # The two branches do not couple, and the LTDL factor reconstructs the (block-diagonal) mass matrix.
+    mass_mat = tensor_to_array(entity.get_mass_mat(decompose=False))
+    assert_allclose(mass_mat[:branch, branch:], 0.0, tol=tol)
+    mass_mat_L, mass_mat_D_inv = entity.get_mass_mat(decompose=True)
+    assert_allclose(mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L, mass_mat, tol=tol)
 
 
 @pytest.mark.required
