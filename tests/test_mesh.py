@@ -660,21 +660,24 @@ def test_glb_shared_texture_not_duplicated(tmp_path):
 
 @pytest.mark.required
 def test_glb_multi_primitive_distinct_materials(tmp_path):
-    # A single glTF mesh may hold several primitives with distinct materials/textures. With the default
-    # group_by_material=False, each primitive must stay a separate Genesis mesh keeping its own texture.
-    # Merging them under the first primitive's material silently drops the other textures.
+    # A single glTF mesh node may hold several primitives with distinct materials/textures. With the default
+    # group_by_material=False, each primitive becomes its own visual mesh so all its textures render (merging them
+    # under the first primitive's material would silently drop the others), but the node is one physical body, so
+    # its primitives are merged into a single collision geom. Separately colliding pieces are authored as nodes.
     texture_size = 16
     prim_colors = np.array([[220, 30, 30], [30, 50, 220]], dtype=np.uint8)
     n_prims = len(prim_colors)
 
-    # Pack one triangle per primitive (offset along x) plus one solid-color PNG per primitive into the binary blob.
+    # One axis-aligned box per primitive plus one solid-color PNG per primitive, packed into a single glTF mesh
+    # (one node) with one primitive per material. The boxes share a face so their union is convex, so merging them
+    # per node yields a single convex collision geom.
+    box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     parts = []
     accessors = []
     for i in range(n_prims):
-        x = 2.0 * i
-        positions = np.array([[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0], [x, 1.0, 0.0]], dtype=np.float32)
-        uvs = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
-        indices = np.array([0, 1, 2], dtype=np.uint16)
+        positions = (box.vertices + np.array([0.5 + i, 0.0, 0.0])).astype(np.float32)
+        uvs = np.zeros((len(positions), 2), dtype=np.float32)
+        indices = box.faces.astype(np.uint32)
         parts.append((positions.tobytes(), 34962))
         parts.append((uvs.tobytes(), 34962))
         parts.append((indices.tobytes(), 34963))
@@ -682,14 +685,16 @@ def test_glb_multi_primitive_distinct_materials(tmp_path):
             pygltflib.Accessor(
                 bufferView=3 * i,
                 componentType=5126,
-                count=3,
+                count=len(positions),
                 type="VEC3",
                 min=positions.min(axis=0).tolist(),
                 max=positions.max(axis=0).tolist(),
             )
         )
-        accessors.append(pygltflib.Accessor(bufferView=3 * i + 1, componentType=5126, count=3, type="VEC2"))
-        accessors.append(pygltflib.Accessor(bufferView=3 * i + 2, componentType=5123, count=3, type="SCALAR"))
+        accessors.append(pygltflib.Accessor(bufferView=3 * i + 1, componentType=5126, count=len(uvs), type="VEC2"))
+        accessors.append(
+            pygltflib.Accessor(bufferView=3 * i + 2, componentType=5125, count=indices.size, type="SCALAR")
+        )
     for color in prim_colors:
         image = Image.fromarray(np.broadcast_to(color, (texture_size, texture_size, 3)).copy())
         buffer = io.BytesIO()
@@ -744,7 +749,7 @@ def test_glb_multi_primitive_distinct_materials(tmp_path):
         surface=gs.surfaces.Default(),
     )
 
-    # One mesh per material rather than a single merged mesh, each keeping its own distinct base-color texture.
+    # One visual mesh per material rather than a single merged mesh, each keeping its own distinct base-color texture.
     assert len(gs_meshes) == n_prims
     dominant_channels = []
     for gs_mesh in gs_meshes:
@@ -752,6 +757,19 @@ def test_glb_multi_primitive_distinct_materials(tmp_path):
         assert isinstance(texture, gs.textures.ImageTexture)
         dominant_channels.append(int(np.argmax(texture.image_array[..., :3].mean(axis=(0, 1)))))
     assert sorted(dominant_channels) == [0, 2]
+
+    scene = gs.Scene(show_viewer=False)
+    entity = scene.add_entity(
+        gs.morphs.Mesh(
+            file=str(glb_path),
+            file_meshes_are_zup=False,
+        ),
+    )
+    scene.build()
+    # Textures render per material (one visual geom each), but the node is a single physical body, so its
+    # primitives are merged into one collision geom rather than split by material.
+    assert len(entity.vgeoms) == n_prims
+    assert len(entity.geoms) == 1
 
 
 @pytest.fixture

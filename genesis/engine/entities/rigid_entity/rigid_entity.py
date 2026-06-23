@@ -587,13 +587,32 @@ class KinematicEntity(Entity):
                     )
                 )
         if morph.collision:
-            # Merge them as a single one if requested
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
-                tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
-                meshes = (mesh,)
+                # Merge every submesh into a single collision geom if requested.
+                collision_groups = [list(meshes)]
+            else:
+                # A source mesh node split into several visual materials is one physical body, so its submeshes are
+                # merged into a single collision geom rather than split per material. Pieces meant to collide
+                # separately must be authored as separate nodes. Meshes with no source node are each their own body.
+                collision_groups = []
+                groups_by_node = {}
+                for mesh in meshes:
+                    node_index = mesh.metadata.get("node_index")
+                    if node_index is None:
+                        collision_groups.append([mesh])
+                        continue
+                    group = groups_by_node.get(node_index)
+                    if group is None:
+                        group = groups_by_node[node_index] = []
+                        collision_groups.append(group)
+                    group.append(mesh)
 
-            for mesh in meshes:
+            for group in collision_groups:
+                if len(group) == 1:
+                    mesh = group[0]
+                else:
+                    tmesh = trimesh.util.concatenate([submesh.trimesh for submesh in group])
+                    mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
                 g_infos.append(
                     dict(
                         contype=morph.contype,
