@@ -1,5 +1,37 @@
 # Genesis Release Note
 
+## 1.2.0
+
+This release dramatically improves scaling to large scenes using islands partitioning, which a now first-class and enabled by default. Besides, the simulation speed is also scaling much better with the number of degrees of freedom per entity.
+
+### Breaking changes
+
+* Parse kinematic trees depth-first instead of breadth-first. (@duburcqa) (#2972)
+
+### New Features
+
+* Add full support of islands and hibernation. (@duburcqa) (#2972, #2974, #2975)
+
+### Bug Fixes
+
+* Fix race condition causing ImGui plugin to crash during scene rebuild. (@Kashu7100) (#2936)
+* Fix joint-equality when attaching a floating-base entity. (@duburcqa) (#2948)
+* Fix offscreen rendering using wrong resolution when interactive viewer is enabled. (@duburcqa) (#2954)
+* Fix Windows offscreen rendering. (@duburcqa) (#2951, #2953, #2961)
+* Deduplicate BatchRenderer textures without image_path. (@NoahLinckeScout) (#2940)
+* Render each heterogeneous variant in its own environment. (@duburcqa) (#2958)
+
+### Miscellaneous
+
+* Add 'loop_config' kernel names for profiling. (@hughperkins) (#2950)
+* Fix typos and redundant placeholder/value in bug report template. (@yeezhouyi) (#2840)
+* Improve readability of entity and morph repr. (@duburcqa) (#2956)
+* Raise on ambiguous morph access for heterogeneous entities. (@kunni918) (#2798)
+* Speedup rigid body mass matrix cholesky decomposition for large dof count. (@Kashu7100) (#2915)
+* Partition mass matrix per kinematic tree to allow factoring them separately. (@duburcqa) (#2976)
+* Cache mesh processing to speed up adding many identical entities. (@duburcqa) (#2978)
+* Scale hibernation ang vel threshold by DOF swept radius. (@duburcqa) (#2979)
+
 ## 1.1.2
 
 This minor release introduces morph pose offset to finally provide a viable solution to the long-lasting inconstency of spatial accessors related to non-standard mesh axes conventions (0.3.13) and inertia alignment (0.4.4). Besides, fixed-size buffers are now sized more tightly to significantly reduce the default memory footprint.
