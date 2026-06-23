@@ -389,7 +389,10 @@ def parse_mesh_glb(path, group_by_material, scale, is_mesh_zup, surface):
             if normals is None:
                 normals = trimesh.Trimesh(points, triangles, process=False).vertex_normals
 
-            group_idx = primitive.material if group_by_material else i
+            # A single glTF mesh may hold several primitives with distinct materials. When not grouping by
+            # material, primitives must still be separated by material so each keeps its own surface and texture,
+            # otherwise primitives sharing a node would be merged under the first primitive's material.
+            group_idx = primitive.material if group_by_material else (i, primitive.material)
             mesh_info, first_created = mesh_infos.get(group_idx)
             if first_created:
                 mesh_info.set_property(
