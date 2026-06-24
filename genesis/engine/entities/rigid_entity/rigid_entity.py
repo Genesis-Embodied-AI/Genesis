@@ -3741,6 +3741,44 @@ class RigidEntity(KinematicEntity):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_force(dofs_idx, envs_idx)
 
+    @gs.assert_built
+    def get_dofs_actuation_force(self, dofs_idx_local=None, envs_idx=None):
+        """
+        Get the torque transmitted through the entity's joints, i.e. the joint torque sensor measurement.
+
+        This is the actuation-side force ``qf_applied + qf_passive``: the actuator/applied generalized
+        force (motor torque from the controller, plus any `set_dofs_force` contribution) combined with the
+        passive joint force (damping/friction and spring). It is the total torque a sensor mounted in
+        series with the actuator would measure.
+
+        Note
+        ----
+        This differs from the two other force getters:
+
+        - `get_dofs_force` returns the *net* force on each dof (mass times acceleration), which converges
+          to zero for a robot at rest and therefore does not capture the gravity-support torque.
+        - `get_dofs_control_force` returns the raw motor command before passive/actuator losses.
+
+        At rest with a controller holding position, this getter reports the gravity-support torque on each
+        joint. If gravity compensation is enabled for the entity (which removes gravity from its dynamics),
+        no gravity term appears here, since the simulated robot carries no gravity load; keep gravity
+        enabled and let the controller compensate to read a real gravity load.
+
+        Parameters
+        ----------
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to get. If None, all dofs will be returned. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        force : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
+            The torque transmitted through the entity's dofs.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_actuation_force(dofs_idx, envs_idx)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------- DOF property getters ---------------------------------
     # ------------------------------------------------------------------------------------

@@ -450,7 +450,7 @@ def test_add_and_read_all_registered_sensors():
         sensor_kwargs = {}
         if issubclass(option_cls, gs.sensors.BaseCameraOptions):
             continue  # skip camera options
-        if issubclass(option_cls, gs.sensors.RigidSensorOptionsMixin):
+        if issubclass(option_cls, (gs.sensors.RigidSensorOptionsMixin, gs.sensors.JointTorque)):
             sensor_kwargs.update(
                 entity_idx=box.idx,
             )
@@ -649,6 +649,72 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
     assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_joint_torque_sensor(show_viewer, tol, n_envs):
+    """The joint torque sensor reports the torque transmitted through the joints (`qf_applied + qf_passive`).
+
+    Unlike the net dof force (`get_dofs_force`, ~0 at rest), it retains the gravity-support torque when the
+    arm is held against gravity, and it tracks an externally commanded joint torque.
+    """
+    DT = 1e-2
+    MOTORS = (0, 1, 2, 3, 4, 5, 6)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=DT, gravity=(0.0, 0.0, -9.81)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+
+    sensor = scene.add_sensor(gs.sensors.JointTorque(entity_idx=franka.idx, dofs_idx_local=MOTORS))
+    # Default (no dofs_idx_local) measures all dofs of the entity.
+    sensor_all = scene.add_sensor(gs.sensors.JointTorque(entity_idx=franka.idx))
+
+    scene.build(n_envs=n_envs)
+    assert sensor.read().shape[-1] == len(MOTORS)
+    assert sensor_all.read().shape[-1] == franka.n_dofs
+
+    franka.set_dofs_kp(np.array([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0]))
+    franka.set_dofs_kv(np.array([450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0]))
+
+    # Hold a bent pose (gravity-loaded) with a stiff PD controller and let it settle.
+    qpos_hold = np.array([0.0, 0.4, 0.0, -1.5, 0.0, 1.2, 0.0])
+    franka.set_qpos(np.concatenate([qpos_hold, np.zeros(franka.n_dofs - 7)]))
+    for _ in range(300):
+        franka.control_dofs_position(qpos_hold, MOTORS)
+        scene.step()
+
+    reading = sensor.read()
+    # The sensor matches the public helper (qf_applied + qf_passive) exactly.
+    assert_equal(reading, franka.get_dofs_actuation_force(MOTORS))
+    # The net dof force is ~0 at rest (the quantity reported in the original issue)...
+    assert_allclose(franka.get_dofs_force(MOTORS), 0.0, tol=1e-2)
+    # ...while the torque sensor retains the nonzero gravity-support torque.
+    assert tensor_to_array(reading.abs().max()) > 1.0
+
+    # The reading is the true gravity-support torque: feeding it back open-loop in force mode (no position
+    # controller) holds the arm against gravity. This gravity-compensation feedforward holds over a short
+    # horizon -- pure feedforward without feedback is only marginally stable, so it eventually drifts.
+    qpos_star = franka.get_qpos()
+    tau_ff = franka.get_dofs_actuation_force()  # all dofs, so the fingers are held too
+    for _ in range(25):
+        franka.control_dofs_force(tau_ff)
+        scene.step()
+    assert_allclose(franka.get_qpos(), qpos_star, tol=1e-2)
+
+    # An externally commanded joint torque is reflected by the sensor. Drive joint 6 (a low gravity-load
+    # wrist joint reading ~0 under PD hold) in force mode with a known torque while the other joints stay
+    # under PD hold, and read after a single step before the joint spins up (so the passive damping term,
+    # which grows with velocity, is still negligible).
+    APPLIED = 5.0
+    franka.control_dofs_position(qpos_hold[:6], MOTORS[:6])
+    franka.control_dofs_force(np.array([APPLIED]), (MOTORS[6],))
+    scene.step()
+    assert_allclose(sensor.read()[..., 6], APPLIED, tol=1e-2)
 
 
 @pytest.mark.required

@@ -2628,6 +2628,18 @@ class RigidSolver(KinematicSolver):
         tensor = qd_to_torch(self.dofs_state.force, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
+    def get_dofs_actuation_force(self, dofs_idx=None, envs_idx=None):
+        # Torque transmitted through each joint: the actuator/applied generalized force (`qf_applied`,
+        # which holds the clamped control command and any `set_dofs_force` contribution) plus the passive
+        # joint force (`qf_passive`: damping/friction + spring). This is the joint-torque-sensor quantity,
+        # as opposed to `get_dofs_force` (net force ~ M*qacc, ~0 at rest) and `get_dofs_control_force`
+        # (pre-loss motor command).
+        # `applied` is a fresh copy (fancy dof indexing forces copy=True), so accumulate into it in place.
+        applied = qd_to_torch(self.dofs_state.qf_applied, envs_idx, dofs_idx, transpose=True, copy=True)
+        passive = qd_to_torch(self.dofs_state.qf_passive, envs_idx, dofs_idx, transpose=True, copy=True)
+        applied.add_(passive)
+        return applied[0] if self.n_envs == 0 else applied
+
     def get_dofs_kp(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")

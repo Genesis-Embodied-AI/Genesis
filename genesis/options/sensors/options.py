@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from genesis.engine.sensors.base_sensor import Sensor
     from genesis.engine.sensors.contact_force import ContactForceSensor, ContactSensor
     from genesis.engine.sensors.imu import IMUSensor
+    from genesis.engine.sensors.joint_torque import JointTorqueSensor
     from genesis.engine.sensors.raycaster import RaycasterSensor
     from genesis.engine.sensors.surface_distance_probe import SurfaceDistanceProbeSensor
 
@@ -302,6 +303,52 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
         super().model_post_init(context)
         if np.any(np.array(self.max_force) <= np.array(self.min_force)):
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
+
+
+class JointTorque(SimpleSensorOptions["JointTorqueSensor"]):
+    """
+    Sensor that returns the torque transmitted through the joints of the associated RigidEntity.
+
+    This measures the actuation-side generalized force ``qf_applied + qf_passive`` (the actuator/applied
+    torque combined with the passive joint force from damping/friction and springs), as a sensor mounted
+    in series with the actuator would. Unlike the net dof force (which converges to zero at rest), this
+    retains the gravity-support torque when the entity is held against gravity.
+
+    Note
+    ----
+    A Cartesian contact wrench enters the dynamics through the constraint force, not ``qf_applied``, so it
+    is reflected here only once the controller responds to it. If gravity compensation is enabled for the
+    entity (which removes gravity from its dynamics), no gravity term appears in the reading.
+
+    Parameters
+    ----------
+    entity_idx : int
+        The global entity index of the RigidEntity to which this sensor is attached. Required.
+    dofs_idx_local : array-like[int], optional
+        The local dof indices of the entity to measure. If empty (the default), all of the entity's dofs
+        are measured.
+    """
+
+    dofs_idx_local: OptionalIArrayType = Field(default_factory=tuple)
+
+    def validate_scene(self, scene: "Scene"):
+        from genesis.engine.entities import RigidEntity
+
+        super().validate_scene(scene)
+        if self.entity_idx < 0:
+            gs.raise_exception("JointTorque sensor requires `entity_idx` to be set to a RigidEntity.")
+        if self.entity_idx >= len(scene.entities):
+            gs.raise_exception(f"Invalid entity index {self.entity_idx}.")
+        entity = scene.entities[self.entity_idx]
+        if not isinstance(entity, RigidEntity):
+            gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
+        if len(self.dofs_idx_local) > 0:
+            dofs = np.array(self.dofs_idx_local)
+            if np.any(dofs < 0) or np.any(dofs >= entity.n_dofs):
+                gs.raise_exception(
+                    f"JointTorque sensor dofs_idx_local should be in range [0, {entity.n_dofs}). "
+                    f"Got {self.dofs_idx_local}."
+                )
 
 
 class TemperatureProperties(NamedTuple):
