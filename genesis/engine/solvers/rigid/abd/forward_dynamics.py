@@ -310,7 +310,17 @@ def func_compute_mass_matrix_lds(
 
     n_entities = static_rigid_sim_config.n_entities_
     _B = static_rigid_sim_config.n_envs
-    n_thread_entities = static_rigid_sim_config.n_entities_ if qd.static(static_rigid_sim_config.use_hibernation) else n_entities
+    # OPT-1: when a contiguous dynamic-entity window is set (hibernation off), launch only over that
+    # window and offset the entity index, skipping static 0-DOF entities.
+    _HAS_WINDOW = qd.static(
+        static_rigid_sim_config.n_dynamic_entities_ > 0 and not static_rigid_sim_config.use_hibernation
+    )
+    _ENTITY_BASE = qd.static(static_rigid_sim_config.dynamic_entity_offset_ if _HAS_WINDOW else 0)
+    n_thread_entities = (
+        qd.static(static_rigid_sim_config.n_dynamic_entities_)
+        if _HAS_WINDOW
+        else (static_rigid_sim_config.n_entities_ if qd.static(static_rigid_sim_config.use_hibernation) else n_entities)
+    )
 
     qd.loop_config(block_dim=BLOCK_DIM)
     for i in range(n_thread_entities * _B * BLOCK_DIM):
@@ -321,7 +331,7 @@ def func_compute_mass_matrix_lds(
         if i_b >= _B:
             continue
 
-        i_e = i_e_local
+        i_e = i_e_local + _ENTITY_BASE
 
         if qd.static(static_rigid_sim_config.use_hibernation):
             if not func_check_index_range(
@@ -333,18 +343,17 @@ def func_compute_mass_matrix_lds(
         entity_dof_end = entities_info.dof_end[i_e]
         n_dofs = entities_info.n_dofs[i_e]
 
-        # This kernel uses a dense local mass matrix in shared memory, so its LDS
-        # footprint is larger than kernels that use packed lower-triangular storage.
-        # Total bytes = 4 * (n^2 + 12n), where:
-        #   - n^2      comes from mass_mat_local[n, n]
-        #   - 12n      comes from 4 vector caches of shape [n, 3]
-        # Constraining that to ~64KB gives n <= 122 for 4-byte floats.
+        # This kernel uses a packed lower-triangular mass matrix in shared memory.
+        # Total bytes = 4 * (n*(n+1)/2 + 12n), where:
+        #   - n*(n+1)/2  comes from mass_mat_packed (1D lower-triangle, OPT-2 vs old n^2)
+        #   - 12n        comes from 4 vector caches of shape [n, 3]
+        # For n=49: 1225 + 12*49 = 1813 floats = 7252B (vs old 2401+588*4 = 11,956B).
+        # Constraining that to ~64KB gives n <= 103 for 4-byte floats (OPT-2 limit).
         KERNEL_MAX_DOFS_PER_ENTITY = qd.static(122 if MAX_DOFS_PER_ENTITY > 122 else MAX_DOFS_PER_ENTITY)
 
         if n_dofs <= 0 or n_dofs > KERNEL_MAX_DOFS_PER_ENTITY:
             continue
 
-        # Shared-memory allocation sized to this kernel's actual dense-matrix budget.
         f_ang_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
         f_vel_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
         cdof_ang_cache = qd.simt.block.SharedArray((KERNEL_MAX_DOFS_PER_ENTITY, 3), gs.qd_float)
@@ -745,11 +754,17 @@ def func_factor_mass(
             MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
             WARP_SIZE = qd.static(64)
 
+            # OPT-1: restrict the (entity, env) grid to the contiguous dynamic-entity window when set,
+            # skipping static 0-DOF entities (their factor is a no-op but still launches a block).
+            _HAS_WINDOW = qd.static(static_rigid_sim_config.n_dynamic_entities_ > 0)
+            _ENTITY_BASE = qd.static(static_rigid_sim_config.dynamic_entity_offset_ if _HAS_WINDOW else 0)
+            n_grid_entities = qd.static(static_rigid_sim_config.n_dynamic_entities_) if _HAS_WINDOW else n_entities
+
             qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
-            for i in range(n_entities * _B * BLOCK_DIM):
+            for i in range(n_grid_entities * _B * BLOCK_DIM):
                 tid = i % BLOCK_DIM
-                i_e = (i // BLOCK_DIM) % n_entities
-                i_b = i // (BLOCK_DIM * n_entities)
+                i_e = (i // BLOCK_DIM) % n_grid_entities + _ENTITY_BASE
+                i_b = i // (BLOCK_DIM * n_grid_entities)
                 if i_b >= _B:
                     continue
 
@@ -759,15 +774,21 @@ def func_factor_mass(
                     n_dofs = entities_info.n_dofs[i_e]
                     n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
-                    mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, MAX_DOFS_PER_ENTITY + 1), gs.qd_float)
+                    # OPT-2: use 1D packed lower-triangle storage for mass_mat to reduce LDS.
+                    # mass_mat_packed[i_d_*(i_d_+1)//2 + j_d_] = mass_mat[i_d_, j_d_] (lower tri only).
+                    # LDS saved: MAX_DOFS*(MAX_DOFS+1)*4B → MAX_DOFS*(MAX_DOFS+1)//2*4B for n=49:
+                    # 49*50*4=9800B → 1225*4=4900B; total LDS: ~10KB → ~5.1KB → more WGs per CU.
+                    MAX_LOWER_TRI_CHOL = qd.static(MAX_DOFS_PER_ENTITY * (MAX_DOFS_PER_ENTITY + 1) // 2)
+                    mass_mat = qd.simt.block.SharedArray((MAX_LOWER_TRI_CHOL,), gs.qd_float)
 
+                    # Load phase: i_pair is the 1D packed index; write directly without 2D encode.
                     i_pair = tid
                     while i_pair < n_lower_tri:
                         i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
                         j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
                         i_d = entity_dof_start + i_d_
                         j_d = entity_dof_start + j_d_
-                        mass_mat[i_d_, j_d_] = rigid_global_info.mass_mat[i_b, i_d, j_d]
+                        mass_mat[i_pair] = rigid_global_info.mass_mat[i_b, i_d, j_d]
                         i_pair = i_pair + BLOCK_DIM
                     qd.simt.block.sync()
 
@@ -776,13 +797,14 @@ def func_factor_mass(
                         while i_d_ < n_dofs:
                             i_d = entity_dof_start + i_d_
                             I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                            mass_mat[i_d_, i_d_] = (
-                                mass_mat[i_d_, i_d_] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+                            diag_idx = i_d_ * (i_d_ + 1) // 2 + i_d_
+                            mass_mat[diag_idx] = (
+                                mass_mat[diag_idx] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                             )
                             if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
                                 if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                                    mass_mat[i_d_, i_d_] = (
-                                        mass_mat[i_d_, i_d_]
+                                    mass_mat[diag_idx] = (
+                                        mass_mat[diag_idx]
                                         - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
                                     )
                             i_d_ = i_d_ + BLOCK_DIM
@@ -797,11 +819,17 @@ def func_factor_mass(
                         i_d_ = n_dofs - j - 1
                         i_d = entity_dof_end - j - 1
 
-                        D_inv = 1.0 / mass_mat[i_d_, i_d_]
+                        # Diagonal element in packed 1D: index = i_d_*(i_d_+1)//2 + i_d_
+                        diag_packed = i_d_ * (i_d_ + 1) // 2 + i_d_
+                        D_inv = 1.0 / mass_mat[diag_packed]
                         if tid == 0:
                             rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
                             # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
                             rigid_global_info.mass_mat_L[i_b, i_d, i_d] = 1.0
+
+                        # Pivot row base index in packed 1D: i_d_*(i_d_+1)//2
+                        # Elements i_d_*(i_d_+1)//2 .. i_d_*(i_d_+1)//2 + (i_d_-1) are row i_d_, cols 0..i_d_-1.
+                        piv_base = i_d_ * (i_d_ + 1) // 2
 
                         # Cache the original pivot row into LDS before it is overwritten. On a
                         # wave64 block (BLOCK_DIM=WARP_SIZE=64) all threads run in lockstep, so the
@@ -810,33 +838,34 @@ def func_factor_mass(
                         # strided fallback keeps it correct for entities wider than BLOCK_DIM.
                         if qd.static(MAX_DOFS_PER_ENTITY <= BLOCK_DIM):
                             if tid < i_d_:
-                                sh_pivot[tid] = mass_mat[i_d_, tid]
+                                sh_pivot[tid] = mass_mat[piv_base + tid]
                         else:
                             _p = tid
                             while _p < i_d_:
-                                sh_pivot[_p] = mass_mat[i_d_, _p]
+                                sh_pivot[_p] = mass_mat[piv_base + _p]
                                 _p = _p + BLOCK_DIM
 
                         # Row-major rank-1 update: each thread owns rows [tid, tid+BLOCK_DIM, ...].
-                        # Reading the pivot from sh_pivot eliminates the per-update sqrt of the
-                        # flat-index decode and keeps sh_pivot[_r] in a register across the columns.
+                        # For row _r: packed base = _r*(_r+1)//2; elements are at base+_c for _c=0.._r.
+                        # As _c increments by 1, the packed index increments by 1 — no extra multiply needed.
                         _r = tid
                         while _r < i_d_:
                             piv_r = sh_pivot[_r] * D_inv
+                            row_base = _r * (_r + 1) // 2
                             _c = 0
                             while _c <= _r:
-                                mass_mat[_r, _c] = mass_mat[_r, _c] - piv_r * sh_pivot[_c]
+                                mass_mat[row_base + _c] = mass_mat[row_base + _c] - piv_r * sh_pivot[_c]
                                 _c = _c + 1
                             _r = _r + BLOCK_DIM
 
                         # Write L factors back to the pivot row.
                         if qd.static(MAX_DOFS_PER_ENTITY <= BLOCK_DIM):
                             if tid < i_d_:
-                                mass_mat[i_d_, tid] = sh_pivot[tid] * D_inv
+                                mass_mat[piv_base + tid] = sh_pivot[tid] * D_inv
                         else:
                             _p = tid
                             while _p < i_d_:
-                                mass_mat[i_d_, _p] = sh_pivot[_p] * D_inv
+                                mass_mat[piv_base + _p] = sh_pivot[_p] * D_inv
                                 _p = _p + BLOCK_DIM
 
                         if qd.static(
@@ -850,6 +879,7 @@ def func_factor_mass(
                         else:
                             qd.simt.block.sync()
 
+                    # HBM write-back: i_pair is again the 1D packed index, read mass_mat[i_pair] directly.
                     i_pair = tid
                     n_strict_lower_tri = n_dofs * (n_dofs - 1) // 2
                     while i_pair < n_strict_lower_tri:
@@ -857,7 +887,7 @@ def func_factor_mass(
                         j_d_ = i_pair - i_d_ * (i_d_ - 1) // 2
                         i_d = entity_dof_start + i_d_
                         j_d = entity_dof_start + j_d_
-                        rigid_global_info.mass_mat_L[i_b, i_d, j_d] = mass_mat[i_d_, j_d_]
+                        rigid_global_info.mass_mat_L[i_b, i_d, j_d] = mass_mat[i_d_ * (i_d_ + 1) // 2 + j_d_]
                         i_pair = i_pair + BLOCK_DIM
     else:
         # Cholesky decomposition that has safe access pattern and robust handling of divide by zero for AD. Even though

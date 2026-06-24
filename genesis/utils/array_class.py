@@ -2226,6 +2226,14 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # Max kinematic-tree depth (root=0). Compile-time bound on the number of level
     # passes for the level-scheduled forward-dynamics tree sweeps.
     max_link_depth: int = -1
+    # OPT-1: contiguous window [dynamic_entity_offset_, +n_dynamic_entities_) of entities that have
+    # at least one DOF. The per-entity tiled mass-matrix/factor kernels launch one thread block per
+    # (entity, env); restricting the grid to this window skips static 0-DOF entities (e.g. a ground
+    # Plane), roughly halving those kernels' launched work for single-robot scenes. n_dynamic_entities_
+    # <= 0 means "unset" — kernels fall back to the full padded n_entities_ range. Only populated when
+    # the dynamic entities form a contiguous block and hibernation is off.
+    n_dynamic_entities_: int = -1
+    dynamic_entity_offset_: int = 0
 
 
 # =========================================== DataManager ===========================================

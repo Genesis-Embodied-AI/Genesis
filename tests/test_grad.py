@@ -587,3 +587,77 @@ def test_mass_mat_L_bw_gradient_correctness(show_viewer, n_envs):
     assert init_qpos.grad is not None, "No gradient flowed back to init_qpos"
     assert torch.isfinite(init_qpos.grad).all(), "Gradient contains NaN or Inf — mass_mat_L_bw indexing is wrong"
     assert (init_qpos.grad.abs() > 0).any(), "Gradient is all-zero — backward pass did not run"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_fk_dynamic_entity_window_backward_equivalence(show_viewer):
+    """The 0-DOF dynamic-entity window does not perturb gradients (requires_grad=True).
+
+    The contiguous dynamic-entity window (OPT-1) restricts the FK kernels
+    (func_forward_velocity, func_update_cartesian_space) and the mass-matrix /
+    factor kernels to dynamic entities, skipping static 0-DOF entities such as a
+    ground Plane. The window gate is ``n_dynamic_entities_ > 0 and not
+    use_hibernation`` — it is NOT conditioned on ``is_backward``, so the backward
+    (adjoint) pass runs the same windowed ndrange. The existing
+    ``test_fk_dynamic_entity_window_equivalence`` only covers forward execution.
+
+    A skipped static entity owns no differentiable DOF state and its FK outputs
+    are constant, so its adjoint contribution must be exactly zero — windowing it
+    out must leave every input gradient unchanged. This test locks that: build the
+    same Plane+robot scene twice (window on by default vs forced off), run an
+    identical forward+backward, and compare the gradients w.r.t. the robot's
+    initial qpos bit-for-bit.
+    """
+    import genesis.engine.solvers
+
+    build_orig = genesis.engine.solvers.RigidSolver.build
+    init_qpos_vals = [0.0, -0.4, 0.0, -1.8, 0.0, 1.6, 0.8, 0.04, 0.04]  # Franka, 9 DOF
+
+    def run(force_window_off):
+        def patched_build(self):
+            build_orig(self)
+            if force_window_off:
+                # Disable the window -> FK/mass kernels iterate the full entity range,
+                # re-including the static Plane's (no-op) blocks. Mathematically identical.
+                self._static_rigid_sim_config.n_dynamic_entities_ = -1
+                self._static_rigid_sim_config.dynamic_entity_offset_ = 0
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("genesis.engine.solvers.RigidSolver.build", patched_build)
+            scene = gs.Scene(
+                sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, requires_grad=True),
+                rigid_options=gs.options.RigidOptions(
+                    enable_collision=False,
+                    enable_self_collision=False,
+                    use_hibernation=False,
+                ),
+                show_viewer=show_viewer,
+            )
+            scene.add_entity(gs.morphs.Plane())  # static 0-DOF entity the window skips
+            robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+            scene.build(n_envs=2)
+            cfg = scene.rigid_solver._static_rigid_sim_config
+
+            init_qpos = gs.tensor([init_qpos_vals] * 2, requires_grad=True)
+            robot.set_qpos(init_qpos)
+            for _ in range(3):
+                scene.step()
+            loss = robot.get_qpos().sum()
+            loss.backward()
+            return cfg.n_dynamic_entities_, cfg.dynamic_entity_offset_, tensor_to_array(init_qpos.grad)
+
+    n_dyn_on, off_on, grad_on = run(force_window_off=False)
+    n_dyn_off, off_off, grad_off = run(force_window_off=True)
+
+    # Guard the premise: the default build must actually engage the window (offset=1, count=1
+    # for one Plane + one robot), else this compares the fallback against itself.
+    assert (off_on, n_dyn_on) == (1, 1), f"window not engaged: offset={off_on}, count={n_dyn_on}"
+    assert n_dyn_off == -1, f"window not disabled in control build: count={n_dyn_off}"
+
+    # Sanity: gradient actually flowed (otherwise the comparison is vacuous).
+    assert np.isfinite(grad_on).all(), "window-on gradient has NaN/Inf"
+    assert (np.abs(grad_on) > 0).any(), "window-on gradient is all-zero — backward did not run"
+
+    # Skipping the static Plane's no-op adjoint blocks must not change any gradient.
+    assert_allclose(grad_on, grad_off, tol=gs.EPS)

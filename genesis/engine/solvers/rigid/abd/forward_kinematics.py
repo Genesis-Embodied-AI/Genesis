@@ -1132,11 +1132,20 @@ def func_forward_velocity(
                 is_backward,
             )
     else:
+        # OPT-1: when a contiguous dynamic-entity window is set (hibernation off), restrict the outer
+        # ndrange to [dynamic_entity_offset_, dynamic_entity_offset_ + n_dynamic_entities_), skipping
+        # static 0-DOF entities whose velocity is always zero and whose FK outputs are constant.
+        _HAS_WINDOW_FV = qd.static(
+            static_rigid_sim_config.n_dynamic_entities_ > 0 and not static_rigid_sim_config.use_hibernation
+        )
+        _ENTITY_BASE_FV = qd.static(static_rigid_sim_config.dynamic_entity_offset_ if _HAS_WINDOW_FV else 0)
+        _N_GRID_ENTITIES_FV = qd.static(static_rigid_sim_config.n_dynamic_entities_) if _HAS_WINDOW_FV else entities_info.n_links.shape[0]
         qd.loop_config(
             name="forward_velocity_entity",
             serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
         )
-        for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        for i_e_local, i_b in qd.ndrange(_N_GRID_ENTITIES_FV, links_state.pos.shape[1]):
+            i_e = i_e_local + _ENTITY_BASE_FV
             func_forward_velocity_entity(
                 i_e,
                 i_b,
@@ -2018,16 +2027,26 @@ def func_update_cartesian_space(
                 is_backward,
             )
         # Per-entity pass for geom poses (and the serial FK on the backward pass).
+        # OPT-1: when a contiguous dynamic-entity window is set (hibernation off), restrict the outer
+        # ndrange to [dynamic_entity_offset_, dynamic_entity_offset_ + n_dynamic_entities_), skipping
+        # static 0-DOF entities whose FK outputs are constant world-frame values.
+        _HAS_WINDOW = qd.static(
+            static_rigid_sim_config.n_dynamic_entities_ > 0 and not static_rigid_sim_config.use_hibernation
+        )
+        _ENTITY_BASE = qd.static(static_rigid_sim_config.dynamic_entity_offset_ if _HAS_WINDOW else 0)
+        _N_GRID_ENTITIES = qd.static(static_rigid_sim_config.n_dynamic_entities_) if _HAS_WINDOW else entities_info.n_links.shape[0]
+        _N_TOTAL_ENTITIES = entities_info.n_links.shape[0]
         qd.loop_config(
             name="update_cartesian_space",
             serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
             block_dim=64,
         )
-        for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
+        for i_e_local, i_b in qd.ndrange(_N_GRID_ENTITIES, links_state.pos.shape[1]):
+            i_e = i_e_local + _ENTITY_BASE
             i_l_start = entities_info.link_start[i_e]
             I_l_start = [i_l_start, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l_start
             if links_info.root_idx[I_l_start] == i_l_start:
-                for j_e in range(i_e, entities_info.n_links.shape[0]):
+                for j_e in range(i_e, _N_TOTAL_ENTITIES):
                     j_l_start = entities_info.link_start[j_e]
                     J_l_start = [j_l_start, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else j_l_start
                     if links_info.root_idx[J_l_start] == i_l_start:

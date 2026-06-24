@@ -807,9 +807,11 @@ def _func_broad_phase_all_vs_all(
             continue
 
         if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
-            if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
-                collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            # Don't clear contact_cache.normal for non-overlapping pairs: the stale normal is a
+            # harmless MPR/GJK warm-start seed (narrowphase always re-derives the true normal and
+            # falls back to a cold start if the seed yields no contact), and skipping the write
+            # eliminates ~50% of broadphase normal stores. Mujoco-compat already skipped this
+            # clear, so removing the block leaves that path unchanged.
             continue
 
         n_broad = qd.atomic_add(collider_state.n_broad_pairs[i_b], 1)

@@ -438,6 +438,35 @@ class RigidSolver(KinematicSolver):
         n_dofs = self.n_dofs
         return n_envs <= 8192 and n_dofs >= 16
 
+    def _compute_dynamic_entity_window(self):
+        # OPT-1: find the contiguous block of entities (ordered by idx_in_solver) that own at least one
+        # DOF. The per-entity tiled mass-matrix/factor kernels launch a thread block per (entity, env);
+        # restricting the grid to this window skips static 0-DOF entities (e.g. a ground Plane). Returns
+        # (offset, count); count <= 0 signals "unset" so kernels fall back to the full n_entities_ range.
+        # Bail (return the full range) when hibernation reorders entities, or when the dynamic entities
+        # are not contiguous (a 0-DOF entity sits between two dynamic ones) — a single window can't
+        # represent that without skipping real work.
+        n_entities = self.n_entities
+        if self._use_hibernation or n_entities == 0:
+            return 0, -1
+
+        # self.entities is in idx_in_solver order (entities are appended sequentially), and dof_start is
+        # assigned in that same order, so list position == kernel entity index.
+        dof_counts = [entity.n_dofs for entity in self.entities]
+        dynamic_idx = [i for i, n in enumerate(dof_counts) if n > 0]
+        if not dynamic_idx:
+            return 0, -1
+
+        offset = dynamic_idx[0]
+        count = dynamic_idx[-1] - offset + 1
+        if count != len(dynamic_idx):
+            # Non-contiguous dynamic entities; a single window would skip a real DOF block.
+            return 0, -1
+        if count == n_entities:
+            # Nothing to skip; leave it unset so kernels keep using n_entities_.
+            return 0, -1
+        return offset, count
+
     def _build_static_config(self):
         # Max kinematic-tree depth (root=0, child=parent+1); links are stored
         # parent-before-child so a single forward sweep over parent_idx computes it.
@@ -450,6 +479,7 @@ class RigidSolver(KinematicSolver):
                     _depth[_i_l] = _depth[_link.parent_idx] + 1
             max_link_depth = max(_depth)
 
+        dynamic_entity_offset, n_dynamic_entities = self._compute_dynamic_entity_window()
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -478,6 +508,8 @@ class RigidSolver(KinematicSolver):
             n_dofs_=self.n_dofs_,
             n_envs=self._B,
             max_link_depth=max_link_depth,
+            n_dynamic_entities_=n_dynamic_entities,
+            dynamic_entity_offset_=dynamic_entity_offset,
             broadphase_traversal=self._resolve_broadphase_traversal(),
             parallel_init=self._should_use_parallel_init(),
             constraint_layout_transposed=self._should_transpose_constraint_layout(),
