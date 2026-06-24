@@ -240,6 +240,50 @@ class ProbesWithNormalSensorOptionsMixin(ProbeSensorOptionsMixin[SensorT]):
             )
 
 
+class JointTorqueSensor(SimpleSensorOptions["JointTorqueSensor"]):
+    """
+    Actuator output torque sensor for rigid entities.
+
+    Models the torque at each joint's gearbox output shaft:
+
+        tau_sensor = tau_control − I_arm · q̈ + tau_frictionloss
+
+    where ``q̈`` is the constraint-solved joint acceleration, ``I_arm`` the per-DOF armature
+    inertia, and ``tau_frictionloss`` the Coulomb friction constraint force (negative when opposing
+    motion).  Gravity, Coriolis, and contact loads are thus captured implicitly.
+
+    Parameters
+    ----------
+    entity_idx : int
+        Scene-level index of the RigidEntity to sense.  Must be >= 0.
+    dofs_idx_local : tuple[int, ...] | None, optional
+        Local DOF indices within the entity.  ``None`` (default) selects all DOFs.
+    """
+
+    dofs_idx_local: tuple[int, ...] | None = None
+
+    def validate_scene(self, scene: "Scene"):
+        from genesis.engine.entities import RigidEntity
+
+        super().validate_scene(scene)
+        if self.entity_idx < 0:
+            gs.raise_exception(f"JointTorqueSensor requires entity_idx >= 0, got {self.entity_idx}.")
+        if self.entity_idx >= len(scene.entities):
+            gs.raise_exception(f"JointTorqueSensor: entity_idx {self.entity_idx} out of range.")
+        entity = scene.entities[self.entity_idx]
+        if not isinstance(entity, RigidEntity):
+            gs.raise_exception(f"JointTorqueSensor: entity at index {self.entity_idx} is not a RigidEntity.")
+        if entity.n_dofs == 0:
+            gs.raise_exception(f"JointTorqueSensor: entity at index {self.entity_idx} has no DOFs.")
+        if self.dofs_idx_local is not None and any(
+            i < 0 or i >= entity.n_dofs for i in self.dofs_idx_local
+        ):
+            gs.raise_exception(
+                f"JointTorqueSensor: dofs_idx_local contains out-of-range indices "
+                f"for entity with {entity.n_dofs} DOFs."
+            )
+
+
 class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["ContactSensor"]):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
