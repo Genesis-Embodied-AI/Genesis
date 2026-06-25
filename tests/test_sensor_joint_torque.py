@@ -13,11 +13,11 @@ import genesis as gs
 from .utils import assert_allclose
 
 # ── pendulum parameters ──────────────────────────────────────────────────────
-PENDULUM_M = 1.0                         # link mass, kg
-PENDULUM_L = 1.0                         # pivot-to-mass distance, m
+PENDULUM_M = 1.0  # link mass, kg
+PENDULUM_L = 1.0  # pivot-to-mass distance, m
 PENDULUM_I = PENDULUM_M * PENDULUM_L**2  # moment of inertia around pivot, kg⋅m²
-G = 9.81                                 # gravity, m/s²
-DT = 0.002                               # simulation timestep, s
+G = 9.81  # gravity, m/s²
+DT = 0.002  # simulation timestep, s
 
 # ── tolerances ───────────────────────────────────────────────────────────────
 # Algebraic equality (tau_sensor = tau_ctrl when armature = frictionloss = 0).
@@ -100,9 +100,7 @@ def _build_scene(
         # is already in contact: mass centre = (0.707, 0, −0.707), box face at x=0.75
         # (half-size 0.1, centre x=0.85) -> gap = 0.75−0.707 = 0.043 < 0.05 = radius.
         # Any positive torque presses the mass into the wall from the very first step.
-        scene.add_entity(
-            gs.morphs.Box(pos=(0.85, 0.0, -0.70), size=(0.2, 0.5, 0.2), fixed=True)
-        )
+        scene.add_entity(gs.morphs.Box(pos=(0.85, 0.0, -0.70), size=(0.2, 0.5, 0.2), fixed=True))
     sensor = scene.add_sensor(
         gs.options.sensors.JointTorqueSensor(
             entity_idx=pendulum.idx,
@@ -146,11 +144,15 @@ def test_joint_torque_sensor_no_armature_no_friction(backend, tmp_path, show_vie
 
         # tau_sensor = tau_control (no armature, no friction -> exact algebraic equality)
         assert_allclose(
-            tau_s, tau_ctrl, tol=EXACT_TOL,
+            tau_s,
+            tau_ctrl,
+            tol=EXACT_TOL,
             err_msg="tau_sensor != tau_control (no armature, no friction)",
         )
         assert_allclose(
-            tau_s, tau_c, tol=EXACT_TOL,
+            tau_s,
+            tau_c,
+            tol=EXACT_TOL,
             err_msg="tau_sensor != applied force tau_c",
         )
 
@@ -158,7 +160,9 @@ def test_joint_torque_sensor_no_armature_no_friction(backend, tmp_path, show_vie
         # (gravity is evaluated at the state used to compute forces for this step)
         tau_phys = PENDULUM_I * qacc_num + _gravity_torque(theta_before)
         assert_allclose(
-            tau_s, tau_phys, tol=PHYS_TOL,
+            tau_s,
+            tau_phys,
+            tol=PHYS_TOL,
             err_msg="tau_sensor != physical joint torque (no armature, no friction)",
         )
 
@@ -199,7 +203,9 @@ def test_joint_torque_sensor_with_armature(backend, tmp_path, show_viewer):
 
         # The sensor must match the physical torque (not the motor torque).
         assert_allclose(
-            tau_s, tau_phys, tol=PHYS_TOL,
+            tau_s,
+            tau_phys,
+            tol=PHYS_TOL,
             err_msg="tau_sensor != physical joint torque (with armature)",
         )
 
@@ -207,7 +213,9 @@ def test_joint_torque_sensor_with_armature(backend, tmp_path, show_viewer):
         # (armature absorbs its share of the acceleration)
         correction = -I_arm * qacc_num
         assert_allclose(
-            tau_s - tau_ctrl, correction, tol=PHYS_TOL,
+            tau_s - tau_ctrl,
+            correction,
+            tol=PHYS_TOL,
             err_msg="tau_sensor − tau_control != −I_arm · θ̈",
         )
 
@@ -253,7 +261,9 @@ def test_joint_torque_sensor_with_friction(backend, tmp_path, show_viewer):
         # Physical joint torque is always the Newton ground truth.
         tau_phys = PENDULUM_I * qacc_num + _gravity_torque(theta_before)
         assert_allclose(
-            tau_s, tau_phys, tol=PHYS_TOL,
+            tau_s,
+            tau_phys,
+            tol=PHYS_TOL,
             err_msg="tau_sensor != physical joint torque (with frictionloss)",
         )
 
@@ -295,10 +305,14 @@ def test_joint_torque_sensor_with_obstacle(backend, tmp_path, show_viewer):
 
         # tau_sensor = tau_control regardless of contact (no armature, no friction).
         assert_allclose(
-            tau_s, tau_ctrl, tol=EXACT_TOL,
+            tau_s,
+            tau_ctrl,
+            tol=EXACT_TOL,
             err_msg="tau_sensor != tau_control in contact scenario",
         )
         assert_allclose(
-            tau_s, tau_c, tol=EXACT_TOL,
+            tau_s,
+            tau_c,
+            tol=EXACT_TOL,
             err_msg="tau_sensor != applied force tau_c in contact scenario",
         )

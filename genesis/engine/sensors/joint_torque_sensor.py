@@ -101,9 +101,7 @@ class JointTorqueSensor(
             device=gs.device,
         )
 
-        self._shared_metadata.dofs_idx = concat_with_tensor(
-            self._shared_metadata.dofs_idx, global_dofs_idx, dim=0
-        )
+        self._shared_metadata.dofs_idx = concat_with_tensor(self._shared_metadata.dofs_idx, global_dofs_idx, dim=0)
 
     # ─────────────────────── update hook ─────────────────────────────
 

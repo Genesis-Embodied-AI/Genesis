@@ -275,12 +275,9 @@ class JointTorqueSensor(SimpleSensorOptions["JointTorqueSensor"]):
             gs.raise_exception(f"JointTorqueSensor: entity at index {self.entity_idx} is not a RigidEntity.")
         if entity.n_dofs == 0:
             gs.raise_exception(f"JointTorqueSensor: entity at index {self.entity_idx} has no DOFs.")
-        if self.dofs_idx_local is not None and any(
-            i < 0 or i >= entity.n_dofs for i in self.dofs_idx_local
-        ):
+        if self.dofs_idx_local is not None and any(i < 0 or i >= entity.n_dofs for i in self.dofs_idx_local):
             gs.raise_exception(
-                f"JointTorqueSensor: dofs_idx_local contains out-of-range indices "
-                f"for entity with {entity.n_dofs} DOFs."
+                f"JointTorqueSensor: dofs_idx_local contains out-of-range indices for entity with {entity.n_dofs} DOFs."
             )
 
 
