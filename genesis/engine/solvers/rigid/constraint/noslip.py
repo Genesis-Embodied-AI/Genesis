@@ -13,6 +13,7 @@ def func_build_efc_AR_b_batch(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     n_dofs = constraint_state.jac.shape[1]
@@ -20,11 +21,24 @@ def func_build_efc_AR_b_batch(
     i_b_AR = 0 if qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL) else i_b
     nefc = constraint_state.n_constraints[i_b]
 
+    # AR = J M^{-1} J^T is block-diagonal by island: a constraint touches only one island's dofs and M^{-1} is
+    # block-diagonal, so AR[r, c] = 0 whenever constraints r and c belong to different islands. When the partition is
+    # active and the env has more than one island, the cross-island dot products below are skipped (the entry is left
+    # zero), turning the O(nefc^2 n_dofs) dense build into the sum of per-island blocks. A single-island env leaves
+    # constraint_island_idx unresolved (the partition skips it), so the per-pair test is gated on n_islands > 1, where
+    # one island spans the whole env and the full dense build is both correct and already minimal.
+    island_aware = False
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        island_aware = island_state.n_islands[i_b] > 1
+
     # build AR = J * inv(M) * J^T
     # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp.
     # No zeroing pass is needed: the symmetric lower-triangle fill writes every entry of [0, nefc)^2 and
     # consumers never read beyond nefc.
     for i_row in range(nefc):
+        isl_r = gs.qd_int(-1)
+        if qd.static(static_rigid_sim_config.enable_per_island_solve):
+            isl_r = island_state.constraint_island_idx[i_row, i_b]
         # tmp = M^{-1} * Jr^T
         if qd.static(static_rigid_sim_config.sparse_solve):
             # Sparse: zero buffer, copy only relevant DOFs
@@ -50,16 +64,22 @@ def func_build_efc_AR_b_batch(
 
         # TODO: For consistency with other usages, migrate to either the lower or upper variant
         # and update all remaining use cases that still read both.
-        # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
+        # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle. The dot is skipped (entry left zero) for a column
+        # in a different island, since that block of AR is structurally zero.
         for i_col in range(i_row + 1):
             s = gs.qd_float(0.0)
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_dofs[i_col, i_b]):
-                    i_d = constraint_state.jac_dofs_idx[i_col, i_d_, i_b]
-                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+            compute = True
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                if island_aware:
+                    compute = island_state.constraint_island_idx[i_col, i_b] == isl_r
+            if compute:
+                if qd.static(static_rigid_sim_config.sparse_solve):
+                    for i_d_ in range(constraint_state.jac_n_dofs[i_col, i_b]):
+                        i_d = constraint_state.jac_dofs_idx[i_col, i_d_, i_b]
+                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                else:
+                    for i_d in range(n_dofs):
+                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
             constraint_state.efc_AR[i_row, i_col, i_b_AR] = s
             constraint_state.efc_AR[i_col, i_row, i_b_AR] = s
 
@@ -97,11 +117,12 @@ def func_solve_mass_entity_row(
         entity_dof_end = entities_info.dof_end[i_e]
         n_dofs = entities_info.n_dofs[i_e]
 
-        # Step 1: Solve w s.t. L^T @ w = y (backward substitution)
+        # Step 1: Solve w s.t. L^T @ w = y (backward substitution). The mass matrix is block-diagonal per kinematic
+        # tree, so each row only couples to dofs within its own block.
         for i_d_ in range(n_dofs):
             i_d = entity_dof_end - i_d_ - 1
             curr_out = buf[i_row, i_d, i_b]
-            for j_d in range(i_d + 1, entity_dof_end):
+            for j_d in range(i_d + 1, rigid_global_info.dofs_mass_block_end[i_d]):
                 curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * buf[i_row, j_d, i_b]
             buf[i_row, i_d, i_b] = curr_out
 
@@ -112,7 +133,7 @@ def func_solve_mass_entity_row(
         # Step 3: Solve x s.t. L @ x = z (forward substitution)
         for i_d in range(entity_dof_start, entity_dof_end):
             curr_out = buf[i_row, i_d, i_b]
-            for j_d in range(entity_dof_start, i_d):
+            for j_d in range(rigid_global_info.dofs_mass_block_start[i_d], i_d):
                 curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * buf[i_row, j_d, i_b]
             buf[i_row, i_d, i_b] = curr_out
 
@@ -276,6 +297,7 @@ def kernel_noslip_fused(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     """Serialized noslip pass: build AR/b, run the force-update sweep, and finish, one env at a time.
@@ -288,7 +310,7 @@ def kernel_noslip_fused(
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         func_build_efc_AR_b_batch(
-            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
+            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, island_state, static_rigid_sim_config
         )
         func_noslip_batch(i_b, collider_state, constraint_state, rigid_global_info, static_rigid_sim_config)
         func_dual_finish_batch(

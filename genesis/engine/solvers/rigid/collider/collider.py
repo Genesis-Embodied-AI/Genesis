@@ -47,8 +47,8 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
-    func_clamp_prune_and_sort_contacts,
-    func_clamp_prune_and_sort_contacts_coop,
+    func_clamp_prune_contacts,
+    func_clamp_prune_contacts_coop,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -83,7 +83,7 @@ class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
 
-        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 2e-3
+        self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
         self._mpr_to_gjk_overlap_ratio = 0.25
         # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
@@ -181,11 +181,10 @@ class Collider:
         # Link-pair pruning can do useful work only when contacts from distinct geom-pairs can accumulate into the same
         # (link_a, link_b) bucket. That happens when any link has more than one geom (compound/decomposed body), when
         # any geom is nonconvex (vertex-based narrowphase emits many contacts per pair), or when terrain is present.
-        # Disabled outright when use_contact_island is True: pruning produces a logical permutation in contact_sort_idx
-        # that the contact-island construction kernel does not honor (it reads contact_data in physical order).
-        if self._solver._options.use_contact_island:
-            has_prunable_contacts = False
-        elif has_nonconvex_nonterrain or has_terrain:
+        # Composes with contact islands: pruning writes a logical permutation into contact_sort_idx, and the island
+        # construction reads contacts through that permutation, so pruning collapses the contacts before islands
+        # partition the (smaller) solve.
+        if has_nonconvex_nonterrain or has_terrain:
             has_prunable_contacts = True
         else:
             has_prunable_contacts = False
@@ -209,31 +208,15 @@ class Collider:
                             has_prunable_contacts = True
 
         # Spatial sort by x-position (with a geom-pair tie-break) only runs on GPU for convex-convex scenes whose
-        # contacts could benefit from locality. Disabled when use_contact_island is True for the same reason as
-        # pruning. Also disabled in autodiff mode: the sort permutes the logical contact order via contact_sort_idx,
-        # get_contacts applies that permutation, but func_set_upstream_grad writes upstream gradients back by physical
-        # index, so a non-identity permutation would attach gradients to the wrong contacts.
-        #
-        # FIXME: this sort is also what makes the contact order run-independent on GPU, where the narrowphase reserves
-        # contact slots via atomic_add and so produces a non-deterministic physical layout. When it is disabled (under
-        # autodiff, or with use_contact_island, which reads contact_data in physical order and ignores the
-        # contact_sort_idx permutation), bit-reproducible simulation is not guaranteed.
+        # contacts could benefit from locality, and is also what makes the GPU contact order run-independent: the
+        # narrowphase reserves contact slots via atomic_add (a non-deterministic physical layout), and the sort writes
+        # a deterministic permutation into contact_sort_idx that every downstream consumer - including the island
+        # construction - reads through. Disabled only in autodiff mode: get_contacts applies the permutation but
+        # func_set_upstream_grad writes upstream gradients back by physical index, so a non-identity permutation would
+        # attach gradients to the wrong contacts.
         spatial_sort_supported = (
-            has_non_box_plane_convex_convex
-            and gs.backend != gs.cpu
-            and not self._solver._options.use_contact_island
-            and not self._solver._requires_grad
+            has_non_box_plane_convex_convex and gs.backend != gs.cpu and not self._solver._requires_grad
         )
-
-        # Hibernation (func_collision_clear / func_collider_clear_env in this module's siblings) advects carried
-        # contacts by walking physical slots [0, n_contacts), which only matches the live set when sort_idx is the
-        # identity. The use_hibernation -> use_contact_island chain in RigidSolver already enforces that pruning and
-        # spatial sort are off, so this is a defensive assertion meant to fail loudly if either gate is loosened.
-        if self._solver._use_hibernation and (has_prunable_contacts or spatial_sort_supported):
-            gs.raise_exception(
-                "Hibernation is incompatible with link-pair pruning and spatial sort: both reorder logical contacts "
-                "via contact_sort_idx, but the hibernation advect loop reads contact_data in physical order."
-            )
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
@@ -963,22 +946,20 @@ class Collider:
         # SMs (the serial fused kernel wins above that threshold).
         ran_fused_dedup_coop = (
             gs.backend != gs.cpu
-            and self._collider_static_config.has_prunable_contacts
             and not self._solver._static_rigid_sim_config.requires_grad
+            and self._collider_static_config.has_prunable_contacts
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
         )
         if ran_fused_dedup_coop:
-            func_clamp_prune_and_sort_contacts_coop(
+            func_clamp_prune_contacts_coop(
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-                self._collider_static_config,
                 self._solver._errno,
             )
         else:
-            func_clamp_prune_and_sort_contacts(
+            func_clamp_prune_contacts(
                 self._collider_state,
                 self._collider_info,
                 self._solver._rigid_global_info,
@@ -1018,6 +999,12 @@ class Collider:
                 sort_idx_view = qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
                 gather_idx_flat = sort_idx_view[:, :n_contacts_max]
                 gather_idx_vec = gather_idx_flat.unsqueeze(-1).expand(-1, -1, 3)
+                # Gather indices past each env's n_contacts are stale (the permutation only fills the live range), so
+                # the dense (n_envs, n_contacts_max) tensor has padding columns to reset to the per-field sentinel.
+                # The mask is field-independent, so build it once and broadcast over scalar and vector fields alike.
+                pad_mask = None
+                if as_tensor and n_envs > 0:
+                    pad_mask = torch.arange(n_contacts_max, device=sort_idx_view.device)[None, :] >= n_contacts[:, None]
 
             for key, data in self._contact_data.items():
                 if zerocopy_aligned:
@@ -1034,6 +1021,9 @@ class Collider:
                     # data shape is (_B, max_candidate_contacts) for scalars, with a trailing 3 axis for vectors.
                     gidx = gather_idx_vec if data.dim() == 3 else gather_idx_flat
                     data = data.gather(dim=1, index=gidx)
+                    if pad_mask is not None:
+                        mask = pad_mask if data.dim() == 2 else pad_mask[..., None]
+                        data.masked_fill_(mask, -1 if data.dtype == gs.tc_int else 0)
                     if n_envs == 0 and not keep_batch_dim:
                         data = data[0]
                     if not to_torch:

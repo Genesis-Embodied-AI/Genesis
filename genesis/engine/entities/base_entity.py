@@ -91,6 +91,12 @@ class Entity(RBC):
     def is_built(self):
         return self._solver._scene._is_built
 
+    def _repr_brief(self):
+        return f"{self.__repr_name__()}, idx: {self.idx}, morph: {self._repr_morph()}, material: {self.material}"
+
+    def _repr_morph(self):
+        return f"{self.morph}"
+
     @property
     def name(self) -> str:
         """

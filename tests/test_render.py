@@ -19,7 +19,7 @@ from genesis.utils.misc import qd_to_numpy, tensor_to_array
 from genesis.vis.keybindings import Key
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_LUISA, SKIP_NO_MADRONA, SKIP_NO_VIEWER
-from .utils import assert_allclose, assert_equal, get_hf_dataset, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_equal, assert_pixel_match, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -77,6 +77,102 @@ def skip_if_not_installed(renderer_type):
             import LuisaRenderPy
         except ImportError:
             pytest.skip(SKIP_NO_LUISA)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("env_separate_rigid", [True, False])
+@pytest.mark.parametrize("n_envs", [1, 3])
+def test_rasterizer_renders_heterogeneous_entities(n_envs, env_separate_rigid, show_viewer, png_snapshot, renderer):
+    # A heterogeneous entity instantiates a different morph variant per environment (a sphere in some, the duck mesh in
+    # others). Each variant must render only in its own environments, both in the per-env batched path
+    # (env_separate_rigid + n_envs > 1, env_idx >= 0) and in the combined single-image path (env_idx == -1). A
+    # homogeneous box renders alongside to confirm ordinary entities are unaffected by the per-env masking.
+    CAM_RES = (160, 120)
+
+    scene = gs.Scene(
+        renderer=renderer,
+        vis_options=gs.options.VisOptions(
+            env_separate_rigid=env_separate_rigid,
+            shadow=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(
+            plane_size=(5.0, 5.0),
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.3, 0.3, 0.3),
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.3, 0.8, 0.3),
+        ),
+    )
+    heterogeneous = scene.add_entity(
+        morph=(
+            gs.morphs.Sphere(
+                radius=0.3,
+            ),
+            gs.morphs.Mesh(
+                file="meshes/duck/duck.obj",
+                scale=0.003,
+                euler=(90.0, 0.0, 90.0),
+            ),
+        ),
+    )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, 5.0, 2.6),
+        lookat=(0.0, 0.0, 0.2),
+        fov=55.0,
+        GUI=show_viewer,
+    )
+
+    scene.build(n_envs=n_envs)
+
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        # Small discrepancies between different hardware due the different physics integration
+        png_snapshot.extension._std_err_threshold = 3.0
+
+    # The sphere variant fills the first environments and the duck the last, placed on opposite sides so the duck
+    # (yellow) occupies a known half of the combined image. The box (homogeneous) sits at the back of each environment.
+    box.set_pos(np.array([[0.0, 1.4, 0.15], [0.4, 1.4, 0.15], [-0.4, 1.4, 0.15]])[:n_envs])
+    heterogeneous.set_pos(np.array([[-1.2, 0.3, 0.3], [-1.2, -0.3, 0.3], [1.2, 0.0, 0.0]])[:n_envs])
+
+    rgb = tensor_to_array(camera.render(rgb=True)[0])
+    # The combined draw-all path is taken unless rendering is both per-env-separated and multi-env.
+    per_env = env_separate_rigid and n_envs > 1
+    if per_env:
+        assert rgb.shape == (n_envs, *CAM_RES[::-1], 3)
+        frames = list(rgb)
+    else:
+        assert rgb.shape == (*CAM_RES[::-1], 3)
+        frames = [rgb]
+
+    # The homogeneous green box renders in every frame.
+    for frame in frames:
+        assert ((frame[..., 1].astype(int) - frame[..., 0].astype(int)) > 40).sum() > 0
+
+    if per_env:
+        # Distinct per-env variants and positions mean no two environments may render identically.
+        for i in range(len(frames)):
+            for j in range(i + 1, len(frames)):
+                assert (frames[i] != frames[j]).any()
+    elif n_envs > 1:
+        # Combined image: the duck variant (yellow) belongs to a single environment on one side, so it must not be
+        # duplicated into the sphere environments on the other side.
+        half = rgb.shape[1] // 2
+        yellow = (rgb[..., 0].astype(int) > 120) & (rgb[..., 1].astype(int) > 120) & (rgb[..., 2].astype(int) < 110)
+        left, right = int(yellow[:, :half].sum()), int(yellow[:, half:].sum())
+        assert max(left, right) > 3 * min(left, right), (
+            f"duck must render only in its environment; yellow={left, right}"
+        )
+
+    for frame in frames:
+        assert rgb_array_to_png_bytes(frame) == png_snapshot
 
 
 @pytest.mark.required
@@ -495,7 +591,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     exporter = FrameImageExporter(tmp_path)
 
     # Initialize the simulation
-    set_random_seed(0)
+    set_random_seed(1)
     for i in range(max(n_envs, 1)):
         qpos = torch.zeros(robot.n_dofs, device=gs.device)
         qpos[:2] = torch.as_tensor(np.random.rand(2), dtype=gs.tc_float, device=gs.device) - 0.5
@@ -1453,6 +1549,56 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
             assert f.read() == png_snapshot
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_offscreen_context_isolation(renderer_type):
+    # Each offscreen scene owns a separate GL context, but the platform's current-context state is process/thread
+    # global. Tearing down one scene's renderer while another is mid-render - which happens under cyclic GC, or
+    # when the render thread deletes a retired renderer - must leave the rendering scene's context untouched. Force
+    # that interleaving by destroying scene B in the middle of scene A's render, and assert A renders exactly as it
+    # does without the interference, rather than rendering on B's destroyed context or losing its context entirely.
+    # The two scenes must own independent renderers, hence a fresh Rasterizer each rather than a shared instance.
+    scene_a = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_a.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
+    camera_a = scene_a.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_a.build()
+    rgb_reference = camera_a.render(rgb=True)[0]
+
+    # Distinct content so that rendering A on B's context would be visibly wrong rather than coincidentally equal.
+    scene_b = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 5.0), size=(0.3, 0.3, 0.3)))
+    camera_b = scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_b.build()
+    camera_b.render(rgb=True)
+
+    # Destroy scene B right after scene A's renderer makes its context current, i.e. mid-render, then check the current
+    # context directly: a stranded context does not necessarily corrupt the rendered pixels on every driver, so
+    # asserting on pixels alone is not enough to catch it. 'save_current_context' returns a restore callable for the
+    # current context, or None when none is current, so a stranded context surfaces as None here.
+    renderer_a = scene_a.visualizer._rasterizer._renderer
+    original_make_current = renderer_a.make_current
+    destroyed = False
+    restore_after_destroy = None
+
+    def make_current_then_destroy_b():
+        nonlocal destroyed, restore_after_destroy
+        original_make_current()
+        if not destroyed:
+            destroyed = True
+            scene_b.destroy()
+            restore_after_destroy = renderer_a.save_current_context()
+
+    renderer_a.make_current = make_current_then_destroy_b
+    rgb_after = camera_a.render(rgb=True)[0]
+
+    assert restore_after_destroy is not None
+    assert_pixel_match(
+        rgb_after,
+        rgb_reference,
+        err_msg="Scene A rendered differently after scene B was destroyed mid-render (wrong or lost GL context).",
+    )
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
@@ -1640,8 +1786,9 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
     )
 
 
+@pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
-def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
+def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapshot):
     # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
     # without denoiser.
     png_snapshot.extension._std_err_threshold = 3.0
@@ -1661,14 +1808,22 @@ def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
             # Reduce number of iterations to speedup runtime
             n_pcg_iterations=40,
         ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
         renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
     )
 
-    # Add ground plane
+    # Add ground plane. For the Rasterizer, keep it small enough to stay within the camera frustum: the Apple
+    # Software Renderer misrasterizes a plane whose vertices fall outside the view, breaking pixel matching. The
+    # RayTracer is unaffected, so keep its default size to preserve the existing snapshot.
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            plane_size=(1.3, 1.3) if renderer_type == RENDERER_TYPE.RASTERIZER else (1e3, 1e3),
+        ),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
         ),
@@ -2021,6 +2176,49 @@ def test_render_offscreen_oversized_resolution(renderer):
         normal=False,
     )
     assert rgb.shape[:2] == (requested_res[1], requested_res[0])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_camera_render_honors_resolution_with_viewer(renderer):
+    # A camera renders into its own offscreen FBO, sized to the camera resolution and independent of the
+    # interactive window. With an interactive viewer shown, the rendered image must still match the camera
+    # resolution, not the (different) viewer resolution, otherwise it no longer matches the camera intrinsics.
+    viewer_res = (640, 480)
+    camera_res = (360, 240)
+    box_halfsize = 0.5
+    camera_dist = 3.0
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=viewer_res,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.0),
+            size=(2.0 * box_halfsize, 2.0 * box_halfsize, 2.0 * box_halfsize),
+            fixed=True,
+        ),
+    )
+    camera = scene.add_camera(
+        res=camera_res,
+        pos=(0.0, 0.0, camera_dist),
+        lookat=(0.0, 0.0, 0.0),
+        near=1.0,
+        far=10.0,
+    )
+    scene.build()
+
+    rgb, depth, _, _ = camera.render(rgb=True, depth=True)
+    assert rgb.shape[:2] == (camera_res[1], camera_res[0])
+    assert depth.shape[:2] == (camera_res[1], camera_res[0])
+
+    # The on-axis center pixel hits the front face of the box, at metric depth camera_dist - box_halfsize.
+    assert_allclose(depth[camera_res[1] // 2, camera_res[0] // 2], camera_dist - box_halfsize, atol=1e-3)
 
 
 @pytest.mark.required

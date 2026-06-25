@@ -158,24 +158,37 @@ class Rasterizer(RBC):
         for node in self._camera_nodes.values():
             self._context.remove_node(node)
         self._camera_nodes.clear()
-        for camera_target in self._camera_targets.values():
-            try:
-                if self._offscreen:
-                    camera_target.delete()
-                elif self._viewer is not None:
-                    self._viewer.close_offscreen(camera_target)
-            except (OpenGL.error.NullFunctionError, OSError):
-                pass
-        self._camera_targets.clear()
 
-        if self._offscreen and self._renderer is not None:
-            try:
-                self._renderer.make_current()
-                self._renderer.delete()
-            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError, ImportError):
-                pass
-            del self._renderer
-            self._renderer = None
+        if self._offscreen:
+            if self._renderer is not None:
+                # Freeing this renderer's GL resources (its camera targets and its own context) requires its
+                # context to be current, but the current context is process/thread-global and may belong to
+                # another renderer (e.g. one mid-render). Save it, free on our context, then restore it after
+                # destroying our context so the other renderer is left current rather than stranded. The saved
+                # restore callable is self-contained, so it still works once our own platform is gone.
+                try:
+                    restore_context = self._renderer.save_current_context()
+                    self._renderer.make_current()
+                    for camera_target in self._camera_targets.values():
+                        try:
+                            camera_target.delete()
+                        except (OpenGL.error.NullFunctionError, OSError):
+                            pass
+                    self._renderer.delete()
+                    if restore_context is not None:
+                        restore_context()
+                except (OpenGL.error.GLError, OpenGL.error.NullFunctionError, ImportError):
+                    pass
+                del self._renderer
+                self._renderer = None
+        else:
+            for camera_target in self._camera_targets.values():
+                try:
+                    if self._viewer is not None:
+                        self._viewer.close_offscreen(camera_target)
+                except (OpenGL.error.NullFunctionError, OSError):
+                    pass
+        self._camera_targets.clear()
 
     @property
     def viewer(self):

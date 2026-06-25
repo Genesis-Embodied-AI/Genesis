@@ -128,11 +128,14 @@ class GenesisGeomRetriever:
             geom_texture_indices = []
             for geom_texture in geom_textures:
                 if isinstance(geom_texture, gs.textures.ImageTexture) and geom_texture.image_array is not None:
-                    texture_id = geom_texture.image_path
+                    texture_id = (
+                        ("path", geom_texture.image_path)
+                        if geom_texture.image_path is not None
+                        else ("image_array", id(geom_texture.image_array))
+                    )
                     if texture_id not in texture_indices:
                         texture_idx = num_textures
-                        if texture_id is not None:
-                            texture_indices[texture_id] = texture_idx
+                        texture_indices[texture_id] = texture_idx
                         texture_widths.append(geom_texture.image_array.shape[1])
                         texture_heights.append(geom_texture.image_array.shape[0])
                         assert geom_texture.channel == 4

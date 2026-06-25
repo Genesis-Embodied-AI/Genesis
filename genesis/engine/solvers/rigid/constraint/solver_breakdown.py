@@ -5,7 +5,7 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.engine.solvers.rigid.constraint import solver
+from . import solver
 
 # --- Parallel linesearch constants ---
 # Number of candidate step sizes evaluated simultaneously per env.
@@ -142,11 +142,13 @@ def _func_decomp_linesearch_p0(
                 constraint_state.mv[i_d1, i_b] = mv_val
                 i_d1 += _T
 
-            # === Phase 0b: Compute jv = J @ search (cooperative over constraints) ===
+            # === Phase 0b: Compute jv = J @ search (cooperative over constraints). Sparse over each constraint's
+            # coupled DOFs (jac_dofs_idx) for CPU skyline / per-island GPU; islands-OFF GPU iterates dense to keep
+            # the per-lane trip count uniform (no warp divergence), matching the non-island baseline. ===
             i_c = tid
             while i_c < n_con:
                 jv_val = gs.qd_float(0.0)
-                if qd.static(static_rigid_sim_config.sparse_solve):
+                if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.enable_per_island_solve):
                     for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
                         i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
                         jv_val = jv_val + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
@@ -575,13 +577,18 @@ def _func_update_constraint_forces(
 @qd.func
 def _func_update_qfrc_constraint_per_dof(
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env), each summing serially over i_c.
+    """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env).
+
+    With islands, a DOF only couples to constraints in its own island (a constraint touching the DOF is always in
+    its island), so the sum runs over that island's constraints (constraint_id) rather than all n_con - identical
+    result, but O(nnz) instead of O(n_dofs * n_con). The per-step constraint order is fixed, so the sum stays
+    deterministic. Without islands it falls back to the dense scan over all constraints.
 
     Under ``enable_cooperative_constraint_kernels`` the outer ndrange is swapped so adjacent lanes vary i_d: the
-    qfrc_constraint write coalesces under the flipped DOF-vec layout. (jac and efc_force are both in the Tier-1 /
-    jac-flip set, so the inner serial reads see the same stride pattern either way.)
+    qfrc_constraint write coalesces under the flipped DOF-vec layout.
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
@@ -591,10 +598,19 @@ def _func_update_qfrc_constraint_per_dof(
         n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
     ):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            n_con = constraint_state.n_constraints[i_b]
             qfrc = gs.qd_float(0.0)
-            for i_c in range(n_con):
-                qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                i_island = island_state.dofs_island_idx[i_d, i_b]
+                if i_island >= 0:
+                    con_base = island_state.constraint_slices.start[i_island, i_b]
+                    con_n = island_state.constraint_slices.n[i_island, i_b]
+                    for i_lcon in range(con_n):
+                        i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+                        qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+            else:
+                n_con = constraint_state.n_constraints[i_b]
+                for i_c in range(n_con):
+                    qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 
 
@@ -833,6 +849,7 @@ def _func_newton_only_nt_hessian(
 
 @qd.func
 def _func_newton_only_nt_hessian_and_cholesky(
+    island_state: array_class.IslandState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -858,11 +875,14 @@ def _func_newton_only_nt_hessian_and_cholesky(
         )
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                # Decomposed arm is non-island: i_island = 0 is the full-env work-unit (island branch is dead).
                 solver.func_cholesky_factor_direct_batch(
-                    i_b=i_b,
-                    constraint_state=constraint_state,
-                    rigid_global_info=rigid_global_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
+                    i_b,
+                    0,
+                    island_state,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
                 )
 
 
@@ -872,6 +892,7 @@ def _func_update_gradient(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     """Step 5: Update gradient"""
@@ -887,47 +908,9 @@ def _func_update_gradient(
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
+                island_state=island_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
-
-
-@qd.func
-def _func_update_gradient_no_solve(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Compute gradient only (no Cholesky solve) — used with fused Cholesky+Solve.
-
-    Under ``enable_cooperative_constraint_kernels`` the ndrange is swapped so adjacent lanes vary i_d - 3 of 4 in-loop
-    accesses (grad, Ma, qfrc_constraint) are flipped DOF-vec; only dofs_state.force stays canonical.
-    """
-    _B = constraint_state.grad.shape[1]
-    n_dofs = constraint_state.grad.shape[0]
-    qd.loop_config(name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in qd.ndrange(
-        n_dofs, _B, axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None)
-    ):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            constraint_state.grad[i_d, i_b] = (
-                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
-            )
-
-
-@qd.func
-def _func_cholesky_and_solve_fused(
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Fused Cholesky factorization + solve. L stays in shared memory."""
-    solver.func_cholesky_and_solve_fused_tiled(
-        constraint_state=constraint_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-    )
 
 
 @qd.func
@@ -984,6 +967,7 @@ def _kernel_solve_graph(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
 ):
@@ -997,31 +981,78 @@ def _kernel_solve_graph(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
-        _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
+        _func_update_qfrc_constraint_per_dof(constraint_state, island_state, static_rigid_sim_config)
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-            and static_rigid_sim_config.enable_tiled_cholesky_hessian
             and static_rigid_sim_config.hessian_fits_shared
         ):
-            # Fused path: H patching + fused Cholesky+Solve (L in shmem, H preserved in nt_H)
+            # Incremental Hessian assembly - full rebuild when the active set changed a lot, delta patch otherwise -
+            # then a tiled factor + solve reading the maintained nt_H. Each changed constraint's J^T D J lands inside
+            # its island's diagonal block (no constraint couples DOFs across islands), so the patch is island-correct.
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
             _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
             _func_patch_hessian_delta(constraint_state, rigid_global_info)
-            _func_update_gradient_no_solve(
+            solver.func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
-            _func_cholesky_and_solve_fused(constraint_state, rigid_global_info, static_rigid_sim_config)
-        elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
-            # so H patching is not possible)
-            _func_newton_only_nt_hessian_and_cholesky(constraint_state, rigid_global_info, static_rigid_sim_config)
-            _func_update_gradient(
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                # Hibernation needs the per-island grid to skip asleep islands, so factor + solve each awake island in
+                # its own tile over the (env, island) grid.
+                solver.func_island_tiled_factor_solve_all(
+                    entities_info,
+                    constraint_state,
+                    island_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    qd.simt.Tile32x32
+                    if qd.static(static_rigid_sim_config.cholesky_tile_size == 32)
+                    else qd.simt.Tile16x16,
+                )
+            else:
+                # Islands OFF, or islands ON without hibernation: the whole-env Hessian is block-diagonal by island, so
+                # its Cholesky is itself block-diagonal - the whole-env fused factor+solve (L in shared memory) yields
+                # the exact per-island result with none of the per-(env, island) grid/indirection overhead, which is
+                # pure cost at the env counts where the env dimension alone already saturates the GPU. The per-island
+                # grid only pays off when the whole-env Hessian does not fit shared (the cooperative branch below).
+                solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
+        elif qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and static_rigid_sim_config.enable_per_island_solve
+            and static_rigid_sim_config.enable_cooperative_constraint_kernels
+        ):
+            # Hibernation with a whole-env Hessian too big for shared but each island's block fitting the per-island
+            # tile: assemble + factor + solve each awake island in its own tile (do_assemble=True), with NO whole-env
+            # assemble + factor + solve each island in its own tile (do_assemble=True), with NO whole-env Hessian
+            # touched. This keeps the cost at sum-of-per-island-blocks instead of the whole-env O(n_dofs^3) factor the
+            # non-fused path below would do - the regime of many small islands whose total dof count exceeds the shared
+            # cap. An island larger than the per-island tile falls back to the scalar per-island solve inside the factor.
+            solver.func_update_gradient_no_solve(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            solver.func_island_tiled_factor_solve_all(
+                entities_info,
+                constraint_state,
+                island_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+                qd.simt.Tile32x32 if qd.static(static_rigid_sim_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
+                do_assemble=True,
+            )
+        elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            # Non-fused path: full whole-env H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H
+            # with L, so H patching is not possible). Reached when the whole-env Hessian does not fit shared and either
+            # islands are OFF (a single whole-env factor, matching the non-island baseline) or the cooperative kernels
+            # are disabled (tiny n_dofs or huge env count), where the whole-env factor is cheap or the monolith wins.
+            _func_newton_only_nt_hessian_and_cholesky(
+                island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            _func_update_gradient(
+                entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
         else:
             _func_update_gradient(
-                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
         _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
@@ -1041,6 +1072,7 @@ def func_solve_decomposed(
     rigid_global_info,
     static_rigid_sim_config,
     _n_iterations,
+    island_state,
 ):
     """
     GPU graph accelerated solver loop with parallel grid-search linesearch and GPU-side iteration via graph_do_while.
@@ -1050,7 +1082,25 @@ def func_solve_decomposed(
     falls back to a host-side C++-side loop, that still reduces python launch overhead.
 
     Early exits when all batch elements have converged (no improved[i_b] is True).
+
+    Islands ON/OFF share this same graph loop: with islands the per-iteration factor/solve runs per-island over the
+    (env, island) grid, while an unpartitioned env is a single island spanning every dof. Early exits when all batch
+    elements have converged (no improved[i_b] is True).
     """
+    # This entrypoint statically IS the decomposed arm, so it owns its init: it forwards is_decomposed=True to
+    # func_solve_init, which builds the island partition but then skips the init Hessian factor + gradient. The graph
+    # rebuilds the Hessian on its first iteration regardless (iter_count <= 1 -> use_full_hessian), so the init factor
+    # would be pure waste, and skipping it makes the decomposed arm behave identically for islands ON and OFF.
+    solver.func_solve_init(
+        dofs_info,
+        dofs_state,
+        entities_info,
+        constraint_state,
+        rigid_global_info,
+        island_state,
+        static_rigid_sim_config,
+        is_decomposed=True,
+    )
     if _n_iterations <= 0:
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
@@ -1060,6 +1110,7 @@ def func_solve_decomposed(
         dofs_state,
         constraint_state,
         rigid_global_info,
+        island_state,
         static_rigid_sim_config,
         constraint_state.graph_counter,
     )

@@ -1,10 +1,12 @@
 import os
 import pickle as pkl
-from typing import Any
+from itertools import chain
+from typing import Any, NamedTuple
 
 import fast_simplification
 import numpy as np
 import trimesh
+from scipy.spatial import QhullError
 
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
@@ -14,6 +16,15 @@ import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr
+
+
+class MeshInertialInfo(NamedTuple):
+    """Mass properties of a mesh in its own frame; center_mass and moment_inertia are None for degenerate geometry."""
+
+    volume: float
+    mass: float
+    center_mass: "np.ndarray | None"
+    moment_inertia: "np.ndarray | None"
 
 
 class Mesh(RBC):
@@ -65,6 +76,18 @@ class Mesh(RBC):
         self._metadata: dict[str, Any] = metadata or {}
         self._color = np.array([1.0, 1.0, 1.0, 1.0], dtype=gs.np_float)
 
+        # Geometry-derived data (independent of appearance) computed lazily and reused. When the same processed
+        # collision geometry backs many entities, these are shared by reference so each entity reads them instead of
+        # recomputing the unique-edge list and the vertex-adjacency graph.
+        self._unique_edges: "np.ndarray | None" = None
+        self._vert_adjacency: "tuple[np.ndarray, np.ndarray, np.ndarray] | None" = None
+        self._is_convex: "bool | None" = None
+        self._inertial_info: "MeshInertialInfo | None" = None
+        # A mesh sharing another's processed geometry (a cached collision template) delegates its inertia query to that
+        # source, so the (convex-hull) mass-property computation runs at most once per geometry and only when an entity
+        # actually needs it - never eagerly for e.g. fixed or articulated assets whose link frames are not aligned.
+        self._inertial_info_source: "Mesh | None" = None
+
         # By default, all meshes are considered zup, unless the "FileMorph.file_meshes_are_zup" option was set to False
         self._metadata.setdefault("imported_as_zup", True)
 
@@ -105,6 +128,7 @@ class Mesh(RBC):
         if self._mesh.vertices.shape[0] > 3:
             self._mesh = trimesh.convex.convex_hull(self._mesh)
             self._metadata["convexified"] = True
+        self._invalidate_geometry_cache()
         self.clear_visuals()
 
     def watertighten(self, aggressiveness=7):
@@ -124,6 +148,7 @@ class Mesh(RBC):
         )
         self._mesh = trimesh.Trimesh(vertices=v, faces=f, process=False)
         self._metadata["watertightened"] = True
+        self._invalidate_geometry_cache()
         self.clear_visuals()
 
     def decimate(self, decimate_face_num, decimate_aggressiveness):
@@ -143,6 +168,7 @@ class Mesh(RBC):
             )
             self._metadata["decimated"] = True
 
+        self._invalidate_geometry_cache()
         self.clear_visuals()
 
     def remesh(self, edge_len_abs=None, edge_len_ratio=0.01, fix=True):
@@ -183,6 +209,7 @@ class Mesh(RBC):
                 pkl.dump((verts, faces), file)
 
         self._mesh = trimesh.Trimesh(vertices=verts, faces=faces)
+        self._invalidate_geometry_cache()
         self.clear_visuals()
 
     def tetrahedralize(self, tet_cfg):
@@ -234,19 +261,76 @@ class Mesh(RBC):
         self._surface = gs.surfaces.Default()
         self._surface.update_texture()
 
+    def _invalidate_geometry_cache(self):
+        # Drop memoized geometry-derived data (unique edges, vertex adjacency, convexity, inertia) when the underlying
+        # trimesh is replaced or its vertices change, so the next query recomputes from the current geometry instead of
+        # returning stale topology or inertia.
+        self._unique_edges = None
+        self._vert_adjacency = None
+        self._is_convex = None
+        self._inertial_info = None
+        self._inertial_info_source = None
+
     def get_unique_edges(self):
         """
         Get the unique edges of the mesh.
         """
-        r_face = np.roll(self.faces, 1, axis=1)
-        edges = np.concatenate(np.array([self.faces, r_face]).T)
+        if self._unique_edges is None:
+            r_face = np.roll(self.faces, 1, axis=1)
+            edges = np.concatenate(np.array([self.faces, r_face]).T)
 
-        # do a first pass to remove duplicates
-        edges.sort(axis=1)
-        edges = np.unique(edges, axis=0)
-        edges = edges[edges[:, 0] != edges[:, 1]]
+            # do a first pass to remove duplicates
+            edges.sort(axis=1)
+            edges = np.unique(edges, axis=0)
+            self._unique_edges = edges[edges[:, 0] != edges[:, 1]]
 
-        return edges
+        return self._unique_edges
+
+    def get_inertial_info(self):
+        """
+        Get the mass properties of the geometry in its own frame as a MeshInertialInfo.
+
+        Non-watertight geometry is closed by its convex hull first so the volume integral is well-defined; a degenerate
+        geometry reports a zero volume and no mass distribution. The result is memoized and shared by reference across
+        entities backed by the same geometry.
+        """
+        if self._inertial_info_source is not None:
+            return self._inertial_info_source.get_inertial_info()
+        if self._inertial_info is None:
+            # A degenerate geometry (zero / ill-defined volume) makes trimesh's mass-property integral divide by zero,
+            # yielding a non-finite center of mass; a more degenerate one (fewer than 4 non-coplanar vertices) makes the
+            # convex-hull closure of a non-watertight mesh raise instead. Either way the geom carries no inertia: report
+            # a zero volume so the caller skips it, rather than crashing or letting NaNs propagate into the composed
+            # inertia (and emitting a warning).
+            with np.errstate(invalid="ignore", divide="ignore"):
+                try:
+                    tmesh = self._mesh if self._mesh.is_watertight else self._mesh.convex_hull
+                    volume = float(tmesh.volume)
+                    center_mass = tmesh.center_mass
+                except QhullError:
+                    volume, center_mass = 0.0, None
+                if volume > 0.0 and np.all(np.isfinite(center_mass)):
+                    self._inertial_info = MeshInertialInfo(volume, tmesh.mass, center_mass, tmesh.moment_inertia)
+                else:
+                    self._inertial_info = MeshInertialInfo(0.0, 0.0, None, None)
+        return self._inertial_info
+
+    def get_vert_adjacency(self):
+        """
+        Get the per-vertex adjacency graph as flat arrays (vert_neighbors, vert_n_neighbors, vert_neighbor_start).
+
+        vert_neighbors concatenates each vertex's neighbor indices, vert_n_neighbors holds the neighbor count of each
+        vertex, and vert_neighbor_start the offset of each vertex's slice into vert_neighbors.
+        """
+        if self._vert_adjacency is None:
+            tmesh = trimesh.Trimesh(vertices=self.verts, faces=self.faces, process=False)
+            vert_neighbors_list = tmesh.vertex_neighbors
+            vert_neighbors = np.array(tuple(chain.from_iterable(vert_neighbors_list)), dtype=gs.np_int)
+            vert_n_neighbors = np.array(tuple(map(len, vert_neighbors_list)), dtype=gs.np_int)
+            vert_neighbor_start = np.array((0, *np.cumsum(vert_n_neighbors)[:-1]), dtype=gs.np_int)
+            self._vert_adjacency = (vert_neighbors, vert_n_neighbors, vert_neighbor_start)
+
+        return self._vert_adjacency
 
     def copy(self):
         """
@@ -463,6 +547,7 @@ class Mesh(RBC):
         Apply a 4x4 transformation matrix (translation on the right column) to the mesh.
         """
         self._mesh.apply_transform(T)
+        self._invalidate_geometry_cache()
 
     @property
     def uid(self):
@@ -483,7 +568,13 @@ class Mesh(RBC):
         """
         Whether the mesh is convex.
         """
-        return self.metadata.get("convexified", self._mesh.is_convex)
+        # 'dict.get' would evaluate the (expensive) convexity test eagerly even when the flag is already set, so branch
+        # explicitly. The trimesh fallback is memoized to stay cheap when many entities share the same geometry.
+        if "convexified" in self.metadata:
+            return self.metadata["convexified"]
+        if self._is_convex is None:
+            self._is_convex = bool(self._mesh.is_convex)
+        return self._is_convex
 
     @property
     def metadata(self):
@@ -506,6 +597,7 @@ class Mesh(RBC):
         """
         assert len(verts) == len(self.verts)
         self._mesh.vertices = verts
+        self._invalidate_geometry_cache()
 
     @property
     def faces(self):

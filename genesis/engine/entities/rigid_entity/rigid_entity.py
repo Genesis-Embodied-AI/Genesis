@@ -1,8 +1,6 @@
 import inspect
 import os
-import xml.etree.ElementTree as ET
 from itertools import chain
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Any, NamedTuple, Sequence
 from functools import wraps
 
@@ -106,15 +104,13 @@ def _align_geoms_to_inertia(cg_infos, vg_infos, file_inertial):
         for cg_info in cg_infos:
             if not (cg_info.get("contype", 0) or cg_info.get("conaffinity", 0)):
                 continue
-            tmesh = cg_info["mesh"].trimesh
-            if not tmesh.is_watertight:
-                tmesh = tmesh.convex_hull
-            if tmesh.volume > 0:
+            mesh_inertial_info = cg_info["mesh"].get_inertial_info()
+            if mesh_inertial_info.volume > 0:
                 geoms_inertial_info.append(
                     (
-                        tmesh.mass,
-                        tmesh.center_mass,
-                        tmesh.moment_inertia,
+                        mesh_inertial_info.mass,
+                        mesh_inertial_info.center_mass,
+                        mesh_inertial_info.moment_inertia,
                         np.array(cg_info.get("pos", gu.zero_pos())),
                         np.array(cg_info.get("quat", gu.identity_quat())),
                     )
@@ -591,13 +587,32 @@ class KinematicEntity(Entity):
                     )
                 )
         if morph.collision:
-            # Merge them as a single one if requested
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
-                tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
-                meshes = (mesh,)
+                # Merge every submesh into a single collision geom if requested.
+                collision_groups = [list(meshes)]
+            else:
+                # A source mesh node split into several visual materials is one physical body, so its submeshes are
+                # merged into a single collision geom rather than split per material. Pieces meant to collide
+                # separately must be authored as separate nodes. Meshes with no source node are each their own body.
+                collision_groups = []
+                groups_by_node = {}
+                for mesh in meshes:
+                    node_index = mesh.metadata.get("node_index")
+                    if node_index is None:
+                        collision_groups.append([mesh])
+                        continue
+                    group = groups_by_node.get(node_index)
+                    if group is None:
+                        group = groups_by_node[node_index] = []
+                        collision_groups.append(group)
+                    group.append(mesh)
 
-            for mesh in meshes:
+            for group in collision_groups:
+                if len(group) == 1:
+                    mesh = group[0]
+                else:
+                    tmesh = trimesh.util.concatenate([submesh.trimesh for submesh in group])
+                    mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
                 g_infos.append(
                     dict(
                         contype=morph.contype,
@@ -1244,10 +1259,22 @@ class KinematicEntity(Entity):
                 entity._dof_start -= n_base_dofs
                 entity._q_start -= n_base_qs
             for joint in self._solver.joints[self.joint_start :]:
+                joint._idx -= n_base_joints
                 joint._dof_start -= n_base_dofs
                 joint._q_start -= n_base_qs
             for link in self._solver.links[(self.link_start + 1) :]:
                 link._joint_start -= n_base_joints
+
+            # Joint-equality constraints (e.g. mimic joints) reference joints by global index, which must stay
+            # aligned with the dense joint ordering. Shift those references in lockstep with the joint re-indexing
+            # above. Link-based equalities (connect/weld) are unaffected since no link is removed here.
+            removed_joints_end = self.joint_start + n_base_joints
+            for equality in self._solver.equalities:
+                if equality.type == gs.EQUALITY_TYPE.JOINT:
+                    if equality._eq_obj1id >= removed_joints_end:
+                        equality._eq_obj1id -= n_base_joints
+                    if equality._eq_obj2id >= removed_joints_end:
+                        equality._eq_obj2id -= n_base_joints
 
         # Overwrite parent link
         base_link._parent_idx = parent_link.idx
@@ -1902,47 +1929,7 @@ class KinematicEntity(Entity):
     def _get_morph_identifier(self) -> str:
         if self._enable_heterogeneous:
             return "heterogeneous"
-
-        morph = self._morph
-
-        if isinstance(morph, gs.morphs.Box):
-            return "box"
-        if isinstance(morph, gs.morphs.Sphere):
-            return "sphere"
-        if isinstance(morph, gs.morphs.Cylinder):
-            return "cylinder"
-        if isinstance(morph, gs.morphs.Plane):
-            return "plane"
-        if isinstance(morph, gs.morphs.Mesh):
-            return Path(morph.file).stem
-        if isinstance(morph, gs.morphs.URDF):
-            if isinstance(morph.file, str):
-                # Try to get robot name from URDF file, fall back to filename stem
-                try:
-                    return uu.get_robot_name(morph.file)
-                except (ValueError, ET.ParseError, FileNotFoundError, OSError) as e:
-                    gs.logger.warning(f"Could not extract robot name from URDF: {e}. Using filename stem instead.")
-                    return Path(morph.file).stem
-            return morph.file.name
-        if isinstance(morph, gs.morphs.MJCF):
-            if isinstance(morph.file, str):
-                # Try to get model name from MJCF file, fall back to filename stem
-                model_name = mju.get_model_name(morph.file)
-                if model_name:
-                    return model_name
-                return Path(morph.file).stem
-            return morph.file.name
-        if isinstance(morph, gs.morphs.Drone):
-            if isinstance(morph.file, str):
-                return Path(morph.file).stem
-            return morph.file.name
-        if isinstance(morph, gs.morphs.USD):
-            if morph.prim_path:
-                return morph.prim_path.rstrip("/").split("/")[-1]
-            return Path(morph.file).stem
-        if isinstance(morph, gs.morphs.Terrain):
-            return morph.name if morph.name else "terrain"
-        return "rigid"
+        return self._morph._identifier()
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -1982,6 +1969,20 @@ class KinematicEntity(Entity):
         return len(self._links)
 
     @property
+    def morph(self):
+        """The morph of the entity.
+
+        Raises an exception for heterogeneous entities, which have multiple morph variants: use morphs for all
+        variants, or main_morph for the first one.
+        """
+        if self._enable_heterogeneous:
+            gs.raise_exception(
+                "Heterogeneous entities have multiple morph variants. Use `.morphs` for all variants, "
+                "or `.main_morph` only when explicitly using the first variant."
+            )
+        return self._morph
+
+    @property
     def main_morph(self):
         """The main morph of the entity (first morph for heterogeneous entities)."""
         return self._morph
@@ -1990,6 +1991,11 @@ class KinematicEntity(Entity):
     def morphs(self):
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
         return gs.List((self._morph, *self._morph_heterogeneous))
+
+    def _repr_morph(self):
+        if self._enable_heterogeneous:
+            return f"{len(self.morphs)} morph variants"
+        return f"{self.main_morph}"
 
     @property
     def n_joints(self):

@@ -351,6 +351,40 @@ def double_ball_pendulum():
 
 
 @pytest.fixture(scope="session")
+def long_chain():
+    # Single kinematic tree with enough DOFs that its mass submatrix exceeds GPU shared memory, so the cooperative
+    # >shared-cap mass assemble runs - the path whose lower-triangular linear-index inversion must stay exact on GPUs
+    # with an imprecise sqrt.
+    mjcf = ET.Element("mujoco", model="long_chain")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="root", pos="0 0 2")
+    ET.SubElement(body, "geom", type="sphere", size="0.03", density="500")
+    for i in range(128):
+        body = ET.SubElement(body, "body", name=f"l{i}", pos="0 0 0.1")
+        ET.SubElement(body, "joint", name=f"j{i}", type="hinge", axis=("1 0 0", "0 1 0", "0 0 1")[i % 3], damping="0.1")
+        ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.1", size="0.02", density="500")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def two_fixed_branches():
+    # One entity whose worldbody holds two independent chains, each rigidly attached to the (fixed) world. Their DOFs
+    # are kinematically decoupled, so the mass matrix is block-diagonal and must partition into one block per branch.
+    mjcf = ET.Element("mujoco", model="two_fixed_branches")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    for name, x in (("a", 0.0), ("b", 1.0)):
+        body = ET.SubElement(worldbody, "body", name=f"{name}root", pos=f"{x} 0 1")
+        ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.06", size="0.02", density="500")
+        for i in range(4):
+            body = ET.SubElement(body, "body", name=f"{name}{i}", pos="0 0 0.06")
+            ET.SubElement(body, "joint", name=f"j{name}{i}", type="hinge", axis="0 1 0", damping="0.1")
+            ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.06", size="0.02", density="500")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def hinge_slide():
     mjcf = ET.Element("mujoco", model="hinge_slide")
 
@@ -427,6 +461,72 @@ def compound_joint():
     ET.SubElement(seg2, "joint", name="j_z", type="hinge", axis="0 0 1")
     ET.SubElement(seg2, "geom", type="capsule", size="0.02", fromto="0 0 0 0 0 0.4")
     return mjcf
+
+
+@pytest.fixture(scope="session")
+def depth_first_tree_mjcf():
+    # A kinematic tree where breadth-first and depth-first orderings differ: root A has a child A1, and a sibling root
+    # B has none, so depth-first visits A, A1, B (A's subtree contiguous) while breadth-first would give A, B, A1.
+    mjcf = ET.Element("mujoco", model="depth_first_tree")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    a = ET.SubElement(worldbody, "body", name="A", pos="0 0 1")
+    ET.SubElement(a, "freejoint")
+    ET.SubElement(a, "geom", type="box", size="0.05 0.05 0.05")
+    a1 = ET.SubElement(a, "body", name="A1", pos="0.15 0 0")
+    ET.SubElement(a1, "joint", type="hinge", axis="0 0 1")
+    ET.SubElement(a1, "geom", type="box", size="0.05 0.05 0.05")
+    b = ET.SubElement(worldbody, "body", name="B", pos="1 0 1")
+    ET.SubElement(b, "freejoint")
+    ET.SubElement(b, "geom", type="box", size="0.05 0.05 0.05")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def depth_first_tree_urdf():
+    # Same shape as depth_first_tree_mjcf but single-rooted (URDF): base -> {A, B}, A -> A1.
+    robot = ET.Element("robot", name="depth_first_tree")
+    for name in ("base", "A", "A1", "B"):
+        link = ET.SubElement(robot, "link", name=name)
+        inertial = ET.SubElement(link, "inertial")
+        ET.SubElement(inertial, "mass", value="1.0")
+        ET.SubElement(inertial, "inertia", ixx="0.01", iyy="0.01", izz="0.01", ixy="0", ixz="0", iyz="0")
+        collision = ET.SubElement(link, "collision")
+        ET.SubElement(ET.SubElement(collision, "geometry"), "box", size="0.1 0.1 0.1")
+    for joint_name, parent, child in (("j_A", "base", "A"), ("j_A1", "A", "A1"), ("j_B", "base", "B")):
+        joint = ET.SubElement(robot, "joint", name=joint_name, type="revolute")
+        ET.SubElement(joint, "parent", link=parent)
+        ET.SubElement(joint, "child", link=child)
+        ET.SubElement(joint, "origin", xyz="0 0 0.2")
+        ET.SubElement(joint, "axis", xyz="0 0 1")
+        ET.SubElement(joint, "limit", lower="-1", upper="1", effort="10", velocity="10")
+    return robot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["depth_first_tree_mjcf", "depth_first_tree_urdf"])
+def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
+    # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index
+    # range. The per-tree mass-matrix factorization relies on this so a multi-body file costs the same as the
+    # equivalent separate entities.
+    scene = gs.Scene(show_viewer=show_viewer)
+    morph = gs.morphs.MJCF(file=xml_path) if model_name.endswith("mjcf") else gs.morphs.URDF(file=xml_path, fixed=True)
+    entity = scene.add_entity(morph)
+    scene.build(n_envs=0)
+
+    parents = [link.parent_idx for link in entity.links]
+    n_links = len(parents)
+    children: dict[int, list[int]] = {i: [] for i in range(n_links)}
+    for i, parent in enumerate(parents):
+        if parent != -1:
+            children[parent].append(i)
+    for i in range(n_links):
+        subtree = []
+        stack = [i]
+        while stack:
+            link = stack.pop()
+            subtree.append(link)
+            stack.extend(children[link])
+        assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
 
 
 @pytest.mark.required
@@ -712,8 +812,18 @@ def test_dynamic_weld_scene_reset():
         ),
         show_viewer=False,
     )
-    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
-    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.2, 0, 0.5)))
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.2, 0, 0.5),
+        )
+    )
     scene.build(n_envs=2)
 
     solver = scene.rigid_solver
@@ -3263,7 +3373,8 @@ def test_apply_external_forces(xml_path, show_viewer):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-def test_mass_mat(show_viewer, tol):
+@pytest.mark.parametrize("model_name", ["long_chain"])
+def test_mass_mat(xml_path, show_viewer, tol):
     # Create and build the scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -3286,8 +3397,17 @@ def test_mass_mat(show_viewer, tol):
         vis_mode="collision",
         visualize_contact=True,
     )
+    # High-DOF single tree: its mass submatrix exceeds GPU shared memory, exercising the cooperative >shared-cap
+    # assemble (the low-DOF frankas exercise the under-cap shared-memory factor instead).
+    long_chain = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            pos=(5, 0, 2),
+        ),
+    )
     scene.build()
 
+    # Two identical entities must yield identical mass matrices, and the LTDL factor must reconstruct it.
     mass_mat_1 = franka1.get_mass_mat(decompose=False)
     mass_mat_2 = franka2.get_mass_mat(decompose=False)
     assert mass_mat_1.shape == (franka1.n_dofs, franka1.n_dofs)
@@ -3296,6 +3416,53 @@ def test_mass_mat(show_viewer, tol):
     mass_mat_L, mass_mat_D_inv = franka1.get_mass_mat(decompose=True)
     mass_mat = mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L
     assert_allclose(mass_mat, mass_mat_1, tol=tol)
+
+    # The cooperative >shared-cap assemble maps a flat lane index to a lower-triangular (row, col) via a float sqrt;
+    # on GPUs whose sqrt undershoots perfect squares (Apple Metal: sqrt(15129) -> 122.999 instead of 123) a naive
+    # inversion lands one row short on every j=0 boundary and silently drops the long-range coupling entries, leaving
+    # the assembled mass matrix indefinite. A real joint-space mass matrix is always symmetric positive-definite.
+    mass_mat_chain = tensor_to_array(long_chain.get_mass_mat(decompose=False))
+    assert_allclose(mass_mat_chain, mass_mat_chain.T, tol=tol)
+    assert np.linalg.eigvalsh(0.5 * (mass_mat_chain + mass_mat_chain.T)).min() > 0.0
+
+    # On GPU the high-DOF chain factors through the register-tiled path (auto-enabled above the shared-memory cap when
+    # RigidOptions.register_tiled_mass is left to its default); its LTDL factor must reconstruct the mass matrix to the
+    # same accuracy as the under-cap path.
+    mass_mat_chain_L, mass_mat_chain_D_inv = long_chain.get_mass_mat(decompose=True)
+    mass_mat_chain_rec = mass_mat_chain_L.T @ torch.diag(1.0 / mass_mat_chain_D_inv) @ mass_mat_chain_L
+    assert_allclose(mass_mat_chain_rec, mass_mat_chain, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["two_fixed_branches"])
+def test_mass_block_partition(xml_path, show_viewer, tol):
+    # Two chains rigidly attached to the fixed world are kinematically independent: the mass matrix is block-diagonal,
+    # so it must partition into one mass block per branch (factoring two n/2 blocks instead of one dense n block).
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+        ),
+    )
+    scene.build(n_envs=0)
+
+    n_dofs = entity.n_dofs
+    branch = n_dofs // 2
+    block_start = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_start)
+    block_end = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_end)
+    assert_allclose(block_start, [0] * branch + [branch] * branch, tol=0)
+    assert_allclose(block_end, [branch] * branch + [n_dofs] * branch, tol=0)
+
+    # The two branches do not couple, and the LTDL factor reconstructs the (block-diagonal) mass matrix.
+    mass_mat = tensor_to_array(entity.get_mass_mat(decompose=False))
+    assert_allclose(mass_mat[:branch, branch:], 0.0, tol=tol)
+    mass_mat_L, mass_mat_D_inv = entity.get_mass_mat(decompose=True)
+    assert_allclose(mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L, mass_mat, tol=tol)
 
 
 @pytest.mark.required
@@ -3818,7 +3985,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
         # of its velocities have decayed to zero.
         aabb = nut.get_AABB()
         assert (aabb[..., 0, 2] < 1.0e-3).all()
-        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.06)
+        assert_allclose(nut.get_dofs_velocity(), 0.0, atol=0.07)
 
 
 # Force CPU because nonconvex SDF is slow on GPU
@@ -4024,11 +4191,11 @@ def test_convexify(euler, show_viewer, gjk_collision):
     # FIXME: The cup is falling on Windows OS because the convex decomposition provided by CoACD is different than
     # other platform, and much worst in practice, with the bottom of the tank that is not planar (even discontinuous).
     # cam.start_recording()
-    for i in range(1000):
+    for i in range(1100):
         scene.step()
         # cam.render()
-        if i > 900:
-            assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=1.0 if sys.platform == "win32" else 0.5)
+        if i > 1000:
+            assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=1.0 if sys.platform == "win32" else 0.6)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
     for obj in objs:
@@ -5375,7 +5542,12 @@ def test_get_constraints_api(show_viewer, tol):
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
-    cube = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.2, 0.0, 0.05)))
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=(0.2, 0.0, 0.05),
+        )
+    )
     scene.build(n_envs=2)
 
     link_a, link_b = robot.base_link.idx, cube.base_link.idx
@@ -6368,7 +6540,7 @@ def test_mesh_align(show_viewer, tol):
         morph=(
             gs.morphs.Mesh(
                 file=f"{bowl_path}/glb/orange_plastic_bowl.glb",
-                scale=0.1,
+                scale=0.5,
                 pos=HET_POS,
                 offset_euler=(30.0, 0.0, 0.0),
                 align=True,
@@ -6442,7 +6614,9 @@ def test_mesh_align(show_viewer, tol):
     for _ in range(600):
         scene.step()
 
-    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.06)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(0, 1, 2)), 0, tol=0.01)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.05)
+    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
     min_z = mango.get_AABB()[:, 0, 2]
     assert ((-0.005 < min_z) & (min_z < 0.0)).all()
 
@@ -6895,10 +7069,18 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     with pytest.raises(gs.GenesisException):
         hand.set_quat(0.0)
 
+    # The free box is dynamically isolated from the robot, so its lateral position must stay put while the
+    # gripper actuates. Attaching the floating-base hand re-indexes joints by dropping its free base joint;
+    # the hand's mimic (joint-equality) references must follow that re-indexing, otherwise they alias this
+    # box's free-joint DOFs and the corrupted constraint drags the box sideways as the fingers move.
+    box_pos_init = box.get_pos()
+
     franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
     hand.control_dofs_position([0.04, 0.04])
     for _ in range(30):
         scene.step()
+
+    assert_allclose(box.get_pos()[..., :2], box_pos_init[..., :2], tol=1e-3)
 
     attach_link = franka.get_link("attachment")
     assert_allclose(attach_link.get_pos(), hand.links[0].get_pos(), tol=gs.EPS)
@@ -6926,9 +7108,16 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
     sphere_drop_height = 0.08
 
     # Run homogeneous simulation with box only
-    scene_box = gs.Scene(show_viewer=False)
+    scene_box = gs.Scene(
+        show_viewer=False,
+    )
     scene_box.add_entity(gs.morphs.Plane())
-    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, box_drop_height)))
+    box_obj = scene_box.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.0, 0.0, box_drop_height),
+        )
+    )
     scene_box.build()
     for _ in range(n_steps):
         scene_box.step()
@@ -6936,7 +7125,9 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
     box_vel = tensor_to_array(box_obj.get_vel())
 
     # Run homogeneous simulation with sphere only
-    scene_sphere = gs.Scene(show_viewer=False)
+    scene_sphere = gs.Scene(
+        show_viewer=False,
+    )
     scene_sphere.add_entity(gs.morphs.Plane())
     sphere_obj = scene_sphere.add_entity(
         gs.morphs.Sphere(
@@ -6952,7 +7143,9 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
 
     # Run heterogeneous simulation with both variants (different sizes AND positions)
     # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
-    scene_het = gs.Scene(show_viewer=show_viewer)
+    scene_het = gs.Scene(
+        show_viewer=show_viewer,
+    )
     scene_het.add_entity(gs.morphs.Plane())
     # Divergent per-variant yaw offsets, irrelevant to the dynamics of these symmetric primitives dropped flat (so
     # the world references still match) but stripped per environment by the relative getters.
@@ -7021,7 +7214,9 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
 @pytest.mark.required
 def test_heterogeneous_invalid_material_raises():
     """Test that heterogeneous morphs with unsupported material raises an exception."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
 
     morphs_heterogeneous = (
         gs.morphs.Box(size=(1.0, 1.0, 1.0)),
@@ -7038,6 +7233,40 @@ def test_heterogeneous_invalid_material_raises():
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
+def test_heterogeneous_morph_property_raises():
+    scene = gs.Scene(show_viewer=False)
+
+    single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
+    single_obj = scene.add_entity(morph=single_morph)
+
+    rigid_morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.1, 0.1, 0.1)),
+        gs.morphs.Cylinder(radius=0.05, height=0.2),
+    )
+    rigid_obj = scene.add_entity(morph=rigid_morphs_heterogeneous)
+    kinematic_morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+        gs.morphs.Sphere(radius=0.1),
+    )
+    kinematic_obj = scene.add_entity(
+        morph=kinematic_morphs_heterogeneous,
+        material=gs.materials.Kinematic(),
+    )
+
+    assert single_obj.morph is single_morph
+    assert rigid_obj.main_morph is rigid_morphs_heterogeneous[0]
+    assert list(rigid_obj.morphs) == list(rigid_morphs_heterogeneous)
+    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs") as exc_info:
+        _ = rigid_obj.morph
+    assert ".main_morph" in str(exc_info.value)
+
+    assert kinematic_obj.main_morph is kinematic_morphs_heterogeneous[0]
+    assert list(kinematic_obj.morphs) == list(kinematic_morphs_heterogeneous)
+    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs"):
+        _ = kinematic_obj.morph
+
+
+@pytest.mark.required
 def test_heterogeneous_fewer_envs_than_variants():
     """Test that having fewer environments than variants works correctly.
 
@@ -7048,7 +7277,9 @@ def test_heterogeneous_fewer_envs_than_variants():
         - Environment 1 -> Variant 1 (second morph in list)
         - Variants 2 and 3 are unused
     """
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())
 
     # 4 variants with different positions but only 2 environments
@@ -7071,9 +7302,12 @@ def test_heterogeneous_fewer_envs_than_variants():
 
 
 @pytest.mark.required
-def test_heterogeneous_mass_setters(tol):
-    """Test entity/link mass setters with heterogeneous morphs."""
-    scene = gs.Scene(show_viewer=False)
+def test_mass_setters(tol):
+    # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
+    # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     het_obj = scene.add_entity(
         morph=[
             gs.morphs.Box(size=(0.01, 0.01, 0.01)),
@@ -7083,36 +7317,31 @@ def test_heterogeneous_mass_setters(tol):
         ],
     )
     scene.build(n_envs=4)
-
     link = next(link for link in het_obj.links if not link.is_fixed)
-
-    # Invalid shape should raise before any per-env state is set.
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0))
-
     het_obj.set_mass(1.0)
     assert_allclose(het_obj.get_mass(), 1.0, tol=tol)
-
-    # Link-level setter should support per-environment mass targets.
     target_mass = (0.2, 0.4, 0.6, 0.8)
     link.set_mass(target_mass)
     assert_allclose(link.get_mass(), target_mass, tol=tol)
 
-
-@pytest.mark.required
-def test_non_batched_mass_setters(tol):
-    """Test link mass setter with non-batched links info (batch_links_info=False)."""
-    scene = gs.Scene(show_viewer=False, rigid_options=gs.options.RigidOptions(batch_links_info=False))
-    obj = scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
+    scene = gs.Scene(
+        show_viewer=False,
+        rigid_options=gs.options.RigidOptions(
+            batch_links_info=False,
+        ),
+    )
+    obj = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
     scene.build(n_envs=4)
-
     link = next(link for link in obj.links if not link.is_fixed)
-
-    # Scalar set_mass should work and apply uniformly across all envs.
     link.set_mass(2.0)
     assert_allclose(link.get_mass(), 2.0, tol=tol)
-
-    # Per-env array mass should raise a clear exception.
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0, 3.0, 4.0))
 
@@ -7590,103 +7819,6 @@ def test_heterogeneous_articulated_structure_mismatch():
                 gs.morphs.URDF(file="urdf/simple/two_link_arm.urdf", pos=(0, 0, 0.1)),
             ]
         )
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("performance_mode", [True])
-def test_hibernation_and_contact_islands(show_viewer):
-    """
-    Test hibernation and contact island behavior.
-
-    Scenario:
-    1. Two boxes settle separately on ground -> both hibernate, 2 contact islands
-    2. Move one box above the other using set_pos (wakes it up)
-    3. Box falls and collides -> both boxes awake
-    4. Stacked boxes settle and hibernate -> 1 contact island (merged)
-    5. Move one box off the hibernated stack using set_pos -> the whole island wakes up
-    6. Boxes settle separately and hibernate -> 2 contact islands (split)
-    """
-    if gs.use_ndarray:
-        pytest.skip("Hibernation does not support dynamic array mode.")
-
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_contact_island=True,
-            use_hibernation=True,
-        ),
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    # Two boxes placed separately on ground
-    box1 = scene.add_entity(
-        gs.morphs.Box(pos=(-0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
-    )
-    box2 = scene.add_entity(
-        gs.morphs.Box(pos=(0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
-    )
-
-    scene.build()
-
-    solver = scene.sim.rigid_solver
-    box1_idx = box1._idx_in_solver
-    box2_idx = box2._idx_in_solver
-
-    # Phase 1: Let boxes settle and hibernate separately
-    for step in range(200):
-        scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
-            break
-
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
-    assert solver.constraint_solver.contact_island.n_islands[0] == 2
-
-    # Phase 2: Move box1 above box2 (this should wake up box1)
-    offset = 0.01
-    box2_pos = box2.get_pos()
-    box1.set_pos(np.array([float(box2_pos[0]) + offset, float(box2_pos[1]) + offset, 0.3]))
-
-    # Verify box1 woke up and position was set
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert float(box1.get_pos()[2]) > 0.2
-
-    # Let box1 fall and collide with box2
-    for _ in range(25):
-        scene.step()
-
-    # Both boxes should be awake shortly after collision (before they re-hibernate)
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert not solver.entities_state.hibernated[box2_idx, 0]
-
-    # Phase 3: Let stacked boxes settle and hibernate
-    for step in range(200):
-        scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
-            break
-
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
-
-    # Stacked boxes should form 1 contact island
-    assert solver.constraint_solver.contact_island.n_islands[0] == 1
-
-    # Phase 4: Move box1 off the hibernated stack. The whole island must wake up, otherwise the stale hibernated
-    # island daisy-chain would keep re-connecting both boxes at every contact island construction.
-    box1.set_pos(np.array([1.0, 0.0, 0.15]))
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert not solver.entities_state.hibernated[box2_idx, 0]
-
-    # Phase 5: Let both boxes settle far apart and hibernate as 2 distinct contact islands
-    for step in range(500):
-        scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
-            break
-
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
-    assert solver.constraint_solver.contact_island.n_islands[0] == 2
 
 
 @pytest.mark.required

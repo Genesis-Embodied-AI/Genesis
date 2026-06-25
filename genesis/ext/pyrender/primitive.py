@@ -86,6 +86,7 @@ class Primitive(object):
         double_sided=False,
         is_floor=False,
         env_shared=True,
+        active_envs=None,
     ):
         if mode is None:
             mode = GLTF.TRIANGLES
@@ -107,6 +108,9 @@ class Primitive(object):
         self.double_sided = double_sided
         self.is_floor = is_floor
         self.env_shared = env_shared
+        # Per-environment visibility mask (bool array of length n_rendered_envs) for heterogeneous geoms whose variant
+        # is only present in a subset of environments. None means the primitive is drawn in every environment.
+        self.active_envs = active_envs
 
         self._bounds = None
         self._bounds_0 = None

@@ -111,7 +111,14 @@ class RigidGlobalInfo:
     mass_mat_L: qd.Tensor
     mass_mat_L_bw: qd.Tensor
     mass_mat_D_inv: qd.Tensor
+    mass_mat_tiled_scratch: qd.Tensor
     mass_mat_mask: qd.Tensor
+    # Per-DOF bounds of the contiguous, independently-factorable mass-matrix block the DOF belongs to (a kinematic
+    # tree, or merged trees whose DOF intervals interleave). The mass matrix is block-diagonal across these blocks, so
+    # the assemble/factor/solve restrict to [block_start, block_end) instead of the full entity DOF range - making a
+    # multi-tree entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent separate entities.
+    dofs_mass_block_start: qd.Tensor
+    dofs_mass_block_end: qd.Tensor
     meaninertia: qd.Tensor
     mass_parent_mask: qd.Tensor
     gravity: qd.Tensor
@@ -125,7 +132,6 @@ class RigidGlobalInfo:
     noslip_tolerance: qd.Tensor
     n_equalities: qd.Tensor
     n_candidate_equalities: qd.Tensor
-    hibernation_thresh_acc: qd.Tensor
     hibernation_thresh_vel: qd.Tensor
     EPS: qd.Tensor
 
@@ -144,6 +150,14 @@ def get_rigid_global_info(solver, kinematic_only):
         gs.raise_exception(
             f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
+
+    # Batch-first scratch for the register-tiled mass factor (qd.simt tile ops are batch-first, so the factorization
+    # cannot run in place on the batch-last mass_mat_L). Allocated only when that path is enabled, with the constraint
+    # Hessian's shape so nt_H can alias it (get_constraint_state) instead of allocating a second buffer; the factor only
+    # touches it before the constraint solve repopulates it in the same step. Empty otherwise.
+    mass_mat_tiled_scratch_shape = ()
+    if not kinematic_only and solver._static_rigid_sim_config.enable_register_tiled_mass:
+        mass_mat_tiled_scratch_shape = (_B, solver.n_dofs_, solver.n_dofs_)
 
     # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
     # layout=(2, 1, 0): i_d1 becomes innermost / stride-1, which coalesces consumer kernels whose lanes stride i_d1
@@ -180,7 +194,10 @@ def get_rigid_global_info(solver, kinematic_only):
             mass_mat_L=V(dtype=gs.qd_float, shape=()),
             mass_mat_L_bw=V(dtype=gs.qd_float, shape=()),
             mass_mat_D_inv=V(dtype=gs.qd_float, shape=()),
+            mass_mat_tiled_scratch=V(dtype=gs.qd_float, shape=()),
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
+            dofs_mass_block_start=V(dtype=gs.qd_int, shape=()),
+            dofs_mass_block_end=V(dtype=gs.qd_int, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
             substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
@@ -191,7 +208,6 @@ def get_rigid_global_info(solver, kinematic_only):
             noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
-            hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
         )
@@ -215,7 +231,10 @@ def get_rigid_global_info(solver, kinematic_only):
         mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
+        mass_mat_tiled_scratch=V(dtype=gs.qd_float, shape=mass_mat_tiled_scratch_shape),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
+        dofs_mass_block_start=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
+        dofs_mass_block_end=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
         mass_parent_mask=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._substep_dt),
         iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.iterations),
@@ -226,7 +245,6 @@ def get_rigid_global_info(solver, kinematic_only):
         noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.noslip_tolerance),
         n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._n_equalities),
         n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver.n_candidate_equalities_),
-        hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._hibernation_thresh_acc),
         hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._hibernation_thresh_vel),
         EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
     )
@@ -368,16 +386,18 @@ def get_constraint_state(constraint_solver, solver):
     dof_vec_layout = (1, 0) if batch_first else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update sweep.
-    # The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes its
-    # AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
+    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update
+    # sweep. The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes
+    # its AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
     # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
     noslip = solver._options.noslip_iterations > 0
     noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_decomposed else 1), noslip)
     efc_b_shape = maybe_shape((len_constraints_, _B if noslip_decomposed else 1), noslip)
-    jac_dofs_idx_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
-    jac_n_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
+    # The sparse-Jacobian representation is always active, so its index buffers are always allocated. The skyline DOF
+    # permutation/envelope buffers stay gated on sparse_solve (CPU-only skyline Cholesky).
+    jac_dofs_idx_shape = jac_shape
+    jac_n_dofs_shape = (len_constraints_, _B)
     sparse_dof_shape = maybe_shape((_B, solver.n_dofs_), constraint_solver.sparse_solve)
 
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
@@ -428,7 +448,14 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        nt_H=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
+        # When the register-tiled mass factor is on, reuse its scratch (rigid_global_info.mass_mat_tiled_scratch,
+        # allocated with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only
+        # writes it before the constraint solve repopulates it in the same step.
+        nt_H=(
+            solver._rigid_global_info.mass_mat_tiled_scratch
+            if solver._static_rigid_sim_config.enable_register_tiled_mass
+            else V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_))
+        ),
         nt_H_env_start=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_iperm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
@@ -593,69 +620,116 @@ def get_contact_cache(solver, n_possible_pairs):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class AggList:
+class IslandSlices:
+    # Per-(island, env) slices into a packed id array: island i_island's items are id[start[i_island, i_b] :
+    # start + n[i_island, i_b]]. curr is the write cursor the partition build advances while filling each slice; once
+    # built, curr == start + n. Indexed [n_entities, B] since an env has at most n_entities islands.
     curr: qd.Tensor
     n: qd.Tensor
     start: qd.Tensor
 
 
-def get_agg_list(solver):
+def get_slices(solver, is_active=True):
     _B = solver._B
-    n_entities = max(solver.n_entities, 1)
+    # An island is a dynamic component (a floating-base kinematic subtree), so there are at most n_links islands
+    # (each link can be its own component). Slices are therefore indexed by island in [0, n_links).
+    n_links = max(solver.n_links, 1)
 
-    return AggList(
-        curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+    return IslandSlices(
+        curr=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        n=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        start=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class ContactIslandState:
-    ci_edges: qd.Tensor
-    edge_id: qd.Tensor
-    constraint_list: qd.Tensor
-    constraint_id: qd.Tensor
-    entity_edge: AggList
-    island_col: AggList
-    island_hibernated: qd.Tensor
-    island_entity: AggList
-    entity_id: qd.Tensor
-    n_edges: qd.Tensor
+class IslandState:
+    # Union-find partition of LINKS into islands. An island is a dynamic component: a maximal set of links connected
+    # through the kinematic tree (a floating-base subtree) plus any contact/equality couplings. The union-find is over
+    # links, with kinematic edges (link <-> parent) added alongside contact/equality edges - so a single Genesis entity
+    # holding several free bodies (common in MJCF) splits into one island per free body, while an articulated body's
+    # links collapse to one island. links_island_idx is -1 for links whose component carries no dofs (fixed bodies),
+    # which are never solved. link_slices maps island -> link-idx slice in link_id; dof_slices maps island -> local-dof
+    # slice in dof_id (dof_id[local] -> global dof, ascending). The per-island Hessian block is assembled/factored at
+    # those global DOF rows/cols in constraint_state.nt_H (the dofs may be non-contiguous globally; the cooperative arm
+    # gathers them into a contiguous shared tile).
+    links_parent_idx: qd.Tensor
+    links_island_idx: qd.Tensor
     n_islands: qd.Tensor
-    n_stack: qd.Tensor
-    entity_island: qd.Tensor
-    stack: qd.Tensor
-    entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
+    link_slices: IslandSlices
+    link_id: qd.Tensor
+    dof_slices: IslandSlices
+    dof_id: qd.Tensor
+    dofs_island_idx: qd.Tensor
+    # Per-island skyline envelope: dof_env_start_local[dof_slices.start[i] + ld] is the smallest island-local column
+    # that can be structurally nonzero in local row ld of island i's Hessian block (from constraint supports and mass
+    # coupling). The per-island assembly, Cholesky factor and triangular solve visit only [env_start, ld], so a large
+    # island (e.g. a tall stack of bodies coupled into one island) factors with its band instead of densely. Defaults
+    # to 0 (dense) when uncomputed, so any path that does not fill it stays correct.
+    dof_env_start_local: qd.Tensor
+    contact_slices: IslandSlices
+    contact_id: qd.Tensor
+    constraint_slices: IslandSlices
+    constraint_id: qd.Tensor
+    # Per-constraint island label (-1 if the constraint touches no dof-island), resolved in parallel by the
+    # constraint scan so the serial per-island grouping can read it in O(1) instead of rescanning the Jacobian.
+    constraint_island_idx: qd.Tensor
+    # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every link is
+    # asleep, set by the partition build. hibernated_next_link is the per-link daisy chain that keeps a hibernated
+    # component together as one island across steps: sleeping bodies generate no live contacts, so the contact/equality
+    # union would otherwise fragment them (the kinematic edges still hold within a component). It is written at
+    # hibernation time, walked at wakeup, and re-unioned by the partition build before labeling.
+    is_hibernated: qd.Tensor
+    hibernated_next_link: qd.Tensor
+    # Compact (env, island) work-list for the cooperative per-island factor+solve. factor_worklist_size[0] is the total
+    # island count across all envs (atomic-built by the partition pass); factor_worklist_i_b / factor_worklist_i_island
+    # hold the env and island index of each work item. The cooperative kernel launches a static block grid and
+    # grid-strides over [0, size), so the block count does not scale with the env count - a small batch with many
+    # islands fans its islands out across blocks rather than serializing them inside a single block-per-env. Order is
+    # racy (atomic reservation), which is fine: islands are independent (block-diagonal Hessian) so the result does not
+    # depend on which block solves which island.
+    factor_worklist_i_b: qd.Tensor
+    factor_worklist_i_island: qd.Tensor
+    factor_worklist_size: qd.Tensor
 
 
-def get_contact_island_state(solver, collider):
+def get_island_state(solver, collider):
     _B = solver._B
+    n_links = max(solver.n_links, 1)
+    n_dofs = max(solver.n_dofs, 1)
+    # island_state is a kernel parameter, so it always exists, but every field is read only inside
+    # `qd.static(use_contact_island)` branches (the per-island Newton solve and the partition build). When islands are
+    # off the whole partition is dead, so each field collapses to a scalar (maybe_shape -> ()): the kernel param stays
+    # valid while the per-env arrays - which scale with n_links/n_dofs/n_contacts * n_envs - cost nothing. The
+    # per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), so island_state
+    # itself holds only the partition maps.
+    is_active = solver._use_contact_island
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
-    n_entities = max(solver.n_entities, 1)
-
-    # When hibernation is enabled, the island construction adds edges for hibernated entity chains
-    # in addition to contact edges. The chain construction is cyclic (last entity links back to first),
-    # so worst case: each entity contributes one hibernation edge, totaling n_entities hibernation edges.
-    max_hibernation_edges = n_entities if solver._use_hibernation else 0
-    max_edges = max_candidate_contacts + max_hibernation_edges
-
-    return ContactIslandState(
-        ci_edges=V(dtype=gs.qd_int, shape=(max_edges, 2, _B)),
-        edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
-        constraint_list=V(dtype=gs.qd_int, shape=(max_candidate_contacts, _B)),
-        constraint_id=V(dtype=gs.qd_int, shape=(max_candidate_contacts * 2, _B)),
-        entity_edge=get_agg_list(solver),
-        island_col=get_agg_list(solver),
-        island_hibernated=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        island_entity=get_agg_list(solver),
-        entity_id=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        n_edges=V(dtype=gs.qd_int, shape=(_B,)),
-        n_islands=V(dtype=gs.qd_int, shape=(_B,)),
-        n_stack=V(dtype=gs.qd_int, shape=(_B,)),
-        entity_island=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        stack=V(dtype=gs.qd_int, shape=(n_entities, _B)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(dtype=gs.qd_int, shape=(n_entities, _B)),
+    # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
+    # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
+    # candidate count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise
+    # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
+    n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
+    return IslandState(
+        links_parent_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        links_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        n_islands=V(dtype=gs.qd_int, shape=maybe_shape((_B,), is_active)),
+        link_slices=get_slices(solver, is_active),
+        link_id=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
+        dof_slices=get_slices(solver, is_active),
+        dof_id=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dofs_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dof_env_start_local=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        contact_slices=get_slices(solver, is_active),
+        contact_id=V(dtype=gs.qd_int, shape=maybe_shape((max_candidate_contacts, _B), is_active)),
+        constraint_slices=get_slices(solver, is_active),
+        constraint_id=V(dtype=gs.qd_int, shape=maybe_shape((n_constraints_max, _B), is_active)),
+        constraint_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_constraints_max, _B), is_active)),
+        is_hibernated=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
+        hibernated_next_link=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), solver._use_hibernation)),
+        factor_worklist_i_b=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
+        factor_worklist_i_island=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
+        factor_worklist_size=V(dtype=gs.qd_int, shape=maybe_shape((1,), is_active)),
     )
 
 
@@ -722,7 +796,7 @@ class ColliderState:
     contact_keep: qd.Tensor
     contact_hull_stack: qd.Tensor
     # Per-bucket lex sort permutation used by the cooperative dedup kernel
-    # (func_clamp_prune_and_sort_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_candidate_contacts because
+    # (func_clamp_prune_contacts_coop) for the phase-3 (u, v) lex sort. Sized to max_candidate_contacts because
     # each env writes its own permutation.
     contact_lex_idx: qd.Tensor
 
@@ -876,13 +950,14 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_nonconvex_nonterrain: bool
     # True when link-pair contact pruning can ever do useful work. False when every link has at most one convex geom and
     # no terrain is present (each (link_a, link_b) bucket then holds at most one geom-pair's contacts, capped at
-    # n_contacts_per_convex_pair, so the 2D hull is at best a marginal reduction), or when use_contact_island is True
-    # (the contact-island path consumes contact_data in physical layout and does not honor the sort_idx indirection).
-    # Lets us skip the pruning kernel call and its scratch buffers entirely.
+    # n_contacts_per_convex_pair, so the 2D hull is at best a marginal reduction). Lets us skip the pruning kernel call
+    # and its scratch buffers entirely. Composes with contact islands: pruning writes a logical permutation into
+    # contact_sort_idx and the island construction reads contacts through it, so pruning collapses the contacts first.
     has_prunable_contacts: bool
-    # True when func_clamp_prune_and_sort_contacts should also spatial-sort contacts by x-position. Gated by both
-    # narrowphase configuration (only meaningful when has_non_box_plane_convex_convex on GPU) and use_contact_island
-    # (the island path does not honor the resulting sort_idx permutation).
+    # True when contacts are ordered deterministically by position in add_inequality_constraints (per-island when
+    # use_contact_island, else a single global pass), making the contact order independent of the racy atomic_add
+    # narrowphase layout. Only meaningful when has_non_box_plane_convex_convex on GPU; disabled in autodiff (the
+    # gradient writeback indexes contacts by physical layout, so a non-identity permutation would misattach gradients).
     spatial_sort_supported: bool
     # maximum number of contact pairs per collision pair
     n_contacts_per_convex_pair: int
@@ -1451,6 +1526,7 @@ class DofsInfo:
     act_gain: qd.Tensor
     act_bias: qd.Tensor
     force_range: qd.Tensor
+    dof_length: qd.Tensor
 
 
 def get_dofs_info(solver):
@@ -1469,6 +1545,7 @@ def get_dofs_info(solver):
         act_gain=V(dtype=gs.qd_float, shape=shape),
         act_bias=V(dtype=gs.qd_vec3, shape=shape),
         force_range=V(dtype=gs.qd_vec2, shape=shape),
+        dof_length=V(dtype=gs.qd_float, shape=shape),
     )
 
 
@@ -1503,7 +1580,7 @@ class DofsState:
     ctrl_pos: qd.Tensor
     ctrl_vel: qd.Tensor
     ctrl_mode: qd.Tensor
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
 
 
 def get_dofs_state(solver):
@@ -1540,7 +1617,7 @@ def get_dofs_state(solver):
         ctrl_pos=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         ctrl_vel=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         ctrl_mode=V(dtype=gs.qd_int, shape=shape),
-        hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=shape),
     )
 
 
@@ -1591,7 +1668,8 @@ class LinksState:
     cfrc_coupling_ang: qd.Tensor
     cfrc_coupling_vel: qd.Tensor
     contact_force: qd.Tensor
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
+    awake_steps: qd.Tensor
 
 
 def get_links_state(solver):
@@ -1642,7 +1720,8 @@ def get_links_state(solver):
         cfrc_coupling_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cfrc_coupling_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         contact_force=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
-        hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=shape),
+        awake_steps=V(dtype=gs.qd_int, shape=shape),
     )
 
 
@@ -1828,7 +1907,7 @@ class GeomsState:
     verts_updated: qd.Tensor
     min_buffer_idx: qd.Tensor
     max_buffer_idx: qd.Tensor
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
     friction_ratio: qd.Tensor
 
 
@@ -1844,7 +1923,7 @@ def get_geoms_state(solver):
         verts_updated=V(dtype=gs.qd_bool, shape=shape),
         min_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
-        hibernated=V(dtype=gs.qd_int, shape=shape),
+        is_hibernated=V(dtype=gs.qd_int, shape=shape),
         friction_ratio=V(dtype=gs.qd_float, shape=shape),
     )
 
@@ -2109,12 +2188,12 @@ def get_entities_info(solver):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class EntitiesState:
-    hibernated: qd.Tensor
+    is_hibernated: qd.Tensor
 
 
 def get_entities_state(solver):
     return EntitiesState(
-        hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
+        is_hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
     )
 
 
@@ -2168,6 +2247,10 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     solver_type: int
     requires_grad: bool
     prefer_decomposed_solver: int = -1  # -1 = None (auto), 0 = False, 1 = True
+    use_contact_island: bool = False  # per-island Newton solve (gated; the legacy island solver is retired)
+    # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
+    # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
+    hibernation_min_steps: int = 10
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
@@ -2178,11 +2261,25 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
+    # Register-streaming tiled per-entity mass factor for the >shared-cap branch of func_factor_mass (GPU forward
+    # only). When True, each entity's single-mass-block submatrix factors in registers via the same TileNxN Cholesky
+    # primitive as the Hessian, instead of the shared-pivot cooperative LDL^T. Only enabled when every entity is a
+    # single mass block (the common case: one kinematic tree). The tile width is always 32: the path is only taken
+    # when the per-entity block exceeds shared memory, which on any real GPU means well over 48 DOFs.
+    enable_register_tiled_mass: bool = False
     # When True, the warm-start factor+solve in ``func_solve_init`` is dispatched through
     # ``func_cholesky_and_solve_fused_tiled`` (single kernel, L kept in shared memory) instead of the separate
     # ``func_cholesky_factor_direct_tiled`` + ``func_cholesky_solve_tiled`` pair. Requires
     # ``enable_tiled_cholesky_hessian`` for the fused kernel to be available.
     enable_fused_factor_solve_init: bool = False
+    # True exactly when the per-island Newton solve path is actually exercised: the partition drives the per-island
+    # Hessian factor, the per-island triangular solve, and the sparse jv / qfrc / Jaref. The whole-env Cholesky of the
+    # block-diagonal (by island) Hessian is the exact per-island result, and once the env dimension saturates the GPU
+    # the whole-env factor beats the per-island grid - so with islands ON but the whole-env Hessian fitting shared and
+    # no hibernation this is False and every per-island kernel takes the dense whole-env (islands-OFF) branch. It is
+    # True only when hibernation needs per-island skipping, or the whole-env Hessian does not fit shared (where the
+    # per-island blocks avoid the whole-env shared cap and cubic and the large-DOF sparse jv/qfrc beats dense).
+    enable_per_island_solve: bool = False
     # When True, the constraint solver uses the GPU subgroup-cooperative kernel variants (warp-cooperative linesearch
     # refinement, per-friction constraint builder, cooperative mass-matrix assembly), together with the batch-first
     # tensor layouts they expect, eg (_B, len_constraints_) for Jaref / efc_D / ... which unlocks coalesced cross-lane
@@ -2196,6 +2293,13 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     constraint_layout_batch_first: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
+    tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
+    # Number of persistent T-lane blocks the cooperative per-island factor+solve launches. The grid is static (for
+    # CUDA-graph capture) and the blocks grid-stride over the materialized (env, island) work-list, so the block count
+    # is decoupled from the env count: a small batch with many islands still spreads its islands across many blocks
+    # instead of serializing them inside one block-per-env. Sized to saturate the GPU (gpu_cores // tile_size) but no
+    # larger than the worst-case work-list (n_links * n_envs), so tiny problems do not launch idle blocks.
+    island_factor_n_blocks: int = 1
     max_n_links_per_entity: int = -1
     max_n_joints_per_link: int = -1
     max_n_dofs_per_joint: int = -1

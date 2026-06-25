@@ -373,7 +373,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         editor panel. Keyed by entity name; values are the kwargs forwarded to ``scene.add_entity``."""
         self._pending_entities_kwargs = {}
         for entity in self.scene.entities:
-            kwargs: dict[str, Any] = {"morph": entity.morph}
+            # A heterogeneous entity has multiple morph variants; capture them all so a rebuild reproduces every
+            # variant instead of collapsing the entity to its first morph.
+            if isinstance(entity, gs.engine.entities.KinematicEntity):
+                morph = tuple(entity.morphs) if len(entity.morphs) > 1 else entity.main_morph
+            else:
+                morph = entity.morph
+            kwargs: dict[str, Any] = {"morph": morph}
             # Carry the material and surface so a rebuild preserves the entity's solver (e.g. a Kinematic entity must
             # not silently become Rigid, the add_entity default). visualize_contact is rigid-only.
             if isinstance(entity, gs.engine.entities.KinematicEntity):

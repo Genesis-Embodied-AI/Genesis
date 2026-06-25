@@ -62,8 +62,8 @@ def func_check_collision_valid(
             I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
             I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-            if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+            if (links_state.is_hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                links_state.is_hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
             ):
                 is_valid = False
 
@@ -94,8 +94,8 @@ def func_collision_clear(
                 # Pair of hibernated-fixed links -> hibernated contact
                 # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
                 # once a new collision is detected
-                if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                    links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+                if (links_state.is_hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                    links_state.is_hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
@@ -196,7 +196,10 @@ def _func_broad_phase_sap(
             collider_state.first_time[i_b] = False
 
         else:
-            # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
+            # Warm start: refresh the sort-buffer extents from the current AABBs. Hibernated geoms do not move, so
+            # their entries stay valid and are skipped; refreshing the awake ones here (rather than relying solely
+            # on the hibernation decision kernel, which runs at substep end) ensures a body woken between substeps -
+            # e.g. by a state setter - is seen by the very next broad phase instead of lagging a step.
             if qd.static(not static_rigid_sim_config.use_hibernation):
                 for i in range(env_n_geoms * 2):
                     if collider_state.sort_buffer.is_max[i, i_b]:
@@ -207,6 +210,14 @@ def _func_broad_phase_sap(
                         collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[
                             collider_state.sort_buffer.i_g[i, i_b], i_b
                         ][axis]
+            else:
+                for i in range(env_n_geoms * 2):
+                    i_g = collider_state.sort_buffer.i_g[i, i_b]
+                    if not geoms_state.is_hibernated[i_g, i_b]:
+                        if collider_state.sort_buffer.is_max[i, i_b]:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
+                        else:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
 
         # insertion sort, which has complexity near O(n) for nearly sorted array
         for i in range(1, 2 * env_n_geoms):
@@ -295,7 +306,7 @@ def _func_broad_phase_sap(
                 n_active_awake = 0
                 n_active_hib = 0
                 for i in range(2 * env_n_geoms):
-                    is_incoming_geom_hibernated = geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
+                    is_incoming_geom_hibernated = geoms_state.is_hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
 
                     if not collider_state.sort_buffer.is_max[i, i_b]:
                         # both awake and hibernated geom check with active awake geoms

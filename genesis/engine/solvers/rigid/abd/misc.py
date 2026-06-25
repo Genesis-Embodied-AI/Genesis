@@ -6,52 +6,86 @@ import genesis.utils.geom as gu
 
 
 @qd.func
-def func_wakeup_entity_and_its_temp_island(
-    i_e,
+def linear_to_lower_tri(i_pair: qd.i32, strict: qd.template() = False):
+    """Convert a linear index into (row, col) of a lower-triangular matrix.
+
+    Maps i_pair -> (i_d1, i_d2) over the lower triangle in the order (0,0), (1,0), (1,1), (2,0), ...
+    (i_pair = i_d1 * (i_d1 + 1) / 2 + i_d2, i_d2 in [0, i_d1]). When ``strict`` the diagonal is excluded, mapping over
+    the strict lower triangle (1,0), (2,0), (2,1), (3,0), ... (i_pair = i_d1 * (i_d1 - 1) / 2 + i_d2, i_d2 in [0, i_d1)).
+
+    Uses a float sqrt with an integer post-correction to handle GPUs whose sqrt is not correctly rounded for perfect
+    squares (observed on Apple Metal where e.g. sqrt(11881) returns ~108.999 instead of 109). Without it the row index
+    lands one short on every j=0 boundary, silently dropping those matrix entries.
+    """
+    offset = qd.static(1.0 if strict else -1.0)
+    i_d1 = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * i_pair + 1, gs.qd_float)) + offset) / 2.0), qd.i32)
+    i_d2 = qd.i32(0)
+    if qd.static(strict):
+        if (i_d1 + 1) * i_d1 // 2 <= i_pair:
+            i_d1 = i_d1 + 1
+        i_d2 = i_pair - i_d1 * (i_d1 - 1) // 2
+    else:
+        if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
+            i_d1 = i_d1 + 1
+        i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+    return i_d1, i_d2
+
+
+@qd.func
+def func_wakeup_island(
+    i_island,
     i_b,
     entities_state: array_class.EntitiesState,
     entities_info: array_class.EntitiesInfo,
+    links_info: array_class.LinksInfo,
     dofs_state: array_class.DofsState,
     links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    contact_island_state: array_class.ContactIslandState,
+    island_state: array_class.IslandState,
+    static_rigid_sim_config: qd.template(),
 ):
-    # Note: Original function handled non-hibernated & fixed entities.
-    # Now, we require a properly hibernated entity to be passed in.
-    island_idx = contact_island_state.entity_island[i_e, i_b]
+    # Wake a hibernated component-island as a unit: every link in the island (and its DOFs and geoms) is revived and
+    # appended to the awake lists, and the owning entities' flags are cleared. Waking the whole island clears its
+    # daisy-chain links, which would otherwise keep re-connecting the woken links to their previous island at the next
+    # partition build.
+    if i_island >= 0:
+        for li in range(island_state.link_slices.n[i_island, i_b]):
+            link_ref = island_state.link_slices.start[i_island, i_b] + li
+            i_l = island_state.link_id[link_ref, i_b]
 
-    for ei in range(contact_island_state.island_entity.n[island_idx, i_b]):
-        entity_ref = contact_island_state.island_entity.start[island_idx, i_b] + ei
-        entity_idx = contact_island_state.entity_id[entity_ref, i_b]
+            # Atomically claim the link by clearing its hibernation flag and reading the previous value. Only the
+            # caller that observes the True->False transition appends it to the awake lists. A plain read-check-set
+            # would let several wake threads targeting the same link (redundant grid threads a backend may launch, or
+            # several triggers in one step) all pass the guard and append the link/DOFs once each, corrupting counts.
+            was_hibernated = qd.atomic_exchange(links_state.is_hibernated[i_l, i_b], 0)
 
-        is_entity_hibernated = entities_state.hibernated[entity_idx, i_b]
+            if was_hibernated:
+                island_state.hibernated_next_link[i_l, i_b] = -1
+                links_state.awake_steps[i_l, i_b] = 0
 
-        if is_entity_hibernated:
-            contact_island_state.entity_idx_to_next_entity_idx_in_hibernated_island[entity_idx, i_b] = -1
+                n_awake_links = qd.atomic_add(rigid_global_info.n_awake_links[i_b], 1)
+                rigid_global_info.awake_links[n_awake_links, i_b] = i_l
 
-            entities_state.hibernated[entity_idx, i_b] = False
-            n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
-            rigid_global_info.awake_entities[n_awake_entities, i_b] = entity_idx
+                link_I = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                n_dofs = links_info.n_dofs[link_I]
+                if n_dofs > 0:
+                    base_dof_idx = links_info.dof_start[link_I]
+                    base_awake_dof_idx = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
+                    for i in range(n_dofs):
+                        i_d = base_dof_idx + i
+                        dofs_state.is_hibernated[i_d, i_b] = False
+                        rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
 
-            n_dofs = entities_info.n_dofs[entity_idx]
-            base_entity_dof_idx = entities_info.dof_start[entity_idx]
-            base_awake_dof_idx = qd.atomic_add(rigid_global_info.n_awake_dofs[i_b], n_dofs)
-            for i in range(n_dofs):
-                i_d = base_entity_dof_idx + i
-                dofs_state.hibernated[i_d, i_b] = False
-                rigid_global_info.awake_dofs[base_awake_dof_idx + i, i_b] = i_d
+                for i_g in range(links_info.geom_start[link_I], links_info.geom_end[link_I]):
+                    geoms_state.is_hibernated[i_g, i_b] = False
 
-            n_links = entities_info.n_links[entity_idx]
-            base_entity_link_idx = entities_info.link_start[entity_idx]
-            base_awake_link_idx = qd.atomic_add(rigid_global_info.n_awake_links[i_b], n_links)
-            for i in range(n_links):
-                i_l = base_entity_link_idx + i
-                links_state.hibernated[i_l, i_b] = False
-                rigid_global_info.awake_links[base_awake_link_idx + i, i_b] = i_l
-
-            for i_g in range(entities_info.geom_start[entity_idx], entities_info.geom_end[entity_idx]):
-                geoms_state.hibernated[i_g, i_b] = False
+                # The entity owning this link now has an awake link; claim it for awake_entities exactly once.
+                i_e = links_info.entity_idx[link_I]
+                was_entity_hibernated = qd.atomic_exchange(entities_state.is_hibernated[i_e, i_b], 0)
+                if was_entity_hibernated:
+                    n_awake_entities = qd.atomic_add(rigid_global_info.n_awake_entities[i_b], 1)
+                    rigid_global_info.awake_entities[n_awake_entities, i_b] = i_e
 
 
 # --------------------------------------------------------------------------------------
@@ -73,27 +107,27 @@ def kernel_init_invweight(
     EPS = rigid_global_info.EPS[None]
 
     if qd.static(static_rigid_sim_config.batch_links_info):
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_l, i_b_ in qd.ndrange(links_info.parent_idx.shape[0], envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             for j in qd.static(range(2)):
                 if force_update or links_info.invweight[i_l, i_b][j] < EPS:
                     links_info.invweight[i_l, i_b][j] = links_invweight[i_b_, i_l, j]
     else:
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_l in range(links_info.parent_idx.shape[0]):
             for j in qd.static(range(2)):
                 if force_update or links_info.invweight[i_l][j] < EPS:
                     links_info.invweight[i_l][j] = links_invweight[i_l, j]
 
     if qd.static(static_rigid_sim_config.batch_dofs_info):
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_d, i_b_ in qd.ndrange(dofs_info.invweight.shape[0], envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             if force_update or dofs_info.invweight[i_d, i_b] < EPS:
                 dofs_info.invweight[i_d, i_b] = dofs_invweight[i_b_, i_d]
     else:
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_d in range(dofs_info.invweight.shape[0]):
             if force_update or dofs_info.invweight[i_d] < EPS:
                 dofs_info.invweight[i_d] = dofs_invweight[i_d]
@@ -167,20 +201,68 @@ def kernel_init_dof_fields(
         dofs_info.act_gain[I_d] = dofs_act_gain[i_d]
         dofs_info.entity_idx[I_d] = entity_idx[i_d]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         dofs_state.ctrl_mode[i_d, i_b] = gs.CTRL_MODE.FORCE
         dofs_state.ctrl_force[i_d, i_b] = gs.qd_float(0.0)
 
     if qd.static(static_rigid_sim_config.use_hibernation):
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_d, i_b in qd.ndrange(n_dofs, _B):
-            dofs_state.hibernated[i_d, i_b] = False
+            dofs_state.is_hibernated[i_d, i_b] = False
             rigid_global_info.awake_dofs[i_d, i_b] = i_d
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
         for i_b in range(_B):
             rigid_global_info.n_awake_dofs[i_b] = n_dofs
+
+
+@qd.kernel(fastcache=True)
+def kernel_reset_hibernation(
+    envs_idx: qd.types.ndarray(),
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
+    geoms_state: array_class.GeomsState,
+    entities_state: array_class.EntitiesState,
+    island_state: array_class.IslandState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    # Wake every body in the given envs and rebuild the compact awake lists. A scene whose state is set (reset or
+    # set_state) must resume fully awake: the restored positions and velocities are a discontinuity, and any body left
+    # hibernated would stay frozen and never be re-simulated. DOFs are gathered per link (so a DOF-less scene reports
+    # zero awake DOFs even though its DOF buffers are padded to at least one slot).
+    n_links = links_state.is_hibernated.shape[0]
+    n_geoms = geoms_state.is_hibernated.shape[0]
+    n_entities = entities_state.is_hibernated.shape[0]
+    max_islands = island_state.is_hibernated.shape[0]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        n_awake_dofs = 0
+        for i_l in range(n_links):
+            links_state.is_hibernated[i_l, i_b] = False
+            links_state.awake_steps[i_l, i_b] = 0
+            island_state.hibernated_next_link[i_l, i_b] = -1
+            rigid_global_info.awake_links[i_l, i_b] = i_l
+            link_I = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            for i_d_ in range(links_info.n_dofs[link_I]):
+                i_d = links_info.dof_start[link_I] + i_d_
+                dofs_state.is_hibernated[i_d, i_b] = False
+                rigid_global_info.awake_dofs[n_awake_dofs, i_b] = i_d
+                n_awake_dofs = n_awake_dofs + 1
+        rigid_global_info.n_awake_links[i_b] = n_links
+        rigid_global_info.n_awake_dofs[i_b] = n_awake_dofs
+        for i_g in range(n_geoms):
+            geoms_state.is_hibernated[i_g, i_b] = False
+        for i_e in range(n_entities):
+            entities_state.is_hibernated[i_e, i_b] = False
+            rigid_global_info.awake_entities[i_e, i_b] = i_e
+        rigid_global_info.n_awake_entities[i_b] = n_entities
+        for i_island in range(max_islands):
+            island_state.is_hibernated[i_island, i_b] = 0
 
 
 @qd.kernel(fastcache=True)
@@ -265,9 +347,9 @@ def kernel_init_link_fields(
         links_state.mass_shift[i_l, i_b] = 0.0
 
     if qd.static(static_rigid_sim_config.use_hibernation):
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_l, i_b in qd.ndrange(n_links, _B):
-            links_state.hibernated[i_l, i_b] = False
+            links_state.is_hibernated[i_l, i_b] = False
             rigid_global_info.awake_links[i_l, i_b] = i_l
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -385,13 +467,13 @@ def kernel_init_vert_fields(
         verts_info.verts_state_idx[i_v] = verts_state_idx[i_v]
         verts_info.is_fixed[i_v] = is_fixed[i_v]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_f in range(n_faces):
         for j in qd.static(range(3)):
             faces_info.verts_idx[i_f][j] = faces[i_f, j]
         faces_info.geom_idx[i_f] = verts_geom_idx[faces[i_f, 0]]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_ed in range(n_edges):
         edges_info.v0[i_ed] = edges[i_ed, 0]
         edges_info.v1[i_ed] = edges[i_ed, 1]
@@ -416,7 +498,7 @@ def kernel_init_vvert_fields(
     n_vverts = vverts.shape[0]
     n_vfaces = vfaces.shape[0]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_vv in range(n_vverts):
         for j in qd.static(range(3)):
             vverts_info.init_pos[i_vv][j] = vverts[i_vv, j]
@@ -425,7 +507,7 @@ def kernel_init_vvert_fields(
         vverts_info.vgeom_idx[i_vv] = vverts_vgeom_idx[i_vv]
         vverts_info.vverts_state_idx[i_vv] = vverts_state_idx[i_vv]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_vf in range(n_vfaces):
         for j in qd.static(range(3)):
             vfaces_info.vverts_idx[i_vf][j] = vfaces[i_vf, j]
@@ -469,7 +551,7 @@ def kernel_init_geom_fields(
     n_geoms = geoms_pos.shape[0]
     _B = geoms_state.friction_ratio.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g in range(n_geoms):
         for j in qd.static(range(3)):
             geoms_info.pos[i_g][j] = geoms_pos[i_g, j]
@@ -555,7 +637,7 @@ def kernel_init_geom_fields(
         geoms_init_AABB[i_g, 6] = qd.Vector([upper[0], upper[1], lower[2]], dt=gs.qd_float)
         geoms_init_AABB[i_g, 7] = qd.Vector([upper[0], upper[1], upper[2]], dt=gs.qd_float)
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g, i_b in qd.ndrange(n_geoms, _B):
         geoms_state.friction_ratio[i_g, i_b] = 1.0
 
@@ -576,7 +658,7 @@ def kernel_init_vgeom_fields(
 ):
     n_vgeoms = vgeoms_pos.shape[0]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_vg in range(n_vgeoms):
         for j in qd.static(range(3)):
             vgeoms_info.pos[i_vg][j] = vgeoms_pos[i_vg, j]
@@ -616,9 +698,8 @@ def kernel_init_entity_fields(
     static_rigid_sim_config: qd.template(),
 ):
     n_entities = entities_dof_start.shape[0]
-    _B = entities_state.hibernated.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e in range(n_entities):
         entities_info.dof_start[i_e] = entities_dof_start[i_e]
         entities_info.dof_end[i_e] = entities_dof_end[i_e]
@@ -636,9 +717,11 @@ def kernel_init_entity_fields(
         entities_info.is_local_collision_mask[i_e] = entities_is_local_collision_mask[i_e]
 
     if qd.static(static_rigid_sim_config.use_hibernation):
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        _B = entities_state.is_hibernated.shape[1]
+
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_e, i_b in qd.ndrange(n_entities, _B):
-            entities_state.hibernated[i_e, i_b] = False
+            entities_state.is_hibernated[i_e, i_b] = False
             rigid_global_info.awake_entities[i_e, i_b] = i_e
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -661,7 +744,7 @@ def kernel_init_equality_fields(
     n_equalities = equalities_eq_obj1id.shape[0]
     _B = equalities_info.eq_obj1id.shape[1]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_eq, i_b in qd.ndrange(n_equalities, _B):
         equalities_info.eq_obj1id[i_eq, i_b] = equalities_eq_obj1id[i_eq]
         equalities_info.eq_obj2id[i_eq, i_b] = equalities_eq_obj2id[i_eq]
@@ -800,7 +883,7 @@ def kernel_update_geoms_render_T(
 
     n_geoms = geoms_state.pos.shape[0]
     _B = geoms_state.pos.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_g, i_b in qd.ndrange(n_geoms, _B):
         geom_T = gu.qd_trans_quat_to_T(
             geoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], geoms_state.quat[i_g, i_b], EPS
@@ -823,7 +906,7 @@ def kernel_update_vgeoms_render_T(
 
     n_vgeoms = vgeoms_info.link_idx.shape[0]
     _B = links_state.pos.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_g, i_b in qd.ndrange(n_vgeoms, _B):
         geom_T = gu.qd_trans_quat_to_T(
             vgeoms_state.pos[i_g, i_b] + rigid_global_info.envs_offset[i_b], vgeoms_state.quat[i_g, i_b], EPS
