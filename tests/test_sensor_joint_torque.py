@@ -48,6 +48,7 @@ def _make_pendulum_xml(
     *,
     armature: float = 0.0,
     frictionloss: float = 0.0,
+    damping: float = 0.0,
 ) -> Path:
     """Write a single-link pendulum MJCF and return the file path."""
     mjcf = ET.Element("mujoco", model="pendulum")
@@ -63,6 +64,7 @@ def _make_pendulum_xml(
         axis="0 1 0",
         armature=str(armature),
         frictionloss=str(frictionloss),
+        damping=str(damping),
     )
     mass_body = ET.SubElement(arm, "body", name="mass", pos=f"0 0 -{PENDULUM_L}")
     ET.SubElement(mass_body, "geom", type="sphere", size="0.05", mass=str(PENDULUM_M))
@@ -77,6 +79,7 @@ def _build_scene(
     *,
     armature: float = 0.0,
     frictionloss: float = 0.0,
+    damping: float = 0.0,
     wall: bool = False,
 ):
     """Build a pendulum scene with an optional fixed wall obstacle.
@@ -89,7 +92,7 @@ def _build_scene(
     Entities must be added before scene.build(); frictionloss rank for the
     sensor is also fixed at build time, so frictionloss must be in the MJCF.
     """
-    xml_path = _make_pendulum_xml(tmp_path, armature=armature, frictionloss=frictionloss)
+    xml_path = _make_pendulum_xml(tmp_path, armature=armature, frictionloss=frictionloss, damping=damping)
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=DT),
         show_viewer=show_viewer,
@@ -316,3 +319,59 @@ def test_joint_torque_sensor_with_obstacle(backend, tmp_path, show_viewer):
             tol=EXACT_TOL,
             err_msg="tau_sensor != applied force tau_c in contact scenario",
         )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_joint_torque_sensor_with_damping(backend, tmp_path, show_viewer):
+    """With viscous damping: tau_sensor = tau_control − damping x vel = M_link·θ̈ + gravity_torque.
+
+    Viscous damping is a passive force (−damping x vel) applied at the joint.  The sensor
+    on the output shaft sees tau_control reduced by the damping contribution, which
+    must equal the physical Newton torque driving the link.
+    """
+    damping_coeff = 0.3  # N⋅m⋅s/rad
+    scene, pendulum, sensor = _build_scene(tmp_path, show_viewer, damping=damping_coeff)
+
+    pendulum.set_qpos([np.pi / 6])
+    tau_c = 3.0  # N⋅m — large enough that the pendulum keeps moving
+
+    vel_prev = pendulum.get_dofs_velocity()[0].item()
+
+    for _ in range(20):
+        theta_before = pendulum.get_dofs_position()[0].item()
+        pendulum.control_dofs_force([tau_c], [0])
+        scene.step()
+
+        vel_after = pendulum.get_dofs_velocity()[0].item()
+        qacc_num = (vel_after - vel_prev) / DT
+
+        tau_s = sensor.read()[0].item()
+        tau_ctrl = pendulum.get_dofs_control_force([0]).item()
+
+        # Physical joint torque (Newton ground truth).
+        tau_phys = PENDULUM_I * qacc_num + _gravity_torque(theta_before)
+        assert_allclose(
+            tau_s,
+            tau_phys,
+            tol=PHYS_TOL,
+            err_msg="tau_sensor != physical joint torque (with damping)",
+        )
+
+        # Direct formula: tau_sensor = tau_control − damping x vel_before_step.
+        tau_expected = tau_ctrl - damping_coeff * vel_prev
+        assert_allclose(
+            tau_s,
+            tau_expected,
+            tol=EXACT_TOL,
+            err_msg="tau_sensor != tau_control − damping·vel",
+        )
+
+        # When moving, damping reduces the torque reaching the link.
+        if vel_prev > 0.05:
+            assert tau_s < tau_ctrl, (
+                f"Expected tau_sensor < tau_control when moving forward with damping, "
+                f"got tau_sensor={tau_s:.4f} tau_control={tau_ctrl:.4f} vel={vel_prev:.4f}"
+            )
+
+        vel_prev = vel_after

@@ -59,7 +59,8 @@ class JointTorqueSensor(
     """
     Measures the torque transmitted from each actuator to its joint output shaft.
     Formula (derived from Newton's 3rd law at the gearbox interface):
-        tau_sensor = tau_control − I_arm · qacc + tau_frictionloss
+        tau_sensor = tau_control - I_arm x qacc + tau_frictionloss + tau_damping
+    where tau_damping = -damping x vel (viscous passive force).
     """
 
     def __init__(
@@ -117,14 +118,15 @@ class JointTorqueSensor(
         B = solver._B
         n_total = dofs.shape[0]
 
-        # tau_control: reconstructed PD/actuator output force per DOF
-        qf_control = solver.get_dofs_control_force(dofs)  # (n_dofs,) or (B, n_dofs)
-        if solver.n_envs == 0:
-            qf_control = qf_control.unsqueeze(0)  # (1, n_dofs)
+        # tau_control: actuator force cached during the solved step.
+        qf_control = qd_to_torch(solver.dofs_state.qf_applied, None, dofs, transpose=True, copy=True)
 
         # qacc: constraint-solved acceleration (NOT the pre-constraint dofs_state.acc)
         # qd field (n_scene_dofs, B); qd_to_torch with transpose=True → (B, n_dofs)
         qacc = qd_to_torch(solver.constraint_solver.qacc, None, dofs, transpose=True, copy=True)
+
+        # tau_damping: viscous passive force (-damping * vel), already computed in dofs_state.
+        qf_passive = qd_to_torch(solver.dofs_state.qf_passive, None, dofs, transpose=True, copy=True)
 
         # tau_frictionloss: Coulomb friction constraint forces (identity Jacobian rows).
         # Recompute ranks each step so they reflect runtime set_dofs_frictionloss() values.
@@ -146,4 +148,4 @@ class JointTorqueSensor(
         armature = solver.get_dofs_armature(dofs)
 
         # raw_data_T layout is (n_total_sensor_dofs, B); write the transposed result
-        raw_data_T.copy_((qf_control - armature * qacc + qfrc_fl).T)
+        raw_data_T.copy_((qf_control - armature * qacc + qfrc_fl + qf_passive).T)
