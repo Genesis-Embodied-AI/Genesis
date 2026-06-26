@@ -31,8 +31,8 @@ def _kernel_get_dofs_frictionloss_force(
     then frictionloss, then contact).  Their Jacobians are identity so efc_force[ne + rank, i_b]
     is exactly the DOF-space frictionloss force.  DOFs without frictionloss (rank == -1) get zero.
     """
-    for i_b, i_s in qd.ndrange(output.shape[0], fl_rank.shape[0]):
-        rank = fl_rank[i_s]
+    for i_b, i_s in qd.ndrange(output.shape[0], fl_rank.shape[1]):
+        rank = fl_rank[i_b, i_s]
         if rank >= 0:
             ne = constraint_state.n_constraints_equality[i_b]
             output[i_b, i_s] = constraint_state.efc_force[ne + rank, i_b]
@@ -131,12 +131,13 @@ class JointTorqueSensor(
         # tau_frictionloss: Coulomb friction constraint forces (identity Jacobian rows).
         # Recompute ranks each step so they reflect runtime set_dofs_frictionloss() values.
         all_fl = solver.get_dofs_frictionloss()  # (n_scene_dofs,) or (B, n_scene_dofs)
-        if all_fl.ndim == 2:
-            all_fl = all_fl[0]
-        has_fl = all_fl > gs.EPS
-        rank_all = torch.cumsum(has_fl.long(), dim=0) - 1
+        if all_fl.ndim == 1:
+            all_fl = all_fl.unsqueeze(0)  # (1, n_scene_dofs)
+        # Compute per-env ranks: each env may enable different DOFs when batch_dofs_info=True.
+        has_fl = all_fl > gs.EPS  # (B, n_scene_dofs)
+        rank_all = torch.cumsum(has_fl.long(), dim=1) - 1  # cumsum along DOF axis
         rank_all[~has_fl] = -1
-        fl_rank = rank_all[dofs].to(dtype=gs.tc_int)
+        fl_rank = rank_all[:, dofs].to(dtype=gs.tc_int)  # (B, n_sensor_dofs)
 
         qfrc_fl = torch.empty((B, n_total), dtype=gs.tc_float, device=gs.device)
         _kernel_get_dofs_frictionloss_force(
