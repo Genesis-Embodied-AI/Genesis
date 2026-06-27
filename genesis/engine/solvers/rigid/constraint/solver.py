@@ -5143,30 +5143,30 @@ def func_solve_iter(
         )
 
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            # Within a step jac, M and efc_D are fixed, so H changes between iters only through the active mask. The
-            # factor in nt_H is maintained accordingly: the first iter rebuilds (nt_H holds L seeded by func_solve_init
-            # for a possibly different active set); afterwards, if no constraint flipped active the matrix is identical
-            # and the factor is reused as-is. When a few constraints flipped, the skyline factor is updated by a rank-1
-            # update/downdate per changed constraint (whole-env or per-island; much cheaper than reassembling and
-            # re-factoring). A degenerate downdate or a large active-set change (> half the constraints) falls back to a
-            # direct rebuild, which `need_rebuild` selects through a single call site (it is a large function, and each
-            # call site is compiled separately). The dense path uses its own incremental rank-1 update.
+            # Within a step jac, M and efc_D are fixed, so H = M + J.T diag(D active) J depends only on the active mask;
+            # the linesearch only moves qacc, never H. func_solve_init already seeded the factor (nt_H holds L for the
+            # seed's active set, and update_constraint above set prev_active to it), so every iteration including the
+            # first is maintained incrementally: if no constraint flipped active the factor is reused as-is; if a few
+            # flipped, the skyline factor is updated by a rank-1 update/downdate per changed constraint (whole-env or
+            # per-island; much cheaper than reassembling and re-factoring). A degenerate downdate or a large active-set
+            # change (> half the constraints) falls back to a direct rebuild, which `need_rebuild` selects through a
+            # single call site (it is a large function, and each call site is compiled separately). The dense path uses
+            # its own incremental rank-1 update.
             if qd.static(static_rigid_sim_config.sparse_solve):
+                func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
+                n_changed = constraint_state.incr_n_changed[i_b]
                 need_rebuild = True
-                if it > 0:
-                    func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-                    n_changed = constraint_state.incr_n_changed[i_b]
-                    if n_changed == 0:
-                        need_rebuild = False
-                    elif n_changed * 2 <= constraint_state.n_constraints[i_b]:
-                        if qd.static(static_rigid_sim_config.sparse_envelope):
-                            need_rebuild = func_hessian_and_cholesky_factor_incremental_sparse_batch(
-                                i_b, constraint_state, rigid_global_info
-                            )
-                        elif qd.static(static_rigid_sim_config.enable_per_island_solve):
-                            need_rebuild = func_cholesky_factor_incremental_per_island_batch(
-                                i_b, island_state, constraint_state, rigid_global_info
-                            )
+                if n_changed == 0:
+                    need_rebuild = False
+                elif n_changed * 2 <= constraint_state.n_constraints[i_b]:
+                    if qd.static(static_rigid_sim_config.sparse_envelope):
+                        need_rebuild = func_hessian_and_cholesky_factor_incremental_sparse_batch(
+                            i_b, constraint_state, rigid_global_info
+                        )
+                    elif qd.static(static_rigid_sim_config.enable_per_island_solve):
+                        need_rebuild = func_cholesky_factor_incremental_per_island_batch(
+                            i_b, island_state, constraint_state, rigid_global_info
+                        )
                 if need_rebuild:
                     func_hessian_and_cholesky_factor_direct_batch(
                         i_b,
