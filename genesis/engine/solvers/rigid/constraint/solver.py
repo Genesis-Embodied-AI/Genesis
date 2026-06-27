@@ -1933,17 +1933,13 @@ def func_compute_island_envelope(
         i_c = island_state.constraint_id[con_base + i_lcon, i_b]
         col_min = n
         for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            i_dg = constraint_state.jac_dofs_idx[i_c, k_, i_b]
-            if qd.abs(constraint_state.jac[i_c, i_dg, i_b]) > EPS:
-                ld = island_state.dof_local_pos[i_dg, i_b]
-                if ld < col_min:
-                    col_min = ld
+            ld = island_state.dof_local_pos[constraint_state.jac_dofs_idx[i_c, k_, i_b], i_b]
+            if ld < col_min:
+                col_min = ld
         for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            i_dg = constraint_state.jac_dofs_idx[i_c, k_, i_b]
-            if qd.abs(constraint_state.jac[i_c, i_dg, i_b]) > EPS:
-                ld = island_state.dof_local_pos[i_dg, i_b]
-                if col_min < island_state.dof_env_start_local[dof_base + ld, i_b]:
-                    island_state.dof_env_start_local[dof_base + ld, i_b] = col_min
+            ld = island_state.dof_local_pos[constraint_state.jac_dofs_idx[i_c, k_, i_b], i_b]
+            if col_min < island_state.dof_env_start_local[dof_base + ld, i_b]:
+                island_state.dof_env_start_local[dof_base + ld, i_b] = col_min
 
     # Mass coupling: the kinematic-tree mask is directional (descendant -> ancestor) plus full intra-link, so check
     # both orientations. DOFs are ascending, so the first coupled lower column is the smallest.
@@ -2006,18 +2002,17 @@ def func_hessian_direct_batch(
             jac_n = constraint_state.jac_n_dofs[i_c, i_b]
             for i_d1_ in range(jac_n):
                 i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
-                if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
-                    for i_d2_ in range(i_d1_, jac_n):
-                        i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
-                        row = qd.max(i_d1, i_d2)
-                        col = qd.min(i_d1, i_d2)
-                        constraint_state.nt_H[i_b, row, col] = (
-                            constraint_state.nt_H[i_b, row, col]
-                            + constraint_state.jac[i_c, i_d1, i_b]
-                            * constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.efc_D[i_c, i_b]
-                            * constraint_state.active[i_c, i_b]
-                        )
+                for i_d2_ in range(i_d1_, jac_n):
+                    i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                    row = qd.max(i_d1, i_d2)
+                    col = qd.min(i_d1, i_d2)
+                    constraint_state.nt_H[i_b, row, col] = (
+                        constraint_state.nt_H[i_b, row, col]
+                        + constraint_state.jac[i_c, i_d1, i_b]
+                        * constraint_state.jac[i_c, i_d2, i_b]
+                        * constraint_state.efc_D[i_c, i_b]
+                        * constraint_state.active[i_c, i_b]
+                    )
         # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same component (one island), so
         # the block is dense over the island's gathered DOFs and never reaches another island's block. Iterating the
         # gathered dof_id (rather than an entity's contiguous range) keeps the add inside this island even when a
