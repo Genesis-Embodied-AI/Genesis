@@ -300,6 +300,9 @@ def func_build_islands(
             link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
             for i_d in range(links_info.dof_start[link_idx], links_info.dof_end[link_idx]):
                 island_state.dof_id[island_state.dof_slices.curr[i_island, i_b], i_b] = i_d
+                island_state.dof_local_pos[i_d, i_b] = (
+                    island_state.dof_slices.curr[i_island, i_b] - island_state.dof_slices.start[i_island, i_b]
+                )
                 island_state.dofs_island_idx[i_d, i_b] = i_island
                 island_state.dof_slices.curr[i_island, i_b] = island_state.dof_slices.curr[i_island, i_b] + 1
 

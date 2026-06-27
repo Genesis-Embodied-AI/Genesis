@@ -660,6 +660,10 @@ class IslandState:
     link_id: qd.Tensor
     dof_slices: IslandSlices
     dof_id: qd.Tensor
+    # Inverse of dof_id: dof_local_pos[d] is the local position of global DOF d within its island (dof_id is ascending,
+    # so dof_id[dof_slices.start[island] + dof_local_pos[d]] == d). Filled by the partition build; lets the per-island
+    # envelope iterate each constraint's own support (jac_dofs_idx) instead of scanning the whole island.
+    dof_local_pos: qd.Tensor
     dofs_island_idx: qd.Tensor
     # Per-island skyline envelope: dof_env_start_local[dof_slices.start[i] + ld] is the smallest island-local column
     # that can be structurally nonzero in local row ld of island i's Hessian block (from constraint supports and mass
@@ -718,6 +722,7 @@ def get_island_state(solver, collider):
         link_id=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
         dof_slices=get_slices(solver, is_active),
         dof_id=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dof_local_pos=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         dofs_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         dof_env_start_local=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         contact_slices=get_slices(solver, is_active),

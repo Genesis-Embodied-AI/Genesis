@@ -1924,17 +1924,25 @@ def func_compute_island_envelope(
     for ld in range(n):
         island_state.dof_env_start_local[dof_base + ld, i_b] = ld
 
-    # Constraint coupling: scanning the island's DOFs in ascending order, the first DOF a constraint touches is its
-    # smallest local column and bounds the envelope of every other DOF it touches.
+    # Constraint coupling: a constraint's smallest live (|jac| > EPS) local DOF bounds the envelope of every other live
+    # DOF it touches. Iterate the constraint's own support (jac_dofs_idx, mapped to island-local positions via
+    # dof_local_pos) rather than scanning the whole island - O(support) instead of O(island size). The |jac| > EPS test
+    # matches the whole-island scan it replaces and the assembly's outer guard, so DOFs that are structurally in the
+    # support but currently have a zero Jacobian column are excluded identically, keeping the envelope deterministic.
     for i_lcon in range(con_n):
         i_c = island_state.constraint_id[con_base + i_lcon, i_b]
         col_min = n
-        for ld in range(n):
-            i_dg = island_state.dof_id[dof_base + ld, i_b]
+        for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_dg = constraint_state.jac_dofs_idx[i_c, k_, i_b]
             if qd.abs(constraint_state.jac[i_c, i_dg, i_b]) > EPS:
-                if col_min == n:
+                ld = island_state.dof_local_pos[i_dg, i_b]
+                if ld < col_min:
                     col_min = ld
-                elif col_min < island_state.dof_env_start_local[dof_base + ld, i_b]:
+        for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+            i_dg = constraint_state.jac_dofs_idx[i_c, k_, i_b]
+            if qd.abs(constraint_state.jac[i_c, i_dg, i_b]) > EPS:
+                ld = island_state.dof_local_pos[i_dg, i_b]
+                if col_min < island_state.dof_env_start_local[dof_base + ld, i_b]:
                     island_state.dof_env_start_local[dof_base + ld, i_b] = col_min
 
     # Mass coupling: the kinematic-tree mask is directional (descendant -> ancestor) plus full intra-link, so check
