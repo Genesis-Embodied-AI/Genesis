@@ -41,7 +41,7 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
-WT_CACHE_VERSION = 3
+WT_CACHE_VERSION = 4
 
 
 def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:

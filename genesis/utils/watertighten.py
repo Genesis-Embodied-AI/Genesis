@@ -1125,6 +1125,86 @@ def _keep_outer_shell(verts: np.ndarray, faces: np.ndarray) -> Tuple[np.ndarray,
     )
 
 
+@nb.jit(nopython=True, cache=True)
+def _corner_root(parent: np.ndarray, corner: int) -> int:
+    """Path-halving find over the face-corner union-find."""
+    while parent[corner] != corner:
+        parent[corner] = parent[parent[corner]]
+        corner = parent[corner]
+    return corner
+
+
+@nb.jit(nopython=True, cache=True)
+def _glue_manifold_corners(
+    order: np.ndarray,
+    key_lo: np.ndarray,
+    key_hi: np.ndarray,
+    va: np.ndarray,
+    vb: np.ndarray,
+    corner0: np.ndarray,
+    corner1: np.ndarray,
+    n_corners: int,
+) -> np.ndarray:
+    """Union the two corners meeting at each endpoint of every manifold edge, then return each corner's root.
+
+    A corner is a (face, slot) pair indexed `3 * face + slot`. Corners are merged only across an edge shared by exactly
+    two faces; an edge incident to more than two faces (a self-touch pinch) glues nothing, so the sheets meeting there
+    keep distinct corners and become distinct vertices. `order` lexically sorts the directed half-edges by their
+    (lower, higher) endpoint so each undirected edge is a contiguous run.
+    """
+    parent = np.arange(n_corners)
+    n = order.shape[0]
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and key_lo[order[j]] == key_lo[order[i]] and key_hi[order[j]] == key_hi[order[i]]:
+            j += 1
+        if j - i == 2:
+            p = order[i]
+            q = order[i + 1]
+            for corner_p, corner_q in (
+                (corner0[p], corner0[q] if va[q] == va[p] else corner1[q]),
+                (corner1[p], corner0[q] if va[q] == vb[p] else corner1[q]),
+            ):
+                root_p = _corner_root(parent, corner_p)
+                root_q = _corner_root(parent, corner_q)
+                if root_p != root_q:
+                    parent[max(root_p, root_q)] = min(root_p, root_q)
+        i = j
+    for corner in range(n_corners):
+        parent[corner] = _corner_root(parent, corner)
+    return parent
+
+
+def _resolve_nonmanifold_edges(verts: np.ndarray, faces: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Un-weld self-touch pinches so every edge is shared by exactly two faces (edge-manifold).
+
+    Manifold dual contouring can still route two iso-surface sheets that pinch inside a single cell through one shared
+    vertex pair, leaving an edge incident to four faces. Splitting each vertex into one copy per connected fan of faces
+    (fans joined only across manifold edges) separates such sheets. Vertex positions are duplicated unchanged and no face
+    or winding is altered, so the divergence-theorem volume, center of mass and inertia are preserved exactly; only the
+    connectivity becomes 2-manifold.
+    """
+    n_f = faces.shape[0]
+    if n_f == 0:
+        return verts, faces
+    slot0 = np.array([0, 1, 2])
+    slot1 = np.array([1, 2, 0])
+    va = faces[:, slot0].reshape(-1)
+    vb = faces[:, slot1].reshape(-1)
+    base = (3 * np.arange(n_f, dtype=np.int64))[:, None]
+    corner0 = (base + slot0).reshape(-1)
+    corner1 = (base + slot1).reshape(-1)
+    key_lo = np.minimum(va, vb)
+    key_hi = np.maximum(va, vb)
+    order = np.lexsort((key_hi, key_lo))
+    parent = _glue_manifold_corners(order, key_lo, key_hi, va, vb, corner0, corner1, 3 * n_f)
+    unique_roots, new_index = np.unique(parent, return_inverse=True)
+    new_verts = verts[faces.reshape(-1)[unique_roots]]
+    new_faces = new_index.reshape(n_f, 3).astype(np.int32)
+    return np.ascontiguousarray(new_verts), np.ascontiguousarray(new_faces)
+
+
 def watertighten_mesh(
     verts: np.ndarray,
     faces: np.ndarray,
@@ -1164,6 +1244,7 @@ def watertighten_mesh(
     grad = _sdf_gradient(field, pitch)
     v, f = _extract_dual_contour_mesh(field, grad, alpha, pitch, origin)
     v, f = _keep_outer_shell(v, f)
+    v, f = _resolve_nonmanifold_edges(v, f)
     # One Newton step on the unsigned distance: snap each wrap vertex to the analytical `alpha`-isosurface of the source
     # mesh. Erases SDF-grid discretisation noise without changing topology - flat source regions stay flat in the wrap.
     _, _, closest = igl.point_mesh_squared_distance(v, verts, faces)
@@ -1186,5 +1267,22 @@ def watertighten_mesh(
     _, ray_idx, _ = src.ray.intersects_location(v, inward, multiple_hits=False)
     has_hit = np.zeros(v.shape[0], dtype=np.bool_)
     has_hit[ray_idx] = True
-    v[has_hit] = closest[has_hit]
-    return v, f
+    snapped = v.copy()
+    snapped[has_hit] = closest[has_hit]
+    # The snap pulls each bulk vertex onto its nearest source point, but two adjacent vertices can land on the same
+    # point, collapsing their edge to a degenerate (zero-area) face and spawning slivers around it. Undo the snap on
+    # any vertex whose move shrank an incident edge below a small fraction of its pre-snap length, iterating until no
+    # edge stays collapsed (each revert can only lengthen edges, so this terminates). Only snapped vertices revert, so
+    # the wrap stays watertight - reverting restores the pre-snap (alpha-iso) position, which is itself valid.
+    edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
+    pre_len = np.linalg.norm(v[edges[:, 0]] - v[edges[:, 1]], axis=1)
+    for _ in range(8):
+        cur_len = np.linalg.norm(snapped[edges[:, 0]] - snapped[edges[:, 1]], axis=1)
+        collapsed = edges[cur_len < 0.2 * np.maximum(pre_len, 1e-12)]
+        revert = np.unique(collapsed)
+        revert = revert[has_hit[revert]]
+        if revert.size == 0:
+            break
+        snapped[revert] = v[revert]
+        has_hit[revert] = False
+    return snapped, f
