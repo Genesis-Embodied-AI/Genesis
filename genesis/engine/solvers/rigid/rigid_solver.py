@@ -883,7 +883,6 @@ class RigidSolver(KinematicSolver):
                 ):
                     mass_parent_mask[i_d, j_d] = 1.0
                 j_l = self.links[j_l].parent_idx
-        self._rigid_global_info.mass_parent_mask.from_numpy(mass_parent_mask)
 
         # Partition each entity's DOFs into contiguous, independently-factorable blocks. M is block-diagonal between
         # DOFs whose links are not kinematic ancestor/descendant of one another, so the per-block bounds let the
@@ -908,6 +907,28 @@ class RigidSolver(KinematicSolver):
         for i_d in range(self.n_dofs_):
             block_end[block_start[i_d]] = i_d + 1
         block_end = block_end[block_start]
+
+        # An aligned free body whose only DOFs are its own free joint has a diagonal joint-space mass block, so zero its
+        # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it
+        # rotates) and the skyline envelope tighter. A DOF-bearing (articulated) descendant adds off-diagonal base
+        # coupling, so the block must be exactly the root's own DOFs for the diagonalization to be valid.
+        for link in self.links:
+            # 'aligned' already implies a free joint; the block bounds must additionally be exactly the link's own DOFs
+            # (no DOF-bearing ancestor or descendant), otherwise the coupled block is not diagonal.
+            if (
+                not link.aligned
+                or block_start[link.dof_start] != link.dof_start
+                or block_end[link.dof_start] != link.dof_end
+            ):
+                continue
+            for i_d in range(link.dof_start, link.dof_end):
+                for j_d in range(link.dof_start, link.dof_end):
+                    if i_d != j_d:
+                        mass_parent_mask[i_d, j_d] = 0.0
+                block_start[i_d] = i_d
+                block_end[i_d] = i_d + 1
+
+        self._rigid_global_info.mass_parent_mask.from_numpy(mass_parent_mask)
         self._rigid_global_info.dofs_mass_block_start.from_numpy(block_start)
         self._rigid_global_info.dofs_mass_block_end.from_numpy(block_end)
 

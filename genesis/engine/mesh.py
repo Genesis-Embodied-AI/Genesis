@@ -15,16 +15,24 @@ import genesis.utils.particle as pu
 import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
+from genesis.typing import Matrix3x3Type, Vec3FType
 from genesis.utils.misc import redirect_libc_stderr
 
 
+class InertialProperties(NamedTuple):
+    """A rigid body's intrinsic inertial: mass, center of mass 'com', and inertia tensor 'i' about that COM."""
+
+    mass: float
+    com: Vec3FType
+    i: Matrix3x3Type
+
+
 class MeshInertialInfo(NamedTuple):
-    """Mass properties of a mesh in its own frame; center_mass and moment_inertia are None for degenerate geometry."""
+    """A mesh's mass properties in its own frame at unit density: the volume and the corresponding intrinsic
+    'inertial', which is None for degenerate geometry that carries no well-defined mass distribution."""
 
     volume: float
-    mass: float
-    center_mass: "np.ndarray | None"
-    moment_inertia: "np.ndarray | None"
+    inertial: "InertialProperties | None"
 
 
 class Mesh(RBC):
@@ -306,13 +314,22 @@ class Mesh(RBC):
                 try:
                     tmesh = self._mesh if self._mesh.is_watertight else self._mesh.convex_hull
                     volume = float(tmesh.volume)
+                    if volume < 0.0:
+                        # Inward-facing winding gives a negative volume and inverted mass properties (e.g. a closed
+                        # terrain block, which bypasses watertighten since it is already watertight). Flip the mesh so
+                        # the inertia integral reflects the actual solid rather than estimating from an inverted one.
+                        tmesh = tmesh.copy()
+                        tmesh.invert()
+                        volume = -volume
                     center_mass = tmesh.center_mass
                 except QhullError:
                     volume, center_mass = 0.0, None
                 if volume > 0.0 and np.all(np.isfinite(center_mass)):
-                    self._inertial_info = MeshInertialInfo(volume, tmesh.mass, center_mass, tmesh.moment_inertia)
+                    self._inertial_info = MeshInertialInfo(
+                        volume, InertialProperties(tmesh.mass, center_mass, tmesh.moment_inertia)
+                    )
                 else:
-                    self._inertial_info = MeshInertialInfo(0.0, 0.0, None, None)
+                    self._inertial_info = MeshInertialInfo(0.0, None)
         return self._inertial_info
 
     def get_vert_adjacency(self):

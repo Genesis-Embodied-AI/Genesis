@@ -2013,14 +2013,17 @@ def func_hessian_direct_batch(
                         * constraint_state.efc_D[i_c, i_b]
                         * constraint_state.active[i_c, i_b]
                     )
-        # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same component (one island), so
-        # the block is dense over the island's gathered DOFs and never reaches another island's block. Iterating the
-        # gathered dof_id (rather than an entity's contiguous range) keeps the add inside this island even when a
-        # component's DOFs are non-contiguous (e.g. an entity whose free bodies interleave in DOF order).
+        # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same kinematic-tree block, which
+        # is a contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add
+        # by that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
+        # envelope: the envelope already includes mass coupling so block_start >= env_start, and entries below
+        # block_start are structurally zero mass. For an aligned free body the block is the diagonal, so only the
+        # diagonal mass is added; for articulated bodies the whole branch block is added.
         for i_d in range(n):
             i_dg = island_state.dof_id[dof_base + i_d, i_b]
-            env_i = island_state.dof_env_start_local[dof_base + i_d, i_b]
-            for j_d in range(env_i, i_d + 1):
+            mass_block_start = rigid_global_info.dofs_mass_block_start[i_dg]
+            mass_lo = island_state.dof_local_pos[mass_block_start, i_b]
+            for j_d in range(mass_lo, i_d + 1):
                 j_dg = island_state.dof_id[dof_base + j_d, i_b]
                 constraint_state.nt_H[i_b, i_dg, j_dg] = (
                     constraint_state.nt_H[i_b, i_dg, j_dg] + rigid_global_info.mass_mat[i_dg, j_dg, i_b]
