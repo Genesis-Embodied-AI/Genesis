@@ -1075,16 +1075,24 @@ def _estimate_feature_size(verts: np.ndarray, faces: np.ndarray) -> float:
 
 
 def _adaptive_params(verts: np.ndarray, faces: np.ndarray, aggressiveness: int):
-    """Pick alpha / pitch / max_cost from the input's estimated feature size, with a bbox-derived compute cap.
+    """Pick alpha / pitch / max_cost from the input's estimated feature size, with a bbox-derived compute floor.
 
-    `max_cost = (aggressiveness * alpha / 6)^2` is the empirical cost-to-aggressiveness mapping that produces visually
-    comparable output across asset sizes (aggressiveness=4 -> `max_cost ~ 1e-3` on a 22 m asset).
+    `pitch` tracks the feature size so the wrap resolution follows the geometry, bounded below by the compute floor
+    `bbox_diag / MAX_CELLS_AXIS`; the `MAX_ALPHA` offset cap only tightens it where the compute floor leaves room. This
+    keeps the wrap scale-invariant - a scaled-up input yields the scaled-up same wrap rather than a denser, more dented
+    one. `max_cost = (aggressiveness * alpha / 6)^2` is the empirical cost-to-aggressiveness mapping; it scales with
+    `alpha` so decimation strength stays consistent across asset sizes.
     """
     bbox_diag = np.linalg.norm(verts.max(axis=0) - verts.min(axis=0))
     feature_size = _estimate_feature_size(verts, faces)
     pitch_feature = max(MIN_PITCH_ABS, feature_size * PITCH_FEATURE_FRACTION)
     pitch_compute = bbox_diag / MAX_CELLS_AXIS
-    pitch = min(max(pitch_feature, pitch_compute), MAX_ALPHA / PITCH_RATIO)
+    # Cap the feature-driven pitch by the offset limit, but never below the compute floor. On a mesh large enough that
+    # `MAX_ALPHA / PITCH_RATIO` drops under `pitch_compute`, an absolute cap would force a grid finer than
+    # `MAX_CELLS_AXIS` (more cells, relatively less decimation, more sliver fans) and make the wrap scale-dependent: the
+    # same asset scaled up would come out denser and dented. Keeping the compute floor authoritative lets the offset
+    # grow with the mesh, so the wrap is scale-invariant (a scaled input gives the scaled-up same wrap).
+    pitch = max(pitch_compute, min(pitch_feature, MAX_ALPHA / PITCH_RATIO))
     alpha = pitch * PITCH_RATIO
     if pitch_compute > pitch_feature:
         gs.logger.warning(
