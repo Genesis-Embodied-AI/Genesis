@@ -3593,7 +3593,7 @@ def test_nonconvex_nonwatertight_collision(show_viewer):
             torch.tensor((0.39,)),
         )
     )
-    for _ in range(700):
+    for _ in range(750):
         scene.step()
 
     # The velocity is fairly large for boxes whose contact set is stable at keep changing (border of a cliff)
