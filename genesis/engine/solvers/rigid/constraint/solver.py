@@ -3185,70 +3185,121 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
 
 
 @qd.func
-def func_cholesky_factor_incremental_per_island_batch(
+def func_rank1_update_island_constraint(
     i_b,
+    i_island,
+    i_c,
     island_state: array_class.IslandState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ) -> bool:
-    """Per-island analogue of func_hessian_and_cholesky_factor_incremental_sparse_batch.
+    """Apply one constraint's rank-1 update/downdate to its island's Cholesky block of L, in place in nt_H.
 
-    Each changed constraint lies in a single island; its rank-1 update/downdate touches only that island's block of L
-    (stored in nt_H at the island's global DOF rows/cols, factored in place). The update runs over the island's local
-    DOF positions ascending (dof_id is ascending, so local order is global-DOF order = the factor's processing order),
-    bounded to the per-island skyline envelope (dof_env_start_local). nt_vec is the rank-1 working vector, indexed by
-    global DOF; it self-clears as columns are consumed and is zeroed up front so a degenerate break leaves it clean.
+    The update runs over the island's local DOF positions ascending (dof_id is ascending, so local order is global-DOF
+    order = the factor's processing order), bounded to the per-island skyline envelope (dof_env_start_local). nt_vec is
+    the rank-1 working vector, indexed by global DOF; it self-clears as columns are consumed (the caller zeroes the
+    island's entries once up front so a degenerate break leaves it clean). Returns whether the downdate went indefinite,
+    in which case the caller refactors the island directly.
     """
     EPS = rigid_global_info.EPS[None]
-    n_dofs = constraint_state.nt_H.shape[1]
-    n_islands = island_state.n_islands[i_b]
+    dof_base = island_state.dof_slices.start[i_island, i_b]
+    n = island_state.dof_slices.n[i_island, i_b]
+    sign = 1.0 if constraint_state.active[i_c, i_b] else -1.0
+    efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
 
-    for d in range(n_dofs):
-        constraint_state.nt_vec[d, i_b] = gs.qd_float(0.0)
+    for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+        gd = constraint_state.jac_dofs_idx[i_c, k_, i_b]
+        constraint_state.nt_vec[gd, i_b] = constraint_state.jac[i_c, gd, i_b] * efc_D_sqrt
 
     is_degenerated = False
-    for idx in range(constraint_state.incr_n_changed[i_b]):
-        i_c = constraint_state.incr_changed_idx[idx, i_b]
-        i_island = 0
-        if n_islands > 1:
-            i_island = island_state.constraint_island_idx[i_c, i_b]
-        dof_base = island_state.dof_slices.start[i_island, i_b]
-        n = island_state.dof_slices.n[i_island, i_b]
-        sign = 1.0 if constraint_state.active[i_c, i_b] else -1.0
-        efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
-
-        for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            gd = constraint_state.jac_dofs_idx[i_c, k_, i_b]
-            constraint_state.nt_vec[gd, i_b] = constraint_state.jac[i_c, gd, i_b] * efc_D_sqrt
-
-        for ld in range(n):
-            gk = island_state.dof_id[dof_base + ld, i_b]
-            vk = constraint_state.nt_vec[gk, i_b]
-            if qd.abs(vk) > EPS:
-                Lkk = constraint_state.nt_H[i_b, gk, gk]
-                tmp = Lkk * Lkk + sign * vk * vk
-                if tmp < EPS:
-                    is_degenerated = True
-                    break
-                r = qd.sqrt(tmp)
-                cinv = Lkk / r
-                c = r / Lkk
-                s = vk / Lkk
-                constraint_state.nt_H[i_b, gk, gk] = r
-                for jd in range(ld + 1, n):
-                    if island_state.dof_env_start_local[dof_base + jd, i_b] <= ld:
-                        gj = island_state.dof_id[dof_base + jd, i_b]
-                        constraint_state.nt_H[i_b, gj, gk] = (
-                            constraint_state.nt_H[i_b, gj, gk] + sign * s * constraint_state.nt_vec[gj, i_b]
-                        ) * cinv
-                        constraint_state.nt_vec[gj, i_b] = (
-                            c * constraint_state.nt_vec[gj, i_b] - s * constraint_state.nt_H[i_b, gj, gk]
-                        )
-                constraint_state.nt_vec[gk, i_b] = gs.qd_float(0.0)
-        if is_degenerated:
-            break
-
+    for ld in range(n):
+        gk = island_state.dof_id[dof_base + ld, i_b]
+        vk = constraint_state.nt_vec[gk, i_b]
+        if qd.abs(vk) > EPS:
+            Lkk = constraint_state.nt_H[i_b, gk, gk]
+            tmp = Lkk * Lkk + sign * vk * vk
+            if tmp < EPS:
+                is_degenerated = True
+                break
+            r = qd.sqrt(tmp)
+            cinv = Lkk / r
+            c = r / Lkk
+            s = vk / Lkk
+            constraint_state.nt_H[i_b, gk, gk] = r
+            for jd in range(ld + 1, n):
+                if island_state.dof_env_start_local[dof_base + jd, i_b] <= ld:
+                    gj = island_state.dof_id[dof_base + jd, i_b]
+                    constraint_state.nt_H[i_b, gj, gk] = (
+                        constraint_state.nt_H[i_b, gj, gk] + sign * s * constraint_state.nt_vec[gj, i_b]
+                    ) * cinv
+                    constraint_state.nt_vec[gj, i_b] = (
+                        c * constraint_state.nt_vec[gj, i_b] - s * constraint_state.nt_H[i_b, gj, gk]
+                    )
+            constraint_state.nt_vec[gk, i_b] = gs.qd_float(0.0)
     return is_degenerated
+
+
+@qd.func
+def func_factor_island_incremental_or_direct(
+    i_b,
+    i_island,
+    island_state: array_class.IslandState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Maintain one island's Cholesky factor for the current active set, choosing per island between an incremental
+    rank-1 update/downdate and a direct refactor.
+
+    One rank-1 update sweeps the island's skyline envelope at O(sum_span) (sum_span = total row span = envelope
+    nonzeros), so n_changed of them cost O(n_changed * sum_span); a direct refactor factors it at O(sum_span_sq)
+    (sum_span_sq = sum of squared row spans). Both costs are read straight off the envelope, so the decision compares
+    them directly - incremental while n_changed * sum_span < sum_span_sq - with no scene-tuned constant. The choice must
+    be per island, not on the env-wide flip count: the rebuild path refactors every island, so a global decision would
+    needlessly refactor quiescent islands whenever flips are spread thin across many of them (e.g. several separated
+    piles each toggling a single contact).
+    """
+    c_start = island_state.constraint_slices.start[i_island, i_b]
+    c_n = island_state.constraint_slices.n[i_island, i_b]
+
+    n_changed = 0
+    for k in range(c_n):
+        i_c = island_state.constraint_id[c_start + k, i_b]
+        if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
+            n_changed = n_changed + 1
+
+    if n_changed > 0:
+        dof_base = island_state.dof_slices.start[i_island, i_b]
+        n_isl_dofs = island_state.dof_slices.n[i_island, i_b]
+        # Estimate both costs from the skyline envelope: one rank-1 update sweeps the envelope at O(sum_span), a direct
+        # refactor factors it at O(sum_span_sq). Incremental wins while n_changed * sum_span < sum_span_sq, i.e. while
+        # n_changed stays below the flop-weighted effective bandwidth sum_span_sq / sum_span. No scene-tuned constant.
+        sum_span = gs.qd_float(0.0)
+        sum_span_sq = gs.qd_float(0.0)
+        for ld in range(n_isl_dofs):
+            row_span = gs.qd_float(ld - island_state.dof_env_start_local[dof_base + ld, i_b])
+            sum_span = sum_span + row_span
+            sum_span_sq = sum_span_sq + row_span * row_span
+        need_rebuild = gs.qd_float(n_changed) * sum_span > sum_span_sq
+        if not need_rebuild:
+            for ld in range(n_isl_dofs):
+                constraint_state.nt_vec[island_state.dof_id[dof_base + ld, i_b], i_b] = gs.qd_float(0.0)
+            for k in range(c_n):
+                i_c = island_state.constraint_id[c_start + k, i_b]
+                if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
+                    if func_rank1_update_island_constraint(
+                        i_b, i_island, i_c, island_state, constraint_state, rigid_global_info
+                    ):
+                        need_rebuild = True
+                        break
+        if need_rebuild:
+            func_hessian_direct_batch(
+                i_b, i_island, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            func_cholesky_factor_direct_batch(
+                i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
 
 
 @qd.func
@@ -5148,27 +5199,49 @@ def func_solve_iter(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             # Within a step jac, M and efc_D are fixed, so H = M + J.T diag(D active) J depends only on the active mask;
             # the linesearch only moves qacc, never H. func_solve_init already seeded the factor (nt_H holds L for the
-            # seed's active set, and update_constraint above set prev_active to it), so every iteration including the
-            # first is maintained incrementally: if no constraint flipped active the factor is reused as-is; if a few
-            # flipped, the skyline factor is updated by a rank-1 update/downdate per changed constraint (whole-env or
-            # per-island; much cheaper than reassembling and re-factoring). A degenerate downdate or a large active-set
-            # change (> half the constraints) falls back to a direct rebuild, which `need_rebuild` selects through a
-            # single call site (it is a large function, and each call site is compiled separately). The dense path uses
-            # its own incremental rank-1 update.
-            if qd.static(static_rigid_sim_config.sparse_solve):
+            # seed's active set, and update_constraint above set prev_active to it), so every iteration is maintained
+            # rather than rebuilt: if no constraint flipped active the factor is reused as-is; if a few flipped, the
+            # skyline factor is updated by a rank-1 update/downdate per changed constraint; a degenerate downdate or a
+            # large active-set change falls back to a direct refactor. The per-island path decides this per island (the
+            # refactor is per island, so a global decision would needlessly rebuild quiescent islands); the whole-env
+            # sparse path and the dense path decide on the env-wide flip count.
+            if qd.static(
+                static_rigid_sim_config.sparse_solve
+                and static_rigid_sim_config.enable_per_island_solve
+                and not static_rigid_sim_config.sparse_envelope
+            ):
+                for i_island in range(island_state.n_islands[i_b]):
+                    if qd.static(static_rigid_sim_config.use_hibernation):
+                        if island_state.is_hibernated[i_island, i_b]:
+                            continue
+                    func_factor_island_incremental_or_direct(
+                        i_b,
+                        i_island,
+                        island_state,
+                        entities_info,
+                        constraint_state,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                    )
+            elif qd.static(static_rigid_sim_config.sparse_solve):
                 func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
                 n_changed = constraint_state.incr_n_changed[i_b]
                 need_rebuild = True
                 if n_changed == 0:
                     need_rebuild = False
-                elif n_changed * 2 <= constraint_state.n_constraints[i_b]:
-                    if qd.static(static_rigid_sim_config.sparse_envelope):
+                elif qd.static(static_rigid_sim_config.sparse_envelope):
+                    # Same crossover as the per-island path, on the whole-env skyline (nt_H_env_start): incremental
+                    # beats a refactor while n_changed * sum_span < sum_span_sq (the flop-weighted effective bandwidth).
+                    n_dofs = constraint_state.nt_H.shape[1]
+                    sum_span = gs.qd_float(0.0)
+                    sum_span_sq = gs.qd_float(0.0)
+                    for p in range(n_dofs):
+                        row_span = gs.qd_float(p - constraint_state.nt_H_env_start[i_b, p])
+                        sum_span = sum_span + row_span
+                        sum_span_sq = sum_span_sq + row_span * row_span
+                    if gs.qd_float(n_changed) * sum_span <= sum_span_sq:
                         need_rebuild = func_hessian_and_cholesky_factor_incremental_sparse_batch(
                             i_b, constraint_state, rigid_global_info
-                        )
-                    elif qd.static(static_rigid_sim_config.enable_per_island_solve):
-                        need_rebuild = func_cholesky_factor_incremental_per_island_batch(
-                            i_b, island_state, constraint_state, rigid_global_info
                         )
                 if need_rebuild:
                     func_hessian_and_cholesky_factor_direct_batch(
