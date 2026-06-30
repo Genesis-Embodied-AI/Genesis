@@ -2992,6 +2992,44 @@ class RigidSolver(KinematicSolver):
         )
         return _tensor
 
+    def get_dofs_actuator_force(self, dofs_idx=None, envs_idx=None):
+        """
+        Generalized effort transmitted to each DOF at the actuator output (torque for revolute DOFs, force for
+        prismatic DOFs), accounting for the gearbox losses between the motor and the joint.
+
+        Computed as qf_applied - armature * qacc + qf_frictionloss + qf_passive: the commanded effort from
+        get_dofs_control_force minus the armature-inertia load, plus the dissipative frictionloss and passive damping
+        efforts. Contact, Coriolis and gravity loads are captured implicitly through the constraint-solved acceleration.
+        """
+        qf_applied = qd_to_torch(self.dofs_state.qf_applied, envs_idx, transpose=True)
+        qacc = qd_to_torch(self.constraint_solver.qacc, envs_idx, transpose=True)
+        qf_passive = qd_to_torch(self.dofs_state.qf_passive, envs_idx, transpose=True)
+        if self._options.batch_dofs_info:
+            armature = qd_to_torch(self.dofs_info.armature, envs_idx, transpose=True)
+            frictionloss = qd_to_torch(self.dofs_info.frictionloss, envs_idx, transpose=True)
+        else:
+            armature = qd_to_torch(self.dofs_info.armature, transpose=True)
+            frictionloss = qd_to_torch(self.dofs_info.frictionloss, transpose=True)
+
+        # Frictionloss constraint forces mapped back to DOF space. Frictionloss constraints occupy the contiguous block
+        # [n_constraints_equality, n_constraints_equality + n_constraints_frictionloss) of the constraint list and have
+        # an identity Jacobian, so `efc_force` at a frictionloss row is exactly the DOF-space frictionloss effort. The
+        # assembly loop appends them in ascending DOF order (it iterates links -> joints -> DOFs serially within each
+        # env, matching the global DOF numbering), so the k-th frictionloss row is the k-th DOF with nonzero
+        # frictionloss. Its row index is therefore `n_constraints_equality + rank`, with `rank` the running count of
+        # frictionloss-enabled DOFs (-1 for DOFs without frictionloss, which contribute zero).
+        efc_force = qd_to_torch(self.constraint_solver.efc_force, envs_idx, transpose=True)
+        n_constraints_equality = qd_to_torch(self.constraint_solver.n_constraints_equality, envs_idx)
+        has_frictionloss = frictionloss > gs.EPS
+        rank = torch.cumsum(has_frictionloss, dim=-1) - 1
+        gather_idx = (n_constraints_equality[:, None] + rank).clamp_(min=0)
+        qf_frictionloss = torch.gather(efc_force, 1, gather_idx) * has_frictionloss
+
+        actuator_force = qf_applied - armature * qacc + qf_frictionloss + qf_passive
+        if dofs_idx is not None:
+            actuator_force = actuator_force[indices_to_mask(None, dofs_idx)]
+        return actuator_force[0] if self.n_envs == 0 else actuator_force
+
     def get_dofs_force(self, dofs_idx=None, envs_idx=None):
         tensor = qd_to_torch(self.dofs_state.force, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor

@@ -1,22 +1,20 @@
 """
 Joint torque sensing on a Franka Emika Panda using the JointTorqueSensor.
 
-The sensor measures the torque at each actuator output shaft:
+The sensor measures the generalized effort at each actuator output shaft:
 
-    τ_sensor = τ_control − I_arm · q̈ + τ_frictionloss
+    actuator_force = tau_control - armature * qacc + tau_frictionloss + tau_damping
 
-In free space τ_sensor ≈ gravity + Coriolis load; when the arm presses against
-the wall box it also captures the contact reaction.
+In free space the reading is approximately the gravity + Coriolis load; when the arm presses against the wall box it
+also captures the contact reaction.
 
-Three live plots show, for joints J0, J2 and J4, the comparison between the
-control torque, the sensor reading and the gravity + Coriolis reference.
+Three live plots show, for joints J0, J1 and J2, the comparison between the control torque, the sensor reading and
+their difference.
 """
 
 import argparse
 import os
-import matplotlib.pyplot as plt
 
-import numpy as np
 import torch
 from tqdm import tqdm
 
@@ -40,61 +38,73 @@ def main():
 
     ########################## create a scene ##########################
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=args.timestep),
-        vis_options=gs.options.VisOptions(show_world_frame=False),
+        sim_options=gs.options.SimOptions(
+            dt=args.timestep,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=args.vis,
     )
 
     ########################## entities ##########################
     scene.add_entity(gs.morphs.Plane())
-    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    franka = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
 
-    # Fixed wall: the robot will press its end-effector into it in the second half.
-    scene.add_entity(gs.morphs.Box(pos=(0.60, 0.0, 0.50), size=(0.04, 0.30, 0.20), fixed=True))
+    # Fixed wall: the robot presses its end-effector into it in the second half.
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.60, 0.0, 0.50),
+            size=(0.04, 0.30, 0.20),
+            fixed=True,
+        ),
+    )
 
     end_effector = franka.get_link("hand")
     motors_dof = (0, 1, 2, 3, 4, 5, 6)
 
     ########################## sensor ##########################
-    torque_sensor = scene.add_sensor(
-        gs.options.sensors.JointTorqueSensor(
+    joint_torque = scene.add_sensor(
+        gs.sensors.JointTorque(
             entity_idx=franka.idx,
             dofs_idx_local=motors_dof,
         )
     )
 
     ########################## recording ##########################
-    # Three subplots, one per representative joint (J0, J1).
-    # Each subplot shows: control torque / sensor torque / difference.
+    # One subplot per representative joint (J0, J1, J2), each showing control torque / sensor torque / difference.
+    plotted_joints = range(3)
     channel_labels = ("tau_ctrl", "tau_sensor", "difference")
-    labels = {"J0": channel_labels, "J1": channel_labels, "J2": channel_labels}
+    labels = {f"J{i}": channel_labels for i in plotted_joints}
 
     def data_func():
-        tau_sensor = torque_sensor.read()
+        tau_sensor = joint_torque.read()
         tau_ctrl = franka.get_dofs_control_force(motors_dof)
-        return {
-            "J0": torch.stack([tau_ctrl[0], tau_sensor[0], tau_sensor[0] - tau_ctrl[0]]),
-            "J1": torch.stack([tau_ctrl[1], tau_sensor[1], tau_sensor[1] - tau_ctrl[1]]),
-            "J2": torch.stack([tau_ctrl[2], tau_sensor[2], tau_sensor[2] - tau_ctrl[2]]),
-        }
+        return {f"J{i}": torch.stack([tau_ctrl[i], tau_sensor[i], tau_sensor[i] - tau_ctrl[i]]) for i in plotted_joints}
 
     if args.vis:
         if IS_PYQTGRAPH_AVAILABLE:
             scene.start_recording(
                 data_func,
-                gs.recorders.PyQtLinePlot(title="JointTorqueSensor — Franka", labels=labels),
+                gs.recorders.PyQtLinePlot(title="JointTorqueSensor - Franka", labels=labels),
             )
         elif IS_MATPLOTLIB_AVAILABLE:
             gs.logger.info("pyqtgraph not found, falling back to matplotlib.")
             scene.start_recording(
                 data_func,
-                gs.recorders.MPLLinePlot(title="JointTorqueSensor — Franka", labels=labels, history_length=steps),
+                gs.recorders.MPLLinePlot(title="JointTorqueSensor - Franka", labels=labels, history_length=steps),
             )
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
@@ -102,23 +112,20 @@ def main():
     ########################## build ##########################
     scene.build()
 
-    franka.set_dofs_armature(np.full(franka.n_dofs, 1.0))
-    franka.set_dofs_frictionloss(np.full(franka.n_dofs, 10.0))
+    franka.set_dofs_armature(1.0)
+    franka.set_dofs_frictionloss(10.0)
 
-    franka.set_dofs_kp(np.array([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0]))
-    franka.set_dofs_kv(np.array([450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0]))
+    franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 100.0, 100.0])
+    franka.set_dofs_kv([450.0, 450.0, 350.0, 350.0, 200.0, 200.0, 200.0, 10.0, 10.0])
     franka.set_dofs_force_range(
-        np.array([-87.0, -87.0, -87.0, -87.0, -12.0, -12.0, -12.0, -100.0, -100.0]),
-        np.array([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0, 100.0, 100.0]),
+        [-87.0, -87.0, -87.0, -87.0, -12.0, -12.0, -12.0, -100.0, -100.0],
+        [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0, 100.0, 100.0],
     )
 
-    ee_quat = np.array([0.0, 1.0, 0.0, 0.0])
-    pos_hold = np.array([0.45, 0.0, 0.50])
-    qpos_hold = franka.inverse_kinematics(link=end_effector, pos=pos_hold, quat=ee_quat)
+    qpos_hold = franka.inverse_kinematics(link=end_effector, pos=[0.45, 0.0, 0.50], quat=[0.0, 1.0, 0.0, 0.0])
     franka.set_qpos(qpos_hold)
 
-    pos_push = np.array([0.70, 0.0, 0.50])
-    qpos_push = franka.inverse_kinematics(link=end_effector, pos=pos_push, quat=ee_quat)
+    qpos_push = franka.inverse_kinematics(link=end_effector, pos=[0.70, 0.0, 0.50], quat=[0.0, 1.0, 0.0, 0.0])
 
     ########################## simulate ##########################
     try:
@@ -131,8 +138,6 @@ def main():
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
         gs.logger.info("Simulation finished.")
-        if args.vis:
-            plt.show()
         scene.stop_recording()
 
 

@@ -4,7 +4,7 @@ from . import (
     contact_force,
     depth_camera,
     imu,
-    joint_torque_sensor,
+    joint_torque,
     kinematic_tactile,
     point_cloud_tactile,
     probe,
