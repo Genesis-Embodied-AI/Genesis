@@ -384,6 +384,18 @@ def get_constraint_state(constraint_solver, solver):
     # striding i_d in cooperative kernels become stride-1; the regression on 1T-per-(i_d, i_b) writers is patched on
     # a per-consumer basis under the same enable_cooperative_constraint_kernels flag.
     dof_vec_layout = (1, 0) if batch_first else None
+    # Rank-1 working vectors of the incremental Cholesky update, flattened slot-minor as [i_d * n_slots + i_u]: one
+    # slot per fused update on the CPU per-island path (func_rank_batch_update_island), a single slot elsewhere
+    # (indexing then reduces to [i_d]). Flat 2D so the buffer keeps the DOF-vec rank and layout on every backend.
+    nt_vec_n_slots = (
+        solver._static_rigid_sim_config.hessian_rank_update_batch
+        if (
+            constraint_solver.sparse_solve
+            and solver._static_rigid_sim_config.enable_per_island_solve
+            and not solver._static_rigid_sim_config.sparse_envelope
+        )
+        else 1
+    )
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update
@@ -447,7 +459,7 @@ def get_constraint_state(constraint_solver, solver):
         mv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_ * nt_vec_n_slots, _B), layout=dof_vec_layout),
         # When the register-tiled mass factor is on, reuse its scratch (rigid_global_info.mass_mat_tiled_scratch,
         # allocated with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only
         # writes it before the constraint solve repopulates it in the same step.
@@ -2271,6 +2283,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
+    # Number of rank-1 Cholesky updates fused into one column sweep by the CPU per-island incremental factor
+    # (func_rank_batch_update_island). Sizes the nt_vec slots and the static per-column unroll.
+    hessian_rank_update_batch: int = 8
     # Register-streaming tiled per-entity mass factor for the >shared-cap branch of func_factor_mass (GPU forward
     # only). When True, each entity's single-mass-block submatrix factors in registers via the same TileNxN Cholesky
     # primitive as the Hessian, instead of the shared-pivot cooperative LDL^T. Only enabled when every entity is a
