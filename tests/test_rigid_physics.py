@@ -4165,6 +4165,63 @@ def test_convexify(euler, show_viewer, gjk_collision):
             assert_allclose(obj_pos[:2], (OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5)), atol=6e-3)
 
 
+@pytest.mark.debug(False)  # Disable debug for speedup
+@pytest.mark.slow
+@pytest.mark.required
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_convexify_stress(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=8000,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file="meshes/tank.obj",
+            scale=5.0,
+            fixed=True,
+            euler=(90, 0, 90),
+        ),
+        vis_mode="collision",
+    )
+    assets = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
+    asset_files = {name: f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}" for name, xml in assets}
+    objs = []
+    for i in range(80):
+        gx, gy, gz = i % 4, (i // 4) % 4, i // 16
+        name = assets[(gx + gy + gz) % len(assets)][0]
+        objs.append(
+            scene.add_entity(
+                gs.morphs.MJCF(
+                    file=asset_files[name],
+                    pos=(gx * 0.1 - 0.15, gy * 0.13 - 0.19, 0.11 + gz * 0.12),
+                    euler=(90.0, 0.0, 0.0),
+                ),
+                vis_mode="collision",
+            )
+        )
+    scene.build()
+
+    # Wait for the pile to collapse and settle at rest
+    for i in range(1500):
+        scene.step()
+
+    # The pile has settled at rest, fully contained in the tank (no ground/tank penetration, no ejection).
+    for obj in objs:
+        # FIXME: There is spurious residual motion that prevents the objects from truly settling, which is problematic.
+        assert_allclose(obj.get_vel(), 0.0, atol=0.06)
+        assert_allclose(obj.get_ang(), 0.0, atol=2.0)
+        obj_pos = tensor_to_array(obj.get_pos())
+        np.testing.assert_array_less(-0.1, obj_pos[2])
+        np.testing.assert_array_less(obj_pos[2], 0.6)
+        np.testing.assert_array_less(np.linalg.norm(obj_pos[:2]), 0.5)
+
+
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.parametrize(
     "scene_kind, max_collision_pairs, max_contacts, error_pattern",
@@ -7080,8 +7137,6 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
 @pytest.mark.slow  # ~450s
 @pytest.mark.required
 def test_heterogeneous_physics_parity(show_viewer, tol):
-    # Uses the fixed-child mesh objects from 'test_convexify' (offset center of mass, distinct mass) so the per-env
-    # parity check exercises the inertia alignment, not just trivially-symmetric primitives.
     n_steps = 100
     drop_height = 0.2
     variants = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))

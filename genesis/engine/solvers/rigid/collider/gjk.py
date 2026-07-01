@@ -1274,7 +1274,7 @@ def func_safe_gjk(
     Montaut, Louis, et al. "Collision detection accelerated: An optimization perspective."
     https://arxiv.org/abs/2205.09663
     """
-    # Compute the initial tetrahedron using two random directions
+    # Compute the initial tetrahedron from 4 fixed-direction support queries
     init_flag = RETURN_CODE.SUCCESS
     gjk_state.simplex.nverts[i_b] = 0
     for i in range(4):

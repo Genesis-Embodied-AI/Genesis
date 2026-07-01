@@ -4,6 +4,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import support_field
+from .constants import CCD_EXTRAPOLATION_TOL, PORTAL_STATUS
 
 
 class MPR:
@@ -377,10 +378,8 @@ def mpr_find_penetration(
             pos_b,
             quat_b,
         )
-        if (
-            mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
-            or iterations > mpr_info.CCD_ITERATIONS[None]
-        ):
+        reached = mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
+        if reached or iterations > mpr_info.CCD_ITERATIONS[None]:
             # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
             # to the origin that lies inside the portal.
             # Let's consider the portal as an infinite plane rather than a face triangle. This makes sense because
@@ -414,6 +413,29 @@ def mpr_find_penetration(
             else:
                 penetration = direction.dot(mpr_state.simplex_support.v[1, i_b])
                 normal = -direction
+
+            # Classify the portal reliability by how far the origin's projection extrapolates beyond the portal
+            # triangle. b1,b2,b3 are the (unnormalized) barycentric coordinates of that projection; all >= 0 means the
+            # origin projects inside (exact depth, Thm 4.2 -> VALID). Outside, -min(b)/sum is the extrapolation as a
+            # fraction of the triangle: a small overshoot is a lower-bound estimate (Thm 4.3 -> DEGENERATED), a large
+            # one makes the infinite-plane depth an unreliable extrapolation (-> INVALID, refine with GJK). This is
+            # what actually matters, rather than the triangle's sliverness per se.
+            pv1 = mpr_state.simplex_support.v[1, i_b]
+            pv2 = mpr_state.simplex_support.v[2, i_b]
+            pv3 = mpr_state.simplex_support.v[3, i_b]
+            b1 = pv2.cross(pv3).dot(direction)
+            b2 = pv3.cross(pv1).dot(direction)
+            b3 = pv1.cross(pv2).dot(direction)
+            bsum = b1 + b2 + b3
+            min_b = qd.min(b1, qd.min(b2, b3))
+            if not reached:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # unconverged (hit the iteration cap)
+            elif min_b >= 0.0:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.VALID  # origin projects inside -> exact depth (Thm 4.2)
+            elif bsum > mpr_info.CCD_EPS[None] and (-min_b) <= qd.static(CCD_EXTRAPOLATION_TOL) * bsum:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED  # small overshoot -> lower bound (Thm 4.3)
+            else:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # extrapolates too far / degenerate -> unreliable
 
             is_col = True
             pos = mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_info, i_ga, i_gb, i_b)
@@ -727,9 +749,9 @@ def func_mpr_contact_from_centers(
     normal = gs.qd_vec3([0.0, 0.0, 0.0])
     penetration = gs.qd_float(0.0)
 
-    # Only the refined-portal path below leaves a usable contact-face portal in simplex_support; the degenerate
-    # touch/segment paths do not.
-    mpr_state.portal_valid[i_b] = False
+    # Default for the degenerate touch/segment paths (and refine failure): a contact with no reusable refined portal.
+    # The refined-portal path classifies the portal precisely inside mpr_find_penetration.
+    mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED
 
     if res == 1:
         is_col, normal, penetration, pos = mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
@@ -752,7 +774,6 @@ def func_mpr_contact_from_centers(
             quat_b,
         )
         if res >= 0:
-            mpr_state.portal_valid[i_b] = True
             is_col, normal, penetration, pos = mpr_find_penetration(
                 geoms_info,
                 static_rigid_sim_config,

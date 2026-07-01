@@ -898,6 +898,7 @@ class ColliderInfo:
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
     mpr_to_gjk_overlap_ratio: qd.Tensor
+    mpr_to_gjk_overlap_ratio_valid: qd.Tensor
     mpr_to_gjk_penetration_ratio: qd.Tensor
     # differentiable contact tolerance
     diff_pos_tolerance: qd.Tensor
@@ -934,6 +935,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
         mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
+        mpr_to_gjk_overlap_ratio_valid=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio_valid"]),
         mpr_to_gjk_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_penetration_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
@@ -994,17 +996,16 @@ def get_mpr_simplex_support(B_):
 class MPRState:
     simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
-    # True iff the last contact came from the refined portal (res==0 -> refine -> find_penetration), so
-    # simplex_support[1..3] holds the contact-face portal. False for the degenerate touch/segment paths, where the
-    # multi-contact perturbation must not reconstruct from the (unrefined) simplex.
-    portal_valid: qd.Tensor
+    # Reliability of the portal in simplex_support[1..3] after a contact, a PORTAL_STATUS value (INVALID/UNKNOWN/VALID).
+    # Only VALID portals are reused (perturbation reconstruction, EPA seeding); INVALID forces a GJK refine.
+    portal_status: qd.Tensor
 
 
 def get_mpr_state(B_):
     return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
-        portal_valid=V(dtype=gs.qd_bool, shape=(B_,)),
+        portal_status=V(dtype=gs.qd_int, shape=(B_,)),
     )
 
 

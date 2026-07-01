@@ -15,6 +15,7 @@ import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
 
 from . import capsule_contact, diff_gjk, gjk, mpr
+from .constants import PORTAL_STATUS
 from .box_contact import (
     func_box_box_contact,
     func_plane_box_contact,
@@ -1096,16 +1097,16 @@ def func_recompute_perturbed_contact(
         penetration = normal.dot(contact_point_b - contact_point_a)
         is_exact = True
     elif geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-        # Analytic closest-segment contact: no portal or witness pair (and its portal_valid / nearest_face are stale,
+        # Analytic closest-segment contact: no portal or witness pair (and its portal_status / nearest_face are stale,
         # since it runs neither MPR nor GJK), so the only correction available is the first-order twist.
         needs_twist = True
     elif used_gjk and gjk_state.nearest_face[i_scratch] < 0:
         # Shallow GJK contact (no EPA polytope was built): no support face, but the perturbed witness delta is the
         # perturbed normal by construction, so keep it; the +/- symmetry keeps the contact set unbiased in aggregate.
         pass
-    elif not used_gjk and not mpr_state.portal_valid[i_scratch]:
-        # MPR resolved the contact through a degenerate touch/segment path, so simplex_support holds no refined
-        # contact-face portal; reconstructing from it would yield a spurious edge/corner normal.
+    elif not used_gjk and mpr_state.portal_status[i_scratch] != PORTAL_STATUS.VALID:
+        # MPR left no trustworthy refined contact-face portal (degenerate touch/segment path, or the origin projects
+        # outside the portal); reconstructing from it would yield a spurious edge/corner normal.
         needs_twist = True
     else:
         # Support pairs of the contact face: the MPR portal (indices 1-3), or the GJK EPA face nearest to the origin.
@@ -1387,16 +1388,25 @@ def func_convex_convex_contact(
 
                         # Fall back to GJK when the penetration exceeds a warm-start-aware threshold: the cached
                         # penetration grew by more than mpr_to_gjk_penetration_ratio (a deeper, non-minimal portal),
-                        # clamped into [tolerance, mpr_to_gjk_overlap_ratio * geom_pair_scale]. A cold pair (cached
-                        # penetration reset to 0) clamps to tolerance - the original "fire as soon as penetration >
-                        # tolerance" gate; a genuinely deep contact always fires at the overlap cap.
+                        # clamped into [tolerance, overlap_ratio * geom_pair_scale]. A cold pair (cached penetration
+                        # reset to 0) clamps to tolerance - the original "fire as soon as penetration > tolerance" gate;
+                        # a genuinely deep contact always fires at the overlap cap. The overlap cap is portal-dependent:
+                        # a VALID portal recovers the exact contact depth (Thm 4.2) so MPR stays reliable to deeper
+                        # penetrations, while a DEGENERATED portal's depth is untrustworthy, so fall back to GJK sooner.
                         if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                            overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio[None]
+                            if mpr_state.portal_status[i_b] == PORTAL_STATUS.VALID:
+                                overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio_valid[None]
                             prefer_gjk = penetration > qd.math.clamp(
                                 collider_info.mpr_to_gjk_penetration_ratio[None]
                                 * collider_state.contact_cache.penetration[i_pair, i_b],
                                 tolerance,
-                                collider_info.mpr_to_gjk_overlap_ratio[None] * geom_pair_scale,
+                                overlap_ratio * geom_pair_scale,
                             )
+                            # An INVALID portal is unreliable even when shallow (unconverged, or the origin extrapolates
+                            # too far outside the portal), so always refine it with GJK.
+                            if is_col and (mpr_state.portal_status[i_b] == PORTAL_STATUS.INVALID):
+                                prefer_gjk = True
 
                     ### GJK, MJ_GJK
                     # TODO: Add support of smooth refinement to differentiable contact.
@@ -2487,15 +2497,24 @@ def _func_narrowphase_contact0(
                             is_mpr_updated = True
 
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                        # Warm-start-aware penetration clamp (see the monolith gate): GJK when the penetration
-                        # exceeds mpr_to_gjk_penetration_ratio times the cached one, floored at tolerance (cold) and
-                        # capped at the overlap depth.
+                        # Warm-start-aware penetration clamp (see the monolith gate): GJK when the penetration exceeds
+                        # mpr_to_gjk_penetration_ratio times the cached one, floored at tolerance (cold) and capped at
+                        # the overlap depth. The overlap cap is portal-dependent: a VALID portal recovers the exact
+                        # contact depth (Thm 4.2) so MPR stays reliable to deeper penetrations, while a DEGENERATED
+                        # portal's depth is untrustworthy, so fall back to GJK sooner.
+                        overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio[None]
+                        if mpr_state.portal_status[flat_idx] == PORTAL_STATUS.VALID:
+                            overlap_ratio = collider_info.mpr_to_gjk_overlap_ratio_valid[None]
                         prefer_gjk = penetration > qd.math.clamp(
                             collider_info.mpr_to_gjk_penetration_ratio[None]
                             * collider_state.contact_cache.penetration[i_pair, i_b],
                             tolerance,
-                            collider_info.mpr_to_gjk_overlap_ratio[None] * geom_pair_scale,
+                            overlap_ratio * geom_pair_scale,
                         )
+                        # An INVALID portal (unconverged, or the origin extrapolates too far outside the portal) gives an
+                        # untrustworthy penetration - always refine with GJK regardless of depth.
+                        if is_col and (mpr_state.portal_status[flat_idx] == PORTAL_STATUS.INVALID):
+                            prefer_gjk = True
 
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
