@@ -448,9 +448,7 @@ class IPCCoupler(RBC):
             # For ext_art links with merged children, also include children's
             # geoms transformed from child-local frame to this link's local frame.
             merged_children = abd_merge_children.get(link, [])
-            geom_sources: list[tuple[list, np.ndarray, np.ndarray]] = [
-                (link.geoms, np.zeros(3, dtype=gs.np_float), np.array([1, 0, 0, 0], dtype=gs.np_float))
-            ]
+            geom_sources: list[tuple[list, np.ndarray, np.ndarray]] = [(link.geoms, gu.zero_pos(), gu.identity_quat())]
             for child in merged_children:
                 child_pos, child_quat = compute_link_to_link_transform(child, link)
                 geom_sources.append((child.geoms, child_pos, child_quat))
@@ -486,7 +484,7 @@ class IPCCoupler(RBC):
                         # Apply geom transform to vertices (geom-local → link-local)
                         geom_verts = gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat)
                         # If from a merged child, transform child-local → parent-local
-                        if frame_pos is not None and np.any(frame_pos) or np.any(frame_quat[1:]):
+                        if np.any(frame_pos) or np.any(frame_quat[1:]):
                             geom_verts = gu.transform_by_trans_quat(geom_verts, frame_pos, frame_quat)
 
                         mesh = uipc.geometry.trimesh(

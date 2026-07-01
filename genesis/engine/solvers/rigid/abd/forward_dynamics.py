@@ -181,6 +181,37 @@ def kernel_restore_integrate(
 
 
 @qd.kernel
+def kernel_compute_force_from_acc(
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    """Refresh dofs_state.force = mass_mat · dofs_state.acc per entity.
+
+    Used between IPC's advance and step_2 so func_implicit_damping (non-default integrator)
+    sees an IPC-aware RHS, and so `get_dofs_force()` on IPC entities reports the total
+    post-coupling generalized force — matching Genesis's existing `mass_mat · acc` convention
+    for non-IPC scenes (see constraint/solver.py:4314). For non-IPC DOFs sharing the scene,
+    the write is idempotent (constraint solver already made force = mass_mat · acc).
+    """
+    BW = qd.static(is_backward)
+    _B = dofs_state.ctrl_mode.shape[1]
+    n_entities = entities_info.n_links.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_e, i_b in qd.ndrange(n_entities, _B):
+        dof_start = entities_info.dof_start[i_e]
+        dof_end = entities_info.dof_end[i_e]
+        for i_d1 in range(dof_start, dof_end):
+            force = gs.qd_float(0.0)
+            for i_d2 in range(dof_start, dof_end):
+                force = force + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * dofs_state.acc[i_d2, i_b]
+            dofs_state.force[i_d1, i_b] = force
+
+
+@qd.kernel
 def kernel_predict_integrate(
     dofs_state: array_class.DofsState,
     links_info: array_class.LinksInfo,

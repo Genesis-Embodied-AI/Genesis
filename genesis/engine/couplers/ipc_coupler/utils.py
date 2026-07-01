@@ -54,8 +54,8 @@ def compute_link_to_link_transform(from_link, to_link):
         (pos, quat) transforming points from from_link frame to to_link frame
     """
     # Accumulate transforms going up from from_link to common ancestor (to_link)
-    pos = np.array([0.0, 0.0, 0.0], dtype=gs.np_float)
-    quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+    pos = gu.zero_pos()
+    quat = gu.identity_quat()
 
     assert from_link.entity is to_link.entity
     entity = from_link.entity

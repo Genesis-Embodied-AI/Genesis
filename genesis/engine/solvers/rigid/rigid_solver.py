@@ -118,6 +118,7 @@ from .abd.forward_dynamics import (
     kernel_compute_qacc,
     kernel_forward_dynamics_without_qacc,
     kernel_restore_integrate,
+    kernel_compute_force_from_acc,
     kernel_predict_integrate,
 )
 from .abd.accessor import (
@@ -1548,6 +1549,15 @@ class RigidSolver(KinematicSolver):
                 is_backward=self._is_backward,
                 restore_qpos=False,
             )
+            # Refresh dofs_state.force = mass_mat · acc so func_implicit_damping sees a
+            # SAP-aware RHS and get_dofs_force() matches the non-IPC convention.
+            kernel_compute_force_from_acc(
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=self._is_backward,
+            )
         elif isinstance(self.sim.coupler, IPCCoupler):
             kernel_restore_integrate(
                 dofs_state=self.dofs_state,
@@ -1557,6 +1567,15 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=self._is_backward,
                 restore_qpos=True,
+            )
+            # Refresh dofs_state.force = mass_mat · acc so func_implicit_damping sees an
+            # IPC-aware RHS and get_dofs_force() matches the non-IPC convention.
+            kernel_compute_force_from_acc(
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=self._is_backward,
             )
 
         kernel_step_2(
