@@ -279,8 +279,7 @@ class IPCCoupler(RBC):
             uipc.Logger.set_level(uipc.Logger.Level.Info)
             uipc.Timer.enable_all()
         else:
-            # TODO: revert to Error after profiling
-            uipc.Logger.set_level(uipc.Logger.Level.Info)
+            uipc.Logger.set_level(uipc.Logger.Level.Error)
             uipc.Timer.disable_all()
 
         # Create workspace directory for IPC output, named after scene UID.
