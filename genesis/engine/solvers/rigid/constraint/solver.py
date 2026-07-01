@@ -1953,6 +1953,17 @@ def func_compute_island_envelope(
                     island_state.dof_env_start_local[dof_base + ld, i_b] = ld2
                 break
 
+    # Transpose the envelope into per-column heights: col_end[c] = max row whose envelope reaches column c. The
+    # column-oriented sweeps (rank-1 update, direct factor, backward substitution) iterate rows (c, col_end[c]]
+    # instead of testing every row below c against its envelope. O(sum_span), like the envelope itself.
+    for ld in range(n):
+        island_state.dof_env_col_end[dof_base + ld, i_b] = ld
+    for ld in range(n):
+        env_i = island_state.dof_env_start_local[dof_base + ld, i_b]
+        for c in range(env_i, ld):
+            if ld > island_state.dof_env_col_end[dof_base + c, i_b]:
+                island_state.dof_env_col_end[dof_base + c, i_b] = ld
+
 
 @qd.func
 def func_hessian_direct_batch(
@@ -1997,20 +2008,20 @@ def func_hessian_direct_batch(
         # O(n_dofs * n_constraints) row-by-constraint scan, which matters when an island carries many contacts.
         for i_lcon in range(con_n):
             i_c = island_state.constraint_id[con_base + i_lcon, i_b]
-            jac_n = constraint_state.jac_n_dofs[i_c, i_b]
-            for i_d1_ in range(jac_n):
-                i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
-                for i_d2_ in range(i_d1_, jac_n):
-                    i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
-                    row = qd.max(i_d1, i_d2)
-                    col = qd.min(i_d1, i_d2)
-                    constraint_state.nt_H[i_b, row, col] = (
-                        constraint_state.nt_H[i_b, row, col]
-                        + constraint_state.jac[i_c, i_d1, i_b]
-                        * constraint_state.jac[i_c, i_d2, i_b]
-                        * constraint_state.efc_D[i_c, i_b]
-                        * constraint_state.active[i_c, i_b]
-                    )
+            # An inactive constraint contributes nothing to H; skip its whole scatter instead of multiplying by 0.
+            if constraint_state.active[i_c, i_b]:
+                efc_D = constraint_state.efc_D[i_c, i_b]
+                jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+                for i_d1_ in range(jac_n):
+                    i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+                    for i_d2_ in range(i_d1_, jac_n):
+                        i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                        row = qd.max(i_d1, i_d2)
+                        col = qd.min(i_d1, i_d2)
+                        constraint_state.nt_H[i_b, row, col] = (
+                            constraint_state.nt_H[i_b, row, col]
+                            + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                        )
         # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same kinematic-tree block, which
         # is a contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add
         # by that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
@@ -2039,35 +2050,34 @@ def func_hessian_direct_batch(
     # Compute `H += J.T @ D @ J` using either dense or sparse implementation
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_c in range(constraint_state.n_constraints[i_b]):
-            jac_n_dofs = constraint_state.jac_n_dofs[i_c, i_b]
-            for i_d1_ in range(jac_n_dofs):
-                i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
-                if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
-                    for i_d2_ in range(i_d1_, jac_n_dofs):
-                        i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
-                        # Write to permuted positions (identity when reordering is off). jac/efc_D are read in natural
-                        # DOF order; only the Hessian storage position is permuted.
-                        p1 = constraint_state.dof_iperm[i_b, i_d1]
-                        p2 = constraint_state.dof_iperm[i_b, i_d2]
-                        row = qd.max(p1, p2)
-                        col = qd.min(p1, p2)
-                        constraint_state.nt_H[i_b, row, col] = (
-                            constraint_state.nt_H[i_b, row, col]
-                            + constraint_state.jac[i_c, i_d1, i_b]
-                            * constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.efc_D[i_c, i_b]
-                            * constraint_state.active[i_c, i_b]
-                        )
+            # An inactive constraint contributes nothing to H; skip its whole scatter instead of multiplying by 0.
+            if constraint_state.active[i_c, i_b]:
+                efc_D = constraint_state.efc_D[i_c, i_b]
+                jac_n_dofs = constraint_state.jac_n_dofs[i_c, i_b]
+                for i_d1_ in range(jac_n_dofs):
+                    i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+                    if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
+                        for i_d2_ in range(i_d1_, jac_n_dofs):
+                            i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                            # Write to permuted positions (identity when reordering is off). jac/efc_D are read in
+                            # natural DOF order; only the Hessian storage position is permuted.
+                            p1 = constraint_state.dof_iperm[i_b, i_d1]
+                            p2 = constraint_state.dof_iperm[i_b, i_d2]
+                            row = qd.max(p1, p2)
+                            col = qd.min(p1, p2)
+                            constraint_state.nt_H[i_b, row, col] = (
+                                constraint_state.nt_H[i_b, row, col]
+                                + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                            )
     else:
         for i_d1, i_c in qd.ndrange(n_dofs, constraint_state.n_constraints[i_b]):
-            if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
+            if constraint_state.active[i_c, i_b] and qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                 for i_d2 in range(i_d1 + 1):
                     constraint_state.nt_H[i_b, i_d1, i_d2] = (
                         constraint_state.nt_H[i_b, i_d1, i_d2]
                         + constraint_state.jac[i_c, i_d2, i_b]
                         * constraint_state.jac[i_c, i_d1, i_b]
                         * constraint_state.efc_D[i_c, i_b]
-                        * constraint_state.active[i_c, i_b]
                     )
 
     # Compute `H += M`. With sparse_solve the storage position is permuted via dof_iperm; otherwise it is natural
@@ -2605,7 +2615,14 @@ def func_cholesky_factor_direct_batch(
                 tmp = tmp - constraint_state.nt_H[i_b, i_dg, j_dg] ** 2
             constraint_state.nt_H[i_b, i_dg, i_dg] = qd.sqrt(qd.max(tmp, EPS))
             inv = 1.0 / constraint_state.nt_H[i_b, i_dg, i_dg]
-            for j_d in range(i_d + 1, n):
+            # Only rows whose envelope reaches column i_d can be nonzero there. The CPU per-island path always
+            # computes dof_env_col_end in its solve init, so it can bound the row sweep by the column height; other
+            # configs (GPU per-island) may factor without computing the envelope, whose 0-default would wrongly
+            # truncate, so they keep the full scan.
+            j_d_hi = n
+            if qd.static(static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope):
+                j_d_hi = island_state.dof_env_col_end[dof_base + i_d, i_b] + 1
+            for j_d in range(i_d + 1, j_d_hi):
                 j_start = island_state.dof_env_start_local[dof_base + j_d, i_b]
                 if j_start <= i_d:
                     j_dg = island_state.dof_id[dof_base + j_d, i_b]
@@ -3205,12 +3222,17 @@ def func_rank1_update_island_constraint(
     sign = 1.0 if constraint_state.active[i_c, i_b] else -1.0
     efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
 
+    # Rows before the constraint's first support DOF hold an exact zero in nt_vec, so the sweep starts there.
+    ld_start = n
     for k_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
         gd = constraint_state.jac_dofs_idx[i_c, k_, i_b]
         constraint_state.nt_vec[gd, i_b] = constraint_state.jac[i_c, gd, i_b] * efc_D_sqrt
+        ld_support = island_state.dof_local_pos[gd, i_b]
+        if ld_support < ld_start:
+            ld_start = ld_support
 
     is_degenerated = False
-    for ld in range(n):
+    for ld in range(ld_start, n):
         gk = island_state.dof_id[dof_base + ld, i_b]
         vk = constraint_state.nt_vec[gk, i_b]
         if qd.abs(vk) > EPS:
@@ -3224,7 +3246,9 @@ def func_rank1_update_island_constraint(
             c = r / Lkk
             s = vk / Lkk
             constraint_state.nt_H[i_b, gk, gk] = r
-            for jd in range(ld + 1, n):
+            # Only rows whose envelope reaches column ld can couple; col_end bounds them so a banded island sweeps
+            # its bandwidth instead of every row below ld.
+            for jd in range(ld + 1, island_state.dof_env_col_end[dof_base + ld, i_b] + 1):
                 if island_state.dof_env_start_local[dof_base + jd, i_b] <= ld:
                     gj = island_state.dof_id[dof_base + jd, i_b]
                     constraint_state.nt_H[i_b, gj, gk] = (
@@ -3374,7 +3398,12 @@ def func_cholesky_solve_batch(
             ld = n - 1 - ld_
             gd = island_state.dof_id[dof_base + ld, i_b]
             curr_out = constraint_state.Mgrad[gd, i_b]
-            for j_d in range(ld + 1, n):
+            # Bound the column sweep by the column height where the envelope is guaranteed computed (CPU per-island
+            # path); see the matching bound in func_cholesky_factor_direct_batch.
+            j_d_hi = n
+            if qd.static(static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope):
+                j_d_hi = island_state.dof_env_col_end[dof_base + ld, i_b] + 1
+            for j_d in range(ld + 1, j_d_hi):
                 if island_state.dof_env_start_local[dof_base + j_d, i_b] <= ld:
                     g_jd = island_state.dof_id[dof_base + j_d, i_b]
                     curr_out = curr_out - constraint_state.nt_H[i_b, g_jd, gd] * constraint_state.Mgrad[g_jd, i_b]

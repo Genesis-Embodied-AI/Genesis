@@ -671,6 +671,9 @@ class IslandState:
     # island (e.g. a tall stack of bodies coupled into one island) factors with its band instead of densely. Defaults
     # to 0 (dense) when uncomputed, so any path that does not fill it stays correct.
     dof_env_start_local: qd.Tensor
+    # Envelope transpose: largest local row whose envelope reaches column ld, bounding the column-oriented factor and
+    # solve sweeps to the band. No safe uncomputed default (0 truncates): only the CPU per-island path may read it.
+    dof_env_col_end: qd.Tensor
     contact_slices: IslandSlices
     contact_id: qd.Tensor
     constraint_slices: IslandSlices
@@ -725,6 +728,7 @@ def get_island_state(solver, collider):
         dof_local_pos=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         dofs_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         dof_env_start_local=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dof_env_col_end=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         contact_slices=get_slices(solver, is_active),
         contact_id=V(dtype=gs.qd_int, shape=maybe_shape((max_candidate_contacts, _B), is_active)),
         constraint_slices=get_slices(solver, is_active),
