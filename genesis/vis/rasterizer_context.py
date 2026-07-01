@@ -599,7 +599,23 @@ class RasterizerContext:
         if self.sim.rigid_solver.is_active and any(link.visualize_contact for link in self.sim.rigid_solver.links):
             # Extract all contact information at once
             contacts_info_all = self.sim.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+
+            # Scale contact arrows by the parent link's overall size rather than the individual contacting geom, so
+            # they stay legible on links built from many small convex-decomposition pieces. The per-geom init AABBs
+            # are in each geom's local frame, so offset their corners by the geom pose to get the link-frame extent.
+            # This diagonal is constant, so compute it once and cache it.
             geoms_aabb = qd_to_numpy(self.sim.rigid_solver.geoms_init_AABB)
+            links_init_AABB_size = np.zeros(self.sim.rigid_solver.n_links, dtype=gs.np_float)
+            for link in self.sim.rigid_solver.links:
+                if link.n_geoms == 0:
+                    continue
+                lower = np.full(3, np.inf, dtype=gs.np_float)
+                upper = np.full(3, -np.inf, dtype=gs.np_float)
+                for geom in link.geoms:
+                    corners = gu.transform_by_trans_quat(geoms_aabb[geom.idx], geom.init_pos, geom.init_quat)
+                    lower = np.minimum(lower, corners.min(axis=0))
+                    upper = np.maximum(upper, corners.max(axis=0))
+                links_init_AABB_size[link.idx] = np.linalg.norm(upper - lower)
 
             for env_i, batch_idx in enumerate(self.rendered_envs_idx):
                 if self.sim.rigid_solver.n_envs > 0:
@@ -611,11 +627,9 @@ class RasterizerContext:
                 if n_contacts == 0:
                     continue
 
-                ga_aabb = geoms_aabb[contacts_info["geom_a"]]
-                gb_aabb = geoms_aabb[contacts_info["geom_b"]]
-                ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
-                gb_aabb_size = np.linalg.norm(gb_aabb[:, -1] - gb_aabb[:, 0], axis=1)
-                arrow_scale = np.minimum(ga_aabb_size, gb_aabb_size)
+                la_size = links_init_AABB_size[contacts_info["link_a"]]
+                lb_size = links_init_AABB_size[contacts_info["link_b"]]
+                arrow_scale = np.minimum(la_size, lb_size)
                 radius = np.minimum(arrow_scale * 0.04, 0.005)
                 contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
                 contact_normal_scaled = contacts_info["normal"] * arrow_scale[:, None]
