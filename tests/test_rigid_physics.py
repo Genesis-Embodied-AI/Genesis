@@ -7500,6 +7500,27 @@ def _build_free_body_urdf(name, com_xyz):
     return urdfpy.URDF._from_xml(robot, robot, get_assets_dir())
 
 
+def _build_wrapped_free_body_urdf(name, child_mass):
+    """Build a free body whose root link is empty (no geom, no inertial) and whose mass and geometry live on a fixed
+    child link, returning its path. Exercises the empty-free-root wrapping a fixed massive child topology."""
+    robot = ET.Element("robot", name=name)
+    ET.SubElement(robot, "link", name="root")
+    child = ET.SubElement(robot, "link", name="payload")
+    for group_tag in ("visual", "collision"):
+        group = ET.SubElement(child, group_tag)
+        geom_el = ET.SubElement(group, "geometry")
+        ET.SubElement(geom_el, "box", size="0.04 0.04 0.04")
+    inertial = ET.SubElement(child, "inertial")
+    ET.SubElement(inertial, "mass", value=str(child_mass))
+    ET.SubElement(inertial, "origin", xyz="0 0 0")
+    ET.SubElement(inertial, "inertia", ixx="1e-3", iyy="1e-3", izz="1e-3", ixy="0", ixz="0", iyz="0")
+    joint = ET.SubElement(robot, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="root")
+    ET.SubElement(joint, "child", link="payload")
+    ET.SubElement(joint, "origin", xyz="0 0 0")
+    return urdfpy.URDF._from_xml(robot, robot, get_assets_dir())
+
+
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_align_heterogeneous_inertial(show_viewer, tol):
@@ -7601,6 +7622,24 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
         gs.morphs.URDF(file=_build_free_body_urdf("free_dup_b", "0.02 0 0"), pos=FREE_POS, align=True),
     )
     free_dup = scene.add_entity(morph=dup_morph, material=gs.materials.Rigid())
+    # Free bodies whose root link is empty and whose mass lives on a fixed child (merge_fixed_links=False keeps the
+    # wrapper). Alignment folds the child's mass onto the root; the subsumed child keeps only the gs.EPS placeholder.
+    WRAP_MASS_A, WRAP_MASS_B = 0.5, 0.25
+    wrapped_morph = (
+        gs.morphs.URDF(
+            file=_build_wrapped_free_body_urdf("wrap_a", WRAP_MASS_A),
+            pos=(5.0, 0.0, 0.2),
+            align=True,
+            merge_fixed_links=False,
+        ),
+        gs.morphs.URDF(
+            file=_build_wrapped_free_body_urdf("wrap_b", WRAP_MASS_B),
+            pos=(5.0, 0.0, 0.2),
+            align=True,
+            merge_fixed_links=False,
+        ),
+    )
+    free_wrapped = scene.add_entity(morph=wrapped_morph)
     scene.build(n_envs=4, env_spacing=(0.0, 0.5))
 
     # Same absolute qpos must map to the same world geometry for the aligned rigid body and its kinematic counterpart;
@@ -7715,6 +7754,16 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     # Variants differ
     with pytest.raises(AssertionError):
         assert_allclose(inertial_i[0, 0], inertial_i[2, 0], tol=tol)
+
+    # Empty-free-root wrapping a fixed massive child: alignment folds the composite mass onto the root (link 0),
+    # leaving the subsumed child (link 1) with only the gs.EPS placeholder. The root must carry exactly the child's
+    # mass; a prior bug summed the root's own gs.EPS placeholder into the composite, inflating it by one gs.EPS
+    # (hence the sub-EPS tolerance below). Envs are dispatched as [A, A, B, B].
+    wrapped_idx = slice(free_wrapped.link_start, free_wrapped.link_end)
+    wrapped_mass = qd_to_numpy(scene.rigid_solver.links_info.inertial_mass, None, wrapped_idx, transpose=True)
+    assert_allclose(wrapped_mass[[0, 1], 0], WRAP_MASS_A, atol=gs.EPS * 0.5)
+    assert_allclose(wrapped_mass[[2, 3], 0], WRAP_MASS_B, atol=gs.EPS * 0.5)
+    assert_allclose(wrapped_mass[:, 1], gs.EPS, atol=gs.EPS * 1e-3)
 
     # Check contacts
     for i in range(4):

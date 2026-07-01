@@ -129,9 +129,7 @@ class KinematicEntity(Entity):
         # arrays: '_align_link' appends one entry per link in build order, the heterogeneous loop appends variants.
         self._align_inertials: list[list[tuple[LinkInertial, bool]]] = []
 
-        # Per-variant base-link offset for heterogeneous entities (None when homogeneous), primary first and aligned
-        # with '_variant_init_qpos'. The primary carries the inertial alignment; the geometry-only variants carry their
-        # morph offset alone, matching how their initial pose is built.
+        # Per-variant base-link offset for heterogeneous entities, primary first and aligned with '_variant_init_qpos'
         self._variant_offset_pos: list[np.ndarray] | None = None
         self._variant_offset_quat: list[np.ndarray] | None = None
 
@@ -188,9 +186,8 @@ class KinematicEntity(Entity):
         for link in self._links:
             link._init_variant_tracking()
 
-        # Track per-variant init_qpos and base-link offset for per-environment dispatch (primary first). The primary
-        # already carries its morph offset and inertial alignment in '_offset_*'; each variant accumulates its own
-        # below so an asymmetric variant is aligned exactly like its homogeneous equivalent.
+        # Track per-variant init_qpos and base-link offset for per-environment dispatch (primary first). Each variant
+        # accumulates its own below so an asymmetric variant is aligned exactly like its homogeneous equivalent.
         self._variant_init_qpos = [self.init_qpos]
         self._variant_offset_pos = [self._offset_pos]
         self._variant_offset_quat = [self._offset_quat]
@@ -810,20 +807,50 @@ class KinematicEntity(Entity):
                 for j_info in links_j_infos[i_l]:
                     j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
 
-        # Force recomputing inertial information based on geometry if ill-defined for some reason
+        # Force recomputing inertial information based on geometry if ill-defined for some reason.
+        # A moving link needs a well-defined inertia only for its own rigid body; a rigidly-attached (fixed-joint) child
+        # folds its mass into the parent's composite-rigid-body inertia.
+        has_links_subtree_mass = [
+            bool(link_g_infos) or (l_info.get("inertial_mass") or 0.0) > 0.0
+            for link_g_infos, l_info in zip(links_g_infos, l_infos)
+        ]
+        for i in reversed(range(len(l_infos))):
+            parent_idx = l_infos[i]["parent_idx"]
+            if parent_idx >= 0 and all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in links_j_infos[i]):
+                has_links_subtree_mass[parent_idx] |= has_links_subtree_mass[i]
+
         is_inertia_invalid = False
-        for l_info, link_j_infos in zip(l_infos, links_j_infos):
-            if not all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos) and (
+        for i, (l_info, link_g_infos, link_j_infos, has_link_subtree_mass) in enumerate(
+            zip(l_infos, links_g_infos, links_j_infos, has_links_subtree_mass)
+        ):
+            # Fixed links are subsumed into their parent's composite; only moving links need a well-defined inertia.
+            if all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos):
+                continue
+            if not (
                 (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)
                 or (l_info.get("inertial_i") is None or (np.diag(l_info["inertial_i"]) <= 0.0).any())
             ):
-                if l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
-                    gs.logger.debug(
-                        f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on "
-                        "geometry."
-                    )
-                l_info["inertial_i"] = None
-                is_inertia_invalid = True
+                continue
+
+            # The own inertia is degenerate, so the parsed inverse weight (derived from it) must be recomputed
+            # regardless of how the mass is resolved below.
+            is_inertia_invalid = True
+
+            # A geometry-less moving link whose rigidly-attached (fixed-joint) subtree carries the mass keeps its
+            # (near-)zero own inertia: the composite-rigid-body inertia is finite, so leave it as parsed. Otherwise
+            # recompute from its own geometry, warning only when nothing in the rigid subtree provides mass.
+            if not link_g_infos and has_link_subtree_mass:
+                continue
+            if not link_g_infos:
+                gs.logger.warning(
+                    f"Moving link '{l_info['name']}' has no mass, inertia or geometry, and no rigidly-attached "
+                    "child provides any. Setting its mass to 'gs.EPS'."
+                )
+            elif l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
+                gs.logger.debug(
+                    f"Invalid or undefined inertia for link '{l_info['name']}'. Force recomputing it based on geometry."
+                )
+            l_info["inertial_i"] = None
         if is_inertia_invalid:
             for l_info, link_j_infos in zip(l_infos, links_j_infos):
                 l_info["invweight"] = np.full((2,), fill_value=-1.0)
@@ -953,10 +980,12 @@ class KinematicEntity(Entity):
             for v in range(len(self._align_inertials[root_local])):
                 inertial_info = []
                 mass_specified = set()
+                composite_links = []
                 for link in subtree:
                     props, is_specified = self._align_inertials[link.idx - self._link_start][v]
-                    if props.mass <= gs.EPS:
+                    if props.mass < gs.EPS:
                         continue
+                    composite_links.append(link)
                     mass_specified.add(is_specified)
                     rot = gu.quat_to_R(props.quat)
                     inertia_in_link = rot @ props.inertia @ rot.T
@@ -1010,13 +1039,15 @@ class KinematicEntity(Entity):
                         geom._init_pos_tc = torch.from_numpy(pos).to(device=gs.device, dtype=gs.tc_float)
                         geom._init_quat_tc = torch.from_numpy(quat).to(device=gs.device, dtype=gs.tc_float)
 
-                # Fold the composite (diagonal, COM-centered) into the dynamics inertia (rigid only; a kinematic entity
-                # has no dynamics inertia): the root carries the whole mass, the fixed children are subsumed. Rescale
-                # the unit-density estimate to the link masses RigidLink._build resolved (uniform per the mass gate).
+                # Fold the composite (diagonal, COM-centered) into the dynamics inertia.
+                # Rescale the unit-density estimate to the link masses.
                 if isinstance(root, RigidLink):
+                    # Sum the dynamics masses of exactly the links that contributed to 'mass_total'; the massless
+                    # links skipped above (a geometry-less link carries only the 'gs.EPS' placeholder) must not
+                    # inflate the composite.
                     real_total = sum(
-                        (link._variant_inertial[v][0] if is_heterogeneous else float(link.inertial_mass))
-                        for link in subtree
+                        float(link._variant_inertial[v][0] if is_heterogeneous else link.inertial_mass)
+                        for link in composite_links
                     )
                     scale = real_total / mass_total
                     zero_pos, identity_quat = gu.zero_pos(), gu.identity_quat()
@@ -1258,7 +1289,9 @@ class KinematicEntity(Entity):
             hint = compose_inertial_properties(geoms_inertial_info)
         else:
             hint = InertialProperties(0.0, np.zeros(3, dtype=gs.np_float), np.zeros((3, 3), dtype=gs.np_float))
-        props = finalize_inertial(explicit_mass, explicit_com, explicit_quat, explicit_inertia, *hint)
+        props = finalize_inertial(
+            explicit_mass, explicit_com, explicit_quat, explicit_inertia, *hint, clamp_min_mass=False
+        )
         return props, explicit_mass is not None and explicit_mass > 0.0
 
     def _align_link(self, l_info, j_infos, cg_infos, vg_infos, morph, link_idx):
