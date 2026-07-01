@@ -1,6 +1,5 @@
 import os
 import xml.etree.ElementTree as ET
-from itertools import chain
 from pathlib import Path
 
 import numpy as np
@@ -89,8 +88,8 @@ def load_xacro(path, mappings):
     return robot
 
 
-def _order_links(l_infos, j_infos, links_g_infos=None):
-    # re-order links based on depth in the kinematic tree, so that parent links are always before child links
+def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
+    # Re-order links depth-first so that each subtree occupies a contiguous range and parents precede their children.
     n_links = len(l_infos)
     dict_child = {k: [] for k in range(n_links)}
     for lc in range(n_links):
@@ -100,18 +99,17 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
         if lp != -1:
             dict_child[lp].append(lc)
 
+    # Depth-first pre-order: a parent always precedes its children (required downstream), and each subtree occupies a
+    # contiguous index range, so a free body and all of its descendants get contiguous links and DOFs. Siblings keep
+    # their original relative order, and the result matches MuJoCo's body ordering. Contiguity lets the per-tree
+    # mass-matrix factorization stay block-local instead of spanning the whole (possibly multi-body) entity.
     ordered_links_idx = []
-    n_level = 0
-    stack_topology = [lc for lc in range(n_links) if l_infos[lc]["parent_idx"] == -1]
-    while len(stack_topology) > 0:
-        next_stack = []
-        ordered_links_idx.append([])
-        for link in stack_topology:
-            ordered_links_idx[n_level].append(link)
-            next_stack += dict_child[link]
-        n_level += 1
-        stack_topology = next_stack
-    ordered_links_idx = tuple(chain.from_iterable(ordered_links_idx))
+    stack_topology = [lc for lc in reversed(range(n_links)) if l_infos[lc]["parent_idx"] == -1]
+    while stack_topology:
+        link = stack_topology.pop()
+        ordered_links_idx.append(link)
+        stack_topology.extend(reversed(dict_child[link]))
+    ordered_links_idx = tuple(ordered_links_idx)
 
     if not ordered_links_idx:
         # avoid case with worldbody without any body (geom directly assigned to worldbody)
@@ -403,7 +401,7 @@ def parse_urdf(morph, surface):
             g_info["pos"] *= morph.scale
 
     # Re-order kinematic tree info
-    l_infos, links_j_infos, links_g_infos, _ = _order_links(l_infos, links_j_infos, links_g_infos)
+    l_infos, links_j_infos, links_g_infos, _ = order_links_depth_first(l_infos, links_j_infos, links_g_infos)
 
     eqs_info = parse_equalities(robot, morph)
 

@@ -168,6 +168,19 @@ class RigidSensorOptionsMixin(KinematicSensorOptionsMixin[SensorT]):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
 
 
+class RigidEntitySensorOptionsMixin(RigidSensorOptionsMixin[SensorT]):
+    """
+    Options for a sensor bound to a whole RigidEntity (e.g. joint-space sensors), where the attachment is mandatory:
+    entity_idx must refer to an existing RigidEntity, static sensors are not allowed. The link offset parameters are
+    inherited from RigidSensorOptionsMixin but ignored by joint-space sensors.
+    """
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if self.entity_idx < 0:
+            gs.raise_exception(f"{type(self).__name__} requires entity_idx >= 0, got {self.entity_idx}.")
+
+
 class SimpleSensorOptions(SensorOptions[SensorT]):
     """
     Options carrying SimpleSensor's imperfection parameters.
@@ -237,6 +250,40 @@ class ProbesWithNormalSensorOptionsMixin(ProbeSensorOptionsMixin[SensorT]):
             gs.raise_exception(
                 "probe_local_normal must be one normal or match probe_local_pos length. "
                 f"Got {normals.reshape(-1, 3).shape[0]} normals and {n_probes} probe positions."
+            )
+
+
+class JointTorque(RigidEntitySensorOptionsMixin["JointTorqueSensor"], SimpleSensorOptions["JointTorqueSensor"]):
+    """
+    Actuator output effort sensor for rigid entities (torque for revolute DOFs, force for prismatic DOFs).
+
+    Models the generalized effort at each joint's gearbox output shaft:
+
+        actuator_force = tau_control - armature * qacc + tau_frictionloss + tau_damping
+
+    where ``qacc`` is the constraint-solved joint acceleration, ``armature`` the per-DOF armature inertia,
+    ``tau_frictionloss`` the Coulomb friction constraint effort (negative when opposing motion), and
+    ``tau_damping = -damping * vel`` the viscous passive effort. Gravity, Coriolis and contact loads are thus
+    captured implicitly.
+
+    Parameters
+    ----------
+    entity_idx : int
+        Scene-level index of the RigidEntity to sense. Must be >= 0.
+    dofs_idx_local : array-like[int] | None, optional
+        Local DOF indices within the entity. ``None`` (default) selects all DOFs.
+    """
+
+    dofs_idx_local: OptionalIArrayType | None = None
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        entity = scene.entities[self.entity_idx]
+        if entity.n_dofs == 0:
+            gs.raise_exception(f"JointTorque: entity at index {self.entity_idx} has no DOFs.")
+        if self.dofs_idx_local is not None and any(i < 0 or i >= entity.n_dofs for i in self.dofs_idx_local):
+            gs.raise_exception(
+                f"JointTorque: dofs_idx_local contains out-of-range indices for entity with {entity.n_dofs} DOFs."
             )
 
 

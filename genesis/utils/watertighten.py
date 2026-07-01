@@ -1,4 +1,4 @@
-"""Watertight wrap of a triangle soup via SDF dual contouring + feature-preserving QEM decimation.
+"""Watertight wrap of a triangle soup via SDF dual contouring + feature-preserving quadric-error decimation.
 
 The main entrypoint is `watertighten_mesh`; see its docstring for the algorithm steps, parameter meanings, and the
 adaptive defaults.
@@ -48,7 +48,7 @@ def _solve3x3(A: np.ndarray, b: np.ndarray) -> Tuple[np.ndarray, float]:
     """Solve a symmetric 3x3 system `A x = b` via cofactor expansion; returns `(x, det)` with caller fallback near zero.
 
     The cofactor form skips the LU factorisation `np.linalg.solve` would do, which pays off on the millions of single
-    solves the QEM inner loop runs through `_q_optimal`.
+    solves the quadric-error decimation inner loop runs through `_quadric_optimal_vertex`.
     """
     cof = np.empty(3, dtype=A.dtype)
     cof[0] = A[1, 1] * A[2, 2] - A[1, 2] * A[1, 2]
@@ -166,16 +166,94 @@ def _sdf_gradient(field: np.ndarray, pitch: float) -> np.ndarray:
 # Dual contouring iso-surface extraction (vectorised over active cells)
 # ===============================================================================================================
 
+# Cube faces in a canonical cyclic corner order chosen so the shared face of two neighbouring cells is traversed over
+# the same world corners (a cell's +x face matches its +x neighbour's -x face, and so on). That makes the contour
+# pairing below a pure function of the face's corner signs, hence identical for both cells - which is what keeps the
+# dual mesh manifold across cell boundaries. Each face lists its 4 corners and the 4 edges joining consecutive corners
+# (face edge `k` joins corner `k` and corner `k+1`).
+_FACE_CORNERS = np.array(
+    [[0, 3, 7, 4], [1, 2, 6, 5], [0, 1, 5, 4], [3, 2, 6, 7], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32
+)
+_FACE_EDGES = np.array(
+    [[3, 11, 7, 8], [1, 10, 5, 9], [0, 9, 4, 8], [2, 10, 6, 11], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32
+)
 
-def _dc_extract(
+
+def _union_find_root(parent: list, node: int) -> int:
+    """Path-halving find for the import-time edge-component union-find."""
+    while parent[node] != node:
+        parent[node] = parent[parent[node]]
+        node = parent[node]
+    return node
+
+
+def _union_find_merge(parent: list, first: int, second: int) -> None:
+    """Merge two union-find sets, keeping the lower index as the root."""
+    root_first, root_second = _union_find_root(parent, first), _union_find_root(parent, second)
+    if root_first != root_second:
+        parent[max(root_first, root_second)] = min(root_first, root_second)
+
+
+def _build_edge_component_table() -> Tuple[np.ndarray, np.ndarray]:
+    """Label, per cube sign-configuration (256 of them), the connected surface component of each of the 12 cube edges
+    (-1 when the edge is inactive), and count the components per configuration.
+
+    Two active (sign-changing) edges are connected when a cube face links them by its marching-cubes contour: a face
+    with exactly two active edges links those two; a saddle face (four active edges, corners alternating in sign) is
+    split into two contour segments around two diagonal corners, chosen purely from the first corner's sign so the two
+    cells sharing the face split it identically. Manifold dual contouring then emits one vertex per component, which
+    removes the 4-face edges a single-vertex-per-cell scheme leaves where the wrap self-touches.
+    """
+    edge_component = np.full((256, 12), -1, dtype=np.int32)
+    n_components = np.zeros(256, dtype=np.int32)
+    for config in range(256):
+        corner_inside = [(config >> corner) & 1 for corner in range(8)]
+        edge_active = [
+            corner_inside[_EDGE_ENDPOINTS[edge, 0]] != corner_inside[_EDGE_ENDPOINTS[edge, 1]] for edge in range(12)
+        ]
+        parent = list(range(12))
+        for face in range(6):
+            corners = _FACE_CORNERS[face]
+            edges = _FACE_EDGES[face]
+            active_face_edges = [int(edges[k]) for k in range(4) if edge_active[edges[k]]]
+            if len(active_face_edges) == 2:
+                _union_find_merge(parent, active_face_edges[0], active_face_edges[1])
+            elif len(active_face_edges) == 4:
+                # Saddle: pair the contour around two diagonal corners - corners 0 and 2 when corner 0 is inside, else
+                # corners 1 and 3. A pure function of the (shared) corner signs, so neighbouring cells agree.
+                if corner_inside[corners[0]]:
+                    _union_find_merge(parent, int(edges[3]), int(edges[0]))
+                    _union_find_merge(parent, int(edges[1]), int(edges[2]))
+                else:
+                    _union_find_merge(parent, int(edges[0]), int(edges[1]))
+                    _union_find_merge(parent, int(edges[2]), int(edges[3]))
+        component_of_root = {}
+        for edge in range(12):
+            if edge_active[edge]:
+                root = _union_find_root(parent, edge)
+                if root not in component_of_root:
+                    component_of_root[root] = len(component_of_root)
+                edge_component[config, edge] = component_of_root[root]
+        n_components[config] = len(component_of_root)
+    return edge_component, n_components
+
+
+_EDGE_COMPONENT, _N_COMPONENTS = _build_edge_component_table()
+
+
+def _extract_dual_contour_mesh(
     field: np.ndarray, grad: np.ndarray, level: float, pitch: float, origin: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Dual contouring: one QEF-solved vertex per active cell + quads per sign-changing axis-aligned grid edge.
+    """Manifold dual contouring: one QEF-solved vertex per connected surface component in each active cell + quads per
+    sign-changing axis-aligned grid edge.
 
-    Vectorised over active cells: each of the 12 cube edges contributes one batched gather + outer-product update; the
-    per-cell 3x3 QEF solve is one batched `np.linalg.solve` (with cell-centre regularisation so coplanar-crossing cells
-    stay well-defined); face emission is three slicing passes (one per axis). Flat features land flat regardless of
-    grid orientation (in contrast to naive surface nets, which jitters on diagonal walls).
+    A vertex per component (rather than one per cell) keeps the output 2-manifold where the iso-surface self-touches
+    inside a cell - a single shared vertex there would leave grid-edge quads meeting at a 4-face edge. Vectorised over
+    active cells: each of the 12 cube edges contributes one batched gather, then its iso-crossing is scattered (via
+    `np.bincount`) into the component vertex that owns it in each cell; the per-vertex 3x3 QEF solve is one batched
+    `np.linalg.solve` (with cell-centre regularisation so coplanar-crossing cells stay well-defined); face emission is
+    three slicing passes (one per axis). Flat features land flat regardless of grid orientation (in contrast to naive
+    surface nets, which jitters on diagonal walls).
     """
     shape = field.shape
     sign = field < level
@@ -192,20 +270,28 @@ def _dc_extract(
     n_active = cell.shape[0]
     if n_active == 0:
         return np.zeros((0, 3), dtype=np.float64), np.zeros((0, 3), dtype=np.int32)
-    # (i, j, k) -> active-cell index, used both by face emission and by edge gathers.
-    cell_vid = np.full((shape[0] - 1, shape[1] - 1, shape[2] - 1), -1, dtype=np.int32)
-    cell_vid[cell[:, 0], cell[:, 1], cell[:, 2]] = np.arange(n_active, dtype=np.int32)
+    cell_config = cube_idx[active].astype(np.int64)
+    # Each active cell owns one vertex per surface component. `cell_vertex_base` is a cell's first global vertex index;
+    # `_EDGE_COMPONENT` maps an active cube edge to its cell-local component, so base + component is the global vertex.
+    component_count = _N_COMPONENTS[cell_config]
+    cell_vertex_base = np.zeros(n_active, dtype=np.int64)
+    np.cumsum(component_count[:-1], out=cell_vertex_base[1:])
+    n_verts = int(component_count.sum())
+    # (i, j, k) -> active-cell index, used by face emission and edge gathers.
+    cell_id = np.full((shape[0] - 1, shape[1] - 1, shape[2] - 1), -1, dtype=np.int32)
+    cell_id[cell[:, 0], cell[:, 1], cell[:, 2]] = np.arange(n_active, dtype=np.int32)
+    # Global vertex owning each active cube edge of each cell (-1 for inactive edges, never read by face emission).
+    cell_edge_vertex = cell_vertex_base[:, None] + _EDGE_COMPONENT[cell_config]
+    # Per-vertex owning cell, for the cell-centre regularisation and the AABB clamp below.
+    vertex_cell = np.repeat(np.arange(n_active, dtype=np.int32), component_count)
 
-    # Per-cell QEF accumulators: A is the 3x3 outer-product sum, b is the (A . crossing) sum projected on the tangent
-    # normal, c_sum is the unweighted centroid of crossings (used as singular-system fallback), ncross is the
-    # active-edge count per cell.
-    A = np.zeros((n_active, 3, 3), dtype=np.float64)
-    b = np.zeros((n_active, 3), dtype=np.float64)
-    c_sum = np.zeros((n_active, 3), dtype=np.float64)
-    ncross = np.zeros(n_active, dtype=np.int32)
-
-    # Iterate the 12 cube edges. Each iteration is one set of vectorised gathers + outer-product updates; we never
-    # construct a (n_cells * 12) intermediate array.
+    # Gather every active edge's iso-crossing (position + interpolated unit normal) along with the global vertex it
+    # feeds, then accumulate the per-vertex QEF in one pass. `A` is the 3x3 outer-product sum, `b` is the (A . crossing)
+    # sum projected on the normal, `crossing_sum` is the unweighted crossing centroid (singular-system fallback) and
+    # `crossing_count` the active-edge count. Appending in cube-edge order keeps each vertex's accumulation order fixed.
+    edge_vertex_parts = []
+    edge_normal_parts = []
+    edge_position_parts = []
     for edge in range(12):
         off0 = _CORNERS[_EDGE_ENDPOINTS[edge, 0]]
         off1 = _CORNERS[_EDGE_ENDPOINTS[edge, 1]]
@@ -229,68 +315,82 @@ def _dc_extract(
         if not valid.any():
             continue
         normal[valid] /= gnorm[valid, None]
-        normal[~valid] = 0.0
-        # Outer-product contribution per active cell + active edge: A += n n^T, b += n (n . p), c_sum += p.
-        weight = valid.astype(np.float64)
-        A += normal[:, :, None] * normal[:, None, :] * weight[:, None, None]
-        b += normal * (np.einsum("ij,ij->i", normal, position) * weight)[:, None]
-        c_sum += position * weight[:, None]
-        ncross += valid.astype(np.int32)
+        # Active edges have a non-negative component, so `cell_edge_vertex` is a real global vertex where `valid`.
+        edge_vertex_parts.append(cell_edge_vertex[valid, edge])
+        edge_normal_parts.append(normal[valid])
+        edge_position_parts.append(position[valid])
 
-    # Regularise toward the cell center so the solve stays well-defined where all crossings lie on a single plane.
-    cell_center = origin + (cell + 0.5) * pitch
+    A = np.zeros((n_verts, 3, 3), dtype=np.float64)
+    b = np.zeros((n_verts, 3), dtype=np.float64)
+    crossing_sum = np.zeros((n_verts, 3), dtype=np.float64)
+    crossing_count = np.zeros(n_verts, dtype=np.float64)
+    if edge_vertex_parts:
+        edge_vertex = np.concatenate(edge_vertex_parts)
+        edge_normal = np.concatenate(edge_normal_parts)
+        edge_position = np.concatenate(edge_position_parts)
+        projection = np.einsum("ij,ij->i", edge_normal, edge_position)
+        for row in range(3):
+            for col in range(3):
+                A[:, row, col] = np.bincount(edge_vertex, edge_normal[:, row] * edge_normal[:, col], minlength=n_verts)
+            b[:, row] = np.bincount(edge_vertex, edge_normal[:, row] * projection, minlength=n_verts)
+            crossing_sum[:, row] = np.bincount(edge_vertex, edge_position[:, row], minlength=n_verts)
+        crossing_count = np.bincount(edge_vertex, minlength=n_verts).astype(np.float64)
+
+    # Regularise toward the owning cell's center so the solve stays well-defined where all crossings lie on one plane.
+    cell_center = origin + (cell[vertex_cell] + 0.5) * pitch
     reg = 1e-3
     A[:, 0, 0] += reg
     A[:, 1, 1] += reg
     A[:, 2, 2] += reg
     b += reg * cell_center
-    fallback_center = c_sum / np.maximum(ncross[:, None], 1)
+    fallback_center = crossing_sum / np.maximum(crossing_count[:, None], 1.0)
     pos = _batched_solve3x3(A, b, fallback_center)
     # Clamp each vertex to its owning cell's AABB so the surface-nets-style quad emission below stays manifold.
-    cell_min = origin + cell * pitch
+    cell_min = origin + cell[vertex_cell] * pitch
     pos = np.clip(pos, cell_min, cell_min + pitch)
     verts = np.ascontiguousarray(pos, dtype=np.float64)
 
-    # Face emission. For each axis-aligned grid edge with a sign change at the right indexing window, write two
-    # triangles connecting the four cell-vertices around it. The winding flips with the field sign so the outward
-    # normal points from `inside` to `outside`.
+    # Face emission. For each axis-aligned grid edge with a sign change, connect the four surrounding cells; in each
+    # cell use the vertex of the component that owns the cube edge coinciding with that grid edge (the cube edge index
+    # differs per cell, listed per axis below). The winding flips with the field sign so the outward normal points from
+    # `inside` to `outside`.
     faces_axes = []
-    # Axis 0: edges from (i, j, k) to (i+1, j, k), 0 <= i < nx-1, 1 <= j <= ny-2, 1 <= k <= nz-2.
-    v0 = field[:-1, 1:-1, 1:-1]
-    v1 = field[1:, 1:-1, 1:-1]
-    sc = (v0 < level) != (v1 < level)
-    if sc.any():
-        ii, jj, kk = np.where(sc)
-        below = v0[ii, jj, kk] < level
-        c0 = cell_vid[ii, jj, kk]
-        c1 = cell_vid[ii, jj + 1, kk]
-        c2 = cell_vid[ii, jj + 1, kk + 1]
-        c3 = cell_vid[ii, jj, kk + 1]
-        faces_axes.append(_emit_quads(c0, c1, c2, c3, below))
-    # Axis 1: edges from (i, j, k) to (i, j+1, k).
-    v0 = field[1:-1, :-1, 1:-1]
-    v1 = field[1:-1, 1:, 1:-1]
-    sc = (v0 < level) != (v1 < level)
-    if sc.any():
-        ii, jj, kk = np.where(sc)
-        below = v0[ii, jj, kk] < level
-        c0 = cell_vid[ii, jj, kk]
-        c1 = cell_vid[ii, jj, kk + 1]
-        c2 = cell_vid[ii + 1, jj, kk + 1]
-        c3 = cell_vid[ii + 1, jj, kk]
-        faces_axes.append(_emit_quads(c0, c1, c2, c3, below))
-    # Axis 2: edges from (i, j, k) to (i, j, k+1).
-    v0 = field[1:-1, 1:-1, :-1]
-    v1 = field[1:-1, 1:-1, 1:]
-    sc = (v0 < level) != (v1 < level)
-    if sc.any():
-        ii, jj, kk = np.where(sc)
-        below = v0[ii, jj, kk] < level
-        c0 = cell_vid[ii, jj, kk]
-        c1 = cell_vid[ii + 1, jj, kk]
-        c2 = cell_vid[ii + 1, jj + 1, kk]
-        c3 = cell_vid[ii, jj + 1, kk]
-        faces_axes.append(_emit_quads(c0, c1, c2, c3, below))
+    # Axis 0: x-edges from (i, j, k) to (i+1, j, k); the four incident cells see them as cube edges 6, 4, 0, 2.
+    face_lo = field[:-1, 1:-1, 1:-1]
+    face_hi = field[1:, 1:-1, 1:-1]
+    crossing = (face_lo < level) != (face_hi < level)
+    if crossing.any():
+        ii, jj, kk = np.where(crossing)
+        below = face_lo[ii, jj, kk] < level
+        v0 = cell_edge_vertex[cell_id[ii, jj, kk], 6]
+        v1 = cell_edge_vertex[cell_id[ii, jj + 1, kk], 4]
+        v2 = cell_edge_vertex[cell_id[ii, jj + 1, kk + 1], 0]
+        v3 = cell_edge_vertex[cell_id[ii, jj, kk + 1], 2]
+        faces_axes.append(_emit_quads(v0, v1, v2, v3, below))
+    # Axis 1: y-edges from (i, j, k) to (i, j+1, k); the four incident cells see them as cube edges 5, 1, 3, 7.
+    face_lo = field[1:-1, :-1, 1:-1]
+    face_hi = field[1:-1, 1:, 1:-1]
+    crossing = (face_lo < level) != (face_hi < level)
+    if crossing.any():
+        ii, jj, kk = np.where(crossing)
+        below = face_lo[ii, jj, kk] < level
+        v0 = cell_edge_vertex[cell_id[ii, jj, kk], 5]
+        v1 = cell_edge_vertex[cell_id[ii, jj, kk + 1], 1]
+        v2 = cell_edge_vertex[cell_id[ii + 1, jj, kk + 1], 3]
+        v3 = cell_edge_vertex[cell_id[ii + 1, jj, kk], 7]
+        faces_axes.append(_emit_quads(v0, v1, v2, v3, below))
+    # Axis 2: z-edges from (i, j, k) to (i, j, k+1); the four incident cells see them as cube edges 10, 11, 8, 9.
+    face_lo = field[1:-1, 1:-1, :-1]
+    face_hi = field[1:-1, 1:-1, 1:]
+    crossing = (face_lo < level) != (face_hi < level)
+    if crossing.any():
+        ii, jj, kk = np.where(crossing)
+        below = face_lo[ii, jj, kk] < level
+        v0 = cell_edge_vertex[cell_id[ii, jj, kk], 10]
+        v1 = cell_edge_vertex[cell_id[ii + 1, jj, kk], 11]
+        v2 = cell_edge_vertex[cell_id[ii + 1, jj + 1, kk], 8]
+        v3 = cell_edge_vertex[cell_id[ii, jj + 1, kk], 9]
+        faces_axes.append(_emit_quads(v0, v1, v2, v3, below))
     if not faces_axes:
         return verts, np.zeros((0, 3), dtype=np.int32)
     faces = np.concatenate(faces_axes, axis=0)
@@ -318,7 +418,7 @@ def _emit_quads(c0: np.ndarray, c1: np.ndarray, c2: np.ndarray, c3: np.ndarray, 
 
 
 @nb.jit(nopython=True, cache=True)
-def _q_cost(q: np.ndarray, vertex: np.ndarray) -> float:
+def _quadric_cost(q: np.ndarray, vertex: np.ndarray) -> float:
     """Quadric cost `[vertex; 1]^T Q [vertex; 1]` for the packed 10-element upper-triangular `q`."""
     return (
         q[0] * vertex[0] * vertex[0]
@@ -335,7 +435,7 @@ def _q_cost(q: np.ndarray, vertex: np.ndarray) -> float:
 
 
 @nb.jit(nopython=True, cache=True)
-def _q_optimal(q: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+def _quadric_optimal_vertex(q: np.ndarray, fallback: np.ndarray) -> np.ndarray:
     """Vertex that minimises `v^T Q v` over the packed-10 quadric; falls back to `fallback` on a singular 3x3 block."""
     A = np.empty((3, 3), dtype=q.dtype)
     A[0, 0] = q[0]
@@ -357,22 +457,22 @@ def _q_optimal(q: np.ndarray, fallback: np.ndarray) -> np.ndarray:
     return x
 
 
-# Log-spaced bucket heap for QEM candidate edges. Push and pop are O(1) (pop scans `bh_heads` forward from the last
-# known min, typically just a handful of empty buckets). Within a bucket the order is LIFO; costs in the same bucket are
-# within ~0.1% of each other (`QEM_BUCKETS = 1024` over ~15 decades of cost) so the QEM collapse sequence is essentially
-# unchanged. Storage layout (single unified table):
-#   bh_entries[i]: (cost, u, v, ver_u, ver_v, next_idx) where `next_idx` chains within a bucket or the free list.
-#   bh_heads[b]:   first entry index in bucket `b` (-1 if empty).
-#   bh_state:      [free_head, min_bucket_hint, populated_count].
-#   bh_params:     [log_min, log_to_bucket_scale, n_buckets].
-QEM_BUCKETS = 1024
-QEM_BUCKET_COST_FLOOR = 1e-30
+# Log-spaced bucket heap for quadric-error candidate edges. Push and pop are O(1) (pop scans `bucket_heap_heads`
+# forward from the last known min, typically just a handful of empty buckets). Within a bucket the order is LIFO; costs
+# in the same bucket are within ~0.1% of each other (`QUADRIC_HEAP_BUCKETS = 1024` over ~15 decades of cost) so the
+# quadric-error collapse sequence is essentially unchanged. Storage layout (single unified table):
+#   bucket_heap_entries[i]: (cost, u, v, ver_u, ver_v, next_idx) where `next_idx` chains within a bucket or free list.
+#   bucket_heap_heads[b]:   first entry index in bucket `b` (-1 if empty).
+#   bucket_heap_state:      [free_head, min_bucket_hint, populated_count].
+#   bucket_heap_params:     [log_min, log_to_bucket_scale, n_buckets].
+QUADRIC_HEAP_BUCKETS = 1024
+QUADRIC_HEAP_COST_FLOOR = 1e-30
 
 
 @nb.jit(nopython=True, cache=True)
-def _bh_bucket(cost: float, log_min: float, scale: float, n_buckets: int) -> int:
-    """Map cost to a bucket index in `[0, n_buckets)`, clamped at both ends and at the `QEM_BUCKET_COST_FLOOR`."""
-    if cost < QEM_BUCKET_COST_FLOOR:
+def _bucket_heap_index(cost: float, log_min: float, scale: float, n_buckets: int) -> int:
+    """Map cost to a bucket index in `[0, n_buckets)`, clamped at both ends and at the `QUADRIC_HEAP_COST_FLOOR`."""
+    if cost < QUADRIC_HEAP_COST_FLOOR:
         return 0
     b = int((np.log(cost) - log_min) * scale)
     if b < 0:
@@ -383,11 +483,11 @@ def _bh_bucket(cost: float, log_min: float, scale: float, n_buckets: int) -> int
 
 
 @nb.jit(nopython=True, cache=True)
-def _bh_push(
-    bh_entries: np.ndarray,
-    bh_heads: np.ndarray,
-    bh_state: np.ndarray,
-    bh_params: np.ndarray,
+def _bucket_heap_push(
+    bucket_heap_entries: np.ndarray,
+    bucket_heap_heads: np.ndarray,
+    bucket_heap_state: np.ndarray,
+    bucket_heap_params: np.ndarray,
     cost: float,
     u: int,
     v: int,
@@ -395,48 +495,52 @@ def _bh_push(
     vv: int,
 ) -> bool:
     """Push `(cost, u, v, vu, vv)` into its log-range bucket; returns False on a full free list (entry dropped)."""
-    free_head = int(bh_state[0])
+    free_head = int(bucket_heap_state[0])
     if free_head < 0:
         return False
     idx = free_head
-    bh_state[0] = bh_entries[idx, 5]
-    n_buckets = int(bh_params[2])
-    b = _bh_bucket(cost, bh_params[0], bh_params[1], n_buckets)
-    bh_entries[idx, 0] = cost
-    bh_entries[idx, 1] = u
-    bh_entries[idx, 2] = v
-    bh_entries[idx, 3] = vu
-    bh_entries[idx, 4] = vv
-    bh_entries[idx, 5] = bh_heads[b]
-    bh_heads[b] = idx
-    if b < int(bh_state[1]):
-        bh_state[1] = b
-    bh_state[2] += 1
+    bucket_heap_state[0] = bucket_heap_entries[idx, 5]
+    n_buckets = int(bucket_heap_params[2])
+    b = _bucket_heap_index(cost, bucket_heap_params[0], bucket_heap_params[1], n_buckets)
+    bucket_heap_entries[idx, 0] = cost
+    bucket_heap_entries[idx, 1] = u
+    bucket_heap_entries[idx, 2] = v
+    bucket_heap_entries[idx, 3] = vu
+    bucket_heap_entries[idx, 4] = vv
+    bucket_heap_entries[idx, 5] = bucket_heap_heads[b]
+    bucket_heap_heads[b] = idx
+    if b < int(bucket_heap_state[1]):
+        bucket_heap_state[1] = b
+    bucket_heap_state[2] += 1
     return True
 
 
 @nb.jit(nopython=True, cache=True)
-def _bh_pop_min(
-    bh_entries: np.ndarray, bh_heads: np.ndarray, bh_state: np.ndarray, bh_params: np.ndarray, popped: np.ndarray
+def _bucket_heap_pop_min(
+    bucket_heap_entries: np.ndarray,
+    bucket_heap_heads: np.ndarray,
+    bucket_heap_state: np.ndarray,
+    bucket_heap_params: np.ndarray,
+    popped: np.ndarray,
 ) -> bool:
     """Pop the head of the lowest non-empty bucket, writing it into `popped` (cost, u, v, vu, vv); False on empty."""
-    n_buckets = int(bh_params[2])
-    hint = int(bh_state[1])
-    while hint < n_buckets and bh_heads[hint] < 0:
+    n_buckets = int(bucket_heap_params[2])
+    hint = int(bucket_heap_state[1])
+    while hint < n_buckets and bucket_heap_heads[hint] < 0:
         hint += 1
-    bh_state[1] = hint
+    bucket_heap_state[1] = hint
     if hint >= n_buckets:
         return False
-    idx = bh_heads[hint]
-    popped[0] = bh_entries[idx, 0]
-    popped[1] = bh_entries[idx, 1]
-    popped[2] = bh_entries[idx, 2]
-    popped[3] = bh_entries[idx, 3]
-    popped[4] = bh_entries[idx, 4]
-    bh_heads[hint] = bh_entries[idx, 5]
-    bh_entries[idx, 5] = bh_state[0]
-    bh_state[0] = idx
-    bh_state[2] -= 1
+    idx = bucket_heap_heads[hint]
+    popped[0] = bucket_heap_entries[idx, 0]
+    popped[1] = bucket_heap_entries[idx, 1]
+    popped[2] = bucket_heap_entries[idx, 2]
+    popped[3] = bucket_heap_entries[idx, 3]
+    popped[4] = bucket_heap_entries[idx, 4]
+    bucket_heap_heads[hint] = bucket_heap_entries[idx, 5]
+    bucket_heap_entries[idx, 5] = bucket_heap_state[0]
+    bucket_heap_state[0] = idx
+    bucket_heap_state[2] -= 1
     return True
 
 
@@ -558,17 +662,17 @@ def _seed_quadrics_and_heap(
     verts: np.ndarray,
     faces: np.ndarray,
     v_Q: np.ndarray,
-    bh_entries: np.ndarray,
-    bh_heads: np.ndarray,
-    bh_state: np.ndarray,
-    bh_params: np.ndarray,
+    bucket_heap_entries: np.ndarray,
+    bucket_heap_heads: np.ndarray,
+    bucket_heap_state: np.ndarray,
+    bucket_heap_params: np.ndarray,
     max_cost: float,
 ) -> int:
-    """Vectorised QEM warm-start: build per-vertex quadrics + bulk-load the initial bucket heap. Returns entry count.
+    """Vectorised quadric-error warm-start: build per-vertex quadrics + bulk-load the bucket heap. Returns entry count.
 
     Filters out edges already past `max_cost` so they don't enter the heap at all. The per-edge optimal-collapse
     position uses the symmetric 3x3 upper-left of the quadric (with edge-midpoint fallback on singular blocks),
-    matching the `_q_optimal` / `_q_cost` semantics the main loop uses.
+    matching the `_quadric_optimal_vertex` / `_quadric_cost` semantics the main loop uses.
     """
     # Plane quadric per face: `plane` packs `(normal, d)` as `(n_faces, 4)`, `face_q` is the packed-10 outer product.
     tri = verts[faces]
@@ -589,11 +693,12 @@ def _seed_quadrics_and_heap(
     u, v = edges[:, 0], edges[:, 1]
     q_sum = v_Q[u] + v_Q[v]
     # Per-edge optimal collapse position via the symmetric 3x3 upper-left quadric block, with edge-midpoint fallback on
-    # singular rows (matches `_q_optimal`). `Q_BLOCK` indexes the symmetric 3x3 out of the packed-10 layout.
+    # singular rows (matches `_quadric_optimal_vertex`). `Q_BLOCK` indexes the symmetric 3x3 block out of the
+    # packed-10 layout.
     Q_BLOCK = np.array([[0, 1, 2], [1, 4, 5], [2, 5, 7]], dtype=np.int64)
     midpoint = 0.5 * (verts[u] + verts[v])
     opt = _batched_solve3x3(q_sum[:, Q_BLOCK], -q_sum[:, [3, 6, 8]], midpoint)
-    # Cost = `[opt; 1]^T Q [opt; 1]` with `Q` rebuilt as a 4x4 symmetric. Same layout as `_q_cost`.
+    # Cost = `[opt; 1]^T Q [opt; 1]` with `Q` rebuilt as a 4x4 symmetric. Same layout as `_quadric_cost`.
     Q_4X4 = np.array([[0, 1, 2, 3], [1, 4, 5, 6], [2, 5, 7, 8], [3, 6, 8, 9]], dtype=np.int64)
     opt_h = np.concatenate((opt, np.ones((opt.shape[0], 1), dtype=opt.dtype)), axis=1)
     cost = np.einsum("ni,nij,nj->n", opt_h, q_sum[:, Q_4X4], opt_h)
@@ -602,47 +707,47 @@ def _seed_quadrics_and_heap(
     cost_kept = cost[keep]
     u_kept = u[keep]
     v_kept = v[keep]
-    capacity = bh_entries.shape[0]
+    capacity = bucket_heap_entries.shape[0]
     n_entries = min(cost_kept.shape[0], capacity)
     cost_kept = cost_kept[:n_entries]
     u_kept = u_kept[:n_entries]
     v_kept = v_kept[:n_entries]
-    log_min, scale, n_buckets = bh_params[0], bh_params[1], int(bh_params[2])
-    bh_heads[:] = -1
+    log_min, scale, n_buckets = bucket_heap_params[0], bucket_heap_params[1], int(bucket_heap_params[2])
+    bucket_heap_heads[:] = -1
     if n_entries > 0:
-        log_cost = np.log(np.maximum(cost_kept, QEM_BUCKET_COST_FLOOR))
+        log_cost = np.log(np.maximum(cost_kept, QUADRIC_HEAP_COST_FLOOR))
         bucket_idx = np.clip(((log_cost - log_min) * scale).astype(np.int64), 0, n_buckets - 1)
         # Sort by (bucket, cost): entries land grouped by bucket and, within each bucket, sorted by cost ascending. The
         # linked list then pops the bucket's cheapest entry first, matching a strict-min priority queue for the initial
-        # heap. Re-seeds during the main loop still go LIFO into bh_heads (their cost is bounded by `max_cost` and they
-        # share a bucket with entries within ~0.1% of their own cost, so the order error is small in practice).
+        # heap. Re-seeds during the main loop still go LIFO into bucket_heap_heads (their cost is bounded by `max_cost`
+        # and they share a bucket with entries within ~0.1% of their own cost, so the order error is small in practice).
         order = np.lexsort((cost_kept, bucket_idx))
         sorted_buckets = bucket_idx[order]
-        bh_entries[:n_entries, 0] = cost_kept[order]
-        bh_entries[:n_entries, 1] = u_kept[order]
-        bh_entries[:n_entries, 2] = v_kept[order]
-        bh_entries[:n_entries, 3:5] = 0
+        bucket_heap_entries[:n_entries, 0] = cost_kept[order]
+        bucket_heap_entries[:n_entries, 1] = u_kept[order]
+        bucket_heap_entries[:n_entries, 2] = v_kept[order]
+        bucket_heap_entries[:n_entries, 3:5] = 0
         # `next_idx[k] = k + 1` when entry k+1 is in the same bucket as k; otherwise -1 (end-of-bucket marker).
         next_idx = np.where(sorted_buckets[:-1] == sorted_buckets[1:], np.arange(1, n_entries, dtype=np.int64), -1)
-        bh_entries[: n_entries - 1, 5] = next_idx
-        bh_entries[n_entries - 1, 5] = -1
-        # `bh_heads[b]` is the first entry of bucket `b`, found at the first occurrence of `b` in `sorted_buckets`.
+        bucket_heap_entries[: n_entries - 1, 5] = next_idx
+        bucket_heap_entries[n_entries - 1, 5] = -1
+        # `bucket_heap_heads[b]` is the first entry of bucket `b`, at the first occurrence of `b` in `sorted_buckets`.
         starts = np.concatenate(([True], sorted_buckets[1:] != sorted_buckets[:-1]))
-        bh_heads[sorted_buckets[starts]] = np.flatnonzero(starts)
-    # Chain unused slots `n_entries..capacity-1` into the free list; `bh_state[0]` is the free-list head (-1 = full).
+        bucket_heap_heads[sorted_buckets[starts]] = np.flatnonzero(starts)
+    # Chain unused slots `n_entries..capacity-1` into the free list; `bucket_heap_state[0]` is the free-list head.
     if n_entries < capacity:
-        bh_entries[n_entries:-1, 5] = np.arange(n_entries + 1, capacity, dtype=np.int64)
-        bh_entries[-1, 5] = -1
-        bh_state[0] = n_entries
+        bucket_heap_entries[n_entries:-1, 5] = np.arange(n_entries + 1, capacity, dtype=np.int64)
+        bucket_heap_entries[-1, 5] = -1
+        bucket_heap_state[0] = n_entries
     else:
-        bh_state[0] = -1
-    bh_state[1] = sorted_buckets[0] if n_entries > 0 else n_buckets
-    bh_state[2] = n_entries
+        bucket_heap_state[0] = -1
+    bucket_heap_state[1] = sorted_buckets[0] if n_entries > 0 else n_buckets
+    bucket_heap_state[2] = n_entries
     return n_entries
 
 
 @nb.jit(nopython=True, cache=True)
-def _qem_main(
+def _quadric_decimate_loop(
     verts: np.ndarray,
     faces: np.ndarray,
     target_faces: int,
@@ -653,17 +758,17 @@ def _qem_main(
     f_alive: np.ndarray,
     vf: np.ndarray,
     n_per: np.ndarray,
-    bh_entries: np.ndarray,
-    bh_heads: np.ndarray,
-    bh_state: np.ndarray,
-    bh_params: np.ndarray,
+    bucket_heap_entries: np.ndarray,
+    bucket_heap_heads: np.ndarray,
+    bucket_heap_state: np.ndarray,
+    bucket_heap_params: np.ndarray,
 ) -> int:
     """Garland-Heckbert decimation with manifold guards and a feature-preserving cost cutoff.
 
     Returns the alive face count on exit (target reached, heap empty, or cost cutoff). Returns -1 on incidence
     buffer overflow; the caller is expected to grow the buffer and retry. The seed quadrics + heap warm-start
     are produced vectorised in `_seed_quadrics_and_heap`; this entry point only runs the inherently serial
-    collapse loop, driven by the O(1) bucket-heap `_bh_push` / `_bh_pop_min` operations.
+    collapse loop, driven by the O(1) bucket-heap `_bucket_heap_push` / `_bucket_heap_pop_min` operations.
     """
     q_sum = np.empty(10, dtype=np.float64)
     ring_u = np.empty(64, dtype=np.int32)
@@ -673,7 +778,9 @@ def _qem_main(
     alive_faces = int(f_alive.sum())
 
     while alive_faces > target_faces:
-        if not _bh_pop_min(bh_entries, bh_heads, bh_state, bh_params, popped):
+        if not _bucket_heap_pop_min(
+            bucket_heap_entries, bucket_heap_heads, bucket_heap_state, bucket_heap_params, popped
+        ):
             break
         cost = popped[0]
         # Bucket heap pops in approximate cost order; once the head bucket's cost exceeds the cutoff every
@@ -690,8 +797,8 @@ def _qem_main(
             continue
         q_sum[:] = v_Q[u] + v_Q[v]
         mid = 0.5 * (verts[u] + verts[v])
-        opt = _q_optimal(q_sum, mid)
-        new_cost = _q_cost(q_sum, opt)
+        opt = _quadric_optimal_vertex(q_sum, mid)
+        new_cost = _quadric_cost(q_sum, opt)
         if new_cost > max_cost:
             continue
         if not _collapse_safe(u, v, opt, verts, faces, vf, n_per, ring_u, ring_v):
@@ -743,16 +850,26 @@ def _qem_main(
                 continue
             q_sum[:] = v_Q[u] + v_Q[w]
             mid = 0.5 * (verts[u] + verts[w])
-            opt = _q_optimal(q_sum, mid)
-            new_cost = _q_cost(q_sum, opt)
+            opt = _quadric_optimal_vertex(q_sum, mid)
+            new_cost = _quadric_cost(q_sum, opt)
             # Skip re-seeds already past the cost cutoff - they would only be popped and immediately discarded.
             if new_cost <= max_cost:
-                _bh_push(bh_entries, bh_heads, bh_state, bh_params, new_cost, u, w, v_version[u], v_version[w])
+                _bucket_heap_push(
+                    bucket_heap_entries,
+                    bucket_heap_heads,
+                    bucket_heap_state,
+                    bucket_heap_params,
+                    new_cost,
+                    u,
+                    w,
+                    v_version[u],
+                    v_version[w],
+                )
 
     return alive_faces
 
 
-def _decimate_qem(verts: np.ndarray, faces: np.ndarray, target_faces: int, max_cost: float):
+def _decimate_quadric_error(verts: np.ndarray, faces: np.ndarray, target_faces: int, max_cost: float):
     """Garland-Heckbert decimation with manifold preservation + feature-preserving cost cutoff.
 
     Seed quadrics + bucket heap are computed once (they only depend on the input geometry) and restored via
@@ -767,28 +884,30 @@ def _decimate_qem(verts: np.ndarray, faces: np.ndarray, target_faces: int, max_c
     # `6 * n_faces` slots covers initial unique edges (~3 * n_faces / 2) plus a per-collapse re-seed budget
     # (~6 neighbours * n_faces / 2) on every input we've tried; the 1M floor keeps small assets usable.
     capacity = max(6 * n_faces, 1_000_000)
-    bh_entries = np.zeros((capacity, 6), dtype=np.float64)
-    bh_heads_pristine = np.full(QEM_BUCKETS, -1, dtype=np.int64)
-    bh_state_pristine = np.zeros(3, dtype=np.int64)
-    # ~15 decades of log span below `max_cost` matches the QEM dynamic range on the reference assets.
-    log_max = np.log(max(max_cost, QEM_BUCKET_COST_FLOOR)) + 1e-3
+    bucket_heap_entries = np.zeros((capacity, 6), dtype=np.float64)
+    bucket_heap_heads_pristine = np.full(QUADRIC_HEAP_BUCKETS, -1, dtype=np.int64)
+    bucket_heap_state_pristine = np.zeros(3, dtype=np.int64)
+    # ~15 decades of log span below `max_cost` matches the quadric-error dynamic range on the reference assets.
+    log_max = np.log(max(max_cost, QUADRIC_HEAP_COST_FLOOR)) + 1e-3
     log_min = log_max - 15.0 * np.log(10.0)
-    bh_params = np.array([log_min, QEM_BUCKETS / (log_max - log_min), QEM_BUCKETS], dtype=np.float64)
+    bucket_heap_params = np.array(
+        [log_min, QUADRIC_HEAP_BUCKETS / (log_max - log_min), QUADRIC_HEAP_BUCKETS], dtype=np.float64
+    )
     v_Q_pristine = np.zeros((n_verts, 10), dtype=np.float64)
-    entries_pristine = np.empty_like(bh_entries)
+    entries_pristine = np.empty_like(bucket_heap_entries)
     _seed_quadrics_and_heap(
         verts,
         faces,
         v_Q_pristine,
-        bh_entries,
-        bh_heads_pristine,
-        bh_state_pristine,
-        bh_params,
+        bucket_heap_entries,
+        bucket_heap_heads_pristine,
+        bucket_heap_state_pristine,
+        bucket_heap_params,
         max_cost,
     )
-    np.copyto(entries_pristine, bh_entries)
-    bh_heads = np.empty_like(bh_heads_pristine)
-    bh_state = np.empty_like(bh_state_pristine)
+    np.copyto(entries_pristine, bucket_heap_entries)
+    bucket_heap_heads = np.empty_like(bucket_heap_heads_pristine)
+    bucket_heap_state = np.empty_like(bucket_heap_state_pristine)
     v_Q = np.empty_like(v_Q_pristine)
     max_deg = 32
     while True:
@@ -803,11 +922,11 @@ def _decimate_qem(verts: np.ndarray, faces: np.ndarray, target_faces: int, max_c
             max_deg *= 2
             continue
         _init_vf(faces_w, vf, n_per)
-        np.copyto(bh_entries, entries_pristine)
-        np.copyto(bh_heads, bh_heads_pristine)
-        np.copyto(bh_state, bh_state_pristine)
+        np.copyto(bucket_heap_entries, entries_pristine)
+        np.copyto(bucket_heap_heads, bucket_heap_heads_pristine)
+        np.copyto(bucket_heap_state, bucket_heap_state_pristine)
         np.copyto(v_Q, v_Q_pristine)
-        result = _qem_main(
+        result = _quadric_decimate_loop(
             verts_w,
             faces_w,
             target_faces,
@@ -818,10 +937,10 @@ def _decimate_qem(verts: np.ndarray, faces: np.ndarray, target_faces: int, max_c
             f_alive,
             vf,
             n_per,
-            bh_entries,
-            bh_heads,
-            bh_state,
-            bh_params,
+            bucket_heap_entries,
+            bucket_heap_heads,
+            bucket_heap_state,
+            bucket_heap_params,
         )
         if result == -1:
             max_deg *= 2
@@ -956,16 +1075,24 @@ def _estimate_feature_size(verts: np.ndarray, faces: np.ndarray) -> float:
 
 
 def _adaptive_params(verts: np.ndarray, faces: np.ndarray, aggressiveness: int):
-    """Pick alpha / pitch / max_cost from the input's estimated feature size, with a bbox-derived compute cap.
+    """Pick alpha / pitch / max_cost from the input's estimated feature size, with a bbox-derived compute floor.
 
-    `max_cost = (aggressiveness * alpha / 6)^2` is the empirical cost-to-aggressiveness mapping that produces visually
-    comparable output across asset sizes (aggressiveness=4 -> `max_cost ~ 1e-3` on a 22 m asset).
+    `pitch` tracks the feature size so the wrap resolution follows the geometry, bounded below by the compute floor
+    `bbox_diag / MAX_CELLS_AXIS`; the `MAX_ALPHA` offset cap only tightens it where the compute floor leaves room. This
+    keeps the wrap scale-invariant - a scaled-up input yields the scaled-up same wrap rather than a denser, more dented
+    one. `max_cost = (aggressiveness * alpha / 6)^2` is the empirical cost-to-aggressiveness mapping; it scales with
+    `alpha` so decimation strength stays consistent across asset sizes.
     """
     bbox_diag = np.linalg.norm(verts.max(axis=0) - verts.min(axis=0))
     feature_size = _estimate_feature_size(verts, faces)
     pitch_feature = max(MIN_PITCH_ABS, feature_size * PITCH_FEATURE_FRACTION)
     pitch_compute = bbox_diag / MAX_CELLS_AXIS
-    pitch = min(max(pitch_feature, pitch_compute), MAX_ALPHA / PITCH_RATIO)
+    # Cap the feature-driven pitch by the offset limit, but never below the compute floor. On a mesh large enough that
+    # `MAX_ALPHA / PITCH_RATIO` drops under `pitch_compute`, an absolute cap would force a grid finer than
+    # `MAX_CELLS_AXIS` (more cells, relatively less decimation, more sliver fans) and make the wrap scale-dependent: the
+    # same asset scaled up would come out denser and dented. Keeping the compute floor authoritative lets the offset
+    # grow with the mesh, so the wrap is scale-invariant (a scaled input gives the scaled-up same wrap).
+    pitch = max(pitch_compute, min(pitch_feature, MAX_ALPHA / PITCH_RATIO))
     alpha = pitch * PITCH_RATIO
     if pitch_compute > pitch_feature:
         gs.logger.warning(
@@ -1006,6 +1133,86 @@ def _keep_outer_shell(verts: np.ndarray, faces: np.ndarray) -> Tuple[np.ndarray,
     )
 
 
+@nb.jit(nopython=True, cache=True)
+def _corner_root(parent: np.ndarray, corner: int) -> int:
+    """Path-halving find over the face-corner union-find."""
+    while parent[corner] != corner:
+        parent[corner] = parent[parent[corner]]
+        corner = parent[corner]
+    return corner
+
+
+@nb.jit(nopython=True, cache=True)
+def _glue_manifold_corners(
+    order: np.ndarray,
+    key_lo: np.ndarray,
+    key_hi: np.ndarray,
+    va: np.ndarray,
+    vb: np.ndarray,
+    corner0: np.ndarray,
+    corner1: np.ndarray,
+    n_corners: int,
+) -> np.ndarray:
+    """Union the two corners meeting at each endpoint of every manifold edge, then return each corner's root.
+
+    A corner is a (face, slot) pair indexed `3 * face + slot`. Corners are merged only across an edge shared by exactly
+    two faces; an edge incident to more than two faces (a self-touch pinch) glues nothing, so the sheets meeting there
+    keep distinct corners and become distinct vertices. `order` lexically sorts the directed half-edges by their
+    (lower, higher) endpoint so each undirected edge is a contiguous run.
+    """
+    parent = np.arange(n_corners)
+    n = order.shape[0]
+    i = 0
+    while i < n:
+        j = i + 1
+        while j < n and key_lo[order[j]] == key_lo[order[i]] and key_hi[order[j]] == key_hi[order[i]]:
+            j += 1
+        if j - i == 2:
+            p = order[i]
+            q = order[i + 1]
+            for corner_p, corner_q in (
+                (corner0[p], corner0[q] if va[q] == va[p] else corner1[q]),
+                (corner1[p], corner0[q] if va[q] == vb[p] else corner1[q]),
+            ):
+                root_p = _corner_root(parent, corner_p)
+                root_q = _corner_root(parent, corner_q)
+                if root_p != root_q:
+                    parent[max(root_p, root_q)] = min(root_p, root_q)
+        i = j
+    for corner in range(n_corners):
+        parent[corner] = _corner_root(parent, corner)
+    return parent
+
+
+def _resolve_nonmanifold_edges(verts: np.ndarray, faces: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Un-weld self-touch pinches so every edge is shared by exactly two faces (edge-manifold).
+
+    Manifold dual contouring can still route two iso-surface sheets that pinch inside a single cell through one shared
+    vertex pair, leaving an edge incident to four faces. Splitting each vertex into one copy per connected fan of faces
+    (fans joined only across manifold edges) separates such sheets. Vertex positions are duplicated unchanged and no face
+    or winding is altered, so the divergence-theorem volume, center of mass and inertia are preserved exactly; only the
+    connectivity becomes 2-manifold.
+    """
+    n_f = faces.shape[0]
+    if n_f == 0:
+        return verts, faces
+    slot0 = np.array([0, 1, 2])
+    slot1 = np.array([1, 2, 0])
+    va = faces[:, slot0].reshape(-1)
+    vb = faces[:, slot1].reshape(-1)
+    base = (3 * np.arange(n_f, dtype=np.int64))[:, None]
+    corner0 = (base + slot0).reshape(-1)
+    corner1 = (base + slot1).reshape(-1)
+    key_lo = np.minimum(va, vb)
+    key_hi = np.maximum(va, vb)
+    order = np.lexsort((key_hi, key_lo))
+    parent = _glue_manifold_corners(order, key_lo, key_hi, va, vb, corner0, corner1, 3 * n_f)
+    unique_roots, new_index = np.unique(parent, return_inverse=True)
+    new_verts = verts[faces.reshape(-1)[unique_roots]]
+    new_faces = new_index.reshape(n_f, 3).astype(np.int32)
+    return np.ascontiguousarray(new_verts), np.ascontiguousarray(new_faces)
+
+
 def watertighten_mesh(
     verts: np.ndarray,
     faces: np.ndarray,
@@ -1016,11 +1223,11 @@ def watertighten_mesh(
     """Return a watertight wrap of the input triangle soup, strictly outside it and within `alpha` of it.
 
     Pipeline: padded unsigned distance field on a regular grid (`_sdf_field`); separable Gaussian blur to kill
-    sub-voxel aliasing; dual-contouring iso-surface extraction at level `alpha` (`_dc_extract`); analytical snap onto
-    the `alpha`-isosurface to remove SDF-grid noise; quadric-error decimation with manifold + normal-flip guards
-    (`_decimate_qem`); inward ray-cast snap of each wrap vertex onto the source surface where the source is locally
-    closed (vertices that bridge open holes stay at the `alpha`-iso to preserve the wrap closure). All adaptive
-    parameters (`alpha`, `pitch`, cost cutoff) come from `_adaptive_params`.
+    sub-voxel aliasing; manifold dual-contouring iso-surface extraction at level `alpha`
+    (`_extract_dual_contour_mesh`); analytical snap onto the `alpha`-isosurface to remove SDF-grid noise; quadric-error
+    decimation with manifold + normal-flip guards (`_decimate_quadric_error`); inward ray-cast snap of each wrap vertex
+    onto the source surface where the source is locally closed (vertices that bridge open holes stay at the `alpha`-iso
+    to preserve the wrap closure). All adaptive parameters (`alpha`, `pitch`, cost cutoff) come from `_adaptive_params`.
 
     Parameters
     ----------
@@ -1043,8 +1250,9 @@ def watertighten_mesh(
     field, origin = _sdf_field(verts, faces, alpha, pitch, blur_radius=blur_radius)
     field = gaussian_blur_3d(field, sigma)
     grad = _sdf_gradient(field, pitch)
-    v, f = _dc_extract(field, grad, alpha, pitch, origin)
+    v, f = _extract_dual_contour_mesh(field, grad, alpha, pitch, origin)
     v, f = _keep_outer_shell(v, f)
+    v, f = _resolve_nonmanifold_edges(v, f)
     # One Newton step on the unsigned distance: snap each wrap vertex to the analytical `alpha`-isosurface of the source
     # mesh. Erases SDF-grid discretisation noise without changing topology - flat source regions stay flat in the wrap.
     _, _, closest = igl.point_mesh_squared_distance(v, verts, faces)
@@ -1052,7 +1260,7 @@ def watertighten_mesh(
     out_norm = np.linalg.norm(outward, axis=1, keepdims=True)
     moved = out_norm[:, 0] > 1e-9
     v[moved] = (closest + alpha * (outward / np.maximum(out_norm, 1e-12)))[moved]
-    v, f = _decimate_qem(v, f, target_faces=max(2 * target_face_num, 1), max_cost=max_cost)
+    v, f = _decimate_quadric_error(v, f, target_faces=max(2 * target_face_num, 1), max_cost=max_cost)
     # Snap each wrap vertex onto its nearest source point - removes the `alpha`-offset inflation entirely on solid
     # bulk regions where the source has well-defined two-sided geometry. Vertices that bridge an open hole in the
     # source must NOT be snapped: their nearest source point sits on the hole's rim, and pulling them onto it would
@@ -1067,5 +1275,22 @@ def watertighten_mesh(
     _, ray_idx, _ = src.ray.intersects_location(v, inward, multiple_hits=False)
     has_hit = np.zeros(v.shape[0], dtype=np.bool_)
     has_hit[ray_idx] = True
-    v[has_hit] = closest[has_hit]
-    return v, f
+    snapped = v.copy()
+    snapped[has_hit] = closest[has_hit]
+    # The snap pulls each bulk vertex onto its nearest source point, but two adjacent vertices can land on the same
+    # point, collapsing their edge to a degenerate (zero-area) face and spawning slivers around it. Undo the snap on
+    # any vertex whose move shrank an incident edge below a small fraction of its pre-snap length, iterating until no
+    # edge stays collapsed (each revert can only lengthen edges, so this terminates). Only snapped vertices revert, so
+    # the wrap stays watertight - reverting restores the pre-snap (alpha-iso) position, which is itself valid.
+    edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
+    pre_len = np.linalg.norm(v[edges[:, 0]] - v[edges[:, 1]], axis=1)
+    for _ in range(8):
+        cur_len = np.linalg.norm(snapped[edges[:, 0]] - snapped[edges[:, 1]], axis=1)
+        collapsed = edges[cur_len < 0.2 * np.maximum(pre_len, 1e-12)]
+        revert = np.unique(collapsed)
+        revert = revert[has_hit[revert]]
+        if revert.size == 0:
+            break
+        snapped[revert] = v[revert]
+        has_hit[revert] = False
+    return snapped, f

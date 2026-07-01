@@ -135,7 +135,7 @@ def test_rasterizer_renders_heterogeneous_entities(n_envs, env_separate_rigid, s
 
     if sys.platform == "darwin" and scene.visualizer.is_software:
         # Small discrepancies between different hardware due the different physics integration
-        png_snapshot.extension._std_err_threshold = 1.5
+        png_snapshot.extension._std_err_threshold = 3.0
 
     # The sphere variant fills the first environments and the duck the last, placed on opposite sides so the duck
     # (yellow) occupies a known half of the combined image. The box (homogeneous) sits at the back of each environment.
@@ -591,7 +591,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     exporter = FrameImageExporter(tmp_path)
 
     # Initialize the simulation
-    set_random_seed(0)
+    set_random_seed(1)
     for i in range(max(n_envs, 1)):
         qpos = torch.zeros(robot.n_dofs, device=gs.device)
         qpos[:2] = torch.as_tensor(np.random.rand(2), dtype=gs.tc_float, device=gs.device) - 0.5

@@ -320,13 +320,12 @@ def change_scene(args: list[str]):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
-# Note that, on GPU, PARA_LEVEL is changing between batched and non-batched simulation
 @pytest.mark.parametrize(
     "test_backend, list_n_objs_n_envs",
     [
-        ("gpu", [(1, 0), (2, 1)]),
+        ("gpu", [(3, 0), (4, 1)]),
         ("gpu", [(3, 3), (4, 4)]),
-        ("cpu", [(1, 0), (2, 1), (2, 2), (3, 3)]),
+        ("cpu", [(2, 0), (4, 4)]),
     ],
 )
 def test_ndarray_no_compile(

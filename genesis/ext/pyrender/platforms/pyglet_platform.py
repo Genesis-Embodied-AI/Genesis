@@ -78,7 +78,12 @@ class PygletPlatform(Platform):
         # The glx call above is a no-op off X11, so explicitly clear pyglet's current-context bookkeeping too. This
         # keeps it accurate on every platform (e.g. Cocoa), so 'save_current_context' never mistakes this renderer's
         # own context for an external one to restore, and the next 'make_current' rebinds rather than short-circuiting.
+        # Clear gl_info in lockstep, exactly as pyglet's own Context.set_current and Context.destroy do. Otherwise
+        # gl_info.have_context() stays True while no context is current, and pyglet's Windows pixel-format matching
+        # then takes the WGL ARB path, whose extension functions resolve only with a context current and otherwise
+        # raise "wglChoosePixelFormatARB before GL context created".
         pyglet.gl.current_context = None
+        pyglet.gl.gl_info.remove_active_context()
 
     def save_current_context(self):
         # 'set_current' is a bound method of the current Context, i.e. a self-contained zero-argument restore callable.
