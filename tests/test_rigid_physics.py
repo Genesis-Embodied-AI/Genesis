@@ -4406,10 +4406,6 @@ def test_nan_reset(gs_sim, mode):
 
 @pytest.mark.required
 def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer):
-    # Two thin stacked boxes with vertically aligned centers: the MPR seed ray is exactly vertical and the flat-face
-    # support ties leave the first support vertex with a small lateral offset, so the portal-discovery collinearity
-    # test must not misclassify this near-perpendicular configuration as a degenerate segment, whose fallback path
-    # would fabricate a laterally-tilted contact from that arbitrary support tie instead of the true vertical normal.
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=False,
