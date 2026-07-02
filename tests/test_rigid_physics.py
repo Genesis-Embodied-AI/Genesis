@@ -4405,13 +4405,12 @@ def test_nan_reset(gs_sim, mode):
 
 
 @pytest.mark.required
-def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer):
+def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer, tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             use_gjk_collision=False,
         ),
         show_viewer=show_viewer,
-        show_FPS=False,
     )
     scene.add_entity(
         gs.morphs.Box(
@@ -4432,13 +4431,13 @@ def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer):
     contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
     normals = contacts["normal"]
     assert len(normals) > 0
-    assert_allclose(np.abs(normals[..., 2]), 1, atol=1e-3)
+    assert_allclose(np.abs(normals[..., 2]), 1, atol=1e2 * tol)
 
     for _ in range(100):
         scene.step()
     pos = box.get_pos()
-    assert_allclose(pos[..., :2], 0, atol=1e-4)
-    assert_allclose(pos[..., 2], 0.015, atol=5e-4)
+    assert_allclose(pos[..., :2], 0, atol=1e1 * tol)
+    assert_allclose(pos[..., 2], 0.015, atol=1e1 * tol)
 
 
 @pytest.mark.required
