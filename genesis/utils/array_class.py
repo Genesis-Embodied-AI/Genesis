@@ -1695,10 +1695,11 @@ class LinksState:
 
 
 def get_links_state(solver):
-    max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = (solver.n_links_, solver._B)
     requires_grad = solver._requires_grad
-    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
+    # The backward joint buffers hold one slot per joint of a link plus the link itself; collapsed when grad is off.
+    n_joints_bw = (max(link.n_joints for link in solver.links) + 1) if requires_grad and solver.n_links else 1
+    shape_bw = (solver.n_links_, n_joints_bw, solver._B)
 
     return LinksState(
         cinr_inertial=V(dtype=gs.qd_mat3, shape=shape, needs_grad=requires_grad),
@@ -2255,7 +2256,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool
-    enable_heterogeneous: bool
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
@@ -2325,12 +2325,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # instead of serializing them inside one block-per-env. Sized to saturate the GPU (gpu_cores // tile_size) but no
     # larger than the worst-case work-list (n_links * n_envs), so tiny problems do not launch idle blocks.
     island_factor_n_blocks: int = 1
-    max_n_links_per_entity: int = -1
-    max_n_joints_per_link: int = -1
-    max_n_dofs_per_joint: int = -1
-    max_n_qs_per_link: int = -1
-    max_n_dofs_per_entity: int = -1
-    max_n_dofs_per_link: int = -1
     max_n_geoms_per_entity: int = -1
     n_entities: int = -1
     n_links: int = -1

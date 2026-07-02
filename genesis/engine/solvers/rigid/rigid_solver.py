@@ -509,7 +509,6 @@ class RigidSolver(KinematicSolver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
-            enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
@@ -641,12 +640,6 @@ class RigidSolver(KinematicSolver):
             if self.sim.options.requires_grad:
                 static_rigid_sim_config.update(
                     max_n_geoms_per_entity=max(len(entity.geoms) for entity in self.entities) if self.links else 0,
-                    max_n_links_per_entity=max(len(entity.links) for entity in self.entities) if self.entities else 0,
-                    max_n_joints_per_link=max(len(link.joints) for link in self.links) if self.links else 0,
-                    max_n_dofs_per_joint=max(joint.n_dofs for joint in self.joints) if self.joints else 0,
-                    max_n_dofs_per_entity=max_n_dofs_per_entity,
-                    max_n_dofs_per_link=max(link.n_dofs for link in self.links) if self.links else 0,
-                    max_n_qs_per_link=max(link.n_qs for link in self.links) if self.links else 0,
                     n_entities=self._n_entities,
                     n_links=self._n_links,
                     n_geoms=self._n_geoms,
