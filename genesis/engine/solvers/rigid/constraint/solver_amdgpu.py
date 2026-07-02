@@ -458,19 +458,16 @@ def _kernel_update_search_direction_amdgpu_decomposed(
 
 
 def _decomposed_amdgpu_is_compatible(*args, **kwargs):
-    # disabled (v1.0.0): decomposed sub-kernels call upstream solver device
-    # functions whose signatures changed in the upstream-v1.0.0 merge. The
-    # self-contained wavecoop / tiled_wc variants cover the AMD perf path.
-    return False
-    # `func_solve_body` is invoked positionally everywhere (see solver.py
-    # ConstraintSolver.solve). Upstream v1.0.0 inserted `dofs_info` as the 2nd
-    # positional arg, so static_rigid_sim_config now arrives as args[5].
+    # Re-enabled (v1.0.0 fix): updated args index from 5 to 6 since
+    # dofs_info was inserted as the 2nd positional arg in v1.0.0.
+    # Sub-kernels use only keyword args for solver device functions -- no
+    # further signature changes needed.
     if gs.backend not in {gs.amdgpu}:
         return False
     # Dense path only -- _kernel_update_constraint_qfrc_amdgpu_decomposed
     # reads constraint_state.jac directly. Sparse decomposition is a
     # separate kernel design (scatter-add) and not implemented here yet.
-    cfg = kwargs.get("static_rigid_sim_config", args[5] if len(args) >= 6 else None)
+    cfg = kwargs.get("static_rigid_sim_config", args[6] if len(args) >= 7 else None)
     if cfg is None:
         return False
     if cfg.sparse_solve:
