@@ -82,7 +82,8 @@ def mpr_point_tri_depth(mpr_info: array_class.MPRInfo, P, x0, B, C):
     pdir = gs.qd_vec3([0.0, 0.0, 0.0])
     # d = |d1|^2 * |d2|^2 - (d1 . d2)^2 = |d1 x d2|^2 is the Gram determinant of the triangle edges (length^4);
     # comparing it to its own scale v * w makes the degeneracy test the dimensionless sin^2 of the edge angle.
-    if qd.abs(d) < mpr_info.CCD_EPS[None] * v * w:
+    # Must use <= so that degenerate (zero-length) edges are still classified as degenerate.
+    if qd.abs(d) <= mpr_info.CCD_EPS[None] * v * w:
         s = t = -1.0
     else:
         s = (q * r - w * p) / d
@@ -531,17 +532,23 @@ def mpr_discover_portal(
         ret = -1
     else:
         direction = mpr_state.simplex_support.v[0, i_b].cross(mpr_state.simplex_support.v[1, i_b])
+        # The touch test must come first and independently: for a vanishing v1 both sides of the relative
+        # collinearity test vanish as well, which would fall through to normalizing a zero cross product.
+        if (
+            qd.abs(mpr_state.simplex_support.v[1, i_b])
+            < mpr_info.CCD_EPS[None] * mpr_state.simplex_support.v[0, i_b].norm()
+        ).all():
+            ret = 1
         # Relative collinearity test: |v0 x v1|^2 = |v0|^2 * |v1|^2 * sin^2(angle). An absolute epsilon (length^4)
-        # would misclassify non-collinear cm-scale pairs as degenerate, fabricating deep contacts via the segment path.
-        norm_sqr_01 = mpr_state.simplex_support.v[0, i_b].norm_sqr() * mpr_state.simplex_support.v[1, i_b].norm_sqr()
-        if direction.dot(direction) < mpr_info.CCD_EPS[None] * norm_sqr_01:
-            if (
-                qd.abs(mpr_state.simplex_support.v[1, i_b])
-                < mpr_info.CCD_EPS[None] * mpr_state.simplex_support.v[0, i_b].norm()
-            ).all():
-                ret = 1
-            else:
-                ret = 2
+        # would misclassify non-collinear cm-scale pairs as degenerate, fabricating deep contacts via the segment
+        # path. Must use <= so that an exactly zero cross product is still classified as degenerate.
+        elif (
+            direction.dot(direction)
+            <= mpr_info.CCD_EPS[None]
+            * mpr_state.simplex_support.v[0, i_b].norm_sqr()
+            * mpr_state.simplex_support.v[1, i_b].norm_sqr()
+        ):
+            ret = 2
         else:
             direction = direction.normalized()
             v, v1, v2 = compute_support(
