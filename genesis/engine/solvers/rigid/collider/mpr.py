@@ -339,8 +339,15 @@ def mpr_find_penetr_touch(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 @qd.func
 def mpr_find_penetr_segment(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
     is_col = True
-    penetration = mpr_state.simplex_support.v[1, i_b].norm()
-    normal = -mpr_state.simplex_support.v[1, i_b].normalized()
+    # Anchor the contact direction to the ray (v1 - v0) rather than the raw support point: a degenerate flat-face
+    # support tie can leave v1 with an arbitrary lateral offset, making its direction noise while the ray stays
+    # meaningful. Fall back to v1 if both coincide (fully degenerate difference).
+    direction = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
+    if direction.norm_sqr() == 0.0:
+        direction = mpr_state.simplex_support.v[1, i_b]
+    direction = direction.normalized()
+    penetration = mpr_state.simplex_support.v[1, i_b].dot(direction)
+    normal = -direction
     pos = (mpr_state.simplex_support.v1[1, i_b] + mpr_state.simplex_support.v2[1, i_b]) * 0.5
 
     return is_col, normal, penetration, pos
@@ -498,10 +505,34 @@ def mpr_discover_portal(
     mpr_state.simplex_support.v[0, i_b] = center_a - center_b
     mpr_state.simplex_size[i_b] = 1
 
-    # Coincident centers (within the solver's absolute length resolution) leave the ray direction undefined; nudge
-    # along +x to get a deterministic ray.
+    # Coincident centers (within the solver's absolute length resolution) leave the ray direction undefined; probe
+    # the three axes and pick the one with the largest Minkowski support extent, which gives portal discovery the
+    # most room to enclose the origin.
     if (qd.abs(mpr_state.simplex_support.v[0, i_b]) < mpr_info.CCD_TOLERANCE[None]).all():
-        mpr_state.simplex_support.v[0, i_b][0] += 10.0 * mpr_info.CCD_TOLERANCE[None]
+        best_extent = gs.qd_float(0.0)
+        best_dir = qd.Vector.zero(gs.qd_float, 3)
+        for i_axis in range(3):
+            probe = qd.Vector.zero(gs.qd_float, 3)
+            probe[i_axis] = 1.0
+            probe_v, probe_v1, probe_v2 = compute_support(
+                geoms_info,
+                collider_state,
+                collider_static_config,
+                support_field_info,
+                probe,
+                i_ga,
+                i_gb,
+                i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+            )
+            extent = probe_v.dot(probe)
+            if i_axis == 0 or extent > best_extent:
+                best_extent = extent
+                best_dir = probe
+        mpr_state.simplex_support.v[0, i_b] = best_dir * (10.0 * mpr_info.CCD_TOLERANCE[None])
 
     direction = -mpr_state.simplex_support.v[0, i_b].normalized()
 
