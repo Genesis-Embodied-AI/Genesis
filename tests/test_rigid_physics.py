@@ -3277,6 +3277,74 @@ def test_mass_matrix_lds_packed_equivalence(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("backend", [gs.gpu])
+def test_mass_mat_L_lower_triangular_public_api(show_viewer, tol):
+    """get_mass_mat(decompose=True) returns a strictly lower-triangular factor on the tiled path.
+
+    The tiled AMD factorizer mirrors each lower-triangle L[i,j] into the upper-triangle slot
+    L[j,i] (OPT-L-MIRROR) so the cooperative triangular solve can read it coalesced. That mirror
+    is an internal HBM-layout detail: the public API must apply tril() so callers always see a
+    canonical lower-triangular Cholesky factor, identical to the non-tiled reference path.
+
+    This locks the API-masking fix: without the tril(), the tiled path leaks a non-zero upper
+    triangle (the regression that originally failed test_mass_matrix_lds_packed_equivalence).
+    Franka (9 DOF) engages the tiled factorizer, so its returned L would expose the mirror.
+    """
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=4)
+    # Guard the premise: this DOF count must actually take the mirror-writing tiled path.
+    assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix, (
+        "tiled path not engaged — test would not exercise the upper-triangle mirror"
+    )
+    scene.step()
+
+    L, _ = robot.get_mass_mat(decompose=True)
+    upper = torch.triu(L, diagonal=1)  # everything strictly above the diagonal must be zero
+    assert_allclose(tensor_to_array(upper), 0, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_small_dof_mass_matrix_factorization_reconstructs(show_viewer, tol):
+    """For a <8-DOF robot (tiling OFF), the LDL^T factor reconstructs the assembled mass matrix.
+
+    Robots with fewer than 8 DOFs disable the tiled Cholesky factorizer, exercising the non-tiled
+    factor path and the gated lower-triangle solve fallback (the upper-triangle mirror is not
+    written, so func_solve_mass_coop_tiled / _kernel_solve_body_tiled_wc_amdgpu Step 3 must read
+    [k, p], not the unwritten mirror). The 9-DOF Franka used by the other tests always takes the
+    tiled path and never hits this branch.
+
+    On this path get_mass_mat(decompose=False) and (decompose=True) are a matched pair, so
+    reassembling L @ diag(1/D_inv) @ L^T must recover M. A broken non-tiled factorizer or a wrong
+    gate would corrupt L/D and break the reconstruction.
+    """
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(gs.morphs.URDF(file="urdf/simple/two_link_arm.urdf", fixed=True))
+    scene.build(n_envs=4)
+    # Guard the premise: <8 DOF must disable tiling so this is the non-tiled / fallback path.
+    assert robot.n_dofs < 8, f"expected <8 DOF to disable tiling, got {robot.n_dofs}"
+    assert not scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix, (
+        "tiling unexpectedly enabled — test would not exercise the <8-DOF fallback"
+    )
+    scene.step()
+
+    M = robot.get_mass_mat(decompose=False)
+    L, D_inv = robot.get_mass_mat(decompose=True)
+
+    # L must be unit-lower-triangular here too (no mirror written on the non-tiled path).
+    assert_allclose(tensor_to_array(torch.triu(L, diagonal=1)), 0, tol=tol)
+
+    D = 1.0 / D_inv
+    M_recon = torch.matmul(torch.matmul(L, torch.diag_embed(D)), L.transpose(-1, -2))
+    assert_allclose(tensor_to_array(M_recon), tensor_to_array(M), tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 def test_fk_dynamic_entity_window_equivalence(show_viewer, tol):
     """OPT-2: windowing the FK kernels over dynamic entities does not change link kinematics.
 

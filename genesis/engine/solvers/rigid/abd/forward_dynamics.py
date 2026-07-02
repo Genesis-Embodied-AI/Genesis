@@ -179,16 +179,30 @@ def func_forward_dynamics(
         contact_island_state=contact_island_state,
         is_backward=is_backward,
     )
-    func_update_acc(
-        update_cacc=False,
-        dofs_state=dofs_state,
-        links_info=links_info,
-        links_state=links_state,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
-    )
+    # Non-hibernation forward pass: use level-scheduled occupancy-optimised dispatch
+    # (ndrange(n_links, n_envs) per depth = 5632 waves on MI325X vs 128 waves in the
+    # serial-chain path). The backward pass keeps the serial walk via func_update_acc.
+    if qd.static(not static_rigid_sim_config.use_hibernation and not is_backward):
+        func_update_acc_levels_split(
+            update_cacc=False,
+            dofs_state=dofs_state,
+            links_info=links_info,
+            links_state=links_state,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    else:
+        func_update_acc(
+            update_cacc=False,
+            dofs_state=dofs_state,
+            links_info=links_info,
+            links_state=links_state,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
     func_update_force(
         links_state=links_state,
         links_info=links_info,
@@ -414,7 +428,15 @@ def func_compute_mass_matrix_lds(
 
         qd.simt.block.sync()
 
-        # Write results to global memory with masking
+        # Write results to global memory with masking.
+        # For off-diagonal pairs (i_d_ != j_d_), write both lower and upper triangle
+        # entries inline using the same masked value. This eliminates the separate
+        # upper-triangle mirror pass (which read from HBM and re-wrote), saving
+        # n_dofs*(n_dofs-1)/2 = 903 HBM reads + 1 block.sync per entity per step.
+        # Correctness: mass_parent_mask is NOT symmetric (mask[i,j]=1 only for
+        # descendant→ancestor pairs); the symmetric matrix needs M[i,j]=M[j,i]=val
+        # where val = dot_product * mask[i,j] (lower-triangle mask applies to both
+        # since the upper is just the symmetric reflection of the same masked value).
         global_pair_idx = tid
         while global_pair_idx < n_pairs:
             i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * global_pair_idx + 1, qd.f32)) - 1.0) / 2.0), qd.i32)
@@ -425,33 +447,20 @@ def func_compute_mass_matrix_lds(
             i_d_global = entity_dof_start + i_d_
             j_d_global = entity_dof_start + j_d_
 
-            # Apply masking and store (global_pair_idx == i_d_*(i_d_+1)/2 + j_d_ = packed index)
-            rigid_global_info.mass_mat[i_b, i_d_global, j_d_global] = (
-                mass_mat_local[global_pair_idx] * rigid_global_info.mass_parent_mask[i_d_global, j_d_global]
-            )
+            # Apply masking and store lower triangle
+            # (global_pair_idx == i_d_*(i_d_+1)/2 + j_d_ = packed index)
+            val = mass_mat_local[global_pair_idx] * rigid_global_info.mass_parent_mask[i_d_global, j_d_global]
+            rigid_global_info.mass_mat[i_b, i_d_global, j_d_global] = val
+
+            # Inline upper-triangle mirror for off-diagonal entries — eliminates
+            # the separate mirror-pass loop + block.sync that follows this write phase.
+            # Upper entry M[j,i] mirrors M[i,j] = val (symmetric matrix).
+            # mask[j,i] is NOT used here because the upper entry equals the already-masked
+            # lower value; applying mask[j,i] (which may be 0) would incorrectly zero it.
+            if i_d_ != j_d_:
+                rigid_global_info.mass_mat[i_b, j_d_global, i_d_global] = val
 
             global_pair_idx += BLOCK_DIM
-
-        # Mirror upper triangle for symmetric matrix in both forward and backward passes
-        qd.simt.block.sync()  # Ensure lower-triangle stores are complete
-
-        n_upper_pairs = n_dofs * (n_dofs - 1) // 2
-        upper_idx = tid
-
-        while upper_idx < n_upper_pairs:
-            # Convert to upper triangle indices
-            i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * upper_idx + 1, qd.f32)) + 1.0) / 2.0), qd.i32)
-            if i_d_ * (i_d_ + 1) // 2 <= upper_idx:
-                i_d_ = i_d_ + 1
-            j_d_ = upper_idx - i_d_ * (i_d_ - 1) // 2
-
-            i_d_global = entity_dof_start + j_d_  # Note: swapped for upper triangle
-            j_d_global = entity_dof_start + i_d_
-
-            # Mirror from lower triangle
-            rigid_global_info.mass_mat[i_b, i_d_global, j_d_global] = rigid_global_info.mass_mat[i_b, j_d_global, i_d_global]
-
-            upper_idx += BLOCK_DIM
 
 
 @qd.func
@@ -880,6 +889,11 @@ def func_factor_mass(
                             qd.simt.block.sync()
 
                     # HBM write-back: i_pair is again the 1D packed index, read mass_mat[i_pair] directly.
+                    # OPT-L-MIRROR: also write each L[row,col] value into the transposed position
+                    # L[col,row] (upper triangle) so that Step 3 of func_solve_mass_coop_tiled and
+                    # K1 Phase 5b can read L[p,k] with k varying across lanes — consecutive addresses
+                    # → COALESCED access instead of n_dofs-strided column access.  The upper triangle
+                    # is otherwise unused (Step 1 back-sub reads lower; diagonal = 1.0 is ignored).
                     i_pair = tid
                     n_strict_lower_tri = n_dofs * (n_dofs - 1) // 2
                     while i_pair < n_strict_lower_tri:
@@ -887,7 +901,10 @@ def func_factor_mass(
                         j_d_ = i_pair - i_d_ * (i_d_ - 1) // 2
                         i_d = entity_dof_start + i_d_
                         j_d = entity_dof_start + j_d_
-                        rigid_global_info.mass_mat_L[i_b, i_d, j_d] = mass_mat[i_d_ * (i_d_ + 1) // 2 + j_d_]
+                        val = mass_mat[i_d_ * (i_d_ + 1) // 2 + j_d_]
+                        rigid_global_info.mass_mat_L[i_b, i_d, j_d] = val
+                        # Mirror into upper triangle for coalesced Step 3 reads.
+                        rigid_global_info.mass_mat_L[i_b, j_d, i_d] = val
                         i_pair = i_pair + BLOCK_DIM
     else:
         # Cholesky decomposition that has safe access pattern and robust handling of divide by zero for AD. Even though
@@ -1151,9 +1168,16 @@ def func_solve_mass_coop_tiled(
     the wavefronts) and reads mass_mat_L[i_b, p, k] with lanes over column k
     (coalesced under the [env,row,col] layout), software-pipelined -- mirroring
     the tiled_wc Phase 5b solve. Forward-only (no autodiff backward path).
+
+    OPT-COOP16: raise COOP from 8 to 16 (BLOCK_DIM=128). This doubles the total
+    wavefronts from 1024 (= N_BLOCKS*1) to 2048 (= N_BLOCKS*2), exceeding the
+    1216 SIMD threshold on MI325X (304 CU x 4 SIMD). The triangular solve inner
+    loops iterate ceil(n_dofs/16)~3 times instead of ceil(n_dofs/8)~6 -- fewer
+    iterations per elimination step with same number of steps. LDS usage is
+    unchanged (msolve[ENVS=8, N_DOFS] bytes). ENVS stays 8 to keep N_BLOCKS=1024.
     """
-    BLOCK_DIM = qd.static(64)
-    COOP = qd.static(8)
+    BLOCK_DIM = qd.static(128)  # OPT-COOP16: was 64; 2 waves/WG instead of 1
+    COOP = qd.static(16)        # OPT-COOP16: was 8; doubles total wavefronts
     ENVS = qd.static(8)
     N_DOFS = qd.static(static_rigid_sim_config.n_dofs_)
     N_BLOCKS = qd.static((static_rigid_sim_config.n_envs + 8 - 1) // 8)
@@ -1212,6 +1236,11 @@ def func_solve_mass_coop_tiled(
             qd.simt.block.sync()
 
             # Step 3: solve L x = z (forward-substitution), software-pipelined
+            # OPT-L-MIRROR: when the tiled Cholesky factorizer ran, read from
+            # L[i_b, p, k] (upper triangle, k > p) for coalesced HBM access; lanes over
+            # column k hit consecutive addresses (row p fixed). When the non-tiled factorizer
+            # ran (e.g. <8-DOF robots where enable_tiled_cholesky_mass_matrix=False), the
+            # upper triangle is not written so fall back to L[i_b, k, p] (lower triangle).
             for pp in range(e_n):
                 p = e_ds + pp
                 if do_e:
@@ -1219,13 +1248,19 @@ def func_solve_mass_coop_tiled(
                     k = p + 1 + lane_in_env
                     l_pf = gs.qd_float(0.0)
                     if k < e_de:
-                        l_pf = rigid_global_info.mass_mat_L[i_b, k, p]
+                        if qd.static(static_rigid_sim_config.enable_tiled_cholesky_mass_matrix):
+                            l_pf = rigid_global_info.mass_mat_L[i_b, p, k]
+                        else:
+                            l_pf = rigid_global_info.mass_mat_L[i_b, k, p]
                     while k < e_de:
                         l_cur = l_pf
                         k = k + COOP
                         l_pf = gs.qd_float(0.0)
                         if k < e_de:
-                            l_pf = rigid_global_info.mass_mat_L[i_b, k, p]
+                            if qd.static(static_rigid_sim_config.enable_tiled_cholesky_mass_matrix):
+                                l_pf = rigid_global_info.mass_mat_L[i_b, p, k]
+                            else:
+                                l_pf = rigid_global_info.mass_mat_L[i_b, k, p]
                         msolve[env_in_block, k - COOP] = msolve[env_in_block, k - COOP] - l_cur * wp
                 qd.simt.block.sync()
 
@@ -1438,6 +1473,108 @@ def func_torque_and_passive_force(
                                 -dofs_state.pos[dof_start + j_d, i_b] * dofs_info.stiffness[I_d],
                                 BW,
                             )
+
+
+@qd.func
+def func_update_acc_link(
+    update_cacc: qd.template(),
+    i_l,
+    i_b,
+    dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Per-link acceleration propagation body, extracted for level-scheduling.
+
+    Propagates cdd_vel / cdd_ang (and optionally cacc_lin / cacc_ang) from
+    parent to child for link ``i_l`` in environment ``i_b``.  Forward-only
+    (no autodiff backward path — the backward pass keeps the serial chain walk
+    via ``func_update_acc``).
+    """
+    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+    i_p = links_info.parent_idx[I_l]
+    i_e = links_info.entity_idx[I_l]
+
+    if i_p == -1:
+        links_state.cdd_vel[i_l, i_b] = -rigid_global_info.gravity[i_b] * (
+            1 - entities_info.gravity_compensation[i_e]
+        )
+        links_state.cdd_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+        if qd.static(update_cacc):
+            links_state.cacc_lin[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            links_state.cacc_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+    else:
+        links_state.cdd_vel[i_l, i_b] = links_state.cdd_vel[i_p, i_b]
+        links_state.cdd_ang[i_l, i_b] = links_state.cdd_ang[i_p, i_b]
+        if qd.static(update_cacc):
+            links_state.cacc_lin[i_l, i_b] = links_state.cacc_lin[i_p, i_b]
+            links_state.cacc_ang[i_l, i_b] = links_state.cacc_ang[i_p, i_b]
+
+    for i_d in range(links_info.dof_start[I_l], links_info.dof_end[I_l]):
+        # cacc = cacc_parent + cdofdot * qvel + cdof * qacc
+        local_cdd_vel = dofs_state.cdofd_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
+        local_cdd_ang = dofs_state.cdofd_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
+
+        links_state.cdd_vel[i_l, i_b] = links_state.cdd_vel[i_l, i_b] + local_cdd_vel
+        links_state.cdd_ang[i_l, i_b] = links_state.cdd_ang[i_l, i_b] + local_cdd_ang
+        if qd.static(update_cacc):
+            links_state.cacc_lin[i_l, i_b] = (
+                links_state.cacc_lin[i_l, i_b]
+                + local_cdd_vel
+                + dofs_state.cdof_vel[i_d, i_b] * dofs_state.acc[i_d, i_b]
+            )
+            links_state.cacc_ang[i_l, i_b] = (
+                links_state.cacc_ang[i_l, i_b]
+                + local_cdd_ang
+                + dofs_state.cdof_ang[i_d, i_b] * dofs_state.acc[i_d, i_b]
+            )
+
+
+@qd.func
+def func_update_acc_levels_split(
+    update_cacc: qd.template(),
+    dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    links_state: array_class.LinksState,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Level-scheduled acceleration propagation: one per-(link, env)-parallel
+    pass per tree depth, with the implicit kernel barrier between passes
+    ordering parent before child.
+
+    Replaces the one-thread-per-entity serial chain walk for the
+    non-hibernation forward pass.  Raises occupancy from ndrange(1, n_envs) =
+    128 waves to ndrange(n_links, n_envs) = 5632 waves on MI325X (4.6× the
+    1216 SIMD count), matching the pattern used by ``func_fk_levels_split``.
+    Forward-only (no autodiff backward path).
+    """
+    n_links = links_state.cdd_vel.shape[0]
+    _B = links_state.cdd_vel.shape[1]
+    for d in qd.static(range(static_rigid_sim_config.max_link_depth + 1)):
+        qd.loop_config(
+            name="update_acc_level",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+            block_dim=64,
+        )
+        for i_l, i_b in qd.ndrange(n_links, _B):
+            I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+            if links_info.depth[I_l] == d:
+                func_update_acc_link(
+                    update_cacc,
+                    i_l,
+                    i_b,
+                    dofs_state,
+                    links_info,
+                    links_state,
+                    entities_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                )
 
 
 @qd.func
@@ -1931,6 +2068,7 @@ def kernel_forward_dynamics_without_qacc(
         contact_island_state=contact_island_state,
         is_backward=is_backward,
     )
+    # Backward pass always keeps the serial chain walk (level-scheduling is forward-only).
     func_update_acc(
         update_cacc=False,
         dofs_state=dofs_state,

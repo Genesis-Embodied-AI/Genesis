@@ -3467,6 +3467,92 @@ def _func_update_cost_coop(
 
 
 @qd.func
+def _func_update_qfrc_constraint_canonical(
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute qfrc_constraint = J^T @ efc_force using one thread per (i_d, i_b) pair.
+
+    2D ndrange over (n_dofs, _B) gives 43×8192 = 352K threads / 64 = 5504 WGs = 5504 waves,
+    vs the monolithic serial path's 128 WGs. Each thread does a serial inner loop over
+    n_constraints (32 iterations). Under canonical jac layout (n_con, n_dofs, _B), adjacent
+    lanes vary i_b (stride-1 in innermost dimension) so reads are coalesced.
+
+    Requires efc_force[i_c, i_b] to be fully written before this kernel runs (enforced by
+    the preceding dispatch boundary when called from func_update_constraint).
+    """
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    _B = constraint_state.jac.shape[2]
+
+    qd.loop_config(
+        name="update_constraint_qfrc_canonical",
+        serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
+    )
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        n_con = constraint_state.n_constraints[i_b]
+        qfrc = gs.qd_float(0.0)
+        for i_c in range(n_con):
+            qfrc = qfrc + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+        constraint_state.qfrc_constraint[i_d, i_b] = qfrc
+
+
+@qd.func
+def _func_update_cost_gauss_canonical(
+    qacc: qd.template(),
+    Ma: qd.template(),
+    cost: qd.template(),
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute prev_cost copy, gauss, and cost (scalar reductions per env) — serial one-thread-per-env.
+
+    This kernel handles the two small serial reductions (n_dofs and n_con loops) that remain after
+    _func_update_efc_force and _func_update_qfrc_constraint_canonical. It is intentionally kept
+    serial (128 WGs at _B=8192) because cost+gauss is only ~5% of the monolithic kernel's total
+    ops and the simple serial path avoids non-coalesced Jaref reads that would occur in a
+    cooperative warp-stride-over-i_c approach under canonical (non-transposed) layout.
+    """
+    _B = constraint_state.jac.shape[2]
+
+    qd.loop_config(
+        name="update_constraint_cost_canonical",
+        serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
+    )
+    for i_b in range(_B):
+        n_dofs = constraint_state.qfrc_constraint.shape[0]
+        ne = constraint_state.n_constraints_equality[i_b]
+        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        n_con = constraint_state.n_constraints[i_b]
+
+        constraint_state.prev_cost[i_b] = cost[i_b]
+
+        cost_i = gs.qd_float(0.0)
+        gauss_i = gs.qd_float(0.0)
+
+        for i_d in range(n_dofs):
+            v = 0.5 * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b]) * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+            gauss_i = gauss_i + v
+            cost_i = cost_i + v
+
+        for i_c in range(n_con):
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            cost_i = cost_i + 0.5 * (
+                Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+            )
+            if ne <= i_c and i_c < nef:
+                f = constraint_state.efc_frictionloss[i_c, i_b]
+                r = constraint_state.diag[i_c, i_b]
+                rf = r * f
+                linear_neg = Jaref_c <= -rf
+                linear_pos = Jaref_c >= rf
+                cost_i = cost_i + linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+
+        constraint_state.gauss[i_b] = gauss_i
+        cost[i_b] = cost_i
+
+
+@qd.func
 def func_update_constraint(
     qacc: qd.Tensor,
     Ma: qd.Tensor,
@@ -3479,14 +3565,46 @@ def func_update_constraint(
 
     Under ``constraint_layout_transposed=True`` we run three sub-kernels (``_func_update_efc_force``,
     ``_func_update_qfrc_constraint_coop``, ``_func_update_cost_coop``) so per-constraint reads/writes coalesce against
-    the flipped jac and Tier-1 constraint-state tensors. Under canonical we keep the original 1-thread-per-env loop
-    (bit-identical to the previous code path). The transpose heuristic disables the flip entirely under sparse_solve,
-    so sparse runs always take the canonical path here.
+    the flipped jac and Tier-1 constraint-state tensors.
+
+    Under canonical layout on AMD GPU (``constraint_layout_transposed=False``, ``backend==amdgpu``,
+    ``sparse_solve=False``), we split into three separate ndrange dispatches to eliminate the
+    grid-starvation bottleneck of the monolithic serial path:
+      1. ``_func_update_efc_force`` (existing): ndrange(len_constraints, _B) → ~32768 WGs
+      2. ``_func_update_qfrc_constraint_canonical`` (new): ndrange(n_dofs, _B) → 5504 WGs
+      3. ``_func_update_cost_gauss_canonical`` (new): range(_B) → 128 WGs (tiny, ~5% of work)
+    The monolithic path produced only 128 WGs for all work at _B=8192, leaving the GPU at
+    ~10% SIMD utilization. The qfrc kernel (J^T@efc_force, 93% of total ops) now runs at
+    5504 WGs >> 1216 SIMDs, fully saturating the device.
+
+    Under all other backends (CPU, CUDA, Vulkan) or when sparse_solve=True, the original
+    1-thread-per-env monolithic loop is preserved (bit-identical to the previous code path).
+    The transpose heuristic disables the flip entirely under sparse_solve, so sparse runs
+    always take the canonical path here.
     """
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         _func_update_efc_force(constraint_state, static_rigid_sim_config)
         _func_update_qfrc_constraint_coop(constraint_state, static_rigid_sim_config)
         _func_update_cost_coop(
+            qacc=qacc,
+            Ma=Ma,
+            cost=cost,
+            dofs_state=dofs_state,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    elif qd.static(
+        static_rigid_sim_config.backend == gs.amdgpu
+        and not static_rigid_sim_config.sparse_solve
+        and static_rigid_sim_config.para_level == gs.PARA_LEVEL.ALL
+    ):
+        # AMD GPU parallel path (canonical layout): three sub-kernels with 2D ndranges to
+        # replace the grid-starved monolithic 1-thread-per-env loop.
+        # Dispatch boundary between each call acts as the global memory barrier that
+        # enforces the sequential dependency: efc_force → qfrc → cost/gauss.
+        _func_update_efc_force(constraint_state, static_rigid_sim_config)
+        _func_update_qfrc_constraint_canonical(constraint_state, static_rigid_sim_config)
+        _func_update_cost_gauss_canonical(
             qacc=qacc,
             Ma=Ma,
             cost=cost,

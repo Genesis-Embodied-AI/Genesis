@@ -106,6 +106,7 @@ from .abd.forward_dynamics import (
     func_solve_mass,
     func_torque_and_passive_force,
     func_update_acc,
+    func_update_acc_levels_split,
     func_update_force,
     func_integrate,
     func_implicit_damping,
@@ -2779,6 +2780,14 @@ class RigidSolver(KinematicSolver):
             tensor = tensor[0]
 
         if decompose:
+            # mass_mat_L stores the Cholesky factor L in the lower triangle.  The tiled AMD
+            # factorization path also writes a mirrored copy of each L[i,j] into the upper-
+            # triangle position L[j,i] to enable coalesced GPU reads during the triangular
+            # solve (OPT-L-MIRROR in func_factor_mass).  That mirror must NOT be visible to
+            # callers -- the canonical L is lower-triangular only (upper entries are zero on
+            # the non-tiled reference path).  Zero the upper triangle before returning so
+            # both paths produce identical output regardless of which factorizer ran.
+            tensor = torch.tril(tensor)
             mass_mat_D_inv = qd_to_torch(
                 self._rigid_global_info.mass_mat_D_inv, envs_idx, dofs_idx, transpose=True, copy=True
             )
@@ -3050,16 +3059,28 @@ def kernel_step_2(
     # because the acceleration at the end of the step is unknown for now as it may change discontinuous between
     # before and after integration under the effect of external forces and constraints. This means that
     # acceleration data will be shifted one timestep in the past, but there isn't really any way around.
-    func_update_acc(
-        update_cacc=True,
-        dofs_state=dofs_state,
-        links_info=links_info,
-        links_state=links_state,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=is_backward,
-    )
+    # Non-hibernation forward pass: level-scheduled occupancy-optimised dispatch (5632 waves vs 128 waves).
+    if qd.static(not static_rigid_sim_config.use_hibernation and not is_backward):
+        func_update_acc_levels_split(
+            update_cacc=True,
+            dofs_state=dofs_state,
+            links_info=links_info,
+            links_state=links_state,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    else:
+        func_update_acc(
+            update_cacc=True,
+            dofs_state=dofs_state,
+            links_info=links_info,
+            links_state=links_state,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=is_backward,
+        )
 
     if qd.static(static_rigid_sim_config.integrator != gs.integrator.approximate_implicitfast):
         func_implicit_damping(

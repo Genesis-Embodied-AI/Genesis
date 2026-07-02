@@ -2809,6 +2809,10 @@ def _kernel_solve_body_tiled_wc_amdgpu(
 
                     # Step 3: solve L x = z (forward-substitution, p low->high)
                     # Software-pipelined: same pattern as Step 1.
+                    # OPT-L-MIRROR: when the tiled Cholesky factorizer ran, read from
+                    # L[p,k] (upper triangle, coalesced) instead of L[k,p] (lower triangle,
+                    # n_dofs-strided). When the non-tiled factorizer ran (<8-DOF robots),
+                    # fall back to L[k,p] (lower triangle) since the upper triangle is unwritten.
                     for pp in range(e_n):
                         p = e_ds + pp
                         if do_e:
@@ -2816,13 +2820,19 @@ def _kernel_solve_body_tiled_wc_amdgpu(
                             k = p + 1 + lane_in_env
                             l_prefetch = gs.qd_float(0.0)
                             if k < e_de:
-                                l_prefetch = rigid_global_info.mass_mat_L[i_b, k, p]
+                                if qd.static(static_rigid_sim_config.enable_tiled_cholesky_mass_matrix):
+                                    l_prefetch = rigid_global_info.mass_mat_L[i_b, p, k]
+                                else:
+                                    l_prefetch = rigid_global_info.mass_mat_L[i_b, k, p]
                             while k < e_de:
                                 l_cur = l_prefetch
                                 k = k + COOP
                                 l_prefetch = gs.qd_float(0.0)
                                 if k < e_de:
-                                    l_prefetch = rigid_global_info.mass_mat_L[i_b, k, p]
+                                    if qd.static(static_rigid_sim_config.enable_tiled_cholesky_mass_matrix):
+                                        l_prefetch = rigid_global_info.mass_mat_L[i_b, p, k]
+                                    else:
+                                        l_prefetch = rigid_global_info.mass_mat_L[i_b, k, p]
                                 msolve_t[env_in_block, k - COOP] = (
                                     msolve_t[env_in_block, k - COOP] - l_cur * wp
                                 )
