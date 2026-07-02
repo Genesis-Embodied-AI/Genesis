@@ -4405,6 +4405,49 @@ def test_nan_reset(gs_sim, mode):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_mpr_thin_box_stack_no_lateral_phantom(n_envs, show_viewer):
+    # Two thin stacked boxes with vertically aligned centers: the MPR seed ray is exactly vertical and the flat-face
+    # support ties leave the first support vertex with a small lateral offset, so the portal-discovery collinearity
+    # test must not misclassify this near-perpendicular configuration as a degenerate segment, whose fallback path
+    # would fabricate a laterally-tilted contact from that arbitrary support tie instead of the true vertical normal.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=False,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.005),
+            size=(0.002, 0.02, 0.01),
+            fixed=True,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.01495),
+            size=(0.002, 0.0199, 0.01),
+        ),
+    )
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+    contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
+    normals = contacts["normal"]
+    assert len(normals) > 0
+    assert_allclose(np.abs(normals[..., 2]), 1, atol=1e-3)
+
+    for _ in range(100):
+        scene.step()
+    pos = box.get_pos()
+    assert_allclose(pos[..., :2], 0, atol=1e-4)
+    assert_allclose(pos[..., 2], 0.015, atol=5e-4)
+
+
+@pytest.mark.required
 def test_box_on_terrain_no_spurious_spin(show_viewer):
     BOX_SIZE = (0.12, 0.06, 0.025)
 
