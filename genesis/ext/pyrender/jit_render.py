@@ -1087,9 +1087,16 @@ class JITRenderer:
                 self.gen_func_ptr()
             return self._update_normal_flat(vertices.reshape((-1, 3, 3)))
 
-    def update_buffer(self, buffer_id, data):
-        """Queue a single buffer update to be flushed during the next render pass."""
-        self._buffer[buffer_id] = data
+    def update_buffer(self, node, buffer_name, data):
+        """Queue a single buffer update to be flushed during the next render pass.
+
+        The GL buffer id is resolved at flush time rather than here: a primitive is only added to the GL context
+        during its first render pass, so an id resolved at enqueue time would be -1 for any update queued before
+        that pass and the update would be silently dropped.
+        """
+        if node.mesh is None or len(node.mesh.primitives) != 1:
+            raise ValueError("Node must have one primitive")
+        self._buffer[(node.mesh.primitives[0], buffer_name)] = data
 
     def flush_buffer(self):
         """Upload all queued buffer updates to the GPU and clear the queue."""
@@ -1098,11 +1105,13 @@ class JITRenderer:
 
         updates = np.zeros((len(self._buffer), 3), dtype=np.int64)
         buffers = []
-        for idx, (id, data) in enumerate(self._buffer.items()):
+        for idx, ((primitive, buffer_name), data) in enumerate(self._buffer.items()):
             buffer = np.ascontiguousarray(data, dtype=np.float32)
             buffers.append(buffer)
 
-            updates[idx, 0] = id
+            # Still -1 if the primitive was removed from the scene since the update was queued. The upload kernel
+            # skips negative ids.
+            updates[idx, 0] = primitive.get_buffer_id(buffer_name)
             updates[idx, 1] = 4 * buffer.size
             updates[idx, 2] = buffer.ctypes.data
 

@@ -359,15 +359,11 @@ class RasterizerContext:
                         link_T = all_T[i::n_links]
                         node = self.link_frame_nodes[link.uid]
                         node.mesh.primitives[0].poses = link_T
-                        buf_id = self._scene.get_buffer_id(node, "model")
-                        if buf_id >= 0:
-                            self.jit.update_buffer(buf_id, link_T.transpose((0, 2, 1)))
+                        self.jit.update_buffer(node, "model", link_T.transpose((0, 2, 1)))
             elif self.link_frame_node is not None:
                 all_T = np.concatenate([self._link_frame_T(solver) for solver in self._rigid_solvers()], axis=0)
                 self.link_frame_node.mesh.primitives[0].poses = all_T
-                buf_id = self._scene.get_buffer_id(self.link_frame_node, "model")
-                if buf_id >= 0:
-                    self.jit.update_buffer(buf_id, all_T.transpose((0, 2, 1)))
+                self.jit.update_buffer(self.link_frame_node, "model", all_T.transpose((0, 2, 1)))
 
     def on_tool(self):
         if self.sim.tool_solver.is_active:
@@ -491,10 +487,9 @@ class RasterizerContext:
                     geoms_T = solver._vgeoms_render_T
                     if entity._morph.enable_custom_vverts:
                         if entity.uid not in self._per_env_vverts_entity_uids:
-                            # The per-env node's GL buffers are only allocated during the upcoming render pass, so any
-                            # queued update_buffer call resolving its id right now would hit -1 and be silently
-                            # dropped. Seed primitive.positions with the current world-space vverts directly so the
-                            # first frame is already correct.
+                            # Seed primitive.positions with the current world-space vverts: buffer updates bypass
+                            # primitive.positions, which keeps feeding the scene bounds (shadow map extents), so it
+                            # must hold world-space data.
                             vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
                             envs_offset = self.scene.envs_offset
                             custom_offset = entity._custom_vvert_start - entity._vvert_start
@@ -551,10 +546,10 @@ class RasterizerContext:
                                 node = self.vverts_nodes[(i_b, geom.uid)]
                                 geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
                                 update_data = self._scene.reorder_vertices(node, geom_vverts.astype(np.float32))
-                                self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                                self.jit.update_buffer(node, "pos", update_data)
                                 normal_data = self.jit.update_normal(node, update_data)
                                 if normal_data is not None:
-                                    self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
+                                    self.jit.update_buffer(node, "normal", normal_data)
                         continue
                 else:
                     geoms = entity.geoms
@@ -591,7 +586,7 @@ class RasterizerContext:
                     node = self.rigid_nodes[geom.uid]
                     node.mesh._bounds = None
                     node.mesh.primitives[0].poses = geom_T
-                    self.jit.update_buffer(self._scene.get_buffer_id(node, "model"), geom_T.transpose((0, 2, 1)))
+                    self.jit.update_buffer(node, "model", geom_T.transpose((0, 2, 1)))
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
@@ -709,8 +704,8 @@ class RasterizerContext:
                         tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end, idx]
 
-                        buf_id = self._scene.get_buffer_id(self.static_nodes[(idx, mpm_entity.uid)], "model")
-                        self.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
+                        node = self.static_nodes[(idx, mpm_entity.uid)]
+                        self.jit.update_buffer(node, "model", tfs.transpose((0, 2, 1)))
 
                     elif mpm_entity.surface.vis_mode == "visual":
                         mpm_entity._vmesh.trimesh.vertices = vverts_all[
@@ -777,8 +772,8 @@ class RasterizerContext:
                         tfs = np.tile(np.eye(4), (sph_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[sph_entity.particle_start : sph_entity.particle_end, idx]
 
-                        buf_id = self._scene.get_buffer_id(self.static_nodes[(idx, sph_entity.uid)], "model")
-                        self.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
+                        node = self.static_nodes[(idx, sph_entity.uid)]
+                        self.jit.update_buffer(node, "model", tfs.transpose((0, 2, 1)))
 
     def on_pbd(self):
         if self.sim.pbd_solver.is_active:
@@ -871,8 +866,8 @@ class RasterizerContext:
                             tfs = np.tile(np.eye(4), (pbd_entity.n_particles, 1, 1))
                             tfs[:, :3, 3] = particles_env[pbd_entity.particle_start : pbd_entity.particle_end]
 
-                            buf_id = self._scene.get_buffer_id(self.static_nodes[(idx, pbd_entity.uid)], "model")
-                            self.jit.update_buffer(buf_id, tfs.transpose((0, 2, 1)))
+                            node = self.static_nodes[(idx, pbd_entity.uid)]
+                            self.jit.update_buffer(node, "model", tfs.transpose((0, 2, 1)))
 
                         elif self.render_particle_as == "tet":
                             new_verts = mu.transform_tets_mesh_verts(
@@ -882,18 +877,18 @@ class RasterizerContext:
                             )
                             node = self.static_nodes[(idx, pbd_entity.uid)]
                             update_data = self._scene.reorder_vertices(node, new_verts.astype(np.float32))
-                            self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                            self.jit.update_buffer(node, "pos", update_data)
                             normal_data = self.jit.update_normal(node, update_data)
                             if normal_data is not None:
-                                self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
+                                self.jit.update_buffer(node, "normal", normal_data)
                     elif pbd_entity.surface.vis_mode == "visual":
                         vverts = vverts_env[pbd_entity.vvert_start : pbd_entity.vvert_end]
                         node = self.static_nodes[(idx, pbd_entity.uid)]
                         update_data = self._scene.reorder_vertices(node, vverts.astype(np.float32))
-                        self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                        self.jit.update_buffer(node, "pos", update_data)
                         normal_data = self.jit.update_normal(node, update_data)
                         if normal_data is not None:
-                            self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
+                            self.jit.update_buffer(node, "normal", normal_data)
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
@@ -944,10 +939,10 @@ class RasterizerContext:
 
                         node = self.static_nodes[(idx, fem_entity.uid)]
                         update_data = self._scene.reorder_vertices(node, vertices)
-                        self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                        self.jit.update_buffer(node, "pos", update_data)
                         normal_data = self.jit.update_normal(node, update_data)
                         if normal_data is not None:
-                            self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
+                            self.jit.update_buffer(node, "normal", normal_data)
 
     def update_sensors(self):
         self.sim._sensor_manager.draw_debug(self)
@@ -1156,7 +1151,7 @@ class RasterizerContext:
             assert len(pose) == n_envs, "Inconsistent batch size."
             obj.primitives[0].poses = pose
             node = self.external_nodes[obj.name]
-            self.jit.update_buffer(self._scene.get_buffer_id(node, "model"), pose.transpose((0, 2, 1)))
+            self.jit.update_buffer(node, "model", pose.transpose((0, 2, 1)))
 
     def clear_debug_object(self, obj):
         self.clear_external_node(obj)

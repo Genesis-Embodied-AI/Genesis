@@ -492,12 +492,6 @@ class Scene(object):
         primitive = node.mesh.primitives[0]
         return vertices[primitive.vertex_mapping] if primitive.vertex_mapping is not None else vertices
 
-    def get_buffer_id(self, node, buffer_name):
-        if node.mesh is None or len(node.mesh.primitives) != 1:
-            raise ValueError("Node must have one primitive")
-        primitive = node.mesh.primitives[0]
-        return primitive.get_buffer_id(buffer_name)
-
     def clear(self):
         """Clear out all nodes to form an empty scene."""
         self._nodes = set()
