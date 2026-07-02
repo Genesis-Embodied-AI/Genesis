@@ -4178,6 +4178,10 @@ def test_convexify_stress(show_viewer):
         rigid_options=gs.options.RigidOptions(
             max_collision_pairs=8000,
         ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, 0.5, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(
