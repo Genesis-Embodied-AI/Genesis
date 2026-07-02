@@ -2004,7 +2004,9 @@ def func_hessian_direct_batch(
                 j_dg = island_state.dof_id[dof_base + j_d, i_b]
                 constraint_state.nt_H[i_b, i_dg, j_dg] = gs.qd_float(0.0)
         # H += J.T @ D @ J by scattering each island constraint's rank update over the DOF pairs in its support
-        # (jac_dofs_idx), writing the lower triangle at global rows/cols. This is O(sum n_support^2) instead of the
+        # (jac_dofs_idx), writing the triangle oriented by ISLAND-LOCAL position: with the fill-reducing (RCM) dof_id
+        # of the CPU skyline path the local order is not globally monotonic, and every per-island factor/solve
+        # consumer reads the block through the same local orientation. This is O(sum n_support^2) instead of the
         # O(n_dofs * n_constraints) row-by-constraint scan, which matters when an island carries many contacts.
         for i_lcon in range(con_n):
             i_c = island_state.constraint_id[con_base + i_lcon, i_b]
@@ -2018,6 +2020,13 @@ def func_hessian_direct_batch(
                         i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
                         row = qd.max(i_d1, i_d2)
                         col = qd.min(i_d1, i_d2)
+                        if qd.static(
+                            static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope
+                        ):
+                            if (island_state.dof_local_pos[i_d1, i_b] >= island_state.dof_local_pos[i_d2, i_b]) != (
+                                i_d1 >= i_d2
+                            ):
+                                row, col = col, row
                         constraint_state.nt_H[i_b, row, col] = (
                             constraint_state.nt_H[i_b, row, col]
                             + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D

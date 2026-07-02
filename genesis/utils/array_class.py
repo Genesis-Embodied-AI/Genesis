@@ -662,7 +662,8 @@ class IslandState:
     # holding several free bodies (common in MJCF) splits into one island per free body, while an articulated body's
     # links collapse to one island. links_island_idx is -1 for links whose component carries no dofs (fixed bodies),
     # which are never solved. link_slices maps island -> link-idx slice in link_id; dof_slices maps island -> local-dof
-    # slice in dof_id (dof_id[local] -> global dof, ascending). The per-island Hessian block is assembled/factored at
+    # slice in dof_id (dof_id[local] -> global dof, ascending unless the CPU skyline path reorders it by contact
+    # adjacency). The per-island Hessian block is assembled/factored at
     # those global DOF rows/cols in constraint_state.nt_H (the dofs may be non-contiguous globally; the cooperative arm
     # gathers them into a contiguous shared tile).
     links_parent_idx: qd.Tensor
@@ -672,8 +673,8 @@ class IslandState:
     link_id: qd.Tensor
     dof_slices: IslandSlices
     dof_id: qd.Tensor
-    # Inverse of dof_id: dof_local_pos[d] is the local position of global DOF d within its island (dof_id is ascending,
-    # so dof_id[dof_slices.start[island] + dof_local_pos[d]] == d). Filled by the partition build; lets the per-island
+    # Inverse of dof_id: dof_local_pos[d] is the local position of global DOF d within its island
+    # (dof_id[dof_slices.start[island] + dof_local_pos[d]] == d). Filled by the partition build; lets the per-island
     # envelope iterate each constraint's own support (jac_dofs_idx) instead of scanning the whole island.
     dof_local_pos: qd.Tensor
     dofs_island_idx: qd.Tensor
@@ -710,6 +711,15 @@ class IslandState:
     factor_worklist_i_b: qd.Tensor
     factor_worklist_i_island: qd.Tensor
     factor_worklist_size: qd.Tensor
+    # Scratch of the per-island fill-reducing (reverse Cuthill-McKee) DOF reordering, computed by the partition
+    # build for the CPU per-island skyline path: rcm_tree_pos maps a tree root link to its island-local tree slot,
+    # rcm_tree_degree holds contact degrees, rcm_tree_is_ordered flags already-ordered trees and rcm_tree_order is
+    # the resulting tree visit order. Only that config reads them. Do NOT fold these into other buffers of the same
+    # kernel: quadrants assumes distinct args never alias.
+    rcm_tree_pos: qd.Tensor
+    rcm_tree_degree: qd.Tensor
+    rcm_tree_is_ordered: qd.Tensor
+    rcm_tree_order: qd.Tensor
 
 
 def get_island_state(solver, collider):
@@ -723,6 +733,12 @@ def get_island_state(solver, collider):
     # per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), so island_state
     # itself holds only the partition maps.
     is_active = solver._use_contact_island
+    rcm_active = (
+        is_active
+        and solver._static_rigid_sim_config.sparse_solve
+        and solver._static_rigid_sim_config.enable_per_island_solve
+        and not solver._static_rigid_sim_config.sparse_envelope
+    )
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
     # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
@@ -751,6 +767,10 @@ def get_island_state(solver, collider):
         factor_worklist_i_b=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
         factor_worklist_i_island=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
         factor_worklist_size=V(dtype=gs.qd_int, shape=maybe_shape((1,), is_active)),
+        rcm_tree_pos=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
+        rcm_tree_degree=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
+        rcm_tree_is_ordered=V(dtype=gs.qd_bool, shape=maybe_shape((n_links, _B), rcm_active)),
+        rcm_tree_order=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
     )
 
 

@@ -157,6 +157,29 @@ def func_group_constraints_by_island(
 
 
 @qd.func
+def func_contact_tree_slots(
+    i_b,
+    i_col,
+    links_info: array_class.LinksInfo,
+    collider_state: array_class.ColliderState,
+    island_state: array_class.IslandState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Island-local tree slots (rcm_tree_pos) of a contact's two endpoints, -1 for a fixed / dof-less side."""
+    link_a = collider_state.contact_data.link_a[i_col, i_b]
+    link_b = collider_state.contact_data.link_b[i_col, i_b]
+    i_ta = -1
+    i_tb = -1
+    if island_state.links_island_idx[link_a, i_b] >= 0:
+        link_idx = [link_a, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link_a
+        i_ta = island_state.rcm_tree_pos[links_info.root_idx[link_idx], i_b]
+    if island_state.links_island_idx[link_b, i_b] >= 0:
+        link_idx = [link_b, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link_b
+        i_tb = island_state.rcm_tree_pos[links_info.root_idx[link_idx], i_b]
+    return i_ta, i_tb
+
+
+@qd.func
 def func_build_islands(
     i_b,
     links_info: array_class.LinksInfo,
@@ -235,8 +258,8 @@ def func_build_islands(
 
     # Label each dynamic component (root marked -2 above). A component (root = min link index) is labeled the first
     # time one of its dof-links is seen, in ascending link order, so labels are deterministic and each island's
-    # gathered global DOFs end up ascending - which lets the per-island Hessian block live in the lower triangle of
-    # constraint_state.nt_H at those global rows/cols.
+    # gathered global DOFs end up ascending (until the fill-reducing reorder below, where enabled) - the per-island
+    # Hessian block lives in constraint_state.nt_H at those global rows/cols, triangle-oriented by local position.
     n_islands = 0
     for i_l in range(n_links):
         link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -333,6 +356,124 @@ def func_build_islands(
         if i_island >= 0:
             island_state.contact_id[island_state.contact_slices.curr[i_island, i_b], i_b] = i_col
             island_state.contact_slices.curr[i_island, i_b] = island_state.contact_slices.curr[i_island, i_b] + 1
+
+    # Fill-reducing DOF reordering for the CPU per-island skyline path: rebuild each island's dof_id in reverse
+    # Cuthill-McKee order of its kinematic trees over the contact adjacency, instead of ascending global order. The
+    # build-time DOF order says nothing about which bodies end up in contact, so a settled pile otherwise produces a
+    # near-dense skyline; ordering trees by contact adjacency shrinks the envelope the factor, rank-1 updates and
+    # triangular solves sweep. Trees stay contiguous with their DOFs in original relative order, preserving the
+    # local contiguity of the mass blocks. Every per-island consumer addresses nt_H through (dof_id, dof_local_pos)
+    # pairs with island-local triangle orientation, so a non-monotonic dof_id only changes where blocks are stored.
+    if qd.static(
+        static_rigid_sim_config.sparse_solve
+        and static_rigid_sim_config.enable_per_island_solve
+        and not static_rigid_sim_config.sparse_envelope
+    ):
+        for i_island in range(n_islands):
+            link_base = island_state.link_slices.start[i_island, i_b]
+            n_isl_links = island_state.link_slices.n[i_island, i_b]
+            con_base = island_state.contact_slices.start[i_island, i_b]
+            n_isl_cons = island_state.contact_slices.n[i_island, i_b]
+
+            # Collect the island's kinematic-tree roots (island-local tree slots, in ascending link order).
+            n_trees = 0
+            for i_l_ in range(n_isl_links):
+                i_l = island_state.link_id[link_base + i_l_, i_b]
+                link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                i_root = links_info.root_idx[link_idx]
+                island_state.rcm_tree_pos[i_root, i_b] = -1
+            for i_l_ in range(n_isl_links):
+                i_l = island_state.link_id[link_base + i_l_, i_b]
+                link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                i_root = links_info.root_idx[link_idx]
+                if island_state.rcm_tree_pos[i_root, i_b] == -1:
+                    island_state.rcm_tree_pos[i_root, i_b] = n_trees
+                    n_trees = n_trees + 1
+
+            # Reordering cannot shrink the envelope of at most two trees; keep the ascending build order there so
+            # small islands stay bit-identical to the unordered path (and the common tiny-island case costs nothing).
+            if n_trees <= 2:
+                continue
+
+            # Contact degree per tree (duplicate contacts inflate degrees, which only biases the tie-break).
+            for i_t in range(n_trees):
+                island_state.rcm_tree_degree[link_base + i_t, i_b] = 0
+                island_state.rcm_tree_is_ordered[link_base + i_t, i_b] = False
+            for i_c_ in range(n_isl_cons):
+                i_col = island_state.contact_id[con_base + i_c_, i_b]
+                i_ta, i_tb = func_contact_tree_slots(
+                    i_b, i_col, links_info, collider_state, island_state, static_rigid_sim_config
+                )
+                if i_ta >= 0 and i_tb >= 0 and i_ta != i_tb:
+                    island_state.rcm_tree_degree[link_base + i_ta, i_b] = (
+                        island_state.rcm_tree_degree[link_base + i_ta, i_b] + 1
+                    )
+                    island_state.rcm_tree_degree[link_base + i_tb, i_b] = (
+                        island_state.rcm_tree_degree[link_base + i_tb, i_b] + 1
+                    )
+
+            # Cuthill-McKee: BFS from the lowest-degree unordered tree, appending each frontier sorted by degree.
+            n_ordered = 0
+            i_head = 0
+            while n_ordered < n_trees:
+                i_t_start = -1
+                for i_t in range(n_trees):
+                    if not island_state.rcm_tree_is_ordered[link_base + i_t, i_b] and (
+                        i_t_start == -1
+                        or island_state.rcm_tree_degree[link_base + i_t, i_b]
+                        < island_state.rcm_tree_degree[link_base + i_t_start, i_b]
+                    ):
+                        i_t_start = i_t
+                island_state.rcm_tree_order[link_base + n_ordered, i_b] = i_t_start
+                island_state.rcm_tree_is_ordered[link_base + i_t_start, i_b] = True
+                n_ordered = n_ordered + 1
+                while i_head < n_ordered:
+                    i_t_head = island_state.rcm_tree_order[link_base + i_head, i_b]
+                    n_frontier_start = n_ordered
+                    for i_c_ in range(n_isl_cons):
+                        i_col = island_state.contact_id[con_base + i_c_, i_b]
+                        i_ta, i_tb = func_contact_tree_slots(
+                            i_b, i_col, links_info, collider_state, island_state, static_rigid_sim_config
+                        )
+                        i_t_next = -1
+                        if i_ta == i_t_head and i_tb >= 0:
+                            i_t_next = i_tb
+                        elif i_tb == i_t_head and i_ta >= 0:
+                            i_t_next = i_ta
+                        if i_t_next >= 0 and not island_state.rcm_tree_is_ordered[link_base + i_t_next, i_b]:
+                            # Insert into the current frontier keeping it sorted by ascending degree.
+                            i_ins = n_ordered
+                            while i_ins > n_frontier_start and (
+                                island_state.rcm_tree_degree[
+                                    link_base + island_state.rcm_tree_order[link_base + i_ins - 1, i_b], i_b
+                                ]
+                                > island_state.rcm_tree_degree[link_base + i_t_next, i_b]
+                            ):
+                                island_state.rcm_tree_order[link_base + i_ins, i_b] = island_state.rcm_tree_order[
+                                    link_base + i_ins - 1, i_b
+                                ]
+                                i_ins = i_ins - 1
+                            island_state.rcm_tree_order[link_base + i_ins, i_b] = i_t_next
+                            island_state.rcm_tree_is_ordered[link_base + i_t_next, i_b] = True
+                            n_ordered = n_ordered + 1
+                    i_head = i_head + 1
+
+            # Rebuild dof_id with trees in REVERSE Cuthill-McKee order, each tree's links in ascending link order.
+            # The per-tree link scan is O(n_trees * n_isl_links), dominated by the BFS neighbor sweep above
+            # (O(n_trees * n_isl_cons)), so it is not worth a per-tree cursor buffer.
+            i_dof_curr = island_state.dof_slices.start[i_island, i_b]
+            for i_t_ in range(n_trees):
+                i_t = island_state.rcm_tree_order[link_base + (n_trees - 1 - i_t_), i_b]
+                for i_l_ in range(n_isl_links):
+                    i_l = island_state.link_id[link_base + i_l_, i_b]
+                    link_idx = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    if island_state.rcm_tree_pos[links_info.root_idx[link_idx], i_b] == i_t:
+                        for i_d in range(links_info.dof_start[link_idx], links_info.dof_end[link_idx]):
+                            island_state.dof_id[i_dof_curr, i_b] = i_d
+                            island_state.dof_local_pos[i_d, i_b] = (
+                                i_dof_curr - island_state.dof_slices.start[i_island, i_b]
+                            )
+                            i_dof_curr = i_dof_curr + 1
 
 
 @qd.func
