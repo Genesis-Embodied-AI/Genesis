@@ -4405,6 +4405,7 @@ def test_nan_reset(gs_sim, mode):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
 def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer, tol):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
