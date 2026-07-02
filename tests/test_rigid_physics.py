@@ -3944,7 +3944,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
 # Force CPU because nonconvex SDF is slow on GPU
 @pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("backend", [gs.cpu])
-@pytest.mark.parametrize("timestep, decimate", [(0.001, False), (0.015, True)])
+@pytest.mark.parametrize("timestep, decimate", [(0.001, False), (0.01, True)])
 def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
     BOWL_THICKNESS = 0.011
     NUM_BOWLS = 32
@@ -7134,59 +7134,72 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
 
 
-@pytest.mark.slow  # ~450s
 @pytest.mark.required
 def test_heterogeneous_physics_parity(show_viewer, tol):
-    n_steps = 100
-    drop_height = 0.2
-    variants = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
+    # Uses the fixed-child mesh objects from 'test_convexify' (offset center of mass, distinct mass) so the per-env
+    # parity check exercises the inertia alignment, not just trivially-symmetric primitives.
+    N_STEPS = 100
+    DROP_HEIGHT = 0.2
+    VARIANTS = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
     # Divergent per-variant yaw offset, stripped to identity by the relative getter and carried by the world frame.
-    # Applied identically to the standalone reference so the dynamics still match.
-    offset_eulers = ((0.0, 0.0, 30.0), (0.0, 0.0, -45.0), (0.0, 0.0, 90.0), (0.0, 0.0, -120.0))
+    # Applied identically to the homogeneous reference so the dynamics still match.
+    OFFSET_EULERS = ((0.0, 0.0, 30.0), (0.0, 0.0, -45.0), (0.0, 0.0, 90.0), (0.0, 0.0, -120.0))
     # Distinct per-variant placement, dispatched per environment.
-    positions = ((0.0, 0.0, drop_height), (0.2, 0.0, drop_height), (0.0, 0.2, drop_height), (0.2, 0.2, drop_height))
+    POSITIONS = ((0.0, 0.0, DROP_HEIGHT), (0.2, 0.0, DROP_HEIGHT), (0.0, 0.2, DROP_HEIGHT), (0.2, 0.2, DROP_HEIGHT))
+    # The homogeneous references live in the same scene, offset far enough that no entity ever interacts with
+    # another: a single build compiles one kernel set instead of one per scene.
+    REFERENCE_OFFSETS = ((10.0, 0.0, 0.0), (20.0, 0.0, 0.0), (30.0, 0.0, 0.0), (40.0, 0.0, 0.0))
 
-    def make_morph(name, xml, pos, offset_euler):
-        asset_path = get_hf_dataset(pattern=f"{name}/*")
-        return gs.morphs.MJCF(file=f"{asset_path}/{name}/{xml}", pos=pos, offset_euler=offset_euler)
+    asset_files = tuple(f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}" for name, xml in VARIANTS)
 
-    # Independent homogeneous reference per variant: world orientation, then post-drop pose, velocity and mass.
-    homog_quat_world, homog_pos, homog_vel, homog_mass = [], [], [], []
-    for (name, xml), pos, offset_euler in zip(variants, positions, offset_eulers):
-        scene = gs.Scene(show_viewer=False)
-        scene.add_entity(gs.morphs.Plane())
-        obj = scene.add_entity(make_morph(name, xml, pos, offset_euler))
-        scene.build()
-        homog_quat_world.append(obj.get_quat(relative=False))
-        for _ in range(n_steps):
-            scene.step()
-        homog_pos.append(obj.get_pos())
-        homog_vel.append(obj.get_vel())
-        homog_mass.append(obj.get_mass())
-
-    # Single heterogeneous entity with one variant per environment.
-    scene_het = gs.Scene(show_viewer=show_viewer)
-    scene_het.add_entity(gs.morphs.Plane())
-    het_obj = scene_het.add_entity(
-        morph=tuple(make_morph(name, xml, pos, oe) for (name, xml), pos, oe in zip(variants, positions, offset_eulers))
+    # One homogeneous reference entity per variant plus a single heterogeneous entity dispatching one variant per
+    # environment, all in one scene.
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    ref_objs = []
+    for file, pos, offset_euler, offset in zip(asset_files, POSITIONS, OFFSET_EULERS, REFERENCE_OFFSETS):
+        ref_objs.append(
+            scene.add_entity(
+                gs.morphs.MJCF(
+                    file=file,
+                    pos=(pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2]),
+                    offset_euler=offset_euler,
+                ),
+            )
+        )
+    het_obj = scene.add_entity(
+        morph=tuple(
+            gs.morphs.MJCF(
+                file=file,
+                pos=pos,
+                offset_euler=offset_euler,
+            )
+            for file, pos, offset_euler in zip(asset_files, POSITIONS, OFFSET_EULERS)
+        )
     )
-    scene_het.build(n_envs=len(variants))
+    scene.build(n_envs=len(VARIANTS))
 
     # At init each variant sits at its own placement; the relative getter strips its offset (and inertial alignment) to
-    # identity in the user frame, while the world frame matches the standalone reference's world orientation.
-    assert_allclose(het_obj.get_quat(relative=True), gu.identity_quat(), tol=tol)
-    for i in range(len(variants)):
-        assert_allclose(het_obj.get_pos()[i], positions[i], tol=tol)
-        assert_allclose(het_obj.get_quat(relative=False)[i], homog_quat_world[i], tol=tol)
+    # identity in the user frame, while the world frame matches the homogeneous reference's world orientation.
+    assert_allclose(gu.quat_to_xyz(het_obj.get_quat(relative=True)), 0.0, tol=tol)
+    assert_allclose(het_obj.get_pos(), POSITIONS, tol=tol)
+    # Matching the reference in both frames validates that the inertial alignment is applied identically to the
+    # heterogeneous entity and the homogeneous references.
+    for relative in (True, False):
+        ref_quats = torch.cat(
+            [ref_obj.get_quat(envs_idx=[i_env], relative=relative) for i_env, ref_obj in enumerate(ref_objs)]
+        )
+        assert_allclose(het_obj.get_quat(relative=relative), ref_quats, tol=tol)
 
-    for _ in range(n_steps):
-        scene_het.step()
+    for _ in range(N_STEPS):
+        scene.step()
 
-    # After the drop each environment matches the standalone simulation of its variant in pose, velocity and mass.
-    for i in range(len(variants)):
-        assert_allclose(het_obj.get_pos()[i], homog_pos[i], tol=tol)
-        assert_allclose(het_obj.get_vel()[i], homog_vel[i], tol=tol)
-        assert_allclose(het_obj.get_mass()[i], homog_mass[i], tol=tol)
+    # After the drop each environment matches the homogeneous reference of its variant in pose, velocity and mass.
+    ref_pos = torch.cat([ref_obj.get_pos(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
+    ref_vel = torch.cat([ref_obj.get_vel(envs_idx=[i_env]) for i_env, ref_obj in enumerate(ref_objs)])
+    assert_allclose(ref_pos - het_obj.get_pos(), REFERENCE_OFFSETS, tol=tol)
+    assert_allclose(het_obj.get_vel(), ref_vel, tol=tol)
+    assert_allclose(het_obj.get_mass(), [ref_obj.get_mass() for ref_obj in ref_objs], tol=tol)
 
     # The variants are genuinely distinct: their masses are not all equal.
     with pytest.raises(AssertionError):
