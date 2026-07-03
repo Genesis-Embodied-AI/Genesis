@@ -493,7 +493,7 @@ class RigidSolver(KinematicSolver):
         enable_cooperative_constraint_kernels = (
             gs.backend != gs.cpu
             and not self.sim.options.requires_grad
-            and not self._options.sparse_solve
+            and not sparse_solve
             and self._sim._B <= 8192
             and self.n_dofs >= 16
         )
