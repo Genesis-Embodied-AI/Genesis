@@ -20,7 +20,11 @@ def test_sparse_noslip_resting_stability(backend, show_viewer):
     TABLE_Z = 0.762
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=1.0 / 30, substeps=4, gravity=(0, 0, -9.81)),
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 30,
+            substeps=4,
+            gravity=(0, 0, -9.81),
+        ),
         rigid_options=gs.options.RigidOptions(
             noslip_iterations=2,
             max_collision_pairs=128,
@@ -54,11 +58,18 @@ def test_sparse_noslip_resting_stability(backend, show_viewer):
         x = 0.4 + 0.12 * (i % 4)
         y = -0.25 + 0.12 * (i // 4)
         box = scene.add_entity(
-            material=gs.materials.Rigid(friction=0.5),
+            material=gs.materials.Rigid(
+                friction=0.5,
+            ),
             # Drop from just above the resting height: a high drop makes the landing chaotic across precisions,
             # while the point here is the stability of the resting contacts.
-            morph=gs.morphs.Box(pos=(x, y, 0.75 * TABLE_Z + 0.025), size=(0.04, 0.04, 0.04)),
-            surface=gs.surfaces.Default(color=(0.3 + 0.7 * (i % 4) / 3, 0.3 + 0.7 * (i // 4) / 3, 0.5, 1.0)),
+            morph=gs.morphs.Box(
+                pos=(x, y, 0.75 * TABLE_Z + 0.025),
+                size=(0.04, 0.04, 0.04),
+            ),
+            surface=gs.surfaces.Default(
+                color=(0.3 + 0.7 * (i % 4) / 3, 0.3 + 0.7 * (i // 4) / 3, 0.5, 1.0),
+            ),
         )
         boxes.append(box)
 
