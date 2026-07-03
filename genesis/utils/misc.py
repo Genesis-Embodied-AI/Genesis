@@ -791,7 +791,12 @@ def qd_zero_grad(value) -> None:
         if value.has_grad():
             grad = value.grad
             if gs.use_zerocopy:
-                qd_to_torch(grad, copy=False).zero_()
+                try:
+                    qd_to_torch(grad, copy=False).zero_()
+                except ValueError:
+                    # No zero-copy view for this buffer (e.g. a field past 2**31 bytes in its SNode tree); fill it in
+                    # place through quadrants instead.
+                    grad.fill(0.0)
             else:
                 grad.fill(0.0)
         return
