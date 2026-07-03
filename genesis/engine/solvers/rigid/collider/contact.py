@@ -1091,10 +1091,20 @@ def func_clamp_prune_contacts_coop(
             # sort, hull build, mark-survivors, and deep-pen restore stay serial on lane 0.
             i_cb_start = 0
             while i_cb_start < n_con:
-                key_b = collider_state.contact_sort_key[i_cb_start, i_b]
+                # Bucket boundaries must be derived from the link ids, not from f32 sort-key equality: the key
+                # lmin * 1e7 + lmax loses the lmax bits above 2^24, so distinct link pairs can share a key and
+                # key-equality scanning would merge their buckets into a single hull.
+                i_pc0 = collider_state.contact_sort_idx[i_cb_start, i_b]
+                i_la0 = collider_state.contact_data.link_a[i_pc0, i_b]
+                i_lb0 = collider_state.contact_data.link_b[i_pc0, i_b]
+                i_l_min0 = qd.min(i_la0, i_lb0)
+                i_l_max0 = qd.max(i_la0, i_lb0)
                 i_cb_end = i_cb_start + 1
                 while i_cb_end < n_con:
-                    if collider_state.contact_sort_key[i_cb_end, i_b] != key_b:
+                    i_pc = collider_state.contact_sort_idx[i_cb_end, i_b]
+                    i_la = collider_state.contact_data.link_a[i_pc, i_b]
+                    i_lb = collider_state.contact_data.link_b[i_pc, i_b]
+                    if qd.min(i_la, i_lb) != i_l_min0 or qd.max(i_la, i_lb) != i_l_max0:
                         break
                     i_cb_end += 1
                 n_cb = i_cb_end - i_cb_start
