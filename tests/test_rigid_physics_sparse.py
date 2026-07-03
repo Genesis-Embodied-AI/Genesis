@@ -11,19 +11,12 @@ from .utils import assert_allclose
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sparse_noslip_resting_stability(backend, show_viewer):
-    # FIXME: Resting boxes never settle on Apple Metal (tipping and mm-scale penetration); this reproduces on a
-    # pristine tree with noslip disabled and with box_box_detection, so it is a backend issue, not a solver-pass one.
-    if sys.platform == "darwin" and backend == gs.gpu:
-        pytest.xfail(reason="Resting box stacks are unstable on Apple Metal.")
-
+def test_sparse_noslip_resting_stability(show_viewer):
     TABLE_Z = 0.762
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1.0 / 30,
-            substeps=4,
-            gravity=(0, 0, -9.81),
+            dt=0.004,
         ),
         rigid_options=gs.options.RigidOptions(
             noslip_iterations=2,
@@ -70,6 +63,7 @@ def test_sparse_noslip_resting_stability(backend, show_viewer):
             surface=gs.surfaces.Default(
                 color=(0.3 + 0.7 * (i % 4) / 3, 0.3 + 0.7 * (i // 4) / 3, 0.5, 1.0),
             ),
+            visualize_contact=True,
         )
         boxes.append(box)
 
@@ -78,7 +72,7 @@ def test_sparse_noslip_resting_stability(backend, show_viewer):
     # Hold the arm at its initial configuration, otherwise it collapses under gravity and sweeps the boxes off.
     franka.control_dofs_position(franka.get_qpos())
 
-    for _ in range(60):
+    for _ in range(80):
         scene.step()
 
     # The boxes must come to rest flat on the table top, neither penetrating nor bouncing, and noslip must prevent
