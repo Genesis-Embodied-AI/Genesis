@@ -488,9 +488,12 @@ def kernel_noslip(
 
     if qd.static(static_rigid_sim_config.enable_per_island_solve):
         # max_islands bounds the per-env island count (at most one island per link); the guard skips the unused tail.
+        # Iterate islands-major so that consecutive GPU lanes sweep the same island index across consecutive envs:
+        # envs are replicas of one scene, so lanes execute identical control flow (island sizes match) and the
+        # batch-contiguous field reads coalesce, instead of adjacent lanes diverging on different islands of one env.
         max_islands = island_state.dof_slices.start.shape[0]
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_b, i_island in qd.ndrange(_B, max_islands):
+        for i_island, i_b in qd.ndrange(max_islands, _B):
             if i_island < island_state.n_islands[i_b]:
                 run_island = True
                 if qd.static(static_rigid_sim_config.use_hibernation):
