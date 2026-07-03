@@ -4,6 +4,8 @@ import pytest
 
 from genesis.utils.misc import tensor_to_array
 
+from .utils import assert_allclose
+
 
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
@@ -55,3 +57,28 @@ def test_sparse_solve_no_nan(backend, precision):
         pos = tensor_to_array(box.get_pos())
         assert not np.any(np.isnan(pos)), f"box_{i} has NaN position"
         assert np.all(np.abs(pos) < 10), f"box_{i} has unreasonable position: {pos}"
+
+
+@pytest.mark.required
+def test_self_collision_sparse_dense_consistency():
+    # Pose folding the arm into link2 / left_finger contact: rows coupling two links of the same kinematic tree carry
+    # both ancestor chains in their dof support, which the sparse consumers must treat as a set.
+    vels = []
+    for sparse_solve in (False, True):
+        scene = gs.Scene(
+            rigid_options=gs.options.RigidOptions(
+                noslip_iterations=2,
+                sparse_solve=sparse_solve,
+            ),
+            show_viewer=False,
+        )
+        franka = scene.add_entity(
+            morph=gs.morphs.MJCF(
+                file="xml/franka_emika_panda/panda.xml",
+            ),
+        )
+        scene.build()
+        franka.set_qpos([-0.2326, -1.6055, 1.7372, -2.7745, 0.1091, 0.9083, 0.4493, 0.0384, 0.0258])
+        scene.step()
+        vels.append(tensor_to_array(franka.get_dofs_velocity()))
+    assert_allclose(vels[0], vels[1], rtol=1e-4, atol=1e-5)

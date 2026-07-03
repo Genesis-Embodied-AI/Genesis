@@ -25,22 +25,35 @@ from . import noslip as constraint_noslip
 
 
 @qd.func
-def _sort_relevant_dofs_descending(
+def _dedup_and_sort_relevant_dofs(
     constraint_state: array_class.ConstraintState,
     i_con: qd.int32,
     n: qd.int32,
     i_b: qd.int32,
     static_rigid_sim_config: qd.template(),
 ):
-    """Insertion sort jac_dofs_idx[i_con, :n, i_b] in descending order.
+    """Deduplicate jac_dofs_idx[i_con, :n, i_b], finalize jac_n_dofs, and insertion-sort in descending order.
 
-    Only the sparse skyline / incremental Cholesky relies on globally descending DOF order; the J.v / J^T.v products
-    and the per-island solves are order-independent. So the sort is skipped unless sparse_solve is set - it is a
-    serial (data-dependent) loop that would otherwise serialize the parallel contact-assembly kernel on GPU. The
-    array is typically <= 14 elements, so O(n^2) is fine.
+    A row coupling two links of the same kinematic tree walks both ancestor chains, so shared ancestor DOFs are
+    appended twice while the dense jac entry accumulates both contributions. Every sparse consumer (J.v / J^T.v
+    products, Hessian assembly, noslip residuals) treats the list as a set, so duplicates must be compacted here.
+    Only the sparse skyline / incremental Cholesky relies on globally descending DOF order, so the sort stays
+    skipped unless sparse_solve is set. The array is typically <= 14 elements, so O(n^2) is fine.
     """
+    n_unique = gs.qd_int(0)
+    for i in range(n):
+        key = constraint_state.jac_dofs_idx[i_con, i, i_b]
+        is_duplicate = False
+        for j in range(n_unique):
+            if constraint_state.jac_dofs_idx[i_con, j, i_b] == key:
+                is_duplicate = True
+        if not is_duplicate:
+            constraint_state.jac_dofs_idx[i_con, n_unique, i_b] = key
+            n_unique = n_unique + 1
+    constraint_state.jac_n_dofs[i_con, i_b] = n_unique
+
     if qd.static(static_rigid_sim_config.sparse_solve):
-        for i in range(1, n):
+        for i in range(1, n_unique):
             key = constraint_state.jac_dofs_idx[i_con, i, i_b]
             j = i - 1
             while j >= 0 and constraint_state.jac_dofs_idx[i_con, j, i_b] < key:
@@ -690,7 +703,7 @@ def _add_friction_constraint(
             link = links_info.parent_idx[link_maybe_batch]
 
     constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
+    _dedup_and_sort_relevant_dofs(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
     imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
 
     diag = invweight + contact_data_friction * contact_data_friction * invweight
@@ -868,7 +881,7 @@ def _add_collision_constraints_per_contact(
                         link = links_info.parent_idx[link_maybe_batch]
 
                 constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-                _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
+                _dedup_and_sort_relevant_dofs(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
                 imp, aref = gu.imp_aref(
                     contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                 )
@@ -1019,7 +1032,7 @@ def func_equality_connect(
         constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
         # Sort needed: DOFs from two entities are only descending within each
         # entity. Incremental Cholesky requires globally descending order.
-        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
+        _dedup_and_sort_relevant_dofs(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
 
         pos_diff = global_anchor1 - global_anchor2
         penetration = pos_diff.norm()
@@ -1121,7 +1134,7 @@ def func_equality_joint(
         constraint_state.jac_dofs_idx[n_con, con_n_dofs, i_b] = i_dof2
         con_n_dofs += 1
     constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
+    _dedup_and_sort_relevant_dofs(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
 
 
 @qd.kernel(fastcache=True)
@@ -1502,7 +1515,7 @@ def func_equality_weld(
                 link = links_info.parent_idx[link_maybe_batch]
 
         constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
-        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
+        _dedup_and_sort_relevant_dofs(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
         diag = qd.max(invweight[0] * (1 - imp) / imp, EPS)
@@ -1563,7 +1576,7 @@ def func_equality_weld(
 
     for i_con in range(n_con, n_con + 3):
         constraint_state.jac_n_dofs[i_con, i_b] = con_n_dofs
-        _sort_relevant_dofs_descending(constraint_state, i_con, con_n_dofs, i_b, static_rigid_sim_config)
+        _dedup_and_sort_relevant_dofs(constraint_state, i_con, con_n_dofs, i_b, static_rigid_sim_config)
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
