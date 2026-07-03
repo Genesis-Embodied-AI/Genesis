@@ -271,13 +271,10 @@ class ConstraintState:
     Ma_ws: qd.Tensor
     grad: qd.Tensor
     Mgrad: qd.Tensor
-    MinvJT: qd.Tensor
     search: qd.Tensor
     efc_D: qd.Tensor
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
-    efc_b: qd.Tensor
-    efc_AR: qd.Tensor
     active: qd.Tensor
     prev_active: qd.Tensor
     qfrc_constraint: qd.Tensor
@@ -398,14 +395,6 @@ def get_constraint_state(constraint_solver, solver):
     )
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update
-    # sweep. The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes
-    # its AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
-    # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
-    noslip = solver._options.noslip_iterations > 0
-    noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
-    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_decomposed else 1), noslip)
-    efc_b_shape = maybe_shape((len_constraints_, _B if noslip_decomposed else 1), noslip)
     # The sparse-Jacobian representation is always active, so its index buffers are always allocated. The skyline DOF
     # permutation/envelope buffers stay gated on sparse_solve (CPU-only skyline Cholesky).
     jac_dofs_idx_shape = jac_shape
@@ -415,12 +404,6 @@ def get_constraint_state(constraint_solver, solver):
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
-        )
-    if math.prod(efc_AR_shape) > np.iinfo(np.int32).max:
-        gs.raise_exception(
-            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={len_constraints_}, "
-            f"n_envs={efc_AR_shape[2]}) is too large. Consider setting a smaller 'max_contacts' in RigidOptions "
-            "to reduce the size of reserved memory."
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
@@ -450,7 +433,6 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, noslip_decomposed)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
@@ -474,8 +456,6 @@ def get_constraint_state(constraint_solver, solver):
         dof_sort_key=V(dtype=gs.qd_float, shape=sparse_dof_shape),
         incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=serial_layout),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
-        efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
-        efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
         # Layout-flippable constraint-state tensors: allocated as qd.Tensor wrappers, optionally with
         # ``layout=(1, 0)`` to physically store as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B);
         # kernel-body indexing ``Jaref[i_c, i_b]`` is rewritten by the AST when ``layout != None``.

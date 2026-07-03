@@ -302,29 +302,15 @@ class ConstraintSolver:
         )
 
     def noslip(self):
-        if self._solver._para_level >= gs.PARA_LEVEL.PARTIAL:
-            # GPU (any n_envs): one kernel decomposed into per-phase offloaded tasks, so that each phase keeps its
-            # own parallel launch shape.
-            constraint_noslip.kernel_noslip_decomposed(
-                self._collider._collider_state,
-                self._solver.dofs_state,
-                self._solver.entities_info,
-                self._solver._rigid_global_info,
-                self.constraint_state,
-                self._solver._static_rigid_sim_config,
-            )
-        else:
-            # Serialized (CPU): single fused kernel processing each env end-to-end, so that the per-env AR scratch stays
-            # cache-hot between the AR build and the force-update sweep (func_noslip_batch).
-            constraint_noslip.kernel_noslip_fused(
-                self._collider._collider_state,
-                self._solver.dofs_state,
-                self._solver.entities_info,
-                self._solver._rigid_global_info,
-                self.constraint_state,
-                self.island_state,
-                self._solver._static_rigid_sim_config,
-            )
+        constraint_noslip.kernel_noslip(
+            self._collider._collider_state,
+            self._solver.dofs_state,
+            self._solver.entities_info,
+            self._solver._rigid_global_info,
+            self.constraint_state,
+            self.island_state,
+            self._solver._static_rigid_sim_config,
+        )
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
         # Early return if already pre-computed
