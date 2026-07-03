@@ -221,6 +221,7 @@ def func_noslip_batch(
     n_rows = constraint_state.n_constraints[i_b]
     row_start = gs.qd_int(0)
     if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        n_dofs = island_state.dof_slices.n[i_island, i_b]
         n_rows = island_state.constraint_slices.n[i_island, i_b]
         row_start = island_state.constraint_slices.start[i_island, i_b]
 
