@@ -3,8 +3,6 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 
-import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-
 
 @qd.func
 def func_solve_mass_block(
@@ -430,40 +428,33 @@ def func_noslip_batch(
 @qd.func
 def func_dual_finish_batch(
     i_b,
+    i_island,
     dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    """Map the final constraint forces back to joint space over one island.
 
-    for i_d in range(n_dofs):
-        constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
-
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        force = constraint_state.efc_force[i_c, i_b]
-        for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-            i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-            constraint_state.qfrc_constraint[i_d, i_b] = (
-                constraint_state.qfrc_constraint[i_d, i_b] + constraint_state.jac[i_c, i_d, i_b] * force
-            )
-
-    rigid_solver.func_solve_mass_batch(
-        i_b=i_b,
-        vec=constraint_state.qfrc_constraint,
-        out=constraint_state.qacc,
-        out_bw=None,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=False,
+    The refresh recomputes qfrc_constraint = J^T f and qacc = acc_smooth + M^{-1} J^T f exactly from the swept
+    forces; the remaining work is copying them into the per-dof state.
+    """
+    func_refresh_qacc_batch(
+        i_b, i_island, dofs_state, rigid_global_info, constraint_state, island_state, static_rigid_sim_config
     )
 
-    for i_d in range(n_dofs):
-        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
-        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    dof_start = gs.qd_int(0)
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        n_dofs = island_state.dof_slices.n[i_island, i_b]
+        dof_start = island_state.dof_slices.start[i_island, i_b]
 
+    for i_d_ in range(n_dofs):
+        i_d = i_d_
+        if qd.static(static_rigid_sim_config.enable_per_island_solve):
+            i_d = island_state.dof_id[dof_start + i_d_, i_b]
+        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
 
@@ -472,17 +463,17 @@ def func_dual_finish_batch(
 def kernel_noslip(
     collider_state: array_class.ColliderState,
     dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Noslip pass: matrix-free force-update sweeps followed by the dual finish.
+    """Noslip pass: matrix-free force-update sweep followed by the dual finish, fused per island.
 
     The sweep is a sequential Gauss-Seidel process within an island; islands are independent (A is block-diagonal by
-    island), so under the per-island solve they are spread across the (env, island) grid, otherwise the whole env is
-    swept by one thread.
+    island and both phases touch only the island's own rows and dofs), so under the per-island solve each (env,
+    island) pair runs sweep and finish end-to-end in one thread, otherwise the whole env is one island swept by one
+    thread.
     """
     _B = constraint_state.jac.shape[2]
 
@@ -509,6 +500,15 @@ def kernel_noslip(
                         island_state,
                         static_rigid_sim_config,
                     )
+                    func_dual_finish_batch(
+                        i_b,
+                        i_island,
+                        dofs_state,
+                        rigid_global_info,
+                        constraint_state,
+                        island_state,
+                        static_rigid_sim_config,
+                    )
     else:
         qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
@@ -522,12 +522,9 @@ def kernel_noslip(
                 island_state,
                 static_rigid_sim_config,
             )
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_dual_finish_batch(
-            i_b, dofs_state, entities_info, rigid_global_info, constraint_state, static_rigid_sim_config
-        )
+            func_dual_finish_batch(
+                i_b, 0, dofs_state, rigid_global_info, constraint_state, island_state, static_rigid_sim_config
+            )
 
 
 @qd.func

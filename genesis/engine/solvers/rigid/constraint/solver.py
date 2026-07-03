@@ -318,7 +318,6 @@ class ConstraintSolver:
         constraint_noslip.kernel_noslip(
             self._collider._collider_state,
             self._solver.dofs_state,
-            self._solver.entities_info,
             self._solver._rigid_global_info,
             self.constraint_state,
             self.island_state,
