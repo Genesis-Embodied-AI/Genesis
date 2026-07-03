@@ -700,6 +700,10 @@ class IslandState:
     rcm_tree_degree: qd.Tensor
     rcm_tree_is_ordered: qd.Tensor
     rcm_tree_order: qd.Tensor
+    # Per-island Newton/CG early-stopping flag: a converged island (gradient norm below its dof-scaled tolerance)
+    # freezes - its search direction is zeroed, so its state and linesearch contributions stay constant - while the
+    # remaining islands keep iterating with a shared step size.
+    improved: qd.Tensor
 
 
 def get_island_state(solver, collider):
@@ -713,6 +717,7 @@ def get_island_state(solver, collider):
     # per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), so island_state
     # itself holds only the partition maps.
     is_active = solver._use_contact_island
+    per_island_solve_active = is_active and solver._static_rigid_sim_config.enable_per_island_solve
     rcm_active = (
         is_active
         and solver._static_rigid_sim_config.sparse_solve
@@ -751,6 +756,7 @@ def get_island_state(solver, collider):
         rcm_tree_degree=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
         rcm_tree_is_ordered=V(dtype=gs.qd_bool, shape=maybe_shape((n_links, _B), rcm_active)),
         rcm_tree_order=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
+        improved=V(dtype=gs.qd_bool, shape=maybe_shape((n_links, _B), per_island_solve_active)),
     )
 
 

@@ -4714,11 +4714,14 @@ def func_update_gradient_batch(
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            # Mgrad = H^{-1} @ grad solved per island on each island's local tile (factored above).
+            # Mgrad = H^{-1} @ grad solved per island on each island's local tile (factored above). Frozen islands are
+            # skipped: their grad has not moved since they froze, so the stale Mgrad is still exact.
             for i_island in range(island_state.n_islands[i_b]):
                 if qd.static(static_rigid_sim_config.use_hibernation):
                     if island_state.is_hibernated[i_island, i_b]:
                         continue
+                if not island_state.improved[i_island, i_b]:
+                    continue
                 func_cholesky_solve_batch(i_b, i_island, island_state, constraint_state, static_rigid_sim_config)
         else:
             # Whole-env solve (matching the whole-env factor): the block-diagonal L's per-island blocks are solved
@@ -4863,6 +4866,7 @@ def func_terminate_or_update_descent_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     n_dofs = constraint_state.jac.shape[1]
@@ -4875,6 +4879,31 @@ def func_terminate_or_update_descent_batch(
         grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
     grad_norm = qd.sqrt(grad_norm)
     improved = grad_norm > tol_scaled and improvement > tol_scaled
+
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        # Freeze islands whose own gradient is flat: the Hessian is block-diagonal across islands, so a flat island is
+        # at its optimum and zeroing its search direction (below) keeps its state and its linesearch contributions
+        # exactly constant while the remaining islands keep iterating. The env stops once every island froze.
+        any_island_improved = False
+        for i_island in range(island_state.n_islands[i_b]):
+            if qd.static(static_rigid_sim_config.use_hibernation):
+                if island_state.is_hibernated[i_island, i_b]:
+                    island_state.improved[i_island, i_b] = False
+                    continue
+            island_dof_start = island_state.dof_slices.start[i_island, i_b]
+            island_n_dofs = island_state.dof_slices.n[i_island, i_b]
+            island_grad_norm = gs.qd_float(0.0)
+            for i_d_ in range(island_n_dofs):
+                i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                island_grad_norm = island_grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+            island_tol_scaled = (
+                rigid_global_info.meaninertia[i_b] * qd.max(1, island_n_dofs) * rigid_global_info.tolerance[None]
+            )
+            island_improved = improved and qd.sqrt(island_grad_norm) > island_tol_scaled
+            island_state.improved[i_island, i_b] = island_improved
+            any_island_improved = any_island_improved or island_improved
+        improved = any_island_improved
+
     constraint_state.improved[i_b] = improved
 
     # Update search direction if necessary
@@ -4902,6 +4931,14 @@ def func_terminate_or_update_descent_batch(
                 constraint_state.search[i_d, i_b] = (
                     -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
                 )
+
+        if qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_island in range(island_state.n_islands[i_b]):
+                if not island_state.improved[i_island, i_b]:
+                    island_dof_start = island_state.dof_slices.start[i_island, i_b]
+                    for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                        i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                        constraint_state.search[i_d, i_b] = gs.qd_float(0.0)
 
 
 @qd.func
@@ -5163,6 +5200,9 @@ def func_solve_init(
     for i_b in qd.ndrange(_B):
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
         constraint_state.use_full_hessian[i_b] = 1
+        if qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_island in range(island_state.n_islands[i_b]):
+                island_state.improved[i_island, i_b] = constraint_state.improved[i_b]
     constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(
@@ -5341,6 +5381,10 @@ def func_solve_iter(
                     if qd.static(static_rigid_sim_config.use_hibernation):
                         if island_state.is_hibernated[i_island, i_b]:
                             continue
+                    # Frozen islands are skipped: their Jaref has not moved since they froze, so no constraint can
+                    # have flipped active and the factor is still exact.
+                    if not island_state.improved[i_island, i_b]:
+                        continue
                     func_factor_island_incremental_or_direct(
                         i_b,
                         i_island,
@@ -5412,6 +5456,7 @@ def func_solve_iter(
             i_b,
             constraint_state=constraint_state,
             rigid_global_info=rigid_global_info,
+            island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
