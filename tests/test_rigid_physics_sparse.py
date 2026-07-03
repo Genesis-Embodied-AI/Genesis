@@ -11,7 +11,7 @@ from .utils import assert_allclose
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sparse_noslip_resting_stability(backend):
+def test_sparse_noslip_resting_stability(backend, show_viewer):
     # FIXME: Resting boxes never settle on Apple Metal (tipping and mm-scale penetration); this reproduces on a
     # pristine tree with noslip disabled and with box_box_detection, so it is a backend issue, not a solver-pass one.
     if sys.platform == "darwin" and backend == gs.gpu:
@@ -26,7 +26,11 @@ def test_sparse_noslip_resting_stability(backend):
             max_collision_pairs=128,
             sparse_solve=True,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.7, -1.1, 1.4),
+            camera_lookat=(0.4, 0.0, 0.75),
+        ),
+        show_viewer=show_viewer,
     )
 
     franka = scene.add_entity(
@@ -54,6 +58,7 @@ def test_sparse_noslip_resting_stability(backend):
             # Drop from just above the resting height: a high drop makes the landing chaotic across precisions,
             # while the point here is the stability of the resting contacts.
             morph=gs.morphs.Box(pos=(x, y, 0.75 * TABLE_Z + 0.025), size=(0.04, 0.04, 0.04)),
+            surface=gs.surfaces.Default(color=(0.3 + 0.7 * (i % 4) / 3, 0.3 + 0.7 * (i // 4) / 3, 0.5, 1.0)),
         )
         boxes.append(box)
 
