@@ -700,9 +700,10 @@ class IslandState:
     rcm_tree_degree: qd.Tensor
     rcm_tree_is_ordered: qd.Tensor
     rcm_tree_order: qd.Tensor
-    # Per-island Newton/CG early-stopping flag: a converged island (gradient norm below its dof-scaled tolerance)
+    # Per-island Newton early-stopping flag: a converged island (gradient norm below its dof-scaled tolerance)
     # freezes - its search direction is zeroed, so its state and linesearch contributions stay constant - while the
-    # remaining islands keep iterating with a shared step size.
+    # remaining islands keep iterating with a shared step size. Newton only: CG's trajectory is path-dependent, so
+    # its per-island variant needs per-island beta scalars and stays whole-env.
     improved: qd.Tensor
 
 
