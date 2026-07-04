@@ -3672,6 +3672,7 @@ def func_ls_init_and_eval_p0(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     """Fused linesearch initialization and first evaluation point (alpha=0) for a single environment.
@@ -3694,35 +3695,63 @@ def func_ls_init_and_eval_p0(
     # mv = M @ search. Mass couples only DOFs within the same kinematic-tree block, so restrict the inner loop to
     # i_d1's block (cross-block entries are zero). For one entity holding many free bodies this is the difference
     # between O(entity_dofs^2) and the sum of per-tree blocks.
-    for i_e in range(n_entities):
-        for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            mv = gs.qd_float(0.0)
-            for i_d2 in range(
-                rigid_global_info.dofs_mass_block_start[i_d1], rigid_global_info.dofs_mass_block_end[i_d1]
-            ):
-                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
-            constraint_state.mv[i_d1, i_b] = mv
-
-    for i_c in range(n_con):
-        jv = gs.qd_float(0.0)
-        if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.enable_per_island_solve):
-            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-        else:
-            for i_d in range(n_dofs):
-                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-        constraint_state.jv[i_c, i_b] = jv
-
-    # -- quad_gauss (same as original func_ls_init) --
+    # A frozen island keeps search = 0 (and its jv / mv scratch zeroed at freeze time), so its dofs and rows are
+    # skipped: recomputing them would write back exact zeros. The quad_gauss sums below drop its exactly-zero terms.
     quad_gauss_1 = gs.qd_float(0.0)
     quad_gauss_2 = gs.qd_float(0.0)
-    for i_d in range(n_dofs):
-        quad_gauss_1 = quad_gauss_1 + (
-            constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
-            - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
-        )
-        quad_gauss_2 = quad_gauss_2 + 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        for i_island in range(island_state.n_islands[i_b]):
+            if not island_state.improved[i_island, i_b]:
+                continue
+            island_dof_start = island_state.dof_slices.start[i_island, i_b]
+            for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                i_d1 = island_state.dof_id[island_dof_start + i_d_, i_b]
+                mv = gs.qd_float(0.0)
+                for i_d2 in range(
+                    rigid_global_info.dofs_mass_block_start[i_d1], rigid_global_info.dofs_mass_block_end[i_d1]
+                ):
+                    mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                constraint_state.mv[i_d1, i_b] = mv
+                quad_gauss_1 = quad_gauss_1 + constraint_state.search[i_d1, i_b] * (
+                    constraint_state.Ma[i_d1, i_b] - dofs_state.force[i_d1, i_b]
+                )
+                quad_gauss_2 = quad_gauss_2 + 0.5 * constraint_state.search[i_d1, i_b] * mv
+            island_con_start = island_state.constraint_slices.start[i_island, i_b]
+            for i_c_ in range(island_state.constraint_slices.n[i_island, i_b]):
+                i_c = island_state.constraint_id[island_con_start + i_c_, i_b]
+                jv = gs.qd_float(0.0)
+                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                constraint_state.jv[i_c, i_b] = jv
+    else:
+        for i_e in range(n_entities):
+            for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                mv = gs.qd_float(0.0)
+                for i_d2 in range(
+                    rigid_global_info.dofs_mass_block_start[i_d1], rigid_global_info.dofs_mass_block_end[i_d1]
+                ):
+                    mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                constraint_state.mv[i_d1, i_b] = mv
+
+        for i_c in range(n_con):
+            jv = gs.qd_float(0.0)
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+            else:
+                for i_d in range(n_dofs):
+                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+            constraint_state.jv[i_c, i_b] = jv
+
+        # -- quad_gauss (same as original func_ls_init) --
+        for i_d in range(n_dofs):
+            quad_gauss_1 = quad_gauss_1 + (
+                constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
+                - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
+            )
+            quad_gauss_2 = quad_gauss_2 + 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
     constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
     constraint_state.quad_gauss[1, i_b] = quad_gauss_1
     constraint_state.quad_gauss[2, i_b] = quad_gauss_2
@@ -4139,6 +4168,7 @@ def func_linesearch_and_apply_alpha(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     alpha = func_linesearch_batch(
@@ -4147,6 +4177,7 @@ def func_linesearch_and_apply_alpha(
         dofs_state=dofs_state,
         rigid_global_info=rigid_global_info,
         constraint_state=constraint_state,
+        island_state=island_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
     n_dofs = constraint_state.qacc.shape[0]
@@ -4309,6 +4340,7 @@ def func_linesearch_batch(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     n_dofs = constraint_state.search.shape[0]
@@ -4338,6 +4370,7 @@ def func_linesearch_batch(
             dofs_state=dofs_state,
             constraint_state=constraint_state,
             rigid_global_info=rigid_global_info,
+            island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_linesearch_eval_at_alpha(
@@ -4406,6 +4439,7 @@ def func_update_constraint_batch(
     cost: qd.Tensor,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     n_dofs = constraint_state.qfrc_constraint.shape[0]
@@ -4417,34 +4451,94 @@ def func_update_constraint_batch(
     gauss_i = gs.qd_float(0.0)
 
     # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-        constraint_state.active[i_c, i_b] = True
+    # A frozen island's Jaref has not moved, so its active / efc_force values are already current; the write pass
+    # skips its rows and the read-only cost reductions below still sum the frozen rows' (constant) contributions.
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        for i_island in range(island_state.n_islands[i_b]):
+            if not island_state.improved[i_island, i_b]:
+                continue
+            island_con_start = island_state.constraint_slices.start[i_island, i_b]
+            for i_c_ in range(island_state.constraint_slices.n[i_island, i_b]):
+                i_c = island_state.constraint_id[island_con_start + i_c_, i_b]
+                if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+                    constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+                constraint_state.active[i_c, i_b] = True
 
-        floss_force = gs.qd_float(0.0)
-        if ne <= i_c and i_c < nef:  # Friction constraints
+                floss_force = gs.qd_float(0.0)
+                if ne <= i_c and i_c < nef:  # Friction constraints
+                    f = constraint_state.efc_frictionloss[i_c, i_b]
+                    r = constraint_state.diag[i_c, i_b]
+                    rf = r * f
+                    linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+                    linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+                    constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+                    floss_force = linear_neg * f + linear_pos * -f
+                elif nef <= i_c:  # Contact constraints
+                    constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+
+                constraint_state.efc_force[i_c, i_b] = floss_force + (
+                    -constraint_state.Jaref[i_c, i_b]
+                    * constraint_state.efc_D[i_c, i_b]
+                    * constraint_state.active[i_c, i_b]
+                )
+        # Friction cost, recomputed read-only over ALL rows (frozen rows' regime is stable since Jaref is frozen)
+        for i_c in range(ne, nef):
             f = constraint_state.efc_frictionloss[i_c, i_b]
             r = constraint_state.diag[i_c, i_b]
             rf = r * f
             linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
             linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-            constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
-            floss_force = linear_neg * f + linear_pos * -f
             floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
             floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
             cost_i = cost_i + floss_cost_local
-        elif nef <= i_c:  # Contact constraints
-            constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+    else:
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+            constraint_state.active[i_c, i_b] = True
 
-        constraint_state.efc_force[i_c, i_b] = floss_force + (
-            -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-        )
+            floss_force = gs.qd_float(0.0)
+            if ne <= i_c and i_c < nef:  # Friction constraints
+                f = constraint_state.efc_frictionloss[i_c, i_b]
+                r = constraint_state.diag[i_c, i_b]
+                rf = r * f
+                linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+                linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+                constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+                floss_force = linear_neg * f + linear_pos * -f
+                floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
+                floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
+                cost_i = cost_i + floss_cost_local
+            elif nef <= i_c:  # Contact constraints
+                constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+
+            constraint_state.efc_force[i_c, i_b] = floss_force + (
+                -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+            )
 
     # qfrc_constraint = J^T @ efc_force. Sparse scatter over each constraint's coupled DOFs (jac_dofs_idx) when that
     # helps (CPU skyline / per-island GPU); islands-OFF GPU gathers per-DOF (bit-identical to the non-island baseline)
     # to keep the 32-env-packed warp's trip count uniform.
-    if qd.static(static_rigid_sim_config.sparse_solve or static_rigid_sim_config.enable_per_island_solve):
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        # Constraint rows only couple dofs of their own island, so each active island zeroes and rescatters its own
+        # dofs; frozen islands keep their (constant) qfrc contributions untouched.
+        for i_island in range(island_state.n_islands[i_b]):
+            if not island_state.improved[i_island, i_b]:
+                continue
+            island_dof_start = island_state.dof_slices.start[i_island, i_b]
+            for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
+            island_con_start = island_state.constraint_slices.start[i_island, i_b]
+            for i_c_ in range(island_state.constraint_slices.n[i_island, i_b]):
+                i_c = island_state.constraint_id[island_con_start + i_c_, i_b]
+                for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                    constraint_state.qfrc_constraint[i_d, i_b] = (
+                        constraint_state.qfrc_constraint[i_d, i_b]
+                        + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                    )
+    elif qd.static(static_rigid_sim_config.sparse_solve):
         for i_d in range(n_dofs):
             constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -4647,6 +4741,7 @@ def func_update_constraint(
     cost: qd.Tensor,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     """Compute active / efc_force / qfrc_constraint / gauss / cost.
@@ -4679,6 +4774,7 @@ def func_update_constraint(
                 cost=cost,
                 dofs_state=dofs_state,
                 constraint_state=constraint_state,
+                island_state=island_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
@@ -4695,10 +4791,25 @@ def func_update_gradient_batch(
 ):
     n_dofs = constraint_state.grad.shape[0]
 
-    for i_d in range(n_dofs):
-        constraint_state.grad[i_d, i_b] = (
-            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
-        )
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        # A frozen island's Ma / qfrc_constraint have not moved (dofs_state.force is fixed within the solve), so its
+        # grad entries already hold their converged values.
+        for i_island in range(island_state.n_islands[i_b]):
+            if not island_state.improved[i_island, i_b]:
+                continue
+            island_dof_start = island_state.dof_slices.start[i_island, i_b]
+            for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                constraint_state.grad[i_d, i_b] = (
+                    constraint_state.Ma[i_d, i_b]
+                    - dofs_state.force[i_d, i_b]
+                    - constraint_state.qfrc_constraint[i_d, i_b]
+                )
+    else:
+        for i_d in range(n_dofs):
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         func_solve_mass_batch(
@@ -4892,6 +5003,8 @@ def func_terminate_or_update_descent_batch(
                 if island_state.is_hibernated[i_island, i_b]:
                     island_state.improved[i_island, i_b] = False
                     continue
+            if not island_state.improved[i_island, i_b]:
+                continue
             island_dof_start = island_state.dof_slices.start[i_island, i_b]
             island_n_dofs = island_state.dof_slices.n[i_island, i_b]
             island_grad_norm = gs.qd_float(0.0)
@@ -4903,6 +5016,16 @@ def func_terminate_or_update_descent_batch(
             )
             island_improved = improved and qd.sqrt(island_grad_norm) > island_tol_scaled
             island_state.improved[i_island, i_b] = island_improved
+            if not island_improved:
+                # Freeze transition: zero the island's jv / mv scratch once, so the env-wide reductions that still
+                # visit its rows and dofs (linesearch quad sums, cost) read exact zeros instead of stale values.
+                for i_d_ in range(island_n_dofs):
+                    i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                    constraint_state.mv[i_d, i_b] = gs.qd_float(0.0)
+                island_con_start = island_state.constraint_slices.start[i_island, i_b]
+                for i_c_ in range(island_state.constraint_slices.n[i_island, i_b]):
+                    i_c = island_state.constraint_id[island_con_start + i_c_, i_b]
+                    constraint_state.jv[i_c, i_b] = gs.qd_float(0.0)
             any_island_improved = any_island_improved or island_improved
         improved = any_island_improved
 
@@ -5130,6 +5253,13 @@ def func_solve_init(
         for i_b in range(_B):
             func_group_constraints_by_island(i_b, island_state, constraint_state, static_rigid_sim_config)
 
+        # The island-gated batch loops below (constraint update, linesearch, gradient) skip frozen islands, so the
+        # flags must be reset before the first consumer runs - they still hold the previous solve's all-frozen state.
+        qd.loop_config(name="init_island_improved", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            for i_island in range(island_state.n_islands[i_b]):
+                island_state.improved[i_island, i_b] = True
+
     # Skyline envelope for the CPU sparse Cholesky, recomputed each step (the fill-reducing DOF permutation it builds
     # on is fixed at build time). Folded here rather than a standalone kernel to avoid a per-step launch.
     if qd.static(static_rigid_sim_config.sparse_envelope):
@@ -5161,6 +5291,7 @@ def func_solve_init(
             cost=constraint_state.cost_ws,
             dofs_state=dofs_state,
             constraint_state=constraint_state,
+            island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -5185,6 +5316,7 @@ def func_solve_init(
             cost=constraint_state.cost,
             dofs_state=dofs_state,
             constraint_state=constraint_state,
+            island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
@@ -5233,6 +5365,7 @@ def func_solve_init(
         cost=constraint_state.cost,
         dofs_state=dofs_state,
         constraint_state=constraint_state,
+        island_state=island_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
@@ -5240,9 +5373,6 @@ def func_solve_init(
     for i_b in qd.ndrange(_B):
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
         constraint_state.use_full_hessian[i_b] = 1
-        if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            for i_island in range(island_state.n_islands[i_b]):
-                island_state.improved[i_island, i_b] = constraint_state.improved[i_b]
     constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(
@@ -5373,25 +5503,53 @@ def func_solve_iter(
         dofs_state=dofs_state,
         rigid_global_info=rigid_global_info,
         constraint_state=constraint_state,
+        island_state=island_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
     if qd.abs(alpha) < rigid_global_info.EPS[None]:
         constraint_state.improved[i_b] = False
     else:
-        for i_d in range(n_dofs):
-            constraint_state.qacc[i_d, i_b] = (
-                constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
-            )
-            constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
-
-        for i_c in range(constraint_state.n_constraints[i_b]):
-            constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
-
-        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+        # Frozen islands are skipped everywhere below: their search / jv / mv are exactly zero, so every update
+        # they would receive is the identity and every field they own already holds its converged value.
+        if qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_island in range(island_state.n_islands[i_b]):
+                if not island_state.improved[i_island, i_b]:
+                    continue
+                island_dof_start = island_state.dof_slices.start[i_island, i_b]
+                for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                    i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                    constraint_state.qacc[i_d, i_b] = (
+                        constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
+                    )
+                    constraint_state.Ma[i_d, i_b] = (
+                        constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+                    )
+                    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+                        constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+                        constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
+                island_con_start = island_state.constraint_slices.start[i_island, i_b]
+                for i_c_ in range(island_state.constraint_slices.n[i_island, i_b]):
+                    i_c = island_state.constraint_id[island_con_start + i_c_, i_b]
+                    constraint_state.Jaref[i_c, i_b] = (
+                        constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+                    )
+        else:
             for i_d in range(n_dofs):
-                constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
-                constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
+                constraint_state.qacc[i_d, i_b] = (
+                    constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
+                )
+                constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+
+            for i_c in range(constraint_state.n_constraints[i_b]):
+                constraint_state.Jaref[i_c, i_b] = (
+                    constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+                )
+
+            if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+                for i_d in range(n_dofs):
+                    constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+                    constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
 
         func_update_constraint_batch(
             i_b,
@@ -5400,6 +5558,7 @@ def func_solve_iter(
             cost=constraint_state.cost,
             dofs_state=dofs_state,
             constraint_state=constraint_state,
+            island_state=island_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
