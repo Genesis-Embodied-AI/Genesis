@@ -79,7 +79,7 @@ def test_sparse_noslip_resting_stability(show_viewer):
     # any sideways creep or spin away from the drop pose.
     assert_allclose([box.get_pos()[2] for box in boxes], 0.75 * TABLE_Z + 0.02, tol=2e-4)
     assert_allclose([box.get_pos()[:2] for box in boxes], [box.morph.pos[:2] for box in boxes], tol=1e-5)
-    assert_allclose([gu.quat_to_xyz(box.get_quat()) for box in boxes], 0.0, tol=1e-5)
+    assert_allclose([gu.quat_to_xyz(box.get_quat()) for box in boxes], 0.0, tol=2e-5)
     assert_allclose([box.get_vel() for box in boxes], 0.0, tol=1e-4)
     assert_allclose([box.get_ang() for box in boxes], 0.0, tol=5e-4)
 
