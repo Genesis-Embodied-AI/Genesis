@@ -2446,7 +2446,9 @@ def func_island_tiled_factor_solve_all(
             i_b = island_state.factor_worklist_i_b[i_work]
             i_island = island_state.factor_worklist_i_island[i_work]
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                do_island = True
+                # A frozen island's grad has not moved, so its factor and Mgrad are still exact; retiring its work
+                # item immediately hands this block to the next (env, island) pair.
+                do_island = island_state.improved[i_island, i_b]
                 if qd.static(static_rigid_sim_config.use_hibernation):
                     if island_state.is_hibernated[i_island, i_b]:
                         do_island = False
