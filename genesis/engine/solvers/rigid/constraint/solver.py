@@ -4915,13 +4915,28 @@ def func_terminate_or_update_descent_batch(
             cg_beta = gs.qd_float(0.0)
             cg_pg_dot_pMg = gs.qd_float(0.0)
 
-            for i_d in range(n_dofs):
-                cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
-                    constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
-                )
-                cg_pg_dot_pMg = cg_pg_dot_pMg + (
-                    constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
-                )
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                # Restrict the beta sums to the still-active islands: frozen islands have unchanged grad/Mgrad, so
+                # they contribute nothing to the numerator but would inflate the denominator and damp beta.
+                for i_island in range(island_state.n_islands[i_b]):
+                    if island_state.improved[i_island, i_b]:
+                        island_dof_start = island_state.dof_slices.start[i_island, i_b]
+                        for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                            i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                            cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
+                                constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                            )
+                            cg_pg_dot_pMg = cg_pg_dot_pMg + (
+                                constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                            )
+            else:
+                for i_d in range(n_dofs):
+                    cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
+                        constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                    )
+                    cg_pg_dot_pMg = cg_pg_dot_pMg + (
+                        constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                    )
             cg_beta = qd.max(cg_beta / qd.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
 
             constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
