@@ -917,6 +917,7 @@ def _func_update_gradient(
 def _func_update_search_direction(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    island_state: array_class.IslandState,
     static_rigid_sim_config: qd.template(),
 ):
     """Step 6: Check convergence and update search direction"""
@@ -930,6 +931,7 @@ def _func_update_search_direction(
                 i_b,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
+                island_state=island_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
 
@@ -1054,7 +1056,7 @@ def _kernel_solve_graph(
             _func_update_gradient(
                 entities_info, dofs_state, constraint_state, rigid_global_info, island_state, static_rigid_sim_config
             )
-        _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_update_search_direction(constraint_state, rigid_global_info, island_state, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
 
 
