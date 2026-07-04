@@ -67,7 +67,6 @@ dependencies = [
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
-    # 0.0.8 is required for the per-environment geom visibility mask ('geom_env_mask')
     "gs-madrona==0.0.8; platform_system=='Linux' and (platform_machine=='x86_64' or platform_machine=='AMD64')",
     # Used for mesh simplification
     "fast_simplification>=0.1.12",
