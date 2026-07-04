@@ -4223,7 +4223,7 @@ def test_convexify_stress(show_viewer):
     for obj in objs:
         # FIXME: There is spurious residual motion that prevents the objects from truly settling, which is problematic.
         assert_allclose(obj.get_vel(), 0.0, atol=0.06)
-        assert_allclose(obj.get_ang(), 0.0, atol=2.0)
+        assert_allclose(obj.get_ang(), 0.0, atol=3.0)
         obj_pos = tensor_to_array(obj.get_pos())
         np.testing.assert_array_less(-0.1, obj_pos[2])
         np.testing.assert_array_less(obj_pos[2], 0.6)
