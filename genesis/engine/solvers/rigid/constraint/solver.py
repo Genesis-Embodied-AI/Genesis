@@ -31,6 +31,7 @@ def _append_relevant_dof(
     i_d: qd.int32,
     n: qd.int32,
     i_b: qd.int32,
+    dedup: qd.int32,
 ):
     """Append dof i_d to jac_dofs_idx[i_con, :n, i_b] unless already present, returning the new count.
 
@@ -38,12 +39,15 @@ def _append_relevant_dof(
     twice: every sparse consumer (J.v / J^T.v products, Hessian assembly, noslip residuals) treats the list as a
     set, and appending duplicates blindly can push the count past the row capacity (n_dofs), spilling into the next
     row. The serialized CPU assembly rebuilds rows in index order and self-heals the spill, but the parallel GPU
-    assembly does not, leaving clobbered supports. The list is typically <= 14 elements, so the O(n) scan is fine.
+    assembly does not, leaving clobbered supports. Duplicates only ever arise while walking the second chain of a
+    row whose links share a kinematic root, so callers pass dedup=False everywhere else and the O(n) scan - which
+    costs >10% on contact-heavy free-body scenes - is skipped.
     """
     is_new = True
-    for j in range(n):
-        if constraint_state.jac_dofs_idx[i_con, j, i_b] == i_d:
-            is_new = False
+    if dedup:
+        for j in range(n):
+            if constraint_state.jac_dofs_idx[i_con, j, i_b] == i_d:
+                is_new = False
     if is_new:
         constraint_state.jac_dofs_idx[i_con, n, i_b] = i_d
         n = n + 1
@@ -681,6 +685,7 @@ def _add_friction_constraint(
         for i_d in range(n_dofs):
             constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
+    same_root = link_b > -1 and links_info.root_idx[link_a_maybe_batch] == links_info.root_idx[link_b_maybe_batch]
     con_n_dofs = 0
     jac_qvel = gs.qd_float(0.0)
     for i_ab in range(2):
@@ -709,7 +714,9 @@ def _add_friction_constraint(
                 jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                 constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                con_n_dofs = _append_relevant_dof(constraint_state, n_con, i_d, con_n_dofs, i_b)
+                con_n_dofs = _append_relevant_dof(
+                    constraint_state, n_con, i_d, con_n_dofs, i_b, i_ab == 1 and same_root
+                )
 
             link = links_info.parent_idx[link_maybe_batch]
 
@@ -858,6 +865,9 @@ def _add_collision_constraints_per_contact(
                     for i_d in range(n_dofs):
                         constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
+                same_root = (
+                    link_b > -1 and links_info.root_idx[link_a_maybe_batch] == links_info.root_idx[link_b_maybe_batch]
+                )
                 con_n_dofs = 0
                 jac_qvel = gs.qd_float(0.0)
                 for i_ab in range(2):
@@ -886,7 +896,9 @@ def _add_collision_constraints_per_contact(
                             jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                             constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                            con_n_dofs = _append_relevant_dof(constraint_state, n_con, i_d, con_n_dofs, i_b)
+                            con_n_dofs = _append_relevant_dof(
+                                constraint_state, n_con, i_d, con_n_dofs, i_b, i_ab == 1 and same_root
+                            )
 
                         link = links_info.parent_idx[link_maybe_batch]
 
@@ -1006,6 +1018,9 @@ def func_equality_connect(
             for i_d in range(n_dofs):
                 constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
 
+        same_root = (
+            link2_idx > -1 and links_info.root_idx[link_a_maybe_batch] == links_info.root_idx[link_b_maybe_batch]
+        )
         jac_qvel = gs.qd_float(0.0)
         for i_ab in range(2):
             sign = gs.qd_float(1.0)
@@ -1034,7 +1049,9 @@ def func_equality_connect(
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                    con_n_dofs = _append_relevant_dof(constraint_state, n_con, i_d, con_n_dofs, i_b)
+                    con_n_dofs = _append_relevant_dof(
+                        constraint_state, n_con, i_d, con_n_dofs, i_b, i_ab == 1 and same_root
+                    )
 
                 link = links_info.parent_idx[link_maybe_batch]
 
@@ -1482,6 +1499,7 @@ def func_equality_weld(
     invweight = links_info.invweight[link_a_maybe_batch] + links_info.invweight[link_b_maybe_batch]
 
     # --- Position part (first 3 constraints) ---
+    same_root = link2_idx > -1 and links_info.root_idx[link_a_maybe_batch] == links_info.root_idx[link_b_maybe_batch]
     for i in range(3):
         n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
         qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
@@ -1519,7 +1537,9 @@ def func_equality_weld(
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
                     constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
 
-                    con_n_dofs = _append_relevant_dof(constraint_state, n_con, i_d, con_n_dofs, i_b)
+                    con_n_dofs = _append_relevant_dof(
+                        constraint_state, n_con, i_d, con_n_dofs, i_b, i_ab == 1 and same_root
+                    )
                 link = links_info.parent_idx[link_maybe_batch]
 
         constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
@@ -1559,7 +1579,9 @@ def func_equality_weld(
                 # it so sparse assembly does not drop them. (The position part above does the same per constraint.)
                 n_dofs_new = con_n_dofs
                 for i_con in range(n_con, n_con + 3):
-                    n_dofs_new = _append_relevant_dof(constraint_state, i_con, i_d, con_n_dofs, i_b)
+                    n_dofs_new = _append_relevant_dof(
+                        constraint_state, i_con, i_d, con_n_dofs, i_b, i_ab == 1 and same_root
+                    )
                 con_n_dofs = n_dofs_new
             link = links_info.parent_idx[link_maybe_batch]
 
