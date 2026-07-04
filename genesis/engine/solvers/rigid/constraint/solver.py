@@ -4880,16 +4880,12 @@ def func_terminate_or_update_descent_batch(
     grad_norm = qd.sqrt(grad_norm)
     improved = grad_norm > tol_scaled and improvement > tol_scaled
 
-    if qd.static(
-        static_rigid_sim_config.enable_per_island_solve
-        and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-    ):
-        # Freeze islands whose own gradient is flat: the Hessian is block-diagonal across islands, so a flat island is
-        # at its optimum and zeroing its search direction (below) keeps its state and its linesearch contributions
-        # exactly constant while the remaining islands keep iterating. The env stops once every island froze. Newton
-        # only: it re-converges to the same optimum regardless of freeze timing, while CG's trajectory is
-        # path-dependent - freezing islands mid-solve changes the Krylov directions of the remaining ones, so the
-        # per-island CG variant needs per-island beta scalars and stays whole-env for now.
+    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+        # Freeze islands whose own gradient is flat: the cost is block-separable across islands (block-diagonal
+        # Hessian), so a flat island is at its optimum and zeroing its search direction (below) keeps its state and
+        # its linesearch contributions exactly constant while the remaining islands keep iterating. The env stops
+        # once every island froze. CG runs one conjugate-gradient recursion per island (per-island beta below), so
+        # freezing an island does not disturb the others' Krylov directions.
         any_island_improved = False
         for i_island in range(island_state.n_islands[i_b]):
             if qd.static(static_rigid_sim_config.use_hibernation):
@@ -4917,6 +4913,45 @@ def func_terminate_or_update_descent_batch(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             for i_d in range(n_dofs):
                 constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                for i_island in range(island_state.n_islands[i_b]):
+                    if not island_state.improved[i_island, i_b]:
+                        island_dof_start = island_state.dof_slices.start[i_island, i_b]
+                        for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                            i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                            constraint_state.search[i_d, i_b] = gs.qd_float(0.0)
+        elif qd.static(
+            static_rigid_sim_config.enable_per_island_solve and not static_rigid_sim_config.enable_mujoco_compatibility
+        ):
+            # One Polak-Ribiere recursion per island: the cost is block-separable, so each island's conjugacy only
+            # involves its own gradient history and a shared beta would couple unrelated islands (and a frozen
+            # island's stale terms would damp the others'). Under enable_mujoco_compatibility the env-wide recursion
+            # below is kept instead: MuJoCo runs a single CG whose beta couples the islands, and per-island conjugacy
+            # - although it converges to the same optimum - follows a different iterate sequence.
+            for i_island in range(island_state.n_islands[i_b]):
+                island_dof_start = island_state.dof_slices.start[i_island, i_b]
+                island_n_dofs = island_state.dof_slices.n[i_island, i_b]
+                if not island_state.improved[i_island, i_b]:
+                    for i_d_ in range(island_n_dofs):
+                        i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                        constraint_state.search[i_d, i_b] = gs.qd_float(0.0)
+                else:
+                    cg_beta = gs.qd_float(0.0)
+                    cg_pg_dot_pMg = gs.qd_float(0.0)
+                    for i_d_ in range(island_n_dofs):
+                        i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                        cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
+                            constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
+                        )
+                        cg_pg_dot_pMg = cg_pg_dot_pMg + (
+                            constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
+                        )
+                    cg_beta = qd.max(cg_beta / qd.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
+                    for i_d_ in range(island_n_dofs):
+                        i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                        constraint_state.search[i_d, i_b] = (
+                            -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
+                        )
         else:
             cg_beta = gs.qd_float(0.0)
             cg_pg_dot_pMg = gs.qd_float(0.0)
@@ -4937,17 +4972,13 @@ def func_terminate_or_update_descent_batch(
                 constraint_state.search[i_d, i_b] = (
                     -constraint_state.Mgrad[i_d, i_b] + cg_beta * constraint_state.search[i_d, i_b]
                 )
-
-        if qd.static(
-            static_rigid_sim_config.enable_per_island_solve
-            and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
-        ):
-            for i_island in range(island_state.n_islands[i_b]):
-                if not island_state.improved[i_island, i_b]:
-                    island_dof_start = island_state.dof_slices.start[i_island, i_b]
-                    for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
-                        i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
-                        constraint_state.search[i_d, i_b] = gs.qd_float(0.0)
+            if qd.static(static_rigid_sim_config.enable_per_island_solve):
+                for i_island in range(island_state.n_islands[i_b]):
+                    if not island_state.improved[i_island, i_b]:
+                        island_dof_start = island_state.dof_slices.start[i_island, i_b]
+                        for i_d_ in range(island_state.dof_slices.n[i_island, i_b]):
+                            i_d = island_state.dof_id[island_dof_start + i_d_, i_b]
+                            constraint_state.search[i_d, i_b] = gs.qd_float(0.0)
 
 
 @qd.func
