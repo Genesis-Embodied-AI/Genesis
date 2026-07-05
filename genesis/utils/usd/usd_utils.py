@@ -211,8 +211,13 @@ def usd_primvar_array_to_numpy(
 
 def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     R, S = gu.polar(T[:3, :3], pure_rotation=True, side="right")
-    if np.linalg.det(R) <= 0:
-        gs.raise_exception(f"Negative determinant of rotation matrix detected. Got {np.linalg.det(R)}.")
+    det_R = np.linalg.det(R)
+    if det_R < 0:
+        # Absorb reflection into scale so R remains a proper rotation (det=+1).
+        R[:, 0] = -R[:, 0]
+        S[0, :] = -S[0, :]
+    elif det_R == 0:
+        gs.raise_exception(f"Singular rotation matrix detected. Got {det_R}.")
     Q = np.eye(4, dtype=T.dtype)
     Q[:3, :3] = R
     Q[:3, 3] = T[:3, 3]

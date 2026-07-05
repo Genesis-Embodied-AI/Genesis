@@ -235,7 +235,8 @@ def parse_prim_geoms(
             gs_type = gs.GEOM_TYPE.MESH
 
         else:  # primitive geometries
-            geom_S_diag = np.diag(geom_S)
+            # Reflection from negative xformOp:scale is carried by geom_ST; collision sizes stay positive.
+            geom_S_diag = np.abs(np.diag(geom_S))
             if not np.allclose(geom_S_diag, geom_S_diag[0], atol=1e-6):
                 gs.logger.warning(
                     f"Non-uniform scale {geom_S_diag} on primitive {prim.GetPath()}. "
