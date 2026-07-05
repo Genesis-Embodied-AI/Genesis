@@ -1157,6 +1157,89 @@ def oriented_capsule_usd(asset_tmp_path):
     return usd_file
 
 
+@pytest.fixture(scope="session")
+def negative_scale_rigid_usd(asset_tmp_path):
+    """Rigid body whose mesh prim uses negative xformOp:scale (reflection)."""
+    usd_file = str(asset_tmp_path / "negative_scale_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    mesh = UsdGeom.Cube.Define(stage, "/root/body")
+    mesh.GetSizeAttr().Set(1.0)
+    mesh.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.5))
+    mesh.AddScaleOp().Set(Gf.Vec3d(-1.0, -1.0, -1.0))
+    UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_negative_scale_reflection(negative_scale_rigid_usd):
+    """Negative xformOp:scale (reflection) must not crash USD transform parsing."""
+    usd_scene = build_usd_scene(negative_scale_rigid_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    assert entity.n_links == 1
+    assert entity.n_geoms >= 1
+    box_geom = next(g for g in entity.geoms if g.type == gs.GEOM_TYPE.BOX)
+    assert_allclose(box_geom.data[:3], (1.0, 1.0, 1.0), tol=gs.EPS)
+
+
+@pytest.fixture(scope="session")
+def nested_collision_joint_usd(asset_tmp_path):
+    """Articulation where joints reference child collision prims under RigidBodyAPI parents."""
+    usd_file = str(asset_tmp_path / "nested_collision_joint.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    base = stage.DefinePrim("/root/base", "Xform")
+    UsdPhysics.CollisionAPI.Apply(base)
+    base_col = UsdGeom.Cube.Define(stage, "/root/base/collision")
+    base_col.GetSizeAttr().Set(1.0)
+    UsdPhysics.CollisionAPI.Apply(base_col.GetPrim())
+
+    # Parent has RigidBodyAPI; joint references child collision prim (common USD authoring pattern).
+    child = stage.DefinePrim("/root/child", "Xform")
+    UsdPhysics.RigidBodyAPI.Apply(child)
+    child_col = UsdGeom.Cube.Define(stage, "/root/child/collision")
+    child_col.GetSizeAttr().Set(0.5)
+    child_col.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.5))
+    UsdPhysics.CollisionAPI.Apply(child_col.GetPrim())
+
+    joint_prim = UsdPhysics.RevoluteJoint.Define(stage, "/root/child/revolute_joint")
+    joint_prim.CreateBody0Rel().SetTargets([base_col.GetPrim().GetPath()])
+    joint_prim.CreateBody1Rel().SetTargets([child_col.GetPrim().GetPath()])
+    joint_prim.CreateAxisAttr().Set("Z")
+    joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_nested_collision_joint_targets(nested_collision_joint_usd):
+    """Joints referencing child collision prims must resolve to the parent RigidBodyAPI link."""
+    usd_scene = build_usd_scene(nested_collision_joint_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    assert entity.n_links == 2
+    assert entity.n_joints == 1
+    # localPos1 is in the collision-child frame; anchor must land at the child offset in link space.
+    joint = entity.joints[0]
+    assert_allclose(joint.pos, (0.0, 0.0, 0.5), tol=gs.EPS)
+
+
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):

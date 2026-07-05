@@ -404,6 +404,39 @@ def find_rigid_bodies_in_range(prim_range: Usd.PrimRange) -> set[str]:
     return rigid_bodies
 
 
+def resolve_rigid_body_link_path(stage: Usd.Stage, path: str) -> str | None:
+    """
+    Resolve a joint body target path to the canonical rigid-body link path.
+
+    USD assets may place RigidBodyAPI on a parent xform and CollisionAPI on a child
+    mesh, with joints referencing either prim. This helper maps both conventions to the
+    same link path used by `find_rigid_bodies_in_range`.
+    """
+    prim = stage.GetPrimAtPath(path)
+    if not prim.IsValid():
+        return None
+
+    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+        return path
+
+    if prim.HasAPI(UsdPhysics.CollisionAPI):
+        canonical = path
+        parent = prim.GetParent()
+        while parent.IsValid():
+            if parent.HasAPI(UsdPhysics.RigidBodyAPI):
+                return str(parent.GetPath())
+            if parent.HasAPI(UsdPhysics.CollisionAPI):
+                canonical = str(parent.GetPath())
+            parent = parent.GetParent()
+        return canonical
+
+    # Wrapper xform without physics API: resolve to the rigid body in its subtree.
+    rigid_bodies = find_rigid_bodies_in_range(Usd.PrimRange(prim))
+    if len(rigid_bodies) == 1:
+        return next(iter(rigid_bodies))
+    return None
+
+
 def extract_links_referenced_by_joints(
     stage: Usd.Stage, joints: list[Usd.Prim], check_rigid_body: bool = True
 ) -> set[str]:
@@ -431,26 +464,22 @@ def extract_links_referenced_by_joints(
         body0_targets = joint.GetBody0Rel().GetTargets()
         body1_targets = joint.GetBody1Rel().GetTargets()
 
-        if body0_targets:
-            body0_path = str(body0_targets[0])
+        for targets in (body0_targets, body1_targets):
+            if not targets:
+                continue
+            body_path = str(targets[0])
+            resolved_path = resolve_rigid_body_link_path(stage, body_path)
+            if resolved_path is None:
+                if not check_rigid_body:
+                    links_referenced.add(body_path)
+                continue
             if check_rigid_body:
-                body0_prim = stage.GetPrimAtPath(body0_path)
-                if body0_prim.IsValid() and (
-                    body0_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body0_prim.HasAPI(UsdPhysics.CollisionAPI)
+                resolved_prim = stage.GetPrimAtPath(resolved_path)
+                if resolved_prim.IsValid() and (
+                    resolved_prim.HasAPI(UsdPhysics.RigidBodyAPI) or resolved_prim.HasAPI(UsdPhysics.CollisionAPI)
                 ):
-                    links_referenced.add(body0_path)
+                    links_referenced.add(resolved_path)
             else:
-                links_referenced.add(body0_path)
-
-        if body1_targets:
-            body1_path = str(body1_targets[0])
-            if check_rigid_body:
-                body1_prim = stage.GetPrimAtPath(body1_path)
-                if body1_prim.IsValid() and (
-                    body1_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body1_prim.HasAPI(UsdPhysics.CollisionAPI)
-                ):
-                    links_referenced.add(body1_path)
-            else:
-                links_referenced.add(body1_path)
+                links_referenced.add(resolved_path)
 
     return links_referenced
