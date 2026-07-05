@@ -54,8 +54,6 @@ from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
     func_contact_sphere_sdf,
-    func_contact_vertex_sdf,
-    func_contact_edge_sdf,
     func_contact_convex_convex_sdf,
     func_contact_mpr_terrain,
     func_add_prism_vert,
@@ -638,7 +636,9 @@ class Collider:
         max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
         # Size the contact buffer per regime: nonconvex pairs each emit up to n_contacts_per_nonconvex_pair, convex and
         # terrain pairs up to n_contacts_per_convex_pair. The worst case fills the capped pair budget with as many
-        # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs.
+        # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs. The budget of a nonconvex pair is
+        # shared between its two vertex scans: the verification scan appends while the pair is under its cap and then
+        # only displaces the pair's least-penetrating contact, so the cap holds regardless of the number of scans.
         cap_nonconvex = self._collider_static_config.n_contacts_per_nonconvex_pair
         cap_convex = self._collider_static_config.n_contacts_per_convex_pair
         n_nonconvex = min(n_possible_nonconvex_pairs, max_collision_pairs)
@@ -887,7 +887,6 @@ class Collider:
                 self._solver.geoms_init_AABB,
                 self._solver.verts_info,
                 self._solver.faces_info,
-                self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
@@ -941,7 +940,6 @@ class Collider:
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
                 self._solver.verts_info,
-                self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,

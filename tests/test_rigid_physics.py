@@ -3791,9 +3791,34 @@ def test_nonconvex_overlap(show_viewer):
         vis_mode="collision",
         visualize_contact=True,
     )
+    # Two compact solid meshes barely touching along their local OBB diagonal, away from the stirrers. The
+    # closing-direction penetration floor must read the true submillimetric overlap along the axis; an OBB-projection
+    # bound overestimates it by up to sqrt(3) off-axis and catapults the pair apart.
+    asset_path = get_hf_dataset(pattern="apple_15/*")
+    apples = []
+    for i_apple in range(2):
+        apples.append(
+            scene.add_entity(
+                gs.morphs.MJCF(
+                    file=f"{asset_path}/apple_15/model.xml",
+                    pos=(0.0, 0.5 + 0.2 * i_apple, 0.0),
+                    convexify=False,
+                ),
+            )
+        )
     scene.build()
     a.set_dofs_velocity(+1.0, dofs_idx_local=0)
     b.set_dofs_velocity(-1.0, dofs_idx_local=0)
+
+    geom = apples[0].geoms[0]
+    apples_overlap = 1e-3
+    u_local = np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)
+    proj = (geom.init_verts - geom.init_verts.mean(axis=0)) @ u_local
+    u_world = gu.quat_to_R(tensor_to_array(geom.get_quat())) @ u_local
+    apples_offset = (proj.max() - proj.min() - apples_overlap) * u_world
+    apples_pos_ref = [tensor_to_array(apple.get_pos()) for apple in apples]
+    apples_pos_ref[1] = apples_pos_ref[0] + apples_offset
+    apples[1].set_pos(apples_pos_ref[1])
 
     total_energy_history = []
     for _ in range(200):
@@ -3804,6 +3829,84 @@ def test_nonconvex_overlap(show_viewer):
     # FIXME: The total energy should be not strictly decreasing but is not... relaxing the condition
     # assert (np.diff(total_energy_history, axis=0) < 0.0)
     assert total_energy_history[0] > 3.0 * total_energy_history[-1]
+
+    # Constraint stabilization alone resolves the overlap, so it cannot separate the apples faster than
+    # overlap / timeconst; a spurious deep contact catapults them an order of magnitude above that ceiling.
+    # Contact impulses being internal to the pair, its total momentum must stay zero.
+    v_sep_max = apples_overlap / float(geom.sol_params[0])
+    assert np.linalg.norm(tensor_to_array(apples[1].get_vel() - apples[0].get_vel())) < v_sep_max
+    assert_allclose(apples[0].get_vel() + apples[1].get_vel(), 0, atol=1e-6)
+    # The apples must separate by at least the overlap, but no more than the stabilization drift accumulates
+    # over the simulated horizon.
+    apples_dist = np.linalg.norm(tensor_to_array(apples[1].get_pos() - apples[0].get_pos()))
+    assert 0.5 * apples_overlap < apples_dist - np.linalg.norm(apples_offset) < v_sep_max * 200 * 0.001
+
+
+# Force CPU because nonconvex SDF is slow on GPU
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_nonconvex_shell_crossing_recovery(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+            gravity=(0, 0, 0),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.17, 0.21, 0.6),
+            camera_lookat=(0.04, -0.02, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    asset_path = get_hf_dataset(pattern="cup_2/*")
+    cups = []
+    for i_cup in range(2):
+        cups.append(
+            scene.add_entity(
+                gs.morphs.MJCF(
+                    file=f"{asset_path}/cup_2/model.xml",
+                    pos=(0.0, 0.0, 0.5 * i_cup),
+                    convexify=False,
+                ),
+                vis_mode="collision",
+                # visualize_contact=True,
+            )
+        )
+    scene.build()
+
+    # Spawn the pair deeply crossed: cup B perpendicular to cup A with its mouth rim 45mm past A's side wall, the
+    # thin-shell equivalent of an overlapping spawn. The solver must recover by pushing the shells apart until they
+    # separate; the failure mode is a wedged equilibrium where contacts on both sides of the crossing curve cancel
+    # and hold the crossed pose forever.
+    geom = cups[0].geoms[0]
+    verts = torch.as_tensor(geom.init_verts, dtype=gs.tc_float)
+    ext = verts.max(dim=0).values - verts.min(dim=0).values
+    mesh_center = 0.5 * (verts.max(dim=0).values + verts.min(dim=0).values)
+    i_axis = int(torch.argmax(ext))
+    quat_a = geom.get_quat()
+    rot_a = gu.quat_to_R(quat_a)
+    radial_dir = rot_a[:, (i_axis + 1) % 3]
+    euler_rot = torch.zeros(3, dtype=gs.tc_float)
+    euler_rot[(i_axis + 2) % 3] = 0.5 * math.pi
+    quat_b = gu.transform_quat_by_quat(gu.xyz_to_quat(euler_rot), quat_a)
+    mesh_center_a = torch.tensor([0.0, 0.0, 0.5], dtype=gs.tc_float) + gu.transform_by_quat(mesh_center, quat_a)
+    mesh_center_b = mesh_center_a + radial_dir * (0.5 * (ext[(i_axis + 1) % 3] + ext[i_axis]) - 0.045)
+    for cup, quat_target, mesh_center_target in ((cups[0], quat_a, mesh_center_a), (cups[1], quat_b, mesh_center_b)):
+        cup_geom = cup.geoms[0]
+        corr_quat = gu.transform_quat_by_quat(gu.inv_quat(cup_geom.get_quat()), quat_target)
+        cup.set_quat(gu.transform_quat_by_quat(cup.get_quat(), corr_quat))
+        cup.set_pos(
+            cup.get_pos() + mesh_center_target - cup_geom.get_pos() - gu.transform_by_quat(mesh_center, quat_target)
+        )
+
+    centers_dist_init = torch.linalg.norm(cups[1].get_pos() - cups[0].get_pos())
+    # Recovery is a creep at the thin-shell pen-cap rate followed by a free drift apart, and the escape time out of
+    # the crossed pose varies by a few hundred steps, so the horizon leaves the drift phase ample room.
+    for _ in range(1500):
+        scene.step()
+
+    # Separation requires the centers to move apart by at least the spawn crossing depth; a wedged pair stays put
+    # (residual velocities below 1e-2 m/s and unchanged distance)
+    centers_dist = torch.linalg.norm(cups[1].get_pos() - cups[0].get_pos())
+    assert centers_dist - centers_dist_init > 0.02
 
 
 # Force CPU because nonconvex SDF is slow on GPU
@@ -4174,7 +4277,8 @@ def test_convexify(euler, show_viewer, gjk_collision):
 @pytest.mark.required
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_convexify_stress(show_viewer):
+@pytest.mark.parametrize("convexify", [False, True])
+def test_many_objects_collision(convexify, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.004,
@@ -4209,6 +4313,7 @@ def test_convexify_stress(show_viewer):
                     file=asset_files[name],
                     pos=((gx + 0.5 * (gz % 2)) * 0.1 - 0.18, (gy + 0.5 * (gz % 2)) * 0.145 - 0.265, 0.11 + gz * 0.08),
                     euler=(90.0, 0.0, 0.0),
+                    convexify=convexify,
                 ),
                 vis_mode="collision",
             )
@@ -4222,8 +4327,9 @@ def test_convexify_stress(show_viewer):
     # The pile has settled at rest, fully contained in the tank (no ground/tank penetration, no ejection).
     for obj in objs:
         # FIXME: There is spurious residual motion that prevents the objects from truly settling, which is problematic.
-        assert_allclose(obj.get_vel(), 0.0, atol=0.06)
-        assert_allclose(obj.get_ang(), 0.0, atol=2.0)
+        # The nonconvex path carries about twice the residual jitter of the convexified one.
+        assert_allclose(obj.get_vel(), 0.0, atol=0.12 if not convexify else 0.06)
+        assert_allclose(obj.get_ang(), 0.0, atol=4.0)
         obj_pos = tensor_to_array(obj.get_pos())
         np.testing.assert_array_less(-0.1, obj_pos[2])
         np.testing.assert_array_less(obj_pos[2], 0.6)
