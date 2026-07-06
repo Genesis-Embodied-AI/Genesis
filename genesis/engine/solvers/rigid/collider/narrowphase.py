@@ -447,15 +447,25 @@ def func_add_polytope_vertex_contacts_sdf(
                 # - Clean (|grad| > 0.9): trust the kernel pen.
                 grad_norm = grad_v.norm()
                 pen_emit = gs.qd_float(0.0)
+                is_support = False
                 contact_pos_v = vertex_pos
                 if grad_norm < 0.5:
+                    # The penetrating branch continues from the taper's surface value, so pen_emit is continuous
+                    # across pen_v = 0 (a step there kicks the body at every grazing activation).
                     if pen_v > 0.0:
-                        pen_emit = qd.min(pen_v, margin)
+                        pen_emit = qd.min(synthetic_pen_max + pen_v, margin)
                     else:
                         pen_emit = synthetic_pen_max * (1.0 + pen_v / margin)
                 elif grad_norm > 0.9:
                     if pen_v > 0.0:
                         pen_emit = pen_v
+                    elif qd.static(not seeded):
+                        # Zero-depth support contacts: at rest only a few verts penetrate, degenerating the support
+                        # manifold to a point or a line the body wobbles about. Verts touching the surface within
+                        # the grid-noise pen scale emit at zero depth, damping the closing velocity without exerting
+                        # static force. Crossed solids are excluded: their band verts sit on the far side of the
+                        # overlap, and damping them stalls the escape.
+                        is_support = pen_v > -synthetic_pen_max and not use_closing_dir
                 elif pen_v > 0.0:
                     pen_emit = synthetic_pen_max
                 normal_v = normal_center
@@ -474,7 +484,10 @@ def func_add_polytope_vertex_contacts_sdf(
                     if grad_norm > 0.5:
                         normal_v = gu.qd_normalize(grad_v, EPS)
                         if normal_v.dot(a_vnormal) > 0.0:
+                            # Grad agreeing with A's outward normal = tunneled past B's thin wall: no support
+                            # contact there, damping the far side stalls the crossing-escape creep.
                             normal_v = -normal_v
+                            is_support = False
                     else:
                         normal_v = -a_vnormal
                 elif not use_closing_dir and not axis_normal and grad_norm > 0.9 and grad_v.dot(normal_center) > 0.0:
@@ -495,7 +508,7 @@ def func_add_polytope_vertex_contacts_sdf(
                     idx_prev = collider_state.n_contacts[i_b] - 1 - j
                     if (contact_pos_v - collider_state.contact_data.pos[idx_prev, i_b]).norm() < tolerance:
                         repeated = True
-                if not repeated and pen_emit > 0.0:
+                if not repeated and (pen_emit > 0.0 or is_support):
                     # Snap the contact position onto A's smooth surface when A is a smooth primitive
                     # (SPHERE/ELLIPSOID/CAPSULE). The tessellation vertex sits an O(tessellation chord error) inboard
                     # of the true surface; on a settled static contact that offset becomes a torque arm and drives a
