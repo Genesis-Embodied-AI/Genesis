@@ -223,7 +223,7 @@ def parse_xml(morph, surface):
     l_infos, links_j_infos = parse_links(mj, morph.scale)
 
     # Re-order kinematic tree info
-    l_infos, links_j_infos, links_g_infos, _ = uu._order_links(l_infos, links_j_infos, links_g_infos)
+    l_infos, links_j_infos, links_g_infos, _ = uu.order_links_depth_first(l_infos, links_j_infos, links_g_infos)
 
     # Parsing all equality constraints
     eqs_info = parse_equalities(mj, morph.scale)

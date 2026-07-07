@@ -59,7 +59,7 @@ def sdf_kernel_init_geom_fields(
     n_geoms = sdf_info.geoms_sdf_start.shape[0]
     n_cells = sdf_info.geoms_sdf_val.shape[0]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i in range(n_geoms):
         for j, k in qd.static(qd.ndrange(4, 4)):
             sdf_info.geoms_info.T_mesh_to_sdf[i][j, k] = geoms_T_mesh_to_sdf[i, j, k]

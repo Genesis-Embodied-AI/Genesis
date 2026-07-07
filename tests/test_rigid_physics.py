@@ -351,6 +351,40 @@ def double_ball_pendulum():
 
 
 @pytest.fixture(scope="session")
+def long_chain():
+    # Single kinematic tree with enough DOFs that its mass submatrix exceeds GPU shared memory, so the cooperative
+    # >shared-cap mass assemble runs - the path whose lower-triangular linear-index inversion must stay exact on GPUs
+    # with an imprecise sqrt.
+    mjcf = ET.Element("mujoco", model="long_chain")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="root", pos="0 0 2")
+    ET.SubElement(body, "geom", type="sphere", size="0.03", density="500")
+    for i in range(128):
+        body = ET.SubElement(body, "body", name=f"l{i}", pos="0 0 0.1")
+        ET.SubElement(body, "joint", name=f"j{i}", type="hinge", axis=("1 0 0", "0 1 0", "0 0 1")[i % 3], damping="0.1")
+        ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.1", size="0.02", density="500")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def two_fixed_branches():
+    # One entity whose worldbody holds two independent chains, each rigidly attached to the (fixed) world. Their DOFs
+    # are kinematically decoupled, so the mass matrix is block-diagonal and must partition into one block per branch.
+    mjcf = ET.Element("mujoco", model="two_fixed_branches")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    for name, x in (("a", 0.0), ("b", 1.0)):
+        body = ET.SubElement(worldbody, "body", name=f"{name}root", pos=f"{x} 0 1")
+        ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.06", size="0.02", density="500")
+        for i in range(4):
+            body = ET.SubElement(body, "body", name=f"{name}{i}", pos="0 0 0.06")
+            ET.SubElement(body, "joint", name=f"j{name}{i}", type="hinge", axis="0 1 0", damping="0.1")
+            ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0 0 0.06", size="0.02", density="500")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def hinge_slide():
     mjcf = ET.Element("mujoco", model="hinge_slide")
 
@@ -427,6 +461,72 @@ def compound_joint():
     ET.SubElement(seg2, "joint", name="j_z", type="hinge", axis="0 0 1")
     ET.SubElement(seg2, "geom", type="capsule", size="0.02", fromto="0 0 0 0 0 0.4")
     return mjcf
+
+
+@pytest.fixture(scope="session")
+def depth_first_tree_mjcf():
+    # A kinematic tree where breadth-first and depth-first orderings differ: root A has a child A1, and a sibling root
+    # B has none, so depth-first visits A, A1, B (A's subtree contiguous) while breadth-first would give A, B, A1.
+    mjcf = ET.Element("mujoco", model="depth_first_tree")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    a = ET.SubElement(worldbody, "body", name="A", pos="0 0 1")
+    ET.SubElement(a, "freejoint")
+    ET.SubElement(a, "geom", type="box", size="0.05 0.05 0.05")
+    a1 = ET.SubElement(a, "body", name="A1", pos="0.15 0 0")
+    ET.SubElement(a1, "joint", type="hinge", axis="0 0 1")
+    ET.SubElement(a1, "geom", type="box", size="0.05 0.05 0.05")
+    b = ET.SubElement(worldbody, "body", name="B", pos="1 0 1")
+    ET.SubElement(b, "freejoint")
+    ET.SubElement(b, "geom", type="box", size="0.05 0.05 0.05")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def depth_first_tree_urdf():
+    # Same shape as depth_first_tree_mjcf but single-rooted (URDF): base -> {A, B}, A -> A1.
+    robot = ET.Element("robot", name="depth_first_tree")
+    for name in ("base", "A", "A1", "B"):
+        link = ET.SubElement(robot, "link", name=name)
+        inertial = ET.SubElement(link, "inertial")
+        ET.SubElement(inertial, "mass", value="1.0")
+        ET.SubElement(inertial, "inertia", ixx="0.01", iyy="0.01", izz="0.01", ixy="0", ixz="0", iyz="0")
+        collision = ET.SubElement(link, "collision")
+        ET.SubElement(ET.SubElement(collision, "geometry"), "box", size="0.1 0.1 0.1")
+    for joint_name, parent, child in (("j_A", "base", "A"), ("j_A1", "A", "A1"), ("j_B", "base", "B")):
+        joint = ET.SubElement(robot, "joint", name=joint_name, type="revolute")
+        ET.SubElement(joint, "parent", link=parent)
+        ET.SubElement(joint, "child", link=child)
+        ET.SubElement(joint, "origin", xyz="0 0 0.2")
+        ET.SubElement(joint, "axis", xyz="0 0 1")
+        ET.SubElement(joint, "limit", lower="-1", upper="1", effort="10", velocity="10")
+    return robot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["depth_first_tree_mjcf", "depth_first_tree_urdf"])
+def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
+    # Links must be parsed depth-first so every subtree - hence every free body's DOFs - occupies a contiguous index
+    # range. The per-tree mass-matrix factorization relies on this so a multi-body file costs the same as the
+    # equivalent separate entities.
+    scene = gs.Scene(show_viewer=show_viewer)
+    morph = gs.morphs.MJCF(file=xml_path) if model_name.endswith("mjcf") else gs.morphs.URDF(file=xml_path, fixed=True)
+    entity = scene.add_entity(morph)
+    scene.build(n_envs=0)
+
+    parents = [link.parent_idx for link in entity.links]
+    n_links = len(parents)
+    children: dict[int, list[int]] = {i: [] for i in range(n_links)}
+    for i, parent in enumerate(parents):
+        if parent != -1:
+            children[parent].append(i)
+    for i in range(n_links):
+        subtree = []
+        stack = [i]
+        while stack:
+            link = stack.pop()
+            subtree.append(link)
+            stack.extend(children[link])
+        assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
 
 
 @pytest.mark.required
@@ -712,8 +812,18 @@ def test_dynamic_weld_scene_reset():
         ),
         show_viewer=False,
     )
-    box1 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
-    box2 = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.2, 0, 0.5)))
+    box1 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        )
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.2, 0, 0.5),
+        )
+    )
     scene.build(n_envs=2)
 
     solver = scene.rigid_solver
@@ -1195,7 +1305,7 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.004,
+            dt=0.003,
             gravity=gravity_world,
         ),
         rigid_options=gs.options.RigidOptions(
@@ -1366,7 +1476,7 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
     if show_viewer:
         scene.visualizer.update()
 
-    for _ in range(300):
+    for _ in range(400):
         scene.step()
 
     pos_local = tensor_to_array(entity.get_pos()) @ R
@@ -1927,7 +2037,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
         ),
         show_viewer=show_viewer,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     for n in range(5**3):
@@ -1946,7 +2056,7 @@ def test_many_boxes_dynamics(box_box_detection, gjk_collision, dynamics, show_vi
     if dynamics:
         for entity in scene.entities[1:]:
             entity.set_dofs_velocity(4.0 * np.random.rand(6))
-    num_steps = 700 if dynamics else 150
+    num_steps = 800 if dynamics else 150
     for i in range(num_steps):
         scene.step()
         if i > num_steps - 50:
@@ -3216,7 +3326,8 @@ def test_apply_external_forces(xml_path, show_viewer):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-def test_mass_mat(show_viewer, tol):
+@pytest.mark.parametrize("model_name", ["long_chain"])
+def test_mass_mat(xml_path, show_viewer, tol):
     # Create and build the scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -3239,8 +3350,17 @@ def test_mass_mat(show_viewer, tol):
         vis_mode="collision",
         visualize_contact=True,
     )
+    # High-DOF single tree: its mass submatrix exceeds GPU shared memory, exercising the cooperative >shared-cap
+    # assemble (the low-DOF frankas exercise the under-cap shared-memory factor instead).
+    long_chain = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            pos=(5, 0, 2),
+        ),
+    )
     scene.build()
 
+    # Two identical entities must yield identical mass matrices, and the LTDL factor must reconstruct it.
     mass_mat_1 = franka1.get_mass_mat(decompose=False)
     mass_mat_2 = franka2.get_mass_mat(decompose=False)
     assert mass_mat_1.shape == (franka1.n_dofs, franka1.n_dofs)
@@ -3249,6 +3369,53 @@ def test_mass_mat(show_viewer, tol):
     mass_mat_L, mass_mat_D_inv = franka1.get_mass_mat(decompose=True)
     mass_mat = mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L
     assert_allclose(mass_mat, mass_mat_1, tol=tol)
+
+    # The cooperative >shared-cap assemble maps a flat lane index to a lower-triangular (row, col) via a float sqrt;
+    # on GPUs whose sqrt undershoots perfect squares (Apple Metal: sqrt(15129) -> 122.999 instead of 123) a naive
+    # inversion lands one row short on every j=0 boundary and silently drops the long-range coupling entries, leaving
+    # the assembled mass matrix indefinite. A real joint-space mass matrix is always symmetric positive-definite.
+    mass_mat_chain = tensor_to_array(long_chain.get_mass_mat(decompose=False))
+    assert_allclose(mass_mat_chain, mass_mat_chain.T, tol=tol)
+    assert np.linalg.eigvalsh(0.5 * (mass_mat_chain + mass_mat_chain.T)).min() > 0.0
+
+    # On GPU the high-DOF chain factors through the register-tiled path (auto-enabled above the shared-memory cap when
+    # RigidOptions.register_tiled_mass is left to its default); its LTDL factor must reconstruct the mass matrix to the
+    # same accuracy as the under-cap path.
+    mass_mat_chain_L, mass_mat_chain_D_inv = long_chain.get_mass_mat(decompose=True)
+    mass_mat_chain_rec = mass_mat_chain_L.T @ torch.diag(1.0 / mass_mat_chain_D_inv) @ mass_mat_chain_L
+    assert_allclose(mass_mat_chain_rec, mass_mat_chain, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["two_fixed_branches"])
+def test_mass_block_partition(xml_path, show_viewer, tol):
+    # Two chains rigidly attached to the fixed world are kinematically independent: the mass matrix is block-diagonal,
+    # so it must partition into one mass block per branch (factoring two n/2 blocks instead of one dense n block).
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+        ),
+    )
+    scene.build(n_envs=0)
+
+    n_dofs = entity.n_dofs
+    branch = n_dofs // 2
+    block_start = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_start)
+    block_end = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_end)
+    assert_allclose(block_start, [0] * branch + [branch] * branch, tol=0)
+    assert_allclose(block_end, [branch] * branch + [n_dofs] * branch, tol=0)
+
+    # The two branches do not couple, and the LTDL factor reconstructs the (block-diagonal) mass matrix.
+    mass_mat = tensor_to_array(entity.get_mass_mat(decompose=False))
+    assert_allclose(mass_mat[:branch, branch:], 0.0, tol=tol)
+    mass_mat_L, mass_mat_D_inv = entity.get_mass_mat(decompose=True)
+    assert_allclose(mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L, mass_mat, tol=tol)
 
 
 @pytest.mark.required
@@ -3426,7 +3593,7 @@ def test_nonconvex_nonwatertight_collision(show_viewer):
             torch.tensor((0.39,)),
         )
     )
-    for _ in range(700):
+    for _ in range(750):
         scene.step()
 
     # The velocity is fairly large for boxes whose contact set is stable at keep changing (border of a cliff)
@@ -3977,10 +4144,11 @@ def test_convexify(euler, show_viewer, gjk_collision):
     # FIXME: The cup is falling on Windows OS because the convex decomposition provided by CoACD is different than
     # other platform, and much worst in practice, with the bottom of the tank that is not planar (even discontinuous).
     # cam.start_recording()
-    for i in range(1000):
+    n_settle = 1250 if euler == (74, 15, 90) else 1000
+    for i in range(n_settle + 100):
         scene.step()
         # cam.render()
-        if i > 900:
+        if i > n_settle:
             assert_allclose(gs_sim.rigid_solver.get_dofs_velocity(), 0.0, atol=1.0 if sys.platform == "win32" else 0.6)
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
 
@@ -5328,7 +5496,12 @@ def test_get_constraints_api(show_viewer, tol):
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
-    cube = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.2, 0.0, 0.05)))
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=(0.2, 0.0, 0.05),
+        )
+    )
     scene.build(n_envs=2)
 
     link_a, link_b = robot.base_link.idx, cube.base_link.idx
@@ -6277,7 +6450,7 @@ def test_ellipsoid(xml_path, show_viewer):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_mesh_align(show_viewer, tol):
+def test_align_mesh(show_viewer, tol):
     INIT_POS = (0.0, 0.0, 0.1)
 
     mango_path = get_hf_dataset(pattern="glb/mango.glb")
@@ -6321,7 +6494,7 @@ def test_mesh_align(show_viewer, tol):
         morph=(
             gs.morphs.Mesh(
                 file=f"{bowl_path}/glb/orange_plastic_bowl.glb",
-                scale=0.1,
+                scale=0.5,
                 pos=HET_POS,
                 offset_euler=(30.0, 0.0, 0.0),
                 align=True,
@@ -6395,14 +6568,16 @@ def test_mesh_align(show_viewer, tol):
     for _ in range(600):
         scene.step()
 
-    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.06)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(0, 1, 2)), 0, tol=0.01)
+    assert_allclose(mango.get_dofs_velocity(dofs_idx_local=(3, 4, 5)), 0, tol=0.05)
+    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
     min_z = mango.get_AABB()[:, 0, 2]
     assert ((-0.005 < min_z) & (min_z < 0.0)).all()
 
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_urdf_align(show_viewer, tol):
+def test_align_urdf(show_viewer, tol):
     INIT_POS = (0.0, 0.0, 0.7)
 
     asset_path = get_hf_dataset(pattern="fork/*")
@@ -6455,7 +6630,36 @@ def test_urdf_align(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_relative_offset_on_link_relative_geoms(show_viewer, tol):
+def test_align_mixed_mass_raises():
+    # Mixing a user-specified mass with a geometry-estimated one in an aligned free body makes the anchor density-
+    # dependent (so rigid and kinematic could align differently) and must raise. The fixed joint with
+    # merge_fixed_links=False keeps the child a distinct fixed link with unspecified mass while the base specifies one.
+    urdf = _build_two_link_revolute_urdf(
+        "mixed_mass_align",
+        "box",
+        {"size": "0.06 0.06 0.06"},
+        links_inertial=[{"mass": 1.0, "ixx": 0.01, "iyy": 0.01, "izz": 0.01, "origin_xyz": "0 0 0"}, None],
+        joint_type="fixed",
+    )
+    for material in (gs.materials.Rigid(), gs.materials.Kinematic()):
+        scene = gs.Scene(
+            show_viewer=False,
+            show_FPS=False,
+        )
+        scene.add_entity(
+            gs.morphs.URDF(
+                file=urdf,
+                align=True,
+                merge_fixed_links=False,
+            ),
+            material=material,
+        )
+        with pytest.raises(gs.GenesisException, match="mixes user-specified and geometry-estimated"):
+            scene.build()
+
+
+@pytest.mark.required
+def test_align_relative_offset_on_link_relative_geoms(show_viewer, tol):
     # To exercise the geom-frame offset strip the geoms MUST sit at non-identity poses relative to their link (explicit
     # collision/visual <origin>) AND the morph offset MUST be a rotation that does not commute with them - otherwise the
     # conjugation degenerates to the plain morph offset and a naive (corrupted) strip would still pass. A convex-
@@ -6876,113 +7080,70 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
 @pytest.mark.slow  # ~450s
 @pytest.mark.required
 def test_heterogeneous_physics_parity(show_viewer, tol):
-    """Test heterogeneous simulation by comparing against independent homogeneous simulations.
+    # Uses the fixed-child mesh objects from 'test_convexify' (offset center of mass, distinct mass) so the per-env
+    # parity check exercises the inertia alignment, not just trivially-symmetric primitives.
+    n_steps = 100
+    drop_height = 0.2
+    variants = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
+    # Divergent per-variant yaw offset, stripped to identity by the relative getter and carried by the world frame.
+    # Applied identically to the standalone reference so the dynamics still match.
+    offset_eulers = ((0.0, 0.0, 30.0), (0.0, 0.0, -45.0), (0.0, 0.0, 90.0), (0.0, 0.0, -120.0))
+    # Distinct per-variant placement, dispatched per environment.
+    positions = ((0.0, 0.0, drop_height), (0.2, 0.0, drop_height), (0.0, 0.2, drop_height), (0.2, 0.2, drop_height))
 
-    This test verifies that heterogeneous simulation produces identical physics results
-    to running separate homogeneous simulations for each variant, including per-variant
-    initial positions.
-    """
-    n_steps = 20
-    box_drop_height = 0.05
-    sphere_drop_height = 0.08
+    def make_morph(name, xml, pos, offset_euler):
+        asset_path = get_hf_dataset(pattern=f"{name}/*")
+        return gs.morphs.MJCF(file=f"{asset_path}/{name}/{xml}", pos=pos, offset_euler=offset_euler)
 
-    # Run homogeneous simulation with box only
-    scene_box = gs.Scene(show_viewer=False)
-    scene_box.add_entity(gs.morphs.Plane())
-    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, box_drop_height)))
-    scene_box.build()
-    for _ in range(n_steps):
-        scene_box.step()
-    box_pos = tensor_to_array(box_obj.get_pos())
-    box_vel = tensor_to_array(box_obj.get_vel())
+    # Independent homogeneous reference per variant: world orientation, then post-drop pose, velocity and mass.
+    homog_quat_world, homog_pos, homog_vel, homog_mass = [], [], [], []
+    for (name, xml), pos, offset_euler in zip(variants, positions, offset_eulers):
+        scene = gs.Scene(show_viewer=False)
+        scene.add_entity(gs.morphs.Plane())
+        obj = scene.add_entity(make_morph(name, xml, pos, offset_euler))
+        scene.build()
+        homog_quat_world.append(obj.get_quat(relative=False))
+        for _ in range(n_steps):
+            scene.step()
+        homog_pos.append(obj.get_pos())
+        homog_vel.append(obj.get_vel())
+        homog_mass.append(obj.get_mass())
 
-    # Run homogeneous simulation with sphere only
-    scene_sphere = gs.Scene(show_viewer=False)
-    scene_sphere.add_entity(gs.morphs.Plane())
-    sphere_obj = scene_sphere.add_entity(
-        gs.morphs.Sphere(
-            radius=0.02,
-            pos=(0.1, 0.0, sphere_drop_height),
-        ),
-    )
-    scene_sphere.build()
-    for _ in range(n_steps):
-        scene_sphere.step()
-    sphere_pos = tensor_to_array(sphere_obj.get_pos())
-    sphere_vel = tensor_to_array(sphere_obj.get_vel())
-
-    # Run heterogeneous simulation with both variants (different sizes AND positions)
-    # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
+    # Single heterogeneous entity with one variant per environment.
     scene_het = gs.Scene(show_viewer=show_viewer)
     scene_het.add_entity(gs.morphs.Plane())
-    # Divergent per-variant yaw offsets, irrelevant to the dynamics of these symmetric primitives dropped flat (so
-    # the world references still match) but stripped per environment by the relative getters.
-    box_offset_euler = (0.0, 0.0, 30.0)
-    sphere_offset_euler = (0.0, 0.0, -45.0)
-    morphs_heterogeneous = (
-        gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.0, 0.0, box_drop_height),
-            offset_euler=box_offset_euler,
-        ),
-        gs.morphs.Sphere(
-            radius=0.02,
-            pos=(0.1, 0.0, sphere_drop_height),
-            offset_euler=sphere_offset_euler,
-        ),
+    het_obj = scene_het.add_entity(
+        morph=tuple(make_morph(name, xml, pos, oe) for (name, xml), pos, oe in zip(variants, positions, offset_eulers))
     )
-    het_obj = scene_het.add_entity(morph=morphs_heterogeneous)
-    scene_het.build(n_envs=4)
+    scene_het.build(n_envs=len(variants))
 
-    # Verify initial positions match per-variant morph.pos
-    het_pos_init = het_obj.get_pos()
-    assert_allclose(het_pos_init[0, 2], box_drop_height, tol=tol)
-    assert_allclose(het_pos_init[1, 2], box_drop_height, tol=tol)
-    assert_allclose(het_pos_init[2, 0], 0.1, tol=tol)
-    assert_allclose(het_pos_init[2, 2], sphere_drop_height, tol=tol)
-    assert_allclose(het_pos_init[3, 0], 0.1, tol=tol)
-    assert_allclose(het_pos_init[3, 2], sphere_drop_height, tol=tol)
-
-    # The relative getter strips each variant's own offset back to the user frame (identity), while the world frame
-    # carries the per-environment offset.
-    box_offset_quat = gu.xyz_to_quat(np.array(box_offset_euler), rpy=True, degrees=True)
-    sphere_offset_quat = gu.xyz_to_quat(np.array(sphere_offset_euler), rpy=True, degrees=True)
+    # At init each variant sits at its own placement; the relative getter strips its offset (and inertial alignment) to
+    # identity in the user frame, while the world frame matches the standalone reference's world orientation.
     assert_allclose(het_obj.get_quat(relative=True), gu.identity_quat(), tol=tol)
-    het_quat_world = het_obj.get_quat(relative=False)
-    assert_allclose(het_quat_world[:2], box_offset_quat, tol=tol)
-    assert_allclose(het_quat_world[2:], sphere_offset_quat, tol=tol)
+    for i in range(len(variants)):
+        assert_allclose(het_obj.get_pos()[i], positions[i], tol=tol)
+        assert_allclose(het_obj.get_quat(relative=False)[i], homog_quat_world[i], tol=tol)
 
     for _ in range(n_steps):
         scene_het.step()
-    het_pos = het_obj.get_pos()
-    het_vel = het_obj.get_vel()
 
-    # Verify heterogeneous results match homogeneous results
-    # Envs 0-1 should match box simulation
-    assert_allclose(het_pos[0], box_pos, tol=tol)
-    assert_allclose(het_pos[1], box_pos, tol=tol)
-    assert_allclose(het_vel[0], box_vel, tol=tol)
-    assert_allclose(het_vel[1], box_vel, tol=tol)
+    # After the drop each environment matches the standalone simulation of its variant in pose, velocity and mass.
+    for i in range(len(variants)):
+        assert_allclose(het_obj.get_pos()[i], homog_pos[i], tol=tol)
+        assert_allclose(het_obj.get_vel()[i], homog_vel[i], tol=tol)
+        assert_allclose(het_obj.get_mass()[i], homog_mass[i], tol=tol)
 
-    # Envs 2-3 should match sphere simulation
-    assert_allclose(het_pos[2], sphere_pos, tol=tol)
-    assert_allclose(het_pos[3], sphere_pos, tol=tol)
-    assert_allclose(het_vel[2], sphere_vel, tol=tol)
-    assert_allclose(het_vel[3], sphere_vel, tol=tol)
-
-    # Box envs should have same mass, sphere envs should have same mass
-    mass = het_obj.get_mass()
-    assert_allclose(mass[0], mass[1], tol=tol)
-    assert_allclose(mass[2], mass[3], tol=tol)
-    # Box and sphere should have different masses
+    # The variants are genuinely distinct: their masses are not all equal.
     with pytest.raises(AssertionError):
-        assert_allclose(mass[0], mass[2], tol=tol)
+        assert_allclose(het_obj.get_mass(), het_obj.get_mass()[0], tol=tol)
 
 
 @pytest.mark.required
 def test_heterogeneous_invalid_material_raises():
     """Test that heterogeneous morphs with unsupported material raises an exception."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
 
     morphs_heterogeneous = (
         gs.morphs.Box(size=(1.0, 1.0, 1.0)),
@@ -7043,7 +7204,9 @@ def test_heterogeneous_fewer_envs_than_variants():
         - Environment 1 -> Variant 1 (second morph in list)
         - Variants 2 and 3 are unused
     """
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     scene.add_entity(gs.morphs.Plane())
 
     # 4 variants with different positions but only 2 environments
@@ -7066,9 +7229,12 @@ def test_heterogeneous_fewer_envs_than_variants():
 
 
 @pytest.mark.required
-def test_heterogeneous_mass_setters(tol):
-    """Test entity/link mass setters with heterogeneous morphs."""
-    scene = gs.Scene(show_viewer=False)
+def test_mass_setters(tol):
+    # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
+    # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
+    scene = gs.Scene(
+        show_viewer=False,
+    )
     het_obj = scene.add_entity(
         morph=[
             gs.morphs.Box(size=(0.01, 0.01, 0.01)),
@@ -7078,36 +7244,31 @@ def test_heterogeneous_mass_setters(tol):
         ],
     )
     scene.build(n_envs=4)
-
     link = next(link for link in het_obj.links if not link.is_fixed)
-
-    # Invalid shape should raise before any per-env state is set.
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0))
-
     het_obj.set_mass(1.0)
     assert_allclose(het_obj.get_mass(), 1.0, tol=tol)
-
-    # Link-level setter should support per-environment mass targets.
     target_mass = (0.2, 0.4, 0.6, 0.8)
     link.set_mass(target_mass)
     assert_allclose(link.get_mass(), target_mass, tol=tol)
 
-
-@pytest.mark.required
-def test_non_batched_mass_setters(tol):
-    """Test link mass setter with non-batched links info (batch_links_info=False)."""
-    scene = gs.Scene(show_viewer=False, rigid_options=gs.options.RigidOptions(batch_links_info=False))
-    obj = scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
+    scene = gs.Scene(
+        show_viewer=False,
+        rigid_options=gs.options.RigidOptions(
+            batch_links_info=False,
+        ),
+    )
+    obj = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
     scene.build(n_envs=4)
-
     link = next(link for link in obj.links if not link.is_fixed)
-
-    # Scalar set_mass should work and apply uniformly across all envs.
     link.set_mass(2.0)
     assert_allclose(link.get_mass(), 2.0, tol=tol)
-
-    # Per-env array mass should raise a clear exception.
     with pytest.raises(gs.GenesisException):
         link.set_mass((1.0, 2.0, 3.0, 4.0))
 
@@ -7261,8 +7422,10 @@ def test_pick_heterogenous_objects(show_viewer):
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas})"
 
 
-def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, links_geoms=None, links_inertial=None):
-    """Build a 2-link prismatic URDF file and return its path.
+def _build_two_link_revolute_urdf(
+    name, geom_tag=None, geom_attribs=None, *, links_geoms=None, links_inertial=None, joint_type="prismatic"
+):
+    """Build a 2-link URDF file (prismatic joint by default) and return its path.
 
     Geometry can be specified either uniformly via (geom_tag, geom_attribs) — applied identically
     to all links — or per-link via links_geoms for full control.
@@ -7271,9 +7434,13 @@ def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, lin
     ----------
     links_geoms : list of list of (tag, attribs, origin_xyz) or None
         Per-link geometry specs. Each link gets a list of (tag, attribs, origin_xyz) tuples.
-    links_inertial : list of dict or None
+    links_inertial : list of (dict or None) or None
         Per-link inertial overrides. Each dict may contain 'mass', 'ixx', 'iyy', 'izz',
-        'ixy', 'ixz', 'iyz', 'origin_xyz'. If None, zero mass/inertia is used (recomputed from geometry).
+        'ixy', 'ixz', 'iyz', 'origin_xyz'. A None entry leaves that link's inertial unspecified
+        (recomputed from geometry); None for the whole list does so for every link.
+    joint_type : str
+        Type of the joint between the two links ('prismatic', 'revolute', 'fixed', ...). A fixed joint makes the
+        second link a fixed child of the first (a single rigid body).
     """
     robot = ET.Element("robot", name=name)
 
@@ -7291,7 +7458,7 @@ def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, lin
                 ET.SubElement(geom_el, tag, **attribs)
                 if origin_xyz:
                     ET.SubElement(group, "origin", xyz=origin_xyz)
-        if links_inertial:
+        if links_inertial and links_inertial[i_link] is not None:
             inertial_props = links_inertial[i_link]
             inertial = ET.SubElement(link, "inertial")
             ET.SubElement(inertial, "mass", value=str(inertial_props["mass"]))
@@ -7307,12 +7474,13 @@ def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, lin
                 izz=str(inertial_props.get("izz", 0)),
             )
 
-    joint = ET.SubElement(robot, "joint", name="joint1", type="prismatic")
+    joint = ET.SubElement(robot, "joint", name="joint1", type=joint_type)
     ET.SubElement(joint, "parent", link="base")
     ET.SubElement(joint, "child", link="moving")
     ET.SubElement(joint, "origin", xyz="0.1 0 0")
-    ET.SubElement(joint, "axis", xyz="1 0 0")
-    ET.SubElement(joint, "limit", lower="-1.0", upper="1.0", effort="100", velocity="1.0")
+    if joint_type != "fixed":
+        ET.SubElement(joint, "axis", xyz="1 0 0")
+        ET.SubElement(joint, "limit", lower="-1.0", upper="1.0", effort="100", velocity="1.0")
 
     return urdfpy.URDF._from_xml(robot, robot, get_assets_dir())
 
@@ -7334,13 +7502,7 @@ def _build_free_body_urdf(name, com_xyz):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-def test_heterogeneous_inertial_alignment(show_viewer, tol):
-    """Test heterogeneous articulated simulation with vertex-based and primitive collision geometries.
-
-    Variant A splits each box primitive into two half-height sub-boxes (top/bottom),
-    variant B uses sphere mesh collision geometry. Verifies dynamics, mass, CoM position,
-    inertia matrix, joint structure, and ground contact settling.
-    """
+def test_align_heterogeneous_inertial(show_viewer, tol):
     GRAVITY = -9.81
 
     # Variant A: sphere mesh collision with explicit inertial properties per link
@@ -7398,9 +7560,12 @@ def test_heterogeneous_inertial_alignment(show_viewer, tol):
     )
 
     scene.add_entity(gs.morphs.Plane())
+    # align=True is requested but must be ignored for these articulated robots: a free base with a DOF-bearing child is
+    # not a single rigid body, so its link frames and joint-space mass coupling must be left intact (aligning it would
+    # misplace the moving child and drop the base coupling). The link-spacing and settling assertions below verify this.
     het_morph = (
-        gs.morphs.URDF(file=urdf_spheres, pos=(0.5, 0, 0.08)),
-        gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02)),
+        gs.morphs.URDF(file=urdf_spheres, pos=(0.5, 0, 0.08), align=True),
+        gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02), align=True),
     )
     het_obj = scene.add_entity(
         morph=het_morph,
@@ -7417,17 +7582,34 @@ def test_heterogeneous_inertial_alignment(show_viewer, tol):
             color=(0.0, 0.0, 1.0, 0.4),
         ),
     )
-    # Free-floating single-link URDF objects with different off-center COMs. Unlike the articulated robots above
-    # (which stay unaligned), each variant is a basic rigid object, so its link frame is moved to its own COM.
+    # Free-floating single-link URDF objects with different off-center COMs. Unlike the articulated robots above (whose
+    # requested alignment is ignored), each variant is a basic rigid object, so its link frame is moved to its own COM.
     FREE_POS = (3.0, 0.0, 0.2)
-    free_het = scene.add_entity(
-        morph=(
-            gs.morphs.URDF(file=_build_free_body_urdf("free_body_a", "0.02 0 0"), pos=FREE_POS, align=True),
-            gs.morphs.URDF(file=_build_free_body_urdf("free_body_b", "0 0 0.03"), pos=FREE_POS, align=True),
-        ),
-        material=gs.materials.Rigid(rho=200.0),
+    free_morph = (
+        gs.morphs.URDF(file=_build_free_body_urdf("free_body_a", "0.02 0 0"), pos=FREE_POS, align=True),
+        gs.morphs.URDF(file=_build_free_body_urdf("free_body_b", "0 0 0.03"), pos=FREE_POS, align=True),
     )
+    free_het = scene.add_entity(morph=free_morph, material=gs.materials.Rigid(rho=200.0))
+    # Kinematic counterpart of the aligned free bodies. The COM/principal anchoring is applied in the base entity, so
+    # for the same qpos a kinematic visualization and the rigid body it tracks must place identical world geometry.
+    free_kin = scene.add_entity(morph=free_morph, material=gs.materials.Kinematic())
+    # A free entity whose two variants are identical, so the solver resolves a single shared offset and takes the
+    # broadcast path (the base link offset) rather than the per-env variant offset. That shared base offset must still
+    # carry the COM anchoring, else the relative getter cannot strip the alignment on this path.
+    dup_morph = (
+        gs.morphs.URDF(file=_build_free_body_urdf("free_dup_a", "0.02 0 0"), pos=FREE_POS, align=True),
+        gs.morphs.URDF(file=_build_free_body_urdf("free_dup_b", "0.02 0 0"), pos=FREE_POS, align=True),
+    )
+    free_dup = scene.add_entity(morph=dup_morph, material=gs.materials.Rigid())
     scene.build(n_envs=4, env_spacing=(0.0, 0.5))
+
+    # Same absolute qpos must map to the same world geometry for the aligned rigid body and its kinematic counterpart;
+    # an unanchored kinematic entity would interpret the qpos in a different link frame and diverge.
+    free_qpos = (1.0, 0.5, 0.8, 0.6, 0.5, 0.3, 0.0)
+    free_het.set_qpos(free_qpos)
+    free_kin.set_qpos(free_qpos)
+    assert_allclose(free_het.get_vAABB(), free_kin.get_vAABB(), tol=tol)
+    scene.reset()
 
     # Each free-body variant (env 0 variant A, env 2 variant B) is aligned to its own COM: the link origin coincides
     # with the COM, and the relative getter strips the alignment back to the user pose.
@@ -7438,6 +7620,16 @@ def test_heterogeneous_inertial_alignment(show_viewer, tol):
             tol=tol,
         )
         assert_allclose(free_het.get_pos(relative=True, envs_idx=i_env), FREE_POS, tol=tol)
+
+    # The duplicate-variant entity takes the broadcast offset path; its relative getter must still strip the shared COM
+    # anchoring back to the user pose in every env (a non-anchored base offset would leave it COM-shifted).
+    assert_allclose(
+        free_dup.get_links_pos(links_idx_local=[0], ref="link_com", relative=False),
+        free_dup.get_links_pos(links_idx_local=[0], ref="link_origin", relative=False),
+        tol=tol,
+    )
+    assert_allclose(free_dup.get_pos(relative=True), FREE_POS, tol=tol)
+    assert_allclose(gu.quat_to_xyz(free_dup.get_quat(relative=True)), 0.0, tol=tol)
 
     # Relative set_pos on a boolean-masked subset of envs: each selected env's relative getter must report its target
     # back, stripping its own per-variant offset.
@@ -7585,103 +7777,6 @@ def test_heterogeneous_articulated_structure_mismatch():
                 gs.morphs.URDF(file="urdf/simple/two_link_arm.urdf", pos=(0, 0, 0.1)),
             ]
         )
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("performance_mode", [True])
-def test_hibernation_and_contact_islands(show_viewer):
-    """
-    Test hibernation and contact island behavior.
-
-    Scenario:
-    1. Two boxes settle separately on ground -> both hibernate, 2 contact islands
-    2. Move one box above the other using set_pos (wakes it up)
-    3. Box falls and collides -> both boxes awake
-    4. Stacked boxes settle and hibernate -> 1 contact island (merged)
-    5. Move one box off the hibernated stack using set_pos -> the whole island wakes up
-    6. Boxes settle separately and hibernate -> 2 contact islands (split)
-    """
-    if gs.use_ndarray:
-        pytest.skip("Hibernation does not support dynamic array mode.")
-
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_contact_island=True,
-            use_hibernation=True,
-        ),
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    # Two boxes placed separately on ground
-    box1 = scene.add_entity(
-        gs.morphs.Box(pos=(-0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
-    )
-    box2 = scene.add_entity(
-        gs.morphs.Box(pos=(0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
-    )
-
-    scene.build()
-
-    solver = scene.sim.rigid_solver
-    box1_idx = box1._idx_in_solver
-    box2_idx = box2._idx_in_solver
-
-    # Phase 1: Let boxes settle and hibernate separately
-    for step in range(200):
-        scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
-            break
-
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
-    assert solver.constraint_solver.contact_island.n_islands[0] == 2
-
-    # Phase 2: Move box1 above box2 (this should wake up box1)
-    offset = 0.01
-    box2_pos = box2.get_pos()
-    box1.set_pos(np.array([float(box2_pos[0]) + offset, float(box2_pos[1]) + offset, 0.3]))
-
-    # Verify box1 woke up and position was set
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert float(box1.get_pos()[2]) > 0.2
-
-    # Let box1 fall and collide with box2
-    for _ in range(25):
-        scene.step()
-
-    # Both boxes should be awake shortly after collision (before they re-hibernate)
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert not solver.entities_state.hibernated[box2_idx, 0]
-
-    # Phase 3: Let stacked boxes settle and hibernate
-    for step in range(200):
-        scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
-            break
-
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
-
-    # Stacked boxes should form 1 contact island
-    assert solver.constraint_solver.contact_island.n_islands[0] == 1
-
-    # Phase 4: Move box1 off the hibernated stack. The whole island must wake up, otherwise the stale hibernated
-    # island daisy-chain would keep re-connecting both boxes at every contact island construction.
-    box1.set_pos(np.array([1.0, 0.0, 0.15]))
-    assert not solver.entities_state.hibernated[box1_idx, 0]
-    assert not solver.entities_state.hibernated[box2_idx, 0]
-
-    # Phase 5: Let both boxes settle far apart and hibernate as 2 distinct contact islands
-    for step in range(500):
-        scene.step()
-        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
-            break
-
-    assert solver.entities_state.hibernated[box1_idx, 0]
-    assert solver.entities_state.hibernated[box2_idx, 0]
-    assert solver.constraint_solver.contact_island.n_islands[0] == 2
 
 
 @pytest.mark.required

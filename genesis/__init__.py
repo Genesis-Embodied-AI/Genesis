@@ -376,15 +376,17 @@ def destroy():
     if logger:
         logger.info("💤 Exiting Genesis and caching compiled kernels...")
 
-    # Destroy all scenes
+    # Destroy all scenes. A weakref that no longer resolves means the scene was already garbage-collected (and its
+    # resources released), so there is nothing left to destroy - skip it rather than asserting.
     global _scene_registry
     for scene_ref in _scene_registry.copy():
         scene = scene_ref()
-        assert scene is not None
-        scene.destroy()
+        if scene is not None:
+            scene.destroy()
 
-    # Release cached RGBA textures so large image arrays from destroyed scenes are not retained globally.
-    surfaces.clear_rgba_cache()
+    # Release every module-level asset cache (parsed meshes, baked RGBA textures, ...) so the large arrays they hold
+    # for destroyed scenes are not retained globally.
+    _clear_caches()
 
     # Destroy all externally registered modules
     for _init_fun, destroy_fun in _module_registry:
@@ -459,6 +461,7 @@ sys.excepthook = _custom_excepthook
 
 from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
+from .utils.misc import clear_caches as _clear_caches
 
 # Eagerly load native extensions under redirected stderr to silence dlopen-time noise (e.g. macOS
 # objc duplicate-class warnings when several libraries ship their own copy of GLFW).

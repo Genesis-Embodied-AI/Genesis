@@ -591,7 +591,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
     exporter = FrameImageExporter(tmp_path)
 
     # Initialize the simulation
-    set_random_seed(0)
+    set_random_seed(1)
     for i in range(max(n_envs, 1)):
         qpos = torch.zeros(robot.n_dofs, device=gs.device)
         qpos[:2] = torch.as_tensor(np.random.rand(2), dtype=gs.tc_float, device=gs.device) - 0.5

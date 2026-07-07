@@ -473,13 +473,18 @@ class RigidOptions(Options):
         constraint. This parameter is called 'timeconst' in Mujoco
         (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
-        Whether to use contact island to speed up contact resolving. Defaults to False.
+        Whether to partition the constraint solve into independent per-island blocks. It has no effect on a scene that
+        is a single dense-coupled tree (one island) or is differentiable, where the dense whole-scene solve is used
+        regardless. Defaults to True.
     use_hibernation : bool, optional
-        Whether to enable hibernation. Defaults to False.
+        Whether to put bodies that have come to rest to sleep, so the solver skips them until they are disturbed. It
+        quietly has no effect on a body that is differentiable, prunable, or under no-slip friction. Defaults to False.
     hibernation_thresh_vel : float, optional
-        Velocity threshold for hibernation. Defaults to 1e-3.
-    hibernation_thresh_acc : float, optional
-        Acceleration threshold for hibernation. Defaults to 1e-2.
+        Velocity tolerance for hibernation, in meters per second: a body sleeps once its maximum DOF speed stays below
+        this for a few consecutive steps, and a whole island sleeps once all its bodies are ready. Each rotational DOF
+        is weighted by the body's swept radius, so the tolerance is a single linear speed that applies uniformly to
+        translation and rotation. If None, it is set to 1e-4 when MuJoCo compatibility is enabled (matching MuJoCo's
+        default) and 2e-3 otherwise. Defaults to None.
     max_dynamic_constraints : int, optional
         Maximum number of dynamic constraints (like suction cup). Defaults to 8.
     use_gjk_collision: bool, optional
@@ -525,13 +530,12 @@ class RigidOptions(Options):
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
     constraint_timeconst: PositiveFloat = 0.01
-    use_contact_island: StrictBool = False
+    use_contact_island: StrictBool = True
     box_box_detection: StrictBool = False
 
     # hibernation threshold
     use_hibernation: StrictBool = False
-    hibernation_thresh_vel: PositiveFloat = 1e-3
-    hibernation_thresh_acc: PositiveFloat = 1e-2
+    hibernation_thresh_vel: PositiveFloat | None = None
 
     # for dynamic properties
     max_dynamic_constraints: NonNegativeInt = 8
@@ -553,22 +557,12 @@ class RigidOptions(Options):
 
     def model_post_init(self, context):
         super().model_post_init(context)
-        if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL and self.use_hibernation:
-            gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
         if self.contact_pruning_tolerance is not None and self.enable_mujoco_compatibility:
             if "contact_pruning_tolerance" in self.model_fields_set:
                 gs.raise_exception(
                     "'contact_pruning_tolerance' is not supported when 'enable_mujoco_compatibility' is True"
                 )
             # User did not explicitly request pruning, silently disable to guarantee mujoco compatibility
-            self.contact_pruning_tolerance = None
-        if self.contact_pruning_tolerance is not None and self.use_contact_island:
-            if "contact_pruning_tolerance" in self.model_fields_set:
-                gs.raise_exception(
-                    "'contact_pruning_tolerance' is not supported when 'use_contact_island' is True. The contact "
-                    "island path consumes contacts in physical layout and does not honor the logical permutation "
-                    "that link-pair pruning produces."
-                )
             self.contact_pruning_tolerance = None
 
 
