@@ -4,6 +4,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import support_field
+from .constants import CCD_EXTRAPOLATION_TOL, PORTAL_STATUS
 
 
 class MPR:
@@ -11,9 +12,9 @@ class MPR:
         self._solver = rigid_solver
 
         self._mpr_info = array_class.get_mpr_info(
-            # It has been observed in practice that increasing this threshold makes collision detection instable,
-            # which is surprising since 1e-9 is above single precision (which has only 7 digits of precision).
-            CCD_EPS=1e-9 if gs.qd_float == qd.f32 else 1e-10,
+            # Relative tolerance of the geometric degeneracy tests: every comparison scales it by the magnitudes of
+            # its operands, making the tests dimensionless and scene-scale-invariant.
+            CCD_EPS=1e-5 if gs.qd_float == qd.f32 else 1e-10,
             CCD_TOLERANCE=1e-6,
             CCD_ITERATIONS=50,
         )
@@ -79,7 +80,10 @@ def mpr_point_tri_depth(mpr_info: array_class.MPRInfo, P, x0, B, C):
     d = w * v - r * r
     dist = s = t = gs.qd_float(0.0)
     pdir = gs.qd_vec3([0.0, 0.0, 0.0])
-    if qd.abs(d) < mpr_info.CCD_EPS[None]:
+    # d = |d1|^2 * |d2|^2 - (d1 . d2)^2 = |d1 x d2|^2 is the Gram determinant of the triangle edges (length^4);
+    # comparing it to its own scale v * w makes the degeneracy test the dimensionless sin^2 of the edge angle.
+    # Must use <= so that degenerate (zero-length) edges are still classified as degenerate.
+    if qd.abs(d) <= mpr_info.CCD_EPS[None] * v * w:
         s = t = -1.0
     else:
         s = (q * r - w * p) / d
@@ -121,14 +125,17 @@ def mpr_portal_dir(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 def mpr_portal_encapsules_origin(
     mpr_state: array_class.MPRState, mpr_info: array_class.MPRInfo, direction, i_ga, i_gb, i_b
 ):
+    # Pure sign test: at the boundary both outcomes are equally valid and the result is value-continuous, so any
+    # epsilon would only shift the decision without protecting anything.
     dot = mpr_state.simplex_support.v[1, i_b].dot(direction)
-    return dot > -mpr_info.CCD_EPS[None]
+    return dot > 0.0
 
 
 @qd.func
 def mpr_portal_can_encapsule_origin(mpr_info: array_class.MPRInfo, v, direction):
+    # Pure sign test (see mpr_portal_encapsules_origin).
     dot = v.dot(direction)
-    return dot > -mpr_info.CCD_EPS[None]
+    return dot > 0.0
 
 
 @qd.func
@@ -140,7 +147,7 @@ def mpr_portal_reach_tolerance(
     dv3 = mpr_state.simplex_support.v[3, i_b].dot(direction)
     dv4 = v.dot(direction)
     dot1 = qd.min(dv4 - dv1, dv4 - dv2, dv4 - dv3)
-    return dot1 < mpr_info.CCD_TOLERANCE[None] + mpr_info.CCD_EPS[None] * qd.max(1.0, dot1)
+    return dot1 < mpr_info.CCD_TOLERANCE[None] + mpr_info.CCD_EPS[None] * qd.abs(dv4)
 
 
 @qd.func
@@ -300,7 +307,9 @@ def mpr_find_pos(
 
     sum_ = b.sum()
 
-    if sum_ < mpr_info.CCD_EPS[None]:
+    # Must use <= so that the all-zero weights of the non-mujoco-compatible path (which skips the tetrahedron
+    # volumes above) still enter the portal-direction fallback.
+    if sum_ <= mpr_info.CCD_EPS[None] * qd.abs(b).sum():
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
         b[0] = 0.0
         for i in range(1, 4):
@@ -330,8 +339,15 @@ def mpr_find_penetr_touch(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 @qd.func
 def mpr_find_penetr_segment(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
     is_col = True
-    penetration = mpr_state.simplex_support.v[1, i_b].norm()
-    normal = -mpr_state.simplex_support.v[1, i_b].normalized()
+    # Anchor the contact direction to the ray (v1 - v0) rather than the raw support point: a degenerate flat-face
+    # support tie can leave v1 with an arbitrary lateral offset, making its direction noise while the ray stays
+    # meaningful. Fall back to v1 if both coincide (fully degenerate difference).
+    direction = mpr_state.simplex_support.v[1, i_b] - mpr_state.simplex_support.v[0, i_b]
+    if direction.norm_sqr() == 0.0:
+        direction = mpr_state.simplex_support.v[1, i_b]
+    direction = direction.normalized()
+    penetration = mpr_state.simplex_support.v[1, i_b].dot(direction)
+    normal = -direction
     pos = (mpr_state.simplex_support.v1[1, i_b] + mpr_state.simplex_support.v2[1, i_b]) * 0.5
 
     return is_col, normal, penetration, pos
@@ -377,10 +393,8 @@ def mpr_find_penetration(
             pos_b,
             quat_b,
         )
-        if (
-            mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
-            or iterations > mpr_info.CCD_ITERATIONS[None]
-        ):
+        reached = mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
+        if reached or iterations > mpr_info.CCD_ITERATIONS[None]:
             # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
             # to the origin that lies inside the portal.
             # Let's consider the portal as an infinite plane rather than a face triangle. This makes sense because
@@ -414,6 +428,30 @@ def mpr_find_penetration(
             else:
                 penetration = direction.dot(mpr_state.simplex_support.v[1, i_b])
                 normal = -direction
+
+            # Classify the portal reliability by how far the origin's projection extrapolates beyond the portal
+            # triangle. b1,b2,b3 are the (unnormalized) barycentric coordinates of that projection; all >= 0 means the
+            # origin projects inside (exact depth, Thm 4.2 -> VALID). Outside, -min(b)/sum is the extrapolation as a
+            # fraction of the triangle: a small overshoot is a lower-bound estimate (Thm 4.3 -> DEGENERATED), a large
+            # one makes the infinite-plane depth an unreliable extrapolation (-> INVALID, refine with GJK). This is
+            # what actually matters, rather than the triangle's sliverness per se.
+            pv1 = mpr_state.simplex_support.v[1, i_b]
+            pv2 = mpr_state.simplex_support.v[2, i_b]
+            pv3 = mpr_state.simplex_support.v[3, i_b]
+            b1 = pv2.cross(pv3).dot(direction)
+            b2 = pv3.cross(pv1).dot(direction)
+            b3 = pv1.cross(pv2).dot(direction)
+            bsum = b1 + b2 + b3
+            babs = qd.abs(b1) + qd.abs(b2) + qd.abs(b3)
+            min_b = qd.min(b1, qd.min(b2, b3))
+            if not reached:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # unconverged (hit the iteration cap)
+            elif min_b >= 0.0:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.VALID  # origin projects inside -> exact depth (Thm 4.2)
+            elif bsum > mpr_info.CCD_EPS[None] * babs and (-min_b) <= qd.static(CCD_EXTRAPOLATION_TOL) * bsum:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED  # small overshoot -> lower bound (Thm 4.3)
+            else:
+                mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # extrapolates too far / degenerate -> unreliable
 
             is_col = True
             pos = mpr_find_pos(static_rigid_sim_config, mpr_state, mpr_info, i_ga, i_gb, i_b)
@@ -467,8 +505,34 @@ def mpr_discover_portal(
     mpr_state.simplex_support.v[0, i_b] = center_a - center_b
     mpr_state.simplex_size[i_b] = 1
 
-    if (qd.abs(mpr_state.simplex_support.v[0, i_b]) < mpr_info.CCD_EPS[None]).all():
-        mpr_state.simplex_support.v[0, i_b][0] += 10.0 * mpr_info.CCD_EPS[None]
+    # Coincident centers (within the solver's absolute length resolution) leave the ray direction undefined; probe
+    # the three axes and pick the one with the largest Minkowski support extent, which gives portal discovery the
+    # most room to enclose the origin.
+    if (qd.abs(mpr_state.simplex_support.v[0, i_b]) < mpr_info.CCD_TOLERANCE[None]).all():
+        best_extent = gs.qd_float(0.0)
+        best_dir = qd.Vector.zero(gs.qd_float, 3)
+        for i_axis in range(3):
+            probe = qd.Vector.zero(gs.qd_float, 3)
+            probe[i_axis] = 1.0
+            probe_v, probe_v1, probe_v2 = compute_support(
+                geoms_info,
+                collider_state,
+                collider_static_config,
+                support_field_info,
+                probe,
+                i_ga,
+                i_gb,
+                i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+            )
+            extent = probe_v.dot(probe)
+            if i_axis == 0 or extent > best_extent:
+                best_extent = extent
+                best_dir = probe
+        mpr_state.simplex_support.v[0, i_b] = best_dir * (10.0 * mpr_info.CCD_TOLERANCE[None])
 
     direction = -mpr_state.simplex_support.v[0, i_b].normalized()
 
@@ -495,15 +559,27 @@ def mpr_discover_portal(
     dot = v.dot(direction)
 
     ret = 0
-    if dot < mpr_info.CCD_EPS[None]:
+    if dot < 0.0:
         ret = -1
     else:
         direction = mpr_state.simplex_support.v[0, i_b].cross(mpr_state.simplex_support.v[1, i_b])
-        if direction.dot(direction) < mpr_info.CCD_EPS[None]:
-            if (qd.abs(mpr_state.simplex_support.v[1, i_b]) < mpr_info.CCD_EPS[None]).all():
-                ret = 1
-            else:
-                ret = 2
+        # The touch test must come first and independently: for a vanishing v1 both sides of the relative
+        # collinearity test vanish as well, which would fall through to normalizing a zero cross product.
+        if (
+            qd.abs(mpr_state.simplex_support.v[1, i_b])
+            < mpr_info.CCD_EPS[None] * mpr_state.simplex_support.v[0, i_b].norm()
+        ).all():
+            ret = 1
+        # Relative collinearity test: |v0 x v1|^2 = |v0|^2 * |v1|^2 * sin^2(angle). An absolute epsilon (length^4)
+        # would misclassify non-collinear cm-scale pairs as degenerate, fabricating deep contacts via the segment
+        # path. Must use <= so that an exactly zero cross product is still classified as degenerate.
+        elif (
+            direction.dot(direction)
+            <= mpr_info.CCD_EPS[None]
+            * mpr_state.simplex_support.v[0, i_b].norm_sqr()
+            * mpr_state.simplex_support.v[1, i_b].norm_sqr()
+        ):
+            ret = 2
         else:
             direction = direction.normalized()
             v, v1, v2 = compute_support(
@@ -521,7 +597,7 @@ def mpr_discover_portal(
                 quat_b,
             )
             dot = v.dot(direction)
-            if dot < mpr_info.CCD_EPS[None]:
+            if dot < 0.0:
                 ret = -1
             else:
                 mpr_state.simplex_support.v1[2, i_b] = v1
@@ -559,7 +635,7 @@ def mpr_discover_portal(
                         quat_b,
                     )
                     dot = v.dot(direction)
-                    if dot < mpr_info.CCD_EPS[None]:
+                    if dot < 0.0:
                         ret = -1
                         break
 
@@ -567,7 +643,7 @@ def mpr_discover_portal(
 
                     va = mpr_state.simplex_support.v[1, i_b].cross(v)
                     dot = va.dot(mpr_state.simplex_support.v[0, i_b])
-                    if dot < -mpr_info.CCD_EPS[None]:
+                    if dot < 0.0:
                         mpr_state.simplex_support.v1[2, i_b] = v1
                         mpr_state.simplex_support.v2[2, i_b] = v2
                         mpr_state.simplex_support.v[2, i_b] = v
@@ -576,7 +652,7 @@ def mpr_discover_portal(
                     if not cont:
                         va = v.cross(mpr_state.simplex_support.v[2, i_b])
                         dot = va.dot(mpr_state.simplex_support.v[0, i_b])
-                        if dot < -mpr_info.CCD_EPS[None]:
+                        if dot < 0.0:
                             mpr_state.simplex_support.v1[1, i_b] = v1
                             mpr_state.simplex_support.v2[1, i_b] = v2
                             mpr_state.simplex_support.v[1, i_b] = v
@@ -727,9 +803,9 @@ def func_mpr_contact_from_centers(
     normal = gs.qd_vec3([0.0, 0.0, 0.0])
     penetration = gs.qd_float(0.0)
 
-    # Only the refined-portal path below leaves a usable contact-face portal in simplex_support; the degenerate
-    # touch/segment paths do not.
-    mpr_state.portal_valid[i_b] = False
+    # Default for the degenerate touch/segment paths (and refine failure): a contact with no reusable refined portal.
+    # The refined-portal path classifies the portal precisely inside mpr_find_penetration.
+    mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED
 
     if res == 1:
         is_col, normal, penetration, pos = mpr_find_penetr_touch(mpr_state, i_ga, i_gb, i_b)
@@ -752,7 +828,6 @@ def func_mpr_contact_from_centers(
             quat_b,
         )
         if res >= 0:
-            mpr_state.portal_valid[i_b] = True
             is_col, normal, penetration, pos = mpr_find_penetration(
                 geoms_info,
                 static_rigid_sim_config,

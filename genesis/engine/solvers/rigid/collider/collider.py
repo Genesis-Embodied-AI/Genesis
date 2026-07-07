@@ -54,8 +54,6 @@ from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
     func_contact_sphere_sdf,
-    func_contact_vertex_sdf,
-    func_contact_edge_sdf,
     func_contact_convex_convex_sdf,
     func_contact_mpr_terrain,
     func_add_prism_vert,
@@ -85,11 +83,16 @@ class Collider:
 
         self._mc_perturbation = 1e-3 if self._solver._enable_mujoco_compatibility else 3e-3
         self._mc_tolerance = 1e-3 if self._solver._enable_mujoco_compatibility else 1.5e-2
-        self._mpr_to_gjk_overlap_ratio = 0.25
+        # Overlap depth (as a fraction of the pair bounding-box diagonal) past which MPR is upgraded to GJK. It is
+        # portal-dependent: a DEGENERATED portal's depth is untrustworthy so it falls back sooner (base ratio), while a
+        # VALID portal recovers the exact depth (Thm 4.2) and stays on MPR to deeper penetrations (valid ratio). The
+        # valid ratio is capped below the point where trusting deep valid portals lets contacts pump energy.
+        self._mpr_to_gjk_overlap_ratio = 0.2
+        self._mpr_to_gjk_overlap_ratio_valid = 0.6
         # Minimum ratio of the current penetration to the cached warm-start penetration for MPR to be treated as
         # having resolved a deeper, non-minimal portal (then upgraded to GJK). At the gate the threshold is clamped
-        # into [tolerance, mpr_to_gjk_overlap_ratio * geom_scale], so a cold pair (cached penetration reset to 0)
-        # reduces to the original "penetration > tolerance" gate and a genuinely deep contact always upgrades.
+        # into [tolerance, overlap_ratio * geom_pair_scale], so a cold pair (cached penetration reset to 0) reduces to
+        # the original "penetration > tolerance" gate and a genuinely deep contact always upgrades at the overlap cap.
         self._mpr_to_gjk_penetration_ratio = 5.0
         self._box_MAXCONPAIR = 16
         self._diff_pos_tolerance = 1e-2
@@ -97,7 +100,6 @@ class Collider:
         self._prune_deep_penetration_ratio = 3.0
         self._prune_max_contacts_per_link_pair = 32
         self._prune_max_contacts_floor = 512
-        self._noslip_max_contacts = 128
 
         self._init_static_config()
         self._use_split_narrowphase = (
@@ -123,20 +125,31 @@ class Collider:
             self._init_multicontact_gjk_state()
 
         if gs.use_zerocopy:
-            self._contact_data: dict[str, torch.Tensor] = {}
-            for key, name in (
-                ("link_a", "link_a"),
-                ("link_b", "link_b"),
-                ("geom_a", "geom_a"),
-                ("geom_b", "geom_b"),
-                ("penetration", "penetration"),
-                ("position", "pos"),
-                ("normal", "normal"),
-                ("force", "force"),
-            ):
-                self._contact_data[key] = qd_to_torch(
-                    getattr(self._collider_state.contact_data, name), transpose=True, copy=False
-                )
+            # Probe every view the zero-copy contact query needs (including the per-call n_contacts and
+            # contact_sort_idx ones, which qd_to_torch caches on their fields). If any field sits past 2**31 bytes
+            # in its SNode tree no zero-copy view exists, and get_contacts falls back to the gather-kernel path.
+            self._contact_data: dict[str, torch.Tensor] | None = {}
+            try:
+                qd_to_torch(self._collider_state.n_contacts, copy=False)
+                qd_to_torch(self._collider_state.contact_sort_idx, transpose=True, copy=False)
+                qd_to_torch(self._collider_state.first_time, copy=False)
+                qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
+                qd_to_torch(self._collider_state.contact_cache.penetration, copy=False)
+                for key, name in (
+                    ("link_a", "link_a"),
+                    ("link_b", "link_b"),
+                    ("geom_a", "geom_a"),
+                    ("geom_b", "geom_b"),
+                    ("penetration", "penetration"),
+                    ("position", "pos"),
+                    ("normal", "normal"),
+                    ("force", "force"),
+                ):
+                    self._contact_data[key] = qd_to_torch(
+                        getattr(self._collider_state.contact_data, name), transpose=True, copy=False
+                    )
+            except ValueError:
+                self._contact_data = None
 
         # Make sure that the initial state is clean
         self.clear()
@@ -248,6 +261,7 @@ class Collider:
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
+            mpr_to_gjk_overlap_ratio_valid=self._mpr_to_gjk_overlap_ratio_valid,
             mpr_to_gjk_penetration_ratio=self._mpr_to_gjk_penetration_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
@@ -622,7 +636,9 @@ class Collider:
         max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs)
         # Size the contact buffer per regime: nonconvex pairs each emit up to n_contacts_per_nonconvex_pair, convex and
         # terrain pairs up to n_contacts_per_convex_pair. The worst case fills the capped pair budget with as many
-        # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs.
+        # (larger-cap) nonconvex pairs as exist, then the rest with convex pairs. The budget of a nonconvex pair is
+        # shared between its two vertex scans: the verification scan appends while the pair is under its cap and then
+        # only displaces the pair's least-penetrating contact, so the cap holds regardless of the number of scans.
         cap_nonconvex = self._collider_static_config.n_contacts_per_nonconvex_pair
         cap_convex = self._collider_static_config.n_contacts_per_convex_pair
         n_nonconvex = min(n_possible_nonconvex_pairs, max_collision_pairs)
@@ -655,13 +671,6 @@ class Collider:
             max_contacts_pruned = np.minimum(link_pairs_n_contacts, self._prune_max_contacts_per_link_pair)
             max_contacts_pruned_total = max(int(max_contacts_pruned.sum()), self._prune_max_contacts_floor)
             max_contacts = min(max_contacts, max_contacts_pruned_total)
-
-        # The noslip dual matrix efc_AR is quadratic in the contact budget, so noslip scenes get a much tighter
-        # default cap: measured noslip workloads (manipulation-style scenes) peak below ~70 simultaneous contact
-        # points, while the worst-case candidate budget is orders of magnitude larger. A denser scene hits the
-        # max_contacts clamp and halts with a request to set 'max_contacts' explicitly, which overrides this cap.
-        if self._solver._options.noslip_iterations > 0 and self._solver._options.max_contacts is None:
-            max_contacts = min(max_contacts, self._noslip_max_contacts)
 
         self._collider_info.max_possible_pairs[None] = n_possible_pairs
         self._collider_info.max_collision_pairs[None] = max_collision_pairs
@@ -697,7 +706,7 @@ class Collider:
 
     def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
         self._contact_data_cache.clear()
-        if gs.use_zerocopy:
+        if gs.use_zerocopy and self._contact_data is not None:
             envs_idx = slice(None) if envs_idx is None else envs_idx
             if not cache_only:
                 first_time = qd_to_torch(self._collider_state.first_time, copy=False)
@@ -734,6 +743,7 @@ class Collider:
 
         if (
             gs.use_zerocopy
+            and self._contact_data is not None
             and not self._solver._use_hibernation
             and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
         ):
@@ -877,7 +887,6 @@ class Collider:
                 self._solver.geoms_init_AABB,
                 self._solver.verts_info,
                 self._solver.faces_info,
-                self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
@@ -931,7 +940,6 @@ class Collider:
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
                 self._solver.verts_info,
-                self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
@@ -985,7 +993,7 @@ class Collider:
             not self._collider_static_config.has_prunable_contacts
             and not self._collider_static_config.spatial_sort_supported
         )
-        if gs.use_zerocopy:
+        if gs.use_zerocopy and self._contact_data is not None:
             n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
             if as_tensor or n_envs == 0:
                 n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()

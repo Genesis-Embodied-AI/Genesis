@@ -271,13 +271,10 @@ class ConstraintState:
     Ma_ws: qd.Tensor
     grad: qd.Tensor
     Mgrad: qd.Tensor
-    MinvJT: qd.Tensor
     search: qd.Tensor
     efc_D: qd.Tensor
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
-    efc_b: qd.Tensor
-    efc_AR: qd.Tensor
     active: qd.Tensor
     prev_active: qd.Tensor
     qfrc_constraint: qd.Tensor
@@ -384,16 +381,20 @@ def get_constraint_state(constraint_solver, solver):
     # striding i_d in cooperative kernels become stride-1; the regression on 1T-per-(i_d, i_b) writers is patched on
     # a per-consumer basis under the same enable_cooperative_constraint_kernels flag.
     dof_vec_layout = (1, 0) if batch_first else None
+    # Rank-1 working vectors of the incremental Cholesky update, flattened slot-minor as [i_d * n_slots + i_u]: one
+    # slot per fused update on the CPU per-island path (func_rank_batch_update_island), a single slot elsewhere
+    # (indexing then reduces to [i_d]). Flat 2D so the buffer keeps the DOF-vec rank and layout on every backend.
+    nt_vec_n_slots = (
+        solver._static_rigid_sim_config.hessian_rank_update_batch
+        if (
+            constraint_solver.sparse_solve
+            and solver._static_rigid_sim_config.enable_per_island_solve
+            and not solver._static_rigid_sim_config.sparse_envelope
+        )
+        else 1
+    )
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
-    # The decomposed (parallel) noslip build computes MinvJT and efc_AR/efc_b for all envs before the force-update
-    # sweep. The serialized path instead fuses build, sweep, and finish per env (kernel_noslip_fused): each env consumes
-    # its AR block right after writing it, so a single batch slot shared by all envs suffices. This keeps the scratch
-    # cache-hot across the fused phases and shrinks its memory footprint by n_envs, and MinvJT is never needed.
-    noslip = solver._options.noslip_iterations > 0
-    noslip_decomposed = noslip and solver._static_rigid_sim_config.para_level >= gs.PARA_LEVEL.PARTIAL
-    efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B if noslip_decomposed else 1), noslip)
-    efc_b_shape = maybe_shape((len_constraints_, _B if noslip_decomposed else 1), noslip)
     # The sparse-Jacobian representation is always active, so its index buffers are always allocated. The skyline DOF
     # permutation/envelope buffers stay gated on sparse_solve (CPU-only skyline Cholesky).
     jac_dofs_idx_shape = jac_shape
@@ -403,12 +404,6 @@ def get_constraint_state(constraint_solver, solver):
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
-        )
-    if math.prod(efc_AR_shape) > np.iinfo(np.int32).max:
-        gs.raise_exception(
-            f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={len_constraints_}, "
-            f"n_envs={efc_AR_shape[2]}) is too large. Consider setting a smaller 'max_contacts' in RigidOptions "
-            "to reduce the size of reserved memory."
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
@@ -438,7 +433,6 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, noslip_decomposed)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
@@ -447,7 +441,7 @@ def get_constraint_state(constraint_solver, solver):
         mv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
-        nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_ * nt_vec_n_slots, _B), layout=dof_vec_layout),
         # When the register-tiled mass factor is on, reuse its scratch (rigid_global_info.mass_mat_tiled_scratch,
         # allocated with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only
         # writes it before the constraint solve repopulates it in the same step.
@@ -462,8 +456,6 @@ def get_constraint_state(constraint_solver, solver):
         dof_sort_key=V(dtype=gs.qd_float, shape=sparse_dof_shape),
         incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B), layout=serial_layout),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
-        efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
-        efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
         # Layout-flippable constraint-state tensors: allocated as qd.Tensor wrappers, optionally with
         # ``layout=(1, 0)`` to physically store as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B);
         # kernel-body indexing ``Jaref[i_c, i_b]`` is rewritten by the AST when ``layout != None``.
@@ -650,7 +642,8 @@ class IslandState:
     # holding several free bodies (common in MJCF) splits into one island per free body, while an articulated body's
     # links collapse to one island. links_island_idx is -1 for links whose component carries no dofs (fixed bodies),
     # which are never solved. link_slices maps island -> link-idx slice in link_id; dof_slices maps island -> local-dof
-    # slice in dof_id (dof_id[local] -> global dof, ascending). The per-island Hessian block is assembled/factored at
+    # slice in dof_id (dof_id[local] -> global dof, ascending unless the CPU skyline path reorders it by contact
+    # adjacency). The per-island Hessian block is assembled/factored at
     # those global DOF rows/cols in constraint_state.nt_H (the dofs may be non-contiguous globally; the cooperative arm
     # gathers them into a contiguous shared tile).
     links_parent_idx: qd.Tensor
@@ -660,8 +653,8 @@ class IslandState:
     link_id: qd.Tensor
     dof_slices: IslandSlices
     dof_id: qd.Tensor
-    # Inverse of dof_id: dof_local_pos[d] is the local position of global DOF d within its island (dof_id is ascending,
-    # so dof_id[dof_slices.start[island] + dof_local_pos[d]] == d). Filled by the partition build; lets the per-island
+    # Inverse of dof_id: dof_local_pos[d] is the local position of global DOF d within its island
+    # (dof_id[dof_slices.start[island] + dof_local_pos[d]] == d). Filled by the partition build; lets the per-island
     # envelope iterate each constraint's own support (jac_dofs_idx) instead of scanning the whole island.
     dof_local_pos: qd.Tensor
     dofs_island_idx: qd.Tensor
@@ -671,6 +664,9 @@ class IslandState:
     # island (e.g. a tall stack of bodies coupled into one island) factors with its band instead of densely. Defaults
     # to 0 (dense) when uncomputed, so any path that does not fill it stays correct.
     dof_env_start_local: qd.Tensor
+    # Envelope transpose: largest local row whose envelope reaches column ld, bounding the column-oriented factor and
+    # solve sweeps to the band. No safe uncomputed default (0 truncates): only the CPU per-island path may read it.
+    dof_env_col_end: qd.Tensor
     contact_slices: IslandSlices
     contact_id: qd.Tensor
     constraint_slices: IslandSlices
@@ -695,6 +691,15 @@ class IslandState:
     factor_worklist_i_b: qd.Tensor
     factor_worklist_i_island: qd.Tensor
     factor_worklist_size: qd.Tensor
+    # Scratch of the per-island fill-reducing (reverse Cuthill-McKee) DOF reordering, computed by the partition
+    # build for the CPU per-island skyline path: rcm_tree_pos maps a tree root link to its island-local tree slot,
+    # rcm_tree_degree holds contact degrees, rcm_tree_is_ordered flags already-ordered trees and rcm_tree_order is
+    # the resulting tree visit order. Only that config reads them. Do NOT fold these into other buffers of the same
+    # kernel: quadrants assumes distinct args never alias.
+    rcm_tree_pos: qd.Tensor
+    rcm_tree_degree: qd.Tensor
+    rcm_tree_is_ordered: qd.Tensor
+    rcm_tree_order: qd.Tensor
 
 
 def get_island_state(solver, collider):
@@ -708,6 +713,12 @@ def get_island_state(solver, collider):
     # per-island Hessian is assembled and factored in place in constraint_state.nt_H (block-diagonal), so island_state
     # itself holds only the partition maps.
     is_active = solver._use_contact_island
+    rcm_active = (
+        is_active
+        and solver._static_rigid_sim_config.sparse_solve
+        and solver._static_rigid_sim_config.enable_per_island_solve
+        and not solver._static_rigid_sim_config.sparse_envelope
+    )
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
     # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
@@ -725,6 +736,7 @@ def get_island_state(solver, collider):
         dof_local_pos=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         dofs_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         dof_env_start_local=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
+        dof_env_col_end=V(dtype=gs.qd_int, shape=maybe_shape((n_dofs, _B), is_active)),
         contact_slices=get_slices(solver, is_active),
         contact_id=V(dtype=gs.qd_int, shape=maybe_shape((max_candidate_contacts, _B), is_active)),
         constraint_slices=get_slices(solver, is_active),
@@ -735,6 +747,10 @@ def get_island_state(solver, collider):
         factor_worklist_i_b=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
         factor_worklist_i_island=V(dtype=gs.qd_int, shape=maybe_shape((n_links * _B,), is_active)),
         factor_worklist_size=V(dtype=gs.qd_int, shape=maybe_shape((1,), is_active)),
+        rcm_tree_pos=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
+        rcm_tree_degree=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
+        rcm_tree_is_ordered=V(dtype=gs.qd_bool, shape=maybe_shape((n_links, _B), rcm_active)),
+        rcm_tree_order=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), rcm_active)),
     )
 
 
@@ -898,6 +914,7 @@ class ColliderInfo:
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
     mpr_to_gjk_overlap_ratio: qd.Tensor
+    mpr_to_gjk_overlap_ratio_valid: qd.Tensor
     mpr_to_gjk_penetration_ratio: qd.Tensor
     # differentiable contact tolerance
     diff_pos_tolerance: qd.Tensor
@@ -934,6 +951,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
         mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
+        mpr_to_gjk_overlap_ratio_valid=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio_valid"]),
         mpr_to_gjk_penetration_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_penetration_ratio"]),
         diff_pos_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_pos_tolerance"]),
         diff_normal_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["diff_normal_tolerance"]),
@@ -994,17 +1012,16 @@ def get_mpr_simplex_support(B_):
 class MPRState:
     simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
-    # True iff the last contact came from the refined portal (res==0 -> refine -> find_penetration), so
-    # simplex_support[1..3] holds the contact-face portal. False for the degenerate touch/segment paths, where the
-    # multi-contact perturbation must not reconstruct from the (unrefined) simplex.
-    portal_valid: qd.Tensor
+    # Reliability of the portal in simplex_support[1..3] after a contact, a PORTAL_STATUS value (INVALID/UNKNOWN/VALID).
+    # Only VALID portals are reused (perturbation reconstruction, EPA seeding); INVALID forces a GJK refine.
+    portal_status: qd.Tensor
 
 
 def get_mpr_state(B_):
     return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
-        portal_valid=V(dtype=gs.qd_bool, shape=(B_,)),
+        portal_status=V(dtype=gs.qd_int, shape=(B_,)),
     )
 
 
@@ -1678,10 +1695,11 @@ class LinksState:
 
 
 def get_links_state(solver):
-    max_n_joints_per_link = solver._static_rigid_sim_config.max_n_joints_per_link
     shape = (solver.n_links_, solver._B)
     requires_grad = solver._requires_grad
-    shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
+    # The backward joint buffers hold one slot per joint of a link plus the link itself; collapsed when grad is off.
+    n_joints_bw = (max(link.n_joints for link in solver.links) + 1) if requires_grad and solver.n_links else 1
+    shape_bw = (solver.n_links_, n_joints_bw, solver._B)
 
     return LinksState(
         cinr_inertial=V(dtype=gs.qd_mat3, shape=shape, needs_grad=requires_grad),
@@ -2238,7 +2256,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool
-    enable_heterogeneous: bool
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
@@ -2266,6 +2283,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
+    # Number of rank-1 Cholesky updates fused into one column sweep by the CPU per-island incremental factor
+    # (func_rank_batch_update_island). Sizes the nt_vec slots and the static per-column unroll.
+    hessian_rank_update_batch: int = 8
     # Register-streaming tiled per-entity mass factor for the >shared-cap branch of func_factor_mass (GPU forward
     # only). When True, each entity's single-mass-block submatrix factors in registers via the same TileNxN Cholesky
     # primitive as the Hessian, instead of the shared-pivot cooperative LDL^T. Only enabled when every entity is a
@@ -2305,12 +2325,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # instead of serializing them inside one block-per-env. Sized to saturate the GPU (gpu_cores // tile_size) but no
     # larger than the worst-case work-list (n_links * n_envs), so tiny problems do not launch idle blocks.
     island_factor_n_blocks: int = 1
-    max_n_links_per_entity: int = -1
-    max_n_joints_per_link: int = -1
-    max_n_dofs_per_joint: int = -1
-    max_n_qs_per_link: int = -1
-    max_n_dofs_per_entity: int = -1
-    max_n_dofs_per_link: int = -1
     max_n_geoms_per_entity: int = -1
     n_entities: int = -1
     n_links: int = -1

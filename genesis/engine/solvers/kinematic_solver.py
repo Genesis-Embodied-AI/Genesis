@@ -347,7 +347,6 @@ class KinematicSolver(Solver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=False,
             batch_joints_info=False,
-            enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=False,
             enable_multi_contact=False,
             enable_collision=False,

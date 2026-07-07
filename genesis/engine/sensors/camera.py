@@ -559,9 +559,7 @@ class RasterizerCameraSensor(
                 if poses is not None and len(poses) > 1:
                     saved_poses[node_uid] = poses.copy()
                     poses[:, :3, 3] -= envs_offset[context.rendered_envs_idx]
-                    buf_id = context._scene.get_buffer_id(node, "model")
-                    if buf_id >= 0:
-                        context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
+                    context.jit.update_buffer(node, "model", poses.transpose((0, 2, 1)))
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._camera_wrapper, rgb=True, depth=False, segmentation=False, normal=False
@@ -571,9 +569,7 @@ class RasterizerCameraSensor(
         for node_uid, poses in saved_poses.items():
             node = context.rigid_nodes[node_uid]
             node.mesh.primitives[0].poses = poses
-            buf_id = context._scene.get_buffer_id(node, "model")
-            if buf_id >= 0:
-                context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
+            context.jit.update_buffer(node, "model", poses.transpose((0, 2, 1)))
 
         # Ensure contiguous layout because the rendered array may have negative strides.
         rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)

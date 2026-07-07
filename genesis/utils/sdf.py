@@ -138,6 +138,39 @@ def sdf_func_world_local(
 
 
 @qd.func
+def sdf_func_ray_exit_distance(
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
+    origin: qd.types.vector(3),
+    direction: qd.types.vector(3),
+    max_dist,
+    tolerance,
+    geom_idx,
+    geom_pos: qd.types.vector(3),
+    geom_quat: qd.types.vector(4),
+):
+    """
+    Distance from a point inside the geom to its surface along a unit direction, bisected down to tolerance.
+    """
+    dist = max_dist
+    sd_end = sdf_func_world_local(geoms_info, sdf_info, origin + max_dist * direction, geom_idx, geom_pos, geom_quat)
+    if sd_end > 0.0:
+        t_lo = gs.qd_float(0.0)
+        t_hi = max_dist
+        while t_hi - t_lo > tolerance:
+            t_mid = 0.5 * (t_lo + t_hi)
+            sd_mid = sdf_func_world_local(
+                geoms_info, sdf_info, origin + t_mid * direction, geom_idx, geom_pos, geom_quat
+            )
+            if sd_mid < 0.0:
+                t_lo = t_mid
+            else:
+                t_hi = t_mid
+        dist = 0.5 * (t_lo + t_hi)
+    return dist
+
+
+@qd.func
 def sdf_func_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
     """
     sdf value at sdf frame coordinate.

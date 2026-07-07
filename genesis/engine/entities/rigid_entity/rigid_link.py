@@ -173,7 +173,7 @@ class LinkInertial(NamedTuple):
 
 
 def finalize_inertial(
-    explicit_mass, explicit_com, explicit_quat, explicit_inertia, hint_mass, hint_com, hint_inertia
+    explicit_mass, explicit_com, explicit_quat, explicit_inertia, hint_mass, hint_com, hint_inertia, clamp_min_mass=True
 ) -> LinkInertial:
     """Resolve a link's local inertial from its parsed explicit values and a geometry-derived estimate (hint).
 
@@ -181,6 +181,10 @@ def finalize_inertial(
     geometry-derived inertia. The hint can come from geom objects (`compute_inertial_from_geoms`, used by
     `RigidLink._build`) or from parsed geometry-info (the load-time align stash) - the single resolution path keeps the
     rigid dynamics inertia and the align anchor in lockstep.
+
+    With ``clamp_min_mass`` the resolved mass is floored at ``gs.EPS`` so a geometry-less moving link stays
+    non-singular in the dynamics; the align stash passes ``False`` so a genuinely massless link keeps its ``0.0``
+    mass and is excluded from the fixed-subtree composite (it must not inflate the composite by ``gs.EPS``).
     """
     mass, com, quat, inertia = explicit_mass, explicit_com, explicit_quat, explicit_inertia
     if (mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS and mass is not None:
@@ -192,10 +196,9 @@ def finalize_inertial(
         com, inertia, quat = hint_com, hint_inertia, gu.identity_quat()
     if quat is None:
         quat = gu.identity_quat()
-    # FIXME: Setting zero mass even for fixed links breaks physics for some reason...
-    # For non-fixed links, it must be non-zero in case for coupling with deformable body solvers.
     return LinkInertial(
-        max(mass, gs.EPS),
+        # For non-fixed links, the mass must be non-zero in case for coupling with deformable body solvers.
+        max(mass, gs.EPS) if clamp_min_mass else mass,
         np.asarray(com, dtype=gs.np_float),
         np.asarray(quat, dtype=gs.np_float),
         np.asarray(inertia, dtype=gs.np_float),
@@ -824,17 +827,11 @@ class RigidLink(KinematicLink):
                     )
 
         if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
-            if not self._is_fixed:
-                if not self._geoms and not self._vgeoms:
-                    if any(joint.type is not gs.JOINT_TYPE.FIXED for joint in self.joints):
-                        gs.logger.info(
-                            f"Mass not specified and no geoms found for link '{self.name}'. Setting to 'gs.EPS'."
-                        )
-                elif not self._geoms:
-                    gs.logger.info(
-                        f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
-                        f"Using visual geoms to compute inertial properties."
-                    )
+            if not self._is_fixed and self._vgeoms and not self._geoms:
+                gs.logger.info(
+                    f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
+                    f"Using visual geoms to compute inertial properties."
+                )
             if self._inertial_pos is not None and self._inertial_i is None:
                 gs.logger.warning(
                     f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."

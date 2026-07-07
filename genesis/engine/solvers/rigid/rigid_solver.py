@@ -493,7 +493,7 @@ class RigidSolver(KinematicSolver):
         enable_cooperative_constraint_kernels = (
             gs.backend != gs.cpu
             and not self.sim.options.requires_grad
-            and not self._options.sparse_solve
+            and not sparse_solve
             and self._sim._B <= 8192
             and self.n_dofs >= 16
         )
@@ -509,7 +509,6 @@ class RigidSolver(KinematicSolver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
-            enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
@@ -641,12 +640,6 @@ class RigidSolver(KinematicSolver):
             if self.sim.options.requires_grad:
                 static_rigid_sim_config.update(
                     max_n_geoms_per_entity=max(len(entity.geoms) for entity in self.entities) if self.links else 0,
-                    max_n_links_per_entity=max(len(entity.links) for entity in self.entities) if self.entities else 0,
-                    max_n_joints_per_link=max(len(link.joints) for link in self.links) if self.links else 0,
-                    max_n_dofs_per_joint=max(joint.n_dofs for joint in self.joints) if self.joints else 0,
-                    max_n_dofs_per_entity=max_n_dofs_per_entity,
-                    max_n_dofs_per_link=max(link.n_dofs for link in self.links) if self.links else 0,
-                    max_n_qs_per_link=max(link.n_qs for link in self.links) if self.links else 0,
                     n_entities=self._n_entities,
                     n_links=self._n_links,
                     n_geoms=self._n_geoms,
@@ -2446,8 +2439,9 @@ class RigidSolver(KinematicSolver):
             if self.n_envs == 0:
                 qpos = qpos[None]
 
-            # Teleporting a sleeping body must revive it, otherwise the new pose is silently dropped.
-            if self._use_hibernation:
+            # Teleporting a sleeping body must revive it, otherwise the new pose is silently dropped. Nothing can be
+            # hibernated while the scene is still being built.
+            if self._use_hibernation and self.is_built:
                 kernel_wake_up_entities_by_qs(
                     qs_idx,
                     envs_idx,
@@ -3012,6 +3006,44 @@ class RigidSolver(KinematicSolver):
             tensor, dofs_idx, envs_idx, self.dofs_state, self.dofs_info, self._static_rigid_sim_config
         )
         return _tensor
+
+    def get_dofs_actuator_force(self, dofs_idx=None, envs_idx=None):
+        """
+        Generalized effort transmitted to each DOF at the actuator output (torque for revolute DOFs, force for
+        prismatic DOFs), accounting for the gearbox losses between the motor and the joint.
+
+        Computed as qf_applied - armature * qacc + qf_frictionloss + qf_passive: the commanded effort from
+        get_dofs_control_force minus the armature-inertia load, plus the dissipative frictionloss and passive damping
+        efforts. Contact, Coriolis and gravity loads are captured implicitly through the constraint-solved acceleration.
+        """
+        qf_applied = qd_to_torch(self.dofs_state.qf_applied, envs_idx, transpose=True)
+        qacc = qd_to_torch(self.constraint_solver.qacc, envs_idx, transpose=True)
+        qf_passive = qd_to_torch(self.dofs_state.qf_passive, envs_idx, transpose=True)
+        if self._options.batch_dofs_info:
+            armature = qd_to_torch(self.dofs_info.armature, envs_idx, transpose=True)
+            frictionloss = qd_to_torch(self.dofs_info.frictionloss, envs_idx, transpose=True)
+        else:
+            armature = qd_to_torch(self.dofs_info.armature, transpose=True)
+            frictionloss = qd_to_torch(self.dofs_info.frictionloss, transpose=True)
+
+        # Frictionloss constraint forces mapped back to DOF space. Frictionloss constraints occupy the contiguous block
+        # [n_constraints_equality, n_constraints_equality + n_constraints_frictionloss) of the constraint list and have
+        # an identity Jacobian, so `efc_force` at a frictionloss row is exactly the DOF-space frictionloss effort. The
+        # assembly loop appends them in ascending DOF order (it iterates links -> joints -> DOFs serially within each
+        # env, matching the global DOF numbering), so the k-th frictionloss row is the k-th DOF with nonzero
+        # frictionloss. Its row index is therefore `n_constraints_equality + rank`, with `rank` the running count of
+        # frictionloss-enabled DOFs (-1 for DOFs without frictionloss, which contribute zero).
+        efc_force = qd_to_torch(self.constraint_solver.efc_force, envs_idx, transpose=True)
+        n_constraints_equality = qd_to_torch(self.constraint_solver.n_constraints_equality, envs_idx)
+        has_frictionloss = frictionloss > gs.EPS
+        rank = torch.cumsum(has_frictionloss, dim=-1) - 1
+        gather_idx = (n_constraints_equality[:, None] + rank).clamp_(min=0)
+        qf_frictionloss = torch.gather(efc_force, 1, gather_idx) * has_frictionloss
+
+        actuator_force = qf_applied - armature * qacc + qf_frictionloss + qf_passive
+        if dofs_idx is not None:
+            actuator_force = actuator_force[indices_to_mask(None, dofs_idx)]
+        return actuator_force[0] if self.n_envs == 0 else actuator_force
 
     def get_dofs_force(self, dofs_idx=None, envs_idx=None):
         tensor = qd_to_torch(self.dofs_state.force, envs_idx, dofs_idx, transpose=True, copy=True)
