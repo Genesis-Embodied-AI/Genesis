@@ -2058,10 +2058,10 @@ def func_convex_convex_contact(
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
                     # Sphere-sphere is handled by the closed-form analytic branch above, which never populates a
-                    # GJK Minkowski triangle. In differentiable mode, register a diff-contact-input entry (matched
-                    # by the analytic branch in func_differentiable_contact) so the backward pass reconstructs the
-                    # contact in closed form instead of from a degenerate triangle. Must run at the same contact
-                    # index as func_add_contact, i.e. before it increments n_contacts.
+                    # GJK Minkowski triangle. In differentiable mode, register a diff-contact-input entry (consumed
+                    # by func_differentiable_sphere_contact) so the backward pass reconstructs the contact in closed
+                    # form instead of from a degenerate triangle. Must run at the same contact index as
+                    # func_add_contact, i.e. before it increments n_contacts.
                     if qd.static(static_rigid_sim_config.requires_grad):
                         if (
                             geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE

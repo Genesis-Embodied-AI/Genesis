@@ -424,9 +424,9 @@ def func_add_diff_contact_input_sphere(
     """Register a differentiable-contact-input entry for an analytically handled sphere-sphere contact.
 
     Unlike func_add_diff_contact_input, which stores a GJK Minkowski triangle, the sphere-sphere contact is
-    reconstructed in closed form in the backward pass (func_differentiable_contact) directly from the geom centres
-    and radii, so only the geom identities and a self-referential ref_id are needed here. Must be called at the same
-    index as the matching func_add_contact, i.e. before n_contacts is incremented.
+    reconstructed in closed form in the backward pass (func_differentiable_sphere_contact) directly from the geom
+    centres and radii, so only the geom identities and a self-referential ref_id are needed here. Must be called at
+    the same index as the matching func_add_contact, i.e. before n_contacts is incremented.
     """
     i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_candidate_contacts[None]:
