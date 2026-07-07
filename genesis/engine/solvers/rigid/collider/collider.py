@@ -1135,6 +1135,7 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._gjk._gjk_info,
+            self._solver._rigid_global_info,
             self._collider_state.diff_contact_input,
         )
 

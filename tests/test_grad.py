@@ -390,6 +390,28 @@ def test_diff_sphere_sphere_contact():
     dL_error_rel /= TRIALS
     assert_allclose(dL_error_rel, 0.0, atol=RTOL)
 
+    # Coincident centres: the normal is undefined so the forward falls back to an arbitrary direction. The backward
+    # must reuse that fallback instead of dividing by a zero distance, otherwise it emits NaN gradients.
+    coincident_pos = torch.as_tensor([0.1, 0.1, 0.3], dtype=sphere0_init_pos.dtype, device=sphere0_init_pos.device)
+    sphere0.set_pos(coincident_pos)
+    sphere1.set_pos(coincident_pos)
+    collider._collider_state.n_contacts.fill(0)
+    collider.detection()
+    contacts = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
+    assert contacts["penetration"].numel() == 1
+    assert torch.isfinite(contacts["normal"]).all()
+    assert torch.isfinite(contacts["position"]).all()
+
+    normal = contacts["normal"].requires_grad_()
+    position = contacts["position"].requires_grad_()
+    penetration = contacts["penetration"].requires_grad_()
+    loss = ((normal * position).sum(dim=-1) * penetration).sum()
+    dL_dnormal = torch.autograd.grad(loss, normal, retain_graph=True)[0]
+    dL_dposition = torch.autograd.grad(loss, position, retain_graph=True)[0]
+    dL_dpenetration = torch.autograd.grad(loss, penetration)[0]
+    collider.backward(dL_dposition, dL_dnormal, dL_dpenetration)
+    assert torch.isfinite(qd_to_torch(solver.geoms_state.pos.grad)).all()
+
 
 # We need to use 64-bit precision for this test because we need to use sufficiently small perturbation to get reliable
 # gradient estimates through finite difference method. This small perturbation is not supported by 32-bit precision in

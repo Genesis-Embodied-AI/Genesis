@@ -752,6 +752,7 @@ def func_compute_minkowski_point(
 def func_differentiable_sphere_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     i_ga,
     i_gb,
     i_b,
@@ -762,12 +763,24 @@ def func_differentiable_sphere_contact(
     func_differentiable_contact, which is degenerate for two smoothly-curved surfaces (where EPA never converges).
     This must match func_sphere_sphere_contact in capsule_contact.py.
     """
+    EPS = rigid_global_info.EPS[None]
+
     radius_a = geoms_info.data[i_ga][0]
     radius_b = geoms_info.data[i_gb][0]
     delta = geoms_state.pos[i_ga, i_b] - geoms_state.pos[i_gb, i_b]
-    dist = delta.norm()
-    contact_normal = delta / dist
-    penetration = radius_a + radius_b - dist
+    dist_sq = delta.dot(delta)
+
+    # At coincident centres the distance is a non-differentiable cusp: the normal (delta / dist) and the distance
+    # itself (whose gradient is also delta / dist) are both 0/0 there, and reverse-mode turns that into 0 * NaN = NaN.
+    # Guard the sqrt so it only runs when the centres are separated; otherwise fall back to the same arbitrary
+    # direction and constant penetration as func_sphere_sphere_contact (the contact is degenerate there anyway).
+    contact_normal = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+    penetration = radius_a + radius_b
+    if dist_sq > EPS * EPS:
+        dist = qd.sqrt(dist_sq)
+        contact_normal = delta / dist
+        penetration = radius_a + radius_b - dist
+
     contact_pos = geoms_state.pos[i_ga, i_b] - (radius_a - 0.5 * penetration) * contact_normal
     return contact_pos, contact_normal, penetration, gs.qd_float(1.0)
 

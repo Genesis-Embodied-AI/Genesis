@@ -3191,6 +3191,7 @@ def func_narrow_phase_diff_convex_vs_convex(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     gjk_info: array_class.GJKInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     # FIXME: Passing nested data structure as input argument is not supported for now.
     diff_contact_input: array_class.DiffContactInput,
 ):
@@ -3210,7 +3211,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 weight = gs.qd_float(0.0)
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
                     contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_sphere_contact(
-                        geoms_state, geoms_info, i_ga, i_gb, i_b
+                        geoms_state, geoms_info, rigid_global_info, i_ga, i_gb, i_b
                     )
                 else:
                     ref_penetration = -1.0
@@ -3249,7 +3250,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 weight = gs.qd_float(0.0)
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
                     contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_sphere_contact(
-                        geoms_state, geoms_info, i_ga, i_gb, i_b
+                        geoms_state, geoms_info, rigid_global_info, i_ga, i_gb, i_b
                     )
                 else:
                     ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
