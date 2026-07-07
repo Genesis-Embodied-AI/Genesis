@@ -460,7 +460,7 @@ class RigidSolver(KinematicSolver):
         # envelope factorization. The differentiable adjoint solve reads the dense Hessian, so the composition is
         # restricted to the forward (non-grad) path. On GPU the dense tiled path is faster, so sparse is dropped and
         # islands stand alone.
-        if gs.backend == gs.cpu and self._use_contact_island and sparse_solve and not self.sim.options.requires_grad:
+        if sparse_solve and gs.backend == gs.cpu and self._use_contact_island and not self.sim.options.requires_grad:
             pass  # compose islands + sparse Jacobian
         elif sparse_solve and gs.backend == gs.cpu:
             self._use_contact_island = False
