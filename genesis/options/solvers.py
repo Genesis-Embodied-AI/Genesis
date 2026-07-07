@@ -494,18 +494,6 @@ class RigidOptions(Options):
         Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL`` (parallel pair iteration). Defaults
         to ``None`` (auto: ``SAP`` on CPU or when hibernation/heterogeneous entities are enabled, ``ALL_VS_ALL`` on GPU
         otherwise). See ``gs.broadphase_traversal`` for details on each strategy.
-    shared_static_raycast_bvh : bool, optional
-        Optimization for raycast sensors (``Raycaster`` / ``DepthCamera``) over large static scenes. When True, the
-        raycast BVH built over the solver's static (fully fixed) collision geometry is allocated **per distinct
-        geometry** rather than per env: envs with identical static geometry share one tree (each reads the tree for
-        its geometry). A homogeneous scene collapses to a single shared tree; a heterogeneous scene with N variants
-        across the envs (N << n_envs, e.g. a terrain curriculum) collapses from n_envs trees to N. For a high-poly
-        static terrain the per-env tree replication is the dominant raycast memory cost, so this cuts total GPU
-        memory by roughly n_envs/N and lifts the env-count ceiling. It is a caller guarantee that each env's static
-        collision geometry stays as built: do not enable it if you give fixed entities per-env poses (e.g. per-env
-        ``set_pos`` on a fixed body) after build, as the shared tree would not reflect the divergence. Defaults to
-        False, which keeps per-env trees and the runtime "shared across envs" auto-detection. Only affects
-        raycasting, not physics.
 
     Warning
     -------
@@ -530,10 +518,6 @@ class RigidOptions(Options):
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
-
-    # raycast: share one static-geometry BVH across envs instead of one per env (caller guarantees env-identical
-    # static collision geometry). See the class docstring.
-    shared_static_raycast_bvh: StrictBool = False
 
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton

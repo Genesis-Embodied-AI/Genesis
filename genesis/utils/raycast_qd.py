@@ -243,35 +243,35 @@ def update_aabbs(
 ):
     """Update per-face collision AABBs from current vertex positions.
 
-    A face contributes to env i_env only if its geom lies in that env's active geom range (links_info.geom_start /
+    A face contributes to env i_b only if its geom lies in that env's active geom range (links_info.geom_start /
     geom_end); otherwise its AABB is left inverted (unhittable) and skipped by ray queries. For a homogeneous solver
     every geom is always in range, so this never excludes anything. For a heterogeneous solver, where all envs share
     one vertex buffer but activate different per-env geom ranges, it makes each env cast against only its own variant
     instead of the union of every variant.
     """
-    # Iterate over the AABB's own batch (tree) dimension, not the solver's env count. ``batch_repr_env`` maps each
-    # tree slot to the env whose geometry it is built from: identity for a per-env BVH (n_batches=n_envs), [0] for a
-    # single shared tree, and one representative env per group for N grouped trees (N distinct geometries << n_envs).
-    for i_b, i_f in qd.ndrange(aabb_state.aabbs.shape[0], faces_info.verts_idx.shape[0]):
-        i_env = batch_repr_env[i_b]
-        aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
+    # Loop over BVH tree slots (aabb_state's batch dim, n_groups <= n_envs), not the env count. batch_repr_env[i_tree]
+    # is the env whose geometry fills that slot -- identity for a per-env BVH, [0] for one shared tree, one env per
+    # group for N grouped trees -- so i_b indexes the solver's env-batched fields as everywhere else.
+    for i_tree, i_f in qd.ndrange(aabb_state.aabbs.shape[0], faces_info.verts_idx.shape[0]):
+        i_b = batch_repr_env[i_tree]
+        aabb_state.aabbs[i_tree, i_f].min.fill(qd.math.inf)
+        aabb_state.aabbs[i_tree, i_f].max.fill(-qd.math.inf)
 
         i_g = faces_info.geom_idx[i_f]
         i_l = geoms_info.link_idx[i_g]
-        I_l = [i_l, i_env] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
         if links_info.geom_start[I_l] <= i_g and i_g < links_info.geom_end[I_l]:
             for i in qd.static(range(3)):
                 i_v = faces_info.verts_idx[i_f][i]
                 i_fv = verts_info.verts_state_idx[i_v]
                 if verts_info.is_fixed[i_v]:
                     pos_v = fixed_verts_state.pos[i_fv]
-                    aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                    aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                    aabb_state.aabbs[i_tree, i_f].min = qd.min(aabb_state.aabbs[i_tree, i_f].min, pos_v)
+                    aabb_state.aabbs[i_tree, i_f].max = qd.max(aabb_state.aabbs[i_tree, i_f].max, pos_v)
                 else:
-                    pos_v = free_verts_state.pos[i_fv, i_env]
-                    aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                    aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+                    pos_v = free_verts_state.pos[i_fv, i_b]
+                    aabb_state.aabbs[i_tree, i_f].min = qd.min(aabb_state.aabbs[i_tree, i_f].min, pos_v)
+                    aabb_state.aabbs[i_tree, i_f].max = qd.max(aabb_state.aabbs[i_tree, i_f].max, pos_v)
 
 
 @qd.kernel
@@ -290,6 +290,33 @@ def kernel_update_verts_and_aabbs(
     func_update_all_verts(
         geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
+    update_aabbs(
+        free_verts_state,
+        fixed_verts_state,
+        verts_info,
+        faces_info,
+        geoms_info,
+        links_info,
+        batch_repr_env,
+        static_rigid_sim_config,
+        aabb_state,
+    )
+
+
+@qd.kernel
+def kernel_update_aabbs(
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    geoms_info: array_class.GeomsInfo,
+    links_info: array_class.LinksInfo,
+    batch_repr_env: qd.types.ndarray(ndim=1),
+    static_rigid_sim_config: qd.template(),
+    aabb_state: qd.template(),
+):
+    # AABB-only build (verts already refreshed): the static-geometry path groups envs from the fresh verts, sizes the
+    # BVH to the group count, then builds here, whereas the combined kernel above fuses vert-refresh + build per env.
     update_aabbs(
         free_verts_state,
         fixed_verts_state,

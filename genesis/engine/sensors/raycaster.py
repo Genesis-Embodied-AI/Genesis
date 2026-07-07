@@ -8,6 +8,7 @@ import torch
 import genesis as gs
 from genesis.engine.bvh import AABB, LBVH
 from genesis.engine.solvers.base_solver import StateChange, Subscriber
+from genesis.engine.solvers.rigid.abd.forward_kinematics import kernel_update_all_verts
 from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 from genesis.options.sensors import Raycaster as RaycasterOptions
 from genesis.options.sensors import RaycastPattern
@@ -16,6 +17,7 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_nump
 from genesis.utils.raycast_qd import (
     kernel_cast_rays,
     kernel_cast_rays_visual,
+    kernel_update_aabbs,
     kernel_update_visual_aabbs,
     kernel_update_verts_and_aabbs,
 )
@@ -42,8 +44,10 @@ class BVHContext:
     """A solver's raycast BVH and the bookkeeping for rebuilding and casting it."""
 
     solver: "KinematicSolver"
-    bvh: LBVH
-    aabb: AABB
+    # None until the first rebuild for a static collision entry, which sizes the BVH to the detected group count
+    # (see RaycastContext._rebuild_static_collision); allocated up front for per-env and visual entries.
+    bvh: "LBVH | None" = None
+    aabb: "AABB | None" = None
     # None for a collision BVH (faces_info / verts_info, no per-face mask), else an int8 (n_vfaces,) array selecting
     # which visual faces contribute.
     raycast_mask: np.ndarray | None = None
@@ -60,8 +64,7 @@ class BVHContext:
     # reveals a set_pos/set_quat/set_vverts since the last build. Ignored by non-static entries, which rebuild every
     # step regardless.
     needs_rebuild: bool = True
-    # True when the geometry is bit-identical across envs, so the cast reads one shared copy (batch 0) with coalesced
-    # node loads instead of scattering over n_env identical trees. Recomputed on every rebuild.
+    # True when a single tree serves every env (all geometry env-identical). Derived from the group count each rebuild.
     shared_across_envs: bool = False
 
     # Tree routing. ``env_bvh_idx`` (n_env,) gives the BVH batch each env casts against; ``batch_repr_env``
@@ -114,33 +117,86 @@ class RaycastContext(SharedSensorContext):
 
     @staticmethod
     def _static_geometry_groups(solver: "RigidSolver"):
-        """Group envs by identical static collision geometry, returning ``(n_groups, env_bvh_idx, batch_repr_env)``.
+        """Group envs by identical static collision geometry: ``(n_groups, env_bvh_idx, batch_repr_env)``.
 
-        Heterogeneity in Genesis is expressed via per-env active-geom ranges in batched ``links_info`` (one variant
-        block per env, see ``_balanced_variant_mapping``). Two envs cast against the same geometry iff every link's
-        ``(geom_start, geom_end)`` matches, so grouping by that per-env signature yields the distinct geometries:
-        a single group when the solver isn't batched (homogeneous), and N groups for N variants across the envs.
-        ``env_bvh_idx[b]`` is env ``b``'s group; ``batch_repr_env[g]`` is the lowest env index in group ``g`` (its
-        verts/ranges build that tree). Caller guarantees, via ``shared_static_raycast_bvh``, that the static
-        geometry stays grouped as built (no per-env ``set_pos`` divergence), so the cheap range signature suffices.
+        Two envs build a bit-identical collision BVH iff every per-env input to ``update_aabbs`` matches: the per-env
+        active geom range (``links_info.geom_start/end``, present only when link info is batched) and the per-env
+        free-vert positions (``free_verts_state.pos``). ``fixed_verts_state`` has no env dimension, so it is identical
+        for all envs and omitted. Grouping on the concatenation of those signatures is exact: homogeneous -> 1 group,
+        N variants -> N, per-env divergence (e.g. per-env set_pos on a fixed body) -> one group per distinct geometry,
+        so a shared tree is never stale. ``env_bvh_idx[b]`` is env ``b``'s group; ``batch_repr_env[g]`` is the lowest
+        env index in group ``g``, whose geometry builds that tree. Reads ``free_verts_state.pos``, so callers refresh
+        the verts first.
         """
         B = solver._B
-        if not solver._options.batch_links_info:
-            # Unbatched link info → every env shares one geom range → a single shared tree.
-            env_bvh_idx = torch.zeros(B, dtype=gs.tc_int, device=gs.device)
-            return 1, env_bvh_idx, torch.zeros(1, dtype=gs.tc_int, device=gs.device)
-        gstart = qd_to_torch(solver.links_info.geom_start)  # (n_links, B)
-        gend = qd_to_torch(solver.links_info.geom_end)
-        sig = torch.cat([gstart, gend], dim=0).t().contiguous()  # (B, 2*n_links) per-env geometry signature
-        uniq, inv = torch.unique(sig, dim=0, return_inverse=True)
+        parts = []
+        if solver._options.batch_links_info:
+            gstart = qd_to_torch(solver.links_info.geom_start)  # (n_links, B)
+            gend = qd_to_torch(solver.links_info.geom_end)
+            parts.append(torch.cat([gstart, gend], dim=0).t())  # (B, 2*n_links) per-env active-geom ranges
+        if solver.n_free_verts > 0:
+            free_pos = qd_to_torch(solver.free_verts_state.pos)  # (n_free_verts, B, 3)
+            parts.append(free_pos.transpose(0, 1).reshape(B, -1))  # (B, 3*n_free_verts) per-env vertex positions
+        if not parts:
+            # Fully env-shared geometry (unbatched ranges, no free verts) -> a single shared tree.
+            zeros_B = torch.zeros(B, dtype=gs.tc_int, device=gs.device)
+            return 1, zeros_B, torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+        sig = torch.cat(parts, dim=1).contiguous()  # (B, K) per-env geometry signature
+        if gs.backend != gs.metal:
+            uniq, inv = torch.unique(sig, dim=0, return_inverse=True)
+        else:
+            # Apple Metal GPU backend does not support torch.unique([...], dim=[...]); group on CPU (rebuild-only).
+            uniq, inv = torch.unique(sig.cpu(), dim=0, return_inverse=True)
+            inv = inv.to(gs.device)
         n_groups = int(uniq.shape[0])
         env_bvh_idx = inv.to(gs.tc_int)
-        # Lowest env index per group (deterministic; any group member is a valid representative since the group is
-        # geometry-identical, but a stable choice keeps builds reproducible).
+        # Lowest env index per group as its (deterministic) representative; any member is geometry-identical.
         env_ids = torch.arange(B, dtype=torch.int64, device=inv.device)
         repr_env = torch.full((n_groups,), B, dtype=torch.int64, device=inv.device)
         repr_env.scatter_reduce_(0, inv.to(torch.int64), env_ids, reduce="amin", include_self=True)
         return n_groups, env_bvh_idx, repr_env.to(gs.tc_int)
+
+    @staticmethod
+    def _alloc_collision_bvh(n_batches: int, n_faces: int) -> "tuple[AABB, LBVH]":
+        aabb = AABB(n_batches=n_batches, n_aabbs=n_faces)
+        bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+        return aabb, bvh
+
+    def _rebuild_static_collision(self, entry: BVHContext):
+        """Regroup a static collision entry from current geometry and rebuild its trees.
+
+        Refreshes every env's free verts, groups envs by exact geometry, (re)allocates the BVH only when the group
+        count changed (a set_pos / reset can split or merge groups), then builds one tree per group from its
+        representative env. Yields n_envs trees when every env differs and a single shared tree when all match.
+        """
+        solver = entry.solver
+        kernel_update_all_verts(
+            geoms_state=solver.geoms_state,
+            geoms_info=solver.geoms_info,
+            verts_info=solver.verts_info,
+            free_verts_state=solver.free_verts_state,
+            fixed_verts_state=solver.fixed_verts_state,
+            static_rigid_sim_config=solver._static_rigid_sim_config,
+        )
+        n_groups, env_bvh_idx, batch_repr_env = self._static_geometry_groups(solver)
+        if entry.aabb is None or entry.aabb.n_batches != n_groups:
+            entry.aabb, entry.bvh = self._alloc_collision_bvh(n_groups, solver.faces_info.geom_idx.shape[0])
+        entry.env_bvh_idx = env_bvh_idx
+        entry.batch_repr_env = batch_repr_env
+        entry.env_major = n_groups < solver._B  # contiguous env blocks per tree -> coalesced env-major cast
+        entry.shared_across_envs = n_groups == 1  # a single tree serves every env
+        kernel_update_aabbs(
+            free_verts_state=solver.free_verts_state,
+            fixed_verts_state=solver.fixed_verts_state,
+            verts_info=solver.verts_info,
+            faces_info=solver.faces_info,
+            geoms_info=solver.geoms_info,
+            links_info=solver.links_info,
+            batch_repr_env=entry.batch_repr_env,
+            static_rigid_sim_config=solver._static_rigid_sim_config,
+            aabb_state=entry.aabb,
+        )
+        entry.bvh.build()
 
     def activate(self):
         """
@@ -160,28 +216,20 @@ class RaycastContext(SharedSensorContext):
             # Applies to both the collision and the visual BVH.
             maybe_static = all(link.is_fixed for link in solver.links)
             if isinstance(solver, RigidSolver):
-                n_faces = solver.faces_info.geom_idx.shape[0]
-                # A static collision mesh whose geometry is env-identical (or shared by groups of envs) produces
-                # bit-identical per-env BVHs, so one tree per distinct geometry serves its envs — dropping the
-                # n_envs-fold replication of nodes / aabbs / morton codes / radix-sort scratch, which dominates GPU
-                # memory for a high-poly terrain. Opt-in (shared_static_raycast_bvh) because env-identity is a
-                # runtime property (per-env set_pos on a fixed body diverges geometry after build) that can't be
-                # auto-proven at allocation time; the flag is a caller guarantee the static geometry stays grouped
-                # as built. With N distinct geometries across n_envs (N << n_envs, e.g. a terrain curriculum), the
-                # BVH collapses from n_envs trees to N. Without the flag, the per-env path keeps the runtime
-                # shared-across-envs detection below.
-                if maybe_static and solver._options.shared_static_raycast_bvh:
-                    n_groups, env_bvh_idx, batch_repr_env = self._static_geometry_groups(solver)
+                if maybe_static:
+                    # A static collision mesh whose geometry is env-identical (or groups into a few variants) builds
+                    # bit-identical trees, so one tree per distinct geometry serves its envs -- dropping the n_envs-fold
+                    # node/aabb/morton/radix-scratch replication that dominates GPU memory for a high-poly terrain. The
+                    # trailing self.update() sizes the (initially None) BVH to the detected group count; rebuilds regroup.
+                    entry = BVHContext(solver, maybe_static=maybe_static)
                 else:
-                    n_groups = n_envs
-                    env_bvh_idx = torch.arange(n_envs, dtype=gs.tc_int, device=gs.device)
-                    batch_repr_env = env_bvh_idx
-                aabb = AABB(n_batches=n_groups, n_aabbs=n_faces)
-                bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                entry = BVHContext(solver, bvh, aabb, None, maybe_static)
-                entry.env_bvh_idx = env_bvh_idx
-                entry.batch_repr_env = batch_repr_env
-                entry.env_major = n_groups < n_envs
+                    # Movable geometry rebuilds every step and diverges per env, so keep one tree per env (identity
+                    # routing); grouping would collapse back to n_envs anyway.
+                    n_faces = solver.faces_info.geom_idx.shape[0]
+                    aabb, bvh = self._alloc_collision_bvh(n_envs, n_faces)
+                    entry = BVHContext(solver, bvh, aabb, maybe_static=maybe_static)
+                    entry.env_bvh_idx = torch.arange(n_envs, dtype=gs.tc_int, device=gs.device)
+                    entry.batch_repr_env = entry.env_bvh_idx
                 self._bvh_contexts.append(entry)
             n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
             if n_vfaces > 0:
@@ -223,7 +271,12 @@ class RaycastContext(SharedSensorContext):
                 entry.needs_rebuild = True
             if entry.maybe_static and not entry.needs_rebuild:
                 continue
-            if entry.raycast_mask is None:
+            if entry.raycast_mask is None and entry.maybe_static:
+                # Static collision geometry: regroup from current verts and build one tree per distinct geometry,
+                # reallocating when the group count changed. Also collapses the homogeneous case to a single tree.
+                self._rebuild_static_collision(entry)
+            elif entry.raycast_mask is None:
+                # Movable collision geometry: one tree per env (identity routing set at activate), rebuilt in place.
                 kernel_update_verts_and_aabbs(
                     geoms_info=entry.solver.geoms_info,
                     geoms_state=entry.solver.geoms_state,
@@ -253,30 +306,23 @@ class RaycastContext(SharedSensorContext):
                     aabb_state=entry.aabb,
                 )
                 entry.bvh.build()
-            entry.needs_rebuild = False
-            # Tree routing. A grouped/shared allocation (n_batches < n_envs) fixed its routing at activate time and
-            # is left as-is. For the per-env allocation (n_batches == n_envs) we recover the runtime shared-geometry
-            # optimization: if the freshly-built per-env trees are bit-identical, route every env to batch 0 (a
-            # coalesced read, no extra memory). Comparing the built AABBs directly captures per-env pose, batched
-            # verts and per-env geometry selection at once. Only static geometry can be shared this way.
-            n_envs = entry.solver._B
-            if entry.maybe_static and entry.aabb.n_batches == n_envs and n_envs > 1:
-                aabb_min = qd_to_torch(entry.aabb.aabbs.min)
-                aabb_max = qd_to_torch(entry.aabb.aabbs.max)
-                entry.shared_across_envs = bool(
-                    torch.equal(aabb_min, aabb_min[:1].expand_as(aabb_min))
-                    and torch.equal(aabb_max, aabb_max[:1].expand_as(aabb_max))
-                )
+                # The visual BVH is always per-env; if a static solver's freshly built per-env visual AABBs match
+                # across envs, route every env to batch 0 (a coalesced read, no extra memory), else keep per-env.
+                n_envs = entry.solver._B
+                entry.shared_across_envs = False
+                if entry.maybe_static and n_envs > 1:
+                    aabb_min = qd_to_torch(entry.aabb.aabbs.min)
+                    aabb_max = qd_to_torch(entry.aabb.aabbs.max)
+                    entry.shared_across_envs = bool(
+                        torch.equal(aabb_min, aabb_min[:1].expand_as(aabb_min))
+                        and torch.equal(aabb_max, aabb_max[:1].expand_as(aabb_max))
+                    )
+                entry.env_major = entry.shared_across_envs
                 if entry.shared_across_envs:
                     entry.env_bvh_idx = torch.zeros(n_envs, dtype=gs.tc_int, device=gs.device)
-                    entry.env_major = True
                 else:
                     entry.env_bvh_idx = torch.arange(n_envs, dtype=gs.tc_int, device=gs.device)
-                    entry.env_major = False
-            else:
-                # Grouped (N<n_envs, routing set at activate) or a single shared tree (n_batches==1, shared by
-                # construction). The non-static per-env case keeps its activate-time identity routing.
-                entry.shared_across_envs = entry.aabb.n_batches < n_envs or n_envs <= 1
+            entry.needs_rebuild = False
 
     def reset(self, envs_idx):
         # A reset may change otherwise-static geometry (re-randomized terrain, teleported obstacles), so force every

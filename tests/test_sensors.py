@@ -1176,16 +1176,12 @@ def test_raycaster_hits(show_viewer, n_envs):
 
 
 @pytest.mark.required
-def test_raycaster_shared_static_bvh(show_viewer):
-    # With RigidOptions.shared_static_raycast_bvh=True, env-identical static collision geometry is allocated as ONE
-    # shared BVH (n_batches=1) read by every env, instead of a per-env tree. Verify the allocation collapses, the
-    # cast is flagged shared, and the distances are finite and identical across envs (they must be, since every env
-    # sees the same geometry from the same sensor pose). The opt-in default (False) and its per-env-set_pos
-    # divergence path are covered by test_lidar_bvh_parallel_env.
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(shared_static_raycast_bvh=True),
-        show_viewer=show_viewer,
-    )
+@pytest.mark.parametrize("n_envs", [0, 4])
+def test_raycaster_shared_static_bvh(show_viewer, n_envs):
+    # Env-identical static collision geometry is automatically allocated as ONE shared BVH (n_batches=1) read by
+    # every env, not a per-env tree. Verify the collapse, the shared-cast flag, and distances that are finite and
+    # (for n_envs>1) identical across envs, since every env sees the same geometry from the same sensor pose.
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(1.0, 0.0, 0.2), fixed=True))
     depth_camera = scene.add_sensor(
@@ -1195,10 +1191,9 @@ def test_raycaster_shared_static_bvh(show_viewer):
             euler_offset=(0.0, 40.0, 0.0),
         )
     )
-    scene.build(n_envs=4)
+    scene.build(n_envs=n_envs)
     scene.step()
 
-    # The single rigid collision BVH collapsed to one shared tree and the cast reads batch 0 for every env.
     (collision_bvh,) = depth_camera._shared_context.bvh_contexts
     assert collision_bvh.aabb.n_batches == 1
     assert collision_bvh.shared_across_envs is True
@@ -1206,57 +1201,101 @@ def test_raycaster_shared_static_bvh(show_viewer):
     distances = depth_camera.read().distances  # (n_envs, H, W)
     assert torch.isfinite(distances).all()
     assert (distances < depth_camera._options.max_range).any()  # some rays hit the box/plane
-    # Identical geometry + identical sensor pose -> every env's depth image matches env 0's.
-    assert torch.equal(distances, distances[:1].expand_as(distances))
+    if n_envs > 1:
+        assert torch.equal(distances, distances[:1].expand_as(distances))
 
 
 @pytest.mark.required
 def test_raycaster_grouped_static_bvh(show_viewer):
-    # With shared_static_raycast_bvh=True and N distinct static variants spread across B envs (N << B), the
-    # collision BVH collapses from B per-env trees to N grouped trees (one per distinct geometry), and each env
-    # casts against its variant's tree. Verify the tree count, the env->group routing, and that the grouped result
-    # is identical to the per-env (flag-off) reference.
+    # N distinct static variants across B envs (N << B) automatically collapse the collision BVH from B per-env
+    # trees to N grouped trees (one per distinct geometry); each env casts against its variant's tree.
     N, B = 3, 12
-    # Three concentric fixed boxes (variants differ by size -> near faces 0.9 / 0.8 / 0.7). Genesis' balanced
-    # variant mapping assigns them to B envs in contiguous blocks (4 envs each here).
+    # Concentric fixed boxes, near faces at 0.9 / 0.8 / 0.7; the balanced variant mapping assigns contiguous blocks.
     variants = (
         gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(1.0, 0.0, 0.5), fixed=True),
         gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(1.0, 0.0, 0.5), fixed=True),
         gs.morphs.Box(size=(0.6, 0.6, 0.6), pos=(1.0, 0.0, 0.5), fixed=True),
     )
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(morph=variants)
+    mount = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, 0.5), fixed=True, collision=False))
+    lidar = scene.add_sensor(
+        gs.sensors.Lidar(
+            entity_idx=mount.idx,
+            pattern=gs.options.sensors.SphericalPattern(n_points=(1, 1), fov=(0.0, 0.0)),
+            max_range=5.0,
+        )
+    )
+    scene.build(n_envs=B)
+    scene.step()
 
-    def build(shared):
-        scene = gs.Scene(
-            rigid_options=gs.options.RigidOptions(shared_static_raycast_bvh=shared),
-            show_viewer=show_viewer,
-        )
-        scene.add_entity(gs.morphs.Plane())
-        scene.add_entity(morph=variants)
-        mount = scene.add_entity(
-            gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, 0.5), fixed=True, collision=False)
-        )
-        lidar = scene.add_sensor(
-            gs.sensors.Lidar(
-                entity_idx=mount.idx,
-                pattern=gs.options.sensors.SphericalPattern(n_points=(1, 1), fov=(0.0, 0.0)),
-                max_range=5.0,
-            )
-        )
-        scene.build(n_envs=B)
-        scene.step()
-        return lidar
-
-    grouped = build(True)
-    collision_bvh = next(e for e in grouped._shared_context.bvh_contexts if e.raycast_mask is None)
+    collision_bvh = next(e for e in lidar._shared_context.bvh_contexts if e.raycast_mask is None)
     assert collision_bvh.aabb.n_batches == N  # B per-env trees collapsed to N
     # Contiguous balanced blocks: envs 0-3 -> variant 0, 4-7 -> 1, 8-11 -> 2.
     assert collision_bvh.env_bvh_idx.tolist() == [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]
-    grouped_d = grouped.read().distances[:, 0, 0]
+    # Each block sees its own variant's near face.
+    d = lidar.read().distances[:, 0, 0]
+    assert_allclose(d[[0, 4, 8]], torch.tensor([0.9, 0.8, 0.7], device=d.device), tol=5e-3)
 
-    per_env_d = build(False).read().distances[:, 0, 0]
-    # Grouped trees give the exact per-env result, and each block sees its own variant's near face.
-    assert torch.equal(grouped_d, per_env_d)
-    assert_allclose(grouped_d[[0, 4, 8]], torch.tensor([0.9, 0.8, 0.7], device=grouped_d.device), tol=5e-3)
+
+@pytest.mark.required
+def test_raycaster_static_bvh_regroups(show_viewer):
+    # A per-env set_pos on a fixed body diverges geometry after build; the static BVH must regroup from the actual
+    # (refreshed) verts so each env reads its own moved geometry, with the tree count tracking distinct geometries:
+    # 1 (identical) -> B (all diverged) -> 1 (reset restores the built geometry).
+    B = 4
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(1.0, 0.0, 0.5), fixed=True))
+    mount = scene.add_entity(gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=(0.0, 0.0, 0.5), fixed=True, collision=False))
+    lidar = scene.add_sensor(
+        gs.sensors.Lidar(
+            entity_idx=mount.idx,
+            pattern=gs.options.sensors.SphericalPattern(n_points=(1, 1), fov=(0.0, 0.0)),
+            max_range=8.0,
+        )
+    )
+    scene.build(n_envs=B)
+    scene.step()
+    collision_bvh = next(e for e in lidar._shared_context.bvh_contexts if e.raycast_mask is None)
+    assert collision_bvh.aabb.n_batches == 1
+
+    box.set_pos(np.array([[1.0, 0.0, 0.5], [2.0, 0.0, 0.5], [3.0, 0.0, 0.5], [4.0, 0.0, 0.5]], dtype=gs.np_float))
+    scene.step()
+    assert collision_bvh.aabb.n_batches == B  # diverged -> one tree per env
+    # Each env reads its own moved box (near face at x-0.2), not env 0's -- the silent-corruption regression guard.
+    assert_allclose(lidar.read().distances[:, 0, 0], torch.tensor([0.8, 1.8, 2.8, 3.8], device=gs.device), tol=5e-3)
+
+    scene.reset()
+    scene.step()
+    assert collision_bvh.aabb.n_batches == 1  # reset restores identical geometry -> back to one shared tree
+
+
+@pytest.mark.required
+def test_raycaster_static_bvh_mixed_fallback(show_viewer):
+    # A movable entity makes the whole rigid solver non-static, so the collision BVH stays per-env (no sharing) --
+    # the automatic, non-silent fallback for a robot-on-static-terrain scene.
+    B = 4
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(1.0, 0.0, 0.2), fixed=True))
+    scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0.0, 0.0, 2.0)))  # free-falling -> movable solver
+    depth_camera = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.raycaster.DepthCameraPattern(res=(8, 8)),
+            pos_offset=(0.0, 0.0, 1.0),
+            euler_offset=(0.0, 40.0, 0.0),
+        )
+    )
+    scene.build(n_envs=B)
+    scene.step()
+
+    collision_bvh = next(e for e in depth_camera._shared_context.bvh_contexts if e.raycast_mask is None)
+    assert collision_bvh.maybe_static is False
+    assert collision_bvh.aabb.n_batches == B  # per-env fallback
+    assert collision_bvh.env_major is False
+    assert torch.isfinite(depth_camera.read().distances).all()
 
 
 @pytest.mark.required
@@ -1469,14 +1508,15 @@ def test_lidar_bvh_parallel_env(show_viewer, tol):
     assert_allclose(lidar_distances, expected_distances, tol=tol)
 
     # All links are fixed, so the collision BVH is static: rebuilt only when a set_pos invalidates it, never on an
-    # ordinary step. The per-env obstacle geometry differs here, so it cannot be shared across envs.
+    # ordinary step. The per-env obstacle geometry differs here, so it groups into one tree per env (no sharing).
     collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)
     assert collision_bvh.maybe_static
     assert not collision_bvh.shared_across_envs
+    assert collision_bvh.aabb.n_batches == 2
 
-    # Make the obstacle geometry identical across envs (sensors still differ in x): the per-env trees become bit-
-    # identical, so the cast switches to the shared path - reading one tree (batch 0) for every env. The set_pos calls
-    # must invalidate the static BVH, otherwise the cast keeps casting against the stale heterogeneous trees.
+    # Make the obstacle geometry identical across envs (sensors still differ in x): the static BVH regroups to a
+    # single shared tree read by every env. The set_pos calls must invalidate it, else the cast keeps using the
+    # stale per-env trees.
     shared_sensor_positions = np.array([[0.0, 0.0, 0.5], [0.5, 0.0, 0.5]], dtype=gs.np_float)
     sensor_mount.set_pos(shared_sensor_positions)
     obstacle_1.set_pos((SHARED_OBSTACLE_1_X, 0.0, 0.5))
@@ -1485,6 +1525,7 @@ def test_lidar_bvh_parallel_env(show_viewer, tol):
     scene.step()
 
     assert collision_bvh.shared_across_envs
+    assert collision_bvh.aabb.n_batches == 1
 
     shared_distances = lidar.read().distances[:, 0, 0]
     shared_expected = min(SHARED_OBSTACLE_1_X - 0.1, SHARED_OBSTACLE_2_X - 0.025) - shared_sensor_positions[:, 0]
@@ -1583,10 +1624,11 @@ def test_raycaster_heterogeneous_object(show_viewer, tol):
     distances = lidar.read().distances[:, 0, 0]
     assert_allclose(distances, (0.9, 0.8, 0.7), tol=5e-3)
 
-    # The per-env trees differ (each masks the other variant), so the cast must not share one tree across envs.
+    # The three variants differ, so the BVH groups into one tree per distinct geometry (3 here) -- not one shared.
     collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)
     assert collision_bvh.maybe_static
     assert not collision_bvh.shared_across_envs
+    assert collision_bvh.aabb.n_batches == 3
 
     # The static BVH is rebuilt only when its geometry actually changes - exactly what is necessary, nothing more: an
     # idle step records no change (rebuild skipped), while a set_pos records a pending change (rebuild scheduled).
