@@ -18,18 +18,14 @@ def func_capsule_capsule_contact(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """
-    Analytical capsule-capsule collision detection.
+    Analytical capsule-capsule collision detection from the two capsule poses (ga_pos/ga_quat, gb_pos/gb_quat) and
+    radii. The poses are passed in rather than read from the geom state so the multi-contact loop can perturb them.
 
     A capsule is defined as a line segment plus a radius (swept sphere).
     Collision between two capsules reduces to:
       1. Find closest points on the two line segments (analytical)
       2. Check if distance < sum of radii
       3. Compute contact point and normal
-
-    Parameters
-    ----------
-    ga_pos, ga_quat : Position and orientation of capsule A (may be perturbed for multi-contact).
-    gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multi-contact).
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -110,7 +106,8 @@ def func_sphere_sphere_contact(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """
-    Analytical sphere-sphere collision detection.
+    Analytical sphere-sphere collision detection from the two sphere centers ga_pos and gb_pos and their radii
+    (the orientations are unused since a sphere is rotation-invariant).
 
     A sphere-sphere collision is a closed form:
       1. Distance between the two centers
@@ -120,11 +117,6 @@ def func_sphere_sphere_contact(
     This avoids routing the pair through the iterative MPR/GJK+EPA path. It is also exactly
     differentiable (no EPA, which fails to converge on the smoothly-curved sphere-sphere
     Minkowski boundary).
-
-    Parameters
-    ----------
-    ga_pos, ga_quat : Position and orientation of sphere A (may be perturbed for multi-contact).
-    gb_pos, gb_quat : Position and orientation of sphere B (may be perturbed for multi-contact).
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -169,17 +161,14 @@ def func_sphere_capsule_contact(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """
-    Analytical sphere-capsule collision detection.
+    Analytical sphere-capsule collision detection from the sphere center ga_pos, the capsule pose (gb_pos, gb_quat),
+    and their radii (the sphere orientation is unused). The poses are passed in rather than read from the geom state
+    so the multi-contact loop can perturb them.
 
     A sphere-capsule collision reduces to:
       1. Find closest point on the capsule's line segment to sphere center
       2. Check if distance < sum of radii
       3. Compute contact point and normal
-
-    Parameters
-    ----------
-    ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multi-contact).
-    gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multi-contact).
     """
     EPS = rigid_global_info.EPS[None]
 
