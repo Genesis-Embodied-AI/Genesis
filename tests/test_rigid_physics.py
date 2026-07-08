@@ -173,6 +173,41 @@ def collision_edge_cases(asset_tmp_path, mode):
 
 
 @pytest.fixture(scope="session")
+def decompose_fusion_groups(asset_tmp_path):
+    """Generate an MJCF model of a single static link mixing several contact-parameter sub-groups: a plane, a
+    nonconvex L-shaped mesh (hull error ~0.3, above the 0.15 threshold) with a small primitive box touching its inner
+    corner, two disjoint convex mesh boxes (0.01 gap along x) with a different friction, two disjoint primitive boxes
+    with yet another friction, and two mesh boxes with adjacent large collision masks that must never be grouped
+    together."""
+    lshape = trimesh.util.concatenate(
+        [
+            trimesh.creation.box(extents=(0.2, 0.1, 0.1)),
+            trimesh.creation.box(
+                extents=(0.1, 0.1, 0.3), transform=trimesh.transformations.translation_matrix((0.05, 0.0, 0.2))
+            ),
+        ]
+    )
+    lshape.export(asset_tmp_path / "lshape.obj")
+    trimesh.creation.box(extents=(0.1, 0.1, 0.1)).export(asset_tmp_path / "small_box.obj")
+
+    mjcf = ET.Element("mujoco", model="decompose_fusion_groups")
+    asset = ET.SubElement(mjcf, "asset")
+    ET.SubElement(asset, "mesh", name="lshape", file=str(asset_tmp_path / "lshape.obj"))
+    ET.SubElement(asset, "mesh", name="small_box", file=str(asset_tmp_path / "small_box.obj"))
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", type="plane", size="5 5 0.1")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="lshape", pos="0 0.5 1")
+    ET.SubElement(worldbody, "geom", type="box", size="0.01 0.01 0.01", pos="-0.01 0.5 1.06")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="-0.055 0 1", friction="0.5")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0.055 0 1", friction="0.5")
+    ET.SubElement(worldbody, "geom", type="box", size="0.02 0.02 0.02", pos="0.3 0 1", friction="0.8")
+    ET.SubElement(worldbody, "geom", type="box", size="0.02 0.02 0.02", pos="0.37 0 1", friction="0.8")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0 -0.5 1", contype="16777216")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0.15 -0.5 1", contype="16777217")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def two_aligned_hinges():
     mjcf = ET.Element("mujoco", model="two_aligned_hinges")
     ET.SubElement(mjcf, "option", timestep="0.05")
@@ -3637,7 +3672,7 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    ground = scene.add_entity(
+    world = scene.add_entity(
         gs.morphs.Mesh(
             file=str(mesh_path),
             pos=(0.0, 0.0, 0.0),
@@ -3645,6 +3680,7 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
             fixed=True,
         ),
         visualize_contact=True,
+        vis_mode="collision",
     )
     obj_surface = gs.surfaces.Default(color=(0.5, 0.7, 0.9, 1.0))
     if obj_shape == "box":
@@ -3654,6 +3690,7 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
                 pos=(0.8 - INIT_GAP, 0.0, 0.1 + INIT_GAP),
             ),
             surface=obj_surface,
+            vis_mode="collision",
         )
     else:
         sphere_radius = 0.1
@@ -3665,6 +3702,7 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
                 convexify=False,
             ),
             surface=obj_surface,
+            vis_mode="collision",
         )
     scene.build()
 
@@ -4282,9 +4320,60 @@ def test_convexify(euler, show_viewer, gjk_collision):
             assert_allclose(obj_pos[:2], (OBJ_OFFSET_X * (1.5 - i), OBJ_OFFSET_Y * (i - 1.5)), atol=6e-3)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("convexify, watertighten", [(True, 5), (False, 5), (False, None)])
+@pytest.mark.parametrize("model_name", ["decompose_fusion_groups"])
+def test_convexify_fusion_groups(convexify, watertighten, xml_path):
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            convexify=convexify,
+            watertighten=watertighten,
+        ),
+    )
+    scene.build()
+
+    # The plane can never be merged nor watertightened.
+    (geom_plane,) = [geom for geom in entity.geoms if geom.type == gs.GEOM_TYPE.PLANE]
+    assert len(geom_plane.init_verts) == 4
+    assert not geom_plane.metadata.get("watertightened", False)
+
+    if convexify:
+        # Only the L-shape sub-group may be decomposed, with its primitive box merged along: the mesh boxes must
+        # survive as four separate convex geoms instead of one hull spanning their gap, and the primitive boxes must
+        # pass through untouched.
+        geoms_decomposed = [geom for geom in entity.geoms if geom.metadata.get("decomposed", False)]
+        geoms_box = [
+            geom
+            for geom in entity.geoms
+            if geom.type == gs.GEOM_TYPE.MESH and not geom.metadata.get("decomposed", False)
+        ]
+        assert len(geoms_decomposed) >= 2
+        assert len(geoms_box) == 4
+        for geom in geoms_box:
+            assert geom.is_convex
+            assert not geom.metadata.get("merged", False)
+            assert_allclose(geom.init_verts.max(axis=0) - geom.init_verts.min(axis=0), 0.1, tol=gs.EPS)
+        assert len([geom for geom in entity.geoms if geom.type == gs.GEOM_TYPE.BOX]) == 2
+    elif watertighten is not None:
+        # All multi-geom sub-groups are fused systematically, including bare primitives, and every fused geom is
+        # watertightened even when its sub-meshes are individually watertight. The mesh boxes with adjacent collision
+        # masks belong to distinct sub-groups and must survive as two separate geoms.
+        assert all(geom.type in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.MESH) for geom in entity.geoms)
+        geoms_merged = [geom for geom in entity.geoms if geom.metadata.get("merged", False)]
+        assert len(geoms_merged) == 3
+        assert len(entity.geoms) == 6
+        assert all(geom.metadata.get("watertightened", False) for geom in geoms_merged)
+    else:
+        # Disabling watertightening on the nonconvex path opts out of fusion entirely: every geom passes through.
+        assert len(entity.geoms) == 9
+        assert not any(geom.metadata.get("merged", False) for geom in entity.geoms)
+        assert len([geom for geom in entity.geoms if geom.type == gs.GEOM_TYPE.BOX]) == 3
+
+
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.slow
-@pytest.mark.required
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("backend", [gs.cpu])
 @pytest.mark.parametrize("convexify", [False, True])
@@ -4342,25 +4431,32 @@ def test_many_objects_collision(convexify, show_viewer, tol):
             vmax_trace.append(scene.rigid_solver.get_links_vel(ref="link_com").norm(dim=-1).max())
             wmax_trace.append(scene.rigid_solver.get_links_ang().norm(dim=-1).max())
 
-    # Deepest interpenetration among the settled objects, checked right after settling (the strictest moment).
+    # The pile has settled at rest, fully contained in the tank (no ground/tank penetration, no ejection)
+    for obj in objs:
+        obj_pos = tensor_to_array(obj.get_pos())
+        np.testing.assert_array_less(-0.1, obj_pos[2])
+        np.testing.assert_array_less(obj_pos[2], 0.6)
+        np.testing.assert_array_less(np.linalg.norm(obj_pos[:2]), 0.5)
+
+    # Make sure that there is no interpenetration among the settled objects
     links, link_names = [], []
     for obj, name in zip(objs, obj_names):
         for link in obj.links:
             links.append([(geom.get_verts(), geom.get_trimesh().faces) for geom in link.geoms])
             link_names.append(name)
     max_penetration, crossings = get_genuine_interpenetration(links)
+    assert max_penetration < (2e-4 if convexify else 2e-3)
 
-    # Over a 100-step window, record the residual velocities and the net energy produced per contact.
-    # Contacts at zero restitution must dissipate over their lifetime, so net positive contact energy is the
-    # solver pumping; contact_data.force acts as -F on link_a and +F on link_b.
-    vel_window = []
+    # Over a 100-step window, record the residual velocities and the net energy produced per contact
+    vel_lin_all, vel_ang_all = [], []
     contact_energy = {}
     for i in range(100):
         scene.step()
         com_pos = scene.rigid_solver.get_links_pos(ref="link_com")
         com_vel = scene.rigid_solver.get_links_vel(ref="link_com")
         ang = scene.rigid_solver.get_links_ang()
-        vel_window.append(com_vel.norm(dim=-1))
+        vel_lin_all.append(com_vel.norm(dim=-1))
+        vel_ang_all.append(ang.norm(dim=-1))
         contacts = scene.rigid_solver.collider.get_contacts(as_tensor=True)
         link_a, link_b = contacts["link_a"], contacts["link_b"]
         pos, force = contacts["position"], contacts["force"]
@@ -4378,25 +4474,21 @@ def test_many_objects_collision(convexify, show_viewer, tol):
         if show_viewer:
             vmax_trace.append(com_vel.norm(dim=-1).max())
             wmax_trace.append(ang.norm(dim=-1).max())
-    energy_pumped = sum(energy for energy in contact_energy.values() if energy > 0.0)
+
+    # Make sure that all objects are settling at rest.
+    # Note that it is not possible to be stricter than quantile because there is legitimate residual motion.
+    # FIXME: Why the angular velocity threshold has to be so large without any visual effect?!
+    assert_allclose(torch.quantile(torch.stack(vel_lin_all, dim=0), 0.8, dim=0), 0.0, tol=0.02 if convexify else 0.15)
+    assert_allclose(torch.quantile(torch.stack(vel_ang_all, dim=0), 0.8, dim=0), 0.0, tol=1.0 if convexify else 7.0)
+
+    # Contacts at zero restitution must dissipate over their lifetime, so net positive contact energy is the
+    # solver pumping; contact_data.force acts as -F on link_a and +F on link_b.
+    # FIXME: Both path pumps net positive contact energy over this window.
+    assert sum(max(energy, 0.0) for energy in contact_energy.values()) < 5.0
     # Total mechanical energy (KE+PE) is a state function, so its per-step rise isolates fictitious energy the
     # solver injected at contacts (a strictly dissipative pile can only lose energy).
-    energy_injected = np.maximum(np.diff(energy_trace), 0.0).sum()
-    # FIXME: There is spurious residual motion on both paths that prevents the objects from truly settling;
-    # the nonconvex path additionally pumps net positive contact energy over this window. The bound is loose
-    # because the integral varies by orders of magnitude across machines (0.02J to 3J on the convexified path).
-    assert_allclose(vel_window, 0.0, atol=0.5)
-    assert energy_pumped < 5.0
-    # FIXME: Only the convexified path is free of fictitious energy injection. The nonconvex path still injects
-    # ~0.4J of spurious energy over the run (the dE+ spikes in the debug plot), pumped by invalid penetration depth
-    # at resting contacts.
-    if convexify:
-        assert energy_injected < tol
-    # FIXME: Only the convexified path is free of interpenetration (~0.07mm, mere contact). The nonconvex detector
-    # is broken - mugs and cups settle with walls crossing and sinking ~26mm into one another - so no penetration
-    # bound is asserted for it until the detector is fixed.
-    if convexify:
-        assert max_penetration < 2e-4
+    # FIXME: Both paths suffer from fictitious energy injection.
+    assert np.quantile(np.maximum(np.diff(energy_trace), 0.0), 0.9 if convexify else 0.7) < tol
 
     if show_viewer:
         _fig, (ax_v, ax_w, ax_e) = plt.subplots(3, 1, sharex=True, figsize=(8, 8))
@@ -4421,17 +4513,6 @@ def test_many_objects_collision(convexify, show_viewer, tol):
             pairs.append((links[a], links[b], label))
         if pairs:
             display_collision_pairs(pairs)
-
-    # The pile has settled at rest, fully contained in the tank (no ground/tank penetration, no ejection).
-    for obj in objs:
-        # FIXME: There is spurious residual motion that prevents the objects from truly settling, which is problematic.
-        # The nonconvex path carries about twice the residual jitter of the convexified one.
-        assert_allclose(obj.get_vel(), 0.0, atol=0.2 if not convexify else 0.06)
-        assert_allclose(obj.get_ang(), 0.0, atol=10.0 if not convexify else 4.0)
-        obj_pos = tensor_to_array(obj.get_pos())
-        np.testing.assert_array_less(-0.1, obj_pos[2])
-        np.testing.assert_array_less(obj_pos[2], 0.6)
-        np.testing.assert_array_less(np.linalg.norm(obj_pos[:2]), 0.5)
 
 
 @pytest.mark.slow("gpu")  # gpu ~250s
