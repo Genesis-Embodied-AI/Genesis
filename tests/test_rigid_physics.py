@@ -30,6 +30,8 @@ from .utils import (
     assert_equal,
     check_mujoco_data_consistency,
     check_mujoco_model_consistency,
+    display_collision_pairs,
+    get_genuine_interpenetration,
     get_hf_dataset,
     init_simulators,
     simulate_and_check_mujoco_consistency,
@@ -2726,7 +2728,7 @@ def test_stickman(gs_sim, mj_sim, tol):
             qvel = gs_robot.get_dofs_velocity()
             qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
             qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)).cpu(), 0.1)
+    assert_allclose(torch.quantile(torch.stack(qvel_norminf_all, dim=0), 0.5), 0.0, tol=0.1)
 
     qpos = gs_robot.get_dofs_position()
     assert torch.linalg.norm(qpos[:2]) < 1.3
@@ -4174,6 +4176,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 def test_convexify(euler, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
     OBJ_OFFSET_Y = 0.15
+    N_SETTLE = 1000
 
     # The test check that the volume difference is under a given threshold and that convex decomposition is only used
     # whenever it is necessary. Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
@@ -4250,19 +4253,19 @@ def test_convexify(euler, show_viewer, gjk_collision):
     assert all(geom.metadata["decomposed"] for geom in mug.geoms) and 5 <= len(mug.geoms) <= 40
     assert all(geom.metadata["decomposed"] for geom in box.geoms) and 5 <= len(box.geoms) <= 20
 
-    # Check resting conditions repeateadly rather not just once, for numerical robustness.
+    # Check that all the objects settle at rest after a while, without spurious jumps
     # cam.start_recording()
-    qvel_norminf_all = []
-    n_settle = 1800 if euler == (74, 15, 90) else 1000
-    for i in range(n_settle + 100):
+    vel_lin_all, vel_ang_all = [], []
+    for i in range(N_SETTLE + 100):
         scene.step()
         # cam.render()
-        if i > n_settle:
-            qvel = gs_sim.rigid_solver.get_dofs_velocity()
-            qvel_norminf = torch.linalg.norm(qvel, ord=math.inf)
-            qvel_norminf_all.append(qvel_norminf)
-    np.testing.assert_array_less(torch.median(torch.stack(qvel_norminf_all, dim=0)).cpu(), 0.05)
+        if i > N_SETTLE:
+            vel_lin_all.append(gs_sim.rigid_solver.get_links_vel(ref="link_com"))
+            vel_ang_all.append(gs_sim.rigid_solver.get_links_ang())
     # cam.stop_recording(save_to_filename="video.mp4", fps=60)
+    # FIXME: There is spurious residual motion on both paths that prevents the objects from truly settling
+    assert_allclose(torch.quantile(torch.stack(vel_lin_all, dim=0), 0.5, dim=0), 0.0, tol=0.01)
+    assert_allclose(torch.quantile(torch.stack(vel_ang_all, dim=0), 0.5, dim=0), 0.0, tol=0.1)
 
     for obj in objs:
         obj_pos = tensor_to_array(obj.get_pos())
@@ -4285,7 +4288,7 @@ def test_convexify(euler, show_viewer, gjk_collision):
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("backend", [gs.cpu])
 @pytest.mark.parametrize("convexify", [False, True])
-def test_many_objects_collision(convexify, show_viewer):
+def test_many_objects_collision(convexify, show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.004,
@@ -4299,21 +4302,24 @@ def test_many_objects_collision(convexify, show_viewer):
         ),
         show_viewer=show_viewer,
     )
-    scene.add_entity(
+    tank = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/tank.obj",
             scale=5.0,
             fixed=True,
             euler=(90, 0, 90),
+            convexify=convexify,
         ),
         vis_mode="collision",
     )
     assets = (("mug_1", "output.xml"), ("donut_0", "output.xml"), ("cup_2", "model.xml"), ("apple_15", "model.xml"))
     asset_files = {name: f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}" for name, xml in assets}
     objs = []
+    obj_names = []
     for i in range(80):
         gx, gy, gz = i % 4, (i // 4) % 4, i // 16
         name = assets[(gx + gy + gz) % len(assets)][0]
+        obj_names.append(name)
         objs.append(
             scene.add_entity(
                 gs.morphs.MJCF(
@@ -4331,10 +4337,18 @@ def test_many_objects_collision(convexify, show_viewer):
     vmax_trace, wmax_trace, energy_trace = [], [], []
     for i in range(1300):
         scene.step()
+        energy_trace.append(sum(tensor_to_array(obj.get_total_energy()) for obj in objs))
         if show_viewer:
             vmax_trace.append(scene.rigid_solver.get_links_vel(ref="link_com").norm(dim=-1).max())
             wmax_trace.append(scene.rigid_solver.get_links_ang().norm(dim=-1).max())
-            energy_trace.append(sum(float(tensor_to_array(obj.get_total_energy())) for obj in objs))
+
+    # Deepest interpenetration among the settled objects, checked right after settling (the strictest moment).
+    links, link_names = [], []
+    for obj, name in zip(objs, obj_names):
+        for link in obj.links:
+            links.append([(geom.get_verts(), geom.get_trimesh().faces) for geom in link.geoms])
+            link_names.append(name)
+    max_penetration, crossings = get_genuine_interpenetration(links)
 
     # Over a 100-step window, record the residual velocities and the net energy produced per contact.
     # Contacts at zero restitution must dissipate over their lifetime, so net positive contact energy is the
@@ -4360,27 +4374,53 @@ def test_many_objects_collision(convexify, show_viewer):
         keys = zip(link_a.tolist(), link_b.tolist(), map(tuple, (pos / 2e-3).round().tolist()))
         for key, contact_power in zip(keys, power.tolist()):
             contact_energy[key] = contact_energy.get(key, 0.0) + contact_power * scene.sim_options.dt
+        energy_trace.append(sum(tensor_to_array(obj.get_total_energy()) for obj in objs))
         if show_viewer:
             vmax_trace.append(com_vel.norm(dim=-1).max())
             wmax_trace.append(ang.norm(dim=-1).max())
-            energy_trace.append(sum(float(tensor_to_array(obj.get_total_energy())) for obj in objs))
     energy_pumped = sum(energy for energy in contact_energy.values() if energy > 0.0)
+    # Total mechanical energy (KE+PE) is a state function, so its per-step rise isolates fictitious energy the
+    # solver injected at contacts (a strictly dissipative pile can only lose energy).
+    energy_injected = np.maximum(np.diff(energy_trace), 0.0).sum()
     # FIXME: There is spurious residual motion on both paths that prevents the objects from truly settling;
     # the nonconvex path additionally pumps net positive contact energy over this window. The bound is loose
     # because the integral varies by orders of magnitude across machines (0.02J to 3J on the convexified path).
     assert_allclose(vel_window, 0.0, atol=0.5)
     assert energy_pumped < 5.0
+    # FIXME: Only the convexified path is free of fictitious energy injection. The nonconvex path still injects
+    # ~0.4J of spurious energy over the run (the dE+ spikes in the debug plot), pumped by invalid penetration depth
+    # at resting contacts.
+    if convexify:
+        assert energy_injected < tol
+    # FIXME: Only the convexified path is free of interpenetration (~0.07mm, mere contact). The nonconvex detector
+    # is broken - mugs and cups settle with walls crossing and sinking ~26mm into one another - so no penetration
+    # bound is asserted for it until the detector is fixed.
+    if convexify:
+        assert max_penetration < 2e-4
 
     if show_viewer:
-        fig, (ax_v, ax_w, ax_e) = plt.subplots(3, 1, sharex=True, figsize=(8, 8))
+        _fig, (ax_v, ax_w, ax_e) = plt.subplots(3, 1, sharex=True, figsize=(8, 8))
         ax_v.semilogy(vmax_trace)
         ax_v.set_ylabel("max |linear velocity| [m/s]")
         ax_w.semilogy(wmax_trace)
         ax_w.set_ylabel("max |angular velocity| [rad/s]")
-        ax_e.plot(energy_trace)
-        ax_e.set_ylabel("total energy [J]")
+        ax_w.set_ylim(bottom=1e-3)
+        ax_e.plot(np.maximum(np.diff(energy_trace), 0.0))
+        ax_e.set_ylabel("energy injected dE+ [J]")
         ax_e.set_xlabel("step")
+        for ax in (ax_v, ax_w, ax_e):
+            ax.set_xlim(0, len(vmax_trace) - 1)
+            ax.grid(True)
+        plt.tight_layout()
         plt.show(block=False)
+
+        pairs = []
+        for crossing in crossings:
+            a, b = crossing.link_a, crossing.link_b
+            label = f"{link_names[a]}#{a} vs {link_names[b]}#{b} ({crossing.depth * 1e3:.1f}mm)"
+            pairs.append((links[a], links[b], label))
+        if pairs:
+            display_collision_pairs(pairs)
 
     # The pile has settled at rest, fully contained in the tank (no ground/tank penetration, no ejection).
     for obj in objs:

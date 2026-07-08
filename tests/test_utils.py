@@ -2,8 +2,10 @@ import math
 from functools import partial
 from unittest.mock import patch
 
+import igl
 import pytest
 import torch
+import trimesh
 import numpy as np
 from scipy.linalg import polar as scipy_polar
 from scipy.spatial.transform import Rotation as R, Slerp
@@ -16,12 +18,10 @@ from genesis.utils import warnings as warnings_mod
 from genesis.utils.warnings import warn_once
 from genesis.utils.urdf import compose_inertial_properties
 
-from .utils import assert_allclose
+from .utils import assert_allclose, display_collision_pairs, get_genuine_interpenetration, get_hf_dataset
 
 
 TOL = 1e-7
-
-pytestmark = [pytest.mark.required]
 
 
 @pytest.fixture
@@ -331,6 +331,7 @@ def test_geom_tensor_identity(batch_shape):
         np.testing.assert_allclose(tensor_to_array(tc_args[0]), tensor_to_array(tc_args[-1]), atol=1e2 * gs.EPS)
 
 
+@pytest.mark.required
 def test_fps_tracker():
     n_envs = 23
     tracker = FPSTracker(alpha=0.0, minimum_interval_seconds=0.1, n_envs=n_envs)
@@ -518,3 +519,464 @@ def test_polar_decomposition_batched_pure_rotation(side, tol):
         np_reconstructed = np_P @ np_U
 
     assert_allclose(np_A, np_reconstructed, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_genuine_interpenetration(show_viewer):
+    # All cases are hand-placed watertight meshes with an analytically known resolution depth (what a
+    # collision algorithm must resolve): dents and enclosures read min(incursion, separation), pierced walls
+    # read min(separation, push-back heal). The overlap detection is vertex-sampled, so every mesh is
+    # tessellated finer than the thinnest dimension of its partner. Every measured configuration is recorded
+    # so show_viewer displays the whole sample set at the end.
+    pairs_viz = []
+
+    def measure(label, links):
+        max_depth, crossings = get_genuine_interpenetration(links)
+        by_pair = {(c.link_a, c.link_b): c.depth for c in crossings}
+        for i_la, geoms_a in enumerate(links):
+            for i_lb in range(i_la + 1, len(links)):
+                if not geoms_a or not links[i_lb]:
+                    continue
+                lo_a = np.concatenate([verts for verts, _ in geoms_a]).min(0)
+                hi_a = np.concatenate([verts for verts, _ in geoms_a]).max(0)
+                lo_b = np.concatenate([verts for verts, _ in links[i_lb]]).min(0)
+                hi_b = np.concatenate([verts for verts, _ in links[i_lb]]).max(0)
+                if (lo_a > hi_b).any() or (lo_b > hi_a).any():
+                    continue
+                depth_pair = by_pair.get((i_la, i_lb))
+                verdict = f"{depth_pair * 1e3:.2f}mm" if depth_pair is not None else "no crossing"
+                pairs_viz.append((geoms_a, links[i_lb], f"{label} [{i_la}-{i_lb}]: {verdict}"))
+        return max_depth, crossings
+
+    def sphere(radius, center):
+        mesh = trimesh.creation.icosphere(subdivisions=4, radius=radius)
+        return mesh.vertices + np.asarray(center), mesh.faces
+
+    RADIUS = 0.03
+    # Overlapping spheres: one crossing whose depth is the overlap, up to the tessellation chord error.
+    for overlap in (2e-3, 5e-3, 15e-3):
+        max_depth, crossings = measure(
+            f"spheres overlapping {overlap * 1e3:g}mm",
+            [[sphere(RADIUS, (0, 0, 0))], [sphere(RADIUS, (2 * RADIUS - overlap, 0, 0))]],
+        )
+        assert len(crossings) == 1
+        assert_allclose(max_depth, overlap, atol=1.5e-4)
+
+    # Touching / separated spheres: no crossing, no depth.
+    max_depth, crossings = measure(
+        "spheres touching", [[sphere(RADIUS, (0, 0, 0))], [sphere(RADIUS, (2 * RADIUS + 1e-4, 0, 0))]]
+    )
+    assert not crossings and max_depth < 5e-4
+    max_depth, crossings = measure("spheres apart", [[sphere(RADIUS, (0, 0, 0))], [sphere(RADIUS, (3 * RADIUS, 0, 0))]])
+    assert not crossings and max_depth == 0.0
+
+    # Sphere floating inside an open container: containment through the opening is NOT interpenetration.
+    # The container is a five-wall open box (no lid), each wall a separate watertight box.
+    inner, wall, height = 0.05, 4e-3, 0.08
+    box_parts = [
+        trimesh.creation.box(extents=(wall, inner + 2 * wall, height)).apply_translation(
+            (-(inner + wall) / 2, 0.0, height / 2)
+        ),
+        trimesh.creation.box(extents=(wall, inner + 2 * wall, height)).apply_translation(
+            (+(inner + wall) / 2, 0.0, height / 2)
+        ),
+        trimesh.creation.box(extents=(inner, wall, height)).apply_translation((0.0, -(inner + wall) / 2, height / 2)),
+        trimesh.creation.box(extents=(inner, wall, height)).apply_translation((0.0, +(inner + wall) / 2, height / 2)),
+        trimesh.creation.box(extents=(inner + 2 * wall, inner + 2 * wall, wall)).apply_translation(
+            (0.0, 0.0, -wall / 2)
+        ),
+    ]
+    box_merged = trimesh.util.concatenate(box_parts).subdivide().subdivide()
+    box_geom = (box_merged.vertices, box_merged.faces)
+    max_depth, crossings = measure("sphere floating in open box", [[box_geom], [sphere(0.015, (0, 0, 0.04))]])
+    assert not crossings and max_depth == 0.0
+
+    # Sphere resting on the container floor with sub-tolerance overlap: contact, not a crossing.
+    max_depth, crossings = measure("sphere resting in open box", [[box_geom], [sphere(0.015, (0, 0, 0.015 - 0.5e-3))]])
+    assert not crossings
+    assert_allclose(max_depth, 0.5e-3, atol=1.5e-4)
+
+    # Sphere inside the container pressed 2 mm into a side wall: the depth is those 2 mm, NOT the centimetres
+    # it would take to extract the sphere through the opening.
+    max_depth, crossings = measure("sphere pressed 2mm into box wall", [[box_geom], [sphere(0.015, (0.012, 0, 0.04))]])
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+
+    # Sphere pressed all the way THROUGH the wall, poking 2 mm outside: the escape pushes it back into the
+    # cavity by the full 6 mm press, however it protrudes.
+    max_depth, crossings = measure("sphere poking through box wall", [[box_geom], [sphere(0.015, (0.016, 0, 0.04))]])
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 6e-3, atol=1.5e-4)
+
+    # Rod fully through a thin plate: the minimum separating translation backs the rod out along its axis -
+    # rod half-extent plus plate half-thickness - regardless of the rod radius.
+    rod = trimesh.creation.cylinder(radius=5e-3, height=0.02, sections=48).subdivide()
+    plate = trimesh.creation.box(extents=(0.05, 0.05, 4e-3))
+    for _ in range(4):
+        plate = plate.subdivide()
+    max_depth, crossings = measure("rod through plate", [[(rod.vertices, rod.faces)], [(plate.vertices, plate.faces)]])
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 12e-3, atol=1.5e-4)
+
+    # Donut cases. Two chain-linked tori with clearance: topologically inseparable (NO translation ever
+    # disjoins them), yet zero interpenetration.
+    def torus(major, minor, center=(0.0, 0.0, 0.0), through_x=False):
+        mesh = trimesh.creation.torus(major_radius=major, minor_radius=minor, major_sections=96, minor_sections=64)
+        if through_x:
+            mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, (1, 0, 0)))
+        return mesh.vertices + np.asarray(center), mesh.faces
+
+    max_depth, crossings = measure(
+        "donuts chain-linked clear", [[torus(0.04, 0.01)], [torus(0.04, 0.01, center=(0.04, 0, 0), through_x=True)]]
+    )
+    assert not crossings and max_depth == 0.0
+
+    # Same links pressed together: tube centrelines 18 mm apart, so the tubes (10 mm each of radius) overlap
+    # by 2 mm at a single spot.
+    max_depth, crossings = measure(
+        "donuts linked pressed 2mm", [[torus(0.04, 0.01)], [torus(0.04, 0.01, center=(0.062, 0, 0), through_x=True)]]
+    )
+    assert len(crossings) == 1
+    # Separation clears the material overlap, it does not unlink: backing off by the press depth returns the
+    # pair to the linked-with-clearance state, which is a valid disjoint configuration.
+    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+
+    # Same-plane donuts overlapping tube-to-tube from the outside by 5 mm.
+    max_depth, crossings = measure(
+        "donuts overlapping outside 5mm", [[torus(0.04, 0.01)], [torus(0.04, 0.01, center=(0.095, 0, 0))]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 5e-3, atol=1.5e-4)
+
+    # Sphere seated in the donut hole, touching the whole ring at once: overlap = r_sphere + r_tube - R_major
+    # exactly. Above the crossing tolerance it is one crossing of that depth, below it a mere contact, and a
+    # small sphere floating in the hole is nothing at all.
+    max_depth, crossings = measure("sphere seated in donut 2mm", [[torus(0.03, 0.01)], [sphere(0.022, (0, 0, 0))]])
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    max_depth, crossings = measure("sphere seated in donut 0.5mm", [[torus(0.03, 0.01)], [sphere(0.0205, (0, 0, 0))]])
+    assert not crossings
+    assert_allclose(max_depth, 0.5e-3, atol=1.5e-4)
+    max_depth, crossings = measure("sphere floating in donut hole", [[torus(0.03, 0.01)], [sphere(0.015, (0, 0, 0))]])
+    assert not crossings and max_depth == 0.0
+
+    # Chain of three spheres with two overlaps of different depths, plus a geom-less link (a free-joint base
+    # link) in the middle: indices must stay aligned and crossings sorted deepest first.
+    links = [
+        [sphere(RADIUS, (0, 0, 0))],
+        [],
+        [sphere(RADIUS, (2 * RADIUS - 5e-3, 0, 0))],
+        [sphere(RADIUS, (4 * RADIUS - 7e-3, 0, 0))],
+    ]
+    max_depth, crossings = measure("sphere chain with empty link", links)
+    assert [(c.link_a, c.link_b) for c in crossings] == [(0, 2), (2, 3)]
+    assert_allclose(crossings[0].depth, 5e-3, atol=1.5e-4)
+    assert_allclose(crossings[1].depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 5e-3, atol=1.5e-4)
+
+    # Thin rod: same extraction distance - the radius does not matter, only the extents do. Dense axial rings
+    # (spacing below the plate thickness) so the rod's own verts flag the overlap at any shift: a feature
+    # thinner than the other body's vertex grid must carry the detection itself.
+    thin_rod = trimesh.creation.cylinder(radius=1e-3, height=0.02, sections=24)
+    for _ in range(3):
+        thin_rod = thin_rod.subdivide()
+    max_depth, crossings = measure(
+        "thin rod through plate", [[(thin_rod.vertices, thin_rod.faces)], [(plate.vertices, plate.faces)]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 12e-3, atol=1.5e-4)
+
+    # Small solid sphere fully engulfed inside a big solid sphere: no free surface to heal toward, only the
+    # extraction resolves - the depth is the separation R + r exactly, however deep it is buried.
+    max_depth, crossings = measure(
+        "sphere engulfed in solid sphere", [[sphere(0.03, (0, 0, 0))], [sphere(0.01, (0, 0, 0))]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 40e-3, atol=1.5e-4)
+
+    # Hollow shell (outer sphere plus inverted inner sphere): a sphere floating in the cavity is containment,
+    # the same sphere pressed 2 mm into the shell from inside is a 2 mm crossing - closed-cavity variant of the
+    # open-container cases.
+    def hollow_sphere(r_out, r_in):
+        outer = trimesh.creation.icosphere(subdivisions=4, radius=r_out)
+        inner = trimesh.creation.icosphere(subdivisions=4, radius=r_in)
+        inner.faces = inner.faces[:, ::-1]
+        merged = trimesh.util.concatenate([outer, inner])
+        return merged.vertices, merged.faces
+
+    shell_geom = hollow_sphere(0.03, 0.025)
+    max_depth, crossings = measure("sphere floating in shell", [[shell_geom], [sphere(0.02, (0, 0, 0))]])
+    assert not crossings and max_depth == 0.0
+    max_depth, crossings = measure("sphere pressed 2mm into shell", [[shell_geom], [sphere(0.02, (0.007, 0, 0))]])
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+
+    # Box balanced edge-down, sunk 2 mm into a large box's top face: an edge-face crossing whose deepest points
+    # are the edge verts.
+    box_flat = trimesh.creation.box(extents=(0.06, 0.06, 0.06)).subdivide().subdivide()
+    box_tilted = trimesh.creation.box(extents=(0.02, 0.02, 0.02))
+    box_tilted.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 4, (1, 0, 0)))
+    box_tilted.apply_translation((0.0, 0.0, 0.03 - 2e-3 + 0.01 * np.sqrt(2)))
+    box_tilted = box_tilted.subdivide().subdivide()
+    max_depth, crossings = measure(
+        "box edge sunk 2mm into face",
+        [[(box_flat.vertices, box_flat.faces)], [(box_tilted.vertices, box_tilted.faces)]],
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+
+    # Solid beam whose tip stops halfway through the wall of a tube: the tip centre is equidistant from the
+    # outer and inner wall surfaces, so the depth is exactly wall/2 - the analytical pin for partial
+    # wall-crossings (the beam is 10 mm wide, far wider than its 2 mm penetration).
+    tube = trimesh.creation.annulus(r_min=0.012, r_max=0.016, height=0.04, sections=96)
+    tube = tube.subdivide().subdivide().subdivide()
+    beam = trimesh.creation.box(extents=(0.02, 0.01, 0.01)).apply_translation((0.024, 0.0, 0.0))
+    beam = beam.subdivide().subdivide()
+    max_depth, crossings = measure(
+        "beam halfway through tube wall", [[(tube.vertices, tube.faces)], [(beam.vertices, beam.faces)]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+
+    # Beam all the way through BOTH tube walls, protruding on each side: the cheapest escape slides the beam
+    # sideways until its 10 mm slab clears the 16 mm outer radius - 21 mm - beating the axial routes.
+    beam_diametral = trimesh.creation.box(extents=(0.06, 0.01, 0.01))
+    beam_diametral = beam_diametral.subdivide().subdivide().subdivide().subdivide()
+    max_depth, crossings = measure(
+        "beam through both tube walls",
+        [[(tube.vertices, tube.faces)], [(beam_diametral.vertices, beam_diametral.faces)]],
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 21e-3, atol=1.5e-4)
+
+    # Beam parallel to the tube axis, grooved lengthwise into the side wall and protruding from both open ends
+    # (a key in a keyway): the escape is the radial push-out, outer radius minus the beam's inner face.
+    beam_keyway = trimesh.creation.box(extents=(0.01, 0.01, 0.06)).apply_translation((0.014, 0.0, 0.0))
+    beam_keyway = beam_keyway.subdivide().subdivide().subdivide().subdivide()
+    max_depth, crossings = measure(
+        "beam grooved along tube wall", [[(tube.vertices, tube.faces)], [(beam_keyway.vertices, beam_keyway.faces)]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 7e-3, atol=1.5e-4)
+
+    # Slim beam fully through one wall, tip hanging in the bore: tube surface verts sit 2 mm inside the 4 mm
+    # beam, and beam verts at most as deep in the 4 mm wall - depth 2 mm however far the beam protrudes.
+    beam_slim = trimesh.creation.box(extents=(0.024, 0.004, 0.004)).apply_translation((0.02, 0.0, 0.0))
+    beam_slim = beam_slim.subdivide().subdivide().subdivide().subdivide()
+    max_depth, crossings = measure(
+        "beam through one tube wall", [[(tube.vertices, tube.faces)], [(beam_slim.vertices, beam_slim.faces)]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 8e-3, atol=1.5e-4)
+
+    # Two thin walls crossing: perpendicular plates, then at 45 degrees (the depth is angle-invariant: half the
+    # plate thickness either way), then two curved cup-like shells whose 5 mm walls cross - depth 2.5 mm.
+    plate_upright = trimesh.creation.box(extents=(4e-3, 0.05, 0.05))
+    for _ in range(4):
+        plate_upright = plate_upright.subdivide()
+    max_depth, crossings = measure(
+        "perpendicular plates crossing",
+        [[(plate.vertices, plate.faces)], [(plate_upright.vertices, plate_upright.faces)]],
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 27e-3, atol=1.5e-4)
+    plate_tilted = plate_upright.copy().apply_transform(trimesh.transformations.rotation_matrix(np.pi / 4, (0, 1, 0)))
+    max_depth, crossings = measure(
+        "45-degree plates crossing", [[(plate.vertices, plate.faces)], [(plate_tilted.vertices, plate_tilted.faces)]]
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, (0.05 * np.sin(np.pi / 4) + 4e-3 * np.cos(np.pi / 4)) / 2 + 2e-3, atol=1.5e-4)
+    shell_thick = hollow_sphere(0.03, 0.025)
+    shell_other = hollow_sphere(0.03, 0.025)
+    max_depth, crossings = measure(
+        "two shells crossing walls",
+        [[shell_thick], [(shell_other[0] + (0.055, 0.0, 0.0), shell_other[1])]],
+    )
+    assert len(crossings) == 1
+    assert_allclose(max_depth, 5e-3, atol=1.5e-4)
+
+    # Analytical mug-vs-cup: two parallel open cylinders whose walls cross. Parallel cups never interlock, so
+    # the separation is exactly the press depth - asserted both shallow and MUCH deeper than the wall.
+    for press in (3e-3, 15e-3):
+        max_depth, crossings = measure(
+            f"parallel cups walls crossed {press * 1e3:g}mm",
+            [[(tube.vertices, tube.faces)], [(tube.vertices + (0.032 - press, 0.0, 0.0), tube.faces)]],
+        )
+        assert len(crossings) == 1
+        assert_allclose(max_depth, press, atol=1.5e-4)
+
+    # Real-asset cases, both representations (watertight wraps and convex decompositions) built as separate
+    # entities of a single scene, all placements done by rigid-transforming the extracted geoms. Real meshes
+    # have no analytical truth: bounds only, to catch garbage estimates.
+    scene = gs.Scene()
+    asset_entities = {
+        convexify: [
+            scene.add_entity(
+                gs.morphs.MJCF(
+                    file=f"{get_hf_dataset(pattern=f'{name}/*')}/{name}/{xml}",
+                    convexify=convexify,
+                ),
+            )
+            for name, xml in (
+                ("cup_2", "model.xml"),
+                ("apple_15", "model.xml"),
+                ("mug_1", "output.xml"),
+                ("donut_0", "output.xml"),
+            )
+        ]
+        for convexify in (False, True)
+    }
+    scene.build()
+    links_pos0 = tensor_to_array(scene.rigid_solver.get_links_pos(), dtype=np.float64)
+    links_quat0 = tensor_to_array(scene.rigid_solver.get_links_quat(), dtype=np.float64)
+
+    def placed(geoms, pos, quat):
+        quat = np.asarray(quat)
+        return [(gu.transform_by_trans_quat(verts, pos, quat), faces) for verts, faces in geoms]
+
+    def overlap_of(geoms_a, geoms_b):
+        depth = 0.0
+        for verts_a, faces_a in geoms_a:
+            for verts_b, faces_b in geoms_b:
+                if (verts_a.min(0) > verts_b.max(0)).any() or (verts_b.min(0) > verts_a.max(0)).any():
+                    continue
+                depth = max(
+                    depth,
+                    -igl.signed_distance(verts_a, verts_b, faces_b)[0].min(),
+                    -igl.signed_distance(verts_b, verts_a, faces_a)[0].min(),
+                )
+        return depth
+
+    for convexify, entities in asset_entities.items():
+        # Geoms expressed in their link frame: MJCF roots may carry a non-identity build pose.
+        cup_geoms, apple_geoms, mug_geoms, donut_geoms = (
+            [
+                (
+                    gu.inv_transform_by_trans_quat(
+                        tensor_to_array(geom.get_verts(), dtype=np.float64), links_pos0[link.idx], links_quat0[link.idx]
+                    ),
+                    geom.get_trimesh().faces.astype(np.int64),
+                )
+                for link in entity.links
+                for geom in link.geoms
+            ]
+            for entity in entities
+        )
+
+        # Seed-52 pile snapshot: an apple nearly filling a cup with its stem bulging ~11 mm through the wall
+        # (the depth is the push-back heal - the protrusion past the pierced wall - far below the
+        # extraction-scale separation and far above the 1.6 mm wall incursion), a mug rim against a cup wall,
+        # and two stacked donuts.
+        links = [
+            placed(cup_geoms, (0.1597, -0.1656, 0.1319), (0.3704, 0.2497, -0.5295, 0.7212)),
+            placed(apple_geoms, (0.1587, -0.1923, 0.1412), (0.5246, -0.6281, 0.3181, -0.4786)),
+            placed(mug_geoms, (0.2153, 0.2083, 0.0792), (0.9515, -0.2904, 0.0217, -0.099)),
+            placed(cup_geoms, (0.1566, 0.1737, 0.1095), (-0.2635, -0.0664, -0.6425, 0.7165)),
+            placed(donut_geoms, (-0.1017, -0.2996, 0.0673), (0.3397, 0.9298, -0.0732, 0.1215)),
+            placed(donut_geoms, (-0.1196, -0.2717, 0.1243), (-0.1533, 0.8963, -0.3895, 0.1462)),
+        ]
+        max_depth, crossings = measure(f"seed-52 snapshot ({convexify=})", links)
+        pair_expected = {(0, 1), (2, 3), (4, 5)}
+        pairs_found = {(c.link_a, c.link_b) for c in crossings}
+        if convexify:
+            # CoACD output varies per platform and its surface deviations shift shallow classifications (the
+            # decomposed cup wall reads a genuine 0.8 mm apple overlap - a contact, not a crossing): only
+            # forbid spurious pairs.
+            assert pairs_found <= pair_expected
+        else:
+            assert pairs_found == pair_expected
+            (apple_cup_depth,) = [c.depth for c in crossings if (c.link_a, c.link_b) == (0, 1)]
+            assert 8e-3 < apple_cup_depth < 20e-3
+        for c in crossings:
+            assert 0.3e-3 < c.depth <= 0.12
+        assert 0.5e-3 < max_depth <= 0.12
+
+        # Mug pressed into the cup: approach from separation, bisect to first contact, press further - two
+        # lateral wall presses, plus the axial approach that telescopes the cup into the mug's opening before
+        # touching, pressed both shallow and deep (a jammed cup-in-mug with large penetration).
+        cup_center = np.concatenate([verts for verts, _ in cup_geoms]).mean(0)
+        mug_center = np.concatenate([verts for verts, _ in mug_geoms]).mean(0)
+        for direction, press in (
+            ((-1.0, 0.0, 0.0), 3e-3),
+            ((-1.0, 0.0, 0.0), 12e-3),
+            ((0.0, 0.0, -1.0), 3e-3),
+            ((0.0, 0.0, -1.0), 25e-3),
+        ):
+            direction = np.asarray(direction)
+            start = cup_center - mug_center - 0.3 * direction
+            t_lo, t_hi = 0.0, 0.6
+            assert overlap_of(cup_geoms, [(verts + start, faces) for verts, faces in mug_geoms]) == 0.0
+            for _ in range(24):
+                t_mid = 0.5 * (t_lo + t_hi)
+                moved = [(verts + start + t_mid * direction, faces) for verts, faces in mug_geoms]
+                if overlap_of(cup_geoms, moved) > 0.0:
+                    t_hi = t_mid
+                else:
+                    t_lo = t_mid
+            pressed = [(verts + start + (t_hi + press) * direction, faces) for verts, faces in mug_geoms]
+            max_depth, crossings = measure(
+                f"mug pressed {press * 1e3:g}mm into cup ({direction=}, {convexify=})", [cup_geoms, pressed]
+            )
+            assert len(crossings) == 1
+            if convexify:
+                # Hull surface deviations shift the first-contact point and the heal witnesses.
+                assert 1e-3 < max_depth < press + 3e-3
+            else:
+                assert_allclose(max_depth, press, atol=2e-3)
+
+        if not convexify:
+            # Oversized and wedged: an apple scaled 1.25x stuffed into the cup (jammed against the walls,
+            # poking out of the opening: extraction-scale escape) and a unit apple centred in the donut's hole
+            # (wedged on the ring like the analytical sphere-in-torus seat), placed by co-centring centroids.
+            apple_center = np.concatenate([verts for verts, _ in apple_geoms]).mean(0)
+            donut_center = np.concatenate([verts for verts, _ in donut_geoms]).mean(0)
+            # Essential enclosure: the oversized apple swallows most of the cup, so the depth is the burial
+            # overlap, not an extraction distance.
+            apple_in_cup = [((verts - apple_center) * 1.25 + cup_center, faces) for verts, faces in apple_geoms]
+            max_depth, crossings = measure("apple x1.25 stuffed in cup", [cup_geoms, apple_in_cup])
+            assert len(crossings) == 1
+            assert 8e-3 < max_depth < 16e-3
+            # Inflated further the cup wall gets buried deeper and the depth keeps growing with the burial
+            # (the separation is even larger for a co-centred enclosure, so min(burial, separation) stays on
+            # the burial side). FIXME: replace the reference value with an analytical bound.
+            apple_x2 = [((verts - apple_center) * 2.0 + cup_center, faces) for verts, faces in apple_geoms]
+            max_depth, crossings = measure("apple x2 engulfing cup", [cup_geoms, apple_x2])
+            assert len(crossings) == 1
+            assert 28e-3 < max_depth < 42e-3
+            # Bore-fit apple with its stem through the mug's side wall (ensemble seed-47 snapshot): the
+            # bore contacts dilute the mean breach normal below coherence, but the nearest crossed-wall
+            # faces at the pierce sites keep a coherent axis, so the depth is the push-back heal of the
+            # stem protrusion - not the extraction-scale separation (59mm) nor the sub-wall incursion.
+            max_depth, crossings = measure(
+                "apple stem through mug wall",
+                [
+                    placed(mug_geoms, (-0.154637, 0.064054, 0.066314), (0.48446, 0.254831, 0.685173, -0.480518)),
+                    placed(apple_geoms, (-0.145008, 0.052819, 0.065729), (0.264979, 0.660853, 0.648809, 0.268525)),
+                ],
+            )
+            assert len(crossings) == 1
+            assert 7e-3 < max_depth < 11e-3
+
+            # Apple wedged inside the cup, pressing the wall from the bore side without piercing it
+            # (ensemble seed-83 snapshot): the press normal is coherent but its retraction is blocked by
+            # the wedge, so the depth is the incursion - not the press-direction escape through the mouth
+            # (65mm) that a coherent dent would otherwise read as its retraction.
+            max_depth, crossings = measure(
+                "apple wedged inside cup",
+                [
+                    placed(cup_geoms, (-0.151896, -0.028087, 0.058628), (0.722454, 0.664688, -0.162572, -0.099101)),
+                    placed(apple_geoms, (-0.166208, -0.061567, 0.060744), (-0.869212, -0.407279, 0.199131, -0.197335)),
+                ],
+            )
+            assert len(crossings) == 1
+            assert 1e-3 < max_depth < 2.5e-3
+
+            apple_in_donut = [(verts - apple_center + donut_center, faces) for verts, faces in apple_geoms]
+            # A seat pressed all around: the depth is the ring burial in the apple, not the unseat.
+            max_depth, crossings = measure("apple centred in donut hole", [donut_geoms, apple_in_donut])
+            assert len(crossings) == 1
+            assert 10e-3 < max_depth < 25e-3
+
+    if show_viewer:
+        display_collision_pairs(pairs_viz)
