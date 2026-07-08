@@ -795,6 +795,108 @@ def test_madrona_fisheye_camera(show_viewer, renderer, png_snapshot):
     _test_madrona_scene(show_viewer, renderer, png_snapshot, use_fisheye_camera=True)
 
 
+@pytest.mark.slow  # ~300s
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
+def test_madrona_renders_heterogeneous_entities(show_viewer, png_snapshot, renderer):
+    # End-to-end regression for heterogeneous entities in the Madrona batch renderer. A heterogeneous entity
+    # instantiates a different morph variant per environment (a sphere in some, the duck mesh in others). The batch
+    # renderer feeds dense per-env poses but relies on a per-(env, vgeom) visibility mask (`geom_env_mask`) so each
+    # variant is drawn only in the environments it is active in. Before the fix every variant was drawn in every
+    # environment, so the duck leaked into the sphere environments. A homogeneous box renders alongside to confirm
+    # ordinary entities are unaffected by the per-env masking. The captured per-env snapshots are the ground truth.
+    N_ENVS = 3
+    CAM_RES = (160, 120)
+
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(
+            plane_size=(5.0, 5.0),
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.3, 0.3, 0.3),
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.3, 0.8, 0.3),
+        ),
+    )
+    heterogeneous = scene.add_entity(
+        morph=(
+            gs.morphs.Sphere(
+                radius=0.3,
+            ),
+            gs.morphs.Mesh(
+                file="meshes/duck/duck.obj",
+                scale=0.003,
+                euler=(90.0, 0.0, 90.0),
+            ),
+        ),
+    )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, 5.0, 2.6),
+        lookat=(0.0, 0.0, 0.2),
+        fov=55.0,
+        GUI=show_viewer,
+    )
+    scene.add_light(
+        pos=(0.0, 0.0, 1.5),
+        dir=(1.0, 1.0, -2.0),
+        directional=True,
+        castshadow=True,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+    scene.add_light(
+        pos=(4.0, -4.0, 4.0),
+        dir=(-1.0, 1.0, -1.0),
+        directional=False,
+        castshadow=True,
+        cutoff=45.0,
+        intensity=0.5,
+    )
+
+    scene.build(n_envs=N_ENVS)
+
+    # The sphere variant fills the first environments and the duck the last, placed on opposite sides so the duck
+    # (yellow) occupies a known half of each environment. The box (homogeneous) sits at the back of every environment.
+    box.set_pos(np.array([[0.0, 1.4, 0.15], [0.4, 1.4, 0.15], [-0.4, 1.4, 0.15]]))
+    heterogeneous.set_pos(np.array([[-1.2, 0.3, 0.3], [-1.2, -0.3, 0.3], [1.2, 0.0, 0.0]]))
+
+    rgb = tensor_to_array(camera.render(rgb=True)[0])
+    # The batch renderer always renders every environment as a separate image.
+    assert rgb.shape == (N_ENVS, *CAM_RES[::-1], 3)
+    frames = list(rgb)
+
+    # The homogeneous green box renders in every environment.
+    for frame in frames:
+        assert ((frame[..., 1].astype(int) - frame[..., 0].astype(int)) > 40).sum() > 0
+
+    # Distinct per-env variants and positions mean no two environments may render identically.
+    for i in range(N_ENVS):
+        for j in range(i + 1, N_ENVS):
+            assert (frames[i] != frames[j]).any()
+
+    # The core regression: the duck variant (yellow) is active in only a subset of environments, so it must not leak
+    # into the sphere environments. At least one environment must show the duck and at least one must show none of it.
+    duck_pixels = [
+        int(((frame[..., 0] > 120) & (frame[..., 1] > 120) & (frame[..., 2] < 110)).sum()) for frame in frames
+    ]
+    assert max(duck_pixels) > 3, f"duck variant never rendered; yellow per env={duck_pixels}"
+    assert min(duck_pixels) <= max(duck_pixels) // 8, (
+        f"duck variant leaked into environments it is not active in; yellow per env={duck_pixels}"
+    )
+
+    for frame in frames:
+        assert rgb_array_to_png_bytes(frame) == png_snapshot
+
+
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
