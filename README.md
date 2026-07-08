@@ -7,7 +7,6 @@
 [![Documentation](https://img.shields.io/readthedocs/genesis-world)](https://genesis-world.readthedocs.io/en/latest/)
 [![GitHub Issues](https://img.shields.io/github/issues/Genesis-Embodied-AI/genesis-world)](https://github.com/Genesis-Embodied-AI/genesis-world/issues)
 [![GitHub Discussions](https://img.shields.io/github/discussions/Genesis-Embodied-AI/genesis-world)](https://github.com/Genesis-Embodied-AI/genesis-world/discussions)
-[![Discord](https://img.shields.io/discord/1322086972302430269?logo=discord)](https://discord.gg/nukCuhB47p)
 
 
 
@@ -227,7 +226,6 @@ Refer to our [contribution guide](https://github.com/Genesis-Embodied-AI/genesis
 
 - Report bugs or request features via GitHub [Issues](https://github.com/Genesis-Embodied-AI/genesis-world/issues).
 - Join discussions or ask questions on GitHub [Discussions](https://github.com/Genesis-Embodied-AI/genesis-world/discussions).
-- Real-time chat: [Discord](https://discord.gg/nukCuhB47p).
 
 ## License and Acknowledgments
 
