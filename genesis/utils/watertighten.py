@@ -1294,20 +1294,4 @@ def watertighten_mesh(
     has_hit[ray_idx] = True
     snapped = v.copy()
     snapped[has_hit] = closest[has_hit]
-    # The snap pulls each bulk vertex onto its nearest source point, but two adjacent vertices can land on the same
-    # point, collapsing their edge to a degenerate (zero-area) face and spawning slivers around it. Undo the snap on
-    # any vertex whose move shrank an incident edge below a small fraction of its pre-snap length, iterating until no
-    # edge stays collapsed (each revert can only lengthen edges, so this terminates). Only snapped vertices revert, so
-    # the wrap stays watertight - reverting restores the pre-snap (alpha-iso) position, which is itself valid.
-    edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]], axis=0)
-    pre_len = np.linalg.norm(v[edges[:, 0]] - v[edges[:, 1]], axis=1)
-    for _ in range(8):
-        cur_len = np.linalg.norm(snapped[edges[:, 0]] - snapped[edges[:, 1]], axis=1)
-        collapsed = edges[cur_len < 0.2 * np.maximum(pre_len, 1e-12)]
-        revert = np.unique(collapsed)
-        revert = revert[has_hit[revert]]
-        if revert.size == 0:
-            break
-        snapped[revert] = v[revert]
-        has_hit[revert] = False
     return snapped, f
