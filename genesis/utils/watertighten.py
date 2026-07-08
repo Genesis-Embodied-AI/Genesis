@@ -1213,6 +1213,23 @@ def _resolve_nonmanifold_edges(verts: np.ndarray, faces: np.ndarray) -> Tuple[np
     return np.ascontiguousarray(new_verts), np.ascontiguousarray(new_faces)
 
 
+def decimate_mesh(
+    verts: np.ndarray,
+    faces: np.ndarray,
+    target_face_num: int = 500,
+    aggressiveness: int = 7,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Manifold-preserving quadric decimation toward `target_face_num` triangles.
+
+    The feature-cost cutoff derived from `aggressiveness` refuses edge collapses that would tear a thin shell,
+    so the result stays watertight - a decimated cup keeps both walls and its volume instead of opening up,
+    which a plain quadric simplify does not guarantee. `aggressiveness` >= 8 removes the cutoff (fastest, may
+    flip normals). Returns the decimated `(verts, faces)`.
+    """
+    _, _, max_cost = _adaptive_params(verts, faces, aggressiveness=aggressiveness)
+    return _decimate_quadric_error(verts, faces, target_faces=max(target_face_num, 1), max_cost=max_cost)
+
+
 def watertighten_mesh(
     verts: np.ndarray,
     faces: np.ndarray,

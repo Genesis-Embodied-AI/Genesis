@@ -1,12 +1,15 @@
 import base64
 import io
+import json
 import numbers
 import os
 import platform
 import re
 import subprocess
+import tempfile
 import time
 import uuid
+import webbrowser
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,9 +18,10 @@ from functools import cache
 from itertools import chain
 from pathlib import Path
 from types import GeneratorType
-from typing import Literal, Sequence
+from typing import Literal, NamedTuple, Sequence
 
 import cpuinfo
+import igl
 import mujoco
 import pytest
 import numpy as np
@@ -35,6 +39,7 @@ from genesis.options.morphs import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
+from genesis.utils.watertighten import decimate_mesh
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
@@ -1152,6 +1157,174 @@ def rgb_array_to_png_bytes(rgb_arr: np.ndarray | torch.Tensor) -> bytes:
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+class Crossing(NamedTuple):
+    """A genuinely-interpenetrating pair of links among those passed to `get_genuine_interpenetration`."""
+
+    link_a: int
+    link_b: int
+    depth: float  # min translation that separates the two links (metres)
+
+
+def get_genuine_interpenetration(links, cross_tol=1e-3, n_dir=40, proxy_faces=250, n_bisect=6):
+    """Measure the deepest surface interpenetration over all link pairs among `links` (each a list of
+    `(verts, faces)` collision geoms).
+
+    A pair only counts as interpenetrating where its surfaces genuinely CROSS - material overlap beyond
+    `cross_tol` - which excludes valid containment (a link resting in another's cavity: the volumes overlap
+    but the surfaces never cross), that a raw min-separation distance would wrongly call deep. The crossing
+    gate uses the full-resolution geoms; a crossing pair then reports how far one link is sunk into the other,
+    i.e. the shortest translation that separates them, searched over `n_dir` directions and refined by
+    `n_bisect` bisection steps. The search runs on manifold-preserving `proxy_faces`-decimated proxies - the
+    thin shells cap raw material overlap at their wall thickness, so this link-nesting search (not the material
+    depth) is what exposes the true centimetre-scale nesting.
+
+    Returns `(max_depth, crossings)`: `max_depth` is the largest penetration over ALL overlapping pairs (the
+    shallow material overlap for contact/containment pairs, the link-nesting depth for crossing pairs), and
+    `crossings` is the list of `Crossing` for genuinely-crossing pairs, deepest first.
+    """
+    # Geoms may arrive as torch tensors (verts) or numpy arrays (faces); igl needs float64 verts and int64 faces.
+    links = [
+        [(tensor_to_array(verts, dtype=np.float64), tensor_to_array(faces, dtype=np.int64)) for verts, faces in geoms]
+        for geoms in links
+    ]
+
+    # Broad-phase AABB per link, from the full-resolution geoms. A link with no collision geom (e.g. a free-joint
+    # base link) gets an inverted AABB so it is rejected against every other link, keeping the link indexing aligned
+    # with the caller's list so the returned crossings stay valid indices.
+    links_aabb = [
+        (
+            (np.concatenate([verts for verts, _ in geoms]).min(0), np.concatenate([verts for verts, _ in geoms]).max(0))
+            if geoms
+            else (np.full(3, np.inf), np.full(3, -np.inf))
+        )
+        for geoms in links
+    ]
+
+    # One manifold-preserving decimated proxy per link for the winding-number search: decimate_mesh keeps thin
+    # shells watertight, unlike a plain quadric simplify that would tear a cup open and corrupt the inside test.
+    proxies = []
+    for geoms in links:
+        verts_all, faces_all, offset = [], [], 0
+        for verts, faces in geoms:
+            if len(faces) > proxy_faces:
+                verts, faces = decimate_mesh(verts, faces, target_face_num=proxy_faces)
+            verts_all.append(verts)
+            faces_all.append(faces + offset)
+            offset += len(verts)
+        proxies.append(
+            (np.concatenate(verts_all), np.concatenate(faces_all))
+            if verts_all
+            else (np.empty((0, 3)), np.empty((0, 3), dtype=np.int64))
+        )
+
+    # Fibonacci direction sphere and the shift grid (each direction times each probe distance).
+    golden = 0.5 * (1.0 + 5.0**0.5)
+    i_dir = np.arange(n_dir)
+    z_dir = 1.0 - 2.0 * (i_dir + 0.5) / n_dir
+    r_dir = np.sqrt(1.0 - z_dir * z_dir)
+    azimuth = 2.0 * np.pi * i_dir / golden
+    dirs = np.stack([r_dir * np.cos(azimuth), r_dir * np.sin(azimuth), z_dir], axis=1)
+    probe = np.array([1e-3, 2e-3, 5e-3, 1e-2, 2e-2, 4e-2, 8e-2, 1.2e-1])
+    shifts = dirs[:, None, :] * probe[None, :, None]
+
+    max_depth = 0.0
+    crossings = []
+    for i_la, geoms_a in enumerate(links):
+        lo_a, hi_a = links_aabb[i_la]
+        for i_lb in range(i_la + 1, len(links)):
+            # Broad-phase reject via AABB.
+            lo_b, hi_b = links_aabb[i_lb]
+            if (lo_a > hi_b).any() or (lo_b > hi_a).any():
+                continue
+
+            # Crossing gate on the full-resolution geoms: deepest material overlap between the two surfaces.
+            crossing = 0.0
+            for verts_a, faces_a in geoms_a:
+                for verts_b, faces_b in links[i_lb]:
+                    if (verts_a.min(0) > verts_b.max(0)).any() or (verts_b.min(0) > verts_a.max(0)).any():
+                        continue
+                    crossing = max(
+                        crossing,
+                        -igl.signed_distance(verts_a, verts_b, faces_b)[0].min(),
+                        -igl.signed_distance(verts_b, verts_a, faces_a)[0].min(),
+                    )
+            if crossing <= cross_tol:
+                max_depth = max(max_depth, crossing)  # contact or containment, not interpenetration
+                continue
+
+            # Batched winding-number overlap over every (direction, probe) shift: a vertex of one proxy lies
+            # inside the other when its generalized winding number exceeds 0.5, which stays valid on the
+            # decimated (non-manifold) union. All directions and probe distances go into just two winding calls.
+            va, fa = proxies[i_la]
+            vb, fb = proxies[i_lb]
+            inside_a = (
+                np.abs(igl.fast_winding_number(vb, fb, (va[None, None] + shifts[:, :, None, :]).reshape(-1, 3))) > 0.5
+            )
+            inside_b = (
+                np.abs(igl.fast_winding_number(va, fa, (vb[None, None] - shifts[:, :, None, :]).reshape(-1, 3))) > 0.5
+            )
+            separated = ~(
+                inside_a.reshape(n_dir, len(probe), len(va)).any(2)
+                | inside_b.reshape(n_dir, len(probe), len(vb)).any(2)
+            )
+
+            # The coarse grid brackets the overlap->separated transition to two adjacent rungs; bisect within the
+            # bracket (only directions that can still beat the running minimum) to get the true separation.
+            depth = probe[-1]
+            for i_dir in range(n_dir):
+                if not separated[i_dir].any():
+                    continue
+                i_probe = separated[i_dir].argmax()
+                lo = probe[i_probe - 1] if i_probe > 0 else 0.0
+                hi = probe[i_probe]
+                if lo >= depth:
+                    continue
+                for _ in range(n_bisect):
+                    mid = 0.5 * (lo + hi)
+                    offset = dirs[i_dir] * mid
+                    is_inside_b = (np.abs(igl.fast_winding_number(vb, fb, va + offset)) > 0.5).any()
+                    is_inside_a = (np.abs(igl.fast_winding_number(va, fa, vb - offset)) > 0.5).any()
+                    if not is_inside_a and not is_inside_b:
+                        hi = mid
+                    else:
+                        lo = mid
+                depth = min(depth, hi)
+
+            max_depth = max(max_depth, depth)
+            crossings.append(Crossing(i_la, i_lb, depth))
+
+    crossings.sort(key=lambda crossing: crossing.depth, reverse=True)
+    return max_depth, crossings
+
+
+def display_collision_pairs(pairs):
+    """Open a self-contained interactive 3D viewer of colliding link pairs in the default browser.
+
+    Each entry of `pairs` is `(geoms_a, geoms_b, label)`, where each `geoms` is a list of `(verts, faces)`
+    collision meshes (torch or numpy); the geoms of a link are merged and the two links drawn blue and red,
+    with a dropdown to switch between pairs. Each bead in the hover overlay marks a surface the cursor ray
+    crosses (coloured by link, back walls flagged with a cross); shift+scroll steps to enclosed surfaces, and
+    clicking two beads reads their distance in millimetres.
+    """
+    data = []
+    for geoms_a, geoms_b, label in pairs:
+        entry = {"label": label}
+        for key, geoms in (("a", geoms_a), ("b", geoms_b)):
+            verts_all, faces_all, offset = [], [], 0
+            for verts, faces in geoms:
+                verts = tensor_to_array(verts, dtype=np.float64)
+                faces = tensor_to_array(faces, dtype=np.int64)
+                verts_all.append(verts)
+                faces_all.append(faces + offset)
+                offset += len(verts)
+            entry[key] = {"v": np.concatenate(verts_all).tolist(), "f": np.concatenate(faces_all).tolist()}
+        data.append(entry)
+    template = (Path(__file__).parent / "mesh_pairs_viewer.html").read_text()
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as file:
+        file.write(template.replace("__DATA__", json.dumps(data)))
+    webbrowser.open(f"file://{file.name}")
 
 
 def pprint_oneline(data, delimiter, digits=None):
