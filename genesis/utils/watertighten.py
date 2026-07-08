@@ -1080,8 +1080,9 @@ def _adaptive_params(verts: np.ndarray, faces: np.ndarray, aggressiveness: int):
     `pitch` tracks the feature size so the wrap resolution follows the geometry, bounded below by the compute floor
     `bbox_diag / MAX_CELLS_AXIS`; the `MAX_ALPHA` offset cap only tightens it where the compute floor leaves room. This
     keeps the wrap scale-invariant - a scaled-up input yields the scaled-up same wrap rather than a denser, more dented
-    one. `max_cost = (aggressiveness * alpha / 6)^2` is the empirical cost-to-aggressiveness mapping; it scales with
-    `alpha` so decimation strength stays consistent across asset sizes.
+    one. `max_cost = (aggressiveness * alpha / 1.5)^2` is the empirical cost-to-aggressiveness mapping; it scales
+    with `alpha` so decimation strength stays consistent across asset sizes. The 1.5 divisor sets how much a given
+    aggressiveness collapses: the default (5) roughly halves the face count of the wrap relative to leaving detail in.
     """
     bbox_diag = np.linalg.norm(verts.max(axis=0) - verts.min(axis=0))
     feature_size = _estimate_feature_size(verts, faces)
@@ -1100,10 +1101,7 @@ def _adaptive_params(verts: np.ndarray, faces: np.ndarray, aggressiveness: int):
             f"bbox_diag={bbox_diag * 1000.0:.0f} mm). Sampling at pitch={pitch * 1000.0:.2f} mm to keep the SDF grid "
             f"<= {MAX_CELLS_AXIS}^3 cells; features below ~{2.0 * pitch * 1000.0:.1f} mm will be lost in the wrap."
         )
-    if aggressiveness >= 8:
-        max_cost = float("inf")
-    else:
-        max_cost = (aggressiveness * alpha / 6.0) ** 2
+    max_cost = (aggressiveness * alpha / 1.5) ** 2
     return alpha, pitch, max_cost
 
 
@@ -1217,14 +1215,15 @@ def decimate_mesh(
     verts: np.ndarray,
     faces: np.ndarray,
     target_face_num: int = 500,
-    aggressiveness: int = 7,
+    aggressiveness: int = 5,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Manifold-preserving quadric decimation toward `target_face_num` triangles.
 
     The feature-cost cutoff derived from `aggressiveness` refuses edge collapses that would tear a thin shell,
     so the result stays watertight - a decimated cup keeps both walls and its volume instead of opening up,
-    which a plain quadric simplify does not guarantee. `aggressiveness` >= 8 removes the cutoff (fastest, may
-    flip normals). Returns the decimated `(verts, faces)`.
+    which a plain quadric simplify does not guarantee. Higher `aggressiveness` (0 to 8) raises the cutoff so more
+    of the mesh collapses, but even 8 stays bounded by it and preserves the closed shape. Returns the decimated
+    `(verts, faces)`.
     """
     _, _, max_cost = _adaptive_params(verts, faces, aggressiveness=aggressiveness)
     return _decimate_quadric_error(verts, faces, target_faces=max(target_face_num, 1), max_cost=max_cost)
@@ -1233,7 +1232,7 @@ def decimate_mesh(
 def watertighten_mesh(
     verts: np.ndarray,
     faces: np.ndarray,
-    aggressiveness: int = 7,
+    aggressiveness: int = 5,
     target_face_num: int = 500,
     sigma: float = 0.8,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -1249,8 +1248,9 @@ def watertighten_mesh(
     Parameters
     ----------
     aggressiveness
-        Integer 0..8. Pass 0 to bypass the wrap (returns the input unchanged). 1 is near-lossless, 5 collapses flat
-        regions while preserving features, 8 ignores the cost cutoff entirely.
+        Integer 0..8. Pass 0 to bypass the wrap (returns the input unchanged). Higher values collapse more of the
+        wrap; 5 (the default) roughly halves the face count while keeping features, and 8 is the strongest
+        decimation the feature cutoff still allows (every level stays watertight and preserves the closed shape).
     target_face_num
         Soft floor: decimation stops at this many faces or when the cheapest remaining collapse exceeds the
         aggressiveness-derived cost threshold, whichever happens first.

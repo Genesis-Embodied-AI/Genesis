@@ -133,7 +133,18 @@ class RigidGeom(RBC):
         grid_size = (upper - lower).max() * padding_ratio + (upper - lower)
         per_axis_lower = grid_size / (self._material.sdf_max_res - 1)
         per_axis_upper = grid_size / max(self._material.sdf_min_res - 1, 2)
-        self._sdf_cell_size = gs.EPS + np.clip(self._material.sdf_cell_size, per_axis_lower, per_axis_upper)
+        # The material cell size is the target. A convex geom has no thin wall to tunnel through, so it keeps that
+        # target. A non-convex geom tunnels when the cell is coarser than its thinnest wall, so the target is shrunk
+        # to fit 2 cells across the wall (its area-weighted p25 thickness) whenever that is finer; the per-axis clip
+        # below still bounds it to [sdf_min_res, sdf_max_res]. The shrink applies to all three axes, not just the
+        # wall's normal axis: the certified penetration bounds that hold shell contacts apart need lattice points
+        # near the contact in every direction, so a wall must be finely sampled along its tangent axes too (see
+        # estimate_wall_thickness).
+        cell_size_target = self._material.sdf_cell_size
+        if not self._is_convex:
+            wall_thickness = mu.estimate_wall_thickness(self._sdf_verts, self._sdf_faces)
+            cell_size_target = min(cell_size_target, wall_thickness / 2.0)
+        self._sdf_cell_size = gs.EPS + np.clip(cell_size_target, per_axis_lower, per_axis_upper)
         self._sdf_res = np.ceil(grid_size / self._sdf_cell_size).astype(gs.np_int) + 1
         # Constant once the SDF resolution is fixed. Cached because the solver re-reads it for every geom on each
         # 'add_entity' (to lay out cell offsets), which would otherwise recompute the product for every prior geom.
@@ -151,9 +162,8 @@ class RigidGeom(RBC):
         self._gsd_path = mu.get_gsd_path(
             self._init_verts,
             self._init_faces,
-            self._material.sdf_cell_size,
-            self._material.sdf_min_res,
-            self._material.sdf_max_res,
+            self._sdf_res,
+            self._sdf_cell_size,
         )
 
         # loading pre-computed cache if available

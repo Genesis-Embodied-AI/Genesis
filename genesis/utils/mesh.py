@@ -41,7 +41,8 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
-WT_CACHE_VERSION = 5
+# Bumped when watertighten output changes for a fixed (mesh, aggressiveness): forces a cache miss on stale entries.
+WT_CACHE_VERSION = 7
 
 
 def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:
@@ -58,6 +59,43 @@ def color_u8_to_f32(color) -> np.ndarray:
 
 def glossiness_to_roughness(glossiness: float) -> float:
     return (2 / (glossiness + 2)) ** (1.0 / 4.0)
+
+
+def estimate_wall_thickness(verts: np.ndarray, faces: np.ndarray, quantile: float = 0.25) -> float:
+    """Estimate a watertight mesh's characteristic wall thickness by probing its local diameter with inward rays.
+
+    A ray is cast inward along the face normal from a stride-subsampled set of face centroids to the first opposite
+    surface. The `quantile` of those hit distances, weighted by probed face area so the estimate measures surface
+    rather than tessellation density (a thin wall spanned by a handful of large faces must not be outvoted by many
+    small decorative facets), is returned: a low quantile approximates the thinnest wall and the median the typical
+    one. Falls back to the bounding-box diagonal when no ray hits (degenerate or non-watertight mesh).
+
+    The estimate is deliberately a scalar, not per-axis: the SDF grid it sizes does not only resolve walls along
+    their normal - it certifies contact penetrations through Lipschitz cone bounds whose slack grows with the
+    lattice spacing in every direction around the contact point, tangent axes included. On a closed shell each
+    wall's tangent directions are other walls' normals (a mug's vertical wall lies tangent to the vertical axis
+    even though the only wall facing that axis, the thick bottom, would justify coarse vertical cells), so relaxing
+    any one axis to the thickness of the walls facing it measurably degrades the certified pens of every wall
+    tangent to it, and no bound-side search can recover the loss (the lateral sample offset is a lattice property).
+    """
+    mesh = trimesh.Trimesh(verts, faces, process=False)
+    diag = np.linalg.norm(verts.max(axis=0) - verts.min(axis=0))
+    stride = max(1, len(faces) // 1000)
+    centers = mesh.triangles_center[::stride]
+    normals = mesh.face_normals[::stride]
+    origins = centers - 1e-3 * diag * normals
+    locations, ray_idx, _ = mesh.ray.intersects_location(origins, -normals, multiple_hits=False)
+    if len(ray_idx) == 0:
+        return diag
+    thickness = np.linalg.norm(locations - origins[ray_idx], axis=1)
+    is_hit_valid = thickness > 1e-4 * diag
+    thickness = thickness[is_hit_valid]
+    if len(thickness) == 0:
+        return diag
+    areas = mesh.area_faces[::stride][ray_idx][is_hit_valid]
+    order = np.argsort(thickness)
+    areas_cum = np.cumsum(areas[order])
+    return thickness[order][np.searchsorted(areas_cum, quantile * areas_cum[-1])]
 
 
 class MeshInfo:
@@ -126,11 +164,13 @@ def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
 
 
-def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    # Schema tag bumped when the on-disk SDF layout changes (e.g. scalar -> per-axis cell size).
-    # Forces a cache miss on stale entries written by older code without manually clearing the cache.
-    schema = "v2-anisotropic-cells"
-    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res, schema)
+def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
+    # The grid is fully determined by the mesh plus the resolved per-axis resolution and cell size, so the key is
+    # built from those rather than the material defaults: the resolution now also depends on wall thickness, so the
+    # defaults no longer identify the grid. Schema tag bumped when the on-disk SDF layout changes (e.g. scalar ->
+    # per-axis cell size); forces a cache miss on stale entries without manually clearing the cache.
+    schema = "v3-res-keyed"
+    hashkey = get_hashkey(verts, faces, sdf_res, sdf_cell_size, schema)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
