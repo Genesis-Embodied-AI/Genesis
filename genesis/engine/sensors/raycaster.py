@@ -255,7 +255,6 @@ class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata
     sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    # Per sensor: True stores hit points then distances, False packs only distances (a 4x smaller cache block).
     sensor_return_points: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
 
 
@@ -357,7 +356,7 @@ class RaycasterSensor(
             return (shape,)
         return ((*shape, 3), shape)
 
-    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None):
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> RaycasterReturnType:
         # With points disabled the base class returns a bare distances tensor; re-wrap it as RaycasterReturnType so
         # the (points, distances) NamedTuple contract holds, with points=None.
         data = super()._get_formatted_data(tensor, envs_idx)
