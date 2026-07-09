@@ -9,6 +9,7 @@ from genesis.typing import (
     PositiveFloat,
     PositiveInt,
     PositiveVec2IType,
+    StrArrayType,
     Vec3FArrayType,
     Vec3FType,
 )

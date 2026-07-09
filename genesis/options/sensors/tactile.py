@@ -1,19 +1,19 @@
-from typing import TYPE_CHECKING, Annotated, Any, Sequence
+from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
 from pydantic import Field, StrictBool
 
 import genesis as gs
 from genesis.typing import (
+    FArrayType,
+    FGridType,
     IArrayType,
     NonNegativeFloat,
     NonNegativeInt,
-    NumericType,
     PositiveFloat,
     PositiveInt,
+    UnitIntervalVec3Type,
     UnitIntervalVec4Type,
-    UnitVec3FArrayType,
-    UnitVec3FType,
-    Vec3FArrayType,
 )
 
 from .options import (
@@ -33,29 +33,40 @@ if TYPE_CHECKING:
         ProximityTaxelSensor,
     )
 
-    Vec3FGridType = Sequence[Sequence[Sequence[NumericType]]]
-    UnitVec3FGridType = Sequence[Sequence[Sequence[NumericType]]]
-else:
-    Vec3FGridType = Annotated[tuple[Vec3FArrayType, ...], Field(min_length=1, strict=False)]
-    UnitVec3FGridType = Annotated[tuple[UnitVec3FArrayType, ...], Field(min_length=1, strict=False)]
+
+def _validate_filler_probe_radius(probe_radius, sensor_name: str) -> None:
+    """
+    Validate a ``probe_radius`` that permits 0-valued (inactive padding for grid) entries.
+    """
+    radii = np.atleast_1d(np.asarray(probe_radius, dtype=float))
+    if np.any(radii < 0.0):
+        gs.raise_exception(f"{sensor_name} probe_radius entries must be non-negative. Got {probe_radius}.")
+    if not np.any(radii > 0.0):
+        gs.raise_exception(f"{sensor_name} requires at least one positive probe_radius. Got {probe_radius}.")
 
 
 class TactileProbeSensorOptionsMixin(ProbeSensorOptionsMixin[SensorT]):
     """
-    Tactile probe sensors use SDF contact-depth queries around each probe position instead of physics solver
-    contact impulses. This allows fast contact sensing at arbitrary probe locations without affecting simulation.
-
-    Note
-    ----
-    If this sensor is attached to a fixed entity, it will not detect contacts with other fixed entities.
+    Tactile probe sensors estimate contact from geometric depth queries (SDF or raycast) around each probe position
+    rather than reading the physics solver's contact impulses, so they sense at arbitrary probe locations without
+    affecting simulation.
 
     Parameters
     ----------
-    debug_contact_color: array-like[float, float, float, float]
-        The color of the debug contact. Defaults to (1.0, 0.2, 0.0, 0.8).
+    debug_contact_color: array-like[float, float, float]
+        RGB color of the debug probe spheres while in contact.
+    contact_depth_query : {"sdf", "raycast"} or None, optional
+        Per-probe contact-depth backend. ``"sdf"`` queries the per-geom analytic SDF grid (fast, exact for primitives,
+        requires SDF activation). ``"raycast"`` walks the rigid solver's per-frame collision-mesh BVH and takes the
+        signed distance to the nearest candidate triangle (sign from the triangle's face normal, negative inside),
+        so ``pen = R - signed_distance`` matches the SDF backend while handling arbitrary meshes uniformly (shares
+        the BVH with ``RaycasterSensor``). ``None`` (default) defers the choice: all sensors of the same class must
+        agree, and the resolved mode is ``"sdf"`` if no sensor of that class sets it.
     """
 
-    debug_contact_color: UnitIntervalVec4Type = (1.0, 0.2, 0.0, 0.8)
+    debug_contact_color: UnitIntervalVec3Type = (1.0, 0.2, 0.0)
+
+    contact_depth_query: Literal["sdf", "raycast"] | None = None
 
 
 class PointCloudTactileSensorMixin(TactileProbeSensorOptionsMixin[SensorT]):
@@ -65,7 +76,10 @@ class PointCloudTactileSensorMixin(TactileProbeSensorOptionsMixin[SensorT]):
     track_link_idx : array-like[int]
         Global link indices whose mesh geometry is used to sample a point cloud from.
     n_sample_points: int | array-like[int]
-        Total FPS samples split across ``track_link_idx``, or one count per tracked link.
+        Total FPS samples split across ``track_link_idx``, or one count per tracked link. Per-variant
+        counts are not supported: when a tracked link belongs to a heterogeneous entity, the per-link
+        count is allocated to every variant on that link (so each parallel environment sees the full
+        count regardless of which variant is active).
     use_visual_mesh : bool
         Whether to use the visual mesh when sampling the point cloud.
     debug_point_cloud_color : array-like[float, float, float, float]
@@ -90,13 +104,39 @@ class ContactProbe(
     """
     Returns boolean contact per probe based on the contact depth threshold.
 
+    Note
+    ----
+    The depth query only runs against geometry the rigid solver reports as in contact with the sensor's link (the
+    depth itself comes from an SDF/raycast query, not the contact impulse, but contact *existence* is gated by the
+    solver). Since the solver skips collision between two fixed entities, a sensor on a fixed entity will not detect
+    contacts with other fixed entities.
+
     Parameters
     ----------
+    probe_radius : float | array-like[float] or shape ``(M, N)`` grid
+        Probe sensing radius in meters. A scalar is shared by every probe; an array (or grid) must match the
+        layout of ``probe_local_pos``. Array entries of ``0`` mark inactive filler probes -- they always read
+        ``False`` and skip the SDF query -- so an irregular taxel set can be padded into a regular grid.
     contact_threshold: float
-        A probe is considered in contact if the penetration depth is greater than or equal to this threshold (meters).
+        Penetration depth (meters) at or above which a probe latches into contact.
+    release_threshold: float, optional
+        Penetration depth (meters) at or below which a latched probe releases (Schmitt-trigger hysteresis). Must be
+        ``<= contact_threshold``. Defaults to ``contact_threshold`` (no hysteresis).
     """
 
+    # Permits 0-valued (inactive filler) entries; see _validate_filler_probe_radius.
+    probe_radius: PositiveFloat | FArrayType | FGridType = 0.01
+
     contact_threshold: NonNegativeFloat = 0.0001
+    release_threshold: NonNegativeFloat | None = None
+
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+        _validate_filler_probe_radius(self.probe_radius, "ContactProbe")
+        if self.release_threshold is not None and self.release_threshold > self.contact_threshold:
+            gs.raise_exception(
+                f"release_threshold ({self.release_threshold}) must be <= contact_threshold ({self.contact_threshold})."
+            )
 
 
 class ContactDepthProbe(
@@ -106,6 +146,13 @@ class ContactDepthProbe(
 ):
     """
     Returns contact depth in meters per probe.
+
+    Note
+    ----
+    The depth query only runs against geometry the rigid solver reports as in contact with the sensor's link (the
+    depth itself comes from an SDF/raycast query, not the contact impulse, but contact *existence* is gated by the
+    solver). Since the solver skips collision between two fixed entities, a sensor on a fixed entity will not detect
+    contacts with other fixed entities.
     """
 
 
@@ -113,27 +160,37 @@ class KinematicTaxel(
     RigidSensorOptionsMixin["KinematicTaxelSensor"],
     SimpleSensorOptions["KinematicTaxelSensor"],
     TactileProbeSensorOptionsMixin["KinematicTaxelSensor"],
-    ProbesWithNormalSensorOptionsMixin["KinematicTaxelSensor"],
 ):
     """
-    A tactile sensor which estimates force and torque per taxel by querying contact depth relative to given probe
-    normals and within the radius of the probe positions along a rigid entity link and the relative velocity of the
-    probe and the entity in contact.
+    A tactile sensor which estimates force and torque per taxel by querying contact depth within the radius of the
+    probe positions along a rigid entity link and the relative velocity of the probe and the entity in contact.
 
-    The returned force is a spring-damper estimate based on contact depth and relative motion:
-        v_n = dot(relative_velocity, probe_normal) * probe_normal
+    The force and torque are aligned with the contact surface normal ``n`` at each probe -- the SDF gradient in
+    ``"sdf"`` mode, or the nearest-triangle face normal in ``"raycast"`` mode. The returned force is a spring-damper
+    estimate based on contact depth and relative motion:
+        v_n = dot(relative_velocity, n) * n
         v_t = relative_velocity - v_n
         s = penetration ** normal_exponent
-        F = (-normal_stiffness * s * probe_normal) - (normal_damping * s * v_n) - (shear_scalar * v_t)
-        T = cross(probe_local_pos, F) - twist_scalar * dot(relative_angular_velocity, probe_normal) * probe_normal
+        F = (normal_stiffness * s * n) + (normal_damping * s * dot(relative_velocity, n) * n) - (shear_scalar * v_t)
+        T = cross(probe_local_pos, F) - twist_scalar * dot(relative_angular_velocity, n) * n
     as opposed to the actual impulse force on the link from the contact obtained from the physics solver.
 
     Note
     ----
-    If this sensor is attached to a fixed entity, it will not detect contacts with other fixed entities.
+    The depth query only runs against geometry the rigid solver reports as in contact with the sensor's link (the
+    force/torque come from the spring-damper estimate above, not the contact impulse, but contact *existence* is
+    gated by the solver). Since the solver skips collision between two fixed entities, a sensor on a fixed entity
+    will not detect contacts with other fixed entities.
+
+    ``probe_local_pos`` may be either an arbitrary set of probes with shape ``(N, 3)`` or a grid-shaped set with shape
+    ``(M, N, 3)``. A probe whose ``probe_radius`` is 0 is treated as an inactive filler -- it reads 0 force/torque and
+    is skipped -- so an irregular taxel set can be padded into a regular grid.
 
     Parameters
     ----------
+    probe_radius : float | array-like[float]
+        Probe sensing radius in meters. A scalar is shared by every probe; an array must match the probe count.
+        Array entries of 0 mark inactive filler probes (see the grid note above); at least one must be positive.
     normal_stiffness : float
         Stiffness for normal force estimation based on contact penetration depth and spring-damper model.
     normal_damping : float
@@ -147,6 +204,9 @@ class KinematicTaxel(
         Coefficient for twist torque estimation based on relative angular velocity of the probe and entity in contact.
     """
 
+    # Permits 0-valued (inactive filler) entries; see _validate_filler_probe_radius.
+    probe_radius: PositiveFloat | FArrayType | FGridType = 0.01
+
     normal_stiffness: NonNegativeFloat = 1000.0
     normal_damping: NonNegativeFloat = 1.0
     normal_exponent: NonNegativeFloat = 1.0
@@ -156,6 +216,7 @@ class KinematicTaxel(
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
 
+        _validate_filler_probe_radius(self.probe_radius, "KinematicTaxel")
         if self.normal_exponent < 1.0:
             gs.raise_exception(f"normal_exponent must be greater than or equal to 1.0. Got {self.normal_exponent}.")
 
@@ -175,7 +236,9 @@ class ElastomerTaxel(
     ----
     ``probe_local_pos`` may be either an arbitrary set of probes with shape ``(N, 3)`` or a grid-shaped set with shape
     ``(M, N, 3)``. Regular planar grids with one shared normal use FFT acceleration for dilation; other layouts use the
-    direct dilation path. Shear is computed directly.
+    direct dilation path. Shear is computed directly. A probe whose ``probe_radius`` is 0 is treated as an inactive
+    filler -- it reads 0 and is excluded from dilation/shear -- so an irregular taxel set can be padded into a
+    regular grid for FFT acceleration.
 
     Parameters
     ----------
@@ -184,18 +247,29 @@ class ElastomerTaxel(
     probe_local_normal : array-like[float, float, float] or array-like[array-like[float, float, float]]
         Unit direction(s) in link-local frame: one normal for all probes, or one normal per probe matching
         ``probe_local_pos``.
+    probe_radius : float | array-like[float]
+        Probe sensing radius in meters. A scalar is shared by every probe; an array must match the probe count.
+        Array entries of 0 mark inactive filler probes (see the grid note above); at least one must be positive.
     track_link_idx : array-like[int]
         Global rigid link indices whose collision geometry is queried by SDF and whose mesh is sampled for shear.
     n_sample_points: int | array-like[int]
         Total surface samples split across ``track_link_idx``, or one count per tracked link.
     lambda_d: float
-        Exponential coefficient for dilation spread.
+        Gaussian falloff coefficient (in 1/m^2) for the dilation kernel ``exp(-lambda_d * r^2)`` that smears each
+        in-contact probe's normal/tangential bulge across its neighbors. Larger values give sharper, more localized
+        markers; smaller values smear the bulge across more probes.
     lambda_s: float
-        Exponential coefficient for shear spread from tracked surface points.
+        Gaussian falloff coefficient (in 1/m^2) for the shear kernel ``exp(-lambda_s * r^2)`` that spreads each
+        anchored tracked-surface point's tangential displacement to nearby probes. Larger values keep shear tightly
+        local to the contact patch; smaller values produce a softer, more diffuse shear response.
     dilate_scale: float
         Scalar gain applied to dilation displacement.
     shear_scale: float
         Scalar gain applied to shear displacement.
+    normal_exponent: float
+        Exponent of the penetration-depth power law for the normal (out-of-plane) marker dilation: the normal
+        bulge scales as ``depth ** normal_exponent``. Must be >= 1.0. Default ``2.0`` (the HydroShear quadratic
+        normal response). Tangential dilation and shear stay linear in depth regardless of this value.
     elastomer_contact_sdf_enter: float
         Positive margin on signed distance: a tracked surface point starts anchoring shear when its elastomer SDF
         value is below ``-elastomer_contact_sdf_enter``.
@@ -210,21 +284,25 @@ class ElastomerTaxel(
     should represent the compliant contact surface.
     """
 
-    probe_local_pos: Vec3FArrayType | Vec3FGridType = ((0.0, 0.0, 0.0),)
-    probe_local_normal: UnitVec3FArrayType | UnitVec3FGridType | UnitVec3FType = (0.0, 0.0, 1.0)
+    # Permits 0-valued (inactive filler) entries; see _validate_filler_probe_radius.
+    probe_radius: PositiveFloat | FArrayType | FGridType = 0.01
 
     lambda_d: NonNegativeFloat = 700.0
     lambda_s: NonNegativeFloat = 300.0
     dilate_scale: NonNegativeFloat = 1.0
     shear_scale: NonNegativeFloat = 1.0
+    normal_exponent: NonNegativeFloat = 2.0
 
     elastomer_contact_sdf_enter: NonNegativeFloat = 1e-5
     elastomer_contact_sdf_exit: NonNegativeFloat = 1e-4
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
+        _validate_filler_probe_radius(self.probe_radius, "ElastomerTaxel")
         if len(self.track_link_idx) == 0:
             gs.raise_exception("ElastomerTaxel requires at least one tracked link in track_link_idx.")
+        if self.normal_exponent < 1.0:
+            gs.raise_exception(f"normal_exponent must be greater than or equal to 1.0. Got {self.normal_exponent}.")
 
 
 class ProximityTaxel(
@@ -237,11 +315,10 @@ class ProximityTaxel(
     A tactile sensor which estimates force and torque per taxel from proximity to point clouds sampled on tracked
     meshes within a **spherical** sensing volume of nominal ``probe_radius`` around each taxel.
 
-    For each taxel, every tracked point inside that sphere contributes a penetration depth ``P_i = R_eff - ||p_i - o||``
-    where ``R_eff`` is drawn each simulation step when ``probe_radius_noise`` is non-zero (additive uniform noise
-    in meters around the sensing radius, clipped nonnegative). Normal force is aligned with ``probe_local_normal``;
-    shear uses tangential relative velocity. Generic SimpleSensor imperfections (bias, resolution, etc.) still apply.
-    Outputs are in link-local frame.
+    For each taxel, every tracked point inside that sphere contributes a penetration depth ``P_i = R - ||p_i - o||``
+    where ``R`` is the sensing radius. Normal force is aligned with ``probe_local_normal``; shear uses tangential
+    relative velocity. Generic SimpleSensor imperfections (bias, resolution, etc.) still apply. Outputs are in
+    link-local frame.
 
     Parameters
     ----------

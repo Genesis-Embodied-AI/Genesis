@@ -1595,7 +1595,7 @@ def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
     for _ in range(50):
         scene.step()
     data = sensor.read()
-    assert (data > BASE_TEMP + DIFF_TEMP).all(), f"Hot box should have heated the grid by at least {DIFF_TEMP}°C"
+    assert (data > BASE_TEMP + DIFF_TEMP).all(), f"Hot box should have heated the grid by at least {DIFF_TEMP} C"
     assert (data[..., GRID_CENTER[0], GRID_CENTER[1], GRID_CENTER[2]] > data[0, 0, 0]).all(), (
         "Center cell should be hotter than corner"
     )
@@ -1610,7 +1610,7 @@ def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
     for _ in range(50):
         scene.step()
     data = sensor.read()
-    assert (data < BASE_TEMP - DIFF_TEMP).all(), f"Cold box should have cooled the grid by at least {DIFF_TEMP}°C"
+    assert (data < BASE_TEMP - DIFF_TEMP).all(), f"Cold box should have cooled the grid by at least {DIFF_TEMP} C"
     assert (data[..., GRID_CENTER[0], GRID_CENTER[1], GRID_CENTER[2]] < data[0, 0, 0]).all(), (
         "Center cell should be colder than corner"
     )
@@ -1817,11 +1817,6 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     )
 
 
-def _as_env_batch(data, n_envs: int) -> torch.Tensor:
-    data = torch.as_tensor(data, device=gs.device)
-    return data.unsqueeze(0) if n_envs == 0 else data
-
-
 # ------------------------------------------------------------------------------------------
 # ----------------------------------- Tactile Sensors --------------------------------------
 # ------------------------------------------------------------------------------------------
@@ -1870,17 +1865,19 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
         (-BOX_SIZE / 4, -BOX_SIZE / 4, BOX_SIZE / 2),
         (0.0, 0.0, -BOX_SIZE / 2),
     )
-    probe_normals = (
-        (0.0, 0.0, 1.0),
-        (0.0, 0.0, 1.0),
-        (0.0, 0.0, 1.0),
-        (0.0, 0.0, -1.0),
-    )
     probe_radii = (
         PROBE_RADIUS,
         PROBE_RADIUS / 10.0,
         BOX_SIZE / 3.0,
         PROBE_RADIUS,
+    )
+    # Outward surface normal at each probe; the contact normal the sensor reports is the opposite (the other
+    # object's surface), so expected KinematicTaxel force aligns with -probe_normals. Not a sensor input.
+    probe_normals = (
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, 1.0),
+        (0.0, 0.0, -1.0),
     )
     common_kwargs = dict(
         entity_idx=box.idx,
@@ -1894,28 +1891,27 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
             **common_kwargs,
         )
     )
-    depth_probe = scene.add_sensor(gs.sensors.ContactDepthProbe(**common_kwargs))
-    noisy_radius_depth_probe = scene.add_sensor(
+    depth_probe = scene.add_sensor(
         gs.sensors.ContactDepthProbe(
-            probe_radius_noise=0.25,
             **common_kwargs,
-        )
+        ),
+    )
+    taxel_kwargs = dict(
+        normal_stiffness=STIFFNESS,
+        normal_damping=0.0,
+        shear_scalar=0.0,
+        twist_scalar=0.0,
+        **common_kwargs,
     )
     taxel = scene.add_sensor(
         gs.sensors.KinematicTaxel(
-            probe_local_normal=probe_normals,
-            normal_stiffness=STIFFNESS,
-            normal_damping=0.0,
-            shear_scalar=0.0,
-            twist_scalar=0.0,
-            **common_kwargs,
-        )
+            **taxel_kwargs,
+        ),
     )
     sphere_taxel = scene.add_sensor(
         gs.sensors.KinematicTaxel(
             entity_idx=sphere.idx,
             probe_local_pos=((0.0, 0.0, -SPHERE_RADIUS),),
-            probe_local_normal=((0.0, 0.0, -1.0),),
             probe_radius=PROBE_RADIUS,
             normal_stiffness=STIFFNESS,
             normal_damping=0.0,
@@ -1928,13 +1924,12 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     scene.build(n_envs=n_envs)
     scene.step()
 
-    depth = _as_env_batch(depth_probe.read_ground_truth(), n_envs)
-    contact = _as_env_batch(contact_probe.read_ground_truth(), n_envs)
-    force = _as_env_batch(taxel.read_ground_truth().force, n_envs)
-    torque = _as_env_batch(taxel.read_ground_truth().torque, n_envs)
+    depth = depth_probe.read_ground_truth()
+    contact = contact_probe.read_ground_truth()
+    force = taxel.read_ground_truth().force
+    torque = taxel.read_ground_truth().torque
 
     assert_equal(contact, depth > CONTACT_THRESHOLD)
-    assert _as_env_batch(noisy_radius_depth_probe.read(), n_envs).shape == depth.shape
     # Check that the box's bottom probe (idx 3) detects the ground.
     assert (depth[..., 3] > tol).all(), "Bottom probe should detect the ground."
     assert (force[..., 3, 2] > tol).all(), "Bottom taxel force should point upward."
@@ -1952,10 +1947,10 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS - PENETRATION))
     scene.step()
 
-    depth = _as_env_batch(depth_probe.read_ground_truth(), n_envs)
-    contact = _as_env_batch(contact_probe.read_ground_truth(), n_envs)
-    force = _as_env_batch(taxel.read_ground_truth().force, n_envs)
-    sphere_force = _as_env_batch(sphere_taxel.read_ground_truth().force, n_envs)
+    depth = depth_probe.read_ground_truth()
+    contact = contact_probe.read_ground_truth()
+    force = taxel.read_ground_truth().force
+    sphere_force = sphere_taxel.read_ground_truth().force
 
     assert_equal(contact, depth > CONTACT_THRESHOLD)
     assert (depth[..., 0] > tol).all(), "Top center probe should detect the sphere."
@@ -1968,6 +1963,100 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS + PROBE_RADIUS + 0.2))
     scene.step()
     assert_allclose(sphere_taxel.read_ground_truth().force, 0.0, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_contact_probe_hysteresis(show_viewer):
+    # ContactProbe with release_threshold < contact_threshold latches like a Schmitt trigger. Depth-probe
+    # semantics: depth = probe_radius - sd(probe, geom). With the probe at the box center (link-local origin) and
+    # the box descending into the ground plane, sd = box.z and depth = probe_radius - box.z.
+    n_envs = 0
+    BOX_SIZE = 0.2
+    # Place probe 0.05m above the box bottom; reported depth = probe_radius - probe.z. With probe_radius = 0.060,
+    # depth = 0.010 at zero penetration and grows linearly with penetration p.
+    PROBE_LOCAL_Z = -BOX_SIZE / 2 + 0.05
+    PROBE_RADIUS = 0.060
+    ENTER = 0.030  # triggered at p ~= 0.020
+    RELEASE = 0.015  # triggered at p ~= 0.005
+
+    # box.z values; box.z = BOX_SIZE/2 - p gives penetration p.
+    BOX_Z_OFF = 1.0  # well above plane -> no contact -> depth = 0
+    BOX_Z_BELOW_RELEASE = 0.099  # p = 0.001 -> depth = 0.011 (< RELEASE)
+    BOX_Z_IN_BAND = 0.090  # p = 0.010 -> depth = 0.020 (RELEASE < d < ENTER)
+    BOX_Z_ABOVE_ENTER = 0.070  # p = 0.030 -> depth = 0.040 (> ENTER)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_Z_OFF),
+            fixed=False,
+        ),
+    )
+
+    common = dict(
+        entity_idx=box.idx,
+        probe_local_pos=((0.0, 0.0, PROBE_LOCAL_Z),),
+        probe_radius=PROBE_RADIUS,
+        draw_debug=show_viewer,
+    )
+    hyst_probe = scene.add_sensor(
+        gs.sensors.ContactProbe(
+            contact_threshold=ENTER,
+            release_threshold=RELEASE,
+            **common,
+        ),
+    )
+    plain_probe = scene.add_sensor(
+        gs.sensors.ContactProbe(
+            contact_threshold=ENTER,
+            **common,
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+
+    def step_at(box_z):
+        box.set_pos((0.0, 0.0, box_z))
+        scene.step()
+        h = hyst_probe.read_ground_truth()
+        p = plain_probe.read_ground_truth()
+        return h.reshape(-1), p.reshape(-1)
+
+    # 1. No contact.
+    h, p = step_at(BOX_Z_OFF)
+    assert not h.any() and not p.any()
+
+    # 2. Depth in band before any latch: both False (not latched).
+    h, p = step_at(BOX_Z_IN_BAND)
+    assert not h.any() and not p.any()
+
+    # 3. Depth above enter: both latch True.
+    h, p = step_at(BOX_Z_ABOVE_ENTER)
+    assert h.all() and p.all()
+
+    # 4. Lift to band: hyst stays latched, plain releases (depth < enter).
+    h, p = step_at(BOX_Z_IN_BAND)
+    assert h.all() and not p.any()
+
+    # 5. Lift to below release: hyst clears.
+    h, p = step_at(BOX_Z_BELOW_RELEASE)
+    assert not h.any() and not p.any()
+
+    # 6. Back into band: still False (not latched).
+    h, p = step_at(BOX_Z_IN_BAND)
+    assert not h.any() and not p.any()
+
+    # 7. Reset clears latch even if depth is in band.
+    step_at(BOX_Z_ABOVE_ENTER)
+    scene.reset()
+    h, p = step_at(BOX_Z_IN_BAND)
+    assert not h.any() and not p.any()
 
 
 @pytest.mark.required
@@ -2053,9 +2142,9 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
     scene.build(n_envs=n_envs)
     scene.step()
 
-    dilate_data = _as_env_batch(dilate_sensor.read_ground_truth(), n_envs)
-    shear_data = _as_env_batch(shear_sensor.read_ground_truth(), n_envs)
-    combined_data = _as_env_batch(combined_sensor.read_ground_truth(), n_envs)
+    dilate_data = dilate_sensor.read_ground_truth()
+    shear_data = shear_sensor.read_ground_truth()
+    combined_data = combined_sensor.read_ground_truth()
     normal_projection = (dilate_data * normals).sum(dim=-1)
     assert (normal_projection[..., 0] > tol).all(), "Bottom marker should dilate along its outward normal."
     assert torch.linalg.norm(dilate_data, dim=-1).max() > tol
@@ -2065,9 +2154,9 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
     sphere.set_pos((LATERAL_SHIFT, 0.0, sphere_init_pos[2]))
     scene.step()
 
-    dilate_data = _as_env_batch(dilate_sensor.read_ground_truth(), n_envs)
-    shear_data = _as_env_batch(shear_sensor.read_ground_truth(), n_envs)
-    combined_data = _as_env_batch(combined_sensor.read_ground_truth(), n_envs)
+    dilate_data = dilate_sensor.read_ground_truth()
+    shear_data = shear_sensor.read_ground_truth()
+    combined_data = combined_sensor.read_ground_truth()
     shear_normal_projection = (shear_data * normals).sum(dim=-1)
     shear_tangent = shear_data - shear_normal_projection.unsqueeze(-1) * normals
     assert torch.linalg.norm(shear_tangent, dim=-1).max() > tol
@@ -2161,6 +2250,25 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
             **sensor_kwargs,
         )
     )
+    # A non-default normal_exponent (cubic instead of the default quadratic normal dilation), one per path.
+    cubic_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos,
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            normal_exponent=3.0,
+            **sensor_kwargs,
+        )
+    )
+    cubic_flat_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            normal_exponent=3.0,
+            **sensor_kwargs,
+        )
+    )
     assert elastomer_grid_sensor._is_grid and elastomer_grid_sensor._use_grid_fft
     assert not elastomer_sensor._is_grid and not elastomer_sensor._use_grid_fft
     assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
@@ -2169,12 +2277,20 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     scene.step()
 
     # Test dilate displacement: grid sensor should match the flat-layout sensor and detect contact magnitude.
-    grid_data = elastomer_grid_sensor.read_ground_truth()
+    # The grid-input sensor reports (..., ny, nx, 3); flatten the grid axes for comparison with the flat sensor.
+    grid_data = torch.as_tensor(elastomer_grid_sensor.read_ground_truth(), device=gs.device).flatten(-3, -2)
     flat_data = elastomer_sensor.read_ground_truth()
     assert_allclose(flat_data, grid_data, tol=tol)
-    assert torch.linalg.norm(torch.as_tensor(grid_data, device=gs.device), dim=-1).max() > tol
+    assert torch.linalg.norm(grid_data, dim=-1).max() > tol
     assert_allclose(shear_sensor.read_ground_truth(), 0.0, tol=tol)
     assert_allclose(combined_sensor.read_ground_truth(), flat_data, tol=tol)
+
+    # normal_exponent reshapes only the out-of-plane channel: the grid-FFT and direct paths still agree, and the
+    # cubic-normal response differs from the default quadratic one (sub-unit depths here, so depth**3 < depth**2).
+    cubic_data = torch.as_tensor(cubic_grid_sensor.read_ground_truth(), device=gs.device).flatten(-3, -2)
+    assert_allclose(cubic_flat_sensor.read_ground_truth(), cubic_data, tol=tol)
+    cubic_diff = cubic_data - grid_data
+    assert torch.linalg.norm(cubic_diff, dim=-1).max() > tol, "normal_exponent=3 should change the dilation output"
 
     # Test combined displacement: dilate + shear contributions should add when the box slides laterally.
     box.set_pos((LATERAL_SHIFT, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION))
@@ -2193,6 +2309,119 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
 
 
 @pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_tactile_filler_probes_radius_zero(show_viewer, tol, n_envs):
+    # probe_radius == 0 marks inactive filler probes on ElastomerTaxel / KinematicTaxel: they read 0 and are
+    # excluded from dilation / force, letting an irregular taxel set be padded into a regular grid for FFT.
+    SPHERE_RADIUS = 0.1
+    BOX_SIZE = 0.1
+    PENETRATION = 0.01
+    GRID = (8, 8)
+    RADIUS = 0.02
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            fixed=True,
+        )
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION),
+            fixed=False,
+        )
+    )
+    grid_pos = gu.generate_grid_points_on_plane(
+        lo=(-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
+        hi=(BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
+        normal=(0.0, 0.0, -1.0),
+        nx=GRID[0],
+        ny=GRID[1],
+    )
+    flat_pos = grid_pos.reshape(-1, 3)
+    # Mark a 2x2 corner block (flat indices iy*nx+ix) as inactive fillers; the rest sense normally.
+    filler_idx = [0, 1, GRID[0], GRID[0] + 1]
+    radii = np.full(flat_pos.shape[0], RADIUS)
+    radii[filler_idx] = 0.0
+    active_mask = radii > 0.0
+
+    elastomer_kwargs = dict(
+        entity_idx=box.idx,
+        probe_local_normal=(0.0, 0.0, -1.0),
+        track_link_idx=(sphere.base_link_idx,),
+        n_sample_points=600,
+        lambda_s=0.0,
+        shear_scale=0.0,
+        dilate_scale=1.0,
+        draw_debug=show_viewer,
+    )
+    elastomer_grid = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=grid_pos,
+            probe_radius=radii.tolist(),
+            **elastomer_kwargs,
+        )
+    )
+    elastomer_active = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=flat_pos[active_mask],
+            probe_radius=RADIUS,
+            **elastomer_kwargs,
+        )
+    )
+    kinematic_kwargs = dict(
+        entity_idx=box.idx,
+        normal_stiffness=500.0,
+        draw_debug=show_viewer,
+    )
+    kinematic_grid = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_pos,
+            probe_radius=radii.tolist(),
+            **kinematic_kwargs,
+        )
+    )
+    kinematic_full = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_pos,
+            probe_radius=RADIUS,
+            **kinematic_kwargs,
+        )
+    )
+    assert elastomer_grid._use_grid_fft
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    # ElastomerTaxel (FFT dilation): filler probes read 0; active probes match a sensor built from only the
+    # active probes -- the fillers contribute no dilation, so the active readings are unchanged by their padding.
+    # The grid-input sensor reports (..., ny, nx, 3); flatten the grid axes for filler-index comparison.
+    grid_data = torch.as_tensor(elastomer_grid.read_ground_truth(), device=gs.device).flatten(-3, -2)
+    active_data = torch.as_tensor(elastomer_active.read_ground_truth(), device=gs.device)
+    assert torch.linalg.norm(grid_data, dim=-1).max() > tol, "active elastomer probes should detect contact"
+    assert_allclose(grid_data[..., filler_idx, :], 0.0, tol=gs.EPS)
+    assert_allclose(grid_data[..., active_mask, :], active_data, tol=tol)
+
+    # KinematicTaxel: filler probes read 0 force; active probes match the all-active grid (per-probe force).
+    # KinematicTaxel reports a grid-shaped (..., ny, nx, 3) reading; flatten the grid axes to the flat index.
+    kin_grid = torch.as_tensor(kinematic_grid.read().force, device=gs.device).flatten(-3, -2)
+    kin_full = torch.as_tensor(kinematic_full.read().force, device=gs.device).flatten(-3, -2)
+    assert torch.linalg.norm(kin_full, dim=-1).max() > tol, "active kinematic probes should detect contact"
+    assert_allclose(kin_grid[..., filler_idx, :], 0.0, tol=gs.EPS)
+    assert_allclose(kin_grid[..., active_mask, :], kin_full[..., active_mask, :], tol=tol)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
@@ -2229,7 +2458,6 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
             probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
             probe_local_normal=(0.0, 0.0, -1.0),
             probe_radius=0.06,
-            probe_radius_noise=0.1,
             track_link_idx=(support.base_link_idx,),
             n_sample_points=600,
             stiffness=100.0,
@@ -2241,12 +2469,12 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
     scene.build(n_envs=n_envs)
     scene.step()
 
-    force_norm = torch.linalg.norm(_as_env_batch(sensor.read_ground_truth().force, n_envs), dim=-1)
+    force_norm = torch.linalg.norm(sensor.read_ground_truth().force, dim=-1)
     assert (force_norm > tol).all()
 
     taxel_box.set_pos((0.0, 0.0, BOX_SIZE + BOX_SIZE / 2 + 0.2))
     scene.step()
-    force_norm = torch.linalg.norm(_as_env_batch(sensor.read_ground_truth().force, n_envs), dim=-1)
+    force_norm = torch.linalg.norm(sensor.read_ground_truth().force, dim=-1)
     assert_allclose(force_norm, 0.0, tol=gs.EPS)
 
 
@@ -2309,7 +2537,6 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
     depth_probe = scene.add_sensor(gs.sensors.ContactDepthProbe(**common))
     kinematic_taxel = scene.add_sensor(
         gs.sensors.KinematicTaxel(
-            probe_local_normal=(0.0, 0.0, 1.0),
             normal_stiffness=100.0,
             normal_damping=0.0,
             shear_scalar=0.0,
@@ -2345,6 +2572,16 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
     )
 
     scene.build(n_envs=2)
+
+    # Per-variant sampling: each heterogeneous variant must receive the full n_sample_points budget so
+    # every parallel env sees the requested point count regardless of which variant is active there.
+    for pc_sensor, n_requested in ((proximity_taxel, 800), (elastomer_taxel, 800)):
+        meta = pc_sensor._shared_metadata
+        pc_start = int(meta.sensor_pc_start[pc_sensor._idx].item())
+        pc_end = pc_start + int(meta.sensor_pc_n[pc_sensor._idx].item())
+        per_env_active = meta.pc_active_envs_mask[pc_start:pc_end].sum(dim=0)
+        assert_equal(per_env_active, torch.full_like(per_env_active, n_requested))
+
     obj.set_pos(
         [
             [0.0, 0.0, PAD_TOP_Z + OBJECT_Z_SIZE / 2 - PENETRATION],
@@ -2368,6 +2605,91 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
     assert (elastomer_norm[0, 0] > tol) and (elastomer_norm[1, 0] > tol)
     assert elastomer_norm[0, 1] > elastomer_norm[1, 1] + gs.EPS
     assert surface_distance[0, 1] < surface_distance[1, 1]
+
+
+@pytest.mark.required
+def test_tactile_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
+    # SDF and raycast contact-depth backends should agree on a face-on contact across the probe sensors. The backend
+    # is class-wide (all sensors of a class share one mode), so each mode is built in its own scene and compared.
+    PAD_SIZE = (0.2, 0.2, 0.05)
+    PAD_TOP_Z = PAD_SIZE[2]
+    BALL_R = 0.04
+    PROBE_R = 0.01
+    CENTER_PROBE = (0.0, 0.0, PAD_SIZE[2] / 2)
+
+    def build_and_read(mode):
+        # Build a scene whose probe sensors all use mode, press the ball in, and return CPU-side readings.
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+            profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+            show_viewer=show_viewer,
+        )
+        pad = scene.add_entity(
+            gs.morphs.Box(
+                size=PAD_SIZE,
+                pos=(0.0, 0.0, PAD_SIZE[2] / 2),
+                fixed=True,
+            )
+        )
+        ball = scene.add_entity(
+            gs.morphs.Sphere(
+                radius=BALL_R,
+                pos=(0.0, 0.0, 0.4),
+            )
+        )
+
+        common = dict(entity_idx=pad.idx, probe_local_pos=(CENTER_PROBE,), probe_radius=PROBE_R)
+        depth = scene.add_sensor(gs.sensors.ContactDepthProbe(contact_depth_query=mode, **common))
+        kin = scene.add_sensor(
+            gs.sensors.KinematicTaxel(
+                normal_stiffness=100.0,
+                normal_damping=0.0,
+                shear_scalar=0.0,
+                twist_scalar=0.0,
+                contact_depth_query=mode,
+                **common,
+            )
+        )
+        elast = scene.add_sensor(
+            gs.sensors.ElastomerTaxel(
+                entity_idx=pad.idx,
+                probe_local_pos=(CENTER_PROBE,),
+                probe_local_normal=(0.0, 0.0, 1.0),
+                probe_radius=PROBE_R,
+                track_link_idx=(ball.base_link_idx,),
+                n_sample_points=200,
+                contact_depth_query=mode,
+            )
+        )
+        scene.build(n_envs=0)
+
+        ball.set_pos((0.0, 0.0, PAD_TOP_Z + BALL_R - 0.005))  # 5mm penetration
+        scene.step()
+        # Materialize on CPU so the readings survive the next scene build.
+        return (
+            tensor_to_array(depth.read_ground_truth()),
+            tensor_to_array(kin.read_ground_truth().force).reshape(-1, 3),
+            tensor_to_array(elast.read_ground_truth()),
+        )
+
+    sdf_d, sdf_f, sdf_e = build_and_read("sdf")
+    ray_d, ray_f, ray_e = build_and_read("raycast")
+
+    # ContactDepthProbe -- both backends report a positive depth of the same order. They do not match tightly: SDF
+    # uses the ball's analytic sphere SDF while raycast hits its faceted mesh, so the depths differ by a
+    # mesh-discretization margin (a few tenths of the probe radius).
+    assert (sdf_d > gs.EPS).all() and (ray_d > gs.EPS).all()
+    assert_allclose(sdf_d, ray_d, tol=0.5 * PROBE_R)
+
+    # KinematicTaxel force: both modes report a force in the same direction with magnitude within mesh-discretization
+    # tolerance of each other.
+    assert np.linalg.norm(sdf_f, axis=-1).item() > 0
+    assert np.linalg.norm(ray_f, axis=-1).item() > 0
+    cos_sim = (sdf_f * ray_f).sum(axis=-1) / (np.linalg.norm(sdf_f, axis=-1) * np.linalg.norm(ray_f, axis=-1) + gs.EPS)
+    assert (cos_sim > 0.9).all(), f"force direction mismatch: cos_sim={cos_sim}"
+
+    # ElastomerTaxel dilate displacement: face-on contact, identical on both modes when geom is a sphere primitive.
+    assert_allclose(sdf_e, ray_e, tol=0.1 * PROBE_R)
 
 
 # ------------------------------------------------------------------------------------------

@@ -76,6 +76,9 @@ class RaycastContext(SharedSensorContext):
     def __init__(self, sim):
         super().__init__(sim)
         self._bvh_contexts: list[BVHContext] = []
+        # The rigid collision BVH context -- the single entry with no per-vface raycast mask (raycast_mask is None).
+        # Resolved once in ``activate`` (the entry list is fixed after that); ``None`` until then / if no rigid solver.
+        self.collision_bvh_context: BVHContext | None = None
 
     @property
     def bvh_contexts(self) -> list[BVHContext]:
@@ -130,6 +133,8 @@ class RaycastContext(SharedSensorContext):
                     aabb = AABB(n_batches=n_envs, n_aabbs=n_vfaces)
                     bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
                     self._bvh_contexts.append(BVHContext(solver, bvh, aabb, mask, maybe_static))
+
+        self.collision_bvh_context = next((c for c in self._bvh_contexts if c.raycast_mask is None), None)
 
         # Lazily watch each static BVH (collision or visual) for GEOMETRY changes. ``update`` polls its
         # rebuild_subscriber so an explicit set_pos / set_quat / set_vverts on the otherwise-immovable geometry forces
