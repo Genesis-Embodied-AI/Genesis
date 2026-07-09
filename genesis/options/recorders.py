@@ -313,6 +313,10 @@ class MPLVectorFieldPlot(BasePlotterOptions):
         The scale factor to apply to the vectors. Defaults to 0.1.
     max_magnitude: float, optional
         Maximum magnitude for the colorbar (colors are fixed to [0, max_magnitude]). Defaults to 1.0.
+    subplot_titles: StrArrayType | None, optional
+        If provided, the figure holds one subplot per title (K subplots in a near-square grid), all sharing
+        ``positions``; the data_func then returns shape ``(K, N, 3)`` -- one vector field per subplot. ``None``
+        (default) is a single plot whose data_func returns ``(N, 3)``.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
     show_window: bool | None
@@ -323,3 +327,4 @@ class MPLVectorFieldPlot(BasePlotterOptions):
     normal: Vec3FType = (0.0, 0.0, 1.0)
     scale_factor: PositiveFloat = 1.0
     max_magnitude: PositiveFloat = 1.0
+    subplot_titles: StrArrayType | None = None

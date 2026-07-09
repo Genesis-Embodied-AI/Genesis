@@ -227,6 +227,8 @@ class ProbeSensorOptionsMixin(SensorOptions[SensorT]):
     probe_radius : float | array-like[float] or shape ``(M, N)`` grid
         Probe sensing radius in meters. A scalar is shared by every probe; an array (or grid) must match the
         layout of ``probe_local_pos``.
+    probe_radius_noise : float
+        Additive radius noise in meters used by kernels whose measured branch depends on effective probe radius.
     debug_probe_color : array-like[float, float, float]
         RGB color for debug probe spheres (no alpha; the center sphere is drawn opaque and the outer sphere uses
         ``debug_probe_sphere_opacity``).
@@ -238,6 +240,7 @@ class ProbeSensorOptionsMixin(SensorOptions[SensorT]):
 
     probe_local_pos: Vec3FArrayType | Vec3FGridType = ((0.0, 0.0, 0.0),)
     probe_radius: PositiveFloat | PositiveFArrayType | PositiveFGridType = 0.01
+    probe_radius_noise: NonNegativeFloat = 0.0
     debug_probe_color: UnitIntervalVec3Type = (0.2, 0.4, 1.0)
     debug_probe_center_radius: PositiveFloat = 0.0008
     debug_probe_sphere_opacity: UnitInterval = 0.3

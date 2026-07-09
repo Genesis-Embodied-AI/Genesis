@@ -3,6 +3,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Callable, Generic, Mapping, TypeVar
 
+import numpy as np
 import torch
 
 import genesis as gs
@@ -21,6 +22,8 @@ def _detach_data(data):
     """Move all GPU tensors to CPU numpy arrays so the data is safe for background thread processing."""
     if isinstance(data, torch.Tensor):
         return tensor_to_array(data)
+    if isinstance(data, np.ndarray):  # already CPU numpy; must precede is_sequence since np.ndarray(<generator>) fails
+        return data
     if isinstance(data, Mapping):
         return {k: _detach_data(v) for k, v in data.items()}
     if is_sequence(data):

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Generic, TypeVar
 
 import numpy as np
@@ -7,6 +7,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.sensors.tactile import TactileProbeSensorOptionsMixin
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 if TYPE_CHECKING:
@@ -35,8 +36,6 @@ class ProbeSensorMetadataMixin:
     total_n_probes: int = 0
     probe_positions: torch.Tensor = make_tensor_field((0, 3))
     probe_radii: torch.Tensor = make_tensor_field((0,))
-    # No-op scaffolding kept for the kernels' dual-radius / gain machinery: always zeros / ones so the
-    # measured branch equals ground truth. ``has_any_*`` stay False.
     probe_radii_noise: torch.Tensor = make_tensor_field((0,))
     has_any_probe_radius_noise: bool = False
     has_any_probe_gain: bool = False
@@ -48,6 +47,22 @@ class ProbeSensorMetadataMixin:
     measured_scratch_T: torch.Tensor = make_tensor_field((0, 0))
 
     probe_gains: torch.Tensor = make_tensor_field((0, 0))
+    probe_gain_resample_low: torch.Tensor = make_tensor_field((0,))
+    probe_gain_resample_high: torch.Tensor = make_tensor_field((0,))
+    probe_has_gain_resample: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
+    any_gain_resample: bool = False
+
+    dead_taxel_mask: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    dead_taxel_values: torch.Tensor = make_tensor_field((0, 0))
+    dead_taxel_probability: torch.Tensor = make_tensor_field((0,))
+    dead_taxel_value_low: torch.Tensor = make_tensor_field((0,))
+    dead_taxel_value_high: torch.Tensor = make_tensor_field((0,))
+    any_dead_taxel: bool = False
+    dead_mask_per_col: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    dead_values_per_col: torch.Tensor = make_tensor_field((0, 0))
+    dead_dirty: bool = True
+    cache_col_probe_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: torch.long)
+    cache_col_n_channel_groups: list[int] = field(default_factory=list)
 
 
 ProbeSensorSharedMetadataT = TypeVar("ProbeSensorSharedMetadataT", bound=ProbeSensorMetadataMixin)
@@ -68,6 +83,9 @@ def get_measured_bufs(
 
 class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
     """Shared logic for registering this sensor's probes in ``ProbeSensorMetadataMixin`` fields."""
+
+    # Number of channel groups per probe in the cache layout. Used by the per-cache-col probe-index builder.
+    _taxel_channel_groups: int = 1
 
     def __init__(
         self,
@@ -116,20 +134,189 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
         self._shared_metadata.probe_radii = concat_with_tensor(
             self._shared_metadata.probe_radii, probe_radii, expand=(self._n_probes,)
         )
-        # No-op scaffolding (always zeros): the kernels' dual-radius machinery reads this; zero noise means the
-        # measured radius equals the nominal radius (measured branch == ground truth).
         self._shared_metadata.probe_radii_noise = concat_with_tensor(
             self._shared_metadata.probe_radii_noise,
-            torch.zeros((self._n_probes,), dtype=gs.tc_float, device=gs.device),
+            torch.full((self._n_probes,), self._options.probe_radius_noise, dtype=gs.tc_float, device=gs.device),
             expand=(self._n_probes,),
         )
-        # No-op scaffolding (always ones): the kernels multiply the measured-branch signal by this per-probe gain.
+        if self._options.probe_radius_noise > 0.0:
+            self._shared_metadata.has_any_probe_radius_noise = True
+
+        # Tactile-specific options (probe_gain, dead_taxel_*) live on ``TactileProbeSensorOptionsMixin``; generic
+        # probe sensors (e.g. SurfaceDistanceProbe) don't carry them and register defaults (gain 1, no dead).
         B = self._manager._sim._B
+        opts = self._options
+        is_tactile = isinstance(opts, TactileProbeSensorOptionsMixin)
+        # Initial per-probe gain (probe_gain may be scalar or per-probe array).
+        gain_value = opts.probe_gain if is_tactile else 1.0
+        if isinstance(gain_value, (int, float)):
+            init_gain = torch.full((B, self._n_probes), float(gain_value), dtype=gs.tc_float, device=gs.device)
+            if float(gain_value) != 1.0:
+                self._shared_metadata.has_any_probe_gain = True
+        else:
+            init_gain = (
+                torch.tensor(gain_value, dtype=gs.tc_float, device=gs.device)
+                .reshape(self._n_probes)
+                .unsqueeze(0)
+                .expand(B, self._n_probes)
+                .contiguous()
+            )
+            if not bool((init_gain == 1.0).all().item()):
+                self._shared_metadata.has_any_probe_gain = True
         self._shared_metadata.probe_gains = concat_with_tensor(
-            self._shared_metadata.probe_gains,
-            torch.ones((B, self._n_probes), dtype=gs.tc_float, device=gs.device),
-            expand=(B, self._n_probes),
-            dim=1,
+            self._shared_metadata.probe_gains, init_gain, expand=(B, self._n_probes), dim=1
+        )
+
+        # Per-probe gain resample range (constant across envs). When option is None, write zeros + has_resample=False;
+        # the reset hook gates on ``has_gain_resample`` per probe.
+        resample_range = opts.probe_gain_resample_range if is_tactile else None
+        if resample_range is None:
+            low, high = 0.0, 0.0
+            has_resample = False
+        else:
+            low, high = float(resample_range[0]), float(resample_range[1])
+            has_resample = True
+            self._shared_metadata.any_gain_resample = True
+            # Resampled gain is generally != 1, so the measured branch can't be assumed equal to GT.
+            self._shared_metadata.has_any_probe_gain = True
+        self._shared_metadata.probe_gain_resample_low = concat_with_tensor(
+            self._shared_metadata.probe_gain_resample_low,
+            torch.full((self._n_probes,), low, dtype=gs.tc_float, device=gs.device),
+            expand=(self._n_probes,),
+        )
+        self._shared_metadata.probe_gain_resample_high = concat_with_tensor(
+            self._shared_metadata.probe_gain_resample_high,
+            torch.full((self._n_probes,), high, dtype=gs.tc_float, device=gs.device),
+            expand=(self._n_probes,),
+        )
+        self._shared_metadata.probe_has_gain_resample = concat_with_tensor(
+            self._shared_metadata.probe_has_gain_resample,
+            torch.full((self._n_probes,), has_resample, dtype=gs.tc_bool, device=gs.device),
+            expand=(self._n_probes,),
+        )
+
+        # Per-probe dead taxel configuration (constant across envs).
+        dead_prob = float(opts.dead_taxel_probability) if is_tactile else 0.0
+        dead_range = opts.dead_taxel_value_range if is_tactile else (0.0, 0.0)
+        s_low, s_high = float(dead_range[0]), float(dead_range[1])
+        self._shared_metadata.dead_taxel_probability = concat_with_tensor(
+            self._shared_metadata.dead_taxel_probability,
+            torch.full((self._n_probes,), dead_prob, dtype=gs.tc_float, device=gs.device),
+            expand=(self._n_probes,),
+        )
+        self._shared_metadata.dead_taxel_value_low = concat_with_tensor(
+            self._shared_metadata.dead_taxel_value_low,
+            torch.full((self._n_probes,), s_low, dtype=gs.tc_float, device=gs.device),
+            expand=(self._n_probes,),
+        )
+        self._shared_metadata.dead_taxel_value_high = concat_with_tensor(
+            self._shared_metadata.dead_taxel_value_high,
+            torch.full((self._n_probes,), s_high, dtype=gs.tc_float, device=gs.device),
+            expand=(self._n_probes,),
+        )
+        if dead_prob > 0.0:
+            self._shared_metadata.any_dead_taxel = True
+        self._shared_metadata.dead_taxel_mask = torch.zeros(
+            (B, self._shared_metadata.total_n_probes), dtype=gs.tc_bool, device=gs.device
+        )
+        self._shared_metadata.dead_taxel_values = torch.zeros(
+            (B, self._shared_metadata.total_n_probes), dtype=gs.tc_float, device=gs.device
+        )
+        # Invalidate the lazy cache-col probe index; rebuilt on next dead apply.
+        self._shared_metadata.cache_col_probe_idx = torch.empty((0,), dtype=torch.long, device=gs.device)
+        self._shared_metadata.cache_col_n_channel_groups.append(self._taxel_channel_groups)
+
+    @classmethod
+    def reset(cls, shared_metadata, shared_ground_truth_cache, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+        # Resample per-(env, probe) gain for probes whose sensor configured a resample range.
+        if shared_metadata.any_gain_resample and shared_metadata.probe_gains.numel() > 0:
+            mask = shared_metadata.probe_has_gain_resample.unsqueeze(0)  # (1, total_n_probes)
+            low = shared_metadata.probe_gain_resample_low.unsqueeze(0)
+            high = shared_metadata.probe_gain_resample_high.unsqueeze(0)
+            sub = shared_metadata.probe_gains[envs_idx]
+            new_gain = torch.rand_like(sub) * (high - low) + low
+            shared_metadata.probe_gains[envs_idx] = torch.where(mask, new_gain, sub)
+        # Resample dead mask + values per env for affected probes.
+        if shared_metadata.any_dead_taxel and shared_metadata.dead_taxel_mask.numel() > 0:
+            prob = shared_metadata.dead_taxel_probability.unsqueeze(0)  # (1, total_n_probes)
+            n_envs = shared_metadata.dead_taxel_mask[envs_idx].shape[0]
+            rolls = torch.rand((n_envs, shared_metadata.total_n_probes), device=gs.device, dtype=gs.tc_float)
+            new_mask = rolls < prob
+            shared_metadata.dead_taxel_mask[envs_idx] = new_mask
+            low = shared_metadata.dead_taxel_value_low.unsqueeze(0)
+            high = shared_metadata.dead_taxel_value_high.unsqueeze(0)
+            uniforms = torch.rand((n_envs, shared_metadata.total_n_probes), device=gs.device, dtype=gs.tc_float)
+            shared_metadata.dead_taxel_values[envs_idx] = uniforms * (high - low) + low
+            # The per-cache-column broadcast is now stale; rebuilt on the next `_apply_hardware_imperfections`.
+            shared_metadata.dead_dirty = True
+
+    @gs.assert_built
+    def set_probe_gain(self, value, envs_idx=None):
+        """Set the per-probe measured-branch contact-depth gain for the given envs.
+
+        ``value`` may be a scalar (broadcast to all probes of this sensor), or an array of length ``n_probes``.
+        Affects only the probes registered by this sensor instance.
+        """
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        probe_start = int(self._shared_metadata.sensor_probe_start[self._idx].item())
+        probe_slice = slice(probe_start, probe_start + self._n_probes)
+        if isinstance(value, (int, float)):
+            row = torch.full((len(envs_idx), self._n_probes), float(value), dtype=gs.tc_float, device=gs.device)
+        else:
+            t = torch.as_tensor(value, dtype=gs.tc_float, device=gs.device).reshape(-1)
+            if t.numel() != self._n_probes:
+                gs.raise_exception(f"set_probe_gain expected {self._n_probes} values, got {t.numel()}.")
+            row = t.unsqueeze(0).expand(len(envs_idx), self._n_probes).contiguous()
+        self._shared_metadata.probe_gains[envs_idx, probe_slice] = row
+        # Conservatively mark gain in use (a user-set gain may be non-unit); never reset to False.
+        self._shared_metadata.has_any_probe_gain = True
+
+    @classmethod
+    def _apply_hardware_imperfections(cls, shared_metadata, measured_slot_0):
+        super()._apply_hardware_imperfections(shared_metadata, measured_slot_0)
+        if not shared_metadata.any_dead_taxel:
+            return
+        cls._maybe_build_cache_col_probe_idx(shared_metadata, measured_slot_0)
+        # The per-(env, probe) dead state only changes on reset; broadcast it to per-(env, cache_col) layout once
+        # (when dirty) instead of gathering every step.
+        if shared_metadata.dead_dirty or shared_metadata.dead_mask_per_col.shape != measured_slot_0.shape:
+            idx = shared_metadata.cache_col_probe_idx  # (total_cache_size,)
+            shared_metadata.dead_mask_per_col = shared_metadata.dead_taxel_mask[:, idx]
+            shared_metadata.dead_values_per_col = shared_metadata.dead_taxel_values[:, idx].to(
+                dtype=measured_slot_0.dtype
+            )
+            shared_metadata.dead_dirty = False
+        torch.where(
+            shared_metadata.dead_mask_per_col,
+            shared_metadata.dead_values_per_col,
+            measured_slot_0,
+            out=measured_slot_0,
+        )
+
+    @classmethod
+    def _maybe_build_cache_col_probe_idx(cls, shared_metadata, tensor):
+        n_cols = tensor.shape[1]
+        if shared_metadata.cache_col_probe_idx.shape == (n_cols,):
+            return
+        sizes = shared_metadata.cache_sizes
+        n_probes_per = shared_metadata.n_probes_per_sensor.tolist()
+        probe_starts = shared_metadata.sensor_probe_start.tolist()
+        groups = shared_metadata.cache_col_n_channel_groups
+        # Each sensor's cache columns are ordered (group, probe, component); only the probe axis indexes a probe,
+        # so its slice is a strided arange: arange(n_p) repeated per-component, tiled over the k groups.
+        per_sensor = []
+        for i_s, cache_size in enumerate(sizes):
+            n_p = n_probes_per[i_s]
+            if n_p == 0:
+                continue
+            k = groups[i_s] if i_s < len(groups) else 1
+            components_per_group = cache_size // (k * n_p)
+            cols = torch.arange(n_p, dtype=torch.long, device=gs.device)
+            cols = cols.repeat_interleave(components_per_group).repeat(k)
+            per_sensor.append(cols + probe_starts[i_s])
+        shared_metadata.cache_col_probe_idx = (
+            torch.cat(per_sensor) if per_sensor else torch.empty((0,), dtype=torch.long, device=gs.device)
         )
 
     @property

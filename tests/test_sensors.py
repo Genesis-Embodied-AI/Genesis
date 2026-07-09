@@ -11,7 +11,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import gaussian_crosstalk_kernel, tensor_to_array
 
 from .utils import assert_allclose, assert_equal
 
@@ -1833,6 +1833,7 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     CONTACT_THRESHOLD = 0.002
     STIFFNESS = 100.0
     SPHERE_RADIUS = 0.1
+    GAIN = 1.5
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1896,6 +1897,19 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
             **common_kwargs,
         ),
     )
+    noisy_radius_depth_probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            probe_radius_noise=0.25,
+            **common_kwargs,
+        )
+    )
+    # probe_gain variants: depth/force should scale by the gain on the measured branch only.
+    gained_depth_probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            probe_gain=GAIN,
+            **common_kwargs,
+        )
+    )
     taxel_kwargs = dict(
         normal_stiffness=STIFFNESS,
         normal_damping=0.0,
@@ -1905,6 +1919,12 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     )
     taxel = scene.add_sensor(
         gs.sensors.KinematicTaxel(
+            **taxel_kwargs,
+        ),
+    )
+    gained_taxel = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_gain=GAIN,
             **taxel_kwargs,
         ),
     )
@@ -1930,6 +1950,7 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     torque = taxel.read_ground_truth().torque
 
     assert_equal(contact, depth > CONTACT_THRESHOLD)
+    assert noisy_radius_depth_probe.read().shape == depth.shape
     # Check that the box's bottom probe (idx 3) detects the ground.
     assert (depth[..., 3] > tol).all(), "Bottom probe should detect the ground."
     assert (force[..., 3, 2] > tol).all(), "Bottom taxel force should point upward."
@@ -1941,6 +1962,16 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     # Forces should be equivalent to the penetration * stiffness along normal vector.
     expected_normals = -torch.tensor(probe_normals, dtype=gs.tc_float, device=gs.device)
     assert_allclose(force, depth.unsqueeze(-1) * STIFFNESS * expected_normals, tol=tol)
+
+    # probe_gain scales the measured branch only; GT is untouched. normal_exponent defaults to 1, so the measured
+    # force is linear in the gained depth and scales by the same factor.
+    gained_depth = gained_depth_probe.read()
+    gained_force = gained_taxel.read().force
+    assert (depth[..., 3] > tol).all()  # sanity: the bottom probe is in contact
+    assert_allclose(gained_depth[..., 3], depth[..., 3] * GAIN, tol=tol)
+    assert_allclose(gained_depth_probe.read_ground_truth(), depth, tol=gs.EPS)
+    assert_allclose(gained_force[..., 3, :], force[..., 3, :] * GAIN, tol=tol)
+    assert_allclose(gained_taxel.read_ground_truth().force, force, tol=gs.EPS)
 
     # Now position the sphere to penetrate the top of the box.
     box_top_z = BOX_SIZE - PENETRATION
@@ -2060,6 +2091,454 @@ def test_contact_probe_hysteresis(show_viewer):
 
 
 @pytest.mark.required
+def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer):
+    # hysteresis_strength > 0 makes the measured depth overshoot GT after a step then relax back; GT untouched.
+    n_envs = 0
+    BOX_SIZE = 0.2
+    PROBE_LOCAL_Z = -BOX_SIZE / 2 + 0.05
+    PROBE_RADIUS = 0.060
+    STRENGTH = 0.5
+    DT = 0.01
+    TAU = 0.05  # alpha = exp(-dt/tau) ~= 0.819
+    ALPHA = np.exp(-DT / TAU)
+
+    BOX_Z_OFF = 1.0
+    BOX_Z_ON = 0.080  # p = 0.020, depth = 0.030 in steady state
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0), dt=DT),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_Z_OFF),
+            fixed=False,
+        ),
+    )
+    common = dict(
+        entity_idx=box.idx,
+        probe_local_pos=((0.0, 0.0, PROBE_LOCAL_Z),),
+        probe_radius=PROBE_RADIUS,
+        draw_debug=show_viewer,
+    )
+    hyst = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            hysteresis_strength=STRENGTH,
+            hysteresis_tau=TAU,
+            **common,
+        ),
+    )
+    plain = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            **common,
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+
+    def step_at(z):
+        box.set_pos((0.0, 0.0, z))
+        scene.step()
+        return (
+            hyst.read().reshape(-1),
+            hyst.read_ground_truth().reshape(-1),
+            plain.read().reshape(-1),
+        )
+
+    # Step 1: no contact. All zero.
+    h_m, h_gt, p_m = step_at(BOX_Z_OFF)
+    assert_allclose(h_m, 0.0, tol=gs.EPS)
+    assert_allclose(h_gt, 0.0, tol=gs.EPS)
+    assert_allclose(p_m, 0.0, tol=gs.EPS)
+
+    # Step 2: jump to BOX_Z_ON. GT should equal plain measured (both = D). Hyst measured = D*(1+strength).
+    h_m, h_gt, p_m = step_at(BOX_Z_ON)
+    depth_ref = float(h_gt[0].item())
+    assert depth_ref > 0.02  # sanity
+    assert_allclose(p_m, depth_ref, tol=1e-5)
+    assert_allclose(h_m, depth_ref * (1.0 + STRENGTH), tol=1e-4)
+
+    # Holding depth: xi decays by ALPHA each step, so measured = depth_ref * (1 + strength * ALPHA^i_step).
+    for i_step in range(1, 5):
+        h_m, h_gt, p_m = step_at(BOX_Z_ON)
+        assert_allclose(h_gt, depth_ref, tol=1e-5)
+        assert_allclose(p_m, depth_ref, tol=1e-5)
+        expected = depth_ref * (1.0 + STRENGTH * (ALPHA**i_step))
+        assert_allclose(h_m, expected, tol=1e-4)
+
+    # Reset clears xi: a single step at depth_ref overshoots exactly like the first contact step.
+    scene.reset()
+    box.set_pos((0.0, 0.0, BOX_Z_OFF))
+    scene.step()
+    h_m, h_gt, p_m = step_at(BOX_Z_ON)
+    assert_allclose(h_m, depth_ref * (1.0 + STRENGTH), tol=1e-4)
+
+
+@pytest.mark.required
+def test_probe_gain_and_dead_resample(show_viewer):
+    # probe_gain_resample_range and dead_taxel_probability redraw per-(env, probe) on each reset; GT untouched.
+    BOX_SIZE = 0.2
+    PROBE_LOCAL_Z = -BOX_SIZE / 2 + 0.05
+    PROBE_RADIUS = 0.060
+    GAIN_LOW, GAIN_HIGH = 0.5, 1.5
+    DEAD_LOW, DEAD_HIGH = 0.123, 0.456
+    BOX_Z = 0.080  # box descends into the plane so the real contact depth is non-zero
+    N_ENVS = 8
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, 1.0),
+            fixed=False,
+        ),
+    )
+    common = dict(
+        entity_idx=box.idx,
+        probe_local_pos=((0.0, 0.0, PROBE_LOCAL_Z),),
+        probe_radius=PROBE_RADIUS,
+        draw_debug=show_viewer,
+    )
+    gain_sensor = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            probe_gain_resample_range=(GAIN_LOW, GAIN_HIGH),
+            **common,
+        ),
+    )
+    dead_sensor = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            dead_taxel_probability=1.0,
+            dead_taxel_value_range=(DEAD_LOW, DEAD_HIGH),
+            **common,
+        ),
+    )
+
+    scene.build(n_envs=N_ENVS)
+
+    def reset_step_read():
+        scene.reset()  # triggers the per-(env, probe) resample of gain and dead state
+        box.set_pos([[0.0, 0.0, BOX_Z]] * N_ENVS)
+        scene.step()
+        gains = (gain_sensor.read() / gain_sensor.read_ground_truth()).reshape(-1).cpu()
+        dead = dead_sensor.read().reshape(-1).cpu()
+        return gains, dead
+
+    gains_a, dead_a = reset_step_read()
+    # Gain stays in range, dead values are overwritten in range, and both vary across the 8 envs.
+    assert torch.all((gains_a >= GAIN_LOW - 1e-5) & (gains_a <= GAIN_HIGH + 1e-5))
+    assert torch.all((dead_a >= DEAD_LOW - 1e-5) & (dead_a <= DEAD_HIGH + 1e-5))
+    assert gains_a.std().item() > 0.01 and dead_a.std().item() > 0.01
+    # The dead sensor's GT is untouched -- it still reports the real (non-zero) contact depth.
+    assert torch.all(dead_sensor.read_ground_truth().reshape(-1) > 0.0)
+
+    # A second reset redraws both.
+    gains_b, dead_b = reset_step_read()
+    assert not torch.allclose(gains_a, gains_b, atol=1e-3)
+    assert not torch.allclose(dead_a, dead_b, atol=1e-3)
+
+
+@pytest.mark.required
+def test_kinematic_taxel_crosstalk(show_viewer):
+    # Crosstalk smears the measured force across grid neighbors (GT unchanged) and preserves total normal force;
+    # crosstalk_strength=0 is the exact no-crosstalk path, and a grid layout matches a flat one at the same probes.
+    BOX_SIZE = 0.2
+    PROBE_RADIUS = 0.02
+    SPACING = 0.03
+    SPHERE_RADIUS = 0.025
+    BOX_BOTTOM_Z = 0.05
+    CROSSTALK_STRENGTH = 0.6
+    CROSSTALK_SIGMA = SPACING
+
+    ny, nx = 5, 5
+    grid_positions = np.zeros((ny, nx, 3), dtype=gs.np_float)
+    for i_y in range(ny):
+        for i_x in range(nx):
+            grid_positions[i_y, i_x] = ((i_x - 2) * SPACING, (i_y - 2) * SPACING, BOX_SIZE / 2)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE / 2),
+            fixed=True,
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.010),
+            fixed=False,
+        )
+    )
+
+    common = dict(
+        entity_idx=box.idx,
+        probe_radius=PROBE_RADIUS,
+        normal_stiffness=100.0,
+        normal_damping=0.0,
+        shear_scalar=0.0,
+        twist_scalar=0.0,
+    )
+    plain = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.tolist(),
+            **common,
+        ),
+    )
+    crosstalk = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.tolist(),
+            crosstalk_strength=CROSSTALK_STRENGTH,
+            crosstalk_sigma=CROSSTALK_SIGMA,
+            **common,
+        )
+    )
+    # crosstalk_strength=0 must reproduce the no-crosstalk path exactly, even with a non-zero sigma.
+    crosstalk_off = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.tolist(),
+            crosstalk_strength=0.0,
+            crosstalk_sigma=0.05,
+            **common,
+        )
+    )
+    # Same probes laid out flat: per-probe GT must match the grid layout.
+    flat = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.reshape(-1, 3).tolist(),
+            **common,
+        )
+    )
+
+    scene.build(n_envs=0)
+    sphere.set_pos((0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.010))
+    scene.step()
+
+    plain_meas_force = plain.read().force
+    crosstalk_meas_force = crosstalk.read().force
+    plain_gt_force = plain.read_ground_truth().force
+    crosstalk_gt_force = crosstalk.read_ground_truth().force
+
+    # GT branch is untouched by crosstalk.
+    assert_allclose(crosstalk_gt_force, plain_gt_force, tol=gs.EPS)
+
+    # Plain measured equals GT (no transforms enabled on plain sensor).
+    assert_allclose(plain_meas_force, plain_gt_force, tol=gs.EPS)
+
+    plain_force_mag = torch.linalg.norm(plain_meas_force, dim=-1)
+    i_y_c, i_x_c = (plain_force_mag == plain_force_mag.max()).nonzero(as_tuple=False)[0].tolist()
+    assert (i_y_c, i_x_c) == (ny // 2, nx // 2)
+
+    crosstalk_force_mag = torch.linalg.norm(crosstalk_meas_force, dim=-1)
+    # Center magnitude on crosstalk sensor is reduced vs plain (energy redistributed).
+    assert crosstalk_force_mag[i_y_c, i_x_c] < plain_force_mag[i_y_c, i_x_c]
+    # A probe outside the contact patch (2 spacings from center) was ~zero on plain; crosstalk leaks force there.
+    plain_far = plain_force_mag[0, 0].item()
+    crosstalk_far = crosstalk_force_mag[0, 0].item()
+    assert plain_far < 1e-4, f"far probe should be ~zero on plain sensor (got {plain_far})"
+    assert crosstalk_far > 1e-4, f"far probe should pick up crosstalk leakage (got {crosstalk_far})"
+
+    # Total Fz across the grid is preserved up to Gaussian-tail leakage past the output slice boundary.
+    plain_total_fz = plain_meas_force[..., 2].sum().item()
+    crosstalk_total_fz = crosstalk_meas_force[..., 2].sum().item()
+    assert np.isclose(plain_total_fz, crosstalk_total_fz, rtol=5e-2, atol=1e-5), (
+        f"plain={plain_total_fz}, crosstalk={crosstalk_total_fz}"
+    )
+
+    # crosstalk_strength=0 is the exact no-crosstalk path (even with a non-zero sigma).
+    assert_allclose(crosstalk_off.read().force, plain_meas_force, tol=gs.EPS)
+    assert_allclose(crosstalk_off.read().torque, plain.read().torque, tol=gs.EPS)
+
+    # A grid layout produces the same per-probe GT as a flat layout at the identical positions.
+    flat_gt = flat.read_ground_truth()
+    assert_allclose(plain_gt_force.reshape(-1, 3), flat_gt.force, tol=gs.EPS)
+    assert_allclose(plain.read_ground_truth().torque.reshape(-1, 3), flat_gt.torque, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_gaussian_crosstalk_kernel_helper():
+    # gaussian_crosstalk_kernel: L1-normalized (conservative), symmetric, center-peaked, rejects even dims.
+    kernel = gaussian_crosstalk_kernel(5, 5, sigma=1.0)
+    assert kernel.shape == (5, 5)
+    assert np.isclose(kernel.sum(), 1.0)
+    assert np.allclose(kernel, kernel.T)  # isotropic on a square grid -> symmetric
+    assert kernel[2, 2] == kernel.max()  # center is the self (peak) tap
+    assert kernel[2, 2] < 1.0  # a conservative kernel shares the peak with neighbors (center < 1)
+    assert gaussian_crosstalk_kernel(5, 5, sigma=2.0)[2, 2] < kernel[2, 2]  # wider sigma spreads more
+    # anisotropic pitch: a larger step on the row axis makes row neighbors lighter than column neighbors.
+    kernel_aniso = gaussian_crosstalk_kernel(5, 5, sigma=1.0, spacing=(2.0, 1.0))
+    assert kernel_aniso[1, 2] < kernel_aniso[2, 1]
+    for bad in [(4, 5), (5, 4)]:
+        with pytest.raises(Exception):
+            gaussian_crosstalk_kernel(*bad, sigma=1.0)
+
+
+@pytest.mark.required
+def test_kinematic_taxel_crosstalk_explicit_kernel(show_viewer):
+    # Explicit kernels: (N, M) identity is a no-op; a blur spreads all channels and conserves total normal force;
+    # a (2, N, M) [normal, shear] kernel routes the pure-normal contact force through the normal group only.
+    BOX_SIZE = 0.2
+    PROBE_RADIUS = 0.02
+    SPACING = 0.03
+    SPHERE_RADIUS = 0.025
+    BOX_BOTTOM_Z = 0.05
+
+    blur = [[0.03, 0.07, 0.03], [0.07, 0.60, 0.07], [0.03, 0.07, 0.03]]  # sums to 1 (conservative), center 0.6
+    identity = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]
+
+    ny, nx = 5, 5
+    grid_positions = np.zeros((ny, nx, 3), dtype=gs.np_float)
+    for i_y in range(ny):
+        for i_x in range(nx):
+            grid_positions[i_y, i_x] = ((i_x - 2) * SPACING, (i_y - 2) * SPACING, BOX_SIZE / 2)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE / 2),
+            fixed=True,
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.010),
+            fixed=False,
+        )
+    )
+    common = dict(
+        entity_idx=box.idx,
+        probe_local_pos=grid_positions.tolist(),
+        probe_radius=PROBE_RADIUS,
+        normal_stiffness=100.0,
+        normal_damping=0.0,
+        shear_scalar=0.0,
+        twist_scalar=0.0,
+    )
+    plain = scene.add_sensor(gs.sensors.KinematicTaxel(**common))
+    ck_id = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=identity, **common))
+    ck_blur = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=blur, **common))
+    ck_normal = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=[blur, identity], **common))
+    ck_shear = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=[identity, blur], **common))
+
+    scene.build(n_envs=0)
+    sphere.set_pos((0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.010))
+    scene.step()
+
+    plain_f = plain.read().force
+    plain_mag = torch.linalg.norm(plain_f, dim=-1)
+    plain_fz = plain_f[..., 2]
+
+    # An identity kernel is an exact no-op, and crosstalk never touches the GT branch.
+    assert_allclose(ck_id.read().force, plain_f, tol=1e-6)
+    assert_allclose(ck_blur.read_ground_truth().force, plain.read_ground_truth().force, tol=gs.EPS)
+
+    # The (N, M) blur reduces the contact peak and leaks force to probes that read ~zero on the plain sensor.
+    plain_zero = plain_mag < 1e-4
+    assert plain_zero.any()
+    blur_mag = torch.linalg.norm(ck_blur.read().force, dim=-1)
+    assert blur_mag[2, 2] < plain_mag[2, 2]
+    assert (blur_mag[plain_zero] > 1e-4).any()
+    assert np.isclose(plain_fz.sum().item(), ck_blur.read().force[..., 2].sum().item(), rtol=5e-2, atol=1e-5)
+
+    # 2-group [normal, shear]: contact force is pure normal (Fz), so the normal kernel governs it. A normal-blur
+    # spreads Fz (peak down, leaks into previously-zero probes); a shear-blur leaves Fz identical (the shear
+    # component is ~zero here).
+    normal_fz = ck_normal.read().force[..., 2]
+    shear_fz = ck_shear.read().force[..., 2]
+    assert normal_fz[2, 2].abs() < plain_fz[2, 2].abs()
+    assert (normal_fz.abs()[plain_zero] > 1e-4).any()
+    assert_allclose(shear_fz, plain_fz, tol=1e-6)
+
+
+@pytest.mark.required
+def test_proximity_taxel_crosstalk(show_viewer):
+    # ProximityTaxel crosstalk smears the measured force across grid neighbors (peak down, leakage) with GT untouched.
+    BOX_SIZE = 0.2
+    SPACING = 0.03
+    SPHERE_RADIUS = 0.03
+    BOX_BOTTOM_Z = 0.05
+    PROBE_RADIUS = 0.04
+
+    ny, nx = 5, 5
+    grid_positions = np.zeros((ny, nx, 3), dtype=gs.np_float)
+    for i_y in range(ny):
+        for i_x in range(nx):
+            grid_positions[i_y, i_x] = ((i_x - 2) * SPACING, (i_y - 2) * SPACING, BOX_SIZE / 2)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE / 2),
+            fixed=True,
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.012),
+            fixed=True,
+        )
+    )
+    common = dict(
+        entity_idx=box.idx,
+        probe_local_pos=grid_positions.tolist(),
+        probe_local_normal=(0.0, 0.0, 1.0),
+        probe_radius=PROBE_RADIUS,
+        track_link_idx=(sphere.base_link_idx,),
+        n_sample_points=3000,
+        stiffness=100.0,
+        shear_coupling=0.0,
+    )
+    plain = scene.add_sensor(gs.sensors.ProximityTaxel(**common))
+    crosstalk = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            crosstalk_kernel=[[0.03, 0.07, 0.03], [0.07, 0.60, 0.07], [0.03, 0.07, 0.03]],
+            **common,
+        )
+    )
+
+    scene.build(n_envs=0)
+    scene.step()
+
+    plain_f = plain.read().force
+    plain_mag = torch.linalg.norm(plain_f, dim=-1)
+    # The localized sphere indent must give a peaked field with some ~zero probes, else there is nothing to smear.
+    i_y_c, i_x_c = (plain_mag == plain_mag.max()).nonzero(as_tuple=False)[0].tolist()
+    assert (i_y_c, i_x_c) == (ny // 2, nx // 2)
+    plain_zero = plain_mag < 1e-4
+    assert plain_zero.any()
+
+    # GT branch untouched; measured peak reduced; previously-zero probes pick up leakage.
+    assert_allclose(crosstalk.read_ground_truth().force, plain.read_ground_truth().force, tol=gs.EPS)
+    ck_mag = torch.linalg.norm(crosstalk.read().force, dim=-1)
+    assert ck_mag[i_y_c, i_x_c] < plain_mag[i_y_c, i_x_c]
+    assert (ck_mag[plain_zero] > 1e-4).any()
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
     """ElastomerTaxel should separate dilation and shear on a dome-like sensor surface."""
@@ -2070,6 +2549,7 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
     N_RINGS = 3
     LATERAL_SHIFT = 0.01
     SHEAR_SCALE = 100.0
+    GAIN = 2.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -2137,6 +2617,15 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
             **sensor_kwargs,
         )
     )
+    # probe_gain variant: the measured marker displacement scales by the gain; GT is untouched.
+    gained_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            probe_gain=GAIN,
+            **sensor_kwargs,
+        )
+    )
     assert not dilate_sensor._is_grid and not dilate_sensor._use_grid_fft
 
     scene.build(n_envs=n_envs)
@@ -2150,6 +2639,11 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
     assert torch.linalg.norm(dilate_data, dim=-1).max() > tol
     assert_allclose(shear_data, 0.0, tol=tol)
     assert_allclose(combined_data, dilate_data, tol=tol)
+
+    gained_meas = gained_sensor.read()
+    gained_gt = gained_sensor.read_ground_truth()
+    assert torch.linalg.norm(gained_gt, dim=-1).max() > tol  # sanity: in contact
+    assert_allclose(gained_meas, gained_gt * GAIN, tol=tol)
 
     sphere.set_pos((LATERAL_SHIFT, 0.0, sphere_init_pos[2]))
     scene.step()
@@ -2269,6 +2763,50 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
             **sensor_kwargs,
         )
     )
+    # compressibility blends the local Gaussian in-plane bulge (1.0, the default) with the global incompressible
+    # (volume-conserving) ~1/r stretch (0.0). Add a fully incompressible grid sensor and a 50/50 blend (no
+    # thickness: the free-space kernel, regularized internally at the probe spacing).
+    incompressible_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos,
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            compressibility=0.0,
+            **sensor_kwargs,
+        )
+    )
+    half_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos,
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            compressibility=0.5,
+            **sensor_kwargs,
+        )
+    )
+    # elastomer_thickness replaces the free-space ~1/r global stretch with the exact bonded-incompressible-layer
+    # transfer S(|k| h): a thicker gel suppresses in-plane surface motion (it approaches the incompressible
+    # half-space, S -> 0), a thin gel recovers the 1/r squeeze flow. Both incompressible (compressibility=0), FFT only.
+    thin_thickness_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos,
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            compressibility=0.0,
+            elastomer_thickness=0.002,
+            **sensor_kwargs,
+        )
+    )
+    thick_thickness_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerTaxel(
+            probe_local_pos=probe_local_pos,
+            dilate_scale=1.0,
+            shear_scale=0.0,
+            compressibility=0.0,
+            elastomer_thickness=0.02,
+            **sensor_kwargs,
+        )
+    )
     assert elastomer_grid_sensor._is_grid and elastomer_grid_sensor._use_grid_fft
     assert not elastomer_sensor._is_grid and not elastomer_sensor._use_grid_fft
     assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
@@ -2291,6 +2829,46 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     assert_allclose(cubic_flat_sensor.read_ground_truth(), cubic_data, tol=tol)
     cubic_diff = cubic_data - grid_data
     assert torch.linalg.norm(cubic_diff, dim=-1).max() > tol, "normal_exponent=3 should change the dilation output"
+
+    # compressibility sanity. The normal (out-of-plane, z) channel is the Gaussian bulge regardless of
+    # compressibility, so it is unchanged from the default (compressibility=1) sensor for any blend. The
+    # volume-conserving incompressible in-plane field decays as ~1/r instead of the local Gaussian, so it reaches
+    # farther: weighting each probe's in-plane displacement by its distance from the centered contact gives a larger
+    # mean radius. The 50/50 blend lands between the local default and the fully incompressible sensor.
+    incompressible_data = torch.as_tensor(incompressible_grid_sensor.read_ground_truth(), device=gs.device).flatten(
+        -3, -2
+    )
+    half_data = torch.as_tensor(half_grid_sensor.read_ground_truth(), device=gs.device).flatten(-3, -2)
+    assert_allclose(incompressible_data[..., 2], grid_data[..., 2], tol=tol)
+    assert_allclose(half_data[..., 2], grid_data[..., 2], tol=tol)
+
+    flat_probe_pos = torch.as_tensor(probe_local_pos.reshape(-1, 3), dtype=gs.tc_float, device=gs.device)
+    probe_radius_from_center = torch.linalg.norm(flat_probe_pos[:, :2], dim=-1)  # in-plane (x, y) distance
+
+    def _inplane_mean_radius(data):
+        inplane_mag = torch.linalg.norm(data[..., :2], dim=-1)
+        return (inplane_mag * probe_radius_from_center).sum(-1) / inplane_mag.sum(-1).clamp_min(gs.EPS)
+
+    local_radius = _inplane_mean_radius(grid_data)
+    half_radius = _inplane_mean_radius(half_data)
+    incompressible_radius = _inplane_mean_radius(incompressible_data)
+    assert (incompressible_radius > half_radius + tol).all() and (half_radius > local_radius + tol).all(), (
+        "in-plane dilation reach should grow as compressibility decreases (local Gaussian -> incompressible 1/r)"
+    )
+
+    # elastomer_thickness: the normal channel is still the Gaussian bulge, and a thicker bonded gel suppresses
+    # in-plane surface motion (every Fourier mode is scaled by S(|k| h), which decreases with h), so its total
+    # in-plane displacement energy is smaller than the thin gel's.
+    thin_data = torch.as_tensor(thin_thickness_grid_sensor.read_ground_truth(), device=gs.device).flatten(-3, -2)
+    thick_data = torch.as_tensor(thick_thickness_grid_sensor.read_ground_truth(), device=gs.device).flatten(-3, -2)
+    assert_allclose(thin_data[..., 2], grid_data[..., 2], tol=tol)
+    assert_allclose(thick_data[..., 2], grid_data[..., 2], tol=tol)
+    thin_inplane_energy = (thin_data[..., :2] ** 2).sum((-1, -2))
+    thick_inplane_energy = (thick_data[..., :2] ** 2).sum((-1, -2))
+    assert (thin_inplane_energy > tol).all(), "thin bonded gel should produce a nonzero in-plane field"
+    assert (thick_inplane_energy < thin_inplane_energy).all(), (
+        "a thicker bonded gel should suppress in-plane surface motion (S(|k| h) -> 0)"
+    )
 
     # Test combined displacement: dilate + shear contributions should add when the box slides laterally.
     box.set_pos((LATERAL_SHIFT, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION))
@@ -2400,6 +2978,15 @@ def test_tactile_filler_probes_radius_zero(show_viewer, tol, n_envs):
             **kinematic_kwargs,
         )
     )
+    kinematic_crosstalk = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_pos,
+            probe_radius=radii.tolist(),
+            crosstalk_strength=1.0,
+            crosstalk_sigma=BOX_SIZE / GRID[0],
+            **kinematic_kwargs,
+        )
+    )
     assert elastomer_grid._use_grid_fft
     scene.build(n_envs=n_envs)
     scene.step()
@@ -2421,6 +3008,10 @@ def test_tactile_filler_probes_radius_zero(show_viewer, tol, n_envs):
     assert_allclose(kin_grid[..., filler_idx, :], 0.0, tol=gs.EPS)
     assert_allclose(kin_grid[..., active_mask, :], kin_full[..., active_mask, :], tol=tol)
 
+    # KinematicTaxel FFT crosstalk smears neighbour force, but filler probes are still masked back to 0.
+    kin_xt = torch.as_tensor(kinematic_crosstalk.read().force, device=gs.device).flatten(-3, -2)
+    assert_allclose(kin_xt[..., filler_idx, :], 0.0, tol=gs.EPS)
+
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
@@ -2428,6 +3019,7 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
     """ProximityTaxel reports a nonzero point-cloud force in contact and near-zero force in air."""
     BOX_SIZE = 0.2
     PENETRATION = 0.01
+    GAIN = 1.5
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -2458,6 +3050,23 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
             probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
             probe_local_normal=(0.0, 0.0, -1.0),
             probe_radius=0.06,
+            probe_radius_noise=0.1,
+            track_link_idx=(support.base_link_idx,),
+            n_sample_points=600,
+            stiffness=100.0,
+            shear_coupling=0.0,
+            draw_debug=show_viewer,
+        )
+    )
+    # probe_gain variant (no radius noise so the measured branch is deterministic): force is linear in the summed
+    # penetration, so the measured force scales by the gain while GT is untouched.
+    gained_sensor = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            entity_idx=taxel_box.idx,
+            probe_local_pos=((0.0, 0.0, -BOX_SIZE / 2), (BOX_SIZE / 4, 0.0, -BOX_SIZE / 2)),
+            probe_local_normal=(0.0, 0.0, -1.0),
+            probe_radius=0.06,
+            probe_gain=GAIN,
             track_link_idx=(support.base_link_idx,),
             n_sample_points=600,
             stiffness=100.0,
@@ -2471,6 +3080,11 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
 
     force_norm = torch.linalg.norm(sensor.read_ground_truth().force, dim=-1)
     assert (force_norm > tol).all()
+
+    gained_meas = gained_sensor.read().force
+    gained_gt = gained_sensor.read_ground_truth().force
+    assert (torch.linalg.norm(gained_gt, dim=-1) > tol).all()  # sanity: in contact
+    assert_allclose(gained_meas, gained_gt * GAIN, tol=tol)
 
     taxel_box.set_pos((0.0, 0.0, BOX_SIZE + BOX_SIZE / 2 + 0.2))
     scene.step()
