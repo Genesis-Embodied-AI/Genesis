@@ -4831,10 +4831,9 @@ def func_update_gradient(
         or static_rigid_sim_config.backend == gs.cpu
         or static_rigid_sim_config.enable_per_island_solve
     ):
-        # CPU, or per-island decomposition: the tiled factor/solve operates on the whole-env dense Hessian, but with a
-        # per-island factor nt_H holds the per-island block-diagonal factor, so the gradient solve must go per-island
-        # (func_cholesky_solve_batch). Gated on enable_per_island_solve, not use_contact_island: a single shared-fitting
-        # island uses the whole-env tiled solve, matching islands off.
+        # CPU, or per-island decomposition: the tiled solve operates on the whole-env dense Hessian, but a per-island
+        # factor leaves nt_H block-diagonal by island, so the gradient solve must go per-island via
+        # func_cholesky_solve_batch. A single whole-env island keeps the tiled solve, like islands off.
         qd.loop_config(
             name="update_gradient", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
         )
@@ -5474,13 +5473,10 @@ def _kernel_solve_monolith(
                 and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
                 and not static_rigid_sim_config.enable_cooperative_constraint_kernels
             ):
-                # Genuine per-island decomposition with the cooperative kernels off: func_solve_init skips the
-                # per-island tiled seed, so the monolith seeds each island's initial scalar factor + gradient + search
-                # here. Gives the first linesearch a valid Newton direction; once per step, then iterate. Gated on
-                # enable_per_island_solve, not use_contact_island: when islands are on but the whole env is a single
-                # shared-fitting block (enable_per_island_solve False), func_solve_init's fast whole-env seed runs
-                # instead - identical to islands off. With cooperative kernels enabled, func_solve_init already seeded
-                # the factor (L persisted to nt_H) and the search direction.
+                # Per-island decomposition with the cooperative kernels off: func_solve_init skips its seed, so the
+                # monolith self-seeds each island's scalar factor + gradient + search here (once per step). Gated on
+                # enable_per_island_solve, so a single whole-env island takes func_solve_init's fast seed instead, like
+                # islands off. With the cooperative kernels on, func_solve_init already seeded the factor (L in nt_H).
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     island_state=island_state,

@@ -376,13 +376,10 @@ def test_island_monolith_seed_oversaturated(show_viewer, monkeypatch):
 @pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_island_whole_env_matches_off(show_viewer, n_envs):
-    # Below 16 dofs the cooperative kernels are disabled (coop is gated on n_dofs >= 16), and a scene whose Hessian fits
-    # the shared tile resolves enable_per_island_solve False. That is exactly the config the monolith seed path gates:
-    # it must track enable_per_island_solve, not use_contact_island, so turning islands on does not change the result
-    # (with a single shared-fitting island the whole-env seed IS the per-island result). Two free boxes = 12 dofs reach
-    # this without faking GPU saturation. A seed gated on use_contact_island alone would run the redundant in-kernel
-    # per-env scalar factor (the >8192-env slowdown); done wrong (branch removed without the func_solve_init seed) it
-    # would leave Mgrad stale and the boxes would fall through the floor.
+    # Below 16 dofs the cooperative kernels are off (gated on n_dofs >= 16) and a shared-fitting Hessian resolves
+    # enable_per_island_solve False - the config where the monolith seed must track enable_per_island_solve, not
+    # use_contact_island, so turning islands on does not change the result (a single whole-env island's seed is the
+    # per-island result). Two free boxes = 12 dofs reach it without faking GPU saturation.
     positions = []
     for use_contact_island in (False, True):
         scene = gs.Scene(
@@ -405,8 +402,8 @@ def test_island_whole_env_matches_off(show_viewer, n_envs):
 
         if use_contact_island:
             cfg = scene.rigid_solver._static_rigid_sim_config
-            # Guard that the scene sits in the gated branch (islands on, coop off, no per-island decomposition), so the
-            # test keeps exercising the use_contact_island-vs-enable_per_island_solve seed gate it protects.
+            # Guard the scene stays in the gated config (islands on, coop off, no per-island decomposition) so the test
+            # keeps exercising the seed gate.
             assert not cfg.enable_cooperative_constraint_kernels
             assert not cfg.enable_per_island_solve
 
@@ -416,13 +413,12 @@ def test_island_whole_env_matches_off(show_viewer, n_envs):
         z = np.stack([np.atleast_1d(tensor_to_array(box.get_pos())[..., 2]) for box in boxes])
         vel = tensor_to_array(scene.rigid_solver.get_dofs_velocity())
         assert not np.isnan(z).any()
-        # Rest on the floor at half the box size; a stale seed (broken fix) never applies the contact response.
+        # Rest on the floor at half the box size; a stale seed would never apply the contact response.
         assert_allclose(z, 0.05, tol=5e-3)
         assert np.abs(vel).max() < 0.1
         positions.append(np.stack([tensor_to_array(box.get_pos()) for box in boxes]))
 
-    # The invariant the fix protects: with a single shared-fitting island per body, use_contact_island must not change
-    # the result - islands on is identical to islands off.
+    # With a single shared-fitting island per body, use_contact_island must not change the result.
     assert_allclose(positions[1], positions[0], tol=5e-3)
 
 
