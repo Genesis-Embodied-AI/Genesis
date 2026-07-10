@@ -817,15 +817,14 @@ class SpatialCrosstalkMixin(Generic[SpatialCrosstalkSharedMetadataT]):
     Adds grid spatial crosstalk to a taxel sensor on the measured branch.
 
     The sensor populates ``_grid_normal`` / ``_grid_spacing`` / ``_use_grid_crosstalk`` in ``__init__`` (via
-    ``_setup_crosstalk_grid``) and calls ``_register_crosstalk`` in ``build()`` when crosstalk is enabled. Must come
-    BEFORE ``SimpleSensor`` and AFTER ``ViscoelasticHysteresisMixin`` in the MRO so the data flow is kernel output
-    -> crosstalk -> hysteresis -> hardware imperfections.
+    ``_setup_crosstalk_grid``) and calls ``_register_crosstalk`` in ``build()`` when crosstalk is enabled.
     """
 
     _shared_metadata: SpatialCrosstalkSharedMetadataT
 
-    def _setup_crosstalk_grid(self, options, sensor_name: str) -> None:
+    def _setup_crosstalk_grid(self, options) -> None:
         """Resolve the grid frame for crosstalk and validate the grid requirement; sets the ``_grid_*`` attributes."""
+        sensor_name = type(self).__name__
         is_grid = len(self._probe_layout_shape) == 2
         # Sensors without a per-probe normal (KinematicTaxel) pass None so the grid plane normal is derived from the
         # layout geometry; ProximityTaxel and the elastomer FFT path pass their explicit probe_local_normal.

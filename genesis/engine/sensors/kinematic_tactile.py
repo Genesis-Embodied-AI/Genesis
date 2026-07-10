@@ -1159,7 +1159,7 @@ class KinematicTaxelSensor(
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
         # Resolve the grid frame for spatial crosstalk (flat pos/normals are already populated by the base mixins).
-        self._setup_crosstalk_grid(options, "KinematicTaxel")
+        self._setup_crosstalk_grid(options)
 
     def build(self):
         super().build()

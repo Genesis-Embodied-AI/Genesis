@@ -2091,7 +2091,7 @@ def test_contact_probe_hysteresis(show_viewer):
 
 
 @pytest.mark.required
-def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer):
+def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer, tol):
     # hysteresis_strength > 0 makes the measured depth overshoot GT after a step then relax back; GT untouched.
     n_envs = 0
     BOX_SIZE = 0.2
@@ -2124,14 +2124,14 @@ def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer):
         probe_radius=PROBE_RADIUS,
         draw_debug=show_viewer,
     )
-    hyst = scene.add_sensor(
+    hyst_sensor = scene.add_sensor(
         gs.sensors.ContactDepthProbe(
             hysteresis_strength=STRENGTH,
             hysteresis_tau=TAU,
             **common,
         ),
     )
-    plain = scene.add_sensor(
+    plain_sensor = scene.add_sensor(
         gs.sensors.ContactDepthProbe(
             **common,
         ),
@@ -2143,42 +2143,42 @@ def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer):
         box.set_pos((0.0, 0.0, z))
         scene.step()
         return (
-            hyst.read().reshape(-1),
-            hyst.read_ground_truth().reshape(-1),
-            plain.read().reshape(-1),
+            hyst_sensor.read().reshape(-1),
+            hyst_sensor.read_ground_truth().reshape(-1),
+            plain_sensor.read().reshape(-1),
         )
 
     # Step 1: no contact. All zero.
-    h_m, h_gt, p_m = step_at(BOX_Z_OFF)
-    assert_allclose(h_m, 0.0, tol=gs.EPS)
-    assert_allclose(h_gt, 0.0, tol=gs.EPS)
-    assert_allclose(p_m, 0.0, tol=gs.EPS)
+    hyst_measured, hyst_ground_truth, plain_measured = step_at(BOX_Z_OFF)
+    assert_allclose(hyst_measured, 0.0, tol=tol)
+    assert_allclose(hyst_ground_truth, 0.0, tol=tol)
+    assert_allclose(plain_measured, 0.0, tol=tol)
 
     # Step 2: jump to BOX_Z_ON. GT should equal plain measured (both = D). Hyst measured = D*(1+strength).
-    h_m, h_gt, p_m = step_at(BOX_Z_ON)
-    depth_ref = float(h_gt[0].item())
+    hyst_measured, hyst_ground_truth, plain_measured = step_at(BOX_Z_ON)
+    depth_ref = float(hyst_ground_truth[0].item())
     assert depth_ref > 0.02  # sanity
-    assert_allclose(p_m, depth_ref, tol=1e-5)
-    assert_allclose(h_m, depth_ref * (1.0 + STRENGTH), tol=1e-4)
+    assert_allclose(plain_measured, depth_ref, tol=tol)
+    assert_allclose(hyst_measured, depth_ref * (1.0 + STRENGTH), tol=tol)
 
     # Holding depth: xi decays by ALPHA each step, so measured = depth_ref * (1 + strength * ALPHA^i_step).
     for i_step in range(1, 5):
-        h_m, h_gt, p_m = step_at(BOX_Z_ON)
-        assert_allclose(h_gt, depth_ref, tol=1e-5)
-        assert_allclose(p_m, depth_ref, tol=1e-5)
+        hyst_measured, hyst_ground_truth, plain_measured = step_at(BOX_Z_ON)
+        assert_allclose(hyst_ground_truth, depth_ref, tol=tol)
+        assert_allclose(plain_measured, depth_ref, tol=tol)
         expected = depth_ref * (1.0 + STRENGTH * (ALPHA**i_step))
-        assert_allclose(h_m, expected, tol=1e-4)
+        assert_allclose(hyst_measured, expected, tol=tol)
 
     # Reset clears xi: a single step at depth_ref overshoots exactly like the first contact step.
     scene.reset()
     box.set_pos((0.0, 0.0, BOX_Z_OFF))
     scene.step()
-    h_m, h_gt, p_m = step_at(BOX_Z_ON)
-    assert_allclose(h_m, depth_ref * (1.0 + STRENGTH), tol=1e-4)
+    hyst_measured, hyst_ground_truth, plain_measured = step_at(BOX_Z_ON)
+    assert_allclose(hyst_measured, depth_ref * (1.0 + STRENGTH), tol=tol)
 
 
 @pytest.mark.required
-def test_probe_gain_and_dead_resample(show_viewer):
+def test_probe_gain_and_dead_resample(show_viewer, tol):
     # probe_gain_resample_range and dead_taxel_probability redraw per-(env, probe) on each reset; GT untouched.
     BOX_SIZE = 0.2
     PROBE_LOCAL_Z = -BOX_SIZE / 2 + 0.05
@@ -2233,8 +2233,8 @@ def test_probe_gain_and_dead_resample(show_viewer):
 
     gains_a, dead_a = reset_step_read()
     # Gain stays in range, dead values are overwritten in range, and both vary across the 8 envs.
-    assert torch.all((gains_a >= GAIN_LOW - 1e-5) & (gains_a <= GAIN_HIGH + 1e-5))
-    assert torch.all((dead_a >= DEAD_LOW - 1e-5) & (dead_a <= DEAD_HIGH + 1e-5))
+    assert torch.all((gains_a >= GAIN_LOW - tol) & (gains_a <= GAIN_HIGH + tol))
+    assert torch.all((dead_a >= DEAD_LOW - tol) & (dead_a <= DEAD_HIGH + tol))
     assert gains_a.std().item() > 0.01 and dead_a.std().item() > 0.01
     # The dead sensor's GT is untouched -- it still reports the real (non-zero) contact depth.
     assert torch.all(dead_sensor.read_ground_truth().reshape(-1) > 0.0)
@@ -2247,8 +2247,10 @@ def test_probe_gain_and_dead_resample(show_viewer):
 
 @pytest.mark.required
 def test_kinematic_taxel_crosstalk(show_viewer):
-    # Crosstalk smears the measured force across grid neighbors (GT unchanged) and preserves total normal force;
-    # crosstalk_strength=0 is the exact no-crosstalk path, and a grid layout matches a flat one at the same probes.
+    # Crosstalk smears the measured force across grid neighbors (GT unchanged) and preserves total normal force,
+    # whether configured via a Gaussian (crosstalk_strength/sigma) or an explicit per-group kernel.
+    # crosstalk_strength=0 and an identity kernel are both the exact no-crosstalk path, and a grid layout matches a
+    # flat one at the same probes.
     BOX_SIZE = 0.2
     PROBE_RADIUS = 0.02
     SPACING = 0.03
@@ -2256,6 +2258,8 @@ def test_kinematic_taxel_crosstalk(show_viewer):
     BOX_BOTTOM_Z = 0.05
     CROSSTALK_STRENGTH = 0.6
     CROSSTALK_SIGMA = SPACING
+    BLUR_KERNEL = [[0.03, 0.07, 0.03], [0.07, 0.60, 0.07], [0.03, 0.07, 0.03]]  # sums to 1 (conservative)
+    IDENTITY_KERNEL = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]
 
     ny, nx = 5, 5
     grid_positions = np.zeros((ny, nx, 3), dtype=gs.np_float)
@@ -2291,12 +2295,7 @@ def test_kinematic_taxel_crosstalk(show_viewer):
         shear_scalar=0.0,
         twist_scalar=0.0,
     )
-    plain = scene.add_sensor(
-        gs.sensors.KinematicTaxel(
-            probe_local_pos=grid_positions.tolist(),
-            **common,
-        ),
-    )
+    plain = scene.add_sensor(gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.tolist(), **common))
     crosstalk = scene.add_sensor(
         gs.sensors.KinematicTaxel(
             probe_local_pos=grid_positions.tolist(),
@@ -2315,10 +2314,21 @@ def test_kinematic_taxel_crosstalk(show_viewer):
         )
     )
     # Same probes laid out flat: per-probe GT must match the grid layout.
-    flat = scene.add_sensor(
+    flat = scene.add_sensor(gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.reshape(-1, 3).tolist(), **common))
+    ck_id = scene.add_sensor(
+        gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.tolist(), crosstalk_kernel=IDENTITY_KERNEL, **common)
+    )
+    ck_blur = scene.add_sensor(
+        gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.tolist(), crosstalk_kernel=BLUR_KERNEL, **common)
+    )
+    ck_normal = scene.add_sensor(
         gs.sensors.KinematicTaxel(
-            probe_local_pos=grid_positions.reshape(-1, 3).tolist(),
-            **common,
+            probe_local_pos=grid_positions.tolist(), crosstalk_kernel=[BLUR_KERNEL, IDENTITY_KERNEL], **common
+        )
+    )
+    ck_shear = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.tolist(), crosstalk_kernel=[IDENTITY_KERNEL, BLUR_KERNEL], **common
         )
     )
 
@@ -2366,6 +2376,29 @@ def test_kinematic_taxel_crosstalk(show_viewer):
     assert_allclose(plain_gt_force.reshape(-1, 3), flat_gt.force, tol=gs.EPS)
     assert_allclose(plain.read_ground_truth().torque.reshape(-1, 3), flat_gt.torque, tol=gs.EPS)
 
+    plain_fz = plain_meas_force[..., 2]
+
+    # An identity kernel is an exact no-op, and crosstalk never touches the GT branch.
+    assert_allclose(ck_id.read().force, plain_meas_force, tol=1e-6)
+    assert_allclose(ck_blur.read_ground_truth().force, plain_gt_force, tol=gs.EPS)
+
+    # The (N, M) blur reduces the contact peak and leaks force to probes that read ~zero on the plain sensor.
+    plain_zero = plain_force_mag < 1e-4
+    assert plain_zero.any()
+    blur_mag = torch.linalg.norm(ck_blur.read().force, dim=-1)
+    assert blur_mag[2, 2] < plain_force_mag[2, 2]
+    assert (blur_mag[plain_zero] > 1e-4).any()
+    assert np.isclose(plain_fz.sum().item(), ck_blur.read().force[..., 2].sum().item(), rtol=5e-2, atol=1e-5)
+
+    # 2-group [normal, shear]: contact force is pure normal (Fz), so the normal kernel governs it. A normal-blur
+    # spreads Fz (peak down, leaks into previously-zero probes); a shear-blur leaves Fz identical (the shear
+    # component is ~zero here).
+    normal_fz = ck_normal.read().force[..., 2]
+    shear_fz = ck_shear.read().force[..., 2]
+    assert normal_fz[2, 2].abs() < plain_fz[2, 2].abs()
+    assert (normal_fz.abs()[plain_zero] > 1e-4).any()
+    assert_allclose(shear_fz, plain_fz, tol=1e-6)
+
 
 @pytest.mark.required
 def test_gaussian_crosstalk_kernel_helper():
@@ -2383,89 +2416,6 @@ def test_gaussian_crosstalk_kernel_helper():
     for bad in [(4, 5), (5, 4)]:
         with pytest.raises(Exception):
             gaussian_crosstalk_kernel(*bad, sigma=1.0)
-
-
-@pytest.mark.required
-def test_kinematic_taxel_crosstalk_explicit_kernel(show_viewer):
-    # Explicit kernels: (N, M) identity is a no-op; a blur spreads all channels and conserves total normal force;
-    # a (2, N, M) [normal, shear] kernel routes the pure-normal contact force through the normal group only.
-    BOX_SIZE = 0.2
-    PROBE_RADIUS = 0.02
-    SPACING = 0.03
-    SPHERE_RADIUS = 0.025
-    BOX_BOTTOM_Z = 0.05
-
-    blur = [[0.03, 0.07, 0.03], [0.07, 0.60, 0.07], [0.03, 0.07, 0.03]]  # sums to 1 (conservative), center 0.6
-    identity = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]
-
-    ny, nx = 5, 5
-    grid_positions = np.zeros((ny, nx, 3), dtype=gs.np_float)
-    for i_y in range(ny):
-        for i_x in range(nx):
-            grid_positions[i_y, i_x] = ((i_x - 2) * SPACING, (i_y - 2) * SPACING, BOX_SIZE / 2)
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE / 2),
-            fixed=True,
-        )
-    )
-    sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=SPHERE_RADIUS,
-            pos=(0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.010),
-            fixed=False,
-        )
-    )
-    common = dict(
-        entity_idx=box.idx,
-        probe_local_pos=grid_positions.tolist(),
-        probe_radius=PROBE_RADIUS,
-        normal_stiffness=100.0,
-        normal_damping=0.0,
-        shear_scalar=0.0,
-        twist_scalar=0.0,
-    )
-    plain = scene.add_sensor(gs.sensors.KinematicTaxel(**common))
-    ck_id = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=identity, **common))
-    ck_blur = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=blur, **common))
-    ck_normal = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=[blur, identity], **common))
-    ck_shear = scene.add_sensor(gs.sensors.KinematicTaxel(crosstalk_kernel=[identity, blur], **common))
-
-    scene.build(n_envs=0)
-    sphere.set_pos((0.0, 0.0, BOX_BOTTOM_Z + BOX_SIZE + SPHERE_RADIUS - 0.010))
-    scene.step()
-
-    plain_f = plain.read().force
-    plain_mag = torch.linalg.norm(plain_f, dim=-1)
-    plain_fz = plain_f[..., 2]
-
-    # An identity kernel is an exact no-op, and crosstalk never touches the GT branch.
-    assert_allclose(ck_id.read().force, plain_f, tol=1e-6)
-    assert_allclose(ck_blur.read_ground_truth().force, plain.read_ground_truth().force, tol=gs.EPS)
-
-    # The (N, M) blur reduces the contact peak and leaks force to probes that read ~zero on the plain sensor.
-    plain_zero = plain_mag < 1e-4
-    assert plain_zero.any()
-    blur_mag = torch.linalg.norm(ck_blur.read().force, dim=-1)
-    assert blur_mag[2, 2] < plain_mag[2, 2]
-    assert (blur_mag[plain_zero] > 1e-4).any()
-    assert np.isclose(plain_fz.sum().item(), ck_blur.read().force[..., 2].sum().item(), rtol=5e-2, atol=1e-5)
-
-    # 2-group [normal, shear]: contact force is pure normal (Fz), so the normal kernel governs it. A normal-blur
-    # spreads Fz (peak down, leaks into previously-zero probes); a shear-blur leaves Fz identical (the shear
-    # component is ~zero here).
-    normal_fz = ck_normal.read().force[..., 2]
-    shear_fz = ck_shear.read().force[..., 2]
-    assert normal_fz[2, 2].abs() < plain_fz[2, 2].abs()
-    assert (normal_fz.abs()[plain_zero] > 1e-4).any()
-    assert_allclose(shear_fz, plain_fz, tol=1e-6)
 
 
 @pytest.mark.required
