@@ -235,8 +235,10 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
         color_groups_fn: Callable[[list[int] | None], list[tuple]] | None = None,
     ) -> tuple[list[int] | None, int, np.ndarray | None]:
         """
-        Generic per-probe debug renderer. Clears prior debug objects, then for each provided color group draws the
-        two-sphere marker (small opaque center + translucent outer sensing sphere) on the selected probe positions.
+        Generic per-probe debug renderer.
+
+        Clears prior debug objects, then for each provided color group draws the two-sphere marker (small opaque
+        center + translucent outer sensing sphere) on the selected probe positions.
 
         ``color_groups_fn(envs_idx)`` returns a list of ``(rgb, mask)`` pairs, where ``rgb`` is a length-3 sequence
         and ``mask`` is a flat ``(n_debug_envs * n_probes,)`` bool array (or tensor castable to bool) selecting
@@ -277,8 +279,9 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
     ) -> Callable[[list[int] | None], list[tuple]]:
         """
         Build a ``color_groups_fn`` for the common tactile split: not-in-contact probes get ``debug_probe_color``
-        and in-contact probes get ``debug_contact_color``. The sensor's options must expose
-        ``debug_contact_color`` (i.e. inherit ``TactileProbeSensorOptionsMixin``).
+        and in-contact probes get ``debug_contact_color``.
+
+        The sensor's options must expose ``debug_contact_color`` (i.e. inherit ``TactileProbeSensorOptionsMixin``).
         """
 
         def fn(envs_idx):

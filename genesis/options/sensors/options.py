@@ -121,9 +121,10 @@ class SensorOptions(Options, Generic[SensorT]):
 
 class KinematicSensorOptionsMixin(SensorOptions[SensorT]):
     """
-    Base options class for sensors attached to a KinematicEntity (or any subclass, including RigidEntity). Use this
-    base for sensors whose output is purely kinematic and does not depend on physics-derived quantities like contact
-    forces or inertial dynamics.
+    Base options class for sensors attached to a KinematicEntity (or any subclass, including RigidEntity).
+
+    Use this base for sensors whose output is purely kinematic and does not depend on physics-derived quantities like
+    contact forces or inertial dynamics.
 
     Parameters
     ----------
@@ -176,8 +177,9 @@ class RigidSensorOptionsMixin(KinematicSensorOptionsMixin[SensorT]):
 class RigidEntitySensorOptionsMixin(RigidSensorOptionsMixin[SensorT]):
     """
     Options for a sensor bound to a whole RigidEntity (e.g. joint-space sensors), where the attachment is mandatory:
-    entity_idx must refer to an existing RigidEntity, static sensors are not allowed. The link offset parameters are
-    inherited from RigidSensorOptionsMixin but ignored by joint-space sensors.
+    entity_idx must refer to an existing RigidEntity, static sensors are not allowed.
+
+    The link offset parameters are inherited from RigidSensorOptionsMixin but ignored by joint-space sensors.
     """
 
     def validate_scene(self, scene: "Scene"):
@@ -261,8 +263,11 @@ class ProbesWithNormalSensorOptionsMixin(ProbeSensorOptionsMixin[SensorT]):
     @property
     def _is_probe_local_normal_required(self) -> bool:
         """Override in subclasses where ``probe_local_normal`` is only consumed by an opt-in mode (e.g. raycast
-        contact-depth queries). When ``False``, the per-probe shape validation in ``model_post_init`` is skipped --
-        sensors that never read the normal don't surface confusing length errors for the default value."""
+        contact-depth queries).
+
+        When ``False``, the per-probe shape validation in ``model_post_init`` is skipped -- sensors that never read
+        the normal don't surface confusing length errors for the default value.
+        """
         return True
 
     def model_post_init(self, context: Any) -> None:
@@ -404,6 +409,7 @@ class TemperatureProperties(NamedTuple):
 class TemperatureGrid(RigidSensorOptionsMixin["TemperatureGridSensor"], SimpleSensorOptions["TemperatureGridSensor"]):
     """
     Sensor that returns the temperature in Celsius of the associated RigidLink in its local frame.
+
     Temperature is computed based on object contacts and their material properties provided to these options.
 
     Parameters
@@ -551,6 +557,7 @@ class SurfaceDistanceProbe(
 ):
     """
     Surface distance probe that reports nearest distances from probe positions to tracked mesh surfaces.
+
     The read() output will provide the distances, and the nearest points can be accessed with `sensor.nearest_points`.
 
     Attached to a rigid entity link. Takes a list of local probe positions and a list of global link indices

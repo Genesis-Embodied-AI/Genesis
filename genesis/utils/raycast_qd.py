@@ -198,6 +198,7 @@ def ray_aabb_intersection(
 ):
     """
     Fast ray-AABB intersection test.
+
     Returns the t value of intersection, or -1.0 if no intersection.
     """
     result = -1.0
@@ -234,7 +235,9 @@ def closest_point_on_triangle(
     v2: qd.types.vector(3),
 ) -> qd.types.vector(3):
     """
-    Closest point on a triangle to a query point. Reference: Christer Ericson, Real-Time Collision Detection 5.1.5.
+    Closest point on a triangle to a query point.
+
+    Reference: Christer Ericson, Real-Time Collision Detection section 5.1.5.
     """
     ab = v1 - v0
     ac = v2 - v0
@@ -471,8 +474,11 @@ def update_visual_aabbs(
     face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
-    """Update per-vface AABBs from the visual mesh. face_mask gates inclusion: 0 keeps the AABB inverted
-    (unhittable) so vfaces from entities not opted into raycasting are skipped by ray queries."""
+    """Update per-vface AABBs from the visual mesh.
+
+    face_mask gates inclusion: 0 keeps the AABB inverted (unhittable) so vfaces from entities not opted into
+    raycasting are skipped by ray queries.
+    """
     _B = vgeoms_state.pos.shape[1]
     n_vfaces = vfaces_info.vverts_idx.shape[0]
     for i_b, i_f in qd.ndrange(_B, n_vfaces):
@@ -625,10 +631,11 @@ def kernel_cast_rays(
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
-    """Cast rays against a collision-mesh BVH, accelerated by a BVH. See write_ray_hit for `is_merge` semantics.
+    """Cast rays against a collision-mesh BVH.
 
-    The result `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each
-    sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
+    See write_ray_hit for `is_merge` semantics. The result `output_hits` is a 2D array of shape (total_cache_size,
+    n_env) where in the first dimension each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges
+    (n_points)].
 
     shared_bvh is a compile-time flag set when the collision geometry is identical across envs; the cast then reads a
     single BVH copy (batch 0) for every env. It also selects the thread -> (ray, env) mapping below, so the homogeneous
@@ -722,7 +729,10 @@ def kernel_cast_rays_visual(
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
-    """Visual-mesh variant of kernel_cast_rays. See kernel_cast_rays for shared_bvh and the thread mapping."""
+    """Visual-mesh variant of kernel_cast_rays.
+
+    See kernel_cast_rays for shared_bvh and the thread mapping.
+    """
     n_points = ray_starts.shape[0]
     n_envs = output_hits.shape[-1]
     for i_flat in range(n_points * n_envs):

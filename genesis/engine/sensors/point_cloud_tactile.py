@@ -164,8 +164,9 @@ def _group_geoms_by_variant(
     geom_chunks: list[tuple[object, np.ndarray, np.ndarray]], batch_size: int
 ) -> list[tuple[torch.Tensor, list[tuple[object, np.ndarray, np.ndarray]]]]:
     """
-    Partition a link's geoms into heterogeneous-variant groups by ``active_envs_mask``. Geoms sharing
-    a mask are one variant; ``None`` masks (homogeneous) collapse into a single all-True group.
+    Partition a link's geoms into heterogeneous-variant groups by ``active_envs_mask``.
+
+    Geoms sharing a mask are one variant; ``None`` masks (homogeneous) collapse into a single all-True group.
     Returns ``[(mask, geom_chunks_for_variant), ...]`` preserving the original geom order within each group.
     """
     groups: dict[bytes, tuple[torch.Tensor, list[tuple[object, np.ndarray, np.ndarray]]]] = {}
@@ -245,9 +246,11 @@ _ELASTOMER_QUERY_AABB_MARGIN = 1e-3
 @dataclass
 class PointCloudBVH(BVHMetadata):
     """
-    BVH over the tracked point clouds of one sensor class. ``leaf_elem_idx`` entries are absolute
-    rows into ``pc_pos_link`` / ``pc_active_envs_mask`` / ``pc_normal_link`` so a leaf hit resolves
-    to per-point data with one indirection. See ``BVHMetadata`` for the shared scaffolding semantics.
+    BVH over the tracked point clouds of one sensor class.
+
+    ``leaf_elem_idx`` entries are absolute rows into ``pc_pos_link`` / ``pc_active_envs_mask`` / ``pc_normal_link``
+    so a leaf hit resolves to per-point data with one indirection. See ``BVHMetadata`` for the shared scaffolding
+    semantics.
     """
 
     # Inverse of sensor_chunk_start/count: chunk_sensor_idx[i_c] is the owning sensor's index. Enables
@@ -257,8 +260,9 @@ class PointCloudBVH(BVHMetadata):
 
     def append_sensor(self, *, pc_start_row: int, idx_cat: torch.Tensor, pos_cat: torch.Tensor) -> None:
         """
-        Build per-tracked-link chunks for one sensor and append into the flat tensors. Must be called
-        immediately after extending ``pc_pos_link`` by ``pos_cat`` so each leaf's element index
+        Build per-tracked-link chunks for one sensor and append into the flat tensors.
+
+        Must be called immediately after extending ``pc_pos_link`` by ``pos_cat`` so each leaf's element index
         (``pc_start_row + local_row``) addresses the freshly-grown rows.
         """
         n_local = int(pos_cat.shape[0])
@@ -968,9 +972,11 @@ def _func_elastomer_min_signed_dist_bvh(
 ) -> float:
     """
     BVH-based signed distance from ``probe_world`` to the nearest triangle of any geom flagged for this sensor in
-    ``track_geom_mask`` (shape ``(B, n_sensors, n_geoms)``). Sign is positive when the probe is outside the surface
-    (closest-triangle face-normal points away from probe), negative when inside. Mirrors the return contract of
-    ``_func_elastomer_min_sdf_over_active_geoms`` so callers consume ``max(0, -signed)`` identically.
+    ``track_geom_mask`` (shape ``(B, n_sensors, n_geoms)``).
+
+    Sign is positive when the probe is outside the surface (closest-triangle face-normal points away from probe),
+    negative when inside. Mirrors the return contract of ``_func_elastomer_min_sdf_over_active_geoms`` so callers
+    consume ``max(0, -signed)`` identically.
 
     Uses ``max_query_dist`` as the BVH cull radius: probes farther than that from every candidate triangle are
     treated as fully outside (returns ``+max_query_dist``), which downstream maps to depth = 0.
@@ -1041,9 +1047,10 @@ def _kernel_elastomer_probe_depth_bvh(
     probe_depth_buf: qd.types.ndarray(),
 ):
     """
-    Per-probe contact depth from the rigid solver's global collision BVH, gated by ``track_geom_mask``. Mirrors
-    ``_kernel_elastomer_probe_depth``'s output contract (write into ``probe_depth_buf``); the dilate accumulator
-    consumes the same buffer downstream.
+    Per-probe contact depth from the rigid solver's global collision BVH, gated by ``track_geom_mask``.
+
+    Mirrors ``_kernel_elastomer_probe_depth``'s output contract (write into ``probe_depth_buf``); the dilate
+    accumulator consumes the same buffer downstream.
     """
     total_n_probes = probe_positions_local.shape[0]
     n_batches = probe_depth_buf.shape[0]
@@ -1091,9 +1098,11 @@ def _kernel_elastomer_probe_depth(
     sdf_info: array_class.SDFInfo,
     probe_depth_buf: qd.types.ndarray(),
 ):
-    """Per-probe contact depth from track-geom SDF, parallel over (env, probe). Writes only
-    ``probe_depth_buf``; dilate accumulation is split into a separate target-major kernel that
-    runs without atomics."""
+    """Per-probe contact depth from track-geom SDF, parallel over (env, probe).
+
+    Writes only ``probe_depth_buf``; dilate accumulation is split into a separate target-major kernel that runs
+    without atomics.
+    """
     total_n_probes = probe_positions_local.shape[0]
     n_batches = probe_depth_buf.shape[0]
 
@@ -1140,11 +1149,13 @@ def _kernel_elastomer_dilate_accumulate(
     probe_depth_buf: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
-    """Target-major dilate accumulator for non-grid sensors. Each (env, target_probe) thread sums
-    Gaussian contributions from every in-contact source probe of its sensor into a register and
-    writes once -- no atomic_add. Grid sensors are skipped (FFT path handles them).
-    Output write is an OVERWRITE because output was pre-zeroed at step start and no other writer
-    touches a non-grid sensor's range before shear-accumulate."""
+    """Target-major dilate accumulator for non-grid sensors.
+
+    Each (env, target_probe) thread sums Gaussian contributions from every in-contact source probe of its sensor
+    into a register and writes once -- no atomic_add. Grid sensors are skipped (FFT path handles them). Output write
+    is an OVERWRITE because output was pre-zeroed at step start and no other writer touches a non-grid sensor's range
+    before shear-accumulate.
+    """
     total_n_probes = probe_positions_local.shape[0]
     n_batches = probe_depth_buf.shape[0]
 
@@ -1392,10 +1403,11 @@ def _kernel_elastomer_surface_state_via_global_bvh(
     surface_candidate_buf: qd.types.ndarray(),
 ):
     """
-    Raycast variant of ``_kernel_elastomer_surface_state_bvh``: same outer (env, chunk) traversal over the point-cloud
-    BVH per tracked link, but the inner signed-distance query at each PC point uses
-    ``_func_elastomer_min_signed_dist_bvh`` over the rigid solver's global collision BVH (gated by
-    ``elastomer_candidate_geom_mask``) instead of the analytic SDF. Output contract matches the SDF variant so the
+    Raycast variant of ``_kernel_elastomer_surface_state_bvh``.
+
+    Same outer (env, chunk) traversal over the point-cloud BVH per tracked link, but the inner signed-distance query
+    at each PC point uses ``_func_elastomer_min_signed_dist_bvh`` over the rigid solver's global collision BVH (gated
+    by ``elastomer_candidate_geom_mask``) instead of the analytic SDF. Output contract matches the SDF variant so the
     dilate / shear pipeline downstream is unchanged.
     """
     n_batches = surface_pos_sensor_buf.shape[0]
@@ -1535,14 +1547,13 @@ def _kernel_elastomer_shear_accumulate(
     shear_active_pc_count: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
-    """Target-major shear accumulator: per (env, target_probe), iterate over the sensor's compact
-    active surface-point index and sum Gaussian contributions into a register, then += the result
-    into ``output``. No atomic_add (each (i_b, i_p) thread owns its output slot).
+    """Target-major shear accumulator: per (env, target_probe), iterate over the sensor's compact active surface-point
+    index and sum Gaussian contributions into a register, then += the result into ``output``.
 
-    Consumes the compact index produced by ``_build_shear_active_pc_index`` (must run after the
-    surface-state kernel AND after the post-kernel ``surface_initialized_buf &= candidate`` cleanup).
-    Inner-loop cost is O(active_count[i_b, i_s]) rather than O(sensor_pc_n[i_s]), so the kernel scales
-    with contact density rather than total point-cloud size.
+    No atomic_add (each (i_b, i_p) thread owns its output slot). Consumes the compact index produced by
+    ``_build_shear_active_pc_index`` (must run after the surface-state kernel AND after the post-kernel
+    ``surface_initialized_buf &= candidate`` cleanup). Inner-loop cost is O(active_count[i_b, i_s]) rather than
+    O(sensor_pc_n[i_s]), so the kernel scales with contact density rather than total point-cloud size.
     """
     total_n_probes = probe_positions_local.shape[0]
     n_batches = surface_pos_sensor_buf.shape[0]
@@ -1612,7 +1623,9 @@ def _build_shear_active_pc_index(
     active_pc_count: torch.Tensor,
 ) -> None:
     """Build the compact per-(env, sensor) active surface-point index consumed by
-    ``_kernel_elastomer_shear_accumulate``. Mutates ``active_pc_idx`` and ``active_pc_count`` in place.
+    ``_kernel_elastomer_shear_accumulate``.
+
+    Mutates ``active_pc_idx`` and ``active_pc_count`` in place.
 
     For each sensor ``s`` with ``shear_scale[s] > 0``, gathers the indices of True entries in
     ``surface_initialized_buf[:, pc_start[s] : pc_start[s] + pc_n[s]]`` into the per-sensor compact slice

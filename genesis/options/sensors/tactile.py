@@ -71,6 +71,8 @@ class TactileProbeSensorOptionsMixin(ProbeSensorOptionsMixin[SensorT]):
 
 class PointCloudTactileSensorMixin(TactileProbeSensorOptionsMixin[SensorT]):
     """
+    Options mixin for tactile sensors that sample a point cloud from tracked link meshes.
+
     Parameters
     ----------
     track_link_idx : array-like[int]
@@ -229,6 +231,7 @@ class ElastomerTaxel(
 ):
     """
     An elastomer tactile sensor that implements HydroShear-style marker displacement from Genesis SDF queries.
+
     The tracked rigid links are sampled into indenter on-surface points for shear history, while marker dilation is
     queried directly from the tracked geometry SDF.
 

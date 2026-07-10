@@ -499,12 +499,13 @@ def _kernel_build_sensor_candidate_geom_mask(
     sensor_candidate_geom_mask: qd.types.ndarray(),
 ):
     """
-    Scatter the per-(env, sensor) candidate-geom bitmask from the prefiltered contact list. Run only when the
-    sensor class is in ``contact_depth_query="raycast"`` mode; the BVH leaf loop consults this mask to skip
-    triangles whose owning geom isn't in the sensor's current contact list. Only the geom on the side opposite
-    the sensor link is marked (mirroring the SDF path's ``i_g = <other geom>`` selection); marking the sensor's
-    own geom would let the BVH closest-point test latch onto the sensor's own surface, pinning the reported
-    depth to ``probe_radius`` regardless of the pressing object.
+    Scatter the per-(env, sensor) candidate-geom bitmask from the prefiltered contact list.
+
+    Run only when the sensor class is in ``contact_depth_query="raycast"`` mode; the BVH leaf loop consults this mask
+    to skip triangles whose owning geom isn't in the sensor's current contact list. Only the geom on the side opposite
+    the sensor link is marked (mirroring the SDF path's ``i_g = <other geom>`` selection); marking the sensor's own
+    geom would let the BVH closest-point test latch onto the sensor's own surface, pinning the reported depth to
+    ``probe_radius`` regardless of the pressing object.
     """
     n_batches = sensor_n_contacts.shape[0]
     n_sensors = sensor_n_contacts.shape[1]
@@ -538,11 +539,13 @@ def _func_query_contact_depth_penetration_bvh(
     sensor_candidate_geom_mask: qd.types.ndarray(),
 ):
     """
-    BVH-based dual-radius probe penetration. Finds the signed distance to the nearest candidate triangle (sign
-    from the closest triangle's face normal: negative when the probe is inside the surface, like
-    ``_func_elastomer_min_signed_dist_bvh``) and returns ``max(0, R - sd)`` per radius. This matches the SDF
-    path's ``pen = R - sd`` -- in particular it keeps growing as the probe penetrates, rather than folding back
-    at ``R`` like an unsigned closest-point distance. Mirrors ``_func_query_contact_depth_penetration``'s return.
+    BVH-based dual-radius probe penetration.
+
+    Finds the signed distance to the nearest candidate triangle (sign from the closest triangle's face normal:
+    negative when the probe is inside the surface, like ``_func_elastomer_min_signed_dist_bvh``) and returns
+    ``max(0, R - sd)`` per radius. This matches the SDF path's ``pen = R - sd`` -- in particular it keeps growing as
+    the probe penetrates, rather than folding back at ``R`` like an unsigned closest-point distance. Mirrors
+    ``_func_query_contact_depth_penetration``'s return.
     """
     n_triangles = faces_info.verts_idx.shape[0]
     radius_query = qd.max(probe_radius_gt, probe_radius_m)
@@ -611,6 +614,7 @@ def _func_query_contact_depth_bvh(
 ):
     """
     BVH-based dual-radius probe query with contact normal and link, mirroring ``_func_query_contact_depth``'s return.
+
     Finds the nearest candidate triangle and its signed distance (sign from the face normal; negative when the probe
     is inside the surface), yielding ``pen = R - sd`` to match the SDF path. The returned contact normal is the
     nearest triangle's outward face normal, which the spring-damper model uses as the surface normal.
@@ -879,8 +883,11 @@ def _kernel_kinematic_taxel_bvh(
 
 
 class KinematicTactileSensorMixin(ContactDepthQuerySensorMixin, ProbeSensorMixin[ProbeSensorSharedMetadataT]):
-    """Contact-depth probe family (ContactDepthProbe, ContactProbe, KinematicTaxel). The class-wide SDF/raycast
-    backend is resolved and activated by ``ContactDepthQuerySensorMixin.build``; subclasses add their own metadata."""
+    """Contact-depth probe family (ContactDepthProbe, ContactProbe, KinematicTaxel).
+
+    The class-wide SDF/raycast backend is resolved and activated by ``ContactDepthQuerySensorMixin.build``;
+    subclasses add their own metadata.
+    """
 
 
 @dataclass
@@ -1027,13 +1034,13 @@ class ContactProbeSensor(
     ContactDepthProbeSensor, SimpleSensor[ContactProbeOptions, RaycastContext, ContactProbeMetadata, tuple]
 ):
     """
-    Returns boolean contact per probe with optional Schmitt-trigger hysteresis. Shares the depth-probe kernel.
+    Returns boolean contact per probe with optional Schmitt-trigger hysteresis.
 
-    The contact bit latches on when depth exceeds ``contact_threshold`` and releases when depth drops to or below
-    ``release_threshold``. When ``release_threshold`` is left unset (the default; it then falls back to
-    ``contact_threshold``), the latch is degenerate and behavior matches a stateless threshold. Latch state is read
-    from the per-branch return-space ring, so GT and measured branches latch independently and reset cleanly with
-    the env (the manager zeros the ring on reset).
+    Shares the depth-probe kernel. The contact bit latches on when depth exceeds ``contact_threshold`` and releases
+    when depth drops to or below ``release_threshold``. When ``release_threshold`` is left unset (the default; it then
+    falls back to ``contact_threshold``), the latch is degenerate and behavior matches a stateless threshold. Latch
+    state is read from the per-branch return-space ring, so GT and measured branches latch independently and reset
+    cleanly with the env (the manager zeros the ring on reset).
     """
 
     def build(self):

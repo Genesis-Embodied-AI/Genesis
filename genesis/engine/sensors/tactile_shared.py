@@ -158,8 +158,9 @@ def func_vec3_at(values: qd.types.ndarray(), i: int) -> qd.types.vector(3):
 @qd.func
 def func_sphere_intersects_aabb(center, radius_sq, bmin, bmax):  # -> bool
     """
-    Squared-distance sphere-vs-AABB test: True iff the closest AABB point to ``center`` is within
-    ``radius_sq``. Reused as a closest-point cull by passing ``radius_sq = current_best_dist_sq``.
+    Squared-distance sphere-vs-AABB test: True iff the closest AABB point to ``center`` is within ``radius_sq``.
+
+    Reused as a closest-point cull by passing ``radius_sq = current_best_dist_sq``.
     """
     d_sq = gs.qd_float(0.0)
     for k in qd.static(range(3)):
@@ -482,12 +483,13 @@ def resolve_contact_depth_query(metadata: ContactDepthQueryMetadataMixin, mode: 
 
 class ContactDepthQuerySensorMixin:
     """
-    Sensor-side counterpart to ``ContactDepthQueryMetadataMixin``. Its ``build()`` resolves the class-wide
-    contact-depth backend (raising if this class's sensors disagree) and activates only the chosen backend: the
-    shared ``RaycastContext`` BVH in raycast mode, else the collider SDF. Mixing this in (alongside the metadata
-    mixin) means subclasses get the resolution from the super-``build()`` chain and need not call
-    ``resolve_contact_depth_query`` themselves. Requires ``_shared_metadata``, ``_options.contact_depth_query``, and
-    a ``_shared_context`` ``RaycastContext``.
+    Sensor-side counterpart to ``ContactDepthQueryMetadataMixin``.
+
+    Its ``build()`` resolves the class-wide contact-depth backend (raising if this class's sensors disagree) and
+    activates only the chosen backend: the shared ``RaycastContext`` BVH in raycast mode, else the collider SDF.
+    Mixing this in (alongside the metadata mixin) means subclasses get the resolution from the super-``build()`` chain
+    and need not call ``resolve_contact_depth_query`` themselves. Requires ``_shared_metadata``,
+    ``_options.contact_depth_query``, and a ``_shared_context`` ``RaycastContext``.
     """
 
     def build(self):

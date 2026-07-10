@@ -39,19 +39,21 @@ if TYPE_CHECKING:
 @dataclass
 class TriangleMeshBVH(BVHMetadata):
     """
-    BVH over tracked mesh triangles for one sensor class. ``leaf_elem_idx`` entries are absolute rows
-    into ``tri_verts``, a flat per-class table of link-local triangle vertices (shape ``(total_n_tri,
-    3, 3)``: per triangle, three xyz vertex positions). See ``BVHMetadata`` for the shared scaffolding
-    semantics. Rigid-link assumption: built once at scene init, never rebuilt.
+    BVH over tracked mesh triangles for one sensor class.
+
+    ``leaf_elem_idx`` entries are absolute rows into ``tri_verts``, a flat per-class table of link-local triangle
+    vertices (shape ``(total_n_tri, 3, 3)``: per triangle, three xyz vertex positions). See ``BVHMetadata`` for the
+    shared scaffolding semantics. Rigid-link assumption: built once at scene init, never rebuilt.
     """
 
     tri_verts: torch.Tensor = make_tensor_field((0, 3, 3))
 
     def append_sensor(self, track_link_idx: np.ndarray, solver) -> None:
         """
-        Build per-tracked-link chunks for one sensor (link-local triangle BVH) and append into the flat
-        tensors. Sensors with no tracked-link geometry register zero chunks; the kernel's per-sensor
-        chunk loop iterates ``[0, sensor_chunk_count[i_s])`` and is a no-op for those.
+        Build per-tracked-link chunks for one sensor (link-local triangle BVH) and append into the flat tensors.
+
+        Sensors with no tracked-link geometry register zero chunks; the kernel's per-sensor chunk loop iterates
+        ``[0, sensor_chunk_count[i_s])`` and is a no-op for those.
         """
         new_chunk_link_idx: list[int] = []
         new_chunk_node_start: list[int] = []
