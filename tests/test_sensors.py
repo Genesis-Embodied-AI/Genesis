@@ -2091,9 +2091,9 @@ def test_contact_probe_hysteresis(show_viewer):
 
 
 @pytest.mark.required
-def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer, tol):
-    # hysteresis_strength > 0 makes the measured depth overshoot GT after a step then relax back; GT untouched.
-    n_envs = 0
+def test_contact_depth_probe_hysteresis_gain_and_dead_resample(show_viewer, tol):
+    # hysteresis_strength > 0 makes the measured depth overshoot GT after a step then relax back (GT untouched);
+    # probe_gain_resample_range and dead_taxel_probability redraw per-(env, probe) on each reset (GT untouched).
     BOX_SIZE = 0.2
     PROBE_LOCAL_Z = -BOX_SIZE / 2 + 0.05
     PROBE_RADIUS = 0.060
@@ -2101,6 +2101,9 @@ def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer, tol):
     DT = 0.01
     TAU = 0.05  # alpha = exp(-dt/tau) ~= 0.819
     ALPHA = np.exp(-DT / TAU)
+    GAIN_LOW, GAIN_HIGH = 0.5, 1.5
+    DEAD_LOW, DEAD_HIGH = 0.123, 0.456
+    N_ENVS = 8
 
     BOX_Z_OFF = 1.0
     BOX_Z_ON = 0.080  # p = 0.020, depth = 0.030 in steady state
@@ -2136,11 +2139,24 @@ def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer, tol):
             **common,
         ),
     )
+    gain_sensor = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            probe_gain_resample_range=(GAIN_LOW, GAIN_HIGH),
+            **common,
+        ),
+    )
+    dead_sensor = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            dead_taxel_probability=1.0,
+            dead_taxel_value_range=(DEAD_LOW, DEAD_HIGH),
+            **common,
+        ),
+    )
 
-    scene.build(n_envs=n_envs)
+    scene.build(n_envs=N_ENVS)
 
     def step_at(z):
-        box.set_pos((0.0, 0.0, z))
+        box.set_pos([[0.0, 0.0, z]] * N_ENVS)
         scene.step()
         return (
             hyst_sensor.read().reshape(-1),
@@ -2171,61 +2187,14 @@ def test_contact_depth_probe_viscoelastic_hysteresis(show_viewer, tol):
 
     # Reset clears xi: a single step at depth_ref overshoots exactly like the first contact step.
     scene.reset()
-    box.set_pos((0.0, 0.0, BOX_Z_OFF))
+    box.set_pos([[0.0, 0.0, BOX_Z_OFF]] * N_ENVS)
     scene.step()
     hyst_measured, hyst_ground_truth, plain_measured = step_at(BOX_Z_ON)
     assert_allclose(hyst_measured, depth_ref * (1.0 + STRENGTH), tol=tol)
 
-
-@pytest.mark.required
-def test_probe_gain_and_dead_resample(show_viewer, tol):
-    # probe_gain_resample_range and dead_taxel_probability redraw per-(env, probe) on each reset; GT untouched.
-    BOX_SIZE = 0.2
-    PROBE_LOCAL_Z = -BOX_SIZE / 2 + 0.05
-    PROBE_RADIUS = 0.060
-    GAIN_LOW, GAIN_HIGH = 0.5, 1.5
-    DEAD_LOW, DEAD_HIGH = 0.123, 0.456
-    BOX_Z = 0.080  # box descends into the plane so the real contact depth is non-zero
-    N_ENVS = 8
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, 1.0),
-            fixed=False,
-        ),
-    )
-    common = dict(
-        entity_idx=box.idx,
-        probe_local_pos=((0.0, 0.0, PROBE_LOCAL_Z),),
-        probe_radius=PROBE_RADIUS,
-        draw_debug=show_viewer,
-    )
-    gain_sensor = scene.add_sensor(
-        gs.sensors.ContactDepthProbe(
-            probe_gain_resample_range=(GAIN_LOW, GAIN_HIGH),
-            **common,
-        ),
-    )
-    dead_sensor = scene.add_sensor(
-        gs.sensors.ContactDepthProbe(
-            dead_taxel_probability=1.0,
-            dead_taxel_value_range=(DEAD_LOW, DEAD_HIGH),
-            **common,
-        ),
-    )
-
-    scene.build(n_envs=N_ENVS)
-
     def reset_step_read():
         scene.reset()  # triggers the per-(env, probe) resample of gain and dead state
-        box.set_pos([[0.0, 0.0, BOX_Z]] * N_ENVS)
+        box.set_pos([[0.0, 0.0, BOX_Z_ON]] * N_ENVS)
         scene.step()
         gains = (gain_sensor.read() / gain_sensor.read_ground_truth()).reshape(-1).cpu()
         dead = dead_sensor.read().reshape(-1).cpu()
