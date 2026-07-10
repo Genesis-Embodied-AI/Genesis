@@ -274,7 +274,7 @@ def test_diff_convex_contact_forward(show_viewer):
     assert_allclose(sort_idx, np.arange(n_contacts), atol=0)
 
 
-def _ellipsoid_mjcf_path(tmp_path, semi_axes=(0.2, 0.15, 0.1)):
+def _build_ellipsoid_mjcf(semi_axes=(0.2, 0.15, 0.1)):
     a, b, c = semi_axes
     mjcf = ET.Element("mujoco", model="ellipsoid")
     ET.SubElement(mjcf, "compiler", angle="degree")
@@ -282,13 +282,11 @@ def _ellipsoid_mjcf_path(tmp_path, semi_axes=(0.2, 0.15, 0.1)):
     body = ET.SubElement(worldbody, "body", name="ellipsoid", pos="0 0 0.5")
     ET.SubElement(body, "geom", type="ellipsoid", size=f"{a} {b} {c}")
     ET.SubElement(body, "joint", name="ellipsoid_joint", type="free")
-    path = tmp_path / "ellipsoid.xml"
-    ET.ElementTree(mjcf).write(path)
-    return str(path)
+    return mjcf
 
 
 @pytest.mark.required
-def test_diff_smooth_pair_raises(tmp_path):
+def test_diff_smooth_pair_raises():
     # A sphere/ellipsoid (or ellipsoid/ellipsoid) pair has an everywhere-curved Minkowski boundary on which
     # diff_gjk's EPA never converges, so it would silently tunnel and is rejected in differentiable mode.
     # Sphere/sphere is exempt: it is handled by the closed-form analytic path (see test_diff_sphere_sphere_contact).
@@ -306,7 +304,7 @@ def test_diff_smooth_pair_raises(tmp_path):
         ),
     )
     scene.add_entity(
-        gs.morphs.MJCF(file=_ellipsoid_mjcf_path(tmp_path)),
+        gs.morphs.MJCF(file=ET.tostring(_build_ellipsoid_mjcf(), encoding="unicode")),
     )
 
     with pytest.raises(gs.GenesisException):
