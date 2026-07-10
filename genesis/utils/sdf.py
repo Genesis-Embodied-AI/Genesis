@@ -347,6 +347,54 @@ def sdf_func_true_grad(
 
 
 @qd.func
+def sdf_func_grad_world_local_consistent(
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    sdf_info: array_class.SDFInfo,
+    pos_world: qd.types.vector(3),
+    geom_idx,
+    geom_pos: qd.types.vector(3),
+    geom_quat: qd.types.vector(4),
+):
+    """
+    SDF gradient in world coordinates as the analytic gradient of the trilinear value interpolant, NOT the
+    interpolation of precomputed lattice gradients that sdf_func_grad_world_local returns.
+
+    A contact whose normal is the exact gradient of the field supplying its penetration derives from a potential
+    and can do no net work around a closed micro-cycle; the lattice-grad interpolation is smoother but tilted off
+    the penetration level sets, which makes a settled stack of nested shells ratchet sideways. That smoothness is
+    load-bearing for sliding thin features (bolt threads), so only the nested-shell contact path uses this variant.
+    """
+    EPS = rigid_global_info.EPS[None]
+    grad_world = qd.Vector.zero(gs.qd_float, 3)
+    if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+        grad_world = gu.qd_normalize(pos_world - geom_pos, EPS)
+    elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+        geom_data = geoms_info.data[geom_idx]
+        plane_normal = gs.qd_vec3([geom_data[0], geom_data[1], geom_data[2]])
+        grad_world = gu.qd_transform_by_quat(plane_normal, geom_quat)
+    else:
+        pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
+        pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
+        grad_mesh = qd.Vector.zero(gs.qd_float, 3)
+        if sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, geom_idx):
+            grad_mesh = sdf_func_proxy_grad(rigid_global_info, sdf_info, pos_sdf, geom_idx)
+        else:
+            geom_sdf_res = sdf_info.geoms_info.sdf_res[geom_idx]
+            cs = sdf_info.geoms_info.sdf_cell_size[geom_idx]
+            base = qd.min(qd.floor(pos_sdf, gs.qd_int), geom_sdf_res - 2)
+            for offset in qd.grouped(qd.ndrange(2, 2, 2)):
+                pos_cell = base + offset
+                w_xyz = 1 - qd.abs(pos_sdf - pos_cell)
+                val = sdf_info.geoms_sdf_val[sdf_func_ravel_cell_idx(sdf_info, pos_cell, geom_sdf_res, geom_idx)]
+                grad_mesh[0] += (2 * offset[0] - 1) * w_xyz[1] * w_xyz[2] * val / cs[0]
+                grad_mesh[1] += w_xyz[0] * (2 * offset[1] - 1) * w_xyz[2] * val / cs[1]
+                grad_mesh[2] += w_xyz[0] * w_xyz[1] * (2 * offset[2] - 1) * val / cs[2]
+        grad_world = gu.qd_transform_by_quat(grad_mesh, geom_quat)
+    return grad_world
+
+
+@qd.func
 def sdf_func_normal_world(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,

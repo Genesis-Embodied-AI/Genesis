@@ -4091,13 +4091,12 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
     "timestep, decimate",
     [
         pytest.param(0.01, True, marks=pytest.mark.required),
-        (0.004, False),
+        (0.001, False),
     ],
 )
 def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
     BOWL_THICKNESS = 0.011
     NUM_BOWLS = 32
-    DURATION = 2.0
 
     timeconst = max(0.005, 2 * timestep)
     scene = gs.Scene(
@@ -4129,7 +4128,7 @@ def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
     scene.build()
 
     # Make sure that the pile stays upright, with bowls stay tightly packed together during the entire motion
-    for _ in range(int(DURATION // timestep)):
+    for _ in range(1500):
         scene.step()
         bowls_pos = np.stack([tensor_to_array(entity.get_pos()) for entity in scene.entities[-NUM_BOWLS:]], axis=0)
         bowls_dist_abs = np.linalg.norm(bowls_pos[:, :2] - bowls_pos[:2, 0], axis=-1)
