@@ -1184,11 +1184,13 @@ def test_raycaster_return_points_false(show_viewer, n_envs):
     scene.add_entity(gs.morphs.Plane())
     scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5), fixed=True))
 
+    MAX_RANGE = 5.0
     cam_pts = scene.add_sensor(
         gs.sensors.DepthCamera(
             pattern=gs.sensors.raycaster.DepthCameraPattern(res=(8, 8)),
             return_points=True,
             pos_offset=(0.0, 0.0, 2.0),
+            max_range=MAX_RANGE,
         )
     )
     cam_nopts = scene.add_sensor(
@@ -1196,6 +1198,7 @@ def test_raycaster_return_points_false(show_viewer, n_envs):
             pattern=gs.sensors.raycaster.DepthCameraPattern(res=(8, 8)),
             return_points=False,
             pos_offset=(0.0, 0.0, 2.0),
+            max_range=MAX_RANGE,
         )
     )
     scene.build(n_envs=n_envs)
@@ -1212,13 +1215,13 @@ def test_raycaster_return_points_false(show_viewer, n_envs):
     assert torch.equal(data_pts.distances, data_nopts.distances)
     # The points-on sensor stays self-consistent (||hit_point|| == distance for rays that hit) even though a
     # distances-only sensor is packed after it in the shared cache.
-    hit = data_pts.distances < cam_pts._options.max_range
+    hit = data_pts.distances < MAX_RANGE
     assert_allclose(data_pts.points.norm(dim=-1)[hit], data_pts.distances[hit], tol=1e-4)
     # The debug-draw reconstruction (distance * unit ray_dir, local frame) must reproduce the stored points on hits.
     n_rays = cam_nopts.ray_dirs.shape[0]
     recon = data_nopts.distances.reshape((-1, n_rays, 1)) * gu.normalize(cam_nopts.ray_dirs)
     points_ref = data_pts.points.reshape((-1, n_rays, 3))
-    hit = (data_pts.distances < cam_pts._options.max_range).reshape((-1, n_rays))
+    hit = (data_pts.distances < MAX_RANGE).reshape((-1, n_rays))
     assert_allclose(recon[hit], points_ref[hit], tol=1e-4)
 
 
