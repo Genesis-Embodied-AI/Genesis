@@ -28,6 +28,54 @@ def mpl_agg_backend():
 
 
 @pytest.mark.required
+def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
+    scene = gs.Scene(show_viewer=False, show_FPS=False)
+    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)))
+
+    n_probes = 9
+    grid = np.stack(np.meshgrid(np.linspace(0, 1, 3), np.linspace(0, 1, 3)), -1).reshape(-1, 2)
+    positions = np.c_[grid, np.zeros(n_probes)]
+    titles = ("a", "b", "c", "d")
+
+    def grid_data():
+        return np.stack([(positions - 0.5) * (i_title + 1) * 0.1 for i_title in range(len(titles))])
+
+    grid_plotter = scene.start_recording(
+        data_func=grid_data,
+        rec_options=gs.recorders.MPLVectorFieldPlot(
+            title="grid",
+            positions=positions,
+            normal=(0.0, 0.0, 1.0),
+            subplot_titles=titles,
+            show_window=False,
+        ),
+    )
+    single_plotter = scene.start_recording(
+        data_func=lambda: (positions - 0.5) * 0.1,
+        rec_options=gs.recorders.MPLVectorFieldPlot(
+            title="single",
+            positions=positions,
+            normal=(0.0, 0.0, 1.0),
+            show_window=False,
+        ),
+    )
+
+    scene.build()
+    # The plotter overwrites the quiver data in place each call, so a single step already exercises process().
+    scene.step()
+    for plotter in (grid_plotter, single_plotter):
+        if plotter.run_in_thread:
+            plotter.sync()
+
+    titled = [ax.get_title() for ax in grid_plotter.fig.get_axes() if ax.get_title() in titles]
+    assert tuple(titled) == titles  # one subplot per title, in order
+    assert len(grid_plotter._quivers) == len(titles)
+    assert len(single_plotter._quivers) == 1  # no subplot_titles -> a single quiver
+    for plotter in (grid_plotter, single_plotter):
+        assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
+
+
+@pytest.mark.required
 def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
     """Test if the plotter recorders works."""
     DT = 0.01
