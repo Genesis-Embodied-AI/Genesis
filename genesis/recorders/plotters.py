@@ -391,8 +391,10 @@ class BaseMPLPlotter(BasePlotter):
     def _make_subplot_grid(self, n_subplots: int, titles: "Sequence[str] | None" = None) -> "list":
         """
         Create ``self.fig`` with ``n_subplots`` axes in a near-square grid and return them as a flat list (one figure,
-        many subplots). Unused cells in the grid are hidden, the figure title is set from ``options.title``, and each
-        axis gets the matching entry of ``titles`` when provided. Subclasses fill the returned axes and then call
+        many subplots).
+
+        Unused cells in the grid are hidden, the figure title is set from ``options.title``, and each axis gets the
+        matching entry of ``titles`` when provided. Subclasses fill the returned axes and then call
         ``_cache_backgrounds()``.
         """
         import matplotlib.pyplot as plt

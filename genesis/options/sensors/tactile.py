@@ -82,10 +82,12 @@ class ViscoelasticHysteresisOptionsMixin(SensorOptions[SensorT]):
 
 def _validate_crosstalk_kernel(kernel) -> None:
     """
-    Validate an explicit crosstalk kernel: 2D ``(N, M)`` or 3D ``(G, N, M)`` with ``G`` in {1, 2, 3}, odd spatial
-    dims (center tap), and finite entries. The conservation (sum ~ 1) check is a build-time warning in
-    ``tactile_shared.build_crosstalk_kernels`` (where the logger is available); the self tap is intentionally allowed
-    to be < 1, which is how a conservative kernel shares a peak with its neighbors.
+    Validate an explicit crosstalk kernel: 2D ``(N, M)`` or 3D ``(G, N, M)`` with ``G`` in {1, 2, 3}, odd spatial dims
+    (center tap), and finite entries.
+
+    The conservation (sum ~ 1) check is a build-time warning in ``tactile_shared.build_crosstalk_kernels`` (where the
+    logger is available); the self tap is intentionally allowed to be < 1, which is how a conservative kernel shares a
+    peak with its neighbors.
     """
     arr = np.asarray(kernel, dtype=float)
     if arr.ndim not in (2, 3):
@@ -102,8 +104,10 @@ def _validate_crosstalk_kernel(kernel) -> None:
 class SpatialCrosstalkOptionsMixin(SensorOptions[SensorT]):
     """
     Grid spatial crosstalk applied on the measured branch: each taxel's force/torque bleeds onto its grid neighbors,
-    modeling mechanical coupling through the sensor's compliant layer. Requires a 2D grid ``probe_local_pos`` (shape
-    ``(ny, nx, 3)`` with non-degenerate spacing); a 0-radius filler probe stays zero.
+    modeling mechanical coupling through the sensor's compliant layer.
+
+    Requires a 2D grid ``probe_local_pos`` (shape ``(ny, nx, 3)`` with non-degenerate spacing); a 0-radius filler probe
+    stays zero.
 
     Configure it one of two ways. A **Gaussian** blur via ``crosstalk_strength`` + ``crosstalk_sigma`` (one isotropic
     kernel on all 6 force/torque channels). Or an **explicit kernel** via ``crosstalk_kernel`` -- a measured
@@ -237,11 +241,12 @@ class PointCloudTactileSensorMixin(TactileProbeSensorOptionsMixin[SensorT]):
 
 class ContactHysteresisOptionsMixin(SensorOptions[SensorT]):
     """
-    Schmitt-trigger contact gate shared by the stateful tactile sensors, in penetration-depth units (meters,
-    backend-agnostic -- both the ``"sdf"`` and ``"raycast"`` contact-depth backends produce the same depth): the
-    gate latches ON when depth >= ``contact_threshold`` and releases when depth <= ``release_threshold``. The band
-    between them suppresses chatter. What the gate controls is sensor-specific (ContactProbe: the boolean output;
-    ElastomerTaxel: the shear anchor state).
+    Schmitt-trigger contact gate shared by the stateful tactile sensors, in penetration-depth units.
+
+    Depth is in meters and backend-agnostic (both the ``"sdf"`` and ``"raycast"`` contact-depth backends produce the
+    same depth): the gate latches ON when depth >= ``contact_threshold`` and releases when depth <=
+    ``release_threshold``, and the band between them suppresses chatter. What the gate controls is sensor-specific
+    (ContactProbe: the boolean output; ElastomerTaxel: the shear anchor state).
 
     Parameters
     ----------

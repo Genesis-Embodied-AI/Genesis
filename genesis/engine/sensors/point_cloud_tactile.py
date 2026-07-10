@@ -901,8 +901,10 @@ def _func_elastomer_direct_dilate_contribution(
     """
     Single tracked-point dilation contribution: tangential spreading is linear in penetration depth, while the
     out-of-plane bulge follows a ``depth ** normal_exponent`` power law (mirrors the FFT path's H / H**normal_exponent
-    channel split). The normal bulge always keeps the Gaussian falloff; the in-plane term is set by ``compressibility``
-    (1 = local Gaussian first-moment, 0 = incompressible ``r_hat/r``, in-between = peak-normalized blend).
+    channel split).
+
+    The normal bulge always keeps the Gaussian falloff; the in-plane term is set by ``compressibility`` (1 = local
+    Gaussian first-moment, 0 = incompressible ``r_hat/r``, in-between = peak-normalized blend).
     """
     planar_diff = _func_elastomer_tangent(target_pos - source_pos, target_normal)
     r2 = planar_diff.dot(planar_diff)
@@ -975,11 +977,12 @@ _LAYER_Q_MAX: Final[float] = 30.0
 def _bonded_layer_transfer(q: torch.Tensor, q_min: float = _LAYER_Q_MIN, q_max: float = _LAYER_Q_MAX) -> torch.Tensor:
     """In-plane transfer ``S(q)``, ``q = |k| * h``, of an incompressible elastic layer bonded to a rigid base
     (``u = w = 0`` at ``z = -h``) with a shear-free top surface where the normal displacement is prescribed:
-    ``u_hat(top) = -i * k_hat * S(q) * H_hat``. Solved exactly per mode -- a 4x4 system in the
-    ``[a, b*h, c, d*h]`` coefficients of ``w(z) = (a + b z) e^{kz} + (c + d z) e^{-kz}`` -- which is the linear
-    elasticity an FEM of a flat bonded slab converges to. Asymptotics: ``S ~ 1.5/q`` for ``q -> 0`` (thin-layer
-    squeeze flow, the free-space ``1/r``) and ``S -> 0`` for ``q -> inf`` (incompressible half-space: no in-plane
-    surface motion), peaking around ``q ~ 1``.
+    ``u_hat(top) = -i * k_hat * S(q) * H_hat``.
+
+    Solved exactly per mode -- a 4x4 system in the ``[a, b*h, c, d*h]`` coefficients of ``w(z) = (a + b z) e^{kz} + (c +
+    d z) e^{-kz}`` -- which is the linear elasticity an FEM of a flat bonded slab converges to. Asymptotics: ``S ~
+    1.5/q`` for ``q -> 0`` (thin-layer squeeze flow, the free-space ``1/r``) and ``S -> 0`` for ``q -> inf``
+    (incompressible half-space: no in-plane surface motion), peaking around ``q ~ 1``.
     """
     # float64 is required here, not stylistic: the 4x4 mode system is ill-conditioned at small q
     # (cond ~ 4.5/q^3, up to ~4.5e9 at q_min) -- far past float32's ~1e7 usable range. S(q) is O(1) so the
