@@ -3205,19 +3205,19 @@ def func_narrow_phase_diff_convex_vs_convex(
             i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
 
             if is_ref:
-                contact_pos = qd.Vector.zero(gs.qd_float, 3)
-                contact_normal = qd.Vector.zero(gs.qd_float, 3)
-                penetration = gs.qd_float(0.0)
-                weight = gs.qd_float(0.0)
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
-                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_sphere_contact(
-                        geoms_state, geoms_info, rigid_global_info, i_ga, i_gb, i_b
-                    )
-                else:
-                    ref_penetration = -1.0
-                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                        geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-                    )
+                ref_penetration = -1.0
+                contact_pos, contact_normal, penetration, weight = diff_gjk.func_dispatch_differentiable_contact(
+                    geoms_state,
+                    geoms_info,
+                    rigid_global_info,
+                    diff_contact_input,
+                    gjk_info,
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    i_c,
+                    ref_penetration,
+                )
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
                 func_set_contact(
@@ -3244,19 +3244,19 @@ def func_narrow_phase_diff_convex_vs_convex(
             i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
 
             if not is_ref:
-                contact_pos = qd.Vector.zero(gs.qd_float, 3)
-                contact_normal = qd.Vector.zero(gs.qd_float, 3)
-                penetration = gs.qd_float(0.0)
-                weight = gs.qd_float(0.0)
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
-                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_sphere_contact(
-                        geoms_state, geoms_info, rigid_global_info, i_ga, i_gb, i_b
-                    )
-                else:
-                    ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
-                    contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                        geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-                    )
+                ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
+                contact_pos, contact_normal, penetration, weight = diff_gjk.func_dispatch_differentiable_contact(
+                    geoms_state,
+                    geoms_info,
+                    rigid_global_info,
+                    diff_contact_input,
+                    gjk_info,
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    i_c,
+                    ref_penetration,
+                )
 
                 func_set_contact(
                     i_ga,

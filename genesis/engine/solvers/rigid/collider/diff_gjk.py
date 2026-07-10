@@ -900,6 +900,40 @@ def func_differentiable_contact(
 
 
 @qd.func
+def func_dispatch_differentiable_contact(
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    diff_contact_input: array_class.DiffContactInput,
+    gjk_info: array_class.GJKInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    i_c,
+    ref_penetration,
+):
+    """
+    Dispatch a differentiable contact to the closed-form sphere-sphere reconstruction
+    (func_differentiable_sphere_contact) when both geoms are spheres, else the general Minkowski-triangle
+    reconstruction (func_differentiable_contact). Shared by the reference and non-reference contact passes in
+    func_narrow_phase_diff_convex_vs_convex (narrowphase.py).
+    """
+    contact_pos = gs.qd_vec3(0.0, 0.0, 0.0)
+    contact_normal = gs.qd_vec3(0.0, 0.0, 0.0)
+    penetration = gs.qd_float(0.0)
+    weight = gs.qd_float(0.0)
+    if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+        contact_pos, contact_normal, penetration, weight = func_differentiable_sphere_contact(
+            geoms_state, geoms_info, rigid_global_info, i_ga, i_gb, i_b
+        )
+    else:
+        contact_pos, contact_normal, penetration, weight = func_differentiable_contact(
+            geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+        )
+    return contact_pos, contact_normal, penetration, weight
+
+
+@qd.func
 def func_plane_normal(v1, v2, v3):
     """
     Compute the normal of the plane defined by three points. The length of the normal corresponds to the two times the
