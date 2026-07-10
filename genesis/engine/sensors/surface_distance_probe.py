@@ -23,6 +23,7 @@ from .tactile_shared import (
     BVH_LEAF_SIZE,
     BVH_STACK_SIZE,
     BVHMetadata,
+    ChunkedBVHData,
     build_static_chunk_bvh,
     func_sphere_intersects_aabb,
     func_vec3_at,
@@ -180,17 +181,7 @@ def _kernel_surface_distance_probe_bvh(
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
-    bvh_sensor_chunk_start: qd.types.ndarray(),
-    bvh_sensor_chunk_count: qd.types.ndarray(),
-    bvh_chunk_link_idx: qd.types.ndarray(),
-    bvh_chunk_node_start: qd.types.ndarray(),
-    bvh_node_min: qd.types.ndarray(),
-    bvh_node_max: qd.types.ndarray(),
-    bvh_node_left: qd.types.ndarray(),
-    bvh_node_right: qd.types.ndarray(),
-    bvh_node_leaf_start: qd.types.ndarray(),
-    bvh_node_leaf_count: qd.types.ndarray(),
-    bvh_leaf_elem_idx: qd.types.ndarray(),
+    bvh: ChunkedBVHData,
     bvh_tri_verts: qd.types.ndarray(),
     links_state: array_class.LinksState,
     positions_gt: qd.types.ndarray(),
@@ -231,35 +222,35 @@ def _kernel_surface_distance_probe_bvh(
         best_dist_sq_m = max_r_m * max_r_m
         best_point_m = probe_world
 
-        chunk_start = bvh_sensor_chunk_start[i_s]
-        n_chunks = bvh_sensor_chunk_count[i_s]
+        chunk_start = bvh.sensor_chunk_start[i_s]
+        n_chunks = bvh.sensor_chunk_count[i_s]
         for c_off in range(n_chunks):
             i_c = chunk_start + c_off
-            track_link_idx = bvh_chunk_link_idx[i_c]
+            track_link_idx = bvh.chunk_link_idx[i_c]
             track_pos = links_state.pos[track_link_idx, i_b]
             track_quat = links_state.quat[track_link_idx, i_b]
             # BVH lives in the tracked link's local frame; bring the probe over.
             probe_link = gu.qd_inv_transform_by_trans_quat(probe_world, track_pos, track_quat)
 
             stack = qd.Vector.zero(gs.qd_int, qd.static(BVH_STACK_SIZE))
-            stack[0] = bvh_chunk_node_start[i_c]
+            stack[0] = bvh.chunk_node_start[i_c]
             stack_idx = 1
 
             while stack_idx > 0:
                 stack_idx -= 1
                 n = stack[stack_idx]
-                bmin = func_vec3_at(bvh_node_min, n)
-                bmax = func_vec3_at(bvh_node_max, n)
+                bmin = func_vec3_at(bvh.node_min, n)
+                bmax = func_vec3_at(bvh.node_max, n)
                 # Cull when min distance from probe to AABB exceeds the conservative current best.
                 cull_radius_sq = qd.max(best_dist_sq_gt, best_dist_sq_m)
                 if not func_sphere_intersects_aabb(probe_link, cull_radius_sq, bmin, bmax):
                     continue
-                left = bvh_node_left[n]
+                left = bvh.node_left[n]
                 if left == -1:
-                    fstart = bvh_node_leaf_start[n]
-                    fn = bvh_node_leaf_count[n]
+                    fstart = bvh.node_leaf_start[n]
+                    fn = bvh.node_leaf_count[n]
                     for j in range(fn):
-                        i_f = bvh_leaf_elem_idx[fstart + j]
+                        i_f = bvh.leaf_elem_idx[fstart + j]
                         v0 = qd.Vector(
                             [bvh_tri_verts[i_f, 0, 0], bvh_tri_verts[i_f, 0, 1], bvh_tri_verts[i_f, 0, 2]],
                             dt=gs.qd_float,
@@ -285,7 +276,7 @@ def _kernel_surface_distance_probe_bvh(
                                 best_dist_sq_m = dist_sq
                                 best_point_m = closest_world
                 else:
-                    right = bvh_node_right[n]
+                    right = bvh.node_right[n]
                     # Median split bounds depth at log2(N / leaf_size) << BVH_STACK_SIZE; the guard mirrors the
                     # global rigid-BVH kernel so a future build strategy can't silently overflow the stack.
                     if stack_idx < qd.static(BVH_STACK_SIZE - 2):
@@ -424,17 +415,7 @@ class SurfaceDistanceProbeSensor(
             shared_metadata.links_idx,
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
-            bvh.sensor_chunk_start,
-            bvh.sensor_chunk_count,
-            bvh.chunk_link_idx,
-            bvh.chunk_node_start,
-            bvh.node_min,
-            bvh.node_max,
-            bvh.node_left,
-            bvh.node_right,
-            bvh.node_leaf_start,
-            bvh.node_leaf_count,
-            bvh.leaf_elem_idx,
+            bvh.kernel_bvh,
             bvh.tri_verts,
             solver.links_state,
             shared_metadata.nearest_positions,

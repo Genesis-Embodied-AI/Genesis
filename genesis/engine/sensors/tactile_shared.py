@@ -191,6 +191,28 @@ def func_aabb_intersects_aabb(amin, amax, bmin, bmax):  # -> bool
     )
 
 
+@dataclass(eq=True, kw_only=False, frozen=True)
+class ChunkedBVHData:
+    """
+    Bundle of the flat ``BVHMetadata`` scaffolding tensors passed to a traversal kernel as one argument.
+
+    See ``BVHMetadata`` for the field semantics. Element payload tables (``tri_verts``, point-cloud
+    positions, ...) stay separate kernel arguments because they differ per sensor class.
+    """
+
+    sensor_chunk_start: qd.types.ndarray()
+    sensor_chunk_count: qd.types.ndarray()
+    chunk_link_idx: qd.types.ndarray()
+    chunk_node_start: qd.types.ndarray()
+    node_min: qd.types.ndarray()
+    node_max: qd.types.ndarray()
+    node_left: qd.types.ndarray()
+    node_right: qd.types.ndarray()
+    node_leaf_start: qd.types.ndarray()
+    node_leaf_count: qd.types.ndarray()
+    leaf_elem_idx: qd.types.ndarray()
+
+
 @dataclass
 class BVHMetadata:
     """
@@ -224,6 +246,30 @@ class BVHMetadata:
     node_leaf_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     node_leaf_count: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     leaf_elem_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+
+    # Cached scaffolding bundle for kernel calls, built once on first use (the BVH is static after scene init).
+    _kernel_bvh: "ChunkedBVHData | None" = field(default=None, init=False, compare=False, repr=False)
+
+    @property
+    def kernel_bvh(self) -> ChunkedBVHData:
+        """
+        The scaffolding fields bundled into a single ``ChunkedBVHData`` traversal-kernel argument.
+        """
+        if self._kernel_bvh is None:
+            self._kernel_bvh = ChunkedBVHData(
+                sensor_chunk_start=self.sensor_chunk_start,
+                sensor_chunk_count=self.sensor_chunk_count,
+                chunk_link_idx=self.chunk_link_idx,
+                chunk_node_start=self.chunk_node_start,
+                node_min=self.node_min,
+                node_max=self.node_max,
+                node_left=self.node_left,
+                node_right=self.node_right,
+                node_leaf_start=self.node_leaf_start,
+                node_leaf_count=self.node_leaf_count,
+                leaf_elem_idx=self.leaf_elem_idx,
+            )
+        return self._kernel_bvh
 
 
 # ============================ FFT helpers ============================

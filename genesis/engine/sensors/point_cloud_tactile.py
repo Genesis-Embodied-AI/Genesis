@@ -34,6 +34,7 @@ from .tactile_shared import (
     BVH_LEAF_SIZE,
     BVH_STACK_SIZE,
     BVHMetadata,
+    ChunkedBVHData,
     ContactDepthQueryMetadataMixin,
     ContactDepthQuerySensorMixin,
     GridFFTConvMetadataMixin,
@@ -353,17 +354,7 @@ def _kernel_point_cloud_proximity_taxel_bvh(
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
-    bvh_sensor_chunk_start: qd.types.ndarray(),
-    bvh_sensor_chunk_count: qd.types.ndarray(),
-    bvh_chunk_link_idx: qd.types.ndarray(),
-    bvh_chunk_node_start: qd.types.ndarray(),
-    bvh_node_min: qd.types.ndarray(),
-    bvh_node_max: qd.types.ndarray(),
-    bvh_node_left: qd.types.ndarray(),
-    bvh_node_right: qd.types.ndarray(),
-    bvh_node_leaf_start: qd.types.ndarray(),
-    bvh_node_leaf_count: qd.types.ndarray(),
-    bvh_leaf_elem_idx: qd.types.ndarray(),
+    bvh: ChunkedBVHData,
     pc_pos_link: qd.types.ndarray(),
     pc_active_envs_mask: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
@@ -428,11 +419,11 @@ def _kernel_point_cloud_proximity_taxel_bvh(
         fv_m = qd.Vector.zero(gs.qd_float, 3)
         tau_w_m = qd.Vector.zero(gs.qd_float, 3)
 
-        chunk_start = bvh_sensor_chunk_start[i_s]
-        n_chunks = bvh_sensor_chunk_count[i_s]
+        chunk_start = bvh.sensor_chunk_start[i_s]
+        n_chunks = bvh.sensor_chunk_count[i_s]
         for c_off in range(n_chunks):
             i_c = chunk_start + c_off
-            track_link_idx = bvh_chunk_link_idx[i_c]
+            track_link_idx = bvh.chunk_link_idx[i_c]
             track_pos = links_state.pos[track_link_idx, i_b]
             track_quat = links_state.quat[track_link_idx, i_b]
             rcom_o = links_state.root_COM[track_link_idx, i_b]
@@ -442,22 +433,22 @@ def _kernel_point_cloud_proximity_taxel_bvh(
             probe_link = gu.qd_inv_transform_by_trans_quat(probe_world, track_pos, track_quat)
 
             stack = qd.Vector.zero(gs.qd_int, qd.static(BVH_STACK_SIZE))
-            stack[0] = bvh_chunk_node_start[i_c]
+            stack[0] = bvh.chunk_node_start[i_c]
             stack_idx = 1
 
             while stack_idx > 0:
                 stack_idx -= 1
                 n = stack[stack_idx]
-                bmin = func_vec3_at(bvh_node_min, n)
-                bmax = func_vec3_at(bvh_node_max, n)
+                bmin = func_vec3_at(bvh.node_min, n)
+                bmax = func_vec3_at(bvh.node_max, n)
                 if not func_sphere_intersects_aabb(probe_link, R_query_sq, bmin, bmax):
                     continue
-                left = bvh_node_left[n]
+                left = bvh.node_left[n]
                 if left == -1:
-                    pstart = bvh_node_leaf_start[n]
-                    pn = bvh_node_leaf_count[n]
+                    pstart = bvh.node_leaf_start[n]
+                    pn = bvh.node_leaf_count[n]
                     for j in range(pn):
-                        i_o = bvh_leaf_elem_idx[pstart + j]
+                        i_o = bvh.leaf_elem_idx[pstart + j]
                         if not pc_active_envs_mask[i_o, i_b]:
                             continue
                         pos_l = func_vec3_at(pc_pos_link, i_o)
@@ -496,7 +487,7 @@ def _kernel_point_cloud_proximity_taxel_bvh(
                                         fv_m[k2] = fv_m[k2] + P_i_m * v_t[k2]
                                         tau_w_m[k2] = tau_w_m[k2] + P_i_m * ctmp[k2]
                 else:
-                    right = bvh_node_right[n]
+                    right = bvh.node_right[n]
                     # Median split bounds depth at log2(N / leaf_size) << BVH_STACK_SIZE; the guard mirrors the
                     # global rigid-BVH kernel so a future build strategy can't silently overflow the stack.
                     if stack_idx < qd.static(BVH_STACK_SIZE - 2):
@@ -766,17 +757,7 @@ class ProximityTaxelSensor(
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
             shared_metadata.n_probes_per_sensor,
-            bvh.sensor_chunk_start,
-            bvh.sensor_chunk_count,
-            bvh.chunk_link_idx,
-            bvh.chunk_node_start,
-            bvh.node_min,
-            bvh.node_max,
-            bvh.node_left,
-            bvh.node_right,
-            bvh.node_leaf_start,
-            bvh.node_leaf_count,
-            bvh.leaf_elem_idx,
+            bvh.kernel_bvh,
             shared_metadata.pc_pos_link,
             shared_metadata.pc_active_envs_mask,
             shared_metadata.probe_radii,
@@ -1210,15 +1191,7 @@ def _kernel_elastomer_surface_state_bvh(
     elastomer_geom_idx: qd.types.ndarray(),
     elastomer_geom_active_envs_mask: qd.types.ndarray(),
     bvh_chunk_sensor_idx: qd.types.ndarray(),
-    bvh_chunk_link_idx: qd.types.ndarray(),
-    bvh_chunk_node_start: qd.types.ndarray(),
-    bvh_node_min: qd.types.ndarray(),
-    bvh_node_max: qd.types.ndarray(),
-    bvh_node_left: qd.types.ndarray(),
-    bvh_node_right: qd.types.ndarray(),
-    bvh_node_leaf_start: qd.types.ndarray(),
-    bvh_node_leaf_count: qd.types.ndarray(),
-    bvh_leaf_elem_idx: qd.types.ndarray(),
+    bvh: ChunkedBVHData,
     pc_pos_link: qd.types.ndarray(),
     pc_active_envs_mask: qd.types.ndarray(),
     sdf_enter: qd.types.ndarray(),
@@ -1278,7 +1251,7 @@ def _kernel_elastomer_surface_state_bvh(
             wmax[k] = wmax[k] + expand
 
         # 3) Transform 8 corners into the chunk's tracked-link local frame to get qmin/qmax.
-        track_link_idx = bvh_chunk_link_idx[i_c]
+        track_link_idx = bvh.chunk_link_idx[i_c]
         track_pos = links_state.pos[track_link_idx, i_b]
         track_quat = links_state.quat[track_link_idx, i_b]
         qmin = qd.Vector([gs.qd_float(1e30), gs.qd_float(1e30), gs.qd_float(1e30)], dt=gs.qd_float)
@@ -1304,22 +1277,22 @@ def _kernel_elastomer_surface_state_bvh(
         sensor_quat = links_state.quat[sensor_link_idx, i_b]
 
         stack = qd.Vector.zero(gs.qd_int, qd.static(BVH_STACK_SIZE))
-        stack[0] = bvh_chunk_node_start[i_c]
+        stack[0] = bvh.chunk_node_start[i_c]
         stack_idx = 1
 
         while stack_idx > 0:
             stack_idx -= 1
             n = stack[stack_idx]
-            bmin = func_vec3_at(bvh_node_min, n)
-            bmax = func_vec3_at(bvh_node_max, n)
+            bmin = func_vec3_at(bvh.node_min, n)
+            bmax = func_vec3_at(bvh.node_max, n)
             if not func_aabb_intersects_aabb(bmin, bmax, qmin, qmax):
                 continue
-            left = bvh_node_left[n]
+            left = bvh.node_left[n]
             if left == -1:
-                pstart = bvh_node_leaf_start[n]
-                pn = bvh_node_leaf_count[n]
+                pstart = bvh.node_leaf_start[n]
+                pn = bvh.node_leaf_count[n]
                 for j in range(pn):
-                    i_o = bvh_leaf_elem_idx[pstart + j]
+                    i_o = bvh.leaf_elem_idx[pstart + j]
                     if not pc_active_envs_mask[i_o, i_b]:
                         continue
                     surface_candidate_buf[i_b, i_o] = True
@@ -1355,7 +1328,7 @@ def _kernel_elastomer_surface_state_bvh(
                         surface_initialized_buf,
                     )
             else:
-                right = bvh_node_right[n]
+                right = bvh.node_right[n]
                 # Median split bounds depth at log2(N / leaf_size) << BVH_STACK_SIZE; the guard mirrors the
                 # global rigid-BVH kernel so a future build strategy can't silently overflow the stack.
                 if stack_idx < qd.static(BVH_STACK_SIZE - 2):
@@ -1373,15 +1346,7 @@ def _kernel_elastomer_surface_state_via_global_bvh(
     elastomer_geom_active_envs_mask: qd.types.ndarray(),
     elastomer_candidate_geom_mask: qd.types.ndarray(),
     bvh_chunk_sensor_idx: qd.types.ndarray(),
-    bvh_chunk_link_idx: qd.types.ndarray(),
-    bvh_chunk_node_start: qd.types.ndarray(),
-    bvh_node_min: qd.types.ndarray(),
-    bvh_node_max: qd.types.ndarray(),
-    bvh_node_left: qd.types.ndarray(),
-    bvh_node_right: qd.types.ndarray(),
-    bvh_node_leaf_start: qd.types.ndarray(),
-    bvh_node_leaf_count: qd.types.ndarray(),
-    bvh_leaf_elem_idx: qd.types.ndarray(),
+    bvh: ChunkedBVHData,
     pc_pos_link: qd.types.ndarray(),
     pc_active_envs_mask: qd.types.ndarray(),
     sdf_enter: qd.types.ndarray(),
@@ -1442,7 +1407,7 @@ def _kernel_elastomer_surface_state_via_global_bvh(
             wmin[k] = wmin[k] - expand
             wmax[k] = wmax[k] + expand
 
-        track_link_idx = bvh_chunk_link_idx[i_c]
+        track_link_idx = bvh.chunk_link_idx[i_c]
         track_pos = links_state.pos[track_link_idx, i_b]
         track_quat = links_state.quat[track_link_idx, i_b]
         qmin = qd.Vector([gs.qd_float(1e30), gs.qd_float(1e30), gs.qd_float(1e30)], dt=gs.qd_float)
@@ -1466,22 +1431,22 @@ def _kernel_elastomer_surface_state_via_global_bvh(
         sensor_quat = links_state.quat[sensor_link_idx, i_b]
 
         stack = qd.Vector.zero(gs.qd_int, qd.static(BVH_STACK_SIZE))
-        stack[0] = bvh_chunk_node_start[i_c]
+        stack[0] = bvh.chunk_node_start[i_c]
         stack_idx = 1
 
         while stack_idx > 0:
             stack_idx -= 1
             n = stack[stack_idx]
-            bmin = func_vec3_at(bvh_node_min, n)
-            bmax = func_vec3_at(bvh_node_max, n)
+            bmin = func_vec3_at(bvh.node_min, n)
+            bmax = func_vec3_at(bvh.node_max, n)
             if not func_aabb_intersects_aabb(bmin, bmax, qmin, qmax):
                 continue
-            left = bvh_node_left[n]
+            left = bvh.node_left[n]
             if left == -1:
-                pstart = bvh_node_leaf_start[n]
-                pn = bvh_node_leaf_count[n]
+                pstart = bvh.node_leaf_start[n]
+                pn = bvh.node_leaf_count[n]
                 for j in range(pn):
-                    i_o = bvh_leaf_elem_idx[pstart + j]
+                    i_o = bvh.leaf_elem_idx[pstart + j]
                     if not pc_active_envs_mask[i_o, i_b]:
                         continue
                     surface_candidate_buf[i_b, i_o] = True
@@ -1519,7 +1484,7 @@ def _kernel_elastomer_surface_state_via_global_bvh(
                         surface_initialized_buf,
                     )
             else:
-                right = bvh_node_right[n]
+                right = bvh.node_right[n]
                 # Median split bounds depth at log2(N / leaf_size) << BVH_STACK_SIZE; the guard mirrors the
                 # global rigid-BVH kernel so a future build strategy can't silently overflow the stack.
                 if stack_idx < qd.static(BVH_STACK_SIZE - 2):
@@ -2126,15 +2091,7 @@ class ElastomerTaxelSensor(
                     shared_metadata.elastomer_geom_idx,
                     shared_metadata.elastomer_geom_active_envs_mask,
                     bvh.chunk_sensor_idx,
-                    bvh.chunk_link_idx,
-                    bvh.chunk_node_start,
-                    bvh.node_min,
-                    bvh.node_max,
-                    bvh.node_left,
-                    bvh.node_right,
-                    bvh.node_leaf_start,
-                    bvh.node_leaf_count,
-                    bvh.leaf_elem_idx,
+                    bvh.kernel_bvh,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
                     shared_metadata.elastomer_contact_sdf_enter,
@@ -2159,15 +2116,7 @@ class ElastomerTaxelSensor(
                     shared_metadata.elastomer_geom_active_envs_mask,
                     shared_metadata.elastomer_candidate_geom_mask,
                     bvh.chunk_sensor_idx,
-                    bvh.chunk_link_idx,
-                    bvh.chunk_node_start,
-                    bvh.node_min,
-                    bvh.node_max,
-                    bvh.node_left,
-                    bvh.node_right,
-                    bvh.node_leaf_start,
-                    bvh.node_leaf_count,
-                    bvh.leaf_elem_idx,
+                    bvh.kernel_bvh,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
                     shared_metadata.elastomer_contact_sdf_enter,
