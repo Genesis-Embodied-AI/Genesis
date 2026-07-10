@@ -1880,6 +1880,7 @@ class GeomsInfo:
     conaffinity: qd.Tensor
     is_fixed: qd.Tensor
     is_decomposed: qd.Tensor
+    is_hollow: qd.Tensor
     needs_coup: qd.Tensor
     coup_friction: qd.Tensor
     coup_softness: qd.Tensor
@@ -1914,6 +1915,7 @@ def get_geoms_info(solver):
         conaffinity=V(dtype=gs.qd_int, shape=shape),
         is_fixed=V(dtype=gs.qd_bool, shape=shape),
         is_decomposed=V(dtype=gs.qd_bool, shape=shape),
+        is_hollow=V(dtype=gs.qd_bool, shape=shape),
         needs_coup=V(dtype=gs.qd_int, shape=shape),
         coup_friction=V(dtype=gs.qd_float, shape=shape),
         coup_softness=V(dtype=gs.qd_float, shape=shape),
