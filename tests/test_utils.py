@@ -554,9 +554,7 @@ def test_genuine_interpenetration(show_viewer):
         return mesh.vertices + np.asarray(center), mesh.faces
 
     RADIUS = 0.03
-    # Overlapping spheres: one crossing whose depth is the overlap, up to the tessellation chord error. The
-    # deepest incursion vertex sits well inside its partner, so it is not a borderline winding-number query:
-    # the fast approximation (is_exact=False) agrees with the exact path here, just at a looser bound.
+    # Overlapping spheres: one crossing whose depth is the overlap, up to the tessellation chord error.
     for overlap in (2e-3, 5e-3, 15e-3):
         pair = [[sphere(RADIUS, (0, 0, 0))], [sphere(RADIUS, (2 * RADIUS - overlap, 0, 0))]]
         max_depth, crossings = measure(f"spheres overlapping {overlap * 1e3:g}mm", pair)
