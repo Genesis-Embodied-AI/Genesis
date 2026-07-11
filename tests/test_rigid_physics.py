@@ -4385,8 +4385,8 @@ def test_many_objects_collision(convexify, show_viewer, tol):
             max_collision_pairs=8000,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(1.0, 0.5, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
+            camera_pos=(0.5, 0.2, 1.6),
+            camera_lookat=(0.0, 0.0, 0.3),
         ),
         show_viewer=show_viewer,
     )
