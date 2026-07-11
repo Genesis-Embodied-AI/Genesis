@@ -1166,7 +1166,7 @@ class Crossing(NamedTuple):
     depth: float  # separating translation for a crossing, deepest incursion for jammed/contact pairs (metres)
 
 
-def get_genuine_interpenetration(links, cross_tol=1e-3, n_dir=40, n_bisect=9):
+def get_genuine_interpenetration(links, cross_tol=1e-3, n_dir=40, n_bisect=9, is_exact=True):
     """Measure the deepest genuine interpenetration over all link pairs among `links` (each a list of
     `(verts, faces)` collision geoms), as the penetration-depth ground truth a collision algorithm is
     expected to resolve.
@@ -1198,6 +1198,10 @@ def get_genuine_interpenetration(links, cross_tol=1e-3, n_dir=40, n_bisect=9):
 
     Returns `(max_depth, crossings)`: `max_depth` is the largest depth over ALL overlapping pairs, and
     `crossings` lists the pairs deeper than `cross_tol`, deepest first.
+
+    `is_exact` gates the insideness of the ground-truth `overlap` on the exact `igl.winding_number`; set it
+    False to use the faster tree approximation, whose platform-dependent error can shift `overlap` on
+    borderline geometry (see `inside_of`).
     """
     # Geoms may arrive as torch tensors (verts) or numpy arrays (faces); igl needs float64 verts and int64 faces.
     links = [
@@ -1231,13 +1235,17 @@ def get_genuine_interpenetration(links, cross_tol=1e-3, n_dir=40, n_bisect=9):
             else (np.empty((0, 3)), np.empty((0, 3), dtype=np.int64))
         )
 
-    def inside_of(points, verts_other, faces_other, lo_other, hi_other):
-        # Winding-number insideness with an exact AABB prefilter: a point outside the partner's bounding box
-        # cannot be inside it, which collapses the query size near separation.
+    def inside_of(points, verts_other, faces_other, lo_other, hi_other, is_exact=False):
+        # Winding-number insideness with an AABB prefilter: a point outside the partner's box can't be inside.
+        # `igl.fast_winding_number` is a tree approximation whose error is platform-dependent (BLAS order),
+        # not float noise, so it can flip a vertex's insideness across platforms. `is_exact` uses the exact
+        # `igl.winding_number` for the one-shot calls that set `overlap`'s ground truth; the hot `separated_at`
+        # search keeps the fast one, where a wrong result only costs an extra bisection step.
         is_inside = np.zeros(len(points), dtype=bool)
         is_in_box = ((points >= lo_other) & (points <= hi_other)).all(1)
         if is_in_box.any():
-            is_inside[is_in_box] = np.abs(igl.fast_winding_number(verts_other, faces_other, points[is_in_box])) > 0.5
+            winding_number = igl.winding_number if is_exact else igl.fast_winding_number
+            is_inside[is_in_box] = np.abs(winding_number(verts_other, faces_other, points[is_in_box])) > 0.5
         return is_inside
 
     # Fibonacci direction sphere and the shift grid (each direction times each probe distance).
@@ -1264,8 +1272,8 @@ def get_genuine_interpenetration(links, cross_tol=1e-3, n_dir=40, n_bisect=9):
             # Incursion magnitudes from unsigned distances gated by winding-number insideness: the
             # pseudonormal sign of igl.signed_distance is unreliable on the overlapping closed components of
             # convex decompositions, while the generalized winding number stays exact.
-            is_inside_a0 = inside_of(va, vb, fb, lo_b, hi_b)
-            is_inside_b0 = inside_of(vb, va, fa, lo_a, hi_a)
+            is_inside_a0 = inside_of(va, vb, fb, lo_b, hi_b, is_exact=is_exact)
+            is_inside_b0 = inside_of(vb, va, fa, lo_a, hi_a, is_exact=is_exact)
             dist_a0, faces_near_a = igl.signed_distance(va, vb, fb)[:2]
             dist_b0, faces_near_b = igl.signed_distance(vb, va, fa)[:2]
             dist_a0 = np.abs(dist_a0)
