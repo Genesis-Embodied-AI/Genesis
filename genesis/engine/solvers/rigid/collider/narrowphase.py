@@ -89,7 +89,6 @@ def func_add_polytope_vertex_contacts_sdf(
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
     tolerance,
-    seeded: qd.template(),
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
@@ -101,6 +100,7 @@ def func_add_polytope_vertex_contacts_sdf(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     errno: qd.Tensor,
+    seeded: qd.template(),
 ):
     # Emit up to n_max contacts at the deepest spatially-diverse vertices of A penetrating (or near-touching) B's
     # surface. Pass 1 scans every vertex of A, evaluates B's grid SDF at each, and keeps the n_max deepest in a small
@@ -185,31 +185,72 @@ def func_add_polytope_vertex_contacts_sdf(
             top_pen[k] = -gs.qd_float(1e30)
             top_iv[k] = -1
         if qd.static(not seeded):
-            for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
-                vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-                if func_point_in_geom_aabb(geoms_state, i_gb, i_b, vertex_pos):
-                    pen_v = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
-                    if pen_v > -margin:
-                        close_idx = -1
-                        for k in range(n_max):
-                            if close_idx < 0 and top_iv[k] >= 0:
-                                other_pos = gu.qd_transform_by_trans_quat(
-                                    verts_info.init_pos[top_iv[k]], ga_pos, ga_quat
+            # Pull B's world AABB back into A's local frame (its exact enclosing box, padded to absorb the
+            # rounding of the two transform paths) and walk only the spatial cells of A overlapping it: a vert
+            # outside B's AABB contributes nothing, so far cells are skipped wholesale, without per-vertex work.
+            # The exact world-AABB gate below is unchanged, and the cell binning shares the kernel's monotone
+            # single-precision cell mapping, so every vert that can pass the gate lies in a visited cell.
+            aabb_center = 0.5 * (geoms_state.aabb_min[i_gb, i_b] + geoms_state.aabb_max[i_gb, i_b])
+            aabb_half_size = 0.5 * (geoms_state.aabb_max[i_gb, i_b] - geoms_state.aabb_min[i_gb, i_b])
+            box_center = gu.qd_inv_transform_by_trans_quat(aabb_center, ga_pos, ga_quat)
+            box_half_size = qd.abs(gu.qd_quat_to_R(ga_quat, EPS)).transpose() @ aabb_half_size
+            box_min = box_center - box_half_size
+            box_max = box_center + box_half_size
+            box_pad = 1e-6 * (1.0 + box_min.norm() + box_max.norm())
+            n_cells_per_axis = 8
+            spatial_origin = collider_info.verts_spatial_grid.geoms_origin[i_ga]
+            spatial_inv_cell_size = collider_info.verts_spatial_grid.geoms_inv_cell_size[i_ga]
+            cell_min = qd.floor((box_min - box_pad - spatial_origin) * spatial_inv_cell_size, gs.qd_int)
+            cell_max = qd.floor((box_max + box_pad - spatial_origin) * spatial_inv_cell_size, gs.qd_int)
+            # The box overlaps the grid only where its cell interval meets [0, n_cells_per_axis - 1] on every
+            # axis; a broadphase pair whose pulled-back box clears the grid on some axis (common for rotated
+            # meshes) scans nothing. Clamping is applied only inside this guard, so indexing stays within the
+            # geom's own cell-range block.
+            if (cell_max >= 0).all() and (cell_min <= n_cells_per_axis - 1).all():
+                cell_min = qd.max(cell_min, 0)
+                cell_max = qd.min(cell_max, n_cells_per_axis - 1)
+                for i_cx in range(cell_min[0], cell_max[0] + 1):
+                    for i_cy in range(cell_min[1], cell_max[1] + 1):
+                        # Cells along z are contiguous in the cell-range layout, so the whole z-run is one vert range.
+                        i_cell = (
+                            i_ga * (n_cells_per_axis**3 + 1)
+                            + (i_cx * n_cells_per_axis + i_cy) * n_cells_per_axis
+                            + cell_min[2]
+                        )
+                        for i_sv in range(
+                            collider_info.verts_spatial_grid.cells_vert_start[i_cell],
+                            collider_info.verts_spatial_grid.cells_vert_start[i_cell + cell_max[2] - cell_min[2] + 1],
+                        ):
+                            vertex_pos = gu.qd_transform_by_trans_quat(
+                                collider_info.verts_spatial_grid.verts_pos[i_sv], ga_pos, ga_quat
+                            )
+                            if func_point_in_geom_aabb(geoms_state, i_gb, i_b, vertex_pos):
+                                is_in_band, sd_v = sdf.sdf_func_world_local_banded(
+                                    geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat, margin
                                 )
-                                if (vertex_pos - other_pos).norm() < diversity_radius:
-                                    close_idx = k
-                        if close_idx >= 0:
-                            if pen_v > top_pen[close_idx]:
-                                top_pen[close_idx] = pen_v
-                                top_iv[close_idx] = i_v
-                        else:
-                            weakest_idx = 0
-                            for k in range(1, n_max):
-                                if top_pen[k] < top_pen[weakest_idx]:
-                                    weakest_idx = k
-                            if pen_v > top_pen[weakest_idx]:
-                                top_pen[weakest_idx] = pen_v
-                                top_iv[weakest_idx] = i_v
+                                pen_v = -sd_v
+                                if is_in_band:
+                                    i_v = collider_info.verts_spatial_grid.verts_idx[i_sv]
+                                    close_idx = -1
+                                    for k in range(n_max):
+                                        if close_idx < 0 and top_iv[k] >= 0:
+                                            other_pos = gu.qd_transform_by_trans_quat(
+                                                verts_info.init_pos[top_iv[k]], ga_pos, ga_quat
+                                            )
+                                            if (vertex_pos - other_pos).norm() < diversity_radius:
+                                                close_idx = k
+                                    if close_idx >= 0:
+                                        if pen_v > top_pen[close_idx]:
+                                            top_pen[close_idx] = pen_v
+                                            top_iv[close_idx] = i_v
+                                    else:
+                                        weakest_idx = 0
+                                        for k in range(1, n_max):
+                                            if top_pen[k] < top_pen[weakest_idx]:
+                                                weakest_idx = k
+                                        if pen_v > top_pen[weakest_idx]:
+                                            top_pen[weakest_idx] = pen_v
+                                            top_iv[weakest_idx] = i_v
         else:
             # Seeded verification: what the pair's first scan cannot see is a feature of A (rim, edge) crossing one
             # of B's faces BETWEEN B's verts; any such feature lies in B's near-surface band, connected on A's vertex
@@ -327,7 +368,7 @@ def func_add_polytope_vertex_contacts_sdf(
         # the FINAL normal rather than letting per-vertex grad override it. The size-ratio gate keeps the existing
         # behavior for one-big-one-small pairs where the SDF grad at A's center is reliable and the closing-direction
         # line is wrong (sphere on a large floor mesh).
-        is_closing_regime = qd.abs(sd_center) < rbound_a and rbound_a_sq > gs.qd_float(0.25) * rbound_b_sq
+        is_closing_regime = qd.abs(sd_center) < rbound_a and rbound_a_sq > 0.25 * rbound_b_sq
         approach_depth_pair = gs.qd_float(0.0)
         closing_normal = qd.Vector.zero(gs.qd_float, 3)
         # Set when A wraps around B so that B passes through A along the center-to-center axis. There the SDF gradient
@@ -748,8 +789,11 @@ def func_add_polytope_vertex_contacts_sdf_shell(
             for i_v in range(geoms_info.vert_start[j_ga], geoms_info.vert_end[j_ga]):
                 vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ja_pos, ja_quat)
                 if func_point_in_geom_aabb(geoms_state, j_gb, i_b, vertex_pos):
-                    pen_v = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, j_gb, jb_pos, jb_quat)
-                    if pen_v > -margin:
+                    is_in_band, sd_v = sdf.sdf_func_world_local_banded(
+                        geoms_info, sdf_info, vertex_pos, j_gb, jb_pos, jb_quat, margin
+                    )
+                    pen_v = -sd_v
+                    if is_in_band:
                         grad_v = sdf.sdf_func_grad_world_local_consistent(
                             geoms_info, rigid_global_info, sdf_info, vertex_pos, j_gb, jb_pos, jb_quat
                         )
@@ -3454,7 +3498,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_pos,
                             gb_quat,
                             tolerance,
-                            False,
                             geoms_state,
                             geoms_info,
                             geoms_init_AABB,
@@ -3466,6 +3509,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             collider_state,
                             collider_info,
                             errno,
+                            seeded=False,
                         )
                         # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's
                         # faces BETWEEN A's verts, so B's verts are checked against A's SDF as well - as a seeded
@@ -3482,7 +3526,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 ga_pos,
                                 ga_quat,
                                 tolerance,
-                                True,
                                 geoms_state,
                                 geoms_info,
                                 geoms_init_AABB,
@@ -3494,4 +3537,5 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 collider_state,
                                 collider_info,
                                 errno,
+                                seeded=True,
                             )

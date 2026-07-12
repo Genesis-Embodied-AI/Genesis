@@ -9,7 +9,11 @@ import genesis.utils.array_class as array_class
 class SDF:
     def __init__(self, rigid_solver):
         self.solver = rigid_solver
-        self._sdf_info = array_class.get_sdf_info(self.solver.n_geoms, self.solver.n_cells)
+        self._geoms_sdf_coarse_res = np.array(
+            [(geom.sdf_res - 2) // 4 + 1 for geom in rigid_solver.geoms], dtype=gs.np_int
+        ).reshape((-1, 3))
+        n_coarse_cells = int(self._geoms_sdf_coarse_res.prod(axis=-1).sum())
+        self._sdf_info = array_class.get_sdf_info(self.solver.n_geoms, self.solver.n_cells, n_coarse_cells)
         self._is_active = False
 
     def activate(self):
@@ -18,6 +22,18 @@ class SDF:
 
         if self.solver.n_geoms > 0:
             geoms = self.solver.geoms
+            # Coarse min-grid companion of each SDF: block minima over the grid nodes, with blocks overlapping by
+            # one node so that every interpolation cell's 8 nodes lie inside the block of its coarse cell. Derived
+            # from the loaded grids, so the preprocessing cache is untouched.
+            geoms_sdf_coarse_val = []
+            for geom, coarse_res in zip(geoms, self._geoms_sdf_coarse_res):
+                coarse_val = geom.sdf_val
+                for axis in range(3):
+                    windows = np.minimum(
+                        4 * np.arange(coarse_res[axis])[:, None] + np.arange(5), coarse_val.shape[axis] - 1
+                    )
+                    coarse_val = np.take(coarse_val, windows, axis=axis).min(axis=axis + 1)
+                geoms_sdf_coarse_val.append(coarse_val.reshape((-1,)))
             sdf_kernel_init_geom_fields(
                 geoms_T_mesh_to_sdf=np.array([geom.T_mesh_to_sdf for geom in geoms], dtype=gs.np_float),
                 geoms_sdf_res=np.array([geom.sdf_res for geom in geoms], dtype=gs.np_int),
@@ -32,6 +48,11 @@ class SDF:
                 geoms_sdf_closest_vert=np.concatenate(
                     [geom.sdf_closest_vert_flattened for geom in geoms], dtype=gs.np_int
                 ),
+                geoms_sdf_coarse_res=self._geoms_sdf_coarse_res,
+                geoms_sdf_coarse_cell_start=np.concatenate(
+                    ([0], self._geoms_sdf_coarse_res.prod(axis=-1).cumsum()[:-1]), dtype=gs.np_int
+                ),
+                geoms_sdf_coarse_val=np.concatenate(geoms_sdf_coarse_val, dtype=gs.np_float),
                 static_rigid_sim_config=self.solver._static_rigid_sim_config,
                 sdf_info=self._sdf_info,
             )
@@ -53,11 +74,15 @@ def sdf_kernel_init_geom_fields(
     geoms_sdf_max: qd.types.ndarray(),
     geoms_sdf_cell_size: qd.types.ndarray(),
     geoms_sdf_closest_vert: qd.types.ndarray(),
+    geoms_sdf_coarse_res: qd.types.ndarray(),
+    geoms_sdf_coarse_cell_start: qd.types.ndarray(),
+    geoms_sdf_coarse_val: qd.types.ndarray(),
     static_rigid_sim_config: qd.template(),
     sdf_info: array_class.SDFInfo,
 ):
     n_geoms = sdf_info.geoms_sdf_start.shape[0]
     n_cells = sdf_info.geoms_sdf_val.shape[0]
+    n_coarse_cells = sdf_info.geoms_sdf_coarse_val.shape[0]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i in range(n_geoms):
@@ -71,12 +96,18 @@ def sdf_kernel_init_geom_fields(
         sdf_info.geoms_info.sdf_max[i] = geoms_sdf_max[i]
         for j in qd.static(range(3)):
             sdf_info.geoms_info.sdf_cell_size[i][j] = geoms_sdf_cell_size[i, j]
+        sdf_info.geoms_info.sdf_coarse_cell_start[i] = geoms_sdf_coarse_cell_start[i]
+        for j in qd.static(range(3)):
+            sdf_info.geoms_info.sdf_coarse_res[i][j] = geoms_sdf_coarse_res[i, j]
 
     for i in range(n_cells):
         sdf_info.geoms_sdf_val[i] = geoms_sdf_val[i]
         sdf_info.geoms_sdf_closest_vert[i] = geoms_sdf_closest_vert[i]
         for j in qd.static(range(3)):
             sdf_info.geoms_sdf_grad[i][j] = geoms_sdf_grad[i, j]
+
+    for i in range(n_coarse_cells):
+        sdf_info.geoms_sdf_coarse_val[i] = geoms_sdf_coarse_val[i]
 
 
 @qd.func
@@ -135,6 +166,73 @@ def sdf_func_world_local(
         sd = sdf_func_sdf(sdf_info, pos_sdf, geom_idx)
 
     return sd
+
+
+@qd.func
+def sdf_func_coarse_sd_lower_bound(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
+    """
+    Certified lower bound on the trilinear sd at an in-grid point: the minimum node value over the 4^3-cell node
+    block containing its interpolation cell. Exact by convexity - the interpolant only combines nodes of that
+    block - at the cost of a single load instead of the 8-node gather.
+    """
+    res = sdf_info.geoms_info.sdf_res[geom_idx]
+    base = qd.min(qd.floor(pos_sdf, gs.qd_int), res - 2)
+    coarse_cell = base // 4
+    coarse_res = sdf_info.geoms_info.sdf_coarse_res[geom_idx]
+    return sdf_info.geoms_sdf_coarse_val[
+        sdf_info.geoms_info.sdf_coarse_cell_start[geom_idx]
+        + (coarse_cell[0] * coarse_res[1] + coarse_cell[1]) * coarse_res[2]
+        + coarse_cell[2]
+    ]
+
+
+@qd.func
+def sdf_func_world_local_banded(
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
+    pos_world: qd.types.vector(3),
+    geom_idx,
+    geom_pos: qd.types.vector(3),
+    geom_quat: qd.types.vector(4),
+    band,
+):
+    """
+    Band-gated variant of sdf_func_world_local, returning (is_in_band, sd).
+
+    is_in_band == (sd < band) for exactly the sd sdf_func_world_local would return, but sd itself is only computed
+    (and meaningful) when in band: an in-grid query whose coarse block minimum already clears the band skips the
+    8-node gather for a single coarse load.
+    """
+    is_in_band = False
+    sd = gs.qd_float(0.0)
+
+    if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+        sd = (pos_world - geom_pos).norm() - geoms_info.data[geom_idx][0]
+        is_in_band = sd < band
+
+    elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+        pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
+        geom_data = geoms_info.data[geom_idx]
+        plane_normal = gs.qd_vec3([geom_data[0], geom_data[1], geom_data[2]])
+        sd = pos_mesh.dot(plane_normal)
+        is_in_band = sd < band
+
+    else:
+        pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
+        pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
+        if sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, geom_idx):
+            sd = sdf_func_proxy_sdf(sdf_info, pos_sdf, geom_idx)
+            is_in_band = sd < band
+        else:
+            coarse_lower_bound = sdf_func_coarse_sd_lower_bound(sdf_info, pos_sdf, geom_idx)
+            # The bound holds in exact arithmetic, but the floating-point evaluation of the trilinear sum can
+            # round below the block minimum; the relative guard keeps a vertex whose exact interpolant clears the
+            # band from being misclassified when its rounded value dips just inside.
+            if not (coarse_lower_bound - 1e-6 * (1.0 + qd.abs(coarse_lower_bound)) >= band):
+                sd = sdf_func_true_sdf(sdf_info, pos_sdf, geom_idx)
+                is_in_band = sd < band
+
+    return is_in_band, sd
 
 
 @qd.func
