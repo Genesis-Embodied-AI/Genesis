@@ -3175,6 +3175,50 @@ class RigidSolver(KinematicSolver):
 
         return tensor
 
+    def get_total_energy(self, envs_idx=None):
+        """Get the total mechanical energy of all entities in Joules [J] (kinetic + potential).
+
+        Kinetic energy is computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``. When the
+        ``approximate_implicitfast`` integrator is used, the mass matrix is recomputed once to exclude implicit
+        damping terms added during integration. Potential energy is the sum over all links:
+        ``PE = -sum_i(m_i * g^T * p_i)``, where ``p_i`` is the center-of-mass position of link *i*.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        total_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        if self._static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast:
+            kernel_compute_mass_matrix(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                decompose=False,
+            )
+        mass_mat = self.get_mass_mat(envs_idx=envs_idx)
+        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
+        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)
+        kinetic_energy = 0.5 * torch.sum(dofs_vel * Mv, dim=-1)
+
+        gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
+        links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
+        links_mass = self.get_links_inertial_mass(envs_idx=envs_idx)  # (n_links,), or (n_envs, n_links) if batched
+
+        # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
+        # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
+        g_dot_p = torch.sum(gravity.unsqueeze(-2) * links_pos, dim=-1)  # (..., n_links)
+        potential_energy = -torch.sum(links_mass * g_dot_p, dim=-1)
+
+        return kinetic_energy + potential_energy
+
     def get_geoms_friction(self, geoms_idx=None):
         return qd_to_torch(self.geoms_info.friction, geoms_idx, copy=True)
 

@@ -4128,9 +4128,10 @@ def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
     scene.build()
 
     # Make sure that the pile stays upright, with bowls stay tightly packed together during the entire motion
+    bowls_link_idx = [entity.base_link_idx for entity in scene.entities[-NUM_BOWLS:]]
     for _ in range(1500):
         scene.step()
-        bowls_pos = np.stack([tensor_to_array(entity.get_pos()) for entity in scene.entities[-NUM_BOWLS:]], axis=0)
+        bowls_pos = tensor_to_array(scene.rigid_solver.get_links_pos(bowls_link_idx, relative=True))
         bowls_dist_abs = np.linalg.norm(bowls_pos[:, :2] - bowls_pos[:2, 0], axis=-1)
         assert (bowls_dist_abs < 0.1).all()
         bowls_dist_rel = np.linalg.norm(np.diff(bowls_pos, axis=0), axis=-1)
@@ -4426,7 +4427,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     vmax_trace, wmax_trace, energy_trace = [], [], []
     for i in range(1300):
         scene.step()
-        energy_trace.append(sum(tensor_to_array(obj.get_total_energy()) for obj in objs))
+        energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
             vmax_trace.append(scene.rigid_solver.get_links_vel(ref="link_com").norm(dim=-1).max())
             wmax_trace.append(scene.rigid_solver.get_links_ang().norm(dim=-1).max())
@@ -4472,7 +4473,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
         keys = zip(link_a.tolist(), link_b.tolist(), map(tuple, (pos / 2e-3).round().tolist()))
         for key, contact_power in zip(keys, power.tolist()):
             contact_energy[key] = contact_energy.get(key, 0.0) + contact_power * scene.sim_options.dt
-        energy_trace.append(sum(tensor_to_array(obj.get_total_energy()) for obj in objs))
+        energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
             vmax_trace.append(com_vel.norm(dim=-1).max())
             wmax_trace.append(ang.norm(dim=-1).max())
