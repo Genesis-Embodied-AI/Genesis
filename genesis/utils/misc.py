@@ -296,6 +296,10 @@ def get_wt_cache_dir():
     return os.path.join(get_cache_dir(), "wt")
 
 
+def get_wth_cache_dir():
+    return os.path.join(get_cache_dir(), "wth")
+
+
 def get_exr_cache_dir():
     return os.path.join(get_cache_dir(), "exr")
 

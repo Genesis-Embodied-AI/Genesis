@@ -595,8 +595,15 @@ class Mesh(RBC):
         if "convexified" in self.metadata:
             return self.metadata["convexified"]
         if self._is_convex is None:
-            self._is_convex = bool(self._mesh.is_convex)
+            self._is_convex = self._mesh.is_convex
         return self._is_convex
+
+    @property
+    def is_watertight(self) -> bool:
+        """
+        Whether the mesh is a closed manifold surface.
+        """
+        return self._mesh.is_watertight
 
     @property
     def metadata(self):
