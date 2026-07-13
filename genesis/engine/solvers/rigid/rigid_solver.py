@@ -1541,9 +1541,13 @@ class RigidSolver(KinematicSolver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
-            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
-            from genesis.engine.couplers import IPCCoupler
+            from genesis.engine.couplers import IPCCoupler, QIPCCoupler
 
+            # QIPC owns all rigid physics — skip entirely
+            if isinstance(self.sim.coupler, QIPCCoupler):
+                return
+
+            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
             if isinstance(self.sim.coupler, IPCCoupler):
                 # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
                 # The rigid simulation will be done in post-coupling phase instead
@@ -1736,9 +1740,13 @@ class RigidSolver(KinematicSolver):
         self._is_backward = False
 
     def substep_post_coupling(self, f):
-        from genesis.engine.couplers import SAPCoupler, IPCCoupler
+        from genesis.engine.couplers import SAPCoupler, IPCCoupler, QIPCCoupler
 
         if not self.is_active:
+            return
+
+        # QIPC owns all rigid physics — skip entirely
+        if isinstance(self.sim.coupler, QIPCCoupler):
             return
 
         if isinstance(self.sim.coupler, SAPCoupler):

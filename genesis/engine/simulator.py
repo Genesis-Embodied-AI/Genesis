@@ -9,6 +9,7 @@ from genesis.options.solvers import (
     BaseCouplerOptions,
     IPCCouplerOptions,
     LegacyCouplerOptions,
+    QIPCCouplerOptions,
     SAPCouplerOptions,
     FEMOptions,
     MPMOptions,
@@ -32,7 +33,7 @@ from .solvers import (
     SPHSolver,
     ToolSolver,
 )
-from .couplers import IPCCoupler, LegacyCoupler, SAPCoupler
+from .couplers import IPCCoupler, LegacyCoupler, QIPCCoupler, SAPCoupler
 from .states.cache import QueriedStates
 from .states.solvers import SimState
 from .sensors import SensorManager
@@ -141,13 +142,15 @@ class Simulator(RBC):
         # coupler
         if isinstance(self.coupler_options, SAPCouplerOptions):
             self._coupler = SAPCoupler(self, self.coupler_options)
+        elif isinstance(self.coupler_options, QIPCCouplerOptions):
+            self._coupler = QIPCCoupler(self, self.coupler_options)
         elif isinstance(self.coupler_options, LegacyCouplerOptions):
             self._coupler = LegacyCoupler(self, self.coupler_options)
         elif isinstance(self.coupler_options, IPCCouplerOptions):
             self._coupler = IPCCoupler(self, self.coupler_options)
         else:
             gs.raise_exception(
-                f"Coupler options {self.coupler_options} not supported. Please use SAPCouplerOptions, LegacyCouplerOptions, or IPCCouplerOptions."
+                f"Coupler options {self.coupler_options} not supported. Please use SAPCouplerOptions, LegacyCouplerOptions, QIPCCouplerOptions, or IPCCouplerOptions."
             )
 
         # states
@@ -197,8 +200,8 @@ class Simulator(RBC):
         self._para_level = self.scene._para_level
 
         # solvers
-        # IPCCoupler needs full substep flow for pre/post coupling phases
-        self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler))
+        # IPCCoupler/QIPCCoupler need full substep flow for pre/post coupling phases
+        self._rigid_only = self.rigid_solver.is_active and not isinstance(self._coupler, (SAPCoupler, IPCCoupler, QIPCCoupler))
         for solver in self._solvers:
             solver.build()
             if solver.is_active:

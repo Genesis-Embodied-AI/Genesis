@@ -1,0 +1,72 @@
+<?xml version="1.0" ?>
+<robot name="panda_2link">
+  <link name="panda_link0">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0.05"/>
+      <mass value="2.9"/>
+      <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://meshes/collision/link0.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://meshes/collision/link0.obj"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="panda_link1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 -0.04 -0.05"/>
+      <mass value="2.7"/>
+      <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://meshes/visual/link1.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://meshes/collision/link1.obj"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="panda_joint1" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0.333"/>
+    <parent link="panda_link0"/>
+    <child link="panda_link1"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-2.9671" upper="2.9671" velocity="2.1750"/>
+  </joint>
+
+  <link name="panda_link2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 -0.04 0.06"/>
+      <mass value="2.73"/>
+      <inertia ixx="0.1" ixy="0" ixz="0" iyy="0.1" iyz="0" izz="0.1"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://meshes/visual/link2.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://meshes/collision/link2.obj"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="panda_joint2" type="revolute">
+    <origin rpy="-1.57079632679 0 0" xyz="0 0 0"/>
+    <parent link="panda_link1"/>
+    <child link="panda_link2"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="87" lower="-1.8326" upper="1.8326" velocity="2.1750"/>
+  </joint>
+</robot>

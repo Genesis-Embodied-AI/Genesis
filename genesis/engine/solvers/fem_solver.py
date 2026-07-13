@@ -969,10 +969,12 @@ class FEMSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
-            # Skip FEM solver step if using IPCCoupler (IPC handles FEM simulation)
-            from genesis.engine.couplers import IPCCoupler
+            # Skip FEM solver step if using IPCCoupler or QIPCCoupler
+            from genesis.engine.couplers import IPCCoupler, QIPCCoupler
 
-            if isinstance(self.sim._coupler, IPCCoupler):
+            if isinstance(self.sim._coupler, QIPCCoupler):
+                return  # QIPC owns all FEM physics
+            elif isinstance(self.sim._coupler, IPCCoupler):
                 pass  # IPC coupler handles FEM simulation
             elif self._use_implicit_solver:
                 self.precompute_material_data(f)
