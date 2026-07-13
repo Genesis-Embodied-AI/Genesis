@@ -573,7 +573,7 @@ def build_mujoco_sim(
     adjacent_collision,
     native_ccd,
     *,
-    cone=gs.friction_cone.pyramidal,
+    friction_cone,
 ):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
@@ -599,7 +599,7 @@ def build_mujoco_sim(
 
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
-    if cone == gs.friction_cone.elliptic:
+    if friction_cone == gs.friction_cone.elliptic:
         model.opt.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
     else:
         model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
@@ -636,7 +636,7 @@ def build_genesis_sim(
     show_viewer,
     mj_sim,
     *,
-    friction_cone=gs.friction_cone.pyramidal,
+    friction_cone,
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(

@@ -273,13 +273,14 @@ class RigidSolver(KinematicSolver):
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
 
+        if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
+            gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
+
         # A high tangential-to-normal impedance ratio suppresses the tangential creep of regularized friction that
         # lets resting structures slowly slide apart under their own weight. With the elliptic cone the tangential
         # rows are stiffened independently, so it resolves to a high ratio - except under MuJoCo compatibility, where
         # behavioral parity with MuJoCo (whose own default is 1) takes priority. The pyramidal cone mixes the normal
         # direction into every row, so it always keeps the neutral default of 1.
-        if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
-            gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
         if options.impratio is None:
             if options.friction_cone == gs.friction_cone.elliptic and not self._enable_mujoco_compatibility:
                 options.impratio = 100.0

@@ -282,6 +282,8 @@ class ConstraintState:
     # prior coupled cone block (Jaref is overwritten by the linesearch apply). Empty for the pyramidal cone.
     cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
+    # Frictionloss rows store their friction loss; elliptic-cone head (normal) rows reuse the field to carry the
+    # contact friction coefficient read by the cone solver (their tangent rows hold 0).
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
     active: qd.Tensor

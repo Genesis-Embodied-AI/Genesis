@@ -846,7 +846,7 @@ def mj_sim(
         multi_contact,
         adjacent_collision,
         gjk_collision,
-        cone=friction_cone,
+        friction_cone=friction_cone,
     )
 
 

@@ -470,7 +470,7 @@ class RigidOptions(Options):
         turns numerically unstable once pushed too far - a stiffness-versus-stability tradeoff, so use the smallest
         value that holds the contacts. It matters mainly with the elliptic cone, which stiffens friction alone while
         leaving the normal contact response at its own impedance. Defaults to None, resolving to 100 with the elliptic
-        cone and 1 otherwise.
+        cone (1 when 'enable_mujoco_compatibility' is set) and 1 otherwise.
     sparse_solve : bool, optional
         Whether to exploit sparsity (skyline-envelope Cholesky) in the constraint solver.
 
