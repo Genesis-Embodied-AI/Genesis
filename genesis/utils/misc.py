@@ -296,6 +296,10 @@ def get_wt_cache_dir():
     return os.path.join(get_cache_dir(), "wt")
 
 
+def get_wth_cache_dir():
+    return os.path.join(get_cache_dir(), "wth")
+
+
 def get_exr_cache_dir():
     return os.path.join(get_cache_dir(), "exr")
 
@@ -410,6 +414,33 @@ def tensor_to_array(x: torch.Tensor, dtype: type[np.generic] | None = None) -> n
 
 def is_approx_multiple(a, b, tol=1e-7):
     return abs(a % b) < tol or abs(b - (a % b)) < tol
+
+
+def gaussian_crosstalk_kernel(n_rows: int, n_cols: int, sigma: float, spacing: float | tuple[float, float] = 1.0):
+    """
+    Build an L1-normalized 2D Gaussian convolution kernel for spatial tactile crosstalk.
+
+    The kernel is a discrete isotropic Gaussian ``exp(-(d / sigma)**2 / 2)`` sampled on an ``n_rows x n_cols`` grid
+    centered on the self taxel, then normalized to sum 1 (so a uniform field passes through unchanged). Pass the
+    result as a sensor's ``crosstalk_kernel`` to spread each taxel's signal onto its neighbors.
+
+    ``n_rows`` and ``n_cols`` must be odd so the kernel has a center tap (the self weight). ``spacing`` is the taxel
+    pitch in the same units as ``sigma`` (a scalar, or ``(row_spacing, col_spacing)`` for an anisotropic grid);
+    default ``1.0`` measures ``sigma`` in taxel cells.
+    """
+    if n_rows % 2 == 0 or n_cols % 2 == 0:
+        raise_exception(
+            f"gaussian_crosstalk_kernel requires odd n_rows, n_cols (center tap); got ({n_rows}, {n_cols})."
+        )
+    if sigma <= 0.0:
+        raise_exception(f"gaussian_crosstalk_kernel requires sigma > 0; got {sigma}.")
+    s_row, s_col = (spacing, spacing) if isinstance(spacing, numbers.Number) else spacing
+    rows = (np.arange(n_rows, dtype=float) - n_rows // 2) * s_row
+    cols = (np.arange(n_cols, dtype=float) - n_cols // 2) * s_col
+    g_row = np.exp(-(rows**2) / (2.0 * sigma * sigma))
+    g_col = np.exp(-(cols**2) / (2.0 * sigma * sigma))
+    kernel = np.outer(g_row, g_col)
+    return kernel / kernel.sum()
 
 
 def concat_with_tensor(

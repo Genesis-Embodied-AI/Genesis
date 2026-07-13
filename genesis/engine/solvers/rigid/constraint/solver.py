@@ -4829,10 +4829,11 @@ def func_update_gradient(
     if qd.static(
         not (static_rigid_sim_config.enable_tiled_cholesky_hessian and static_rigid_sim_config.hessian_fits_shared)
         or static_rigid_sim_config.backend == gs.cpu
-        or static_rigid_sim_config.use_contact_island
+        or static_rigid_sim_config.enable_per_island_solve
     ):
-        # CPU, or islands: the tiled factor/solve operates on the whole-env dense Hessian, but with islands nt_H
-        # holds the per-island block-diagonal factor, so the gradient solve must go per-island (func_cholesky_solve_batch).
+        # CPU, or per-island decomposition: the tiled solve operates on the whole-env dense Hessian, but a per-island
+        # factor leaves nt_H block-diagonal by island, so the gradient solve must go per-island via
+        # func_cholesky_solve_batch. A single whole-env island keeps the tiled solve, like islands off.
         qd.loop_config(
             name="update_gradient", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
         )
@@ -5222,7 +5223,7 @@ def func_solve_init(
             and (
                 is_decomposed
                 or not (
-                    static_rigid_sim_config.use_contact_island
+                    static_rigid_sim_config.enable_per_island_solve
                     and static_rigid_sim_config.backend != gs.cpu
                     and not static_rigid_sim_config.enable_cooperative_constraint_kernels
                 )
@@ -5232,10 +5233,11 @@ def func_solve_init(
             # its first linesearch consumes the search direction computed here (this kernel is its "iteration 0"; the
             # graph then computes each subsequent direction at the end of an iteration). So it ALWAYS needs this seed,
             # islands on or off. The monolith seeds it here except in the one case where its body self-inits the factor
-            # per-env: the GPU island arm with the cooperative kernels disabled (the only case keyed below). With the
-            # cooperative kernels enabled the body does NOT self-init, so the seed must run here even for GPU islands -
-            # otherwise a shared-fitting Hessian at an env count that oversaturates the GPU (where neither the fused nor
-            # the per-island seed branch above fires) would leave Mgrad stale.
+            # per-env: the GPU per-island-decomposition arm (enable_per_island_solve) with the cooperative kernels
+            # disabled (the only case keyed below). With the cooperative kernels enabled the body does NOT self-init, so
+            # the seed must run here even for per-island decomposition - otherwise a shared-fitting Hessian at an env
+            # count that oversaturates the GPU (where neither the fused nor the per-island seed branch above fires)
+            # would leave Mgrad stale.
             # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
             func_hessian_and_cholesky_factor_direct(
                 island_state=island_state,
@@ -5250,15 +5252,16 @@ def func_solve_init(
             not (
                 static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
                 and not is_decomposed
-                and static_rigid_sim_config.use_contact_island
+                and static_rigid_sim_config.enable_per_island_solve
                 and static_rigid_sim_config.backend != gs.cpu
                 and not static_rigid_sim_config.enable_cooperative_constraint_kernels
             )
         ):
             # Initial gradient (Mgrad = H^-1 grad for Newton, grad for CG). Seeds the decomposed arm's first search
-            # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU island monolith with
-            # the cooperative kernels disabled, which self-inits the gradient per-env in its own body; with them enabled
-            # the body does not self-init, so the seed must run here.
+            # direction, so it runs for the decomposed arm in all cases. Skipped only for the GPU per-island-
+            # decomposition monolith (enable_per_island_solve) with the cooperative kernels disabled, which self-inits
+            # the gradient per-env in its own body; with them enabled the body does not self-init, so the seed must run
+            # here.
             func_update_gradient(
                 dofs_state=dofs_state,
                 entities_info=entities_info,
@@ -5465,15 +5468,15 @@ def _kernel_solve_monolith(
             has_awake_work = has_awake_work and rigid_global_info.n_awake_dofs[i_b] > 0
         if has_awake_work:
             if qd.static(
-                static_rigid_sim_config.use_contact_island
+                static_rigid_sim_config.enable_per_island_solve
                 and static_rigid_sim_config.backend != gs.cpu
                 and static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
                 and not static_rigid_sim_config.enable_cooperative_constraint_kernels
             ):
-                # Without the cooperative kernels, func_solve_init skips the GPU-island tiled seed, so the monolith
-                # seeds this env's initial scalar per-island factor + gradient + search here. Gives the first
-                # linesearch a valid Newton direction; once per step, then iterate. With cooperative kernels enabled,
-                # func_solve_init already seeded the factor (L persisted to nt_H) and the search direction.
+                # Per-island decomposition with the cooperative kernels off: func_solve_init skips its seed, so the
+                # monolith self-seeds each island's scalar factor + gradient + search here (once per step). Gated on
+                # enable_per_island_solve, so a single whole-env island takes func_solve_init's fast seed instead, like
+                # islands off. With the cooperative kernels on, func_solve_init already seeded the factor (L in nt_H).
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     island_state=island_state,

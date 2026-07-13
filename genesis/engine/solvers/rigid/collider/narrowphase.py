@@ -89,7 +89,6 @@ def func_add_polytope_vertex_contacts_sdf(
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
     tolerance,
-    seeded: qd.template(),
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
@@ -101,6 +100,7 @@ def func_add_polytope_vertex_contacts_sdf(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     errno: qd.Tensor,
+    seeded: qd.template(),
 ):
     # Emit up to n_max contacts at the deepest spatially-diverse vertices of A penetrating (or near-touching) B's
     # surface. Pass 1 scans every vertex of A, evaluates B's grid SDF at each, and keeps the n_max deepest in a small
@@ -185,31 +185,72 @@ def func_add_polytope_vertex_contacts_sdf(
             top_pen[k] = -gs.qd_float(1e30)
             top_iv[k] = -1
         if qd.static(not seeded):
-            for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
-                vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-                if func_point_in_geom_aabb(geoms_state, i_gb, i_b, vertex_pos):
-                    pen_v = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
-                    if pen_v > -margin:
-                        close_idx = -1
-                        for k in range(n_max):
-                            if close_idx < 0 and top_iv[k] >= 0:
-                                other_pos = gu.qd_transform_by_trans_quat(
-                                    verts_info.init_pos[top_iv[k]], ga_pos, ga_quat
+            # Pull B's world AABB back into A's local frame (its exact enclosing box, padded to absorb the
+            # rounding of the two transform paths) and walk only the spatial cells of A overlapping it: a vert
+            # outside B's AABB contributes nothing, so far cells are skipped wholesale, without per-vertex work.
+            # The exact world-AABB gate below is unchanged, and the cell binning shares the kernel's monotone
+            # single-precision cell mapping, so every vert that can pass the gate lies in a visited cell.
+            aabb_center = 0.5 * (geoms_state.aabb_min[i_gb, i_b] + geoms_state.aabb_max[i_gb, i_b])
+            aabb_half_size = 0.5 * (geoms_state.aabb_max[i_gb, i_b] - geoms_state.aabb_min[i_gb, i_b])
+            box_center = gu.qd_inv_transform_by_trans_quat(aabb_center, ga_pos, ga_quat)
+            box_half_size = qd.abs(gu.qd_quat_to_R(ga_quat, EPS)).transpose() @ aabb_half_size
+            box_min = box_center - box_half_size
+            box_max = box_center + box_half_size
+            box_pad = 1e-6 * (1.0 + box_min.norm() + box_max.norm())
+            n_cells_per_axis = 8
+            spatial_origin = collider_info.verts_spatial_grid.geoms_origin[i_ga]
+            spatial_inv_cell_size = collider_info.verts_spatial_grid.geoms_inv_cell_size[i_ga]
+            cell_min = qd.floor((box_min - box_pad - spatial_origin) * spatial_inv_cell_size, gs.qd_int)
+            cell_max = qd.floor((box_max + box_pad - spatial_origin) * spatial_inv_cell_size, gs.qd_int)
+            # The box overlaps the grid only where its cell interval meets [0, n_cells_per_axis - 1] on every
+            # axis; a broadphase pair whose pulled-back box clears the grid on some axis (common for rotated
+            # meshes) scans nothing. Clamping is applied only inside this guard, so indexing stays within the
+            # geom's own cell-range block.
+            if (cell_max >= 0).all() and (cell_min <= n_cells_per_axis - 1).all():
+                cell_min = qd.max(cell_min, 0)
+                cell_max = qd.min(cell_max, n_cells_per_axis - 1)
+                for i_cx in range(cell_min[0], cell_max[0] + 1):
+                    for i_cy in range(cell_min[1], cell_max[1] + 1):
+                        # Cells along z are contiguous in the cell-range layout, so the whole z-run is one vert range.
+                        i_cell = (
+                            i_ga * (n_cells_per_axis**3 + 1)
+                            + (i_cx * n_cells_per_axis + i_cy) * n_cells_per_axis
+                            + cell_min[2]
+                        )
+                        for i_sv in range(
+                            collider_info.verts_spatial_grid.cells_vert_start[i_cell],
+                            collider_info.verts_spatial_grid.cells_vert_start[i_cell + cell_max[2] - cell_min[2] + 1],
+                        ):
+                            vertex_pos = gu.qd_transform_by_trans_quat(
+                                collider_info.verts_spatial_grid.verts_pos[i_sv], ga_pos, ga_quat
+                            )
+                            if func_point_in_geom_aabb(geoms_state, i_gb, i_b, vertex_pos):
+                                is_in_band, sd_v = sdf.sdf_func_world_local_banded(
+                                    geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat, margin
                                 )
-                                if (vertex_pos - other_pos).norm() < diversity_radius:
-                                    close_idx = k
-                        if close_idx >= 0:
-                            if pen_v > top_pen[close_idx]:
-                                top_pen[close_idx] = pen_v
-                                top_iv[close_idx] = i_v
-                        else:
-                            weakest_idx = 0
-                            for k in range(1, n_max):
-                                if top_pen[k] < top_pen[weakest_idx]:
-                                    weakest_idx = k
-                            if pen_v > top_pen[weakest_idx]:
-                                top_pen[weakest_idx] = pen_v
-                                top_iv[weakest_idx] = i_v
+                                pen_v = -sd_v
+                                if is_in_band:
+                                    i_v = collider_info.verts_spatial_grid.verts_idx[i_sv]
+                                    close_idx = -1
+                                    for k in range(n_max):
+                                        if close_idx < 0 and top_iv[k] >= 0:
+                                            other_pos = gu.qd_transform_by_trans_quat(
+                                                verts_info.init_pos[top_iv[k]], ga_pos, ga_quat
+                                            )
+                                            if (vertex_pos - other_pos).norm() < diversity_radius:
+                                                close_idx = k
+                                    if close_idx >= 0:
+                                        if pen_v > top_pen[close_idx]:
+                                            top_pen[close_idx] = pen_v
+                                            top_iv[close_idx] = i_v
+                                    else:
+                                        weakest_idx = 0
+                                        for k in range(1, n_max):
+                                            if top_pen[k] < top_pen[weakest_idx]:
+                                                weakest_idx = k
+                                        if pen_v > top_pen[weakest_idx]:
+                                            top_pen[weakest_idx] = pen_v
+                                            top_iv[weakest_idx] = i_v
         else:
             # Seeded verification: what the pair's first scan cannot see is a feature of A (rim, edge) crossing one
             # of B's faces BETWEEN B's verts; any such feature lies in B's near-surface band, connected on A's vertex
@@ -327,33 +368,32 @@ def func_add_polytope_vertex_contacts_sdf(
         # the FINAL normal rather than letting per-vertex grad override it. The size-ratio gate keeps the existing
         # behavior for one-big-one-small pairs where the SDF grad at A's center is reliable and the closing-direction
         # line is wrong (sphere on a large floor mesh).
-        use_closing_dir = qd.abs(sd_center) < rbound_a and rbound_a_sq > gs.qd_float(0.25) * rbound_b_sq
+        is_closing_regime = qd.abs(sd_center) < rbound_a and rbound_a_sq > 0.25 * rbound_b_sq
         approach_depth_pair = gs.qd_float(0.0)
         closing_normal = qd.Vector.zero(gs.qd_float, 3)
         # Set when A wraps around B so that B passes through A along the center-to-center axis. There the SDF gradient
         # at A's center is ill-conditioned (it sits inside B, away from any surface), so per-vertex grads are trusted
         # directly rather than filtered against that unreliable reference normal.
-        enclosed_axis = False
+        is_enclosed_regime = False
         # Set when A and B are two concave shells resting on each other (nested cups/bowls). Both SDF-based normals
         # are unreliable there, so the center-to-center line is used as the contact normal for the whole pair.
-        axis_normal = False
-        if use_closing_dir:
+        is_axis_normal_regime = False
+        if is_closing_regime:
             closing_dir = center_a_world - center_b_world
             if closing_dir.norm() > EPS:
                 closing_normal = gu.qd_normalize(closing_dir, EPS)
                 # Reject the override when A wraps around B: the center-to-center line is then B's through-axis and
                 # the axis "overlap" is the pass-through extent, not a real interpenetration, so resolving along it
                 # would eject A. The pose-robust signature is that A's own center lies in a cavity rather than inside
-                # A's material, so query A's SDF at A's center: positive for such a hollow/annular A, negative for the
+                # A's material (the build-time is_hollow flag): true for such a hollow/annular A, false for the
                 # solid A of the genuine crossed-thin-geom regime.
-                sd_a_self = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_world, i_ga, ga_pos, ga_quat)
-                if sd_a_self > EPS:
-                    use_closing_dir = False
+                if geoms_info.is_hollow[i_ga]:
+                    is_closing_regime = False
                     if sd_center < 0.0:
                         # B's material occupies A's center: B passes through A's cavity (a nut around a bolt shaft).
                         # The grad at A's center is ill-conditioned (deep inside B), so trust each vertex's own grad,
                         # which is radial around B and balances across the contact ring.
-                        enclosed_axis = True
+                        is_enclosed_regime = True
                     else:
                         # A is hollow but its center sits OUTSIDE B: two concave shells resting on each other (nested
                         # cups/bowls). BOTH SDF-based normals are unreliable here - the thin curved wall makes the
@@ -362,17 +402,16 @@ def func_add_polytope_vertex_contacts_sdf(
                         # line is the stacking axis and the robust contact normal, so use it directly (b->a) for every
                         # contact of the pair.
                         normal_center = closing_normal
-                        axis_normal = True
+                        is_axis_normal_regime = True
                 else:
                     # Mirror the enclosure test on B: when B's own center sits in a cavity of B (mug, cup, torus),
                     # the center-to-center axis passes through that cavity, so the axis overlap measures pass-through
                     # extent rather than material interpenetration - flooring pen_emit with it catapults a solid A
                     # resting inside or beside the hollow B. The genuine crossed-thin-geom regime this override
-                    # targets has both bodies solid (their centers inside their own material), so requiring
-                    # sd_b_self <= EPS preserves it while restoring the standard SDF-gradient path for hollow B.
-                    sd_b_self = sdf.sdf_func_world_local(geoms_info, sdf_info, center_b_world, i_gb, gb_pos, gb_quat)
-                    if sd_b_self > EPS:
-                        use_closing_dir = False
+                    # targets has both bodies solid (their centers inside their own material), so requiring a
+                    # non-hollow B preserves it while restoring the standard SDF-gradient path for hollow B.
+                    if geoms_info.is_hollow[i_gb]:
+                        is_closing_regime = False
                         sd_b_center = sdf.sdf_func_world_local(
                             geoms_info, sdf_info, center_b_world, i_ga, ga_pos, ga_quat
                         )
@@ -382,7 +421,7 @@ def func_add_polytope_vertex_contacts_sdf(
                             # ill-conditioned (it sits on B's bore axis where the axisymmetric grad vanishes), so
                             # trust each vertex's own grad, which is radial around B's bore and balances across the
                             # contact ring.
-                            enclosed_axis = True
+                            is_enclosed_regime = True
                     else:
                         normal_center = closing_normal
                         # Approach depth along the closing axis, measured on the SDFs: bisect the center-to-center
@@ -422,7 +461,7 @@ def func_add_polytope_vertex_contacts_sdf(
                         )
                         approach_depth_pair = depth_a + depth_b - seg_len
             else:
-                use_closing_dir = False
+                is_closing_regime = False
         for k in range(n_max):
             if top_iv[k] >= 0:
                 i_v = top_iv[k]
@@ -459,7 +498,7 @@ def func_add_polytope_vertex_contacts_sdf(
                 elif pen_v > 0.0:
                     pen_emit = synthetic_pen_max
                 normal_v = normal_center
-                if enclosed_axis or axis_normal:
+                if is_enclosed_regime or is_axis_normal_regime:
                     # Two concave shells (nested cups/bowls) or B passing through A's cavity (nut on bolt): the
                     # pair-level reference normal is unreliable (sign-flipped in a concave pocket, or vertical-only so
                     # it cannot resist lateral shear). Orient the contact from A's own exact vertex surface normal
@@ -477,7 +516,12 @@ def func_add_polytope_vertex_contacts_sdf(
                             normal_v = -normal_v
                     else:
                         normal_v = -a_vnormal
-                elif not use_closing_dir and not axis_normal and grad_norm > 0.9 and grad_v.dot(normal_center) > 0.0:
+                elif (
+                    not is_closing_regime
+                    and not is_axis_normal_regime
+                    and grad_norm > 0.9
+                    and grad_v.dot(normal_center) > 0.0
+                ):
                     # Trust a per-vertex grad as the contact normal only in the clean band (the same |grad| > 0.9 band
                     # where the kernel pen is trusted): this is what exposes both face normals for an A wedged at a
                     # concave L-corner. In the edge/smoothed bands the per-vertex grad is a partially-interpolated
@@ -488,7 +532,7 @@ def func_add_polytope_vertex_contacts_sdf(
                 # outer skin is the small radial gap to B's lateral, not the much larger approach depth along the
                 # closing axis. Use the geometric approach depth as a floor on pen_emit so the constraint solver sees
                 # the actual overlap rather than just the radial gap.
-                if use_closing_dir and pen_v > 0.0 and approach_depth_pair > pen_emit:
+                if is_closing_regime and pen_v > 0.0 and approach_depth_pair > pen_emit:
                     pen_emit = approach_depth_pair
                 repeated = False
                 for j in range(n_added):
@@ -555,6 +599,416 @@ def func_add_polytope_vertex_contacts_sdf(
                                 collider_state,
                                 collider_info,
                             )
+
+
+@qd.func
+def func_add_polytope_vertex_contacts_sdf_shell(
+    i_ga,
+    i_gb,
+    i_b,
+    i_pair,
+    ga_pos: qd.types.vector(3),
+    ga_quat: qd.types.vector(4),
+    gb_pos: qd.types.vector(3),
+    gb_quat: qd.types.vector(4),
+    tolerance,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_static_config: qd.template(),
+    sdf_info: array_class.SDFInfo,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    errno: qd.Tensor,
+):
+    """
+    Sector-aggregated manifold for nested-shell pairs (both bodies hollow, see the dispatcher gate).
+
+    The annular contact of nested shells makes the top-k vertex manifold churn: kept-set swaps, dedup toggles and
+    regime flips each relocate a finite force, and a tall stack rectifies that noise into a sideways walk. Here
+    every band vert instead accumulates into a fixed azimuthal sector, and each active sector emits ONE aggregated
+    contact, so the emitted force field is continuous in pose and the pair budget holds by construction.
+    """
+    # The bucket table is sized at the pair budget: each bucket emits at most one contact, from whichever scan
+    # covers it (see emission).
+    n_buckets = qd.static(
+        collider_static_config.n_contacts_per_nonconvex_pair if static_rigid_sim_config.enable_multi_contact else 1
+    )
+    EPS = rigid_global_info.EPS[None]
+    synthetic_pen_max = 1e-4
+    center_a_world = gu.qd_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos, ga_quat)
+    center_b_world = gu.qd_transform_by_trans_quat(geoms_info.center[i_gb], gb_pos, gb_quat)
+    # Shared azimuthal-sector frame for both scan directions: a vertex found by the swapped scan joins the
+    # aggregate its azimuth belongs to instead of spawning a contact of its own. Derived from the closing line,
+    # which is pose-continuous.
+    closing_line = center_a_world - center_b_world
+    frame_axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+    if closing_line.norm() > EPS:
+        frame_axis = gu.qd_normalize(closing_line, EPS)
+    # Fixed oblique reference direction: any axis-dependent choice relabels every bucket in one step when the
+    # axis crosses its switching surface; a constant reference is continuous everywhere except exact alignment,
+    # which no physical stacking axis hits.
+    e_ref = qd.Vector([0.36, 0.48, 0.8], dt=gs.qd_float)
+    t1_ref = gu.qd_normalize(frame_axis.cross(e_ref), EPS)
+    t2_ref = frame_axis.cross(t1_ref)
+    frame_origin = 0.5 * (center_a_world + center_b_world)
+
+    # Per-bucket accumulators, one table per scan direction. A vertex enters or leaves a bucket with weight
+    # pen_emit -> 0, which is what keeps the emitted force field continuous.
+    acc_w = qd.Vector.zero(gs.qd_float, n_buckets)
+    acc_pos = qd.Matrix.zero(gs.qd_float, n_buckets, 3)
+    acc_n = qd.Matrix.zero(gs.qd_float, n_buckets, 3)
+    acc_pen_max = qd.Vector.zero(gs.qd_float, n_buckets)
+    # The swapped scan fills a shadow table consumed only where the primary scan is blind (see emission):
+    # both scans sample the same patch through two different tessellations, and summing them makes their
+    # sampling washboards beat - a low-frequency force modulation that ratchets a soft stack sideways.
+    acc2_w = qd.Vector.zero(gs.qd_float, n_buckets)
+    acc2_pos = qd.Matrix.zero(gs.qd_float, n_buckets, 3)
+    acc2_n = qd.Matrix.zero(gs.qd_float, n_buckets, 3)
+    acc2_pen_max = qd.Vector.zero(gs.qd_float, n_buckets)
+    sup_w = qd.Vector.zero(gs.qd_float, n_buckets)
+    sup_pos = qd.Matrix.zero(gs.qd_float, n_buckets, 3)
+    sup_n = qd.Matrix.zero(gs.qd_float, n_buckets, 3)
+
+    for i_phase in qd.static(range(2)):
+        # Phase 0 scans every vert of A against B's SDF; phase 1 scans B's verts against A's SDF into the shadow
+        # table, covering features of B crossing A's faces BETWEEN A's verts. Phase-1 normals are negated onto
+        # the phase-0 orientation convention.
+        j_ga = i_ga
+        j_gb = i_gb
+        ja_pos = ga_pos
+        ja_quat = ga_quat
+        jb_pos = gb_pos
+        jb_quat = gb_quat
+        phase_sign = gs.qd_float(1.0)
+        if qd.static(i_phase == 1):
+            j_ga = i_gb
+            j_gb = i_ga
+            ja_pos = gb_pos
+            ja_quat = gb_quat
+            jb_pos = ga_pos
+            jb_quat = ga_quat
+            phase_sign = -1.0
+        is_phase_active = True
+        if qd.static(i_phase == 1):
+            # A plane's handful of far-flung verts carry no contact information.
+            is_phase_active = geoms_info.type[j_ga] != gs.GEOM_TYPE.PLANE
+        jb_cell = sdf_info.geoms_info.sdf_cell_size[j_gb]
+        margin = qd.min(qd.min(jb_cell[0], jb_cell[1]), jb_cell[2])
+        ja_center_local = geoms_info.center[j_ga]
+        rbound_a_sq = gs.qd_float(0.0)
+        for k in qd.static(range(8)):
+            delta = geoms_init_AABB[j_ga, k] - ja_center_local
+            d_sq = delta.dot(delta)
+            if d_sq > rbound_a_sq:
+                rbound_a_sq = d_sq
+        rbound_a = qd.sqrt(rbound_a_sq)
+        ja_center_world = gu.qd_transform_by_trans_quat(ja_center_local, ja_pos, ja_quat)
+        can_use_sd_reject = geoms_info.type[j_gb] == gs.GEOM_TYPE.SPHERE or geoms_info.type[j_gb] == gs.GEOM_TYPE.PLANE
+        if not can_use_sd_reject:
+            pos_mesh = gu.qd_inv_transform_by_trans_quat(ja_center_world, jb_pos, jb_quat)
+            pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[j_gb])
+            can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, j_gb)
+        sd_center = sdf.sdf_func_world_local(geoms_info, sdf_info, ja_center_world, j_gb, jb_pos, jb_quat)
+        if is_phase_active and ((not can_use_sd_reject) or sd_center <= rbound_a):
+            rbound_b_sq = gs.qd_float(0.0)
+            jb_center_local = geoms_info.center[j_gb]
+            for k in qd.static(range(8)):
+                delta_b = geoms_init_AABB[j_gb, k] - jb_center_local
+                d_sq_b = delta_b.dot(delta_b)
+                if d_sq_b > rbound_b_sq:
+                    rbound_b_sq = d_sq_b
+            jb_center_world = gu.qd_transform_by_trans_quat(jb_center_local, jb_pos, jb_quat)
+
+            grad_center = sdf.sdf_func_grad_world_local_consistent(
+                geoms_info, rigid_global_info, sdf_info, ja_center_world, j_gb, jb_pos, jb_quat
+            )
+            normal_center = gu.qd_normalize(grad_center, EPS)
+            # Regime detection and per-vertex pen/normal policy identical to the per-vertex manifold, which
+            # documents the rationale of each test.
+            is_closing_regime = qd.abs(sd_center) < rbound_a and rbound_a_sq > gs.qd_float(0.25) * rbound_b_sq
+            approach_depth_pair = gs.qd_float(0.0)
+            closing_normal = qd.Vector.zero(gs.qd_float, 3)
+            is_enclosed_regime = False
+            is_axis_normal_regime = False
+            if is_closing_regime:
+                closing_dir = ja_center_world - jb_center_world
+                if closing_dir.norm() > EPS:
+                    closing_normal = gu.qd_normalize(closing_dir, EPS)
+                    if geoms_info.is_hollow[j_ga]:
+                        is_closing_regime = False
+                        if sd_center < 0.0:
+                            is_enclosed_regime = True
+                        else:
+                            normal_center = closing_normal
+                            is_axis_normal_regime = True
+                    elif geoms_info.is_hollow[j_gb]:
+                        is_closing_regime = False
+                        sd_b_center = sdf.sdf_func_world_local(
+                            geoms_info, sdf_info, jb_center_world, j_ga, ja_pos, ja_quat
+                        )
+                        if sd_b_center < 0.0:
+                            is_enclosed_regime = True
+                    else:
+                        normal_center = closing_normal
+                        seg_len = closing_dir.norm()
+                        depth_b = sdf.sdf_func_ray_exit_distance(
+                            geoms_info,
+                            sdf_info,
+                            jb_center_world,
+                            closing_normal,
+                            seg_len,
+                            tolerance,
+                            j_gb,
+                            jb_pos,
+                            jb_quat,
+                        )
+                        depth_a = sdf.sdf_func_ray_exit_distance(
+                            geoms_info,
+                            sdf_info,
+                            ja_center_world,
+                            -closing_normal,
+                            seg_len,
+                            tolerance,
+                            j_ga,
+                            ja_pos,
+                            ja_quat,
+                        )
+                        approach_depth_pair = depth_a + depth_b - seg_len
+                else:
+                    is_closing_regime = False
+            # Both directions run the same full scan: phase 0 checks A's verts against B's SDF, phase 1
+            # B's verts against A's (features of one body crossing the other's faces BETWEEN its verts are
+            # only visible to the swapped scan). A full scan keeps membership continuous in pose - verts
+            # enter and leave the admission band with weight pen_emit -> 0 - whereas a seeded local search
+            # toggles whole member clusters at finite weight whenever a hill-climb seed relocates, and that
+            # force modulation ratchets a softly-stacked column sideways.
+            for i_v in range(geoms_info.vert_start[j_ga], geoms_info.vert_end[j_ga]):
+                vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ja_pos, ja_quat)
+                if func_point_in_geom_aabb(geoms_state, j_gb, i_b, vertex_pos):
+                    is_in_band, sd_v = sdf.sdf_func_world_local_banded(
+                        geoms_info, sdf_info, vertex_pos, j_gb, jb_pos, jb_quat, margin
+                    )
+                    pen_v = -sd_v
+                    if is_in_band:
+                        grad_v = sdf.sdf_func_grad_world_local_consistent(
+                            geoms_info, rigid_global_info, sdf_info, vertex_pos, j_gb, jb_pos, jb_quat
+                        )
+                        grad_norm = grad_v.norm()
+                        pen_emit = gs.qd_float(0.0)
+                        is_support = False
+                        if grad_norm > 0.9:
+                            if pen_v > 0.0:
+                                pen_emit = pen_v
+                            elif qd.static(i_phase == 0):
+                                # Zero-depth support contacts: verts touching within the grid-noise pen scale damp
+                                # the closing velocity without exerting static force. Crossed solids are excluded
+                                # (damping the far side of the overlap stalls the escape).
+                                is_support = pen_v > -synthetic_pen_max and not is_closing_regime
+                        elif is_closing_regime or is_axis_normal_regime or is_enclosed_regime:
+                            # Sub-cell thin walls are uncertifiable by the lattice, yet these band verts are the
+                            # only carriers of the coupling across the wall: keep the synthetic depths, continuous
+                            # across pen_v = 0.
+                            if grad_norm < 0.5:
+                                if pen_v > 0.0:
+                                    pen_emit = qd.min(synthetic_pen_max + pen_v, margin)
+                                else:
+                                    pen_emit = synthetic_pen_max * (1.0 + pen_v / margin)
+                            elif pen_v > 0.0:
+                                pen_emit = synthetic_pen_max
+                        else:
+                            # Outside the thin-wall regimes an uncertain (smoothed or seam) pen is not trusted at
+                            # all; the vert still damps the closing velocity as a zero-depth support contact.
+                            if qd.static(i_phase == 0):
+                                is_support = pen_v > -synthetic_pen_max
+                        normal_v = normal_center
+                        if is_enclosed_regime or is_axis_normal_regime:
+                            # Concave shells: the pair-level reference normal cannot resist lateral shear, so orient
+                            # from B's grad when well-conditioned (sign fixed from A's exact vertex normal) and from
+                            # A's vertex normal when the grad is smoothed across the thin wall.
+                            a_vnormal = gu.qd_normalize(
+                                gu.qd_transform_by_quat(verts_info.init_normal[i_v], ja_quat), EPS
+                            )
+                            if grad_norm > 0.5:
+                                normal_v = gu.qd_normalize(grad_v, EPS)
+                                if normal_v.dot(a_vnormal) > 0.0:
+                                    # Grad agreeing with A's outward normal = tunneled past B's thin wall: no
+                                    # support contact there, damping the far side stalls the crossing-escape creep.
+                                    normal_v = -normal_v
+                                    is_support = False
+                            else:
+                                normal_v = -a_vnormal
+                        elif (
+                            not is_closing_regime
+                            and not is_axis_normal_regime
+                            and grad_norm > 0.9
+                            and grad_v.dot(normal_center) > 0.0
+                        ):
+                            # Trust a per-vertex grad as the contact normal only in the clean band where the kernel
+                            # pen is trusted; in the edge/smoothed bands the reference normal at A's center is more
+                            # reliable.
+                            normal_v = gu.qd_normalize(grad_v, EPS)
+                        # In the closing regime the per-vertex pen is only the radial gap to B's lateral; floor it
+                        # with the geometric approach depth so the solver sees the actual overlap.
+                        if is_closing_regime and pen_v > 0.0 and approach_depth_pair > pen_emit:
+                            pen_emit = approach_depth_pair
+                        rel_ref = vertex_pos - frame_origin
+                        az_ref = qd.atan2(rel_ref.dot(t2_ref), rel_ref.dot(t1_ref))
+                        # Two sub-buckets per azimuth sector, split by normal hemisphere: a crossed wall has
+                        # penetrating verts on BOTH faces with opposed normals, and merging them would cancel the
+                        # aggregate exactly when the crossing needs resistance from each side. The split also keeps
+                        # phase-1 members from annihilating phase-0 members of the opposite face.
+                        i_bucket = 0
+                        i_bucket_2 = 0
+                        w_hat = gs.qd_float(1.0)
+                        if qd.static(n_buckets >= 2):
+                            # Hat-weighted azimuthal binning: a member splits its weight linearly between the two
+                            # nearest sector centers, so rotating past a sector boundary moves weight continuously
+                            # instead of relocating it in one step - a hard handoff modulates the emitted forces
+                            # and, combined with any standing lateral bias, ratchets a softly-stacked column.
+                            az_scaled = (az_ref + qd.math.pi) * ((n_buckets // 2) / (2.0 * qd.math.pi))
+                            u_hat = az_scaled - 0.5
+                            i_sec = qd.cast(qd.floor(u_hat), gs.qd_int)
+                            frac_hat = u_hat - qd.cast(i_sec, gs.qd_float)
+                            i_sec = qd.raw_mod(i_sec + (n_buckets // 2), n_buckets // 2)
+                            i_sec_2 = qd.raw_mod(i_sec + 1, n_buckets // 2)
+                            w_hat = 1.0 - frac_hat
+                            i_bucket = 2 * i_sec
+                            i_bucket_2 = 2 * i_sec_2
+                            # Hemisphere sign from whichever direction is well-conditioned for this face: seating
+                            # faces align with the closing axis, side walls are perpendicular to it and split on
+                            # the local radial instead - otherwise their sub-bucket assignment is FP-noise-driven
+                            # and opposite faces can still share a bucket and cancel.
+                            normal_folded = phase_sign * normal_v
+                            rad_ref = gu.qd_normalize(rel_ref - rel_ref.dot(frame_axis) * frame_axis, EPS)
+                            split_dot = normal_folded.dot(frame_axis)
+                            rad_dot = normal_folded.dot(rad_ref)
+                            if qd.abs(rad_dot) > qd.abs(split_dot):
+                                split_dot = rad_dot
+                            if split_dot > 0.0:
+                                i_bucket = i_bucket + 1
+                                i_bucket_2 = i_bucket_2 + 1
+                        if pen_emit > 0.0:
+                            for k_hat in qd.static(range(2)):
+                                i_bucket_k = i_bucket if k_hat == 0 else i_bucket_2
+                                w_b = (w_hat if k_hat == 0 else 1.0 - w_hat) * pen_emit
+                                if qd.static(i_phase == 0):
+                                    acc_w[i_bucket_k] += w_b
+                                    for j in qd.static(range(3)):
+                                        acc_pos[i_bucket_k, j] += w_b * vertex_pos[j]
+                                        acc_n[i_bucket_k, j] += phase_sign * w_b * normal_v[j]
+                                else:
+                                    acc2_w[i_bucket_k] += w_b
+                                    for j in qd.static(range(3)):
+                                        acc2_pos[i_bucket_k, j] += w_b * vertex_pos[j]
+                                        acc2_n[i_bucket_k, j] += phase_sign * w_b * normal_v[j]
+                            # Depth is a per-violation quantity: one physical violation provisions ONE constraint
+                            # row's corrective impulse, so a member's pen goes to its primary bucket only while
+                            # the hat split shares its weight. A sector fed purely by secondary spill emits with
+                            # zero depth (direction and damping only): its positional correction already lives in
+                            # the primary row. The handoff at a boundary crossing is smooth because at the swap
+                            # both buckets hold nearly the same members, so the depth moves between two
+                            # geometrically near-identical rows. Scaling the pen by the hat share instead would
+                            # under-provision the primary row (a softened correction destabilizes what it
+                            # supports), and writing it into both buckets would double the corrective capacity
+                            # for as long as the member sits in the overlap, pulsing the emitted forces at entry
+                            # and exit.
+                            if qd.static(i_phase == 0):
+                                if pen_emit > acc_pen_max[i_bucket]:
+                                    acc_pen_max[i_bucket] = pen_emit
+                            elif pen_emit > acc2_pen_max[i_bucket]:
+                                acc2_pen_max[i_bucket] = pen_emit
+                        elif is_support:
+                            for k_hat in qd.static(range(2)):
+                                i_bucket_k = i_bucket if k_hat == 0 else i_bucket_2
+                                w_b = w_hat if k_hat == 0 else 1.0 - w_hat
+                                sup_w[i_bucket_k] += w_b
+                                for j in qd.static(range(3)):
+                                    sup_pos[i_bucket_k, j] += w_b * vertex_pos[j]
+                                    sup_n[i_bucket_k, j] += phase_sign * w_b * normal_v[j]
+    # Emit one aggregated contact per active bucket. A bucket whose members disagree on direction (the weighted
+    # normal nearly cancels) is ambiguous and skipped; buckets holding only zero-depth support verts emit a support
+    # contact at their weight-averaged centroid.
+    for i_bucket in range(n_buckets):
+        emit_pen = gs.qd_float(0.0)
+        is_emit = False
+        contact_pos = qd.Vector.zero(gs.qd_float, 3)
+        normal_c = qd.Vector.zero(gs.qd_float, 3)
+        if acc_w[i_bucket] > 0.0:
+            inv_w = 1.0 / acc_w[i_bucket]
+            contact_pos = qd.Vector(
+                [acc_pos[i_bucket, 0] * inv_w, acc_pos[i_bucket, 1] * inv_w, acc_pos[i_bucket, 2] * inv_w],
+                dt=gs.qd_float,
+            )
+            # Rescale the pen-weighted sum to the mean member normal BEFORE normalizing: the sum's magnitude is
+            # O(pen), where the eps guard under norm() is no longer negligible and would emit a non-unit normal
+            # (a silently softened constraint row). The mean is O(1) by the coherence gate, so the guard is inert.
+            normal_c = qd.Vector([acc_n[i_bucket, 0], acc_n[i_bucket, 1], acc_n[i_bucket, 2]], dt=gs.qd_float)
+            normal_c = normal_c / acc_w[i_bucket]
+            if normal_c.norm() > 0.1:
+                # The emitted depth is the deepest member pen: the solver consumes pen as a geometric depth (it
+                # drives impedance and error correction, and is reported by get_contacts), so a summed magnitude
+                # would inflate a shallow many-vert ring and saturate a genuinely deep crossing. The direction
+                # still composes the member forces via sum(pen_i * n_i).
+                emit_pen = acc_pen_max[i_bucket]
+                normal_c = gu.qd_normalize(normal_c, EPS)
+                is_emit = True
+        elif acc2_w[i_bucket] > 0.0:
+            # The primary scan is blind in this sector (a feature of the other body crosses between its verts):
+            # fall back to the swapped scan's aggregate, which is the coverage this scan direction exists for.
+            inv_w = 1.0 / acc2_w[i_bucket]
+            contact_pos = qd.Vector(
+                [acc2_pos[i_bucket, 0] * inv_w, acc2_pos[i_bucket, 1] * inv_w, acc2_pos[i_bucket, 2] * inv_w],
+                dt=gs.qd_float,
+            )
+            normal_c = qd.Vector([acc2_n[i_bucket, 0], acc2_n[i_bucket, 1], acc2_n[i_bucket, 2]], dt=gs.qd_float)
+            normal_c = normal_c / acc2_w[i_bucket]
+            if normal_c.norm() > 0.1:
+                emit_pen = acc2_pen_max[i_bucket]
+                normal_c = gu.qd_normalize(normal_c, EPS)
+                is_emit = True
+        elif sup_w[i_bucket] > 0.0:
+            inv_w = 1.0 / sup_w[i_bucket]
+            contact_pos = qd.Vector(
+                [sup_pos[i_bucket, 0] * inv_w, sup_pos[i_bucket, 1] * inv_w, sup_pos[i_bucket, 2] * inv_w],
+                dt=gs.qd_float,
+            )
+            normal_c = qd.Vector([sup_n[i_bucket, 0], sup_n[i_bucket, 1], sup_n[i_bucket, 2]], dt=gs.qd_float)
+            if normal_c.norm() > 0.1 * sup_w[i_bucket]:
+                normal_c = gu.qd_normalize(normal_c, EPS)
+                is_emit = True
+        if is_emit:
+            # Snap onto A's smooth surface when A is a smooth primitive; a no-op for polytope-typed A.
+            contact_pos = func_apply_smooth_refinement(
+                i_ga,
+                i_gb,
+                normal_c,
+                emit_pen,
+                contact_pos,
+                ga_pos,
+                ga_quat,
+                gb_pos,
+                gb_quat,
+                geoms_info,
+                static_rigid_sim_config,
+            )
+            func_add_contact(
+                i_ga,
+                i_gb,
+                normal_c,
+                contact_pos,
+                emit_pen,
+                i_b,
+                i_pair,
+                geoms_state,
+                geoms_info,
+                collider_state,
+                collider_info,
+                errno,
+            )
 
 
 @qd.func
@@ -2591,8 +3045,8 @@ def _func_narrowphase_contact0(
                             tolerance,
                             overlap_ratio * geom_pair_scale,
                         )
-                        # An INVALID portal (unconverged, or the origin extrapolates too far outside the portal) gives an
-                        # untrustworthy penetration - always refine with GJK regardless of depth.
+                        # An INVALID portal (unconverged, or the origin extrapolates too far outside the portal) gives
+                        # an untrustworthy penetration - always refine with GJK regardless of depth.
                         if is_col and (mpr_state.portal_status[flat_idx] == PORTAL_STATUS.INVALID):
                             prefer_gjk = True
 
@@ -2970,46 +3424,57 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                     ga_quat = geoms_state.quat[i_ga, i_b]
                     gb_pos = geoms_state.pos[i_gb, i_b]
                     gb_quat = geoms_state.quat[i_gb, i_b]
-                    func_add_polytope_vertex_contacts_sdf(
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        i_pair,
-                        ga_pos,
-                        ga_quat,
-                        gb_pos,
-                        gb_quat,
-                        tolerance,
-                        False,
-                        geoms_state,
-                        geoms_info,
-                        geoms_init_AABB,
-                        verts_info,
-                        rigid_global_info,
-                        static_rigid_sim_config,
-                        collider_static_config,
-                        sdf_info,
-                        collider_state,
-                        collider_info,
-                        errno,
-                    )
-                    # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's faces
-                    # BETWEEN A's verts (a mug rim pressing through a cup wall), so B's verts are checked against A's
-                    # SDF as well - as a seeded local search rather than a full scan, so the cost stays bounded by the
-                    # contact patch instead of B's vertex count. Skipped only for PLANE (its handful of far-flung
-                    # verts carry no contact information).
-                    if geoms_info.type[i_gb] != gs.GEOM_TYPE.PLANE:
-                        func_add_polytope_vertex_contacts_sdf(
-                            i_gb,
+                    # Nested-shell pair detection: BOTH bodies hollow (their own centers sit in their cavities),
+                    # A's center outside B's material, comparable sizes. Such pairs contact along an annular line
+                    # where the per-vertex manifold churns, so they use the sector-aggregated manifold; every other
+                    # pair - including a hollow body near a solid one (nut around a bolt) - keeps the per-vertex one.
+                    is_shell_pair = False
+                    center_a_w = gu.qd_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos, ga_quat)
+                    rb_a_sq = gs.qd_float(0.0)
+                    rb_b_sq = gs.qd_float(0.0)
+                    for k in qd.static(range(8)):
+                        d_a = geoms_init_AABB[i_ga, k] - geoms_info.center[i_ga]
+                        d_b = geoms_init_AABB[i_gb, k] - geoms_info.center[i_gb]
+                        if d_a.dot(d_a) > rb_a_sq:
+                            rb_a_sq = d_a.dot(d_a)
+                        if d_b.dot(d_b) > rb_b_sq:
+                            rb_b_sq = d_b.dot(d_b)
+                    sd_center_ab = sdf.sdf_func_world_local(geoms_info, sdf_info, center_a_w, i_gb, gb_pos, gb_quat)
+                    # Nested-only: A's center must lie inside B's local AABB. Adjacent shells share every
+                    # other property of a nested pair, but their contact is a small lens ON the closing
+                    # line, where the azimuthal sectors degenerate to a single bucket and the aggregate
+                    # churns (cm-scale contact relocation every step, with intermittently silent steps);
+                    # the per-vertex manifold handles them well. The two populations sit far from this
+                    # boundary - a nested center is deep inside, an adjacent center a full bound outside -
+                    # so the gate is stable in practice.
+                    center_a_in_b = gu.qd_inv_transform_by_trans_quat(center_a_w, gb_pos, gb_quat)
+                    is_nested = True
+                    for j in qd.static(range(3)):
+                        if (
+                            center_a_in_b[j] < geoms_init_AABB[i_gb, 0][j]
+                            or center_a_in_b[j] > geoms_init_AABB[i_gb, 7][j]
+                        ):
+                            is_nested = False
+                    if (
+                        is_nested
+                        and geoms_info.is_hollow[i_ga]
+                        and geoms_info.is_hollow[i_gb]
+                        and qd.abs(sd_center_ab) < qd.sqrt(rb_a_sq)
+                        and rb_a_sq > 0.25 * rb_b_sq
+                        and sd_center_ab >= 0.0
+                    ):
+                        is_shell_pair = True
+                    if is_shell_pair:
+                        func_add_polytope_vertex_contacts_sdf_shell(
                             i_ga,
+                            i_gb,
                             i_b,
                             i_pair,
-                            gb_pos,
-                            gb_quat,
                             ga_pos,
                             ga_quat,
+                            gb_pos,
+                            gb_quat,
                             tolerance,
-                            True,
                             geoms_state,
                             geoms_info,
                             geoms_init_AABB,
@@ -3022,3 +3487,55 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             collider_info,
                             errno,
                         )
+                    else:
+                        func_add_polytope_vertex_contacts_sdf(
+                            i_ga,
+                            i_gb,
+                            i_b,
+                            i_pair,
+                            ga_pos,
+                            ga_quat,
+                            gb_pos,
+                            gb_quat,
+                            tolerance,
+                            geoms_state,
+                            geoms_info,
+                            geoms_init_AABB,
+                            verts_info,
+                            rigid_global_info,
+                            static_rigid_sim_config,
+                            collider_static_config,
+                            sdf_info,
+                            collider_state,
+                            collider_info,
+                            errno,
+                            seeded=False,
+                        )
+                        # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's
+                        # faces BETWEEN A's verts, so B's verts are checked against A's SDF as well - as a seeded
+                        # local search rather than a full scan. Skipped only for PLANE (its handful of far-flung
+                        # verts carry no contact information).
+                        if geoms_info.type[i_gb] != gs.GEOM_TYPE.PLANE:
+                            func_add_polytope_vertex_contacts_sdf(
+                                i_gb,
+                                i_ga,
+                                i_b,
+                                i_pair,
+                                gb_pos,
+                                gb_quat,
+                                ga_pos,
+                                ga_quat,
+                                tolerance,
+                                geoms_state,
+                                geoms_info,
+                                geoms_init_AABB,
+                                verts_info,
+                                rigid_global_info,
+                                static_rigid_sim_config,
+                                collider_static_config,
+                                sdf_info,
+                                collider_state,
+                                collider_info,
+                                errno,
+                                seeded=True,
+                            )

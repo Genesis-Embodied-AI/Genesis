@@ -271,6 +271,7 @@ class Collider:
         self._init_collision_pair_idx(self._collision_pair_idx)
         self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
+        self._init_verts_spatial_grid()
         self._init_max_contacts(self._n_possible_pairs, self._large_contact_pair_mask)
         self._init_terrain_state()
 
@@ -614,6 +615,54 @@ class Collider:
             vert_n_neighbors = np.concatenate(vert_n_neighbors, dtype=gs.np_int)
 
         return vert_neighbors, vert_neighbor_start, vert_n_neighbors
+
+    def _init_verts_spatial_grid(self):
+        """
+        Sort each geom's collision verts into a fixed 8x8x8 grid over its local AABB, as a permutation of vert
+        indices ordered by grid cell (z fastest) plus per-cell vert ranges.
+
+        The nonconvex narrowphase visits only the cells overlapping the other geom's pulled-back AABB, skipping far
+        verts wholesale. Binning uses the same single-precision cell mapping as the kernel side; that mapping is
+        monotone, so a vert inside a (padded) query box always lands inside the visited cell range.
+        """
+        if self._solver.n_verts == 0:
+            return
+        n_geoms = len(self._solver.geoms)
+        verts_idx = []
+        verts_pos = []
+        cells_vert_start = []
+        geoms_origin = np.zeros((n_geoms, 3), dtype=gs.np_float)
+        geoms_inv_cell_size = np.zeros((n_geoms, 3), dtype=gs.np_float)
+        offset_vert = 0
+        for i_g, geom in enumerate(self._solver.geoms):
+            verts = geom.init_verts.astype(gs.np_float)
+            if len(verts) == 0:
+                verts_idx.append(np.zeros(0, dtype=gs.np_int))
+                verts_pos.append(np.zeros((0, 3), dtype=gs.np_float))
+                cells_vert_start.append(np.full(8**3 + 1, offset_vert, dtype=gs.np_int))
+                continue
+            origin = verts.min(axis=0)
+            extent = verts.max(axis=0) - origin
+            inv_cell_size = np.where(extent > 0.0, 8 / np.maximum(extent, gs.EPS), 0.0).astype(gs.np_float)
+            verts_cell = np.clip(np.floor((verts - origin) * inv_cell_size), 0, 7).astype(gs.np_int)
+            verts_cell_flat = (verts_cell[:, 0] * 8 + verts_cell[:, 1]) * 8 + verts_cell[:, 2]
+            order = np.argsort(verts_cell_flat, kind="stable")
+            verts_idx.append(order + geom.vert_start)
+            # The positions themselves are duplicated in spatial order: the scan streams them sequentially, where
+            # gathering through the permutation would defeat the prefetcher on the hot path.
+            verts_pos.append(verts[order])
+            counts = np.bincount(verts_cell_flat, minlength=8**3)
+            cells_vert_start.append(np.concatenate(([0], counts.cumsum())) + offset_vert)
+            geoms_origin[i_g] = origin
+            geoms_inv_cell_size[i_g] = inv_cell_size
+            offset_vert = offset_vert + len(verts)
+
+        verts_spatial_grid = self._collider_info.verts_spatial_grid
+        verts_spatial_grid.verts_idx.from_numpy(np.concatenate(verts_idx, dtype=gs.np_int))
+        verts_spatial_grid.verts_pos.from_numpy(np.concatenate(verts_pos, dtype=gs.np_float))
+        verts_spatial_grid.cells_vert_start.from_numpy(np.concatenate(cells_vert_start, dtype=gs.np_int))
+        verts_spatial_grid.geoms_origin.from_numpy(geoms_origin)
+        verts_spatial_grid.geoms_inv_cell_size.from_numpy(geoms_inv_cell_size)
 
     def _init_collision_pair_idx(self, collision_pair_idx):
         if self._n_possible_pairs == 0:

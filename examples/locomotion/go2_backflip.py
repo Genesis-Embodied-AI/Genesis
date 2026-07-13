@@ -132,7 +132,7 @@ def main():
     policy = torch.jit.load(f"./backflip/{args.exp_name}.pt")
     policy.to(device=gs.device)
 
-    obs, _ = env.reset()
+    obs = env.reset()
     with torch.no_grad():
         while True:
             actions = policy(obs)

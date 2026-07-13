@@ -76,10 +76,16 @@ class RaycastContext(SharedSensorContext):
     def __init__(self, sim):
         super().__init__(sim)
         self._bvh_contexts: list[BVHContext] = []
+        # The rigid collision BVH context -- the single entry with no per-vface raycast mask (raycast_mask is None).
+        # Resolved once in ``activate`` (the entry list is fixed after that); ``None`` until then / if no rigid solver.
+        self.collision_bvh_context: BVHContext | None = None
 
     @property
     def bvh_contexts(self) -> list[BVHContext]:
-        """The per-(solver, mesh-type) BVHs. Raises if inactive: only a consumer that activated it may read them."""
+        """The per-(solver, mesh-type) BVHs.
+
+        Raises if inactive: only a consumer that activated it may read them.
+        """
         if not self._active:
             raise gs.GenesisException("RaycastContext queried before activation; no sensor declared a raycast need.")
         return self._bvh_contexts
@@ -87,6 +93,7 @@ class RaycastContext(SharedSensorContext):
     @staticmethod
     def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
         """Build a per-vface mask (int8, shape (n_vfaces,)) selecting vfaces opted into visual raycasting.
+
         A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
         """
         n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
@@ -103,9 +110,11 @@ class RaycastContext(SharedSensorContext):
 
     def activate(self):
         """
-        Build the per-(solver, mesh-type) BVHs on first activation; idempotent. Rigid solvers get a collision BVH
-        covering all collision faces; any solver with entities opting in via ``material.use_visual_raycasting`` gets a
-        visual BVH masked to those vfaces. Collision and visual entries coexist (the cast kernels merge in place).
+        Build the per-(solver, mesh-type) BVHs on first activation; idempotent.
+
+        Rigid solvers get a collision BVH covering all collision faces; any solver with entities opting in via
+        ``material.use_visual_raycasting`` gets a visual BVH masked to those vfaces. Collision and visual entries
+        coexist (the cast kernels merge in place).
         """
         if self._active:
             return
@@ -130,6 +139,8 @@ class RaycastContext(SharedSensorContext):
                     aabb = AABB(n_batches=n_envs, n_aabbs=n_vfaces)
                     bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
                     self._bvh_contexts.append(BVHContext(solver, bvh, aabb, mask, maybe_static))
+
+        self.collision_bvh_context = next((c for c in self._bvh_contexts if c.raycast_mask is None), None)
 
         # Lazily watch each static BVH (collision or visual) for GEOMETRY changes. ``update`` polls its
         # rebuild_subscriber so an explicit set_pos / set_quat / set_vverts on the otherwise-immovable geometry forces

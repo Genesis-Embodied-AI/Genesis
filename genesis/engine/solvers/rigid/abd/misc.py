@@ -541,6 +541,7 @@ def kernel_init_geom_fields(
     geoms_coup_restitution: qd.types.ndarray(),
     geoms_is_fixed: qd.types.ndarray(),
     geoms_is_decomp: qd.types.ndarray(),
+    geoms_is_hollow: qd.types.ndarray(),
     # Quadrants variables
     geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
@@ -584,6 +585,7 @@ def kernel_init_geom_fields(
         geoms_info.friction[i_g] = geoms_friction[i_g]
 
         geoms_info.is_convex[i_g] = geoms_is_convex[i_g]
+        geoms_info.is_hollow[i_g] = geoms_is_hollow[i_g]
         geoms_info.needs_coup[i_g] = geoms_needs_coup[i_g]
         geoms_info.contype[i_g] = geoms_contype[i_g]
         geoms_info.conaffinity[i_g] = geoms_conaffinity[i_g]

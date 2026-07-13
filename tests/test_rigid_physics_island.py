@@ -315,12 +315,11 @@ def test_solve_correctness(show_viewer, noslip_iterations, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_island_monolith_seed_oversaturated(show_viewer, monkeypatch):
-    # The GPU island monolith leaves its initial factor + gradient to func_solve_init, except when its body self-inits
-    # them per-env - which it only does when the cooperative kernels are disabled. With them enabled, func_solve_init
-    # must seed: for a shared-fitting Hessian at an env count that oversaturates the GPU, neither the fused nor the
-    # per-island seed branch fires, so the fallback factor+gradient must run, else Mgrad stays stale and the solve
-    # makes no progress (the boxes fall through the floor). Faking GPU saturation (get_gpu_core_count -> 1) reaches the
-    # oversaturated path at 2 envs instead of the thousands a real GPU would need.
+    # enable_cooperative_constraint_kernels is bounded by get_gpu_core_count(), so faking extreme GPU saturation
+    # (get_gpu_core_count -> 1) disables the cooperative kernels at 2 envs - a small-scale stand-in for the
+    # >get_gpu_core_count() env regime. With islands on and the monolith arm pinned the whole env is a single
+    # shared-fitting block (enable_per_island_solve False), so the in-kernel branch A is gated off and func_solve_init
+    # must supply the seed factor + gradient; otherwise Mgrad stays stale and the boxes fall through the floor.
     import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
     from genesis.utils.array_class import RigidSimStaticConfig
 
@@ -342,8 +341,8 @@ def test_island_monolith_seed_oversaturated(show_viewer, monkeypatch):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
-    # Four spaced free boxes: 24 dofs (>= 16, so the cooperative kernels engage) that fit the shared tile, and four
-    # independent islands - exactly the shared-fitting multi-island case the seed branches gate out.
+    # Four spaced free boxes: 24 dofs (cooperative-eligible at n_dofs >= 16, but disabled here by the faked saturation)
+    # that fit the shared tile, four independent islands - the shared-fitting case where the in-kernel seed gates off.
     boxes = [
         scene.add_entity(
             gs.morphs.Box(
@@ -357,7 +356,7 @@ def test_island_monolith_seed_oversaturated(show_viewer, monkeypatch):
 
     cfg = scene.rigid_solver._static_rigid_sim_config
     # Guard against the test silently ceasing to exercise the gap (e.g. if the saturation heuristic changes).
-    assert cfg.enable_cooperative_constraint_kernels
+    assert not cfg.enable_cooperative_constraint_kernels
     assert not cfg.enable_fused_factor_solve_init
     assert not cfg.enable_per_island_solve
 

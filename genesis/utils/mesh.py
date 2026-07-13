@@ -32,6 +32,7 @@ from .misc import (
     get_tet_cache_dir,
     get_usd_cache_dir,
     get_wt_cache_dir,
+    get_wth_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
@@ -41,7 +42,10 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
-WT_CACHE_VERSION = 5
+# Bumped when watertighten output changes for a fixed (mesh, aggressiveness): forces a cache miss on stale entries.
+WT_CACHE_VERSION = 7
+# Bumped when the wall-thickness estimate changes for a fixed (mesh, quantile): forces a cache miss on stale entries.
+WTH_CACHE_VERSION = 1
 
 
 def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:
@@ -58,6 +62,56 @@ def color_u8_to_f32(color) -> np.ndarray:
 
 def glossiness_to_roughness(glossiness: float) -> float:
     return (2 / (glossiness + 2)) ** (1.0 / 4.0)
+
+
+def get_wall_thickness(verts: np.ndarray, faces: np.ndarray, quantile: float = 0.25) -> float:
+    """Estimate a watertight mesh's characteristic wall thickness by probing its local diameter with inward rays.
+
+    A ray is cast inward along the face normal from a stride-subsampled set of face centroids to the first opposite
+    surface. The `quantile` of those hit distances, weighted by probed face area so the estimate measures surface
+    rather than tessellation density (a thin wall spanned by a handful of large faces must not be outvoted by many
+    small decorative facets), is returned: a low quantile approximates the thinnest wall and the median the typical
+    one. The mesh must be watertight: inward rays escape through holes of an open surface, so the estimate is
+    meaningless there and an exception is raised (the caller is expected to skip the probe for non-watertight meshes).
+
+    The estimate is deliberately a scalar, not per-axis: the SDF grid it sizes does not only resolve walls along
+    their normal - it certifies contact penetrations through Lipschitz cone bounds whose slack grows with the
+    lattice spacing in every direction around the contact point, tangent axes included. On a closed shell each
+    wall's tangent directions are other walls' normals (a mug's vertical wall lies tangent to the vertical axis
+    even though the only wall facing that axis, the thick bottom, would justify coarse vertical cells), so relaxing
+    any one axis to the thickness of the walls facing it measurably degrades the certified pens of every wall
+    tangent to it, and no bound-side search can recover the loss (the lateral sample offset is a lattice property).
+    """
+    cache_path = get_wth_path(verts, faces, quantile)
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as file:
+                return pkl.load(file)
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
+            gs.logger.info("Ignoring corrupted wall-thickness cache.")
+
+    mesh = trimesh.Trimesh(verts, faces, process=False)
+    if not mesh.is_watertight:
+        gs.raise_exception("Wall-thickness estimation requires a watertight mesh.")
+    diag = np.linalg.norm(verts.max(axis=0) - verts.min(axis=0))
+    stride = max(1, len(faces) // 1000)
+    centers = mesh.triangles_center[::stride]
+    normals = mesh.face_normals[::stride]
+    origins = centers - 1e-3 * diag * normals
+    locations, ray_idx, _ = mesh.ray.intersects_location(origins, -normals, multiple_hits=False)
+    thickness = np.linalg.norm(locations - origins[ray_idx], axis=1)
+    # A hit at the ray origin's own face reads as zero thickness; drop those self-hits before taking the quantile.
+    is_hit_valid = thickness > 1e-4 * diag
+    thickness = thickness[is_hit_valid]
+    areas = mesh.area_faces[::stride][ray_idx][is_hit_valid]
+    order = np.argsort(thickness)
+    areas_cum = np.cumsum(areas[order])
+    wall_thickness = thickness[order][np.searchsorted(areas_cum, quantile * areas_cum[-1])]
+
+    os.makedirs(get_wth_cache_dir(), exist_ok=True)
+    with open(cache_path, "wb") as file:
+        pkl.dump(wall_thickness, file, protocol=pkl.HIGHEST_PROTOCOL)
+    return wall_thickness
 
 
 class MeshInfo:
@@ -126,11 +180,13 @@ def get_asset_path(file):
     return os.path.join(get_src_dir(), "assets", file)
 
 
-def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    # Schema tag bumped when the on-disk SDF layout changes (e.g. scalar -> per-axis cell size).
-    # Forces a cache miss on stale entries written by older code without manually clearing the cache.
-    schema = "v2-anisotropic-cells"
-    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res, schema)
+def get_gsd_path(verts, faces, sdf_res, sdf_cell_size):
+    # The grid is fully determined by the mesh plus the resolved per-axis resolution and cell size, so the key is
+    # built from those rather than the material defaults: the resolution now also depends on wall thickness, so the
+    # defaults no longer identify the grid. Schema tag bumped when the on-disk SDF layout changes (e.g. scalar ->
+    # per-axis cell size); forces a cache miss on stale entries without manually clearing the cache.
+    schema = "v3-res-keyed"
+    hashkey = get_hashkey(verts, faces, sdf_res, sdf_cell_size, schema)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
@@ -162,6 +218,11 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
 def get_wt_path(verts, faces, aggressiveness):
     hashkey = get_hashkey(verts, faces, aggressiveness, WT_CACHE_VERSION)
     return os.path.join(get_wt_cache_dir(), f"{hashkey}.wt")
+
+
+def get_wth_path(verts, faces, quantile):
+    hashkey = get_hashkey(verts, faces, quantile, WTH_CACHE_VERSION)
+    return os.path.join(get_wth_cache_dir(), f"{hashkey}.wth")
 
 
 def get_exr_path(file_path):
@@ -431,6 +492,12 @@ def _postprocess_collision_geoms_impl(
     if not g_infos:
         return []
 
+    # Check whether the geometries are authored, ie they are all watertight and convex, as a cheap proxy
+    is_authored = all(
+        (tmesh := g_info["mesh"].trimesh).is_winding_consistent and tmesh.is_watertight and tmesh.is_convex
+        for g_info in g_infos
+    )
+
     # Weld coincident vertices of non-convex collision meshes onto a separate copy. Formats that store unshared
     # per-face vertices (notably STL) yield a vertex soup whose duplicates differ only by float rounding; the
     # downstream exact dedup at geom build only partially fuses them, leaving a degraded (sliver) mesh that corrupts
@@ -438,7 +505,7 @@ def _postprocess_collision_geoms_impl(
     # may be the very same trimesh as the visual geom, so the weld must not be done in place: only the collision geom
     # is swapped for the welded copy, leaving the visual vertices untouched. Already-shared meshes (OBJ, glTF) weld to
     # no fewer vertices and keep their original geom.
-    if not convexify:
+    if not is_authored and not convexify:
         for g_info in g_infos:
             if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
@@ -455,93 +522,32 @@ def _postprocess_collision_geoms_impl(
     # Note that this procedure is only applied if the estimated volume is significantly different before and after
     # repair, to avoid altering the original mesh without actual benefit. Moreover, only duplicate faces are removed,
     # which is less aggressive than `Trimesh.process(validate=True)`.
-    for g_info in g_infos:
-        mesh = g_info["mesh"]
-        tmesh = mesh.trimesh
-        if g_info["type"] != gs.GEOM_TYPE.MESH:
-            continue
-        if tmesh.is_winding_consistent and not tmesh.is_watertight:
-            tmesh_repaired = tmesh.copy()
-            tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
-            if tmesh_repaired.volume < 0.0:
-                tmesh_repaired.invert()
-            if abs(tmesh_repaired.volume) < gs.EPS:
+    if not is_authored:
+        for g_info in g_infos:
+            mesh = g_info["mesh"]
+            tmesh = mesh.trimesh
+            if g_info["type"] != gs.GEOM_TYPE.MESH:
                 continue
-            if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
-                gs.logger.info(
-                    "Collision mesh is not watertight and has ill-defined volume. It will be repaired by removing "
-                    "duplicate faces."
-                )
-                tmesh.update_faces(tmesh.unique_faces())
-                tmesh._cache.clear()
-                tmesh.visual._cache.clear()
+            if tmesh.is_winding_consistent and not tmesh.is_watertight:
+                tmesh_repaired = tmesh.copy()
+                tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
+                if tmesh_repaired.volume < 0.0:
+                    tmesh_repaired.invert()
+                if abs(tmesh_repaired.volume) < gs.EPS:
+                    continue
+                if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
+                    gs.logger.info(
+                        "Collision mesh is not watertight and has ill-defined volume. It will be repaired by removing "
+                        "duplicate faces."
+                    )
+                    tmesh.update_faces(tmesh.unique_faces())
+                    tmesh._cache.clear()
+                    tmesh.visual._cache.clear()
 
-    # Watertighten non-convex meshes that are not already closed. The convex path skips this: the convex hull /
-    # decomposition replaces the surface anyway, so an alpha-wrap of the input would be wasted work. Each unique
-    # (vertex, face) pair is wrapped at most once - one entity can hold many sub-meshes that share buffers
-    # (repeated wheels, bolts, panel decorations from URDF parts) and re-running the wrap on each one would be
-    # pure duplicated effort.
-    if not convexify and watertighten is not None:
-        from .watertighten import watertighten_mesh
-
-        # Fuse every non-watertight MESH-type g_info into one combined triangle soup, run the SDF wrap once on
-        # the union, and replace the first of those g_infos with the wrap output (dropping the rest). Wrapping
-        # each sub-piece independently would produce overlapping closed surfaces - one per piece - which the
-        # downstream SDF / contact generator would then read as nested layers; a single fused wrap is one
-        # closed surface for the whole entity and also runs in one SDF pass instead of N.
-        mesh_idx: list[int] = []
-        verts_chunks: list[np.ndarray] = []
-        faces_chunks: list[np.ndarray] = []
-        v_offset = 0
-        for i, g_info in enumerate(g_infos):
-            tmesh = g_info["mesh"].trimesh
-            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.is_watertight:
-                continue
-            mesh_idx.append(i)
-            verts_chunks.append(np.asarray(tmesh.vertices, dtype=np.float64))
-            faces_chunks.append(np.asarray(tmesh.faces, dtype=np.int32) + v_offset)
-            v_offset += len(tmesh.vertices)
-        if mesh_idx:
-            verts_in = np.concatenate(verts_chunks, axis=0)
-            faces_in = np.concatenate(faces_chunks, axis=0).astype(np.int32, copy=False)
-            # On-disk cache keyed by (vertices, faces, aggressiveness): a repeated run on the same entity is a
-            # file read instead of a multi-second SDF + DC + QEM rebuild. The reader tolerates corruption
-            # (partial writes, stale pickles, missing modules) by falling back to a fresh compute, matching
-            # the pattern used by `get_cvx_path` above.
-            cache_path = get_wt_path(verts_in, faces_in, watertighten)
-            from_cache = False
-            v_out = f_out = None
-            if os.path.exists(cache_path):
-                try:
-                    with open(cache_path, "rb") as fp:
-                        v_out, f_out = pkl.load(fp)
-                    from_cache = True
-                except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
-                    gs.logger.info("Ignoring corrupted watertighten cache.")
-            if not from_cache:
-                v_out, f_out = watertighten_mesh(verts_in, faces_in, aggressiveness=watertighten)
-                os.makedirs(get_wt_cache_dir(), exist_ok=True)
-                with open(cache_path, "wb") as fp:
-                    pkl.dump((v_out, f_out), fp, protocol=pkl.HIGHEST_PROTOCOL)
-            fused = trimesh.Trimesh(vertices=v_out, faces=f_out, process=False)
-            metadata = g_infos[mesh_idx[0]]["mesh"].metadata.copy()
-            metadata["watertightened"] = True
-            g_infos[mesh_idx[0]]["mesh"] = gs.Mesh.from_trimesh(
-                mesh=fused,
-                surface=gs.surfaces.Collision(),
-                metadata=metadata,
-            )
-            for i in reversed(mesh_idx[1:]):
-                del g_infos[i]
-            gs.logger.info(
-                f"Watertightened {len(mesh_idx)} non-watertight collision sub-mesh(es) into one fused wrap "
-                f"({'cache hit' if from_cache else 'fresh compute'}): "
-                f"{len(verts_in)} -> {len(v_out)} vertices, {len(faces_in)} -> {len(f_out)} faces."
-            )
-
-    # Check if all the geometries can be convexified without decomposition
-    must_decompose = False
-    if convexify:
+    # Check which geometries can be convexified without decomposition
+    geoms_must_decompose = [False] * len(g_infos)
+    volume_err_max = 0.0
+    if not is_authored and convexify:
         for i_g, g_info in enumerate(g_infos):
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
@@ -565,70 +571,83 @@ def _postprocess_collision_geoms_impl(
 
             # Compute volume approximation error between true geometry and its convex hull conservatively
             if not tmesh.is_winding_consistent:
-                volume_err = float("inf")
-                must_decompose = not math.isinf(decompose_error_threshold)
-                if not must_decompose and len(g_infos) > 1:
-                    gs.logger.warning(
-                        f"Winding not consistent for submesh '{mesh.metadata.get('name', i_g)}'. Forcing convex "
-                        "decomposition..."
-                    )
+                if not math.isinf(decompose_error_threshold):
+                    geoms_must_decompose[i_g] = True
+                    volume_err_max = float("inf")
             elif abs(tmesh.volume) > gs.EPS:
                 volume_err = abs(cmesh.volume / abs(tmesh.volume) - 1.0)
                 if volume_err > decompose_error_threshold:
-                    must_decompose = True
-                    if not must_decompose and len(g_infos) > 1:
-                        gs.logger.warning(
-                            f"Convex hull of submesh '{mesh.metadata.get('name') or i_g}' is not accurate enough for "
-                            f"collision detection ({volume_err:.3f}). Forcing convex decomposition..."
+                    geoms_must_decompose[i_g] = True
+                    volume_err_max = max(volume_err_max, volume_err)
+    must_decompose = any(geoms_must_decompose)
+
+    # Fuse collision geoms that share a collision group and contact parameters into one closed surface per consistent
+    # sub-group, transforming each sub-mesh into its group's first geom frame so the fused geom keeps that pose. One
+    # surface per group exposes the whole-object topology needed to detect enclosure correctly and to estimate wall
+    # thickness (which sets the grid SDF cell size, hence collision accuracy), and it is cheaper - fewer vertices to
+    # scan and roughly one contact set per link instead of per geom. All geom types can be merged except planes and
+    # terrains. On the nonconvex path, sub-groups are systematically fused unless watertightening is disabled; on the
+    # convex path, only when one of their members requires decomposition.
+    geoms_is_fused = [False] * len(g_infos)
+    if len(g_infos) > 1 and ((not convexify and watertighten is not None) or (not is_authored and must_decompose)):
+        fusion_groups: list[list[int]] = []
+        for i, g_info in enumerate(g_infos):
+            # Join the first existing sub-group with a matching collision group and contact params, else open a new one.
+            if g_info["type"] not in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN):
+                for fusion_group in fusion_groups:
+                    first_g_info = g_infos[fusion_group[0]]
+                    if (
+                        first_g_info["type"] not in (gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.TERRAIN)
+                        and all(first_g_info.get(name) == g_info.get(name) for name in ("contype", "conaffinity"))
+                        and all(
+                            np.allclose(first_g_info.get(name, np.nan), g_info.get(name, np.nan), equal_nan=True)
+                            for name in ("friction", "sol_params")
                         )
+                    ):
+                        fusion_group.append(i)
+                        break
+                else:
+                    fusion_groups.append([i])
+            else:
+                fusion_groups.append([i])
 
-    # Check whether merging the geometries is possible, i.e.
-    # * They are all meshes
-    # * They belong to the same collision group (same contype and conaffinity)
-    # * Their physical properties are the same (friction coef and contact solver parameters)
-    if (must_decompose or not convexify) and len(g_infos) > 1:
-        is_merged = all(g_info["type"] == gs.GEOM_TYPE.MESH for g_info in g_infos)
-        for name in ("contype", "conaffinity", "friction", "sol_params"):
-            if not is_merged:
-                break
-            values = np.stack([g_info.get(name, float("nan")) for g_info in g_infos], axis=0)
-            diffs = np.diff(values, axis=0)
-            if not (np.isnan(diffs).all(axis=0) | (np.abs(diffs) < gs.EPS).all(axis=0)).all():
-                is_merged = False
-
-        # Merge geometry into a single mesh, always preserving the first geom's local pose.
-        # Each submesh's vertices are expressed relative to the first geom's frame, so the
-        # merged geom inherits the first geom's pos/quat unchanged.
-        if is_merged:
-            first_g_info = g_infos[0]
+        fused_infos = []
+        geoms_is_fused = []
+        for fusion_group in fusion_groups:
+            if len(fusion_group) == 1 or (convexify and not any(geoms_must_decompose[i] for i in fusion_group)):
+                fused_infos.extend(g_infos[i] for i in fusion_group)
+                geoms_is_fused.extend([False] * len(fusion_group))
+                continue
+            first_g_info = g_infos[fusion_group[0]]
+            T_first_inv = np.linalg.inv(
+                gu.trans_quat_to_T(first_g_info.get("pos", gu.zero_pos()), first_g_info.get("quat", gu.identity_quat()))
+            )
             tmeshes = []
             metadata = set(first_g_info["mesh"].metadata.items())
-            T_first_inv = np.linalg.inv(
-                gs.utils.geom.trans_quat_to_T(
-                    first_g_info.get("pos", gu.zero_pos()),
-                    first_g_info.get("quat", gu.identity_quat()),
-                )
-            )
-            for g_info in g_infos:
+            for i in fusion_group:
+                g_info = g_infos[i]
                 mesh = g_info["mesh"]
                 tmesh = mesh.trimesh
-                T_rel = T_first_inv @ gs.utils.geom.trans_quat_to_T(
-                    g_info.get("pos", gu.zero_pos()),
-                    g_info.get("quat", gu.identity_quat()),
+                T_rel = T_first_inv @ gu.trans_quat_to_T(
+                    g_info.get("pos", gu.zero_pos()), g_info.get("quat", gu.identity_quat())
                 )
                 if not np.allclose(T_rel, np.eye(4)):
                     tmesh = tmesh.copy()
                     tmesh.apply_transform(T_rel)
                 metadata &= set(mesh.metadata.items())
                 tmeshes.append(tmesh)
-
             tmesh = trimesh.util.concatenate(tmeshes)
-            metadata = dict(metadata) | {"merged": True}
-            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata=metadata)
-            g_infos = [{**first_g_info, **dict(mesh=mesh)}]
+            mesh = gs.Mesh.from_trimesh(
+                mesh=tmesh, surface=gs.surfaces.Collision(), metadata=dict(metadata) | {"merged": True}
+            )
+            fused_infos.append({**first_g_info, **dict(type=gs.GEOM_TYPE.MESH, data=None, mesh=mesh)})
+            geoms_is_fused.append(True)
+        g_infos = fused_infos
 
-        # Try again to convexify then apply convex decomposition if not possible
-        if must_decompose and is_merged:
+        # A genuinely fused mesh (a sub-group of more than one geom) re-enters the pipeline so its convex hull /
+        # decomposition is recomputed on the union; requiring an actual merge stops infinite recursion once every
+        # sub-group is either a singleton or accurate enough to skip decomposition.
+        if convexify and any(geoms_is_fused):
             return _postprocess_collision_geoms_impl(
                 g_infos,
                 decimate,
@@ -640,16 +659,51 @@ def _postprocess_collision_geoms_impl(
                 watertighten,
             )
 
-    if must_decompose:
-        if math.isinf(volume_err):
+    # Nonconvex: watertighten each fused surface into a closed mesh so the grid SDF is reliable. The convex path skips
+    # this (its hull / decomposition replaces the surface anyway, so an alpha-wrap would be wasted work).
+    if not convexify and watertighten is not None:
+        from .watertighten import watertighten_mesh
+
+        for g_info, is_fused in zip(g_infos, geoms_is_fused):
+            # Fused geoms are always watertightened, as their sub-meshes may overlap while being individually
+            # watertight. Other geoms are skipped if they are not generic meshes or already watertight or convex.
+            tmesh = g_info["mesh"].trimesh
+            if not is_fused and (g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.is_watertight or tmesh.is_convex):
+                continue
+
+            # On-disk cache keyed by (vertices, faces, aggressiveness): a repeated build on the same geom is a file read
+            # instead of a multi-second SDF + DC + QEM rebuild. The reader tolerates corruption (partial writes, stale
+            # pickles, missing modules) by falling back to a fresh compute, matching the pattern used by get_cvx_path.
+            cache_path = get_wt_path(tmesh.vertices, tmesh.faces, watertighten)
+            is_cached_loaded = False
+            v_out = f_out = None
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as fp:
+                        v_out, f_out = pkl.load(fp)
+                    is_cached_loaded = True
+                except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
+                    gs.logger.info("Ignoring corrupted watertighten cache.")
+            if not is_cached_loaded:
+                v_out, f_out = watertighten_mesh(tmesh.vertices, tmesh.faces, aggressiveness=watertighten)
+                os.makedirs(get_wt_cache_dir(), exist_ok=True)
+                with open(cache_path, "wb") as fp:
+                    pkl.dump((v_out, f_out), fp, protocol=pkl.HIGHEST_PROTOCOL)
+            fused = trimesh.Trimesh(vertices=v_out, faces=f_out, process=False)
+            metadata = g_info["mesh"].metadata.copy()
+            metadata["watertightened"] = True
+            g_info["mesh"] = gs.Mesh.from_trimesh(mesh=fused, surface=gs.surfaces.Collision(), metadata=metadata)
+
+    if not is_authored and must_decompose:
+        if math.isinf(volume_err_max):
             gs.logger.info(
                 "Collision mesh has inconsistent winding and 'decompose_error_threshold' != float('inf'). "
                 "Falling back to more expensive convex decomposition (see FileMorph options)."
             )
         else:
             gs.logger.info(
-                f"Convex hull is not accurate enough for collision detection ({volume_err:.3f}). Falling back to more "
-                "expensive convex decomposition (see FileMorph options)."
+                f"Convex hull is not accurate enough for collision detection ({volume_err_max:.3f}). Falling back to "
+                "more expensive convex decomposition (see FileMorph options)."
             )
         _g_infos = []
         for g_info in g_infos:
@@ -657,7 +711,7 @@ def _postprocess_collision_geoms_impl(
             tmesh = mesh.trimesh
             if g_info["type"] != gs.GEOM_TYPE.MESH:
                 volume_err = 0.0
-            if not tmesh.is_winding_consistent:
+            elif not tmesh.is_winding_consistent:
                 volume_err = float("inf")
             elif abs(tmesh.volume) < gs.EPS:
                 volume_err = 0.0

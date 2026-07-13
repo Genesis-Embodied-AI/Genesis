@@ -266,6 +266,7 @@ def build_usd_scene(
             fixed=fixed,
             convexify=False,
             decimate=False,
+            watertighten=None,
             align=False,
         ),
         material=gs.materials.Rigid(
