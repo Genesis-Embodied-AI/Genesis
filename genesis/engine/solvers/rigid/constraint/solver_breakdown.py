@@ -556,9 +556,6 @@ def _func_update_constraint_forces_body(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     ncone = nef + constraint_state.n_constraints_cone[i_b]
 
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-
     if qd.static(static_rigid_sim_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
         # Elliptic cone: the head thread ((i_c - nef) % 3 == 0) processes the normal + two tangent rows as one
         # second-order cone and writes all three; the two tangent threads are no-ops (race-free). Mirrors
@@ -633,6 +630,18 @@ def _func_update_constraint_forces(
     """
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
+
+    # Snapshot prev_active in its own parallel pass so every row is captured before any active recompute: the cone head
+    # thread rewrites its two tangent rows' active, which would otherwise race the tangent threads capturing prev_active.
+    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        qd.loop_config(name="snapshot_prev_active")
+        for i_c, i_b in qd.ndrange(
+            len_constraints,
+            _B,
+            axes=qd.static((1, 0) if static_rigid_sim_config.enable_cooperative_constraint_kernels else None),
+        ):
+            if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
 
     qd.loop_config(name="update_constraint_forces")
     for i_c, i_b in qd.ndrange(
@@ -1149,9 +1158,9 @@ def _kernel_solve_graph(
                 # grid only pays off when the whole-env Hessian does not fit shared (the cooperative branch below).
                 # For the elliptic cone, add its coupled block to the maintained nt_H, factor+solve, then remove it, so
                 # the incremental patch keeps working on the cone-free Hessian (no per-iteration rebuild).
-                _func_wrap_cone_hessian(constraint_state, static_rigid_sim_config, 1.0)
+                _func_wrap_cone_hessian(constraint_state, static_rigid_sim_config, scale=1.0)
                 solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_global_info, static_rigid_sim_config)
-                _func_wrap_cone_hessian(constraint_state, static_rigid_sim_config, -1.0)
+                _func_wrap_cone_hessian(constraint_state, static_rigid_sim_config, scale=-1.0)
         elif qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_per_island_solve

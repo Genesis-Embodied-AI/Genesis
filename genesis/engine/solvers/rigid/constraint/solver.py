@@ -886,7 +886,14 @@ def _add_collision_constraints_per_contact(
                                 constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
                         constraint_state.diag[n_con, i_b] = gs.qd_float(1.0)
                         constraint_state.aref[n_con, i_b] = gs.qd_float(0.0)
-                        constraint_state.efc_D[n_con, i_b] = gs.qd_float(0.0)
+                        # The elliptic cone reads efc_D as con_mu = friction * sqrt(d0 / d1); a zero would give
+                        # sqrt(0 / 0) = NaN that the cleared jacobian cannot mask (0 * NaN = NaN), poisoning the solve.
+                        # A finite efc_D = 1 / diag keeps con_mu finite, so the zero residuals classify this inert row
+                        # as inactive. The pyramidal path is unaffected by efc_D once its jacobian is zero, so it keeps 0.
+                        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                            constraint_state.efc_D[n_con, i_b] = gs.qd_float(1.0)
+                        else:
+                            constraint_state.efc_D[n_con, i_b] = gs.qd_float(0.0)
                     continue
 
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
@@ -5305,9 +5312,6 @@ def _func_update_efc_force_body(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     ncone = nef + constraint_state.n_constraints_cone[i_b]
 
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-
     if qd.static(static_rigid_sim_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
         # Elliptic cone contact (cooperative one-thread-per-row): the second-order cone (SOC) couples the normal (head)
         # row with its two tangent rows. Only the head thread ((i_c - nef) % 3 == 0) processes the triple and writes
@@ -5380,6 +5384,20 @@ def _func_update_efc_force(
     """
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
+
+    # Snapshot prev_active in its own parallel pass so every row is captured before any active recompute: the cone head
+    # thread rewrites its two tangent rows' active, which would otherwise race the tangent threads capturing prev_active.
+    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        qd.loop_config(
+            name="snapshot_prev_active", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+        )
+        for i_c, i_b in qd.ndrange(
+            len_constraints,
+            _B,
+            axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None),
+        ):
+            if i_c < constraint_state.n_constraints[i_b]:
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
 
     qd.loop_config(
         name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
