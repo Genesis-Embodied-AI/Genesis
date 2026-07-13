@@ -273,6 +273,19 @@ class RigidSolver(KinematicSolver):
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
 
+        # A high tangential-to-normal impedance ratio suppresses the tangential creep of regularized friction that
+        # lets resting structures slowly slide apart under their own weight. With the elliptic cone the tangential
+        # rows are stiffened independently, so it resolves to a high ratio - except under MuJoCo compatibility, where
+        # behavioral parity with MuJoCo (whose own default is 1) takes priority. The pyramidal cone mixes the normal
+        # direction into every row, so it always keeps the neutral default of 1.
+        if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
+            gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
+        if options.impratio is None:
+            if options.friction_cone == gs.friction_cone.elliptic and not self._enable_mujoco_compatibility:
+                options.impratio = 100.0
+            else:
+                options.impratio = 1.0
+
         self.collider = None
         self.constraint_solver = None
 
@@ -511,6 +524,7 @@ class RigidSolver(KinematicSolver):
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
+            enable_elliptic_friction=self._options.friction_cone == gs.friction_cone.elliptic,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
@@ -576,6 +590,8 @@ class RigidSolver(KinematicSolver):
                 # scalar O(n_dofs^3) per-env factor is always worse). hessian_fits_shared additionally gates the
                 # shared-memory tiled triangular solve and fused factor+solve, which stage the full L tile in shared.
                 hessian_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs, tiled_n_dofs + 1)
+                # The elliptic cone Hessian block is added as an additive post-pass after func_hessian_direct_tiled
+                # (before the tiled factor reads the assembled H), so the tiled factor path supports elliptic.
                 enable_tiled_cholesky_hessian = self.n_dofs >= 16 and (not hessian_fits_shared or envs_undersaturate)
 
                 # The cooperative in-place LDL^T has no cap; the shared-memory tile is faster but capped. Same env logic

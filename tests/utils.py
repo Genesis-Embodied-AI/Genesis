@@ -565,7 +565,15 @@ def _get_model_mappings(
 
 
 def build_mujoco_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, native_ccd
+    xml_path,
+    gs_solver,
+    gs_integrator,
+    merge_fixed_links,
+    multi_contact,
+    adjacent_collision,
+    native_ccd,
+    *,
+    cone=gs.friction_cone.pyramidal,
 ):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
@@ -591,7 +599,10 @@ def build_mujoco_sim(
 
     model.opt.solver = mj_solver
     model.opt.integrator = mj_integrator
-    model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
+    if cone == gs.friction_cone.elliptic:
+        model.opt.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
+    else:
+        model.opt.cone = mujoco.mjtCone.mjCONE_PYRAMIDAL
     model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ISLAND
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
@@ -624,6 +635,8 @@ def build_genesis_sim(
     gjk_collision,
     show_viewer,
     mj_sim,
+    *,
+    friction_cone=gs.friction_cone.pyramidal,
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -641,6 +654,7 @@ def build_genesis_sim(
             integrator=gs_integrator,
             constraint_solver=gs_solver,
             enable_mujoco_compatibility=mujoco_compatibility,
+            friction_cone=friction_cone,
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,
@@ -756,9 +770,10 @@ def check_mujoco_model_consistency(
 
     mj_cone = mujoco.mjtCone(mj_sim.model.opt.cone)
     if mj_cone.name == "mjCONE_ELLIPTIC":
-        assert False
+        assert gs_sim.rigid_solver._options.friction_cone == gs.friction_cone.elliptic
+        assert_allclose(gs_sim.rigid_solver._options.impratio, mj_sim.model.opt.impratio, tol=tol)
     elif mj_cone.name == "mjCONE_PYRAMIDAL":
-        assert True
+        assert gs_sim.rigid_solver._options.friction_cone == gs.friction_cone.pyramidal
     else:
         assert False
 

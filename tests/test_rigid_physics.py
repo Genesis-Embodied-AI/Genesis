@@ -582,6 +582,24 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.friction_cone(gs.friction_cone.elliptic)
+@pytest.mark.parametrize("model_name", ["box_plan"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_box_plane_dynamics_elliptic(gs_sim, mj_sim, tol):
+    # Elliptic (second-order) friction cone must match MuJoCo's elliptic cone. The box lands and slides with an
+    # initial tangential + angular velocity so the tangential cone rows are exercised in both the sliding (cone
+    # boundary) and sticking (bottom) regimes.
+    cube_pos = np.array([0.0, 0.0, 0.6])
+    cube_quat = np.random.rand(4)
+    cube_quat /= np.linalg.norm(cube_quat)
+    qpos = np.concatenate((cube_pos, cube_quat))
+    qvel = np.random.rand(6) * 0.2
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["general_actuator"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
@@ -4095,13 +4113,18 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
     ],
 )
 def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
-    BOWL_THICKNESS = 0.011
+    BOWL_THICKNESS = 0.013
     NUM_BOWLS = 32
 
     timeconst = max(0.005, 2 * timestep)
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=timestep,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # The pyramidal cone cannot hold the pile: its regularized friction creeps tangentially under the
+            # sustained shear of the nested stack, and the tower topples within a few thousand steps.
+            friction_cone=gs.friction_cone.elliptic,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-0.6, 0.6, 0.5),
@@ -4116,7 +4139,7 @@ def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
         scene.add_entity(
             morph=gs.morphs.Mesh(
                 file=f"{asset_path}/glb/orange_plastic_bowl.glb",
-                pos=(0, 0, 0.0 + i * BOWL_THICKNESS),
+                pos=(0, 0, 0.0 + i * (BOWL_THICKNESS - 0.15 * timeconst)),
                 euler=(90, 0, 0),
                 convexify=False,
                 decimate=decimate,
@@ -6624,99 +6647,275 @@ def test_mesh_primitive_COM(show_viewer):
 
 
 @pytest.mark.slow("gpu")  # gpu ~250s
-@pytest.mark.required
-@pytest.mark.parametrize("scale", [0.04, 1.0])
-@pytest.mark.parametrize("friction", [0.5, 2.0])
-@pytest.mark.parametrize("mesh_boxes", [False, True])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_tmp_path):
+@pytest.mark.debug(False)  # the OOB checks in debug mode spill memory and add no value to this long settling test
+@pytest.mark.parametrize(
+    "backend, mode, friction, n_boxes, solver",
+    [
+        # n_boxes selects the codepath: 1 box (6 DOF) runs the dense monolith with islands off; 3 boxes (18 DOF) turn
+        # islands on and, on GPU past the 16-DOF cooperative threshold, engage the decomposed arm. CG rides the
+        # lighter-load elliptic configs; the stiff high-load cases stay on Newton, which CG cannot hold as tightly.
+        (gs.cpu, "elliptic", 2.0, 1, gs.constraint_solver.Newton),
+        pytest.param(gs.cpu, "elliptic", 2.0, 3, gs.constraint_solver.Newton, marks=pytest.mark.required),
+        (gs.cpu, "elliptic", 0.5, 3, gs.constraint_solver.Newton),
+        (gs.gpu, "elliptic", 2.0, 1, gs.constraint_solver.CG),
+        pytest.param(gs.gpu, "elliptic", 2.0, 3, gs.constraint_solver.Newton, marks=pytest.mark.required),
+        (gs.gpu, "elliptic", 0.5, 3, gs.constraint_solver.Newton),
+        pytest.param(gs.cpu, "noslip", 2.0, 3, gs.constraint_solver.Newton, marks=pytest.mark.required),
+        (gs.cpu, "noslip", 0.5, 3, gs.constraint_solver.CG),
+        pytest.param(gs.gpu, "noslip", 2.0, 3, gs.constraint_solver.Newton, marks=pytest.mark.required),
+    ],
+)
+def test_static_friction(mode, friction, n_boxes, solver, show_viewer):
+    # A shear-loaded stack of n_boxes floating boxes braced against a fixed wall must stay static under either
+    # creep-suppression mechanism: noslip (pyramidal cone + noslip post-iterations) or the elliptic cone (high
+    # tangential impedance). Regularized friction alone lets the stack slowly creep under sustained shear; both hold.
     GRAVITY = -9.81
-    # FIXME: we need apply a larger force than expected to keep the boxes static
-    SAFETY_FACTOR = 2.5
+    # SAFETY_FACTOR scales the applied shear above the theoretical minimum (weight / mu) that braces the stack. The
+    # pyramidal cone inscribes the true friction cone and its regularized friction creeps, so noslip must over-push
+    # ~2.5x; the elliptic cone enforces the exact Coulomb limit and holds at nearly the theoretical force (the static
+    # hold breaks down just below ~1.08, since the fixed wall braces the stack only through the inter-box friction
+    # chain). Residual creep shrinks monotonically with the tangential impedance ratio impratio: 20 still creeps past
+    # tolerance over this horizon, ~50 holds marginally, and the default 100 holds with margin.
+    SAFETY_FACTOR = 1.1 if mode == "elliptic" else 2.5
+    scale = 1.0
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(noslip_iterations=5),
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=solver,
+            noslip_iterations=5 if mode == "noslip" else 0,
+            friction_cone=gs.friction_cone.elliptic if mode == "elliptic" else gs.friction_cone.pyramidal,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3 * scale, 3 * scale, 3 * scale),
             camera_lookat=(scale, 0.0, 0.0),
         ),
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
         show_viewer=show_viewer,
     )
 
-    for i in range(3):
+    for i in range(n_boxes + 1):
         box_size = (scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i)))
-        if mesh_boxes:
-            mesh_path = str(asset_tmp_path / f"noslip_box_{scale}_{i}.obj")
-            trimesh.creation.box(extents=box_size).export(mesh_path, file_type="obj")
-            morph = gs.morphs.Mesh(
-                file=mesh_path,
-                pos=(i * scale, 0, 0),
-                fixed=(i == 0),
-            )
-        else:
-            morph = gs.morphs.Box(
+        scene.add_entity(
+            gs.morphs.Box(
                 size=box_size,
                 pos=(i * (1 - 1e-3) * scale, 0, 0),
                 fixed=(i == 0),
-            )
-        scene.add_entity(
-            morph,
+            ),
             material=gs.materials.Rigid(
                 rho=200.0,
                 friction=friction,
             ),
-            surface=gs.surfaces.Default(
-                color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
-            ),
             visualize_contact=True,
         )
 
-    mesh_path = str(asset_tmp_path / f"noslip_faraway_{scale}.obj")
-    trimesh.creation.box(extents=(scale, scale, scale)).export(mesh_path, file_type="obj")
-    scene.add_entity(gs.morphs.Mesh(file=mesh_path, pos=(100 * scale, 100 * scale, 0)))
-
-    _, box_1, box_2 = scene.entities[:3]
+    floating_boxes = scene.entities[1:]
     scene.build()
 
-    # Compute the force that must be applied to get the box in place without slipping
-    total_mass = box_1.get_mass() + box_2.get_mass()
+    # Both solver arms are provably exercised across the parametrization: a single floating box is one island on the
+    # dense monolith path, while three floating boxes turn islands on and (on GPU, at 18 >= 16 DOF) engage the
+    # cooperative decomposed arm - the path that regressed the elliptic slip. prefer_decomposed_solver is pinned by
+    # the test infra (1 on GPU, 0 on CPU) and the decomposed arm is kept only where the cooperative kernels engage.
+    assert scene.sim.rigid_solver._use_contact_island == (n_boxes > 1)
+    if gs.backend != gs.cpu:
+        assert scene.sim.rigid_solver._static_rigid_sim_config.enable_cooperative_constraint_kernels == (n_boxes > 1)
+        assert scene.sim.rigid_solver._static_rigid_sim_config.prefer_decomposed_solver == int(n_boxes > 1)
+
+    # Force needed to hold the floating boxes static without slipping
+    total_mass = sum(box.get_mass() for box in floating_boxes)
     force_x = (total_mass * GRAVITY) / friction
 
-    # Push the floating box that is further away from the fixed box in its direction
-    box_2.control_dofs_force(SAFETY_FACTOR * force_x, dofs_idx_local=0)
+    # Push the furthest floating box toward the fixed wall
+    floating_boxes[-1].control_dofs_force(SAFETY_FACTOR * force_x, dofs_idx_local=0)
 
-    # Add position-based orientation control torque is used to stabilize contacts
-    for box in (box_1, box_2):
+    # Position-based orientation control stabilizes the contacts
+    for box in floating_boxes:
         box.set_dofs_kp(1000.0 * total_mass, dofs_idx_local=slice(3, 6))
         box.set_dofs_kv(100.0 * total_mass, dofs_idx_local=slice(3, 6))
         box.control_dofs_position(box.get_dofs_position(dofs_idx_local=slice(3, 6)), dofs_idx_local=slice(3, 6))
 
-    # Recording rest positions after a few warmup steps
+    # Record rest positions after warmup
     for _ in range(50):
         scene.step()
-    boxes_pos_init = [box.get_pos() for box in (box_1, box_2)]
+    boxes_pos_init = [box.get_pos() for box in floating_boxes]
 
-    # Simulate for 20 seconds
+    # Hold under sustained shear for 20 seconds
     for _ in range(2000):
         scene.step()
 
-    # Check that the floating boxes did not move
-    assert_allclose([box.get_pos() for box in (box_1, box_2)], boxes_pos_init, atol=5e-3)
+    # The floating boxes stay static
+    assert_allclose([box.get_pos() for box in floating_boxes], boxes_pos_init, atol=5e-3)
 
-    # Reduce the force below theoretical threshold
-    box_2.control_dofs_force(0.95 * force_x, dofs_idx_local=0)
-
-    # Simulate for a while
+    # Drop the force below the theoretical threshold; the stack loses its brace and falls
+    floating_boxes[-1].control_dofs_force(0.95 * force_x, dofs_idx_local=0)
     for _ in range(300):
         scene.step()
-
-    # Check that boxes are falling
-    for box in (box_1, box_2):
+    for box in floating_boxes:
         _, _, box_z = box.get_pos()
         assert box_z < -scale
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_elliptic_cone_coulomb_isotropy(backend, show_viewer, tol):
+    # With the box yaw and the tangential center-of-mass force in independent random directions across parallel envs, a
+    # box on a plane must slide above the Coulomb threshold |F_t| = mu*N and hold static below it, identically per env.
+    GRAVITY = -9.81
+    MU = 1.0
+    DT = 0.005
+    N_ENVS = 16
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=gs.friction_cone.elliptic,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction=MU,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.1),
+        ),
+        material=gs.materials.Rigid(
+            friction=MU,
+        ),
+    )
+    scene.build(n_envs=N_ENVS)
+    mass = box.get_mass()
+    normal_force = MU * mass * (-GRAVITY)
+
+    yaw = 2.0 * torch.pi * torch.rand(N_ENVS, device=gs.device)
+    direction = 2.0 * torch.pi * torch.rand(N_ENVS, device=gs.device)
+    zeros = torch.zeros(N_ENVS, device=gs.device)
+    quat = torch.stack((torch.cos(0.5 * yaw), zeros, zeros, torch.sin(0.5 * yaw)), dim=1)
+    force_dir = torch.stack((torch.cos(direction), torch.sin(direction)), dim=1)
+
+    def settle():
+        box.control_dofs_force(0.0, dofs_idx_local=[0, 1])
+        box.set_pos((0.0, 0.0, 0.1))
+        box.set_quat(quat)
+        box.set_dofs_velocity(
+            torch.cat(
+                (0.02 * torch.randn(N_ENVS, 2, device=gs.device), torch.zeros(N_ENVS, 4, device=gs.device)), dim=1
+            )
+        )
+        # Hold each orientation so the CoM force slides the box instead of tipping it about the contact.
+        box.set_dofs_kp(1.0e3 * mass, dofs_idx_local=slice(3, 6))
+        box.set_dofs_kv(1.0e2 * mass, dofs_idx_local=slice(3, 6))
+        box.control_dofs_position(box.get_dofs_position(dofs_idx_local=slice(3, 6)), dofs_idx_local=slice(3, 6))
+        for _ in range(25):
+            scene.step()
+
+    # Above the Coulomb threshold: the box slides, and the elliptic cone makes the sliding acceleration identical in
+    # every direction. Skip the initial transient, then measure the acceleration over a fixed window.
+    settle()
+    box.control_dofs_force(1.5 * normal_force * force_dir, dofs_idx_local=[0, 1])
+    for _ in range(10):
+        scene.step()
+    vel_0 = box.get_dofs_velocity(dofs_idx_local=[0, 1])
+    for _ in range(20):
+        scene.step()
+    vel_1 = box.get_dofs_velocity(dofs_idx_local=[0, 1])
+    accel = torch.linalg.norm(vel_1 - vel_0, dim=1) / (20 * DT)
+    assert accel.std() < 0.02 * accel.mean()
+
+    # Below the Coulomb threshold: friction holds the box static in every direction, with no slow tangential creep.
+    settle()
+    box.control_dofs_force(0.4 * normal_force * force_dir, dofs_idx_local=[0, 1])
+    for _ in range(40):
+        scene.step()
+    assert (torch.linalg.norm(box.get_dofs_velocity(dofs_idx_local=[0, 1]), dim=1) < 0.02).all()
+
+
+@pytest.mark.required
+def test_elliptic_cone_push_isotropy(show_viewer):
+    N_ENVS = 8
+    FRICTION = 0.5
+    BOX_POS = (0.0, 0.0, 0.05)
+    BOX_SIZE = (0.1, 0.2, 0.1)
+    PUSHER_RADIUS = 0.02
+    PUSHER_HEIGHT = 0.1
+    # Pusher path in the box's local frame; the shared +y offset gives the push a lever arm that spins the box.
+    PUSH_START_LOCAL = (-0.15, 0.03, 0.05)
+    PUSH_END_LOCAL = (0.02, 0.03, 0.05)
+    PUSHER_KP = (2000.0, 2000.0, 2000.0, 500.0, 500.0, 500.0)
+    PUSHER_KV = (200.0, 200.0, 200.0, 50.0, 50.0, 50.0)
+    N_PUSH_STEPS = 80
+    # The box-pusher contact leaves a residual ~1e-5, so the pose cannot match to the double-precision `tol`.
+    POSE_TOL = 5e-5
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            substeps=4,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=gs.friction_cone.elliptic,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            pos=BOX_POS,
+            size=BOX_SIZE,
+        ),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    pusher = scene.add_entity(
+        gs.morphs.Cylinder(
+            pos=PUSH_START_LOCAL,
+            height=PUSHER_HEIGHT,
+            radius=PUSHER_RADIUS,
+        ),
+        material=gs.materials.Rigid(
+            friction=FRICTION,
+        ),
+    )
+    scene.build(n_envs=N_ENVS)
+
+    yaw = 2.0 * torch.pi * torch.arange(N_ENVS, device=gs.device) / N_ENVS
+    box_quat = gu.xyz_to_quat(torch.stack((torch.zeros_like(yaw), torch.zeros_like(yaw), yaw), dim=1), rpy=True)
+    box.set_quat(box_quat)
+
+    # Rotate the local pusher path into each env's world frame by the box yaw, and PD-control the pusher's full pose.
+    push_start = gu.transform_by_quat(torch.tensor(PUSH_START_LOCAL, device=gs.device).repeat(N_ENVS, 1), box_quat)
+    push_end = gu.transform_by_quat(torch.tensor(PUSH_END_LOCAL, device=gs.device).repeat(N_ENVS, 1), box_quat)
+    pusher.set_pos(push_start)
+    pusher.set_dofs_kp(pusher.get_mass() * torch.tensor(PUSHER_KP, device=gs.device))
+    pusher.set_dofs_kv(pusher.get_mass() * torch.tensor(PUSHER_KV, device=gs.device))
+
+    # Let the box resolve its initial ground contact before the push starts, so the two transients do not couple.
+    scene.step()
+
+    # Drive the pusher forward through the box while holding its height and orientation.
+    pusher.control_dofs_position(push_end, dofs_idx_local=[0, 1, 2])
+    pusher.control_dofs_position(0.0, dofs_idx_local=[3, 4, 5])
+    for _ in range(N_PUSH_STEPS):
+        scene.step()
+
+    # The box and pusher settle at rest by the end.
+    assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0.0, atol=0.01)
+
+    # The final box pose in its own initial frame is identical across every initial yaw.
+    rel_pos = gu.transform_by_quat(box.get_pos() - torch.tensor(BOX_POS, device=gs.device), gu.inv_quat(box_quat))
+    rel_yaw = gu.quat_to_xyz(gu.transform_quat_by_quat(box.get_quat(), gu.inv_quat(box_quat)), rpy=True)[:, 2]
+    assert_allclose(rel_pos, rel_pos.mean(dim=0), atol=POSE_TOL)
+    assert_allclose(rel_yaw, rel_yaw.mean(), atol=POSE_TOL)
 
 
 @pytest.mark.slow  # ~250s

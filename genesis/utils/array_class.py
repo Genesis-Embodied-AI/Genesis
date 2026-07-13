@@ -130,6 +130,7 @@ class RigidGlobalInfo:
     ls_tolerance: qd.Tensor
     noslip_iterations: qd.Tensor
     noslip_tolerance: qd.Tensor
+    impratio: qd.Tensor
     n_equalities: qd.Tensor
     n_candidate_equalities: qd.Tensor
     hibernation_thresh_vel: qd.Tensor
@@ -206,6 +207,7 @@ def get_rigid_global_info(solver, kinematic_only):
             ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            impratio=V_SCALAR_FROM(dtype=gs.qd_float, value=1.0),
             n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
@@ -243,6 +245,7 @@ def get_rigid_global_info(solver, kinematic_only):
         ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.ls_tolerance),
         noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.noslip_iterations),
         noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.noslip_tolerance),
+        impratio=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.impratio),
         n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._n_equalities),
         n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver.n_candidate_equalities_),
         hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._hibernation_thresh_vel),
@@ -265,6 +268,9 @@ class ConstraintState:
     jac_n_dofs: qd.Tensor
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
+    # Number of elliptic-cone contact rows (3 per contact), laid out contiguously at the start of the collision
+    # segment. Zero for the pyramidal cone. The cone rows occupy [ne + n_frictionloss, ne + n_frictionloss + n_cone).
+    n_constraints_cone: qd.Tensor
     improved: qd.Tensor
     Jaref: qd.Tensor
     Ma: qd.Tensor
@@ -272,6 +278,9 @@ class ConstraintState:
     grad: qd.Tensor
     Mgrad: qd.Tensor
     search: qd.Tensor
+    # Previous-iteration cone-row residuals, kept only for the elliptic cone so the incremental factor can downdate the
+    # prior coupled cone block (Jaref is overwritten by the linesearch apply). Empty for the pyramidal cone.
+    cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
@@ -371,6 +380,11 @@ def get_constraint_state(constraint_solver, solver):
     # The remaining (len_constraints_,) tensors outside the GPU cooperative flip set follow only the serialized flip.
     con_layout = (1, 0) if batch_first else None
     serial_layout = (1, 0) if serialized else None
+    # The CPU incremental factor maintains the elliptic cone by a per-iteration rank-3 update reading the previous cone
+    # residuals, so the residual cache is allocated for the CPU elliptic case.
+    is_cone_incremental = (
+        solver._static_rigid_sim_config.enable_elliptic_friction and solver._static_rigid_sim_config.backend == gs.cpu
+    )
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
@@ -412,6 +426,7 @@ def get_constraint_state(constraint_solver, solver):
         qd_n_equalities=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.qd_int, shape=(_B,)),
+        n_constraints_cone=V(dtype=gs.qd_int, shape=(_B,)),
         is_warmstart=V(dtype=gs.qd_bool, shape=(_B,)),
         improved=V(dtype=gs.qd_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.qd_float, shape=(_B,)),
@@ -433,6 +448,11 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        cone_prev_jaref=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape((constraint_solver.n_cone_constraints_, _B), is_cone_incremental),
+            layout=serial_layout if is_cone_incremental else None,
+        ),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
@@ -2291,6 +2311,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_dofs_info: bool
     batch_joints_info: bool
     enable_mujoco_compatibility: bool
+    enable_elliptic_friction: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
     box_box_detection: bool

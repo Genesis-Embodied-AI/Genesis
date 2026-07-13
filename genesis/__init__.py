@@ -495,6 +495,7 @@ from .constants import (
     INACTIVE,
     integrator,
     constraint_solver,
+    friction_cone,
     broadphase_traversal,
 )
 
