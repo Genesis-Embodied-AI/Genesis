@@ -916,9 +916,7 @@ def _func_elastomer_direct_dilate_contribution(
         if compressibility <= 0.0:  # pure incompressible r_hat / r
             w = depth * inv
         else:  # blend, each kernel peak-normalized (see the FFT builder for the closed-form peaks)
-            # = _INV_SQRT_E (e^-0.5); inlined literal so this @qd.func stays pure for its fastcache callers (reading
-            # the module global here would be a [PURE.VIOLATION]).
-            norm_g = gs.qd_float(qd.static(0.6065306597126334)) / qd.sqrt(gs.qd_float(2.0) * lam)
+            norm_g = gs.qd_float(qd.static(_INV_SQRT_E)) / qd.sqrt(gs.qd_float(2.0) * lam)
             norm_i = gs.qd_float(1.0) / (gs.qd_float(2.0) * eps)
             w = depth * (compressibility * gaussian / norm_g + (gs.qd_float(1.0) - compressibility) * inv / norm_i)
     return (planar_diff * w + normal_bulge) * scale
@@ -1443,10 +1441,7 @@ def _kernel_elastomer_surface_state_bvh(
         sensor_pos = links_state.pos[sensor_link_idx, i_b]
         sensor_quat = links_state.quat[sensor_link_idx, i_b]
 
-        # = tactile_shared.BVH_STACK_SIZE, inlined as a literal because this kernel is fastcache=True: reading the
-        # module global here would be a [PURE.VIOLATION].
-        _bvh_stack_size = qd.static(32)
-        stack = qd.Vector.zero(gs.qd_int, qd.static(_bvh_stack_size))
+        stack = qd.Vector.zero(gs.qd_int, qd.static(BVH_STACK_SIZE))
         stack[0] = bvh.chunk_node_start[i_c]
         stack_idx = 1
 
@@ -1501,7 +1496,7 @@ def _kernel_elastomer_surface_state_bvh(
                 right = bvh.node_right[n]
                 # Median split bounds depth at log2(N / leaf_size) << BVH_STACK_SIZE; the guard mirrors the
                 # global rigid-BVH kernel so a future build strategy can't silently overflow the stack.
-                if stack_idx < qd.static(_bvh_stack_size - 2):
+                if stack_idx < qd.static(BVH_STACK_SIZE - 2):
                     stack[stack_idx] = left
                     stack[stack_idx + 1] = right
                     stack_idx += 2
