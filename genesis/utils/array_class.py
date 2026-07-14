@@ -2340,6 +2340,16 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
+    # Thread-block widths for specific cooperative rigid kernels. Migrated from module-level constants to static config
+    # fields so their values participate in the fastcache key (reading a bare module global inside qd.static() is a
+    # purity violation, since changing the global would not invalidate cached kernels).
+    # Cooperative mass_mat_assemble warp width (func_compute_mass_matrix); one warp per (entity, env).
+    mass_mat_block: int = 32
+    # Shared-memory reduction block dim for the decomposed-solver P0 linesearch kernel (_func_decomp_linesearch_p0).
+    p0_block: int = 32
+    # Candidate step sizes evaluated in parallel per env in the decomposed-solver linesearch
+    # (_func_decomp_linesearch_refine_and_apply); one block per env with this many cooperating threads.
+    ls_parallel_k: int = 32
     # Number of rank-1 Cholesky updates fused into one column sweep by the CPU per-island incremental factor
     # (func_rank_batch_update_island). Sizes the nt_vec slots and the static per-column unroll.
     hessian_rank_update_batch: int = 8

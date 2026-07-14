@@ -26,11 +26,6 @@ from .misc import (
     linear_to_lower_tri,
 )
 
-# Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
-# enable_cooperative_constraint_kernels=True (and not use_hibernation). One warp per (entity, env); lanes stride i_d_
-# within the entity dof block to coalesce the flipped mass_mat writes.
-_MASS_MAT_BLOCK = 32
-
 
 @qd.kernel
 def update_qacc_from_qvel_delta(
@@ -390,7 +385,7 @@ def func_compute_mass_matrix(
         # two-pass path computed and then overwrote, and removing the separate mirror pass. Under the flipped
         # mass_mat layout (i_d stride-1) the primary write coalesces; the inline mirror write is strided but
         # replaces the previous mirror-pass read-write at similar cost.
-        _T = qd.static(_MASS_MAT_BLOCK)
+        _T = qd.static(static_rigid_sim_config.mass_mat_block)
         n_entities = entities_info.n_links.shape[0]
         _B_assemble = links_state.pos.shape[1]
         qd.loop_config(name="mass_mat_assemble", block_dim=_T)
