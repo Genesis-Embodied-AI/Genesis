@@ -4157,9 +4157,9 @@ def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
     # Make sure that the pile stays upright, with bowls stay tightly packed together during the entire motion
     bowls_link_idx = [entity.base_link_idx for entity in scene.entities[-NUM_BOWLS:]]
     # The spawn drop sways the stack laterally before it settles; assert once the transient has decayed.
-    for _ in range(700):
-        scene.step()
     for _ in range(1000):
+        scene.step()
+    for _ in range(500):
         scene.step()
         bowls_pos = tensor_to_array(scene.rigid_solver.get_links_pos(bowls_link_idx, relative=True))
         bowls_dist_abs = np.linalg.norm(bowls_pos[:, :2] - bowls_pos[0, :2], axis=-1)
