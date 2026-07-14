@@ -4,7 +4,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import support_field
-from .constants import CCD_EXTRAPOLATION_TOL, PORTAL_STATUS
+from .constants import PORTAL_STATUS
 
 
 class MPR:
@@ -448,7 +448,10 @@ def mpr_find_penetration(
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # unconverged (hit the iteration cap)
             elif min_b >= 0.0:
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.VALID  # origin projects inside -> exact depth (Thm 4.2)
-            elif bsum > mpr_info.CCD_EPS[None] * babs and (-min_b) <= qd.static(CCD_EXTRAPOLATION_TOL) * bsum:
+            elif (
+                bsum > mpr_info.CCD_EPS[None] * babs
+                and (-min_b) <= qd.static(collider_static_config.ccd_extrapolation_tol) * bsum
+            ):
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED  # small overshoot -> lower bound (Thm 4.3)
             else:
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # extrapolates too far / degenerate -> unreliable

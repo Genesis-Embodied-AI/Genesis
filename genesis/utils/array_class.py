@@ -1035,6 +1035,11 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     n_contacts_per_nonconvex_pair: int
     # ccd algorithm
     ccd_algorithm: int
+    # How far the origin's projection may extrapolate beyond the portal triangle (as a barycentric fraction) before the
+    # infinite-plane penetration is deemed unreliable and the portal is marked INVALID (refine with GJK). Kept as a
+    # compile-time static-config member rather than an MPRInfo runtime field so it adds no kernel buffer binding: one
+    # more MPRInfo read pushes _func_narrowphase_multicontact past Metal's 31-binding limit.
+    ccd_extrapolation_tol: float = 1.0
 
 
 # =========================================== MPR ===========================================
