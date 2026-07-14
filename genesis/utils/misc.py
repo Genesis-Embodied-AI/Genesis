@@ -661,21 +661,6 @@ def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
     return out[mask]
 
 
-def _field_in_tree_offset_overflows_i32(value: qd.Field) -> bool:
-    """Whether the field sits past 2**31 bytes in its SNode tree.
-
-    FIXME: Quadrants' 'field_to_dlpack' truncates the in-tree byte offset to signed i32, so the zero-copy view of such
-    a field would silently alias the tree base (fixed upstream in Genesis-Embodied-AI/quadrants#768). Remove this guard
-    once the pinned quadrants release includes the fix.
-    """
-    snode = value.snode.ptr
-    offset = 0
-    while snode is not None:
-        offset += snode.offset_bytes_in_parent_cell
-        snode = snode.parent
-    return offset >= 2**31
-
-
 def qd_to_torch(
     value: qd.Tensor | qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
@@ -716,8 +701,6 @@ def qd_to_torch(
             is_copy = False
         except AttributeError:
             try:
-                if isinstance(value, qd.Field) and _field_in_tree_offset_overflows_i32(value):
-                    raise ValueError("Zero-copy view unavailable for fields past 2**31 bytes in their SNode tree.")
                 tc = value.to_torch(copy=False)
             except (ValueError, RuntimeError):
                 if copy is False:
@@ -786,8 +769,6 @@ def qd_to_numpy(
             is_copy = False
         except AttributeError:
             try:
-                if isinstance(value, qd.Field) and _field_in_tree_offset_overflows_i32(value):
-                    raise ValueError("Zero-copy view unavailable for fields past 2**31 bytes in their SNode tree.")
                 tc = value.to_torch(copy=False)
             except (RuntimeError, TypeError, ValueError):
                 if copy is False:
