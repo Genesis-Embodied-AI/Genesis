@@ -30,6 +30,7 @@ SceneMeta = namedtuple(
 pytestmark = [
     pytest.mark.benchmarks,
     pytest.mark.cache(False),
+    pytest.mark.debug(False),
 ]
 
 

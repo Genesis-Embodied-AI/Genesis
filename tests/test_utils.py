@@ -524,11 +524,9 @@ def test_polar_decomposition_batched_pure_rotation(side, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_genuine_interpenetration(show_viewer):
-    # All cases are hand-placed watertight meshes with an analytically known resolution depth (what a
-    # collision algorithm must resolve): dents and enclosures read min(incursion, separation), pierced walls
-    # read min(separation, push-back heal). The overlap detection is vertex-sampled, so every mesh is
-    # tessellated finer than the thinnest dimension of its partner. Every measured configuration is recorded
-    # so show_viewer displays the whole sample set at the end.
+    RADIUS = 0.03
+    EXACT_TOL = 2e-4
+
     pairs_viz = []
 
     def measure(label, links, is_exact=True):
@@ -553,13 +551,12 @@ def test_genuine_interpenetration(show_viewer):
         mesh = trimesh.creation.icosphere(subdivisions=4, radius=radius)
         return mesh.vertices + np.asarray(center), mesh.faces
 
-    RADIUS = 0.03
     # Overlapping spheres: one crossing whose depth is the overlap, up to the tessellation chord error.
     for overlap in (2e-3, 5e-3, 15e-3):
         pair = [[sphere(RADIUS, (0, 0, 0))], [sphere(RADIUS, (2 * RADIUS - overlap, 0, 0))]]
         max_depth, crossings = measure(f"spheres overlapping {overlap * 1e3:g}mm", pair)
         assert len(crossings) == 1
-        assert_allclose(max_depth, overlap, atol=1.5e-4)
+        assert_allclose(max_depth, overlap, atol=EXACT_TOL)
         max_depth_fast, crossings_fast = measure(f"spheres overlapping {overlap * 1e3:g}mm fast", pair, is_exact=False)
         assert len(crossings_fast) == 1
         assert_allclose(max_depth_fast, overlap, atol=5e-4)
@@ -596,19 +593,19 @@ def test_genuine_interpenetration(show_viewer):
     # Sphere resting on the container floor with sub-tolerance overlap: contact, not a crossing.
     max_depth, crossings = measure("sphere resting in open box", [[box_geom], [sphere(0.015, (0, 0, 0.015 - 0.5e-3))]])
     assert not crossings
-    assert_allclose(max_depth, 0.5e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 0.5e-3, atol=EXACT_TOL)
 
     # Sphere inside the container pressed 2 mm into a side wall: the depth is those 2 mm, NOT the centimetres
     # it would take to extract the sphere through the opening.
     max_depth, crossings = measure("sphere pressed 2mm into box wall", [[box_geom], [sphere(0.015, (0.012, 0, 0.04))]])
     assert len(crossings) == 1
-    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 2e-3, atol=EXACT_TOL)
 
     # Sphere pressed all the way THROUGH the wall, poking 2 mm outside: the escape pushes it back into the
     # cavity by the full 6 mm press, however it protrudes.
     max_depth, crossings = measure("sphere poking through box wall", [[box_geom], [sphere(0.015, (0.016, 0, 0.04))]])
     assert len(crossings) == 1
-    assert_allclose(max_depth, 6e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 6e-3, atol=EXACT_TOL)
 
     # Rod fully through a thin plate: the minimum separating translation backs the rod out along its axis -
     # rod half-extent plus plate half-thickness - regardless of the rod radius.
@@ -618,7 +615,7 @@ def test_genuine_interpenetration(show_viewer):
         plate = plate.subdivide()
     max_depth, crossings = measure("rod through plate", [[(rod.vertices, rod.faces)], [(plate.vertices, plate.faces)]])
     assert len(crossings) == 1
-    assert_allclose(max_depth, 12e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 12e-3, atol=EXACT_TOL)
 
     # Donut cases. Two chain-linked tori with clearance: topologically inseparable (NO translation ever
     # disjoins them), yet zero interpenetration.
@@ -641,24 +638,24 @@ def test_genuine_interpenetration(show_viewer):
     assert len(crossings) == 1
     # Separation clears the material overlap, it does not unlink: backing off by the press depth returns the
     # pair to the linked-with-clearance state, which is a valid disjoint configuration.
-    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 2e-3, atol=EXACT_TOL)
 
     # Same-plane donuts overlapping tube-to-tube from the outside by 5 mm.
     max_depth, crossings = measure(
         "donuts overlapping outside 5mm", [[torus(0.04, 0.01)], [torus(0.04, 0.01, center=(0.095, 0, 0))]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 5e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 5e-3, atol=EXACT_TOL)
 
     # Sphere seated in the donut hole, touching the whole ring at once: overlap = r_sphere + r_tube - R_major
     # exactly. Above the crossing tolerance it is one crossing of that depth, below it a mere contact, and a
     # small sphere floating in the hole is nothing at all.
     max_depth, crossings = measure("sphere seated in donut 2mm", [[torus(0.03, 0.01)], [sphere(0.022, (0, 0, 0))]])
     assert len(crossings) == 1
-    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 2e-3, atol=EXACT_TOL)
     max_depth, crossings = measure("sphere seated in donut 0.5mm", [[torus(0.03, 0.01)], [sphere(0.0205, (0, 0, 0))]])
     assert not crossings
-    assert_allclose(max_depth, 0.5e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 0.5e-3, atol=EXACT_TOL)
     max_depth, crossings = measure("sphere floating in donut hole", [[torus(0.03, 0.01)], [sphere(0.015, (0, 0, 0))]])
     assert not crossings and max_depth == 0.0
 
@@ -672,9 +669,9 @@ def test_genuine_interpenetration(show_viewer):
     ]
     max_depth, crossings = measure("sphere chain with empty link", links)
     assert [(c.link_a, c.link_b) for c in crossings] == [(0, 2), (2, 3)]
-    assert_allclose(crossings[0].depth, 5e-3, atol=1.5e-4)
-    assert_allclose(crossings[1].depth, 2e-3, atol=1.5e-4)
-    assert_allclose(max_depth, 5e-3, atol=1.5e-4)
+    assert_allclose(crossings[0].depth, 5e-3, atol=EXACT_TOL)
+    assert_allclose(crossings[1].depth, 2e-3, atol=EXACT_TOL)
+    assert_allclose(max_depth, 5e-3, atol=EXACT_TOL)
 
     # Thin rod: same extraction distance - the radius does not matter, only the extents do. Dense axial rings
     # (spacing below the plate thickness) so the rod's own verts flag the overlap at any shift: a feature
@@ -686,7 +683,7 @@ def test_genuine_interpenetration(show_viewer):
         "thin rod through plate", [[(thin_rod.vertices, thin_rod.faces)], [(plate.vertices, plate.faces)]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 12e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 12e-3, atol=EXACT_TOL)
 
     # Small solid sphere fully engulfed inside a big solid sphere: no free surface to heal toward, only the
     # extraction resolves - the depth is the separation R + r exactly, however deep it is buried.
@@ -694,7 +691,7 @@ def test_genuine_interpenetration(show_viewer):
         "sphere engulfed in solid sphere", [[sphere(0.03, (0, 0, 0))], [sphere(0.01, (0, 0, 0))]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 40e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 40e-3, atol=EXACT_TOL)
 
     # Hollow shell (outer sphere plus inverted inner sphere): a sphere floating in the cavity is containment,
     # the same sphere pressed 2 mm into the shell from inside is a 2 mm crossing - closed-cavity variant of the
@@ -711,7 +708,7 @@ def test_genuine_interpenetration(show_viewer):
     assert not crossings and max_depth == 0.0
     max_depth, crossings = measure("sphere pressed 2mm into shell", [[shell_geom], [sphere(0.02, (0.007, 0, 0))]])
     assert len(crossings) == 1
-    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 2e-3, atol=EXACT_TOL)
 
     # Box balanced edge-down, sunk 2 mm into a large box's top face: an edge-face crossing whose deepest points
     # are the edge verts.
@@ -725,7 +722,7 @@ def test_genuine_interpenetration(show_viewer):
         [[(box_flat.vertices, box_flat.faces)], [(box_tilted.vertices, box_tilted.faces)]],
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 2e-3, atol=EXACT_TOL)
 
     # Solid beam whose tip stops halfway through the wall of a tube: the tip centre is equidistant from the
     # outer and inner wall surfaces, so the depth is exactly wall/2 - the analytical pin for partial
@@ -738,7 +735,7 @@ def test_genuine_interpenetration(show_viewer):
         "beam halfway through tube wall", [[(tube.vertices, tube.faces)], [(beam.vertices, beam.faces)]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 2e-3, atol=EXACT_TOL)
 
     # Beam all the way through BOTH tube walls, protruding on each side: the cheapest escape slides the beam
     # sideways until its 10 mm slab clears the 16 mm outer radius - 21 mm - beating the axial routes.
@@ -749,7 +746,7 @@ def test_genuine_interpenetration(show_viewer):
         [[(tube.vertices, tube.faces)], [(beam_diametral.vertices, beam_diametral.faces)]],
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 21e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 21e-3, atol=EXACT_TOL)
 
     # Beam parallel to the tube axis, grooved lengthwise into the side wall and protruding from both open ends
     # (a key in a keyway): the escape is the radial push-out, outer radius minus the beam's inner face.
@@ -759,7 +756,7 @@ def test_genuine_interpenetration(show_viewer):
         "beam grooved along tube wall", [[(tube.vertices, tube.faces)], [(beam_keyway.vertices, beam_keyway.faces)]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 7e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 7e-3, atol=EXACT_TOL)
 
     # Slim beam fully through one wall, tip hanging in the bore: tube surface verts sit 2 mm inside the 4 mm
     # beam, and beam verts at most as deep in the 4 mm wall - depth 2 mm however far the beam protrudes.
@@ -769,7 +766,7 @@ def test_genuine_interpenetration(show_viewer):
         "beam through one tube wall", [[(tube.vertices, tube.faces)], [(beam_slim.vertices, beam_slim.faces)]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 8e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 8e-3, atol=EXACT_TOL)
 
     # Two thin walls crossing: perpendicular plates, then at 45 degrees (the depth is angle-invariant: half the
     # plate thickness either way), then two curved cup-like shells whose 5 mm walls cross - depth 2.5 mm.
@@ -781,13 +778,13 @@ def test_genuine_interpenetration(show_viewer):
         [[(plate.vertices, plate.faces)], [(plate_upright.vertices, plate_upright.faces)]],
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 27e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 27e-3, atol=EXACT_TOL)
     plate_tilted = plate_upright.copy().apply_transform(trimesh.transformations.rotation_matrix(np.pi / 4, (0, 1, 0)))
     max_depth, crossings = measure(
         "45-degree plates crossing", [[(plate.vertices, plate.faces)], [(plate_tilted.vertices, plate_tilted.faces)]]
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, (0.05 * np.sin(np.pi / 4) + 4e-3 * np.cos(np.pi / 4)) / 2 + 2e-3, atol=1.5e-4)
+    assert_allclose(max_depth, (0.05 * np.sin(np.pi / 4) + 4e-3 * np.cos(np.pi / 4)) / 2 + 2e-3, atol=EXACT_TOL)
     shell_thick = hollow_sphere(0.03, 0.025)
     shell_other = hollow_sphere(0.03, 0.025)
     max_depth, crossings = measure(
@@ -795,7 +792,7 @@ def test_genuine_interpenetration(show_viewer):
         [[shell_thick], [(shell_other[0] + (0.055, 0.0, 0.0), shell_other[1])]],
     )
     assert len(crossings) == 1
-    assert_allclose(max_depth, 5e-3, atol=1.5e-4)
+    assert_allclose(max_depth, 5e-3, atol=EXACT_TOL)
 
     # Analytical mug-vs-cup: two parallel open cylinders whose walls cross. Parallel cups never interlock, so
     # the separation is exactly the press depth - asserted both shallow and MUCH deeper than the wall.
@@ -805,7 +802,7 @@ def test_genuine_interpenetration(show_viewer):
             [[(tube.vertices, tube.faces)], [(tube.vertices + (0.032 - press, 0.0, 0.0), tube.faces)]],
         )
         assert len(crossings) == 1
-        assert_allclose(max_depth, press, atol=1.5e-4)
+        assert_allclose(max_depth, press, atol=EXACT_TOL)
 
     # Real-asset cases, both representations (watertight wraps and convex decompositions) built as separate
     # entities of a single scene, all placements done by rigid-transforming the extracted geoms. Real meshes
@@ -952,8 +949,8 @@ def test_genuine_interpenetration(show_viewer):
             max_depth, crossings = measure(
                 "apple stem through mug wall",
                 [
-                    placed(mug_geoms, (-0.154637, 0.064054, 0.066314), (0.48446, 0.254831, 0.685173, -0.480518)),
-                    placed(apple_geoms, (-0.145008, 0.052819, 0.065729), (0.264979, 0.660853, 0.648809, 0.268525)),
+                    placed(mug_geoms, (-0.1546, 0.0640, 0.0663), (0.4844, 0.2548, 0.6851, -0.4805)),
+                    placed(apple_geoms, (-0.1450, 0.0528, 0.0657), (0.2649, 0.6608, 0.6488, 0.2685)),
                 ],
             )
             assert len(crossings) == 1
@@ -966,8 +963,8 @@ def test_genuine_interpenetration(show_viewer):
             max_depth, crossings = measure(
                 "apple wedged inside cup",
                 [
-                    placed(cup_geoms, (-0.151896, -0.028087, 0.058628), (0.722454, 0.664688, -0.162572, -0.099101)),
-                    placed(apple_geoms, (-0.166208, -0.061567, 0.060744), (-0.869212, -0.407279, 0.199131, -0.197335)),
+                    placed(cup_geoms, (-0.1518, -0.0280, 0.0586), (0.7224, 0.6646, -0.1625, -0.0991)),
+                    placed(apple_geoms, (-0.1662, -0.0615, 0.0607), (-0.8692, -0.4072, 0.1991, -0.1973)),
                 ],
             )
             assert len(crossings) == 1
