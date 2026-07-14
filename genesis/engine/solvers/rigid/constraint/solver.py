@@ -2710,7 +2710,7 @@ def func_hessian_direct_tiled(
     n_dofs = constraint_state.nt_H.shape[1]
 
     # BLOCK_DIM = 128 is optimal, after grid searching ofter block_dim = 64, 128, 256, and evaluating
-    # the test_rigid_benchmarks.py in production.yml for each value.
+    # the tests/benchmarks/test_rigid.py in production.yml for each value.
     BLOCK_DIM = qd.static(128)
     MAX_DOFS_PER_BLOCK = qd.static(64)
     # Note: setting MAX_CONSTRAINTS_PER_BLOCK to 64 provides a benefit for anymal_uniform_kinematic cpu

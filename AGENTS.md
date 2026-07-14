@@ -21,7 +21,8 @@ uv run examples/tutorials/hello_genesis.py
 
 ```bash
 uv run pytest tests/                      # All tests
-uv run pytest tests/test_file.py          # Specific file
+uv run pytest tests/rigid/                # One component folder
+uv run pytest tests/rigid/test_collision.py  # Specific capability file
 uv run pytest tests/ --backend=gpu        # GPU backend
 uv run pytest tests/ -m required          # Required tests only
 uv run pytest tests/ -m "not slow"        # Skip slow tests

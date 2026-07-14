@@ -20,7 +20,7 @@ pip uninstall --no-input -y genesis-world
 pip install --no-input --no-user --no-cache --quiet -e ".[dev]" "libigl==2.5.1"
 
 # Run the benchmarks
-pytest --print -x -m benchmarks --backend gpu "./tests_2/test_rigid_benchmarks.py"
+pytest --print -x -m benchmarks --backend gpu "./tests"
 """
 
 # Get all commit hashes after a given date (oldest to newest)
