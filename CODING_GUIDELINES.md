@@ -1,0 +1,223 @@
+# Genesis Coding Guidelines
+
+This document describes how we write, test, and review code in Genesis. It is aimed at all contributors. It is long on purpose: most review friction on this project comes from small, well-defined conventions that are easy to follow once you know them, and expensive to re-explain on every pull request. Reading this once will save you (and your reviewer) many review rounds.
+
+Two things to keep in mind throughout:
+
+- **The rigid solver is the reference implementation.** When in doubt about naming, kernel structure, or code organization, open `genesis/engine/solvers/rigid/` and imitate what you find there. The historical rationale for the naming scheme is documented in [PR #1053](https://github.com/Genesis-Embodied-AI/Genesis/pull/1053).
+- **Match the established sibling pattern; do not invent structure.** Before adding any helper, fixture, option, cast, comment, or file layout, look at how a sibling in the same directory already does it, and copy that. Genuine novelty is rarely the problem in reviews; deviation from an existing convention almost always is.
+
+## 1. Philosophy and priorities
+
+- **Code quality over source consistency.** When porting code from another project, a research prototype, or an older implementation, Genesis conventions always take priority over the original code's style. Use the original logic as a reference for *what* to compute, never for *how* to write it.
+- **Build/initialization time: maintainability first.** Scene construction and model loading run once; clarity beats micro-optimization there, as long as performance stays reasonable. Use public APIs.
+- **Runtime hot paths: efficiency first.** Anything executed every simulation step must minimize GPU-CPU transfers and use bulk, vectorized operations.
+- **No legacy code.** Experimental subsystems carry no deprecation or backward-compatibility burden. Dead code, unused helpers, and commented-out experiments must be removed, not kept "just in case". Do not implement private helpers proactively because they "might be useful later"; add them when they are actually needed.
+
+## 2. Naming conventions
+
+Consistent naming is one of the most heavily enforced aspects of Genesis reviews. The scheme below applies everywhere, including throwaway debug and instrumentation code: a cryptic one-off local like `wt` (for `is_watertight`) will be flagged even in a script you plan to delete.
+
+### 2.1 General rules
+
+- snake_case for variables and attributes: `link_idx`, never `LinkIdx`.
+- **Spell names out.** No abbreviations: `joint_` not `jnt_`, `link_` not `ln_`. The only tolerated shorthands are `idx` for `index` and `n` for `num`.
+- **Use Genesis's domain nouns.** A physical object is an `entity`, a `link`, or a `geom` - never coin a new term (`body`, `object`, `piece`) when one of these fits. This is also a correctness cue, not just naming: the rigid-body unit is the link, so a per-object quantity groups geoms per link (iterate `entity.links` then `link.geoms`), never per entity - assuming entity for a multi-link entity is a bug.
+- **Booleans read as predicates.** Every boolean variable, field, attribute, or property takes an `is_` or `has_` prefix, present tense preferred: `is_hibernated` (not `hibernated`), `is_fixed`, `is_convex`, `has_multi_island_structure`. `was_` is acceptable only for a genuine past-tense flag (prefer `is_cached_loaded` over `was_cached`). A bare name (`hibernated`, `placed`) or a `did_` prefix (`did_fuse`) is not valid.
+- Methods that merely expose a value (for example a `has_any_rigid_coupling()` method) should be properties instead.
+- Avoid the generic `all_` prefix or suffix on containers; name the content specifically: `joints_xanchor`, `links_inertia_i`, `geoms_pos`, `entities_quat`, `verts_idx`.
+- Avoid pure renaming assignments such as `mass_mat_env = mass_mat_all`; they add a second name for the same object and nothing else.
+- Keep file naming consistent within a directory (for example, all IPC examples are `ipc_*.py`).
+
+### 2.2 Containers
+
+- A container holding one attribute per instance of a parent type is named parent-type-first, with the plural `s` on the **first** word only, even when it reads oddly: `links_dof_start`, not `dof_start_links` and not `link_dof_starts`. Alternatively, use a container-type last word: `_pair`, `_set`, `_map`, `_list`.
+- Nested containers order their words from highest to lowest in the hierarchy, with as many plural markers as the nesting depth: `geoms_vertices_idx`.
+
+### 2.3 Index variables in kernels
+
+- Loop indices **and** held index values are named `i_<short code>`, where the code is a short type tag, usually one or two letters: `i_b` (batch/environment), `i_d` (dof), `i_c` (contact), `i_l` (link), `i_ga`/`i_gb` (geoms a and b of a pair). Verbose forms like `i_hull_top` are rejected; make the code slightly longer only when needed to resolve a genuine ambiguity. The rule applies to stored values too: `i_pair = ...`, not `pair_idx = ...`.
+- A second nested index over the same type uses the `j_` prefix: `i_d`/`j_d` for two nested dof loops. Numbers are allowed in the code when meaningful: `i_d0`/`i_d1` for two perturbation directions.
+- **A relative (offset) index takes a trailing underscore.** When an index is later offset by a range start, name it `i_c_` and use it as `field[i_c_start + i_c_, i_b]`. The absolute range boundaries are `i_c_start`/`i_c_end`, and counts are `n_*` (`n_con`, `n_kept`). A bare `k` used as `b_start + k` violates both rules at once.
+- **The `_idx` suffix is reserved for persistent tensors and fields** (`contact_sort_idx`, `dofs_idx`). Never use `_idx` for a local loop counter or a local holding an index value.
+- **Survey existing kernels before naming anything new.** The rigid solver and collider already define a vocabulary; reuse it rather than inventing synonyms. Established codes include: `i_b` (batch/env), `i_c` (contact), `i_d` (dof), `i_e` (entity), `i_g`/`i_ga`/`i_gb` (geom), `i_l`/`i_la`/`i_lb` (link), `i_v` (vertex), `i_f` (face), `i_con` (constraint), `i_pair`, `i_p`/`i_q` (current/previous item in a sort, with matching `_p`/`_q` attribute suffixes), `i_pc` (physical contact slot), `i_cb` (contact within a bucket). A capitalized `I_l` denotes the maybe-batched index tuple `[i_l, i_b] if batched else i_l`.
+- A `@qd.func` that processes a single environment (first argument `i_b`), called from a kernel's batch loop, is suffixed `_batch`: `func_solve_mass_batch`, `func_noslip_batch`.
+
+## 3. Formatting and style
+
+- **ASCII only, everywhere in source files** (code, comments, docstrings). Write `tau` and `qddot`, not Greek letters; `*` not a middle dot; `x` not a multiplication sign; `<=`, `>=`, `!=`, `~=` not their Unicode forms; `-` or `--` not an em-dash; plain `# ---` separators, never box-drawing characters. After bulk edits, `LC_ALL=C grep '[^[:print:][:space:]]' <files>` should come back empty.
+- **Lines wrap at 120 characters, and only there.** Do not wrap earlier. When you modify an existing comment, reflow the whole comment block to the 120-character limit, not just the lines you touched; mixed wrap widths within one block look careless.
+- **Spell out acronyms on first use** in each docstring or comment, verbatim with the acronym in parentheses: "positive semi-definite (PSD)", "symmetric positive definite (SPD)", "second-order cone (SOC)". The bare acronym is fine after that first spell-out within the same docstring/comment.
+- **Argument wrapping is all-or-nothing.** Either the entire call fits on one line within 120 characters, or every argument goes on its own line. Never pack two or three arguments per continuation line.
+- No import aliasing: `Cloth`, not `ClothMaterial`.
+- All imports live at module top level. Local imports inside functions are allowed only when strictly necessary to break a circular dependency.
+- No temporary variable just to hold an `isinstance` result; write `isinstance(...)` directly in the `if`.
+- **Pass an anonymous literal by keyword** so its meaning is visible at the call site: `_adaptive_params(verts, faces, aggressiveness=7)`, not a bare `7`. Positional is fine for self-named variables. (Kernel calls are the exception - positional only, see section 9.)
+
+## 4. Comments
+
+The default is **no comment**. A comment earns its place only when a reader looking at the code would reasonably ask "why does this work?" or "why is this here?" and could not answer from the names and control flow alone: a subtle invariant, a workaround for a specific upstream bug, a non-obvious ordering constraint, a hidden assumption.
+
+- Never restate what the code already says, and never write tautologies ("dt is the timestep, so it must match the simulated timestep").
+- **Justification is what comments are for - written to stay true.** Explain why the code is the way it is: the invariant it preserves, the failure mode the tempting alternative runs into. State the mechanism generically and in the present tense; never anchor it to perishable specifics - measured values, benchmark figures, particular unit tests or examples - which go stale long before the mechanism does.
+- **Describe current behavior, never history.** No "regression for X", "bug fix for Y", "previously...", "used to...". Git history and the PR description are the place for that context. Phrase everything as a present-tense statement of what the code does or guarantees.
+- **State what IS, never what is NOT.** Drop "not X", "unlike Y", "does not ...", and "it is X, not Y" framings (in comments, docstrings, and reports) unless the negation was explicitly asked for or is the literal spec. Defending against a concern the reader never raised is noise - if a property is not mentioned, it does not exist. Say the positive fact and stop.
+- **No pointer comments.** "Matches the pattern elsewhere in this file", "same as func_X", "see line N" - these rot the moment the referent moves and add nothing a grep would not. Either state the invariant directly or drop the sentence.
+- Do not justify a design by citing external projects a reader cannot verify. Decide from Genesis's own conventions; if a real external consumer genuinely matters, name it with a URL the reviewer can open.
+- **When porting a feature from a known external project (e.g. MuJoCo), reference it at the right granularity: name the feature being re-implemented, optionally point to the official doc section, and/or give the math formula. Never cite the external repo's specific file / function / constant / symbol names** - those are cross-repo, go stale as the other project changes, add no signal a reader cannot rederive, and are easy to find manually later. "matches MuJoCo's elliptic cone" is good; "matches MuJoCo's `ellipticCostDif` in `engine_solver.c`" is not.
+- Punctuation: single dash `-`, not double `--`; single-line comments do not end with a period; no RST double backticks in `#` comments (they only render in docstrings).
+- Commented-out `print` statements are prohibited; convert them to `gs.logger.debug` traces.
+- **Never delete a comment that is still applicable.** If it has gone stale, update it to describe current behavior. If you believe it is truly irrelevant, raise it with the maintainer rather than deleting it silently - a comment documenting a non-obvious decision is easy to destroy and hard to recover.
+
+## 5. Docstrings
+
+- Every docstring opens with a **single-sentence summary of at most ~250 characters**, followed by a blank line, followed by the details broken into paragraphs or sections. Never one massive block. This applies to modules, classes, functions, and `@qd.kernel`/`@qd.func` bodies alike, so that IDE preview popups show one sharp sentence.
+- A function-level description belongs in a docstring, never in a block of leading `#` comments at the top of the body.
+- Docstrings describe the current state, not the change history. If a behavior exists because of a bug fix, explain it in terms of the current invariant ("Must handle Z to avoid Y"), not the fix.
+- For a parameter that defaults to `None` and is resolved internally, document it as: "If None, resolved based on <condition>: <value1> for <case1>, <value2> for <case2>. Defaults to None." Do not write "resolved at build time" or similar implementation-timing details; the reader cares about the conditions and outcomes, not when resolution happens.
+- **A user-facing option doc must let the user DECIDE - state the TRADEOFF (cost AND benefit, and when to pick each value), not only what the option does.** If the doc makes one setting look strictly better, the downside is missing and the doc is useless (litmus: "why is this option even exposed, then?"). Every option that exists because of a tradeoff must state it (e.g. an exact-but-more-expensive mode; a stiffness knob that also ill-conditions the solve). Keep it compact.
+- **No external-engine references in user-facing docs** (Options fields, public API): explain the feature standalone, in Genesis terms. Naming a ported engine (e.g. MuJoCo) belongs only in dev code comments, never in user documentation.
+- **No internal/implementation mechanism in user-facing docs.** Describe observable behavior and its consequences for the user, not how it is implemented: no data-structure or solver internals (constraint "rows", "coupling", "cone projection", Hessian, kernels, factor paths). "harder to solve and more sensitive numerically" is user-facing; "couples the three rows into one nonlinear cone projection" is not. Also state costs/limits in user terms - if speed is not the real cost, say what is (e.g. numerical robustness).
+
+## 6. Functions, helpers, and structure
+
+Genesis strongly resists the accumulation of small wrappers. Helpers accrete, get reused where their assumptions do not hold, and force reviewers to jump around to confirm one-liners.
+
+- **Do not wrap a few lines of straightforward logic in a helper.** Inline it. A long but linear function reads fine; do not split it "for readability" when each part is called exactly once.
+- **A single-use helper is acceptable only if it is standalone and completely generic** - a math function or a conversion utility that could plausibly live in `genesis.utils` and serve any caller. Anything beyond that is suspect.
+- **Avoid private instance methods (`_foo`).** They are almost always the wrong tool. Prefer, in order: inlining at the call site (duplicating a one-to-three-line check is not a sin), a module-level free function when the logic has no `self` dependency, or an attribute computed once at build time when the value is stable and reused. Extraction pays for itself only at three or more call sites with genuinely non-trivial logic.
+- **No proxy locals.** Do not introduce a variable whose only purpose is to name an expression consumed on the next line. Assign a local only when the value is genuinely reused, or when the name carries information the expression cannot.
+- **Do not promote a performance micro-optimization to class surface.** A one-shot check (for example, "has this subclass overridden `_post_process`?") stays inline at its single use site - no private class attribute, no classmethod, no staticmethod for it.
+- **No speculative defensive code.** When a canonical pattern exists in the codebase, mirror it exactly. If you find yourself adding an `isinstance` guard, an `is None` check, or a `try/except` that the canonical version omits, treat that as a red flag: prove it is needed by removing it and running the relevant test, or drop it. Do this before writing a comment to justify the guard.
+- Local-scope function definitions need strong motivation; avoid them.
+- Prefer clearing over reallocating mutable containers: `self.abd_data_by_link.clear()`, not `self.abd_data_by_link = {}`.
+- Code duplication should be avoided - but resolve it with the mechanisms above (attribute caching, genuinely generic module-level functions), not by minting noise helpers.
+
+## 7. Typing and data structures
+
+- **Plain dicts for packing attributes are prohibited.** Use strongly typed named structures: dataclasses or NamedTuples. Conversely, a single value must not be wrapped in a one-field named structure; return it bare.
+- **Do not use raw numpy / torch / quadrants dtypes** unless an external interface forces them. Genesis dtypes are defined in `genesis/__init__.py`, and the quadrants dataclass dtypes live in `genesis/utils/array_class.py`.
+- **No torch dtype casts** (`.long()`, `.to(torch.int64)`, ...). For advanced indexing, use `indices_to_mask` from `genesis.utils.misc`; for a `torch.gather` index, let a `cumsum` over a boolean mask produce int64 naturally.
+- **Never write `detach().cpu().numpy()`.** Use `tensor_to_array` from `genesis.utils.misc`, which handles the GPU-to-CPU transfer correctly. Never call `np.asarray` on a torch tensor. It takes a `dtype` argument (`tensor_to_array(x, dtype=np.float64)`) - use that rather than chaining `.astype`, and do the conversion once inside the function that needs the dtype, not at each call site (callers pass native `entity.get_verts()` / `geom.get_trimesh().faces`).
+- **No unnecessary casts.** Do not add `float()`, `int()`, `.astype(...)`, `np.asarray(...)`, or a `dtype=` unless strictly necessary. A numpy scalar indexes arrays, compares, does arithmetic, and satisfies `assert x < tol` fine; wrapping it for a local, return, or assert is noise, and re-stating a dtype the data already has (e.g. `trimesh.vertices` is float64) is the same. Cast only where an external interface forces it (igl needs float64 verts / int64 faces; kernel args need native `float`/`int`), and never re-cast what a later step already casts (drop per-chunk casts before a final `.astype`).
+- **Pick one array library per code block and stick to it end-to-end.** Pipelines built on getters, `gu.*` math helpers, and setters speak torch natively: keep them pure torch (`torch.as_tensor(geom.init_verts, dtype=gs.tc_float)`, `torch.zeros(..., dtype=gs.tc_float)`, `torch.linalg.norm`), with no `tensor_to_array` round-trips in between. `tensor_to_array` is for crossing into numpy-only consumers (`np.testing`, matplotlib, trimesh/igl). Note `gu.transform_quat_by_quat` and friends reject mixed torch/numpy inputs.
+- **Never derive a dtype from data.** `dtype=gs.tc_float` / `gs.tc_int`, never `dtype=other_tensor.dtype`.
+- Build fixed rotations with `gu.xyz_to_quat(euler)` (radians, torch-capable), not `gu.euler_to_quat` (numpy-only) and not hand-rolled quaternion literals.
+- Rotate vectors with `gu.transform_by_quat(v, quat)`, not by materializing the matrix (`gu.quat_to_R(quat) @ v`). Reserve `quat_to_R` for when the matrix itself is needed (e.g. extracting a frame axis as a column).
+- `np.asarray` in general is reserved for public API entry points where the data source is uncontrolled. It should never appear on internal code paths.
+- **Never pass numpy scalar types** (`numpy.float64`, ...) as kernel arguments; cast to native Python `float()`/`int()`. Numpy scalars break the quadrants fast-cache, which holds weak references.
+- Never use `flatten()`, `reshape((-1,))`, or `ravel()` where a squash is meant, and prefer `[..., 0, :]` over `squash(axis=-2)`.
+- **Allocate exactly what is needed.** Preallocating buffers to a max size "to be safe" is prohibited.
+- `getattr`/`hasattr` are prohibited on our own classes; initialize attributes to `None` and discriminate with `isinstance`. The one narrow exception is objects from an external library, and only when no `isinstance` check against a public, stable type exists. Decision order: public-type `isinstance` first, `getattr(obj, "name", default)` second, `try/except AttributeError` as a last resort.
+- **Never attach attributes on the fly to instances you do not own** (external library objects, another module's objects). Strictly forbidden.
+
+## 8. Data access
+
+### 8.1 At build/initialization time
+
+- Iterate through the public entity/link/geom API: `entity.links`, `link.geoms`, `geom.init_verts`, `link.get_pos()`, and so on. Drop to low-level solver fields only when efficiency, conciseness, or maintainability specifically demands it.
+- Store Python references (entity and link objects, in dicts keyed however runtime needs them) at build time, instead of re-deriving them from solver fields every step.
+
+### 8.2 At runtime
+
+- Use `qd_to_numpy` / `qd_to_torch` from `genesis.utils.misc` for bulk GPU-CPU transfers. Calling the quadrants `.to_numpy()` / `.to_torch()` methods directly is forbidden, and so is item-accessing a qd field (`field[i]`).
+- **Always pass `transpose=True`** so the batch dimension comes first (`[B, n, dim]`), matching the public getter convention.
+- **Hoist conversions out of loops.** Convert once, then index the local array. If only a slice is needed, pass the slice as an argument to the conversion rather than slicing the full result afterward.
+- Do not pass `copy=` at all when the returned value is fresh arithmetic; let the function zero-copy or copy as needed. Reserve `copy=True` for the case where a raw field view would otherwise escape and could be mutated later. Note that `copy=False` fails on CUDA: GPU data always requires a copy to reach numpy.
+- **Zero-copy aliasing hazard:** on the CPU backend, `qd_to_numpy` returns a live view into the field buffer. If you store the result across simulation steps, `.copy()` it first (or reduce it to Python scalars immediately) - otherwise a later "delta" between stored and current values is identically zero, because both names alias the same memory.
+- Prefer torch-based zero-copy to feed state into other solvers; numpy zero-copy only exists on the CPU backend.
+- Handle all environments at once. Calling getters/setters per environment index in a loop is inefficient; batch the call, falling back to a loop only where an accessor fundamentally requires it. Avoid branching code on batched-versus-unbatched; handle it at the argument level (`envs_idx=env_idx if batched else None`).
+- A quantity derived from several raw solver fields belongs in a single vectorized solver getter, not assembled by each consumer or extracted through a bespoke per-element kernel. Prefer the dev getter/setter API over reading quadrants fields directly: fields may be renamed or removed, while getters/setters are stable dev API.
+- Interop code should keep data as torch tensors or numpy arrays from the start. Numpy implementations must be fully vectorized; use Numba (single-threaded, CPU backend) for computation-heavy CPU "kernels".
+
+## 9. Writing Quadrants kernels
+
+- **New kernels are free functions decorated with `@qd.kernel`** - no `@qd.data_oriented` classes. Use `V_ANNOTATION` from `genesis.utils.array_class` for type-polymorphic parameters. The FEM solver is the historical exception: it follows the old `@qd.data_oriented` method pattern, and kernels added there must stay consistent with it. Never put `@qd.data_oriented` on non-solver classes (materials, couplers, entities).
+- **Call kernels with positional arguments only.** Keyword arguments on kernel calls are slow.
+- **The outermost `for` loop of a kernel is auto-parallelized.** Outer-scope locals mutated inside that loop are a single shared memory slot that all threads race on; the value after the loop is undefined and run-to-run unstable on GPU. The CPU backend often looks correct only because its default executor is single-threaded - do not let that fool you. To fix: serialize the loop (wrap the body in `for _ in range(1):`, or use `qd.loop_config(serialize=True)`), or use `qd.atomic_min`/`qd.atomic_max`/`qd.atomic_add` for pure reductions. When something "works on CPU but fails on Metal", check for this pattern before suspecting a compiler bug.
+- **Loop-variable scoping:** a variable assigned in the outer scope of a kernel (for example a lane-strided `i_c_ = tid; while i_c_ < n: ...`) cannot be reused as a `for` loop variable in the same kernel; the compiler rejects it. The trailing-underscore convention for relative indices conveniently keeps these names distinct.
+- **Do not pass the same buffer under two different argument names of a single kernel.** Intra-kernel argument aliasing miscompiles. Use dedicated buffers.
+- In-kernel printing uses the plain `print(...)` intrinsic (there is no `qd.print`). Be aware that kernel `print()` is a silent no-op on Metal; use debug fields there instead.
+- **Never delete or wipe compile/JIT caches** (`~/.cache/quadrants/`, Numba caches), even as a diagnostic step. To bypass the quadrants offline cache for one run, set `QD_OFFLINE_CACHE=0`. Note that the offline cache does not pick up edits to library-side kernels, so use that variable when testing such edits.
+- Environment variables like `QD_PERFDISPATCH_FORCE` are read at `import genesis` time; set them in the environment before the import, not after.
+- Numba-cached JIT functions (for example in pyrender's `jit_render.py`) do not reliably pick up new closure variables. Change the input data before the call (for example, zero out `n_indices` to skip primitives) instead of adding new flag checks inside the JIT body.
+
+## 10. API design
+
+- **Do not force users to set an option that has only one correct value in context.** Default it to `None`, resolve the correct value at initialization from other options, scene contents, or runtime state (documented), and raise if the user explicitly supplies a conflicting value.
+- **Option fields taking index or array inputs must use the project's array-like type aliases** (`IArrayType`, `OptionalIArrayType`, `FArrayType`, `Vec3FType`, ... from `genesis.typing`), never a bare `tuple[int, ...]` or `list[...]`. The `Options` base is strict Pydantic, so a bare typed-collection field would reject the plain lists and numpy arrays users naturally pass; the aliases carry the coercion. Match how sibling option fields are typed.
+- **A manager class must only know its base-class contract.** For instance, the sensor manager may reference `Sensor` and nothing below it - no `isinstance(x, SimpleSensor)`, no subclass method comparisons. When the manager needs class-specific knowledge (is some hook overridden? what buffer size is needed?), expose it as a classmethod on the base class with a conservative default, and let subclasses override it.
+- Internal orchestration objects such as `scene.sim.coupler` are not public API. Behavior a user must control belongs on entity-level options (for example, material options), not on methods of internal objects.
+- Deprecation notices go through `gs.logger.warning(...)`, never Python's `warnings.warn`.
+
+## 11. Error handling
+
+- **Catch-all `except` clauses are prohibited**, with the single exception of exception forwarding across a multiprocessing boundary.
+- **Never downgrade a critical error to a warning.** If something breaks the physics, raise - re-raising with a clearer message is fine, swallowing is not.
+- **NaN must halt the simulation.** A warning is not acceptable; use the existing errno mechanism, defining a new error code if needed.
+
+## 12. Testing
+
+### 12.1 What a test must check
+
+- **Assert physics, not just execution.** "The simulation runs without error" is not a test. Check quantities with physical meaning: free-fall displacement (`z = z0 - 0.5*g*t^2`), no ground penetration, velocity decaying to zero at rest, contact stopping a fall.
+- **Bug-fix PRs must include a regression test** that fails on `main` and passes with the fix.
+- When no analytical expectation exists, run the simulation once, hardcode the resulting reference values, and assert against them with a loose tolerance, leaving a `FIXME` asking for physics-informed assertions later. This non-regression fallback is far better than checking nothing.
+- For exact analytical dynamics checks, force `gs.integrator.Euler` so the finite-differenced acceleration matches the solver's, and account for rigid-body rotational inertia plus the implicit-damping first-order correction (`effective_inertia = I + damping*dt`) rather than loosening tolerances or distorting the geometry.
+- **Tests are reference documentation.** They must exercise the public API we want users to adopt - default getters, user-frame values compared against the hard-coded morph inputs - never internal solver-frame access or non-default flags pinned to dodge a new default.
+- Do not write tests that verify deprecation warnings are emitted; feature tests exercise behavior, not warning machinery.
+
+### 12.2 Test structure
+
+- **No dedicated single-feature test module.** New tests go into the existing comprehensive file for their domain (for example `tests/test_sensors.py`), never a fresh `test_<one_thing>.py`.
+- **Pack tests.** Prefer one comprehensive scene with diverse entities and options over many small single-option tests; add differently-configured entities to the same scene rather than writing sibling functions. One scene build per test: each additional build recompiles kernels (roughly 18 s locally, minutes on CI), and folding reference simulations into the same scene makes comparisons tighter, not looser.
+- **Prefer parametrization over new test functions.** A new case for the same capability becomes a `@pytest.mark.parametrize` dimension on the existing test. Parametrize batched tests over `n_envs=[0, 2]` - multi-env is where shape bugs hide - but do not add a dead dimension that a conftest fixture already controls (such as `backend`).
+- **Name tests after the feature validated, not the scenario used to validate it.** A test exercising off-axis contact rejection through a stacking-tower scene is `test_reject_offaxis_contact_on_authored_decomp`, not `test_stacking_tower_stability`; the tower is *how*, the rejection is *what*.
+- **No docstrings on test functions.** Use inline comments only where intent is non-obvious, and never mention regressions or history.
+- No module-level test constants, helpers, or parametrize scenario lists. Constants live inside the test, UPPERCASE when they are top-level local-scope constants (`N_STEPS`, `POSITIONS`); derived lookups stay lowercase. Read derived parameters back from the built model (`get_dofs_armature()`, ...) instead of duplicating literals between construction and assertions.
+
+### 12.3 Assertions
+
+- Use `assert_allclose` from `tests/utils.py`; it handles tensors, numpy arrays, and scalars uniformly.
+- Do not gate per-step assertions behind `float(...)`/`.item()` casts on tensor reductions. Design the scenario (for example, a warmup loop) so the assertion holds unconditionally, then assert on the full tensor with `.all()`.
+- Use the built-in `envs_idx` argument on getters rather than indexing the batched result: `get_pos(envs_idx=[i])`, not `get_pos()[i]`.
+- Assert orientation via `gu.quat_to_xyz(...) == 0.0`, never by comparing to `gu.identity_quat()`.
+- Prefer difference-form assertions (`assert_allclose(ref - het, OFFSET)`) over reconstructing one side through tensor conversions, and vectorize per-env assertion loops into whole-batch calls.
+- Write explicit component sums for tiny fixed-size tuples (`(pos[0] + off[0], pos[1] + off[1], pos[2] + off[2])`), not zip-comprehensions.
+- When the mechanism under test differs between frames, check frame-sensitive getters in both `relative=True` and `relative=False`.
+- Shapes to remember: FEM `entity.get_state().pos` is `[B, n_verts, 3]` (use `[..., 2]` for z); rigid `entity.get_pos()` is `[B, 3]` or `[3]` (use `np.atleast_1d(...)[..., 2]` and `.all()`).
+
+### 12.4 Scene construction in tests and examples
+
+- **One option per line** for every scene-building call - `scene.add_entity`, `scene.add_sensor`, `scene.add_camera`, `gs.Scene`, `gs.morphs.*`, `gs.sensors.*`, `gs.options.*`, `gs.materials.*`, `gs.surfaces.*` - even when there is a single option, and including calls nested inside other calls (`morph=gs.morphs.Box(pos=..., size=...)` on one line is a violation even if `morph=` has its own line). ruff will not enforce or preserve this, so it must be done by hand, and an expanded call must never be collapsed back. The one exception: a heterogeneous entity built from a list of morphs keeps each morph compact on a single line inside the list.
+- **Honor declaration order** when passing keyword arguments: order them as the function or class signature declares them (verify with `inspect.signature` rather than guessing).
+- **Set only strictly-required options, at default values unless a reason forces otherwise.** Never set redundant or default-valued options, and never pick a non-default value without a load-bearing reason. The one exception: an option whose value the test computation reads (`gravity`, `dt`) is set explicitly even when it equals the default, so the simulated value provably matches the asserted one. This applies to plain function calls too: never spell out an argument whose value matches the default (`gu.xyz_to_quat(euler, rpy=False, degrees=False)` is a violation).
+- **Tune the camera viewpoint optimally.** Set `ViewerOptions` `camera_pos` / `camera_lookat` so the region of interest (the contact patch, the crossing) fills the frame; verify the framing by rendering offscreen with the same pose and looking at the image, not by guessing. A distant wide shot is useless for debugging.
+- **Enable `vis_mode="collision"`** on the entities of physics tests and examples; the collision geometry is what needs visual debugging with `show_viewer=True`.
+- **Pass scalars and lists directly.** Setters and inverse kinematics accept array-likes and broadcast scalars across DOFs; never wrap values in `np.full`, `np.array`, or a single-element list. Inline one-shot target vectors instead of naming them.
+- **Custom MJCF/URDF models** are built with `xml.etree.ElementTree` inside a fixture that returns `ET.tostring(mjcf, encoding="unicode")`, passed straight to the morph's `file=` argument (the loaders parse inline XML). Never assemble XML from string literals, `textwrap.dedent`, or f-string concatenation. `tests/test_rigid_physics.py` shows the pattern.
+- Do not call `scene.viewer.stop()` (or `pyrender_viewer.close()`) in tests or examples; viewer teardown runs automatically when the scene is destroyed, and the `try/finally` wrapper it usually comes with is noise.
+
+### 12.5 Test failures are signal
+
+- **Never loosen a tolerance to make a failing test pass, and never dismiss a discrepancy as floating-point noise.** fp32 rounding is on the order of 1e-6; a drift of, say, 5e-3 on a quantity that should be mathematically exact means a term is dropped or wrong somewhere. Find the mechanism before touching any tolerance. Restricting a test's backend or parametrization to sidestep a failure is tolerance-widening in disguise.
+- **A fix for a local failure must be local.** Never edit a shared constant, fixture, or global configuration to silence one test; the change belongs at that call site (a per-test override, a local argument, a local guard).
+- If your change makes an existing test fail and you believe the test's expectation is what should change, raise it with the maintainers with your analysis; do not silently rewrite assertions.
+- **Never remove or weaken an existing assertion or measurement to silence a failure**, including a CI-only failure. A threshold that only holds on one machine is a calibration problem to raise with data, not a license to delete the check.
+- **Tighten toward physically-exact conditions; slack hides bugs.** A padded safety factor or a generous tolerance that makes a scenario pass trivially also masks real behavioral differences - between solver backends, arms, or factor paths. Prefer the tightest thresholds the physics justifies: an over-pushed or loosely-checked scenario passes on every backend while a genuine discrepancy sits underneath it. When tightening a test toward the exact expected behavior makes it start failing, that failure is the test working as intended - a newly-observable issue to investigate at its root, not a calibration to back off.
+- **Verify a fix against the exact assertion path, not a cheaper proxy.** A reduced reproduction - fewer steps, only the first phase, a simpler scene - can pass while the full test still fails, because the part it drops is exactly where the behavior diverges (a longer settle, a second load phase). Confirm on the real test at the real horizon before declaring a fix validated.
+
+### 12.6 Step budget and minimality
+
+- **Use the strict minimum number of steps needed to validate**, measured empirically (a criterion-trajectory probe), never guessed. When the checked quantity is floating-point-sensitive, pad by whichever is larger: `+10%` or rounding up to 50 steps (so a small count lands near 50, a large one gets `+10%`).
+- **Per-test step-horizon tiers:** under 100 steps is fine without discussion; 100-300 needs an explicit justification; over 300 is near-prohibited and reserved for the handful (4-5 across the *entire* suite) of tests that genuinely need a long horizon. Also bound the total env-steps (`steps * n_envs`): a 500-step, 16-env settle (8000 env-steps) is unacceptable - delete it or fit the budget. CI cost multiplies every step across the matrix.
+- **Validate the math, not scale.** One constraint proves the theory - if it works for one it works for a thousand - so no large or high-DOF scene is needed to establish correctness. A real multi-body scene (for example the bowl tower) earns its steps only when it validates something a single constraint cannot, such as end-to-end stability.
+- **Prefer floating-point-robust checks.** A single constraint-solve comparison (one step from a fixed state) is robust; a multi-step trajectory comparison *across numerically-distinct codepaths* (different solver arms or factor paths) is not - fp32 error compounds and even correct paths diverge, so cross-codepath trajectory matching is meaningless. Compare a single solve, or an analytical physical property, instead.
+- **Cross-engine consistency (for example against MuJoCo) is the real-world-system check; analytical closed-form checks validate the math.** Add targeted regression tests reactively, when a specific bug surfaces - not speculatively.
+
+## 13. Git and pull requests
+
+- **Branch names use alphanumerics and underscores only, and describe the code content**, not the issue: `analytical_smooth_contact_pos`, not `fix-issue-2793`. The branch outlives the issue.
+- **Commit messages are a single title line.** No body, no implementation details, no co-author trailers.
+- **No AI attribution anywhere.** No "Generated with ..." footers, no AI co-author trailers, in commits, PR bodies, issues, or comments.
+- **PR descriptions are terse and go straight to the point.** State the change and the one fact that justifies it; cut every sentence a reviewer can infer. Long descriptions do not get read. Follow the PR template, keeping each section tight.
