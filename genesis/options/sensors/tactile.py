@@ -10,6 +10,7 @@ from genesis.typing import (
     IArrayType,
     NonNegativeFloat,
     NonNegativeInt,
+    OptionalIArrayType,
     PositiveFArrayType,
     PositiveFloat,
     PositiveInt,
@@ -27,9 +28,11 @@ from .options import (
     SensorT,
     SimpleSensorOptions,
     _check_len_match,
+    _validate_filter_link_idx,
 )
 
 if TYPE_CHECKING:
+    from genesis.engine.scene import Scene
     from genesis.engine.sensors.kinematic_tactile import (
         ContactDepthProbeSensor,
         ContactProbeSensor,
@@ -210,6 +213,25 @@ class TactileProbeSensorOptionsMixin(ProbeSensorOptionsMixin[SensorT]):
             gs.raise_exception(f"dead_taxel_value_range must satisfy low <= high. Got ({low}, {high}).")
 
 
+class FilterableTactileProbeSensorOptionsMixin(TactileProbeSensorOptionsMixin[SensorT]):
+    """
+    Options for tactile probe sensors that resolve depth against the physics solver's active contact pairs (as
+    opposed to a sampled point cloud), and can therefore scope which contacts count by the counterpart link.
+
+    Parameters
+    ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link where the other participant is
+        one of these links are ignored (they contribute no penetration/force). Default is empty (no filtering).
+    """
+
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        _validate_filter_link_idx(scene, self.filter_link_idx, f"{type(self).__name__} sensor")
+
+
 class PointCloudTactileSensorMixin(TactileProbeSensorOptionsMixin[SensorT]):
     """
     Options mixin for tactile sensors that sample a point cloud from tracked link meshes.
@@ -272,7 +294,7 @@ class ContactHysteresisOptionsMixin(SensorOptions[SensorT]):
 class ContactProbe(
     RigidSensorOptionsMixin["ContactProbeSensor"],
     SimpleSensorOptions["ContactProbeSensor"],
-    TactileProbeSensorOptionsMixin["ContactProbeSensor"],
+    FilterableTactileProbeSensorOptionsMixin["ContactProbeSensor"],
     ViscoelasticHysteresisOptionsMixin["ContactProbeSensor"],
     ContactHysteresisOptionsMixin["ContactProbeSensor"],
 ):
@@ -306,7 +328,7 @@ class ContactProbe(
 class ContactDepthProbe(
     RigidSensorOptionsMixin["ContactDepthProbeSensor"],
     SimpleSensorOptions["ContactDepthProbeSensor"],
-    TactileProbeSensorOptionsMixin["ContactDepthProbeSensor"],
+    FilterableTactileProbeSensorOptionsMixin["ContactDepthProbeSensor"],
     ViscoelasticHysteresisOptionsMixin["ContactDepthProbeSensor"],
 ):
     """
@@ -324,7 +346,7 @@ class ContactDepthProbe(
 class KinematicTaxel(
     RigidSensorOptionsMixin["KinematicTaxelSensor"],
     SimpleSensorOptions["KinematicTaxelSensor"],
-    TactileProbeSensorOptionsMixin["KinematicTaxelSensor"],
+    FilterableTactileProbeSensorOptionsMixin["KinematicTaxelSensor"],
     ViscoelasticHysteresisOptionsMixin["KinematicTaxelSensor"],
     SpatialCrosstalkOptionsMixin["KinematicTaxelSensor"],
 ):
