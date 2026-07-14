@@ -5276,11 +5276,15 @@ def func_update_constraint_batch(
     cost_i = gs.qd_float(0.0)
     gauss_i = gs.qd_float(0.0)
 
-    # Snapshot the previous active set in a separate pass BEFORE any active is recomputed. A coupled elliptic-cone
+    # Snapshot the previous active set in a separate pass BEFORE any active is recomputed: a coupled elliptic-cone
     # head writes active for its two tangent rows, so capturing prev_active inline (per row, in the recompute loop)
     # would read a tangent row's already-updated value once the head ran first, hiding its flip from the incremental
-    # factor's changed-constraint list.
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+    # factor's changed-constraint list. Pyramidal rows only write their own active, so they keep the fused inline
+    # snapshot below.
+    if qd.static(
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        and static_rigid_sim_config.enable_elliptic_friction
+    ):
         for i_c in range(constraint_state.n_constraints[i_b]):
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
 
@@ -5292,6 +5296,11 @@ def func_update_constraint_batch(
             if (i_c - nef) % 3 == 0:
                 cost_i = cost_i + func_cone_update_rows(i_c, i_b, constraint_state)
         else:
+            if qd.static(
+                static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+                and not static_rigid_sim_config.enable_elliptic_friction
+            ):
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
             constraint_state.active[i_c, i_b] = True
             floss_force = gs.qd_float(0.0)
             if ne <= i_c and i_c < nef:  # Friction constraints
@@ -5377,6 +5386,11 @@ def _func_update_efc_force_body(
         if (i_c - nef) % 3 == 0:
             func_cone_update_rows(i_c, i_b, constraint_state)
     else:
+        if qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and not static_rigid_sim_config.enable_elliptic_friction
+        ):
+            constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
         constraint_state.active[i_c, i_b] = True
         floss_force = gs.qd_float(0.0)
         if ne <= i_c and i_c < nef:
@@ -5409,8 +5423,12 @@ def _func_update_efc_force(
     _B = constraint_state.grad.shape[1]
 
     # Snapshot prev_active in its own parallel pass so every row is captured before any active recompute: the cone head
-    # thread rewrites its two tangent rows' active, which would otherwise race the tangent threads capturing prev_active.
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+    # thread rewrites its two tangent rows' active, which would otherwise race the tangent threads capturing
+    # prev_active. Pyramidal threads only write their own row, so they snapshot inline in the body (no extra pass).
+    if qd.static(
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        and static_rigid_sim_config.enable_elliptic_friction
+    ):
         qd.loop_config(
             name="snapshot_prev_active", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
         )
