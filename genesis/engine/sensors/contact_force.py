@@ -9,7 +9,13 @@ import genesis as gs
 from genesis.options.sensors import Contact as ContactSensorOptions
 from genesis.options.sensors import ContactForce as ContactForceSensorOptions
 from genesis.utils.geom import inv_transform_by_quat, qd_inv_transform_by_quat, transform_by_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_torch, tensor_to_array
+from genesis.utils.misc import (
+    append_filter_links_idx,
+    concat_with_tensor,
+    make_tensor_field,
+    qd_to_torch,
+    tensor_to_array,
+)
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 from .base_sensor import RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensor, SimpleSensorMetadata
@@ -23,6 +29,27 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
+@qd.func
+def _func_link_is_filtered(filter_links_idx: qd.types.ndarray(), i_s: int, link: int):
+    """Whether ``link`` is in sensor ``i_s``'s filter list. ``-1`` padding entries never match a real link index."""
+    is_filtered = False
+    for i_f in range(filter_links_idx.shape[-1]):
+        if filter_links_idx[i_s, i_f] == link:
+            is_filtered = True
+    return is_filtered
+
+
+def _drop_filtered_counterpart_contacts(
+    is_a: torch.Tensor, is_b: torch.Tensor, link_a, link_b, shared_metadata
+) -> None:
+    filt = shared_metadata.filtered_sensor_idx
+    if filt.numel() == 0:
+        return
+    sub_filter = shared_metadata.filter_links_idx[filt][None, :, None, :]
+    is_a[:, filt, :] &= ~(link_b[:, None, :, None] == sub_filter).any(dim=-1)
+    is_b[:, filt, :] &= ~(link_a[:, None, :, None] == sub_filter).any(dim=-1)
+
+
 @qd.kernel
 def _kernel_get_contacts_forces(
     sensors_link_idx: qd.types.ndarray(),
@@ -30,6 +57,7 @@ def _kernel_get_contacts_forces(
     link_a: qd.types.ndarray(),
     link_b: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
+    filter_links_idx: qd.types.ndarray(),  # (n_sensors, max_filter_links); unused slots are -1
     output: qd.types.ndarray(),
 ):
     for i_c, i_s, i_b in qd.ndrange(link_a.shape[-1], sensors_link_idx.shape[-1], output.shape[-1]):
@@ -51,10 +79,15 @@ def _kernel_get_contacts_forces(
             force_a = qd_inv_transform_by_quat(-force_vec, quat_a)
             force_b = qd_inv_transform_by_quat(force_vec, quat_b)
 
-            if contact_data_link_a == sensors_link_idx[i_s]:
+            # Accumulate the force on whichever side is the sensor link, unless the counterpart link is filtered.
+            if contact_data_link_a == sensors_link_idx[i_s] and not _func_link_is_filtered(
+                filter_links_idx, i_s, contact_data_link_b
+            ):
                 for j in qd.static(range(3)):
                     output[j_s + j, i_b] += force_a[j]
-            if contact_data_link_b == sensors_link_idx[i_s]:
+            if contact_data_link_b == sensors_link_idx[i_s] and not _func_link_is_filtered(
+                filter_links_idx, i_s, contact_data_link_a
+            ):
                 for j in qd.static(range(3)):
                     output[j_s + j, i_b] += force_b[j]
 
@@ -103,15 +136,10 @@ class ContactSensor(SimpleSensor[ContactSensorOptions, None, ContactSensorMetada
             self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
 
-        num_sensors, cur_num_filter_links = self._shared_metadata.filter_links_idx.shape
-        max_num_filter_links = max(cur_num_filter_links, len(self._options.filter_link_idx))
-        filter_links_idx = torch.full((num_sensors + 1, max_num_filter_links), -1, dtype=gs.tc_int, device=gs.device)
-        filter_links_idx[:num_sensors, :cur_num_filter_links] = self._shared_metadata.filter_links_idx
-        filter_links_idx[num_sensors, : len(self._options.filter_link_idx)] = torch.tensor(
-            self._options.filter_link_idx, dtype=gs.tc_int, device=gs.device
+        num_sensors = self._shared_metadata.filter_links_idx.shape[0]
+        self._shared_metadata.filter_links_idx = append_filter_links_idx(
+            self._shared_metadata.filter_links_idx, self._options.filter_link_idx
         )
-        self._shared_metadata.filter_links_idx = filter_links_idx
-
         if len(self._options.filter_link_idx) > 0:
             self._shared_metadata.filtered_sensor_idx = concat_with_tensor(
                 self._shared_metadata.filtered_sensor_idx, num_sensors, expand=(1,), dim=0
@@ -146,18 +174,9 @@ class ContactSensor(SimpleSensor[ContactSensorOptions, None, ContactSensorMetada
 
         is_contact_a = link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]
         is_contact_b = link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]
+        _drop_filtered_counterpart_contacts(is_contact_a, is_contact_b, link_a, link_b, shared_metadata)
         # Float-valued contact count per sensor (intermediate cache is float; bool projection in `_post_process`).
         result = (is_contact_a | is_contact_b).sum(dim=-1).to(dtype=gs.tc_float)
-        # Apply the (more expensive) filter-aware update only on sensors that declared a filter; other sensors keep the
-        # cheap aggregate result above.
-        if shared_metadata.filtered_sensor_idx.numel() > 0:
-            filt = shared_metadata.filtered_sensor_idx
-            sub_filter = shared_metadata.filter_links_idx[filt][None, :, None, :]
-            filtered_a = (link_b[:, None, :, None] == sub_filter).any(dim=-1)
-            filtered_b = (link_a[:, None, :, None] == sub_filter).any(dim=-1)
-            sub_is_a = is_contact_a[:, filt, :]
-            sub_is_b = is_contact_b[:, filt, :]
-            result[:, filt] = ((sub_is_a & ~filtered_a) | (sub_is_b & ~filtered_b)).sum(dim=-1).to(dtype=gs.tc_float)
         raw_data_T[:] = result.T
 
     @classmethod
@@ -198,6 +217,11 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata)
 
     min_force: torch.Tensor = make_tensor_field((0, 3))
     max_force: torch.Tensor = make_tensor_field((0, 3))
+    # (num_force_sensors, max_num_filter_links); unused slots are -1.
+    filter_links_idx: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    # Indices into links_idx of sensors that have at least one filter link. Lets the GT update skip the
+    # 4D contact-vs-filter comparison for the (typically larger) subset of sensors with no filter.
+    filtered_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class ContactForceSensor(
@@ -227,6 +251,15 @@ class ContactForceSensor(
         self._shared_metadata.max_force = concat_with_tensor(
             self._shared_metadata.max_force, self._options.max_force, expand=(1, 3)
         )
+
+        num_sensors = self._shared_metadata.filter_links_idx.shape[0]
+        self._shared_metadata.filter_links_idx = append_filter_links_idx(
+            self._shared_metadata.filter_links_idx, self._options.filter_link_idx
+        )
+        if len(self._options.filter_link_idx) > 0:
+            self._shared_metadata.filtered_sensor_idx = concat_with_tensor(
+                self._shared_metadata.filtered_sensor_idx, num_sensors, expand=(1,), dim=0
+            )
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)
@@ -266,6 +299,7 @@ class ContactForceSensor(
             # Forces are aggregated BEFORE moving them in local frame for efficiency.
             force_mask_a = link_a[:, None] == shared_metadata.links_idx[None, :, None]
             force_mask_b = link_b[:, None] == shared_metadata.links_idx[None, :, None]
+            _drop_filtered_counterpart_contacts(force_mask_a, force_mask_b, link_a, link_b, shared_metadata)
             force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
             sensors_force = (force_mask[..., None] * force[:, None]).sum(dim=2)
             sensors_quat = links_quat[:, shared_metadata.links_idx]
@@ -280,6 +314,7 @@ class ContactForceSensor(
                 link_a.contiguous(),
                 link_b.contiguous(),
                 links_quat.contiguous(),
+                shared_metadata.filter_links_idx,
                 raw_data_T,
             )
 

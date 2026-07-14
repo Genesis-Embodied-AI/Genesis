@@ -66,6 +66,16 @@ def _check_len_match(value, expected_len: int, name: str, ref_name: str):
         )
 
 
+def _validate_filter_link_idx(scene: "Scene", filter_link_idx, sensor_name: str):
+    """Check that a contact sensor's ``filter_link_idx`` are valid global (solver-space) rigid link indices."""
+    if filter_link_idx:
+        n_links = scene.sim.rigid_solver.n_links
+        if np.any(np.array(filter_link_idx) < 0) or np.any(np.array(filter_link_idx) >= n_links):
+            gs.raise_exception(
+                f"{sensor_name} filter_link_idx should be in range [0, {n_links}). Got {filter_link_idx}"
+            )
+
+
 class SensorOptions(Options, Generic[SensorT]):
     """
     Base class for all sensor options.
@@ -346,12 +356,7 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["Con
 
     def validate_scene(self, scene: "Scene"):
         super().validate_scene(scene)
-        if self.filter_link_idx:
-            n_links = scene.sim.rigid_solver.n_links
-            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
-                gs.raise_exception(
-                    f"Contact sensor filter_link_idx should be in range [0, {n_links}). Got {self.filter_link_idx}"
-                )
+        _validate_filter_link_idx(scene, self.filter_link_idx, "Contact sensor")
 
 
 class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOptions["ContactForceSensor"]):
@@ -360,6 +365,10 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
 
     Parameters
     ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link where the other
+        participant is one of these links are ignored (their force is not included). Default is empty
+        (no filtering).
     min_force : float | array-like[float, float, float], optional
         The minimum detectable absolute force per each axis. Values below this will be treated as 0. Default is 0.
     max_force : float | array-like[float, float, float], optional
@@ -369,6 +378,8 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
     debug_scale : float, optional
         The scale factor for the debug force arrow. Defaults to 0.01.
     """
+
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
 
     resolution: LaxVec3FType = 0.0
 
@@ -382,6 +393,10 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOp
         super().model_post_init(context)
         if np.any(np.array(self.max_force) <= np.array(self.min_force)):
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        _validate_filter_link_idx(scene, self.filter_link_idx, "ContactForce sensor")
 
 
 class TemperatureProperties(NamedTuple):
