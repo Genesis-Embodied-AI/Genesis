@@ -452,6 +452,8 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     metadata["name"] = mj.names[name_start : mj.names.find(b"\x00", name_start)].decode("utf-8")
 
     mj_mat_id = int(mj_geom.matid[0])
+    is_2d_texture = False
+    has_explicit_texcoords = False
     if mj_mat_id >= 0:
         mj_mat = mj.mat(mj_mat_id)
         tex_id_RGB = mj_mat.texid[mujoco.mjtTextureRole.mjTEXROLE_RGB]
@@ -459,6 +461,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         tex_id = tex_id_RGB if tex_id_RGB >= 0 else tex_id_RGBA
         if tex_id >= 0:
             mj_tex = mj.tex(tex_id)
+            is_2d_texture = mj_tex.type[0] == mujoco.mjtTexture.mjTEXTURE_2D
             H, W, C = mj_tex.height[0], mj_tex.width[0], mj_tex.nchannel[0]
             mj_mat_img = mj.tex_data[mj_tex.adr[0] : (mj_tex.adr[0] + H * W * C)].reshape(H, W, C)
             mj_mat_img = Image.fromarray(mj_mat_img)
@@ -573,8 +576,9 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         index_faces = [faces.ravel(), norm_faces.ravel()]
         if tex_vert_start != -1:  # -1 means no texcoord
             tex_faces = mj.mesh_facetexcoord[face_start:face_end]
-            uv = mj.mesh_texcoord[tex_vert_start:tex_vert_end]
+            uv = mj.mesh_texcoord[tex_vert_start:tex_vert_end].copy()
             uv[:, 1] = 1 - uv[:, 1]
+            has_explicit_texcoords = True
             index_faces.append(tex_faces.ravel())
         else:
             uv = None
@@ -598,8 +602,41 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
 
-    if uv is not None and mj_mat is not None:
-        uv *= mj_mat.texrepeat
+    if mj_mat is not None:
+        if is_2d_texture and not has_explicit_texcoords:
+            render_size = geom_size[:2].copy()
+            if mj_geom.type[0] in (
+                mujoco.mjtGeom.mjGEOM_SPHERE,
+                mujoco.mjtGeom.mjGEOM_CAPSULE,
+                mujoco.mjtGeom.mjGEOM_CYLINDER,
+            ):
+                render_size[1] = render_size[0]
+            is_size_finite = render_size > 0
+
+            object_xy = mesh_params["vertices"][:, :2].copy()
+            if mj_geom.type[0] != mujoco.mjtGeom.mjGEOM_MESH:
+                # Finite primitives use unit coordinates, while infinite plane dimensions use spatial coordinates
+                np.divide(object_xy, render_size, out=object_xy, where=is_size_finite)
+
+            repeat = mj_mat.texrepeat.copy()
+            if mj_geom.dataid[0] >= 0:
+                # Geoms fitted to mesh assets are already scaled by the MuJoCo compiler
+                np.divide(repeat, render_size, out=repeat, where=is_size_finite)
+            if mj_mat.texuniform[0]:
+                # Spatial repetition includes the scale applied by the Genesis morph
+                repeat *= np.where(is_size_finite, render_size, 1.0) * scale
+
+            # MuJoCo's object-linear two-dimensional texture mapping
+            #   s =  0.5 * repeat_x * x - 0.5
+            #   t = -0.5 * repeat_y * y - 0.5
+            uv = np.empty_like(object_xy)
+            uv[:, 0] = 0.5 * repeat[0] * object_xy[:, 0] - 0.5
+            uv[:, 1] = -0.5 * repeat[1] * object_xy[:, 1] - 0.5
+
+            # Trimesh measures the vertical texture coordinate from the top edge
+            uv[:, 1] = 1.0 - uv[:, 1]
+        elif uv is not None and not is_2d_texture:
+            uv *= mj_mat.texrepeat
     tmesh = trimesh.Trimesh(
         **mesh_params,
         visual=TextureVisuals(uv=uv, material=tmesh_mat),

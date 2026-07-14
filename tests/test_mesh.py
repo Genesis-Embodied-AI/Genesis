@@ -4,6 +4,7 @@ import platform
 from contextlib import nullcontext
 
 import xml.etree.ElementTree as ET
+import mujoco
 import numpy as np
 import pygltflib
 import pytest
@@ -940,6 +941,233 @@ def test_mjcf_parse_mesh_normals(normals_mjcf):
 
     assert_allclose(parsed.vertices[parsed_order], raw.vertices[raw_order], atol=1e-4)
     assert_allclose(parsed.vertex_normals[parsed_order], raw.vertex_normals[raw_order], atol=1e-3)
+
+
+@pytest.fixture
+def textured_mjcf(tmp_path):
+    explicit_mesh_path = tmp_path / "tetra.obj"
+    explicit_mesh_path.write_text(
+        "\n".join(
+            (
+                "v -1 -1 -1",
+                "v 1 -1 -1",
+                "v 0 1 -1",
+                "v 0 0 1",
+                "vt 0.1 0.2",
+                "vt 0.8 0.2",
+                "vt 0.4 0.9",
+                "vt 0.6 0.7",
+                "f 1/1 3/3 2/2",
+                "f 1/1 2/2 4/4",
+                "f 2/2 3/3 4/4",
+                "f 3/3 1/1 4/4",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    mjcf = ET.Element("mujoco", model="texture_mapping")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="0", conaffinity="0")
+
+    asset = ET.SubElement(mjcf, "asset")
+    ET.SubElement(asset, "texture", name="checker", type="2d", builtin="checker", width="8", height="8")
+    ET.SubElement(asset, "material", name="repeated", texture="checker", texrepeat="2 2.5")
+    ET.SubElement(
+        asset,
+        "material",
+        name="uniform",
+        texture="checker",
+        texrepeat="2 2.5",
+        texuniform="true",
+    )
+    ET.SubElement(
+        asset,
+        "mesh",
+        name="plain_mesh",
+        vertex="-1 -1 -1  1 -1 -1  0 1 -1  0 0 1",
+        face="0 2 1  0 1 3  1 2 3  2 0 3",
+    )
+    ET.SubElement(
+        asset,
+        "mesh",
+        name="fitted_mesh",
+        vertex="-2 -3 -1  2 -3 -1  -2 3 -1  -2 -3 1",
+        face="0 2 1  0 1 3  0 3 2  1 2 3",
+    )
+    ET.SubElement(asset, "mesh", name="explicit_mesh", file=str(explicit_mesh_path))
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="plane_repeated",
+        type="plane",
+        size="3 5 0.1",
+        material="repeated",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="plane_uniform",
+        type="plane",
+        size="3 5 0.1",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="plane_infinite",
+        type="plane",
+        size="0 0 0.1",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="sphere_uniform",
+        type="sphere",
+        size="2",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="ellipsoid_uniform",
+        type="ellipsoid",
+        size="2 3 4",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="capsule_uniform",
+        type="capsule",
+        size="2 3",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="cylinder_uniform",
+        type="cylinder",
+        size="2 3",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="box_uniform",
+        type="box",
+        size="2 3 4",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="mesh_generated",
+        type="mesh",
+        mesh="plain_mesh",
+        material="repeated",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="box_fitted",
+        type="box",
+        mesh="fitted_mesh",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="mesh_explicit_a",
+        type="mesh",
+        mesh="explicit_mesh",
+        material="uniform",
+    )
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="mesh_explicit_b",
+        type="mesh",
+        mesh="explicit_mesh",
+        material="uniform",
+    )
+
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+def test_mjcf_2d_texture_mapping(textured_mjcf):
+    SCALE = 2.0
+    EXPECTED_NAMES = {
+        "plane_repeated",
+        "plane_uniform",
+        "plane_infinite",
+        "sphere_uniform",
+        "ellipsoid_uniform",
+        "capsule_uniform",
+        "cylinder_uniform",
+        "box_uniform",
+        "mesh_generated",
+        "box_fitted",
+        "mesh_explicit_a",
+        "mesh_explicit_b",
+    }
+
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=textured_mjcf,
+            scale=SCALE,
+        ),
+    )
+    scene.build()
+
+    model = mujoco.MjModel.from_xml_string(textured_mjcf)
+    vgeom_names = {vgeom.metadata["name"] for vgeom in entity.vgeoms}
+    assert vgeom_names == EXPECTED_NAMES
+
+    explicit_mesh = model.mesh("explicit_mesh")
+    texcoord_start = explicit_mesh.texcoordadr[0]
+    texcoord_end = texcoord_start + model.mesh_texcoordnum[explicit_mesh.id]
+    explicit_uvs = model.mesh_texcoord[texcoord_start:texcoord_end]
+
+    for vgeom in entity.vgeoms:
+        geom = model.geom(vgeom.metadata["name"])
+        if vgeom.metadata["name"].startswith("mesh_explicit"):
+            assert_allclose(
+                np.unique(vgeom.uvs, axis=0),
+                np.unique(explicit_uvs, axis=0),
+                tol=1e-6,
+            )
+            continue
+
+        render_size = geom.size[:2].copy()
+        if geom.type[0] in (
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            mujoco.mjtGeom.mjGEOM_CAPSULE,
+            mujoco.mjtGeom.mjGEOM_CYLINDER,
+        ):
+            render_size[1] = render_size[0]
+        is_size_finite = render_size > 0
+
+        object_xy = vgeom.init_vverts[:, :2] / SCALE
+        if geom.type[0] != mujoco.mjtGeom.mjGEOM_MESH:
+            np.divide(object_xy, render_size, out=object_xy, where=is_size_finite)
+
+        material = model.mat(geom.matid[0])
+        repeat = material.texrepeat.copy()
+        if geom.dataid[0] >= 0:
+            np.divide(repeat, render_size, out=repeat, where=is_size_finite)
+        if material.texuniform[0]:
+            repeat *= np.where(is_size_finite, render_size, 1.0) * SCALE
+
+        expected_uvs = np.empty_like(object_xy)
+        expected_uvs[:, 0] = 0.5 * repeat[0] * object_xy[:, 0] - 0.5
+        expected_uvs[:, 1] = -0.5 * repeat[1] * object_xy[:, 1] - 0.5
+        assert_allclose(vgeom.uvs, expected_uvs, tol=1e-6)
 
 
 @pytest.mark.required
