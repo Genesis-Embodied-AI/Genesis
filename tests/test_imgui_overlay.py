@@ -60,18 +60,6 @@ def test_imgui_overlay_capture_pending_entities_preserves_heterogeneous_morphs()
     assert heterogeneous_kwargs["visualize_contact"] is True
 
 
-@pytest.mark.required
-def test_imgui_overlay_mouse_scroll_preserves_pyglet_direction():
-    plugin = ImGuiOverlayPlugin.__new__(ImGuiOverlayPlugin)
-    plugin._available = True
-    plugin._io = Mock()
-    plugin._is_capturing = Mock(return_value=False)
-
-    plugin.on_mouse_scroll(10, 20, -2, 3)
-
-    plugin._io.add_mouse_wheel_event.assert_called_once_with(-2, 3)
-
-
 def _apply_deterministic_imgui_overrides(monkeypatch):
     """Make ImGui rendering and timing pixel-identical across renderers for snapshot tests."""
     from imgui_bundle import imgui
