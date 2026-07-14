@@ -233,11 +233,23 @@ def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapsh
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_set_vverts(renderer, show_viewer):
     scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.0, -1.5, 0.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
         renderer=renderer,
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
-    plane = scene.add_entity(gs.morphs.Plane())
+    # Keep every ground plane vertex inside the camera frustum (camera at (0, -1.5, 0.5), yfov 30 deg,
+    # aspect 4:3): the Apple Software Renderer misrasterizes geometry whose vertices fall outside the view,
+    # breaking the pixel comparisons below.
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(
+            pos=(0.0, 1.8, 0.0),
+            plane_size=(1.2, 2.0),
+        ),
+    )
     entity = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/sphere.obj",
