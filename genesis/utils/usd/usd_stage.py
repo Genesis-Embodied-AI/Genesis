@@ -82,10 +82,9 @@ def _find_connected_components(stage: Usd.Stage, all_joints: List[Usd.Prim]) -> 
 
         joint_to_links[joint_prim] = (body0_path, body1_path)
 
-        # Union connected links (only if they are rigid bodies)
-        # If a joint connects a non-rigid-body to a rigid body, we still include the rigid body
+        # Union connected links. A target that resolves to no rigid-body link is None; a joint with a
+        # single resolved side still contributes that link as a standalone component member.
         if body0_path and body1_path:
-            # Both are rigid bodies - union them
             all_link_paths.add(body0_path)
             all_link_paths.add(body1_path)
             uf.union(body0_path, body1_path)

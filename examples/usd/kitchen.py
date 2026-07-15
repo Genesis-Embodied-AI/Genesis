@@ -38,7 +38,7 @@ def place_on_ground(entities, gap=0.05):
     for entity in entities:
         lo, hi = tensor_to_array(entity.get_AABB())
         size = hi - lo
-        target_min = np.array([x, -0.5 * size[1], gap], dtype=np.float32)
+        target_min = np.array([x, -0.5 * size[1], gap])
         entity.set_pos(tensor_to_array(entity.get_pos()) + (target_min - lo))
         x += size[0] + gap
 
@@ -55,13 +55,15 @@ def load_asset(scene, root, rel_path, fixed):
             fixed=fixed,
             convexify=False,  # Don't force convex hulls; honor the asset's MeshCollisionAPI approximation per geom.
             decimate=True,  # Simplify collision meshes (fewer faces) for speed and stability.
-            align=False,  # Keep the USD root-link frames (don't re-center to the center of mass).
         ),
         vis_mode="visual",  # Render the entity's own USD materials, not the randomized per-collision colors.
     )
-    gs.logger.info(f"  -> parsed {len(entities)} entit{'y' if len(entities) == 1 else 'ies'}")
-    for e in entities:
-        gs.logger.info(f"     {e.__class__.__name__}: n_links={e.n_links} n_joints={e.n_joints} n_geoms={e.n_geoms}")
+    gs.logger.info(f"  -> parsed {len(entities)} entities")
+    for entity in entities:
+        gs.logger.info(
+            f"     {entity.__class__.__name__}: "
+            f"n_links={entity.n_links} n_joints={entity.n_joints} n_geoms={entity.n_geoms}"
+        )
     return entities
 
 
@@ -79,7 +81,6 @@ def main():
 
     scene = gs.Scene(
         show_viewer=args.vis,
-        show_FPS=False,
         rigid_options=gs.options.RigidOptions(
             enable_neutral_collision=True,  # Enable so articulated parts (e.g. dishwasher) don't clip
         ),
@@ -119,9 +120,7 @@ def main():
     scene.build()
     if not args.full:
         place_on_ground(all_entities)
-    gs.logger.info(
-        f"Scene built successfully with {len(all_entities)} entit{'y' if len(all_entities) == 1 else 'ies'}."
-    )
+    gs.logger.info(f"Scene built successfully with {len(all_entities)} entities.")
 
     if args.vis:
         is_running = True

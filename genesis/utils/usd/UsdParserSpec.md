@@ -25,7 +25,7 @@ restoring $\det R = +1$. The reflection therefore lives entirely in $S$ (baked i
 vertices via `geom_ST`), and rendered/collision geometry keeps the intended handedness.
 
 Consequences for primitive collision shapes: because $S$ may now be negative, primitive
-dimensions (sphere radius, box extents, …) are taken from `np.abs(np.diag(S))` so collision
+dimensions (sphere radius, box extents, ...) are taken from `np.abs(np.diag(S))` so collision
 sizes stay positive; the sign (reflection) is still applied to the baked mesh via the full
 scale matrix. A truly singular transform ($\det R = 0$) still raises.
 

@@ -124,16 +124,15 @@ def _parse_joint_axis_pos(
     context: UsdContext,
     joint: UsdPhysics.Joint,
     child_link: Usd.Prim,
+    joint_frame: Usd.Prim,
     is_body1: bool,
     axis_override: str | None = None,
-    frame_prim: Usd.Prim | None = None,
 ) -> Tuple[str, np.ndarray, np.ndarray]:
-    # localPos/localRot are expressed in the joint body-relationship target frame, which may be a
-    # collision child prim rather than the canonical RigidBodyAPI link prim.
-    frame_prim = frame_prim or child_link
+    # localPos/localRot are expressed in the frame of 'joint_frame', the joint body-relationship target,
+    # which may be a collision child prim rather than the canonical RigidBodyAPI link prim.
     joint_pos_attr = joint.GetLocalPos1Attr() if is_body1 else joint.GetLocalPos0Attr()
     joint_pos = usd_pos_to_numpy(joint_pos_attr.Get()) if joint_pos_attr.HasValue() else gu.zero_pos()
-    T = context.compute_transform(frame_prim)
+    T = context.compute_transform(joint_frame)
     joint_pos = gu.transform_by_T(joint_pos, T)
     Q, S = context.compute_gs_transform(child_link)
     Q_inv = np.linalg.inv(Q)
@@ -251,11 +250,11 @@ def _parse_link(
                 joint = UsdPhysics.Joint(joint_prim)
             # localPos/localRot are authored in the body-relationship target's frame (frame_path),
             # which may differ from the canonical link prim; fall back to the link if unresolved.
-            frame_prim = context.stage.GetPrimAtPath(frame_path) if frame_path else link
-            if not frame_prim.IsValid():
-                frame_prim = link
+            joint_frame = context.stage.GetPrimAtPath(frame_path) if frame_path else link
+            if not joint_frame.IsValid():
+                joint_frame = link
             joint_axis_str, joint_axis, joint_pos = _parse_joint_axis_pos(
-                context, joint, link, is_body1, detected_axis_str, frame_prim=frame_prim
+                context, joint, link, joint_frame, is_body1, detected_axis_str
             )
             joint_name = str(joint_prim.GetPath())
         else:
@@ -646,9 +645,9 @@ def _apply_density_derived_mass(
         l_info["inertial_mass"] = props.mass
         # Only fill center-of-mass / inertia when not authored, to preserve any explicit values.
         if l_info.get("inertial_pos") is None:
-            l_info["inertial_pos"] = np.asarray(props.com, dtype=gs.np_float)
+            l_info["inertial_pos"] = props.com
         if l_info.get("inertial_i") is None:
-            l_info["inertial_i"] = np.asarray(props.i, dtype=gs.np_float)
+            l_info["inertial_i"] = props.i
 
 
 def _compute_joint_prim_paths(stage: Usd.Stage, entity_prim: Usd.Prim) -> List[str] | None:
@@ -789,6 +788,14 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     # Fill link mass/inertia from density (MassAPI or physics-material) when no explicit mass is set.
     _apply_density_derived_mass(links, l_infos, links_g_infos)
+
+    # The USD-side g_info annotations are fully consumed at this point; strip them so they do not leak
+    # into the generic entity-building pipeline (including the visual copies of collision geoms).
+    for link_g_infos in links_g_infos:
+        for g_info in link_g_infos:
+            g_info.pop("prim_path", None)
+            g_info.pop("density", None)
+
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils.order_links_depth_first(l_infos, links_j_infos, links_g_infos)
     eqs_info = []  # USD doesn't support equality constraints
 

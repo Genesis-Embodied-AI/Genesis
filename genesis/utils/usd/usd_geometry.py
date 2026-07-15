@@ -12,8 +12,8 @@ from .usd_context import UsdContext
 from .usd_utils import AXES_T, AXES_VECTOR, usd_attr_array_to_numpy, usd_primvar_array_to_numpy
 
 
-# UsdPhysics.MeshCollisionAPI 'approximation' tokens → per-geom collision post-processing overrides
-# consumed by RigidEntity._postprocess_geoms_info (None on a field = inherit the morph default).
+# UsdPhysics.MeshCollisionAPI 'approximation' tokens -> per-geom collision post-processing overrides
+# consumed by RigidEntity._postprocess_geoms_info (an absent field inherits the morph default).
 # 'boundingCube'/'boundingSphere' are handled separately by fitting a primitive geom in the parser.
 _APPROXIMATION_OVERRIDES = {
     "convexHull": {"convexify": True, "decompose_error_threshold": float("inf")},  # single hull, no decomposition
@@ -350,19 +350,16 @@ def parse_prim_geoms(
             # falling back to static; restitution has no rigid-rigid equivalent in the solver and is
             # dropped (with a one-time warning).
             geom_friction = gu.default_friction()
-            geom_density = None
             physics_material = context.get_physics_material(prim)
             if physics_material is not None:
-                # get_physics_material returns only authored attributes, so an explicit 0 (a frictionless
-                # collider) is honored. Prefer dynamic friction, fall back to static, else the default.
-                if "dynamic_friction" in physics_material:
-                    geom_friction = physics_material["dynamic_friction"]
-                elif "static_friction" in physics_material:
-                    geom_friction = physics_material["static_friction"]
-                if physics_material.get("restitution"):
+                # PhysicsMaterial fields are None when unauthored, so an explicitly authored 0 (a
+                # frictionless collider) is honored. Prefer dynamic friction, fall back to static.
+                if physics_material.dynamic_friction is not None:
+                    geom_friction = physics_material.dynamic_friction
+                elif physics_material.static_friction is not None:
+                    geom_friction = physics_material.static_friction
+                if physics_material.restitution:
                     context.note_unsupported_restitution()
-                # Stash the material density for the link-level mass computation (see usd_rigid_entity).
-                geom_density = physics_material.get("density")
 
             # Per-geom collision approximation hint (UsdPhysics.MeshCollisionAPI), honored only when
             # explicitly authored. Meaningful for mesh collision; primitives are already exact.
@@ -372,48 +369,58 @@ def parse_prim_geoms(
                 if approximation_attr.HasAuthoredValue():
                     approximation = approximation_attr.Get()
 
-            geom_prim_path = str(prim.GetPath())
-
-            def _collision_g_info(**overrides):
-                g_info = dict(
-                    pos=geom_pos,
-                    quat=geom_quat,
-                    contype=1,
-                    conaffinity=1,
-                    friction=geom_friction,
-                    sol_params=gu.default_solver_params(),
-                    # Source prim path, used to resolve collision-group membership (see usd_collision).
-                    prim_path=geom_prim_path,
-                )
-                if geom_density is not None:
-                    g_info["density"] = geom_density
-                g_info.update(overrides)
-                return g_info
+            # 'prim_path' resolves collision-group membership (see usd_collision) and 'density' feeds
+            # the density-derived link mass; parse_usd_rigid_entity strips both once consumed.
+            collision_g_info = dict(
+                pos=geom_pos,
+                quat=geom_quat,
+                contype=1,
+                conaffinity=1,
+                friction=geom_friction,
+                prim_path=str(prim.GetPath()),
+            )
+            if physics_material is not None and physics_material.density is not None:
+                collision_g_info["density"] = physics_material.density
 
             if approximation in ("boundingCube", "boundingSphere") and meshes:
                 # Fit a single primitive to the collision vertices, replacing the mesh collider.
                 verts = np.vstack([mesh.verts for mesh in meshes])
                 lo, hi = verts.min(axis=0), verts.max(axis=0)
                 center = (lo + hi) * 0.5
-                prim_pos = geom_pos + gu.transform_by_quat(center.astype(gs.np_float), geom_quat)
+                prim_pos = geom_pos + gu.transform_by_quat(center, geom_quat)
                 if approximation == "boundingCube":
-                    extents = (hi - lo).astype(gs.np_float)
+                    extents = hi - lo
                     bv_tmesh = trimesh.creation.box(extents=extents)
                     bv_type, bv_data = gs.GEOM_TYPE.BOX, extents
                 else:
-                    radius = float(np.linalg.norm(verts - center, axis=1).max())
+                    radius = np.linalg.norm(verts - center, axis=1).max()
                     bv_tmesh = trimesh.creation.icosphere(radius=radius, subdivisions=2)
-                    bv_type, bv_data = gs.GEOM_TYPE.SPHERE, np.array([radius], dtype=gs.np_float)
+                    bv_type, bv_data = gs.GEOM_TYPE.SPHERE, np.array([radius])
                 bv_mesh = gs.Mesh.from_trimesh(bv_tmesh, surface=geom_surface, metadata={"name": geom_id})
-                # Already a primitive: skip mesh convexify for this geom.
                 g_infos.append(
-                    _collision_g_info(mesh=bv_mesh, pos=prim_pos, type=bv_type, data=bv_data, convexify=False)
+                    {
+                        **collision_g_info,
+                        "mesh": bv_mesh,
+                        "pos": prim_pos,
+                        "sol_params": gu.default_solver_params(),
+                        "type": bv_type,
+                        "data": bv_data,
+                        # Already a primitive: skip mesh convexify for this geom.
+                        "convexify": False,
+                    }
                 )
             else:
                 approximation_overrides = _APPROXIMATION_OVERRIDES.get(approximation, {})
                 for mesh in meshes:
                     g_infos.append(
-                        _collision_g_info(mesh=mesh, type=gs_type, data=geom_data, **approximation_overrides)
+                        {
+                            **collision_g_info,
+                            "mesh": mesh,
+                            "sol_params": gu.default_solver_params(),
+                            "type": gs_type,
+                            "data": geom_data,
+                            **approximation_overrides,
+                        }
                     )
 
     predicate = Usd.TraverseInstanceProxies()
