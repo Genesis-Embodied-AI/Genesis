@@ -17,7 +17,7 @@ try:
 except ImportError as e:
     pytest.skip("USD is not supported because 'pxr' module is not available.", allow_module_level=True)
 
-from pxr import Gf, Sdf, UsdGeom, UsdPhysics
+from pxr import Gf, Sdf, UsdGeom, UsdPhysics, UsdShade
 from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
 from ..conftest import SKIP_NO_OMNIVERSE_KIT
 
@@ -1109,6 +1109,363 @@ def test_humanoid_generic_joint_detection():
             assert False, f"Joint {joint.name} is FREE but should be SPHERICAL or REVOLUTE."
     spherical_joints = [j for j in entity.joints if j.type == gs.JOINT_TYPE.SPHERICAL]
     assert len(spherical_joints) > 0, "No SPHERICAL joints found — generic PhysicsJoint detection failed."
+
+
+@pytest.fixture(scope="session")
+def negative_scale_rigid_usd(asset_tmp_path):
+    """Rigid body whose mesh prim uses negative xformOp:scale (reflection)."""
+    usd_file = str(asset_tmp_path / "negative_scale_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    mesh = UsdGeom.Cube.Define(stage, "/root/body")
+    mesh.GetSizeAttr().Set(1.0)
+    mesh.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.5))
+    mesh.AddScaleOp().Set(Gf.Vec3d(-1.0, -1.0, -1.0))
+    UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_negative_scale_reflection(negative_scale_rigid_usd):
+    """Negative xformOp:scale (reflection) must not crash USD transform parsing."""
+    usd_scene = build_usd_scene(negative_scale_rigid_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    assert entity.n_links == 1
+    assert entity.n_geoms >= 1
+    box_geom = next(g for g in entity.geoms if g.type == gs.GEOM_TYPE.BOX)
+    assert_allclose(box_geom.data[:3], (1.0, 1.0, 1.0), tol=gs.EPS)
+
+
+@pytest.fixture(scope="session")
+def nested_collision_joint_usd(asset_tmp_path):
+    """Articulation where joints reference child collision prims under RigidBodyAPI parents."""
+    usd_file = str(asset_tmp_path / "nested_collision_joint.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    base = stage.DefinePrim("/root/base", "Xform")
+    UsdPhysics.CollisionAPI.Apply(base)
+    base_col = UsdGeom.Cube.Define(stage, "/root/base/collision")
+    base_col.GetSizeAttr().Set(1.0)
+    UsdPhysics.CollisionAPI.Apply(base_col.GetPrim())
+
+    # Parent has RigidBodyAPI; joint references child collision prim (common USD authoring pattern).
+    child = stage.DefinePrim("/root/child", "Xform")
+    UsdPhysics.RigidBodyAPI.Apply(child)
+    child_col = UsdGeom.Cube.Define(stage, "/root/child/collision")
+    child_col.GetSizeAttr().Set(0.5)
+    child_col.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.5))
+    UsdPhysics.CollisionAPI.Apply(child_col.GetPrim())
+
+    joint_prim = UsdPhysics.RevoluteJoint.Define(stage, "/root/child/revolute_joint")
+    joint_prim.CreateBody0Rel().SetTargets([base_col.GetPrim().GetPath()])
+    joint_prim.CreateBody1Rel().SetTargets([child_col.GetPrim().GetPath()])
+    joint_prim.CreateAxisAttr().Set("Z")
+    joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_nested_collision_joint_targets(nested_collision_joint_usd):
+    """Joints referencing child collision prims must resolve to the parent RigidBodyAPI link."""
+    usd_scene = build_usd_scene(nested_collision_joint_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    assert entity.n_links == 2
+    assert entity.n_joints == 1
+    # localPos1 is in the collision-child frame; anchor must land at the child offset in link space.
+    joint = entity.joints[0]
+    assert_allclose(joint.pos, (0.0, 0.0, 0.5), tol=gs.EPS)
+
+
+@pytest.fixture(scope="session")
+def physics_material_rigid_usd(asset_tmp_path):
+    """Rigid body with a bound UsdPhysicsMaterialAPI (static/dynamic friction + restitution)."""
+    usd_file = str(asset_tmp_path / "physics_material_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    body = UsdGeom.Cube.Define(stage, "/root/body")
+    body.GetSizeAttr().Set(1.0)
+    UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(body.GetPrim())
+
+    material = UsdShade.Material.Define(stage, "/root/PhysicsMaterial")
+    material_api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+    material_api.CreateStaticFrictionAttr(0.8)
+    material_api.CreateDynamicFrictionAttr(0.6)
+    material_api.CreateRestitutionAttr(0.4)
+    UsdShade.MaterialBindingAPI.Apply(body.GetPrim()).Bind(
+        material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
+    )
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_physics_material_friction(physics_material_rigid_usd):
+    """Friction from a bound UsdPhysicsMaterialAPI must override the default on collision geoms."""
+    usd_scene = build_usd_scene(physics_material_rigid_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    assert entity.n_geoms >= 1
+    # Dynamic friction (0.6) is preferred over static (0.8); restitution (0.4) is dropped.
+    assert_allclose(entity.geoms[0].friction, 0.6, tol=gs.EPS)
+
+
+@pytest.fixture(scope="session")
+def frictionless_material_rigid_usd(asset_tmp_path):
+    """Rigid body whose bound physics material explicitly authors dynamic_friction = 0."""
+    usd_file = str(asset_tmp_path / "frictionless_material_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    body = UsdGeom.Cube.Define(stage, "/root/body")
+    body.GetSizeAttr().Set(1.0)
+    UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(body.GetPrim())
+
+    material = UsdShade.Material.Define(stage, "/root/PhysicsMaterial")
+    UsdPhysics.MaterialAPI.Apply(material.GetPrim()).CreateDynamicFrictionAttr(0.0)
+    UsdShade.MaterialBindingAPI.Apply(body.GetPrim()).Bind(
+        material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
+    )
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_physics_material_zero_friction(frictionless_material_rigid_usd):
+    """An explicitly authored dynamic_friction = 0 must be preserved, not treated as unset."""
+    usd_scene = build_usd_scene(frictionless_material_rigid_usd, scale=1.0, fixed=True)
+    entity = usd_scene.entities[0]
+    assert entity.n_geoms >= 1
+    assert_allclose(entity.geoms[0].friction, 0.0, tol=gs.EPS)
+
+
+@pytest.fixture(scope="session")
+def density_only_rigid_usd(asset_tmp_path):
+    """Rigid body specifying mass implicitly via MassAPI density (no explicit mass)."""
+    usd_file = str(asset_tmp_path / "density_only_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    body = UsdGeom.Cube.Define(stage, "/root/body")
+    body.GetSizeAttr().Set(1.0)  # 1 m^3 unit cube
+    UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(body.GetPrim())
+    mass_api = UsdPhysics.MassAPI.Apply(body.GetPrim())
+    mass_api.CreateDensityAttr(500.0)
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_density_derived_mass(density_only_rigid_usd):
+    """A link with only MassAPI density must get mass = density x volume from its geometry."""
+    usd_scene = build_usd_scene(density_only_rigid_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    # Unit cube (1 m^3) at density 500 -> 500 kg, independent of the material's default rho.
+    assert_allclose(entity.get_mass(), 500.0, tol=1e-4)
+
+
+def _define_usd_mesh(stage, path, tmesh):
+    """Author a UsdGeom.Mesh from a trimesh (points + triangle faces)."""
+    mesh = UsdGeom.Mesh.Define(stage, path)
+    mesh.GetPointsAttr().Set([Gf.Vec3f(*map(float, v)) for v in tmesh.vertices])
+    mesh.GetFaceVertexIndicesAttr().Set([int(i) for i in tmesh.faces.reshape(-1)])
+    mesh.GetFaceVertexCountsAttr().Set([3] * len(tmesh.faces))
+    return mesh
+
+
+def _approximated_mesh_usd(usd_file, tmesh, approximation):
+    """A rigid mesh body whose collision uses the given MeshCollisionAPI approximation."""
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+    mesh = _define_usd_mesh(stage, "/root/body", tmesh)
+    UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+    UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(approximation)
+    stage.Save()
+    return usd_file
+
+
+@pytest.fixture(scope="session")
+def bounding_cube_mesh_usd(asset_tmp_path):
+    """Mesh collider (2x1x1 box) with approximation=boundingCube."""
+    import trimesh
+
+    return _approximated_mesh_usd(
+        str(asset_tmp_path / "bounding_cube_mesh.usda"), trimesh.creation.box(extents=(2.0, 1.0, 1.0)), "boundingCube"
+    )
+
+
+@pytest.fixture(scope="session")
+def bounding_sphere_mesh_usd(asset_tmp_path):
+    """Mesh collider (2x1x1 box) with approximation=boundingSphere."""
+    import trimesh
+
+    return _approximated_mesh_usd(
+        str(asset_tmp_path / "bounding_sphere_mesh.usda"),
+        trimesh.creation.box(extents=(2.0, 1.0, 1.0)),
+        "boundingSphere",
+    )
+
+
+@pytest.fixture(scope="session")
+def convex_hull_mesh_usd(asset_tmp_path):
+    """Concave collider (two disjoint boxes) with approximation=convexHull."""
+    import trimesh
+
+    box_a = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    box_b = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    box_b.apply_translation((3.0, 0.0, 0.0))
+    concave = trimesh.util.concatenate([box_a, box_b])
+    return _approximated_mesh_usd(str(asset_tmp_path / "convex_hull_mesh.usda"), concave, "convexHull")
+
+
+@pytest.mark.required
+def test_collision_approximation_bounding_cube(bounding_cube_mesh_usd):
+    """approximation=boundingCube must fit a BOX collision geom to the mesh AABB."""
+    usd_scene = build_usd_scene(bounding_cube_mesh_usd, scale=1.0, fixed=True)
+    entity = usd_scene.entities[0]
+    box_geom = next(g for g in entity.geoms if g.type == gs.GEOM_TYPE.BOX)
+    assert_allclose(box_geom.data[:3], (2.0, 1.0, 1.0), tol=1e-5)
+
+
+@pytest.mark.required
+def test_collision_approximation_bounding_sphere(bounding_sphere_mesh_usd):
+    """approximation=boundingSphere must fit a SPHERE collision geom enclosing the mesh."""
+    usd_scene = build_usd_scene(bounding_sphere_mesh_usd, scale=1.0, fixed=True)
+    entity = usd_scene.entities[0]
+    sphere_geom = next(g for g in entity.geoms if g.type == gs.GEOM_TYPE.SPHERE)
+    # Half the AABB diagonal of a 2x1x1 box: 0.5 * sqrt(4+1+1).
+    assert_allclose(sphere_geom.data[0], 0.5 * np.sqrt(6.0), tol=1e-3)
+
+
+@pytest.mark.required
+def test_collision_approximation_convex_hull(convex_hull_mesh_usd):
+    """approximation=convexHull forces a convex collision geom even when morph.convexify is False."""
+    usd_scene = build_usd_scene(convex_hull_mesh_usd, scale=1.0, fixed=True)
+    entity = usd_scene.entities[0]
+    assert entity.n_geoms == 1  # single hull, not decomposed
+    assert entity.geoms[0].mesh.trimesh.is_convex
+
+
+def _can_collide(g0, g1):
+    """Genesis collision rule between two collision g_infos."""
+    return bool((g0["contype"] & g1["conaffinity"]) | (g1["contype"] & g0["conaffinity"]))
+
+
+class _FilteringContext:
+    """Minimal UsdContext stand-in for apply_collision_filtering unit tests."""
+
+    def __init__(self, stage):
+        self.stage = stage
+        self.cross_entity_warned = False
+
+    def note_unsupported_cross_entity_filtering(self):
+        self.cross_entity_warned = True
+
+
+@pytest.mark.required
+def test_collision_group_filtering():
+    """Two colliders in CollisionGroups that filter each other must end up unable to collide."""
+    from genesis.utils.usd.usd_collision import apply_collision_filtering
+
+    stage = Usd.Stage.CreateInMemory()
+    for path in ("/root/a", "/root/b", "/root/c"):
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, path).GetPrim())
+    group_a = UsdPhysics.CollisionGroup.Define(stage, "/groups/A")
+    group_b = UsdPhysics.CollisionGroup.Define(stage, "/groups/B")
+    group_a.GetCollidersCollectionAPI().CreateIncludesRel().AddTarget("/root/a")
+    group_b.GetCollidersCollectionAPI().CreateIncludesRel().AddTarget("/root/b")
+    group_a.CreateFilteredGroupsRel().AddTarget("/groups/B")  # A and B do not collide
+
+    cg_infos = [
+        {"prim_path": "/root/a", "contype": 1, "conaffinity": 1},
+        {"prim_path": "/root/b", "contype": 1, "conaffinity": 1},
+        {"prim_path": "/root/c", "contype": 1, "conaffinity": 1},
+    ]
+    ctx = _FilteringContext(stage)
+    apply_collision_filtering(ctx, cg_infos)
+
+    assert not ctx.cross_entity_warned  # all colliders are in this entity
+    assert not _can_collide(cg_infos[0], cg_infos[1])  # A vs B filtered
+    assert _can_collide(cg_infos[0], cg_infos[2])  # A vs ungrouped still collides
+    assert _can_collide(cg_infos[1], cg_infos[2])  # B vs ungrouped still collides
+    assert all("prim_path" not in g for g in cg_infos)  # consumed
+
+
+@pytest.mark.required
+def test_filtered_pairs_api():
+    """UsdPhysics.FilteredPairsAPI must prevent the referenced prim pair from colliding."""
+    from genesis.utils.usd.usd_collision import apply_collision_filtering
+
+    stage = Usd.Stage.CreateInMemory()
+    for path in ("/root/a", "/root/b"):
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, path).GetPrim())
+    prim_a = stage.GetPrimAtPath("/root/a")
+    UsdPhysics.FilteredPairsAPI.Apply(prim_a).CreateFilteredPairsRel().AddTarget("/root/b")
+
+    cg_infos = [
+        {"prim_path": "/root/a", "contype": 1, "conaffinity": 1},
+        {"prim_path": "/root/b", "contype": 1, "conaffinity": 1},
+    ]
+    apply_collision_filtering(_FilteringContext(stage), cg_infos)
+    assert not _can_collide(cg_infos[0], cg_infos[1])
+
+
+@pytest.mark.required
+def test_collision_filtering_cross_entity_warns():
+    """Filtering that targets a collider outside this entity is reported, not silently dropped."""
+    from genesis.utils.usd.usd_collision import apply_collision_filtering
+
+    stage = Usd.Stage.CreateInMemory()
+    for path in ("/root/a", "/root/b"):
+        UsdPhysics.CollisionAPI.Apply(UsdGeom.Cube.Define(stage, path).GetPrim())
+    UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath("/root/a")).CreateFilteredPairsRel().AddTarget("/root/b")
+
+    # Only /root/a is part of this entity; /root/b belongs to a separate entity (add_stage split).
+    cg_infos = [{"prim_path": "/root/a", "contype": 1, "conaffinity": 1}]
+    ctx = _FilteringContext(stage)
+    apply_collision_filtering(ctx, cg_infos)
+    assert ctx.cross_entity_warned
 
 
 @pytest.fixture(scope="session")

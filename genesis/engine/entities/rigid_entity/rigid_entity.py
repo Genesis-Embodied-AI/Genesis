@@ -1250,16 +1250,35 @@ class KinematicEntity(Entity):
             else:
                 decompose_error_threshold = morph.decompose_object_error_threshold
 
-            cg_infos = mu.postprocess_collision_geoms(
-                cg_infos,
-                morph.decimate,
-                morph.decimate_face_num,
-                morph.decimate_aggressiveness,
-                morph.convexify,
-                decompose_error_threshold,
-                morph.coacd_options,
-                morph.watertighten,
-            )
+            # A collision geom may carry per-geom post-processing overrides (e.g. a USD
+            # MeshCollisionAPI approximation hint sets "convexify"/"decimate"/"decompose_error_threshold";
+            # None = inherit the morph-level value). Group geoms by their effective settings and
+            # post-process each group separately. Geoms without overrides share one group, i.e. the
+            # previous whole-entity behavior.
+            groups: dict[tuple, list] = {}
+            for g_info in cg_infos:
+                convexify = g_info.pop("convexify", None)
+                decimate = g_info.pop("decimate", None)
+                threshold = g_info.pop("decompose_error_threshold", None)
+                settings = (
+                    morph.convexify if convexify is None else convexify,
+                    morph.decimate if decimate is None else decimate,
+                    decompose_error_threshold if threshold is None else threshold,
+                )
+                groups.setdefault(settings, []).append(g_info)
+
+            cg_infos = []
+            for (convexify, decimate, threshold), group_g_infos in groups.items():
+                cg_infos += mu.postprocess_collision_geoms(
+                    group_g_infos,
+                    decimate,
+                    morph.decimate_face_num,
+                    morph.decimate_aggressiveness,
+                    convexify,
+                    threshold,
+                    morph.coacd_options,
+                    morph.watertighten,
+                )
 
         # Randomize collision mesh colors. This is especially useful to check convex decomposition.
         for g_info in cg_infos:

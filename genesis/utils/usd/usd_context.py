@@ -121,6 +121,9 @@ class UsdContext:
                 f"Failed to open USD stage: {self._stage_file}. Ensure the file exists and is a valid USD file.", e
             )
         self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
+        self._physics_material_cache: dict[str, dict | None] = {}  # prim_path -> physics material props
+        self._restitution_warned = False
+        self._cross_entity_filter_warned = False
         self._material_parsed = False
         self._bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
         self._prim_material_bindings: dict[str, str] = {}  # prim_path -> material_path
@@ -163,6 +166,74 @@ class UsdContext:
         if prim_path in self._prim_material_bindings:
             return UsdShade.Material(self._stage.GetPrimAtPath(self._prim_material_bindings[prim_path]))
         return None
+
+    def get_physics_material(self, prim: Usd.Prim) -> dict | None:
+        """
+        Resolve and parse the physics material (UsdPhysicsMaterialAPI) bound to a prim.
+
+        USD binds physics materials on the dedicated ``"physics"`` material purpose, which may be
+        authored on the prim itself or inherited from an ancestor. Returns a dict containing only
+        the **authored** properties among ``static_friction``, ``dynamic_friction``,
+        ``restitution`` and ``density`` (unauthored attributes are omitted so callers can fall
+        back to Genesis defaults), or ``None`` if no physics material is bound.
+        """
+        prim_path = str(prim.GetPath())
+        if prim_path in self._physics_material_cache:
+            return self._physics_material_cache[prim_path]
+
+        props: dict | None = None
+        material, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial("physics")
+        material_prim = material.GetPrim() if material else None
+        if material_prim is not None and material_prim.IsValid() and material_prim.HasAPI(UsdPhysics.MaterialAPI):
+            material_api = UsdPhysics.MaterialAPI(material_prim)
+            parsed = {}
+            for key, attr in (
+                ("static_friction", material_api.GetStaticFrictionAttr()),
+                ("dynamic_friction", material_api.GetDynamicFrictionAttr()),
+                ("restitution", material_api.GetRestitutionAttr()),
+                ("density", material_api.GetDensityAttr()),
+            ):
+                if attr and attr.HasAuthoredValue():
+                    value = attr.Get()
+                    if value is not None:
+                        parsed[key] = float(value)
+            props = parsed or None
+
+        self._physics_material_cache[prim_path] = props
+        return props
+
+    def note_unsupported_restitution(self):
+        """
+        Emit a one-time warning that USD physics-material restitution is not applied.
+
+        The Genesis rigid solver has no rigid-rigid restitution coefficient; contact elasticity
+        is governed by ``sol_params`` instead. Restitution authored on a UsdPhysicsMaterialAPI is
+        therefore parsed but dropped.
+        """
+        if not self._restitution_warned:
+            self._restitution_warned = True
+            gs.logger.warning(
+                "USD physics material 'restitution' is not supported by the rigid solver "
+                "(no rigid-rigid restitution coefficient); ignoring it. Tune contact elasticity "
+                "via solver 'sol_params' instead."
+            )
+
+    def note_unsupported_cross_entity_filtering(self):
+        """
+        Emit a one-time warning that cross-entity USD collision filtering is not applied.
+
+        ``scene.add_stage`` splits a stage into separate entities, and collision filtering is solved
+        per entity. A CollisionGroup / FilteredPairsAPI relationship that spans two prims which end up
+        in different entities cannot be expressed as per-entity contype/conaffinity, so those pairs
+        keep colliding. Within-entity (self-collision) filtering is unaffected.
+        """
+        if not self._cross_entity_filter_warned:
+            self._cross_entity_filter_warned = True
+            gs.logger.warning(
+                "USD collision filtering references colliders in different entities (scene.add_stage "
+                "splits the stage into separate entities); cross-entity filtering is not applied, so "
+                "those geometry pairs will still collide. Within-entity self-collision filtering is applied."
+            )
 
     def compute_transform(self, prim: Usd.Prim) -> np.ndarray:
         """
@@ -404,6 +475,39 @@ def find_rigid_bodies_in_range(prim_range: Usd.PrimRange) -> set[str]:
     return rigid_bodies
 
 
+def resolve_rigid_body_link_path(stage: Usd.Stage, path: str) -> str | None:
+    """
+    Resolve a joint body target path to the canonical rigid-body link path.
+
+    USD assets may place RigidBodyAPI on a parent xform and CollisionAPI on a child
+    mesh, with joints referencing either prim. This helper maps both conventions to the
+    same link path used by `find_rigid_bodies_in_range`.
+    """
+    prim = stage.GetPrimAtPath(path)
+    if not prim.IsValid():
+        return None
+
+    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+        return path
+
+    if prim.HasAPI(UsdPhysics.CollisionAPI):
+        canonical = path
+        parent = prim.GetParent()
+        while parent.IsValid():
+            if parent.HasAPI(UsdPhysics.RigidBodyAPI):
+                return str(parent.GetPath())
+            if parent.HasAPI(UsdPhysics.CollisionAPI):
+                canonical = str(parent.GetPath())
+            parent = parent.GetParent()
+        return canonical
+
+    # Wrapper xform without physics API: resolve to the rigid body in its subtree.
+    rigid_bodies = find_rigid_bodies_in_range(Usd.PrimRange(prim))
+    if len(rigid_bodies) == 1:
+        return next(iter(rigid_bodies))
+    return None
+
+
 def extract_links_referenced_by_joints(
     stage: Usd.Stage, joints: list[Usd.Prim], check_rigid_body: bool = True
 ) -> set[str]:
@@ -431,26 +535,22 @@ def extract_links_referenced_by_joints(
         body0_targets = joint.GetBody0Rel().GetTargets()
         body1_targets = joint.GetBody1Rel().GetTargets()
 
-        if body0_targets:
-            body0_path = str(body0_targets[0])
+        for targets in (body0_targets, body1_targets):
+            if not targets:
+                continue
+            body_path = str(targets[0])
+            resolved_path = resolve_rigid_body_link_path(stage, body_path)
+            if resolved_path is None:
+                if not check_rigid_body:
+                    links_referenced.add(body_path)
+                continue
             if check_rigid_body:
-                body0_prim = stage.GetPrimAtPath(body0_path)
-                if body0_prim.IsValid() and (
-                    body0_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body0_prim.HasAPI(UsdPhysics.CollisionAPI)
+                resolved_prim = stage.GetPrimAtPath(resolved_path)
+                if resolved_prim.IsValid() and (
+                    resolved_prim.HasAPI(UsdPhysics.RigidBodyAPI) or resolved_prim.HasAPI(UsdPhysics.CollisionAPI)
                 ):
-                    links_referenced.add(body0_path)
+                    links_referenced.add(resolved_path)
             else:
-                links_referenced.add(body0_path)
-
-        if body1_targets:
-            body1_path = str(body1_targets[0])
-            if check_rigid_body:
-                body1_prim = stage.GetPrimAtPath(body1_path)
-                if body1_prim.IsValid() and (
-                    body1_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body1_prim.HasAPI(UsdPhysics.CollisionAPI)
-                ):
-                    links_referenced.add(body1_path)
-            else:
-                links_referenced.add(body1_path)
+                links_referenced.add(resolved_path)
 
     return links_referenced
