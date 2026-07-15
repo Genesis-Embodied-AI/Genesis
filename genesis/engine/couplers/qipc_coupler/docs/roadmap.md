@@ -1,79 +1,98 @@
 # QIPCCoupler Roadmap
 
-## Current Status (2026-07-13)
+## Current Status (2026-07-15)
 
-**Core data pipeline is fully aligned with QIPC standalone.** All solver input state (ABD q, joint anchor/axis, kp/kv, target_theta) matches between Genesis+QIPCCoupler and standalone QIPC `add_urdf` with machine-epsilon precision. The full Genesis user-facing pipeline (`control_dofs_position` -> `step` -> `get_dofs_position`) produces identical results.
+Core data pipeline fully aligned with QIPC standalone. Fixed-joint merging, per-entity material config, home pose via init_theta, and actuator gain resolution all working. Draft PR #3043 submitted to `feat/ipc_coupler`.
 
-### What Works (Verified)
+### What Works
 
-- Genesis entity parsing -> QIPC ABD body creation (mesh + mass/inertia from Genesis rigid info)
-- Joint topology extraction -> QIPC joint creation with per-body `axis_left`/`axis_right`
-- Mesh in link-local frame with `geo.transforms` for positioning
-- Joint pivot/axis correctness verified against standalone QIPC
-- QIPC viewer integration (`debug_viewer` option, `up_axis = "z"`)
-- `JointCollection.merge()` for single-JC batch control
-- Quadrants kernel for ABD q -> links_state writeback (no host transfer)
-- Build-time skip of Genesis compilation step (`_skip_first_step`)
-- Control forwarding (Genesis `ctrl_pos` -> QIPC target theta) — **verified correct**
-- State writeback (QIPC theta -> Genesis `dofs_state.pos`) — **verified correct**
-- Revolute joints — **verified, all parameters aligned**
-- Prismatic joints — **verified, all parameters aligned**
-- Mixed joint configurations (revolute + prismatic) — **verified**
-- Non-trivial joint RPY (e.g., panda_joint2 with RPY=[-pi/2, 0, 0]) — **verified**
-- End-to-end Genesis pipeline alignment (control -> step -> readback) — **verified**
-- Fixed joint merging (links connected by FIXED joints fused into single body) — **verified**
-- Links without collision geometry — handled via proxy body or mesh-only merge
-- Per-link relative transform writeback for merged bodies — **verified**
-
-### Alignment Test Results (123/123 checks pass)
-
-| Test | Checks | Max Diff |
-|---|---|---|
-| simple_two_link (init) | 17/17 | 0.00e+00 |
-| panda_2link (init, RPY) | 18/18 | 4.98e-17 |
-| prismatic (init) | 9/9 | 0.00e+00 |
-| mixed_joints (init) | 19/19 | 0.00e+00 |
-| step alignment (gravity) | 10/10 | 0.00e+00 |
-| control alignment (direct) | 20/20 | 2.64e-16 |
-| E2E Genesis simple | 10/10 | 2.78e-17 |
-| E2E Genesis panda_2link | 10/10 | 1.33e-11 |
-| fixed_joint_merge | 17/17 | 0.00e+00 |
-| fixed_chain | 18/18 | 0.00e+00 |
-
-Test script: `genesis/engine/couplers/qipc_coupler/tests/test_alignment.py`
+- Entity parsing, ABD body creation, joint topology with correct anchor/axis
+- Fixed-joint merging (parallel axis theorem, relative-transform writeback)
+- Home pose via QIPC init_theta (absolute joint-angle frame)
+- Per-entity config via `gs.materials.Rigid(qipc_*=...)`
+- Actuator gain resolution (MJCF-parsed > material override > defaults)
+- Revolute, prismatic, and mixed joint configurations
+- IK-based end-effector teleop example
+- Initial state writeback at end of build()
 
 ### What Remains
 
-1. **`reset()` implementation** — not implemented yet, currently a no-op
-2. **Home pose initialization** — not cleanly supported (theta=0 means init pose in QIPC)
-3. **Observation API validation** — `get_pos`, `get_quat` may need validation at the Genesis entity level
-4. **Multi-entity support** — currently only supports single entity
-5. **n_envs > 1** — not supported
+1. `reset()` implementation
+2. Multi-entity support (currently single entity only)
+3. `n_envs > 1` support
+4. Observation API validation (`get_pos`, `get_quat` at entity level)
 
-## Priority 1: Joint Theta Direction Alignment — RESOLVED
+---
 
-The previous concern about joint theta direction differences between Genesis and QIPC has been resolved. The alignment test suite verifies that:
-- ABD body `q` (12-DOF per body): identical initial transforms
-- Joint `target_theta`: identical control targets
-- Joint `kp`/`kv`: identical gains
-- Joint `axis_left`/`axis_right`: identical axis vectors
-- Joint `anchor_left`/`anchor_right`: identical pivot positions
-- Stepped theta readback: identical after 10 steps with control
+## Next: Test Suite (Priority 1)
 
-The coupler's manual body-local anchor/axis computation produces the same results as QIPC standalone's `anchor_world`/`axis_world` → `_resolve_world_params` pipeline.
+Restructure tests to `tests/qipc/` following the IPC pattern (`tests/ipc/`), and add physics-asserting test cases covering what IPC tests already validate plus QIPC-specific features.
+
+### Structure
+
+```
+tests/qipc/
+  __init__.py
+  utils.py              # shared helpers (scene builders, comparison utilities)
+  test_alignment.py     # solver state alignment vs standalone QIPC
+  test_rigid.py         # rigid-body physics tests
+  test_joint.py         # joint control and limits
+```
+
+### Test cases to implement
+
+#### test_alignment.py (migrate from current test_qipc.py)
+
+- [x] init state alignment (revolute, prismatic, mixed, fixed-joint merge)
+- [x] step alignment (gravity, no control)
+- [x] control alignment (target tracking)
+- [ ] alignment with home_qpos / init_theta
+
+#### test_rigid.py (analogous to tests/ipc/test_rigid.py)
+
+- [ ] `test_freefall` — object in freefall matches `z = z0 - 0.5*g*t^2`
+- [ ] `test_ground_contact` — object resting on ground does not penetrate (requires QIPC contact)
+- [ ] `test_fixed_base_holds` — fixed-base robot does not move under gravity
+- [ ] `test_merged_body_coherence` — links merged by fixed joints move as one rigid body
+
+#### test_joint.py (analogous to tests/ipc/test_rigid.py joint tests)
+
+- [ ] `test_single_joint_tracking` — sinusoidal PD target, verify correlation and amplitude
+- [ ] `test_joint_position_limits` — bang-bang velocity command respects joint limits
+- [ ] `test_joint_type_matrix` — parametrize over revolute/prismatic x fixed/free base
+- [ ] `test_actuator_gains_from_mjcf` — verify kp/kv match MJCF actuator section
+- [ ] `test_home_qpos_offset` — verify theta at init equals home_qpos, control at home_qpos holds pose
+
+### IPC test gaps (not yet covered by IPC, opportunity for QIPC to lead)
+
+- [ ] `test_stacked_free_base` — IPC marks this xfail; QIPC may handle it differently
+- [ ] `test_velocity_control` — direct velocity control tracking
+- [ ] `test_multi_entity` — multiple robots in one scene (blocked on multi-entity support)
+
+---
 
 ## Priority 2: Reset Implementation
 
-Implement `reset()` to restore all QIPC scene state to initial conditions:
+Implement `reset()` to restore QIPC scene state:
 - Reset ABD q to initial transforms
-- Reset joint theta to zero
+- Reset joint theta to init_theta values
 - Reset target_theta, velocities
-- Sync with Genesis entity init_qpos
+- Writeback to Genesis
 
-## Priority 3: Robust Link Handling — RESOLVED
+---
 
-Fixed joint merging and proxy body support are now implemented:
-- Links connected by FIXED joints are merged into single ABD bodies (parallel axis theorem for inertials)
-- Jointless MJCF bodies (implicit fixed connection) are also detected and merged
-- Meshless links contribute mass/inertia to merged body; fully meshless groups use proxy bodies
-- Writeback kernel handles per-link relative transforms for merged members
+## Priority 3: Multi-entity and n_envs
+
+- Support multiple entities per scene (iterate over all rigid entities in build)
+- Support n_envs > 1 (batched simulation)
+
+---
+
+## Resolved
+
+- Joint theta direction alignment
+- Fixed-joint merging
+- Per-entity material config (moved from QIPCCouplerOptions)
+- Home pose via init_theta (removed offset hacking)
+- Sign-preserving FK rotation (_rodrigues)
+- MJCF prismatic FK body-quat bug (fixed in both coupler and cgq)
