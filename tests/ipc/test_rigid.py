@@ -910,7 +910,7 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
 @pytest.mark.required
 @pytest.mark.xfail(
     raises=gs.GenesisException,
-    reason="Two-way soft constraint coupling produces NaN constraint forces for stacked free-base articulations.",
+    reason="external_articulation coupling does not support a non-fixed base yet.",
 )
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_stacked_revolute_pairs_collision(n_envs, show_viewer):
@@ -946,8 +946,7 @@ def test_stacked_revolute_pairs_collision(n_envs, show_viewer):
         material=gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.5),
     )
 
-    # 3 robots at different heights, added in permuted order to flip contact pair indices.
-    # Free-base articulated entities only support 'two_way_soft_constraint' coupling.
+    # 3 robots at different heights, added in permuted order to flip contact pair indices
     mjcf_content = build_two_cube_joint_mjcf("revolute", (-1.57, 1.57), fixed=False)
     heights = [0.15, 0.40, 0.65]
     add_order = [2, 0, 1]
@@ -955,7 +954,7 @@ def test_stacked_revolute_pairs_collision(n_envs, show_viewer):
     for idx in add_order:
         robots[idx] = scene.add_entity(
             gs.morphs.MJCF(file=mjcf_content, pos=(0, 0, heights[idx])),
-            material=gs.materials.Rigid(coup_type="two_way_soft_constraint"),
+            material=gs.materials.Rigid(coup_type="external_articulation"),
         )
 
     scene.build(n_envs=n_envs)
