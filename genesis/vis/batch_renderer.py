@@ -103,6 +103,18 @@ class GenesisGeomRetriever:
         args["geom_sizes"] = np.ones((self.n_vgeoms, 3), dtype=np.float32)
         args["enabled_geom_groups"] = self.default_enabled_geom_groups
 
+        # Heterogeneous entities: a vgeom variant may exist in only a subset of envs
+        # (vgeom.active_envs_mask). Emit an optional [num_worlds, num_geoms] visibility
+        # mask (1 = visible, 0 = hidden) so each variant renders only where it is active;
+        # omitted for homogeneous scenes (legacy + back-compat with older Madrona).
+        if any(vgeom.active_envs_mask is not None for vgeom in vgeoms):
+            num_worlds = max(self.rigid_solver.n_envs, 1)
+            geom_env_mask = np.ones((num_worlds, self.n_vgeoms), dtype=np.int32)
+            for vgeom in vgeoms:
+                if vgeom.active_envs_mask is not None:
+                    geom_env_mask[:, vgeom.idx] = vgeom.active_envs_mask.detach().cpu().numpy()
+            args["geom_env_mask"] = geom_env_mask
+
         # Retrieve material data
         geom_mat_ids = []
         num_materials = 0

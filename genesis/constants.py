@@ -61,6 +61,24 @@ class constraint_solver(IntEnum):
     Newton = 1
 
 
+# rigid solver contact friction cone
+class friction_cone(IntEnum):
+    """
+    Contact friction cone model, trading numerical robustness for physical accuracy.
+
+    'pyramidal' (the default) approximates the friction cone by a pyramid: robust and easy to solve, but the
+    approximation makes friction anisotropic (the effective limit depends on the sliding direction). 'elliptic' is
+    the exact cone: friction is isotropic and bounded by its true Euclidean limit sqrt(f_t1^2 + f_t2^2) <= mu * f_n
+    in every direction, and with a high 'impratio' it holds resting stacks without the slow tangential creep of
+    regularized friction, in return for being harder to solve and more sensitive numerically. Prefer pyramidal for
+    robustness; choose elliptic when isotropic friction or firm static friction matters - e.g. objects that must stay
+    put at rest instead of slowly creeping.
+    """
+
+    pyramidal = 0
+    elliptic = 1
+
+
 # rigid solver broadphase traversal strategy
 class broadphase_traversal(IntEnum):
     """

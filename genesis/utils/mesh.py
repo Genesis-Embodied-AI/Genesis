@@ -32,6 +32,7 @@ from .misc import (
     get_tet_cache_dir,
     get_usd_cache_dir,
     get_wt_cache_dir,
+    get_wth_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
@@ -43,6 +44,8 @@ DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture 
 
 # Bumped when watertighten output changes for a fixed (mesh, aggressiveness): forces a cache miss on stale entries.
 WT_CACHE_VERSION = 7
+# Bumped when the wall-thickness estimate changes for a fixed (mesh, quantile): forces a cache miss on stale entries.
+WTH_CACHE_VERSION = 1
 
 
 def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:
@@ -61,14 +64,15 @@ def glossiness_to_roughness(glossiness: float) -> float:
     return (2 / (glossiness + 2)) ** (1.0 / 4.0)
 
 
-def estimate_wall_thickness(verts: np.ndarray, faces: np.ndarray, quantile: float = 0.25) -> float:
+def get_wall_thickness(verts: np.ndarray, faces: np.ndarray, quantile: float = 0.25) -> float:
     """Estimate a watertight mesh's characteristic wall thickness by probing its local diameter with inward rays.
 
     A ray is cast inward along the face normal from a stride-subsampled set of face centroids to the first opposite
     surface. The `quantile` of those hit distances, weighted by probed face area so the estimate measures surface
     rather than tessellation density (a thin wall spanned by a handful of large faces must not be outvoted by many
     small decorative facets), is returned: a low quantile approximates the thinnest wall and the median the typical
-    one. Falls back to the bounding-box diagonal when no ray hits (degenerate or non-watertight mesh).
+    one. The mesh must be watertight: inward rays escape through holes of an open surface, so the estimate is
+    meaningless there and an exception is raised (the caller is expected to skip the probe for non-watertight meshes).
 
     The estimate is deliberately a scalar, not per-axis: the SDF grid it sizes does not only resolve walls along
     their normal - it certifies contact penetrations through Lipschitz cone bounds whose slack grows with the
@@ -78,24 +82,36 @@ def estimate_wall_thickness(verts: np.ndarray, faces: np.ndarray, quantile: floa
     any one axis to the thickness of the walls facing it measurably degrades the certified pens of every wall
     tangent to it, and no bound-side search can recover the loss (the lateral sample offset is a lattice property).
     """
+    cache_path = get_wth_path(verts, faces, quantile)
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "rb") as file:
+                return pkl.load(file)
+        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
+            gs.logger.info("Ignoring corrupted wall-thickness cache.")
+
     mesh = trimesh.Trimesh(verts, faces, process=False)
+    if not mesh.is_watertight:
+        gs.raise_exception("Wall-thickness estimation requires a watertight mesh.")
     diag = np.linalg.norm(verts.max(axis=0) - verts.min(axis=0))
     stride = max(1, len(faces) // 1000)
     centers = mesh.triangles_center[::stride]
     normals = mesh.face_normals[::stride]
     origins = centers - 1e-3 * diag * normals
     locations, ray_idx, _ = mesh.ray.intersects_location(origins, -normals, multiple_hits=False)
-    if len(ray_idx) == 0:
-        return diag
     thickness = np.linalg.norm(locations - origins[ray_idx], axis=1)
+    # A hit at the ray origin's own face reads as zero thickness; drop those self-hits before taking the quantile.
     is_hit_valid = thickness > 1e-4 * diag
     thickness = thickness[is_hit_valid]
-    if len(thickness) == 0:
-        return diag
     areas = mesh.area_faces[::stride][ray_idx][is_hit_valid]
     order = np.argsort(thickness)
     areas_cum = np.cumsum(areas[order])
-    return thickness[order][np.searchsorted(areas_cum, quantile * areas_cum[-1])]
+    wall_thickness = thickness[order][np.searchsorted(areas_cum, quantile * areas_cum[-1])]
+
+    os.makedirs(get_wth_cache_dir(), exist_ok=True)
+    with open(cache_path, "wb") as file:
+        pkl.dump(wall_thickness, file, protocol=pkl.HIGHEST_PROTOCOL)
+    return wall_thickness
 
 
 class MeshInfo:
@@ -202,6 +218,11 @@ def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
 def get_wt_path(verts, faces, aggressiveness):
     hashkey = get_hashkey(verts, faces, aggressiveness, WT_CACHE_VERSION)
     return os.path.join(get_wt_cache_dir(), f"{hashkey}.wt")
+
+
+def get_wth_path(verts, faces, quantile):
+    hashkey = get_hashkey(verts, faces, quantile, WTH_CACHE_VERSION)
+    return os.path.join(get_wth_cache_dir(), f"{hashkey}.wth")
 
 
 def get_exr_path(file_path):

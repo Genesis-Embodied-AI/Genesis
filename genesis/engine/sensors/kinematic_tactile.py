@@ -34,6 +34,10 @@ from .tactile_shared import (
     ContactDepthQueryMetadataMixin,
     ContactDepthQuerySensorMixin,
     ContactPrefilterMetadataMixin,
+    SpatialCrosstalkMetadataMixin,
+    SpatialCrosstalkMixin,
+    ViscoelasticHysteresisMetadataMixin,
+    ViscoelasticHysteresisMixin,
     func_sphere_intersects_aabb,
 )
 
@@ -892,6 +896,7 @@ class KinematicTactileSensorMixin(ContactDepthQuerySensorMixin, ProbeSensorMixin
 
 @dataclass
 class ContactDepthProbeMetadata(
+    ViscoelasticHysteresisMetadataMixin,
     ProbeSensorMetadataMixin,
     ContactPrefilterMetadataMixin,
     ContactDepthQueryMetadataMixin,
@@ -902,6 +907,7 @@ class ContactDepthProbeMetadata(
 
 
 class ContactDepthProbeSensor(
+    ViscoelasticHysteresisMixin[ContactDepthProbeMetadata],
     KinematicTactileSensorMixin[ContactDepthProbeMetadata],
     RigidSensorMixin[ContactDepthProbeMetadata],
     SimpleSensor[ContactDepthProbeOptions, RaycastContext, ContactDepthProbeMetadata, tuple],
@@ -1025,9 +1031,9 @@ class ContactDepthProbeSensor(
 class ContactProbeMetadata(ContactDepthProbeMetadata):
     contact_threshold: torch.Tensor = make_tensor_field((0,))
     release_threshold: torch.Tensor = make_tensor_field((0,))
-    # Per-probe thresholds scattered into intermediate-cache layout, computed lazily on first `_post_process`.
-    threshold_row: torch.Tensor = make_tensor_field((0,))
-    release_threshold_row: torch.Tensor = make_tensor_field((0,))
+    # Per-probe gate levels scattered into intermediate-cache layout, computed lazily on first `_post_process`.
+    enter_row: torch.Tensor = make_tensor_field((0,))
+    exit_row: torch.Tensor = make_tensor_field((0,))
 
 
 class ContactProbeSensor(
@@ -1048,13 +1054,13 @@ class ContactProbeSensor(
         self._shared_metadata.contact_threshold = concat_with_tensor(
             self._shared_metadata.contact_threshold, self._options.contact_threshold, expand=(1,)
         )
-        release = (
+        exit_level = (
             self._options.contact_threshold
             if self._options.release_threshold is None
             else self._options.release_threshold
         )
         self._shared_metadata.release_threshold = concat_with_tensor(
-            self._shared_metadata.release_threshold, release, expand=(1,)
+            self._shared_metadata.release_threshold, exit_level, expand=(1,)
         )
 
     @classmethod
@@ -1074,24 +1080,21 @@ class ContactProbeSensor(
         *,
         is_measured: bool,
     ) -> torch.Tensor:
-        if (
-            shared_metadata.threshold_row.shape != (tensor.shape[1],)
-            or shared_metadata.threshold_row.dtype != tensor.dtype
-        ):
+        if shared_metadata.enter_row.shape != (tensor.shape[1],) or shared_metadata.enter_row.dtype != tensor.dtype:
             i_p = torch.arange(shared_metadata.total_n_probes, device=gs.device, dtype=gs.tc_int)
             i_s = shared_metadata.probe_sensor_idx
             cache_idx = shared_metadata.sensor_cache_start[i_s] + i_p - shared_metadata.sensor_probe_start[i_s]
             cache_idx_64 = cache_idx.to(dtype=torch.int64)
             enter_row = torch.zeros((tensor.shape[1],), dtype=tensor.dtype, device=gs.device)
             enter_row.scatter_(0, cache_idx_64, shared_metadata.contact_threshold[i_s].to(dtype=tensor.dtype))
-            release_row = torch.zeros((tensor.shape[1],), dtype=tensor.dtype, device=gs.device)
-            release_row.scatter_(0, cache_idx_64, shared_metadata.release_threshold[i_s].to(dtype=tensor.dtype))
-            shared_metadata.threshold_row = enter_row
-            shared_metadata.release_threshold_row = release_row
-        above_enter = tensor > shared_metadata.threshold_row.unsqueeze(0)
-        above_release = tensor > shared_metadata.release_threshold_row.unsqueeze(0)
+            exit_row = torch.zeros((tensor.shape[1],), dtype=tensor.dtype, device=gs.device)
+            exit_row.scatter_(0, cache_idx_64, shared_metadata.release_threshold[i_s].to(dtype=tensor.dtype))
+            shared_metadata.enter_row = enter_row
+            shared_metadata.exit_row = exit_row
+        above_enter = tensor > shared_metadata.enter_row.unsqueeze(0)
+        above_exit = tensor > shared_metadata.exit_row.unsqueeze(0)
         prev_state = timeline.at(0, copy=False)
-        return above_enter | (prev_state & above_release)
+        return above_enter | (prev_state & above_exit)
 
     def _draw_debug(self, context: "RasterizerContext"):
         def mask(envs_idx):
@@ -1118,6 +1121,8 @@ class KinematicTaxelReturnType(NamedTuple):
 
 @dataclass
 class KinematicTaxelMetadata(
+    ViscoelasticHysteresisMetadataMixin,
+    SpatialCrosstalkMetadataMixin,
     ProbeSensorMetadataMixin,
     ContactPrefilterMetadataMixin,
     ContactDepthQueryMetadataMixin,
@@ -1132,11 +1137,29 @@ class KinematicTaxelMetadata(
 
 
 class KinematicTaxelSensor(
+    ViscoelasticHysteresisMixin[KinematicTaxelMetadata],
+    SpatialCrosstalkMixin[KinematicTaxelMetadata],
     KinematicTactileSensorMixin[KinematicTaxelMetadata],
     RigidSensorMixin[KinematicTaxelMetadata],
     SimpleSensor[KinematicTaxelOptions, RaycastContext, KinematicTaxelMetadata, KinematicTaxelReturnType],
 ):
     """Kinematic taxels: spring-damper force and torque per probe from contact geometry and relative motion."""
+
+    # Two channel groups: force xyz followed by torque xyz (probe-major within each group). See
+    # ``ProbeSensorMixin._taxel_channel_groups`` for how this drives dead-taxel cache-col -> probe mapping.
+    _taxel_channel_groups: int = 2
+
+    def __init__(
+        self,
+        options: KinematicTaxelOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
+        # Resolve the grid frame for spatial crosstalk (flat pos/normals are already populated by the base mixins).
+        self._setup_crosstalk_grid(options)
 
     def build(self):
         super().build()
@@ -1156,6 +1179,9 @@ class KinematicTaxelSensor(
         self._shared_metadata.twist_scalar = concat_with_tensor(
             self._shared_metadata.twist_scalar, float(self._options.twist_scalar), expand=(1,)
         )
+
+        if self._options.is_crosstalk_enabled and self._use_grid_crosstalk:
+            self._register_crosstalk()
 
         # Re-allocate the per-(env, sensor) contact prefilter buffers to absorb the newly-registered sensor.
         # Sized at build time; the per-step kernel writes into the same buffers without further allocation.

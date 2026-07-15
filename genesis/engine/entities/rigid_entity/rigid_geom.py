@@ -139,11 +139,17 @@ class RigidGeom(RBC):
         # below still bounds it to [sdf_min_res, sdf_max_res]. The shrink applies to all three axes, not just the
         # wall's normal axis: the certified penetration bounds that hold shell contacts apart need lattice points
         # near the contact in every direction, so a wall must be finely sampled along its tangent axes too (see
-        # estimate_wall_thickness).
+        # get_wall_thickness).
         cell_size_target = self._material.sdf_cell_size
         if not self._is_convex:
-            wall_thickness = mu.estimate_wall_thickness(self._sdf_verts, self._sdf_faces)
-            cell_size_target = min(cell_size_target, wall_thickness / 2.0)
+            # The wall-thickness probe only makes sense on a closed surface: on an open mesh the inward rays escape
+            # through the holes, so keep the material target there. The sdf mesh probed by 'get_wall_thickness' is a
+            # proxy for this collision mesh and must share its watertightness, hence it raises if that does not hold.
+            if self._mesh.is_watertight:
+                wall_thickness = mu.get_wall_thickness(self._sdf_verts, self._sdf_faces)
+                cell_size_target = min(cell_size_target, wall_thickness / 2.0)
+            else:
+                gs.logger.warning(f"Geom idx {self._idx} is not watertight; skipping wall-thickness SDF refinement.")
         self._sdf_cell_size = gs.EPS + np.clip(cell_size_target, per_axis_lower, per_axis_upper)
         self._sdf_res = np.ceil(grid_size / self._sdf_cell_size).astype(gs.np_int) + 1
         # Constant once the SDF resolution is fixed. Cached because the solver re-reads it for every geom on each

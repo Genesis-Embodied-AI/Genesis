@@ -130,6 +130,7 @@ class RigidGlobalInfo:
     ls_tolerance: qd.Tensor
     noslip_iterations: qd.Tensor
     noslip_tolerance: qd.Tensor
+    impratio: qd.Tensor
     n_equalities: qd.Tensor
     n_candidate_equalities: qd.Tensor
     hibernation_thresh_vel: qd.Tensor
@@ -206,6 +207,7 @@ def get_rigid_global_info(solver, kinematic_only):
             ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            impratio=V_SCALAR_FROM(dtype=gs.qd_float, value=1.0),
             n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
@@ -243,6 +245,7 @@ def get_rigid_global_info(solver, kinematic_only):
         ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.ls_tolerance),
         noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.noslip_iterations),
         noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.noslip_tolerance),
+        impratio=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.impratio),
         n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._n_equalities),
         n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver.n_candidate_equalities_),
         hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._hibernation_thresh_vel),
@@ -265,6 +268,9 @@ class ConstraintState:
     jac_n_dofs: qd.Tensor
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
+    # Number of elliptic-cone contact rows (3 per contact), laid out contiguously at the start of the collision
+    # segment. Zero for the pyramidal cone. The cone rows occupy [ne + n_frictionloss, ne + n_frictionloss + n_cone).
+    n_constraints_cone: qd.Tensor
     improved: qd.Tensor
     Jaref: qd.Tensor
     Ma: qd.Tensor
@@ -272,7 +278,12 @@ class ConstraintState:
     grad: qd.Tensor
     Mgrad: qd.Tensor
     search: qd.Tensor
+    # Previous-iteration cone-row residuals, kept only for the elliptic cone so the incremental factor can downdate the
+    # prior coupled cone block (Jaref is overwritten by the linesearch apply). Empty for the pyramidal cone.
+    cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
+    # Frictionloss rows store their friction loss; elliptic-cone head (normal) rows reuse the field to carry the
+    # contact friction coefficient read by the cone solver (their tangent rows hold 0).
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
     active: qd.Tensor
@@ -371,6 +382,11 @@ def get_constraint_state(constraint_solver, solver):
     # The remaining (len_constraints_,) tensors outside the GPU cooperative flip set follow only the serialized flip.
     con_layout = (1, 0) if batch_first else None
     serial_layout = (1, 0) if serialized else None
+    # The CPU incremental factor maintains the elliptic cone by a per-iteration rank-3 update reading the previous cone
+    # residuals, so the residual cache is allocated for the CPU elliptic case.
+    is_cone_incremental = (
+        solver._static_rigid_sim_config.enable_elliptic_friction and solver._static_rigid_sim_config.backend == gs.cpu
+    )
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
@@ -412,6 +428,7 @@ def get_constraint_state(constraint_solver, solver):
         qd_n_equalities=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_frictionloss=V(dtype=gs.qd_int, shape=(_B,)),
+        n_constraints_cone=V(dtype=gs.qd_int, shape=(_B,)),
         is_warmstart=V(dtype=gs.qd_bool, shape=(_B,)),
         improved=V(dtype=gs.qd_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.qd_float, shape=(_B,)),
@@ -433,6 +450,11 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        cone_prev_jaref=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape((constraint_solver.n_cone_constraints_, _B), is_cone_incremental),
+            layout=serial_layout if is_cone_incremental else None,
+        ),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
@@ -888,10 +910,34 @@ def get_collider_state(
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VertsSpatialGrid:
+    # Per-geom 8x8x8 grid over collision verts in the local AABB: a permutation of vert indices sorted by grid
+    # cell (z fastest), the matching vert positions duplicated in that order for sequential streaming, and per-cell
+    # vert ranges (8^3 + 1 entries per geom), so a scan visits only the cells overlapping a query box. The cell
+    # mapping is anchored by geoms_origin / geoms_inv_cell_size in the geom frame.
+    verts_idx: qd.Tensor
+    verts_pos: qd.Tensor
+    cells_vert_start: qd.Tensor
+    geoms_origin: qd.Tensor
+    geoms_inv_cell_size: qd.Tensor
+
+
+def get_verts_spatial_grid(solver):
+    return VertsSpatialGrid(
+        verts_idx=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
+        verts_pos=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_verts_,)),
+        cells_vert_start=V(dtype=gs.qd_int, shape=(max(solver.n_geoms * (8**3 + 1), 1),)),
+        geoms_origin=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_,)),
+        geoms_inv_cell_size=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_,)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ColliderInfo:
     vert_neighbors: qd.Tensor
     vert_neighbor_start: qd.Tensor
     vert_n_neighbors: qd.Tensor
+    verts_spatial_grid: VertsSpatialGrid
     # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by SAP broadphase, narrowphase, and contact cache.
     collision_pair_idx: qd.Tensor
     max_possible_pairs: qd.Tensor
@@ -936,6 +982,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         vert_neighbors=V(dtype=gs.qd_int, shape=(max(n_vert_neighbors, 1),)),
         vert_neighbor_start=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
         vert_n_neighbors=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
+        verts_spatial_grid=get_verts_spatial_grid(solver),
         collision_pair_idx=V(dtype=gs.qd_int, shape=(solver.n_geoms_, solver.n_geoms_)),
         max_possible_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs=V(dtype=gs.qd_int, shape=()),
@@ -1494,6 +1541,9 @@ class SDFGeomInfo:
     sdf_max: qd.Tensor
     sdf_cell_size: qd.Tensor
     sdf_cell_start: qd.Tensor
+    # Coarse min-grid companion: per-block minima over grid nodes, a certified lower bound of the trilinear sd.
+    sdf_coarse_res: qd.Tensor
+    sdf_coarse_cell_start: qd.Tensor
 
 
 def get_sdf_geom_info(n_geoms):
@@ -1503,6 +1553,8 @@ def get_sdf_geom_info(n_geoms):
         sdf_max=V(dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_cell_size=V_VEC(3, dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_cell_start=V(dtype=gs.qd_int, shape=(n_geoms,)),
+        sdf_coarse_res=V_VEC(3, dtype=gs.qd_int, shape=(n_geoms,)),
+        sdf_coarse_cell_start=V(dtype=gs.qd_int, shape=(n_geoms,)),
     )
 
 
@@ -1513,9 +1565,10 @@ class SDFInfo:
     geoms_sdf_val: qd.Tensor
     geoms_sdf_grad: qd.Tensor
     geoms_sdf_closest_vert: qd.Tensor
+    geoms_sdf_coarse_val: qd.Tensor
 
 
-def get_sdf_info(n_geoms, n_cells):
+def get_sdf_info(n_geoms, n_cells, n_coarse_cells):
     if math.prod((n_cells, 3)) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"SDF Gradient shape (n_cells={n_cells}, 3) is too large. Consider manually setting larger "
@@ -1528,6 +1581,7 @@ def get_sdf_info(n_geoms, n_cells):
         geoms_sdf_val=V(dtype=gs.qd_float, shape=(max(n_cells, 1),)),
         geoms_sdf_grad=V_VEC(3, dtype=gs.qd_float, shape=(max(n_cells, 1),)),
         geoms_sdf_closest_vert=V(dtype=gs.qd_int, shape=(max(n_cells, 1),)),
+        geoms_sdf_coarse_val=V(dtype=gs.qd_float, shape=(max(n_coarse_cells, 1),)),
     )
 
 
@@ -2259,6 +2313,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_dofs_info: bool
     batch_joints_info: bool
     enable_mujoco_compatibility: bool
+    enable_elliptic_friction: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
     box_box_detection: bool

@@ -86,6 +86,7 @@ def _add_tactile_sensor(
                 stiffness=10.0,
                 shear_coupling=1.0,
                 probe_local_normal=probe_normal,
+                probe_radius_noise=0.005,
                 **common,
             )
         )

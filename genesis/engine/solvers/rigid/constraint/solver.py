@@ -107,18 +107,26 @@ class ConstraintSolver:
         # * 1 constraint per dof frictionloss
         # * up to 6 constraints per equality (weld)
         # When 'max_contacts' is set, it overrides the post-pruning contact budget enforced by the collider.
+        # Resolve the max_contacts option in place: from the collider's post-pruning budget when unset, else clamped
+        # to the candidate budget and written back so the collider honors the user's cap. Downstream reads the option.
         collider_info = rigid_solver.collider._collider_info
-        if rigid_solver._options.max_contacts is not None:
-            collider_info.max_contacts[None] = min(
+        if rigid_solver._options.max_contacts is None:
+            rigid_solver._options.max_contacts = collider_info.max_contacts[None]
+        else:
+            rigid_solver._options.max_contacts = min(
                 rigid_solver._options.max_contacts, collider_info.max_candidate_contacts[None]
             )
-        self.len_constraints = int(
-            4 * collider_info.max_contacts[None]
+            collider_info.max_contacts[None] = rigid_solver._options.max_contacts
+        self.len_constraints = (
+            4 * rigid_solver._options.max_contacts
             + sum(joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC) for joint in self._solver.joints)
             + self._solver.n_dofs
             + self._solver.n_candidate_equalities_ * 6
         )
         self.len_constraints_ = max(1, self.len_constraints)
+        # Max cone rows (3 per contact); sizes the elliptic-only previous-residual buffer to exactly the contact rows,
+        # below the full constraint count that also covers equalities, joint limits, and frictionloss.
+        self.n_cone_constraints_ = max(1, 3 * rigid_solver._options.max_contacts)
 
         self.constraint_state = array_class.get_constraint_state(self, self._solver)
         self.constraint_state.qd_n_equalities.from_numpy(
@@ -232,23 +240,27 @@ class ConstraintSolver:
             n_constraints = qd_to_torch(self.constraint_state.n_constraints, copy=False)
             n_constraints_equality = qd_to_torch(self.constraint_state.n_constraints_equality, copy=False)
             n_constraints_frictionloss = qd_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
+            n_constraints_cone = qd_to_torch(self.constraint_state.n_constraints_cone, copy=False)
             qd_n_equalities = qd_to_torch(self.constraint_state.qd_n_equalities, copy=False)
             n_eq = self._solver._n_equalities
             if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                 n_constraints.masked_fill_(envs_idx, 0)
                 n_constraints_equality.masked_fill_(envs_idx, 0)
                 n_constraints_frictionloss.masked_fill_(envs_idx, 0)
+                n_constraints_cone.masked_fill_(envs_idx, 0)
                 qd_n_equalities.masked_fill_(envs_idx, n_eq)
             elif isinstance(envs_idx, torch.Tensor):
                 n_constraints.scatter_(0, envs_idx, 0)
                 n_constraints_equality.scatter_(0, envs_idx, 0)
                 n_constraints_frictionloss.scatter_(0, envs_idx, 0)
+                n_constraints_cone.scatter_(0, envs_idx, 0)
                 qd_n_equalities.scatter_(0, envs_idx, n_eq)
             else:
                 env_mask = indices_to_mask(envs_idx)
                 assign_indexed_tensor(n_constraints, env_mask, 0)
                 assign_indexed_tensor(n_constraints_equality, env_mask, 0)
                 assign_indexed_tensor(n_constraints_frictionloss, env_mask, 0)
+                assign_indexed_tensor(n_constraints_cone, env_mask, 0)
                 assign_indexed_tensor(qd_n_equalities, env_mask, n_eq)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
@@ -588,6 +600,7 @@ def func_clear_constraint_at_env(
     constraint_state.n_constraints[i_b] = 0
     constraint_state.n_constraints_equality[i_b] = 0
     constraint_state.n_constraints_frictionloss[i_b] = 0
+    constraint_state.n_constraints_cone[i_b] = 0
     constraint_state.qd_n_equalities[i_b] = rigid_global_info.n_equalities[None]
     for i_d, i_c in qd.ndrange(n_dofs, len_constraints):
         constraint_state.jac[i_c, i_d, i_b] = 0.0
@@ -646,7 +659,12 @@ def _add_friction_constraint(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Add one friction-basis row to the constraint Jacobian and write its matching diag/aref/efc_D scalars."""
+    """Add one collision row to the constraint Jacobian and write its matching diag/aref/efc_D scalars.
+
+    With the pyramidal friction cone this is one of the 4 friction-basis rows (i_friction in [0, 4)); with the
+    elliptic cone (enable_elliptic_friction) it is one of the 3 cone rows (i_friction 0 = normal, 1/2 = tangent),
+    which the Newton solver couples into a single second-order friction cone.
+    """
     EPS = rigid_global_info.EPS[None]
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
@@ -673,10 +691,20 @@ def _add_friction_constraint(
     if link_b > -1:
         invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-    d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
-    n = d * contact_data_friction - contact_data_normal
+    n = -contact_data_normal
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        # Cone rows [normal, t1, t2]: the normal row opposes the contact normal, the tangent rows follow the
+        # orthonormal contact frame (no friction mixing - the cone couples the three rows in the solver).
+        if i_friction == 1:
+            n = d1
+        elif i_friction == 2:
+            n = d2
+    else:
+        d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
+        n = d * contact_data_friction - contact_data_normal
 
-    n_con = collision_con_start + i_col_ * 4 + i_friction
+    rows_per_contact = qd.static(3 if static_rigid_sim_config.enable_elliptic_friction else 4)
+    n_con = collision_con_start + i_col_ * rows_per_contact + i_friction
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
             i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
@@ -722,12 +750,29 @@ def _add_friction_constraint(
 
     constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
     _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
-    imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
 
-    diag = invweight + contact_data_friction * contact_data_friction * invweight
-    diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
+    diag = gs.qd_float(0.0)
+    aref = gs.qd_float(0.0)
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        # Tangent rows carry no positional error (pure damping reference); the normal row references the penetration
+        # depth. The impedance is shared (it depends only on penetration), and the tangent rows are impratio times
+        # stiffer than the normal row (R_t = R_n / impratio), matching MuJoCo's elliptic cone.
+        pos_ref = -contact_data_penetration if i_friction == 0 else 0.0
+        imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, pos_ref)
+        diag = invweight * (1 - imp) / imp
+        if i_friction > 0:
+            diag = diag / rigid_global_info.impratio[None]
+        # The cone solver reads the contact friction coefficient off the head (normal) row.
+        constraint_state.efc_frictionloss[n_con, i_b] = contact_data_friction if i_friction == 0 else 0.0
+    else:
+        imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
+        # MuJoCo's regularized pyramid impedance: impratio shrinks the effective cone coefficient (mu_reg^2 = mu^2 /
+        # impratio), stiffening the friction-mixed rows. Because every pyramid row mixes the normal direction, a high
+        # ratio also stiffens the normal response - the reason to raise impratio with the elliptic cone instead.
+        friction_sq_reg = contact_data_friction * contact_data_friction / rigid_global_info.impratio[None]
+        diag = invweight + friction_sq_reg * invweight
+        diag = diag * 2 * friction_sq_reg * (1 - imp) / imp
     diag = qd.max(diag, EPS)
-
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1 / diag
@@ -751,15 +796,16 @@ def _add_collision_constraints_per_friction(
     """
     _B = dofs_state.ctrl_mode.shape[1]
     max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
+    rows_per_contact = qd.static(3 if static_rigid_sim_config.enable_elliptic_friction else 4)
 
     qd.loop_config(
         name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
     )
-    for flat_idx in range(_B * max_candidate_contacts * 4):
-        slot = flat_idx % (max_candidate_contacts * 4)
-        i_b = flat_idx // (max_candidate_contacts * 4)
-        i_col_ = slot // 4
-        i_friction = slot % 4
+    for flat_idx in range(_B * max_candidate_contacts * rows_per_contact):
+        slot = flat_idx % (max_candidate_contacts * rows_per_contact)
+        i_b = flat_idx // (max_candidate_contacts * rows_per_contact)
+        i_col_ = slot // rows_per_contact
+        i_friction = slot % rows_per_contact
         if i_col_ < collider_state.n_contacts[i_b]:
             _add_friction_constraint(
                 i_b,
@@ -790,6 +836,7 @@ def _add_collision_constraints_per_contact(
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
     max_candidate_contacts = collider_state.contact_data.link_a.shape[0]
+    rows_per_contact = qd.static(3 if static_rigid_sim_config.enable_elliptic_friction else 4)
 
     # Iteration order follows the jac layout: batch-outer keeps every write within one env's batch-first block, while
     # the batch-inner order keeps consecutive GPU threads on consecutive envs (coalesced batch-last).
@@ -831,8 +878,8 @@ def _add_collision_constraints_per_contact(
                     links_info.is_fixed[link_b_maybe_batch] or links_state.is_hibernated[link_b, i_b]
                 )
                 if not is_a_awake and not is_b_awake:
-                    for i_friction in range(4):
-                        n_con = collision_con_start + i_col_ * 4 + i_friction
+                    for i_friction in range(rows_per_contact):
+                        n_con = collision_con_start + i_col_ * rows_per_contact + i_friction
                         if qd.static(static_rigid_sim_config.sparse_solve):
                             for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
                                 i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
@@ -843,7 +890,14 @@ def _add_collision_constraints_per_contact(
                                 constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
                         constraint_state.diag[n_con, i_b] = gs.qd_float(1.0)
                         constraint_state.aref[n_con, i_b] = gs.qd_float(0.0)
-                        constraint_state.efc_D[n_con, i_b] = gs.qd_float(0.0)
+                        # The elliptic cone reads efc_D as con_mu = friction * sqrt(d0 / d1); a zero would give
+                        # sqrt(0 / 0) = NaN that the cleared jacobian cannot mask (0 * NaN = NaN), poisoning the solve.
+                        # A finite efc_D = 1 / diag keeps con_mu finite, so the zero residuals classify this inert row
+                        # as inactive. The pyramidal path is unaffected by efc_D once its jacobian is zero, so it keeps 0.
+                        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                            constraint_state.efc_D[n_con, i_b] = 1.0
+                        else:
+                            constraint_state.efc_D[n_con, i_b] = 0.0
                     continue
 
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
@@ -852,11 +906,19 @@ def _add_collision_constraints_per_contact(
             if link_b > -1:
                 invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-            for i_friction in range(4):
-                d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
-                n = d * contact_data_friction - contact_data_normal
+            for i_friction in range(rows_per_contact):
+                n = -contact_data_normal
+                if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                    # Cone rows [normal, t1, t2]: tangent rows follow the orthonormal contact frame (no mixing).
+                    if i_friction == 1:
+                        n = d1
+                    elif i_friction == 2:
+                        n = d2
+                else:
+                    d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
+                    n = d * contact_data_friction - contact_data_normal
 
-                n_con = collision_con_start + i_col_ * 4 + i_friction
+                n_con = collision_con_start + i_col_ * rows_per_contact + i_friction
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     for i_d_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
                         i_d = constraint_state.jac_dofs_idx[n_con, i_d_, i_b]
@@ -904,14 +966,28 @@ def _add_collision_constraints_per_contact(
 
                 constraint_state.jac_n_dofs[n_con, i_b] = con_n_dofs
                 _sort_relevant_dofs_descending(constraint_state, n_con, con_n_dofs, i_b, static_rigid_sim_config)
-                imp, aref = gu.imp_aref(
-                    contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
-                )
 
-                diag = invweight + contact_data_friction * contact_data_friction * invweight
-                diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
+                diag = gs.qd_float(0.0)
+                aref = gs.qd_float(0.0)
+                if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                    # Tangent rows carry no positional error (pure damping reference) and are impratio times stiffer
+                    # than the normal row; the head (normal) row stores the contact friction for the cone solver.
+                    pos_ref = -contact_data_penetration if i_friction == 0 else 0.0
+                    imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, pos_ref)
+                    diag = invweight * (1 - imp) / imp
+                    if i_friction > 0:
+                        diag = diag / rigid_global_info.impratio[None]
+                    constraint_state.efc_frictionloss[n_con, i_b] = contact_data_friction if i_friction == 0 else 0.0
+                else:
+                    imp, aref = gu.imp_aref(
+                        contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
+                    )
+                    # MuJoCo's regularized pyramid impedance: impratio shrinks the effective cone coefficient
+                    # (mu_reg^2 = mu^2 / impratio), stiffening the friction-mixed rows.
+                    friction_sq_reg = contact_data_friction * contact_data_friction / rigid_global_info.impratio[None]
+                    diag = invweight + friction_sq_reg * invweight
+                    diag = diag * 2 * friction_sq_reg * (1 - imp) / imp
                 diag = qd.max(diag, EPS)
-
                 constraint_state.diag[n_con, i_b] = diag
                 constraint_state.aref[n_con, i_b] = aref
                 constraint_state.efc_D[n_con, i_b] = 1 / diag
@@ -950,9 +1026,16 @@ def add_collision_constraints(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
+    rows_per_contact = qd.static(3 if static_rigid_sim_config.enable_elliptic_friction else 4)
     qd.loop_config(name="add_collision_count", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        constraint_state.n_constraints[i_b] = constraint_state.n_constraints[i_b] + collider_state.n_contacts[i_b] * 4
+        n_collision_rows = collider_state.n_contacts[i_b] * rows_per_contact
+        constraint_state.n_constraints[i_b] = constraint_state.n_constraints[i_b] + n_collision_rows
+        # The elliptic cone rows are the whole collision segment (3 contiguous per contact); joint limits follow.
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+            constraint_state.n_constraints_cone[i_b] = n_collision_rows
+        else:
+            constraint_state.n_constraints_cone[i_b] = 0
 
 
 @qd.func
@@ -1996,6 +2079,68 @@ def func_compute_island_envelope(
 
 
 @qd.func
+def func_add_cone_hessian_block(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+    scale: qd.template() = 1.0,
+):
+    """Accumulate scale * J_c^T H_c J_c (the coupled elliptic-cone contribution) into the Hessian nt_H[i_b].
+
+    A middle-zone contact adds the symmetric 3x3 local block H_c over the three cone rows' shared DOF support (top
+    zone adds nothing; bottom zone is the plain per-row J^T D J the caller already accumulated with active=True). H_c
+    is positive semi-definite (PSD), so nt_H stays symmetric positive definite (SPD) and the factor kernels are
+    unchanged. The block is read in natural DOF order and stored at the layout the factor uses - natural for the
+    dense path, permuted via dof_iperm for the sparse skyline. scale is +1 to add the block before a factor and -1
+    to remove it after a non-destructive factor, so a caller can carry the cone through an incrementally-maintained
+    nt_H without a rebuild.
+    """
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_cone = constraint_state.n_constraints_cone[i_b]
+    for i_cone in range(n_cone // 3):
+        i_head = nef + i_cone * 3
+        j1 = i_head + 1
+        j2 = i_head + 2
+        d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_head, i_b, constraint_state)
+        zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
+        if zone == 2:
+            _f0, _f1, _f2, _c, h00, h01, h02, h11, h12, h22 = _func_cone_middle(
+                jar0, jar1, jar2, d0, con_mu, friction, N, T
+            )
+            jac_n = constraint_state.jac_n_dofs[i_head, i_b]
+            for i_d1_ in range(jac_n):
+                i_d1 = constraint_state.jac_dofs_idx[i_head, i_d1_, i_b]
+                for i_d2_ in range(i_d1_ + 1):
+                    i_d2 = constraint_state.jac_dofs_idx[i_head, i_d2_, i_b]
+                    row = qd.max(i_d1, i_d2)
+                    col = qd.min(i_d1, i_d2)
+                    block = _func_cone_block_product(
+                        h00,
+                        h01,
+                        h02,
+                        h11,
+                        h12,
+                        h22,
+                        constraint_state.jac[i_head, row, i_b],
+                        constraint_state.jac[j1, row, i_b],
+                        constraint_state.jac[j2, row, i_b],
+                        constraint_state.jac[i_head, col, i_b],
+                        constraint_state.jac[j1, col, i_b],
+                        constraint_state.jac[j2, col, i_b],
+                    )
+                    # jac is read in natural DOF order (row/col above); only the storage position is permuted (sparse).
+                    w_row = row
+                    w_col = col
+                    if qd.static(static_rigid_sim_config.sparse_solve):
+                        p1 = constraint_state.dof_iperm[i_b, i_d1]
+                        p2 = constraint_state.dof_iperm[i_b, i_d2]
+                        w_row = qd.max(p1, p2)
+                        w_col = qd.min(p1, p2)
+                    constraint_state.nt_H[i_b, w_row, w_col] = constraint_state.nt_H[i_b, w_row, w_col] + scale * block
+
+
+@qd.func
 def func_hessian_direct_batch(
     i_b,
     i_island,
@@ -2061,6 +2206,61 @@ def func_hessian_direct_batch(
                             constraint_state.nt_H[i_b, row, col]
                             + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
                         )
+        # Coupled elliptic-cone Hessian block for this island's middle-zone cones. A cone's three rows share one DOF
+        # support and land in one island, so its middle-zone 3x3 coupling J_c^T H_c J_c is scattered over that support
+        # in the same island-local orientation as the J^T D J loop; the per-row J^T D J of the active rows was already
+        # added above. Seed cone_prev_jaref from these residuals so the incremental factor downdates exactly this block
+        # next iteration.
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+            ne = constraint_state.n_constraints_equality[i_b]
+            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+            n_cone = constraint_state.n_constraints_cone[i_b]
+            for i_lcon in range(con_n):
+                i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+                if i_c >= nef and i_c < nef + n_cone and (i_c - nef) % 3 == 0:
+                    j1 = i_c + 1
+                    j2 = i_c + 2
+                    d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_c, i_b, constraint_state)
+                    # cone_prev_jaref backs the CPU incremental rank-3 downdate, so seed it on the CPU backend.
+                    if qd.static(static_rigid_sim_config.backend == gs.cpu):
+                        i_cone_row = i_c - nef
+                        constraint_state.cone_prev_jaref[i_cone_row, i_b] = jar0
+                        constraint_state.cone_prev_jaref[i_cone_row + 1, i_b] = jar1
+                        constraint_state.cone_prev_jaref[i_cone_row + 2, i_b] = jar2
+                    zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
+                    if zone == 2:
+                        _f0, _f1, _f2, _c, h00, h01, h02, h11, h12, h22 = _func_cone_middle(
+                            jar0, jar1, jar2, d0, con_mu, friction, N, T
+                        )
+                        jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+                        for i_d1_ in range(jac_n):
+                            i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+                            for i_d2_ in range(i_d1_, jac_n):
+                                i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                                row = qd.max(i_d1, i_d2)
+                                col = qd.min(i_d1, i_d2)
+                                if qd.static(
+                                    static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope
+                                ):
+                                    if (
+                                        island_state.dof_local_pos[i_d1, i_b] >= island_state.dof_local_pos[i_d2, i_b]
+                                    ) != (i_d1 >= i_d2):
+                                        row, col = col, row
+                                block = _func_cone_block_product(
+                                    h00,
+                                    h01,
+                                    h02,
+                                    h11,
+                                    h12,
+                                    h22,
+                                    constraint_state.jac[i_c, row, i_b],
+                                    constraint_state.jac[j1, row, i_b],
+                                    constraint_state.jac[j2, row, i_b],
+                                    constraint_state.jac[i_c, col, i_b],
+                                    constraint_state.jac[j1, col, i_b],
+                                    constraint_state.jac[j2, col, i_b],
+                                )
+                                constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + block
         # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same kinematic-tree block, which
         # is a contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add
         # by that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
@@ -2118,6 +2318,21 @@ def func_hessian_direct_batch(
                         * constraint_state.jac[i_c, i_d1, i_b]
                         * constraint_state.efc_D[i_c, i_b]
                     )
+
+    # Coupled elliptic-cone Hessian: a middle-zone contact contributes J_c^T H_c J_c with the symmetric 3x3 local block
+    # H_c (top zone contributes nothing; bottom zone is the plain per-row J^T D J already added above with active=True).
+    # The three cone rows share one DOF support, so the block is scattered over that support once and keeps the Hessian
+    # symmetric positive definite (SPD), leaving the factor kernels unchanged. Seed cone_prev_jaref from these residuals
+    # so the incremental factor downdates exactly this block next iteration.
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        func_add_cone_hessian_block(i_b, constraint_state, static_rigid_sim_config)
+        # cone_prev_jaref backs the CPU incremental rank-3 downdate, so seed it on the CPU backend.
+        if qd.static(static_rigid_sim_config.backend == gs.cpu):
+            ne = constraint_state.n_constraints_equality[i_b]
+            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+            n_cone = constraint_state.n_constraints_cone[i_b]
+            for i_cone_row in range(n_cone):
+                constraint_state.cone_prev_jaref[i_cone_row, i_b] = constraint_state.Jaref[nef + i_cone_row, i_b]
 
     # Compute `H += M`. With sparse_solve the storage position is permuted via dof_iperm; otherwise it is natural
     # (dof_iperm is only populated on the sparse path).
@@ -2494,8 +2709,7 @@ def func_hessian_direct_tiled(
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
 
-    # BLOCK_DIM = 128 is optimal, after grid searching ofter block_dim = 64, 128, 256, and evaluating
-    # the test_rigid_benchmarks.py in production.yml for each value.
+    # BLOCK_DIM = 128 is optimal, after grid searching block_dim = 64, 128, 256 on the production benchmarks.
     BLOCK_DIM = qd.static(128)
     MAX_DOFS_PER_BLOCK = qd.static(64)
     # Note: setting MAX_CONSTRAINTS_PER_BLOCK to 64 provides a benefit for anymal_uniform_kinematic cpu
@@ -3092,6 +3306,17 @@ def func_hessian_and_cholesky_factor_direct(
         # GPU
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
 
+        # The tiled kernel assembles M + J^T D J only. Add the coupled elliptic-cone block as an additive post-pass
+        # before factoring: the block is positive semi-definite (PSD) so the factor kernels are unchanged, and the tiled
+        # kernel already gave middle/top cone rows active=0 (no per-row term) and bottom rows their diagonal D, so this
+        # adds exactly the middle-zone 3x3 coupling with no double-count. Same guard as the tiled kernel (skip settled
+        # or empty envs).
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+            qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            for i_b in range(_B):
+                if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                    func_add_cone_hessian_block(i_b, constraint_state, static_rigid_sim_config)
+
         if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
             # The register-streaming tiled factor has no shared-memory DOF cap, so it replaces the scalar one-thread-
             # per-env Cholesky (O(n_dofs^3) serial) for any n_dofs >= 16. Above the shared cap (hessian_fits_shared is
@@ -3128,13 +3353,95 @@ def func_build_changed_constraint_list(
 
 
 @qd.func
+def func_apply_rank1_dense_whole_env(
+    i_b,
+    sign,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+) -> bool:
+    """Apply one rank-1 update (sign +1) or downdate (sign -1) to the whole-env dense factor L in nt_H.
+
+    The working vector is pre-staged over all DOFs in nt_vec. Returns True on a non-positive downdate pivot. Shared
+    by the active-set flip update (working vector jac * sqrt(D)) and the coupled cone update (rank-3 factor of the
+    block staged one column at a time), so both maintain the dense factor through one code path.
+    """
+    EPS = rigid_global_info.EPS[None]
+    n_dofs = constraint_state.nt_H.shape[1]
+    is_degenerated = False
+    for k in range(n_dofs):
+        if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
+            Lkk = constraint_state.nt_H[i_b, k, k]
+            tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+            if tmp < EPS:
+                is_degenerated = True
+                break
+            r = qd.sqrt(tmp)
+            c = r / Lkk
+            cinv = 1 / c
+            s = constraint_state.nt_vec[k, i_b] / Lkk
+            constraint_state.nt_H[i_b, k, k] = r
+            for i in range(k + 1, n_dofs):
+                constraint_state.nt_H[i_b, i, k] = (
+                    constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                ) * cinv
+
+            for i in range(k + 1, n_dofs):
+                constraint_state.nt_vec[i, i_b] = (
+                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                )
+
+    return is_degenerated
+
+
+@qd.func
+def func_apply_rank1_sparse_whole_env(
+    i_b,
+    sign,
+    p_min,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+) -> bool:
+    """Apply one rank-1 update (sign +1) or downdate (sign -1) to the whole-env skyline factor L in nt_H.
+
+    The working vector is pre-staged at permuted positions in nt_vec (L is stored in permuted layout); the sweep runs
+    ascending columns from p_min within the skyline envelope (nt_H_env_start) and self-clears nt_vec as each column is
+    consumed. Returns True on a non-positive downdate pivot. Shared by the active-set flip update (working vector
+    jac * sqrt(D)) and the coupled cone update (rank-3 factor of the block staged one column at a time), so both
+    maintain the skyline factor through one code path.
+    """
+    EPS = rigid_global_info.EPS[None]
+    n_dofs = constraint_state.nt_H.shape[1]
+    is_degenerated = False
+    for k in range(p_min, n_dofs):
+        vk = constraint_state.nt_vec[k, i_b]
+        if qd.abs(vk) > EPS:
+            Lkk = constraint_state.nt_H[i_b, k, k]
+            tmp = Lkk * Lkk + sign * vk * vk
+            if tmp < EPS:
+                is_degenerated = True
+                break
+            r = qd.sqrt(tmp)
+            cinv = Lkk / r
+            s = vk / Lkk
+            constraint_state.nt_H[i_b, k, k] = r
+            for i in range(k + 1, n_dofs):
+                if constraint_state.nt_H_env_start[i_b, i] <= k:
+                    constraint_state.nt_H[i_b, i, k] = (
+                        constraint_state.nt_H[i_b, i, k] + sign * s * constraint_state.nt_vec[i, i_b]
+                    ) * cinv
+                    constraint_state.nt_vec[i, i_b] = (r / Lkk) * constraint_state.nt_vec[
+                        i, i_b
+                    ] - s * constraint_state.nt_H[i_b, i, k]
+            constraint_state.nt_vec[k, i_b] = 0.0
+    return is_degenerated
+
+
+@qd.func
 def func_hessian_and_cholesky_factor_incremental_dense_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ) -> bool:
-    EPS = rigid_global_info.EPS[None]
-
     n_dofs = constraint_state.nt_H.shape[1]
 
     is_degenerated = False
@@ -3146,27 +3453,8 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
         for i_d in range(n_dofs):
             constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-        for k in range(n_dofs):
-            if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                Lkk = constraint_state.nt_H[i_b, k, k]
-                tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-                if tmp < EPS:
-                    is_degenerated = True
-                    break
-                r = qd.sqrt(tmp)
-                c = r / Lkk
-                cinv = 1 / c
-                s = constraint_state.nt_vec[k, i_b] / Lkk
-                constraint_state.nt_H[i_b, k, k] = r
-                for i in range(k + 1, n_dofs):
-                    constraint_state.nt_H[i_b, i, k] = (
-                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
-                    ) * cinv
-
-                for i in range(k + 1, n_dofs):
-                    constraint_state.nt_vec[i, i_b] = (
-                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                    )
+        if func_apply_rank1_dense_whole_env(i_b, sign, constraint_state, rigid_global_info):
+            is_degenerated = True
 
     return is_degenerated
 
@@ -3181,15 +3469,12 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
     constraint, instead of reassembling and re-factoring H from scratch.
 
     For each constraint whose active state flipped, H changes by +-D * jac jac^T (+ when it became active, - when it
-    became inactive), so L changes by the matching rank-1 Cholesky update (sign +1) or downdate (sign -1). The update
-    processes columns in ascending permuted order from the support's smallest permuted index; its fill stays within the
-    skyline envelope (nt_H_env_start), which is the structural pattern over all constraints, so the inner loop visits
-    only rows whose band reaches column k. Returns True if a downdate hits a non-positive pivot (caller rebuilds).
+    became inactive), so L changes by the matching rank-1 Cholesky update or downdate. Returns True if a downdate hits
+    a non-positive pivot (caller rebuilds).
 
     nt_vec is the working rank-1 vector in permuted layout; it self-clears as each column is consumed, but a degenerate
     break leaves residual entries, so it is zeroed up front to stay correct across calls.
     """
-    EPS = rigid_global_info.EPS[None]
     n_dofs = constraint_state.nt_H.shape[1]
 
     for p in range(n_dofs):
@@ -3210,76 +3495,40 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
             if p < p_min:
                 p_min = p
 
-        # Ascending columns from the support's first permuted index; fill stays within the skyline envelope.
-        for k in range(p_min, n_dofs):
-            vk = constraint_state.nt_vec[k, i_b]
-            if qd.abs(vk) > EPS:
-                Lkk = constraint_state.nt_H[i_b, k, k]
-                tmp = Lkk * Lkk + sign * vk * vk
-                if tmp < EPS:
-                    is_degenerated = True
-                    break
-                r = qd.sqrt(tmp)
-                cinv = Lkk / r
-                s = vk / Lkk
-                constraint_state.nt_H[i_b, k, k] = r
-                for i in range(k + 1, n_dofs):
-                    if constraint_state.nt_H_env_start[i_b, i] <= k:
-                        constraint_state.nt_H[i_b, i, k] = (
-                            constraint_state.nt_H[i_b, i, k] + sign * s * constraint_state.nt_vec[i, i_b]
-                        ) * cinv
-                        constraint_state.nt_vec[i, i_b] = (r / Lkk) * constraint_state.nt_vec[
-                            i, i_b
-                        ] - s * constraint_state.nt_H[i_b, i, k]
-                constraint_state.nt_vec[k, i_b] = gs.qd_float(0.0)
-        if is_degenerated:
+        if func_apply_rank1_sparse_whole_env(i_b, sign, p_min, constraint_state, rigid_global_info):
+            is_degenerated = True
             break
 
     return is_degenerated
 
 
 @qd.func
-def func_rank_batch_update_island(
+def func_apply_staged_rank_updates_island(
     i_b,
     i_island,
-    batch_ic,
     n_u,
+    signs,
+    ld_start,
     island_state: array_class.IslandState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ) -> bool:
-    """Apply batched rank-1 updates/downdates to the island's Cholesky block of L, in place in nt_H, fused into a
+    """Apply n_u staged rank-1 updates/downdates to the island's Cholesky block of L, in place in nt_H, fused into a
     single column sweep.
 
-    A rank-1 rotation at column ld only reads state produced by earlier updates at that column and by its own
-    rotations at earlier columns, so interleaving the n_u updates per column computes bit-identical results to running
-    them sequentially, while visiting each L column once instead of n_u times (amortized index and envelope lookups,
-    and n_u independent rotation chains per column). The sweep runs over ascending island-local positions from the
-    batch's first support row, bounded per column by the skyline height (dof_env_col_end). nt_vec holds one
-    working vector per batch slot, flattened slot-minor ([i_d * hessian_rank_update_batch + i_u]); the caller zeroes
-    the island's entries once per incremental attempt. Returns whether any downdate went indefinite, in which case the caller refactors the island directly
-    (discarding the partially updated L, so the fused ordering is unobservable).
+    The caller stages each update's working vector into nt_vec (slot-minor [i_d * hessian_rank_update_batch + i_u])
+    and its sign (+1 update, -1 downdate) into signs, with ld_start the smallest island-local support row across the
+    staged vectors. This sweep is agnostic to the source: batched per-constraint J^T D J rows (one rank-1 each) or a
+    contact's coupled second-order-cone block (staged as its rank-3 factor). A rank-1 rotation at column ld only reads
+    state produced by earlier updates at that column and by its own rotations at earlier columns, so interleaving the
+    n_u updates per column is bit-identical to running them sequentially while visiting each L column once. The sweep
+    is bounded per column by the skyline height (dof_env_col_end). Returns whether any downdate went indefinite, in
+    which case the caller refactors the island directly (discarding the partially updated L).
     """
     EPS = rigid_global_info.EPS[None]
     dof_base = island_state.dof_slices.start[i_island, i_b]
     n = island_state.dof_slices.n[i_island, i_b]
-
-    signs = qd.Vector.zero(gs.qd_float, static_rigid_sim_config.hessian_rank_update_batch)
-    # Rows before the batch's first support DOF hold an exact zero in every working vector, so the sweep starts there.
-    ld_start = n
-    for i_u in qd.static(range(static_rigid_sim_config.hessian_rank_update_batch)):
-        if i_u < n_u:
-            i_c = batch_ic[i_u]
-            signs[i_u] = 1.0 if constraint_state.active[i_c, i_b] else -1.0
-            efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
-            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
-                slot_base = i_d * static_rigid_sim_config.hessian_rank_update_batch
-                constraint_state.nt_vec[slot_base + i_u, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
-                ld_support = island_state.dof_local_pos[i_d, i_b]
-                if ld_support < ld_start:
-                    ld_start = ld_support
 
     is_degenerated = False
     for ld in range(ld_start, n):
@@ -3330,6 +3579,235 @@ def func_rank_batch_update_island(
 
 
 @qd.func
+def func_rank_batch_update_island(
+    i_b,
+    i_island,
+    batch_ic,
+    n_u,
+    island_state: array_class.IslandState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+) -> bool:
+    """Stage n_u flipped constraints as per-constraint rank-1 J^T D J updates and apply them to the island's L.
+
+    Each update's sign follows the constraint's active state (+1 turned active, -1 turned inactive), applied through
+    func_apply_staged_rank_updates_island. nt_vec holds one working vector per batch slot (slot-minor
+    [i_d * hessian_rank_update_batch + i_u]); the caller zeroes the island's entries once per attempt.
+    """
+    n = island_state.dof_slices.n[i_island, i_b]
+    signs = qd.Vector.zero(gs.qd_float, static_rigid_sim_config.hessian_rank_update_batch)
+    # Rows before the batch's first support DOF hold an exact zero in every working vector, so the sweep starts there.
+    ld_start = n
+    for i_u in qd.static(range(static_rigid_sim_config.hessian_rank_update_batch)):
+        if i_u < n_u:
+            i_c = batch_ic[i_u]
+            signs[i_u] = 1.0 if constraint_state.active[i_c, i_b] else -1.0
+            efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
+            for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
+                slot_base = i_d * static_rigid_sim_config.hessian_rank_update_batch
+                constraint_state.nt_vec[slot_base + i_u, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+                ld_support = island_state.dof_local_pos[i_d, i_b]
+                if ld_support < ld_start:
+                    ld_start = ld_support
+    return func_apply_staged_rank_updates_island(
+        i_b, i_island, n_u, signs, ld_start, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
+
+
+@qd.func
+def func_cone_rank_update_island(
+    i_b,
+    i_island,
+    island_state: array_class.IslandState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+) -> bool:
+    """Maintain this island's coupled elliptic-cone contribution in the Cholesky factor L incrementally.
+
+    A middle-zone contact contributes J_c^T H_c J_c, which varies with the residual each iteration, so this downdates
+    the previous block and updates the current one. With H_c = L_c L_c^T (3x3), that block equals the sum of rank-1
+    terms w_k w_k^T with w_0 = l00 J_0 + l10 J_1 + l20 J_2, w_1 = l11 J_1 + l21 J_2, w_2 = l22 J_2; the previous w_k
+    stage into slots 0..2 (-1) and the current into slots 3..5 (+1), applied by the shared rank sweep. Downdating first
+    leaves the intermediate factor the well-conditioned cone-free system. cone_prev_jaref holds the previous residuals,
+    indexed by the cone row offset past the equality and frictionloss rows. Returns True on a degenerate downdate, so
+    the caller refactors the island directly.
+    """
+    EPS = rigid_global_info.EPS[None]
+    B = qd.static(static_rigid_sim_config.hessian_rank_update_batch)
+    qd.static_assert(B >= 6, "the cone rank-3 downdate + update stages 6 nt_vec slots per DOF")
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_cone = constraint_state.n_constraints_cone[i_b]
+    con_base = island_state.constraint_slices.start[i_island, i_b]
+    con_n = island_state.constraint_slices.n[i_island, i_b]
+    n = island_state.dof_slices.n[i_island, i_b]
+
+    # Downdate the previous block (slots 0..2, -1) then update the current one (slots 3..5, +1); the cone-free
+    # intermediate keeps every rotation well conditioned.
+    signs = qd.Vector.zero(gs.qd_float, B)
+    for i_u in qd.static(range(6)):
+        signs[i_u] = 2 * (i_u // 3) - 1
+
+    is_degenerated = False
+    for i_lcon in range(con_n):
+        if not is_degenerated:
+            i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+            if i_c >= nef and i_c < nef + n_cone and (i_c - nef) % 3 == 0:
+                j1 = i_c + 1
+                j2 = i_c + 2
+                i_cone_row = i_c - nef
+                d0, _d1, _d2, friction, con_mu, cur0, cur1, cur2 = _func_cone_head_load(i_c, i_b, constraint_state)
+                cur_zone, cN, cT = _func_cone_zone(cur0, cur1, cur2, con_mu, friction)
+                prev0 = constraint_state.cone_prev_jaref[i_cone_row, i_b]
+                prev1 = constraint_state.cone_prev_jaref[i_cone_row + 1, i_b]
+                prev2 = constraint_state.cone_prev_jaref[i_cone_row + 2, i_b]
+                prev_zone, pN, pT = _func_cone_zone(prev0, prev1, prev2, con_mu, friction)
+
+                if cur_zone == 2 or prev_zone == 2:
+                    cl00, cl10, cl20, cl11, cl21, cl22 = _func_cone_block_chol(
+                        cur0, cur1, cur2, d0, con_mu, friction, cur_zone, cN, cT, EPS
+                    )
+                    pl00, pl10, pl20, pl11, pl21, pl22 = _func_cone_block_chol(
+                        prev0, prev1, prev2, d0, con_mu, friction, prev_zone, pN, pT, EPS
+                    )
+                    ld_start = n
+                    jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+                    for k_ in range(jac_n):
+                        i_d = constraint_state.jac_dofs_idx[i_c, k_, i_b]
+                        slot_base = i_d * B
+                        j_0 = constraint_state.jac[i_c, i_d, i_b]
+                        j_1 = constraint_state.jac[j1, i_d, i_b]
+                        j_2 = constraint_state.jac[j2, i_d, i_b]
+                        constraint_state.nt_vec[slot_base + 0, i_b] = pl00 * j_0 + pl10 * j_1 + pl20 * j_2
+                        constraint_state.nt_vec[slot_base + 1, i_b] = pl11 * j_1 + pl21 * j_2
+                        constraint_state.nt_vec[slot_base + 2, i_b] = pl22 * j_2
+                        constraint_state.nt_vec[slot_base + 3, i_b] = cl00 * j_0 + cl10 * j_1 + cl20 * j_2
+                        constraint_state.nt_vec[slot_base + 4, i_b] = cl11 * j_1 + cl21 * j_2
+                        constraint_state.nt_vec[slot_base + 5, i_b] = cl22 * j_2
+                        ld_support = island_state.dof_local_pos[i_d, i_b]
+                        if ld_support < ld_start:
+                            ld_start = ld_support
+
+                    if func_apply_staged_rank_updates_island(
+                        i_b,
+                        i_island,
+                        6,
+                        signs,
+                        ld_start,
+                        island_state,
+                        constraint_state,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                    ):
+                        is_degenerated = True
+
+                constraint_state.cone_prev_jaref[i_cone_row, i_b] = cur0
+                constraint_state.cone_prev_jaref[i_cone_row + 1, i_b] = cur1
+                constraint_state.cone_prev_jaref[i_cone_row + 2, i_b] = cur2
+    return is_degenerated
+
+
+@qd.func
+def func_cone_rank_update_whole_env(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+) -> bool:
+    """Maintain the whole-env coupled elliptic-cone contribution in the Cholesky factor L incrementally.
+
+    Whole-env analogue of func_cone_rank_update_island: per middle-zone contact it applies the rank-3 factor of H_c as
+    three column sweeps of the previous block (-1) then three of the current block (+1), reusing the same single rank-1
+    sweep as the active-set update. Downdating first keeps the intermediate factor the well-conditioned cone-free
+    system. The working vector rides in the layout the factor uses: natural DOF order for the dense path, permuted
+    position (dof_iperm) for the sparse skyline. cone_prev_jaref holds the previous residuals. Returns True on a
+    degenerate downdate, so the caller refactors directly.
+    """
+    EPS = rigid_global_info.EPS[None]
+    n_dofs = constraint_state.nt_H.shape[1]
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_cone = constraint_state.n_constraints_cone[i_b]
+
+    is_degenerated = False
+    if n_cone > 0:
+        # The sparse sweep reads the working vector across the whole envelope, so it must start all-zero. A completed
+        # sweep self-clears, but a prior degenerate break (then a direct rebuild) can leave residue, so zero it up
+        # front.
+        if qd.static(static_rigid_sim_config.sparse_solve):
+            for p in range(n_dofs):
+                constraint_state.nt_vec[p, i_b] = 0.0
+
+        for i_cone in range(n_cone // 3):
+            if not is_degenerated:
+                i_head = nef + i_cone * 3
+                j1 = i_head + 1
+                j2 = i_head + 2
+                i_cone_row = i_head - nef
+                d0, _d1, _d2, friction, con_mu, cur0, cur1, cur2 = _func_cone_head_load(i_head, i_b, constraint_state)
+                cur_zone, cN, cT = _func_cone_zone(cur0, cur1, cur2, con_mu, friction)
+                prev0 = constraint_state.cone_prev_jaref[i_cone_row, i_b]
+                prev1 = constraint_state.cone_prev_jaref[i_cone_row + 1, i_b]
+                prev2 = constraint_state.cone_prev_jaref[i_cone_row + 2, i_b]
+                prev_zone, pN, pT = _func_cone_zone(prev0, prev1, prev2, con_mu, friction)
+
+                if cur_zone == 2 or prev_zone == 2:
+                    cl00, cl10, cl20, cl11, cl21, cl22 = _func_cone_block_chol(
+                        cur0, cur1, cur2, d0, con_mu, friction, cur_zone, cN, cT, EPS
+                    )
+                    pl00, pl10, pl20, pl11, pl21, pl22 = _func_cone_block_chol(
+                        prev0, prev1, prev2, d0, con_mu, friction, prev_zone, pN, pT, EPS
+                    )
+                    # Per-term coefficients over (J_0, J_1, J_2): downdate the previous block first (terms 0..2, sign
+                    # 2 * (term // 3) - 1 = -1) so the intermediate factor is the well-conditioned cone-free system,
+                    # then update the current block (terms 3..5, +1). A term whose coefficients are all zero (side
+                    # outside the middle zone) stages a zero vector and the sweep skips it.
+                    c0 = qd.Vector([pl00, 0.0, 0.0, cl00, 0.0, 0.0], dt=gs.qd_float)
+                    c1 = qd.Vector([pl10, pl11, 0.0, cl10, cl11, 0.0], dt=gs.qd_float)
+                    c2 = qd.Vector([pl20, pl21, pl22, cl20, cl21, cl22], dt=gs.qd_float)
+                    jac_n = constraint_state.jac_n_dofs[i_head, i_b]
+                    for term in range(6):
+                        if not is_degenerated:
+                            sign = 2 * (term // 3) - 1
+                            if qd.static(static_rigid_sim_config.sparse_solve):
+                                p_min = n_dofs
+                                for k_ in range(jac_n):
+                                    i_d = constraint_state.jac_dofs_idx[i_head, k_, i_b]
+                                    p = constraint_state.dof_iperm[i_b, i_d]
+                                    constraint_state.nt_vec[p, i_b] = (
+                                        c0[term] * constraint_state.jac[i_head, i_d, i_b]
+                                        + c1[term] * constraint_state.jac[j1, i_d, i_b]
+                                        + c2[term] * constraint_state.jac[j2, i_d, i_b]
+                                    )
+                                    if p < p_min:
+                                        p_min = p
+                                if func_apply_rank1_sparse_whole_env(
+                                    i_b, sign, p_min, constraint_state, rigid_global_info
+                                ):
+                                    is_degenerated = True
+                            else:
+                                for p in range(n_dofs):
+                                    constraint_state.nt_vec[p, i_b] = 0.0
+                                for k_ in range(jac_n):
+                                    i_d = constraint_state.jac_dofs_idx[i_head, k_, i_b]
+                                    constraint_state.nt_vec[i_d, i_b] = (
+                                        c0[term] * constraint_state.jac[i_head, i_d, i_b]
+                                        + c1[term] * constraint_state.jac[j1, i_d, i_b]
+                                        + c2[term] * constraint_state.jac[j2, i_d, i_b]
+                                    )
+                                if func_apply_rank1_dense_whole_env(i_b, sign, constraint_state, rigid_global_info):
+                                    is_degenerated = True
+
+                constraint_state.cone_prev_jaref[i_cone_row, i_b] = cur0
+                constraint_state.cone_prev_jaref[i_cone_row + 1, i_b] = cur1
+                constraint_state.cone_prev_jaref[i_cone_row + 2, i_b] = cur2
+    return is_degenerated
+
+
+@qd.func
 def func_factor_island_incremental_or_direct(
     i_b,
     i_island,
@@ -3344,28 +3822,48 @@ def func_factor_island_incremental_or_direct(
 
     One rank-1 update sweeps the island's skyline envelope at O(sum_span) (sum_span = total row span = envelope
     nonzeros), so n_changed of them cost O(n_changed * sum_span); a direct refactor factors it at O(sum_span_sq)
-    (sum_span_sq = sum of squared row spans). Both costs are read straight off the envelope, so the decision compares
-    them directly - incremental while n_changed * sum_span < sum_span_sq - with no scene-tuned constant. The choice must
-    be per island, not on the env-wide flip count: the rebuild path refactors every island, so a global decision would
+    (sum_span_sq = sum of squared row spans). The elliptic cone adds one fused rank-6 sweep per middle-zone contact to
+    the incremental side, which the rebuild bakes into the Hessian instead. Both costs are read straight off the
+    envelope, so the decision compares them directly, with no scene-tuned constant. The choice must be per island, not
+    on the env-wide flip count: the rebuild path refactors every island, so a global decision would
     needlessly refactor quiescent islands whenever flips are spread thin across many of them (e.g. several separated
     piles each toggling a single contact).
     """
     c_start = island_state.constraint_slices.start[i_island, i_b]
     c_n = island_state.constraint_slices.n[i_island, i_b]
 
+    # Count active-set flips and, for the elliptic cone, the middle-zone cone contacts whose coupled block must be
+    # refreshed this iteration (each fires one rank-3 downdate + update below). A cone whose current AND previous
+    # residuals sit outside the middle zone has no block baked in L and leaves the factor valid, so an island with no
+    # flips and no middle-zone cones skips entirely; its cone_prev_jaref goes stale, which is safe because a skipped
+    # cone's stale residuals stay classified non-middle until the update runs again on its current residuals.
     n_changed = 0
-    for k in range(c_n):
-        i_c = island_state.constraint_id[c_start + k, i_b]
-        if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
-            n_changed = n_changed + 1
+    cone_passes = 0
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        nef = constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+        ncone = nef + constraint_state.n_constraints_cone[i_b]
+        for k in range(c_n):
+            i_c = island_state.constraint_id[c_start + k, i_b]
+            if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
+                n_changed = n_changed + 1
+            if i_c >= nef and i_c < ncone and (i_c - nef) % 3 == 0:
+                if _func_cone_head_is_middle(i_c, i_b, nef, constraint_state):
+                    cone_passes = cone_passes + 1
+    else:
+        for k in range(c_n):
+            i_c = island_state.constraint_id[c_start + k, i_b]
+            if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
+                n_changed = n_changed + 1
 
-    if n_changed > 0:
+    if n_changed > 0 or cone_passes > 0:
         dof_base = island_state.dof_slices.start[i_island, i_b]
         n_isl_dofs = island_state.dof_slices.n[i_island, i_b]
         # Estimate both costs from the skyline envelope, per envelope entry: a fused pass over the envelope pays the
         # index/envelope work once (n_passes * sum_span) plus one rotation per update (n_changed * sum_span), while a
-        # direct refactor pays index work and one FMA on each of the sum_span_sq entries. Incremental wins while
-        # (n_changed + n_passes) * sum_span < 2 * sum_span_sq. No scene-tuned constant.
+        # direct refactor pays index work and one FMA on each of the sum_span_sq entries. Each middle-zone cone contact
+        # adds a further fused rank-6 sweep to the incremental side (its rank-3 downdate + update: 6 rotations plus one
+        # envelope pass), which the rebuild avoids by baking the cone into the Hessian. Incremental wins while
+        # (n_changed + n_passes + 7 * cone_passes) * sum_span < 2 * sum_span_sq. No scene-tuned constant.
         sum_span = gs.qd_float(0.0)
         sum_span_sq = gs.qd_float(0.0)
         for ld in range(n_isl_dofs):
@@ -3375,7 +3873,7 @@ def func_factor_island_incremental_or_direct(
         n_passes = (
             n_changed + static_rigid_sim_config.hessian_rank_update_batch - 1
         ) // static_rigid_sim_config.hessian_rank_update_batch
-        need_rebuild = gs.qd_float(n_changed + n_passes) * sum_span > 2.0 * sum_span_sq
+        need_rebuild = gs.qd_float(n_changed + n_passes + 7 * cone_passes) * sum_span > 2.0 * sum_span_sq
         if not need_rebuild:
             for ld in range(n_isl_dofs):
                 slot_base = island_state.dof_id[dof_base + ld, i_b] * static_rigid_sim_config.hessian_rank_update_batch
@@ -3415,6 +3913,14 @@ def func_factor_island_incremental_or_direct(
                     static_rigid_sim_config,
                 ):
                     need_rebuild = True
+            # The active-set batch above maintains the per-row J^T D J of active rows; the coupled middle-zone cone
+            # block (its rows inactive) is disjoint from that and is maintained here by its rank-3 downdate/update.
+            if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                if not need_rebuild:
+                    if func_cone_rank_update_island(
+                        i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                    ):
+                        need_rebuild = True
         if need_rebuild:
             func_hessian_direct_batch(
                 i_b, i_island, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
@@ -3443,6 +3949,10 @@ def func_hessian_and_cholesky_factor_incremental_batch(
         do_full_rebuild = island_state.n_islands[i_b] > 1
         if qd.static(static_rigid_sim_config.use_hibernation):
             do_full_rebuild = True
+    # The elliptic cone rides the incremental factor via a per-iteration rank-3 update backed by cone_prev_jaref, which
+    # only the CPU backend allocates; a GPU scalar factor here instead rebuilds with the cone baked in each iteration.
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction and static_rigid_sim_config.backend != gs.cpu):
+        do_full_rebuild = True
     is_degenerated = False
     if do_full_rebuild:
         func_hessian_and_cholesky_factor_direct_batch(
@@ -3458,6 +3968,15 @@ def func_hessian_and_cholesky_factor_incremental_batch(
             is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(
                 i_b, constraint_state, rigid_global_info
             )
+        # The active-set update above maintains the per-row J^T D J of the flipped rows; the coupled middle-zone cone
+        # block varies with the residual each iteration, so it rides the same factor via its rank-3 update here. Only
+        # the CPU backend reaches this incremental path for elliptic (a GPU scalar factor rebuilt above); the static
+        # backend guard also keeps func_cone_rank_update_whole_env (which indexes the CPU-only cone_prev_jaref) out of
+        # the GPU compilation of this runtime branch.
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction and static_rigid_sim_config.backend == gs.cpu):
+            if not is_degenerated:
+                if func_cone_rank_update_whole_env(i_b, constraint_state, rigid_global_info, static_rigid_sim_config):
+                    is_degenerated = True
     return is_degenerated
 
 
@@ -3688,6 +4207,9 @@ def func_ls_init_and_eval_p0(
     n_entities = entities_info.dof_start.shape[0]
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    ncone = nef
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        ncone = ncone + constraint_state.n_constraints_cone[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
     # -- mv and jv (same as original func_ls_init) --
@@ -3738,6 +4260,9 @@ def func_ls_init_and_eval_p0(
     # Recompute quad on the fly from Jaref, jv, efc_D — avoids writing/reading the quad array entirely.
     # 3 loads per constraint (Jaref, jv, D) + ~8 FLOPs, vs 3 writes + 3 reads through global memory.
     for i_c in range(n_con):
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
+            # Elliptic cone rows carry no per-row quadratic; the coupled loop below evaluates them exactly.
+            continue
         Jaref_c = constraint_state.Jaref[i_c, i_b]
         jv_c = constraint_state.jv[i_c, i_b]
         D = constraint_state.efc_D[i_c, i_b]
@@ -3768,11 +4293,27 @@ def func_ls_init_and_eval_p0(
             quad_total_1 = quad_total_1 + qf_1
             quad_total_2 = quad_total_2 + qf_2
         else:
-            # Contact: check Jaref < 0
+            # Contact / joint-limit (unilateral): check Jaref < 0
             active = Jaref_c < 0
             quad_total_0 = quad_total_0 + qf_0 * active
             quad_total_1 = quad_total_1 + qf_1 * active
             quad_total_2 = quad_total_2 + qf_2 * active
+
+    # Elliptic cone contacts, evaluated exactly at alpha=0 (value/gradient/curvature of the cone cost). The
+    # per-alpha linesearch re-evaluates them via the same helper; here alpha=0 gives the p0 contribution.
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        for i_cone in range((ncone - nef) // 3):
+            i_head = nef + i_cone * 3
+            d0, d1, d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_head, i_b, constraint_state)
+            jv0 = constraint_state.jv[i_head, i_b]
+            jv1 = constraint_state.jv[i_head + 1, i_b]
+            jv2 = constraint_state.jv[i_head + 2, i_b]
+            cost_c, grad_c, hess_c = _func_cone_cost_along_alpha(
+                jar0, jar1, jar2, jv0, jv1, jv2, 0.0, d0, d1, d2, con_mu, friction
+            )
+            quad_total_0 = quad_total_0 + cost_c
+            quad_total_1 = quad_total_1 + grad_c
+            quad_total_2 = quad_total_2 + 0.5 * hess_c
 
     # Write eq_sum to global for subsequent calls
     constraint_state.eq_sum[0, i_b] = eq_sum_0
@@ -3796,6 +4337,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     i_b,
     alphas,
     constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
     n_alphas: qd.template(),
 ):
     """Reduce the quadratic-coefficient triplets (const, linear, quad) for up to ``n_alphas`` candidate alphas (passed
@@ -3812,9 +4354,12 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    ncone = nef
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        ncone = ncone + constraint_state.n_constraints_cone[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
-    # Start from quad_gauss + eq_sum (skips ne equality constraints)
+    # Start from quad_gauss + eq_sum (skips equality; the elliptic cone is evaluated exactly per-alpha below)
     base_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
     base_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
     base_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
@@ -3848,8 +4393,10 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
             t_1[k] = t_1[k] + ak_qf_1
             t_2[k] = t_2[k] + ak_qf_2
 
-    # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas
-    for i_c in range(nef, n_con):
+    # Contact / joint-limit constraints [ncone, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas.
+    # Elliptic cone rows [nef, ncone) are evaluated exactly per-alpha in the cone loop below; for the pyramidal
+    # cone ncone == nef so this covers the whole collision segment unchanged.
+    for i_c in range(ncone, n_con):
         Jaref_c = constraint_state.Jaref[i_c, i_b]
         jv_c = constraint_state.jv[i_c, i_b]
         D = constraint_state.efc_D[i_c, i_b]
@@ -3863,6 +4410,25 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
             t_0[k] = t_0[k] + qf_0 * act
             t_1[k] = t_1[k] + qf_1 * act
             t_2[k] = t_2[k] + qf_2 * act
+
+    # Elliptic cone rows [nef, ncone): evaluate the exact cone cost along alpha per candidate (matching MuJoCo's
+    # elliptic cone) and pack its value/gradient/curvature as a local quadratic centered at alpha_k, so the
+    # reconstruction cost(alpha_k) = c + l*alpha_k + q*alpha_k^2 reproduces the exact cone cost/grad/hess there.
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        for i_cone in range((ncone - nef) // 3):
+            i_head = nef + i_cone * 3
+            d0, d1, d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_head, i_b, constraint_state)
+            jv0 = constraint_state.jv[i_head, i_b]
+            jv1 = constraint_state.jv[i_head + 1, i_b]
+            jv2 = constraint_state.jv[i_head + 2, i_b]
+            for k in qd.static(range(n_alphas)):
+                alpha_k = alphas[k]
+                cost_c, grad_c, hess_c = _func_cone_cost_along_alpha(
+                    jar0, jar1, jar2, jv0, jv1, jv2, alpha_k, d0, d1, d2, con_mu, friction
+                )
+                t_0[k] = t_0[k] + cost_c - grad_c * alpha_k + 0.5 * hess_c * alpha_k * alpha_k
+                t_1[k] = t_1[k] + grad_c - hess_c * alpha_k
+                t_2[k] = t_2[k] + 0.5 * hess_c
 
     t0 = qd.Vector([t_0[0], t_1[0], t_2[0]])
     t1 = qd.Vector([t_0[1], t_1[1], t_2[1]])
@@ -3904,6 +4470,7 @@ def _func_linesearch_eval_at_alpha(
     alpha,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
     coop: qd.template(),
 ):
     """Single-alpha linesearch evaluator. ``coop=True`` runs cooperatively across the 32-lane warp (caller passes the
@@ -3917,13 +4484,15 @@ def _func_linesearch_eval_at_alpha(
     alphas = qd.Vector([alpha, alpha, alpha])
     if qd.static(coop):
         t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
-            i_b, tid, alphas, constraint_state, n_alphas=1
+            i_b, tid, alphas, constraint_state, static_rigid_sim_config, n_alphas=1
         )
         return _func_linesearch_eval_quadratic_at_alpha(
             i_b, tid, alpha, t0, constraint_state, rigid_global_info, coop=True
         )
     else:
-        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(i_b, alphas, constraint_state, n_alphas=1)
+        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
+            i_b, alphas, constraint_state, static_rigid_sim_config, n_alphas=1
+        )
         return _func_linesearch_eval_quadratic_at_alpha(
             i_b, tid, alpha, t0, constraint_state, rigid_global_info, coop=False
         )
@@ -3935,6 +4504,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
     tid,
     alphas,
     constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
     n_alphas: qd.template(),
 ):
     """Cooperative (32-lane subgroup) variant of ``_func_linesearch_eval_constraints_at_n_alphas_serial``.
@@ -3945,6 +4515,9 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    ncone = nef
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        ncone = ncone + constraint_state.n_constraints_cone[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
     # Start from quad_gauss + eq_sum (skips ne equality constraints); only lane 0 holds the seed,
@@ -3989,9 +4562,10 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
             t_2[k] = t_2[k] + ak_qf_2
         i_c = i_c + 32
 
-    # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas;
-    # constraint loop strided by 32 across the warp.
-    i_c = nef + tid
+    # Contact / joint-limit constraints [ncone, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas;
+    # constraint loop strided by 32 across the warp. Elliptic cone rows [nef, ncone) are evaluated exactly in the
+    # cone loop below; ncone == nef for the pyramidal cone, so this covers the whole collision segment unchanged.
+    i_c = ncone + tid
     while i_c < n_con:
         Jaref_c = constraint_state.Jaref[i_c, i_b]
         jv_c = constraint_state.jv[i_c, i_b]
@@ -4007,6 +4581,26 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
             t_1[k] = t_1[k] + qf_1 * act
             t_2[k] = t_2[k] + qf_2 * act
         i_c = i_c + 32
+
+    # Elliptic cone rows [nef, ncone): the exact cone cost along alpha (matching MuJoCo's elliptic cone), packed as a
+    # local quadratic centered at alpha_k, matching the serial inner. Lane-strided over cone contacts by 32.
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        i_cone = tid
+        while i_cone < (ncone - nef) // 3:
+            i_head = nef + i_cone * 3
+            d0, d1, d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_head, i_b, constraint_state)
+            jv0 = constraint_state.jv[i_head, i_b]
+            jv1 = constraint_state.jv[i_head + 1, i_b]
+            jv2 = constraint_state.jv[i_head + 2, i_b]
+            for k in qd.static(range(n_alphas)):
+                alpha_k = alphas[k]
+                cost_c, grad_c, hess_c = _func_cone_cost_along_alpha(
+                    jar0, jar1, jar2, jv0, jv1, jv2, alpha_k, d0, d1, d2, con_mu, friction
+                )
+                t_0[k] = t_0[k] + cost_c - grad_c * alpha_k + 0.5 * hess_c * alpha_k * alpha_k
+                t_1[k] = t_1[k] + grad_c - hess_c * alpha_k
+                t_2[k] = t_2[k] + 0.5 * hess_c
+            i_cone = i_cone + 32
 
     # Warp-tree reduction: every lane's 9 partial sums collapse into the per-env totals; after this
     # all 32 lanes hold identical scalars. The `5` is log2(32) tree levels.
@@ -4075,6 +4669,7 @@ def _func_linesearch_eval_at_3_alphas(
     alphas,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
     coop: qd.template(),
 ):
     """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single constraint-loop pass.
@@ -4087,12 +4682,16 @@ def _func_linesearch_eval_at_3_alphas(
     See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract (forwarded via ``coop``) and the
     rationale for the per-branch return."""
     if qd.static(coop):
-        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_coop(i_b, tid, alphas, constraint_state, n_alphas=3)
+        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
+            i_b, tid, alphas, constraint_state, static_rigid_sim_config, n_alphas=3
+        )
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_global_info, coop=True
         )
     else:
-        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(i_b, alphas, constraint_state, n_alphas=3)
+        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
+            i_b, alphas, constraint_state, static_rigid_sim_config, n_alphas=3
+        )
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_global_info, coop=False
         )
@@ -4179,6 +4778,7 @@ def func_linesearch_refine(
     gtol,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
     coop: qd.template(),
 ):
     """Bracketing walk + 3-alpha dual-bracket refinement.
@@ -4217,7 +4817,13 @@ def func_linesearch_refine(
         p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
         p2update = 1
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_linesearch_eval_at_alpha(
-            i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info, coop=coop
+            i_b,
+            tid,
+            p1_alpha - p1_deriv_0 / p1_deriv_1,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+            coop=coop,
         )
         ls_it_local = ls_it_local + 1
         if qd.abs(p1_deriv_0) < gtol:
@@ -4240,7 +4846,7 @@ def func_linesearch_refine(
             while ls_it_local < ls_iter_limit:
                 alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
                 costs, grads, hess = _func_linesearch_eval_at_3_alphas(
-                    i_b, tid, alphas, constraint_state, rigid_global_info, coop=coop
+                    i_b, tid, alphas, constraint_state, rigid_global_info, static_rigid_sim_config, coop=coop
                 )
                 ls_it_local = ls_it_local + 3
                 p1_next = alpha_0
@@ -4346,6 +4952,7 @@ def func_linesearch_batch(
             alpha=p0_alpha - p0_deriv_0 / p0_deriv_1,
             constraint_state=constraint_state,
             rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
             coop=False,
         )
 
@@ -4370,6 +4977,7 @@ def func_linesearch_batch(
                 gtol=gtol,
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
                 coop=False,
             )
             constraint_state.ls_result[i_b] = ls_result
@@ -4399,6 +5007,254 @@ def func_save_prev_grad(
 
 
 @qd.func
+def _func_cone_zone(jar0, jar1, jar2, con_mu, mu):
+    """Classify one 3-row (normal + 2 tangent) elliptic contact into MuJoCo's three cone zones from the per-row
+    residuals jar_j.
+
+    Returns (zone, N, T): zone 0 = top (dual-cone interior, inactive), 1 = bottom (polar cone, plain quadratic),
+    2 = middle (cone boundary). N and T are the rescaled normal/tangential magnitudes reused by the middle-zone
+    force/cost/Hessian. con_mu is the regularized master coefficient (friction / sqrt(impratio)); mu is the raw
+    tangential friction coefficient.
+    """
+    N = con_mu * jar0
+    u1 = mu * jar1
+    u2 = mu * jar2
+    T = qd.sqrt(u1 * u1 + u2 * u2)
+    zone = 2
+    if N >= con_mu * T or (T <= 0.0 and N >= 0.0):
+        zone = 0
+    elif con_mu * N + T <= 0.0 or (T <= 0.0 and N < 0.0):
+        zone = 1
+    return zone, N, T
+
+
+@qd.func
+def _func_cone_head_load(i_c, i_b, constraint_state: array_class.ConstraintState):
+    """Load the shared per-contact scalars of the elliptic cone whose head (normal) row is i_c.
+
+    Returns (d0, d1, d2, friction, con_mu, jar0, jar1, jar2): the three rows' impedances, the contact friction stored
+    on the head row, the regularized master coefficient con_mu = friction * sqrt(d0 / d1) (= friction / sqrt(impratio)
+    since the tangent rows are impratio times stiffer), and the three residuals.
+    """
+    d0 = constraint_state.efc_D[i_c, i_b]
+    d1 = constraint_state.efc_D[i_c + 1, i_b]
+    d2 = constraint_state.efc_D[i_c + 2, i_b]
+    friction = constraint_state.efc_frictionloss[i_c, i_b]
+    con_mu = friction * qd.sqrt(d0 / d1)
+    jar0 = constraint_state.Jaref[i_c, i_b]
+    jar1 = constraint_state.Jaref[i_c + 1, i_b]
+    jar2 = constraint_state.Jaref[i_c + 2, i_b]
+    return d0, d1, d2, friction, con_mu, jar0, jar1, jar2
+
+
+@qd.func
+def _func_cone_head_is_middle(
+    i_c,
+    i_b,
+    nef,
+    constraint_state: array_class.ConstraintState,
+) -> bool:
+    """Whether elliptic cone contact head i_c sits in the middle (cone-boundary) zone this iteration or last.
+
+    The coupled cone block only fires its rank-3 downdate/update when the current or previous residual is in the middle
+    zone; top/bottom zones leave the factor untouched. The incremental-vs-rebuild cost model uses this to charge only
+    the cone contacts whose update actually runs.
+    """
+    i_cone_row = i_c - nef
+    _d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_c, i_b, constraint_state)
+    cur_zone, cur_N, cur_T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
+    prev_zone, prev_N, prev_T = _func_cone_zone(
+        constraint_state.cone_prev_jaref[i_cone_row, i_b],
+        constraint_state.cone_prev_jaref[i_cone_row + 1, i_b],
+        constraint_state.cone_prev_jaref[i_cone_row + 2, i_b],
+        con_mu,
+        friction,
+    )
+    return cur_zone == 2 or prev_zone == 2
+
+
+@qd.func
+def _func_cone_Dm(D0, con_mu):
+    """Middle-zone impedance Dm = D0 / (con_mu^2 * (1 + con_mu^2)), folding the normal impedance and the regularized
+    coefficient of one elliptic contact."""
+    return D0 / (con_mu * con_mu * (1.0 + con_mu * con_mu))
+
+
+@qd.func
+def _func_cone_middle(jar0, jar1, jar2, D0, con_mu, mu, N, T):
+    """Middle-zone (cone-boundary) force, cost, and symmetric 3x3 local Hessian for one elliptic contact.
+
+    Returns (f0, f1, f2, cost, h00, h01, h02, h11, h12, h22), the analytic second-order-cone projection of MuJoCo's
+    elliptic cone. Only valid when the contact is in the middle zone (T > 0).
+    """
+    u1 = mu * jar1
+    u2 = mu * jar2
+    Dm = _func_cone_Dm(D0, con_mu)
+    NmT = N - con_mu * T
+
+    f0 = -Dm * NmT * con_mu
+    f1 = -f0 / T * u1 * mu
+    f2 = -f0 / T * u2 * mu
+    cost = 0.5 * Dm * NmT * NmT
+
+    # Curvature in the rescaled U-space, then pre/post-multiplied by G = diag(con_mu, mu, mu) and scaled by Dm.
+    cN_T3 = con_mu * N / (T * T * T)
+    diag_add = con_mu * con_mu - con_mu * N / T
+    hu00 = gs.qd_float(1.0)
+    hu01 = -(con_mu / T) * u1
+    hu02 = -(con_mu / T) * u2
+    hu11 = cN_T3 * u1 * u1 + diag_add
+    hu12 = cN_T3 * u1 * u2
+    hu22 = cN_T3 * u2 * u2 + diag_add
+
+    h00 = Dm * con_mu * con_mu * hu00
+    h01 = Dm * con_mu * mu * hu01
+    h02 = Dm * con_mu * mu * hu02
+    h11 = Dm * mu * mu * hu11
+    h12 = Dm * mu * mu * hu12
+    h22 = Dm * mu * mu * hu22
+    return f0, f1, f2, cost, h00, h01, h02, h11, h12, h22
+
+
+@qd.func
+def _func_cone_block_product(h00, h01, h02, h11, h12, h22, a0, a1, a2, b0, b1, b2):
+    """One entry a^T H_c b of the scattered coupled-cone Hessian: the symmetric 3x3 local block H_c contracted with
+    the three cone rows' jacobian entries a_j (row DOF) and b_j (column DOF)."""
+    return (
+        h00 * a0 * b0
+        + h01 * (a0 * b1 + a1 * b0)
+        + h02 * (a0 * b2 + a2 * b0)
+        + h11 * a1 * b1
+        + h12 * (a1 * b2 + a2 * b1)
+        + h22 * a2 * b2
+    )
+
+
+@qd.func
+def _func_cone_block_chol(jar0, jar1, jar2, D0, con_mu, friction, zone, N, T, EPS):
+    """Lower-triangular Cholesky factor (l00, l10, l20, l11, l21, l22) of one contact's middle-zone cone Hessian H_c.
+
+    All six entries are zero outside the middle zone. Diagonals are floored at EPS so a near-degenerate block cannot
+    divide by zero; a truly indefinite downdate built from the factor is caught later by the rank sweep's pivot test.
+    """
+    l00 = gs.qd_float(0.0)
+    l10 = gs.qd_float(0.0)
+    l20 = gs.qd_float(0.0)
+    l11 = gs.qd_float(0.0)
+    l21 = gs.qd_float(0.0)
+    l22 = gs.qd_float(0.0)
+    if zone == 2:
+        _f0, _f1, _f2, _c, h00, h01, h02, h11, h12, h22 = _func_cone_middle(
+            jar0, jar1, jar2, D0, con_mu, friction, N, T
+        )
+        l00 = qd.sqrt(qd.max(h00, EPS))
+        l10 = h01 / l00
+        l20 = h02 / l00
+        l11 = qd.sqrt(qd.max(h11 - l10 * l10, EPS))
+        l21 = (h12 - l20 * l10) / l11
+        l22 = qd.sqrt(qd.max(h22 - l20 * l20 - l21 * l21, 0.0))
+    return l00, l10, l20, l11, l21, l22
+
+
+@qd.func
+def func_cone_middle_cost(i_c, i_b, constraint_state: array_class.ConstraintState):
+    """Coupled middle-zone cost 0.5*Dm*(N - con_mu*T)^2 of the elliptic cone whose head row is i_c; 0 outside.
+
+    Shared by every linesearch/cost path so the coupled term is computed identically across arms.
+    """
+    d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_c, i_b, constraint_state)
+    zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
+    c = gs.qd_float(0.0)
+    if zone == 2:
+        NmT = N - con_mu * T
+        c = 0.5 * _func_cone_Dm(d0, con_mu) * NmT * NmT
+    return c
+
+
+@qd.func
+def _func_cone_cost_along_alpha(jar0, jar1, jar2, jv0, jv1, jv2, alpha, d0, d1, d2, con_mu, mu):
+    """Exact elliptic-cone cost and its first/second derivatives in the linesearch step alpha (matching MuJoCo).
+
+    Evaluated at jar_j(alpha) = jar_j + alpha * jv_j, returning (cost, dcost/dalpha, d2cost/dalpha2). The zone is
+    re-classified at this alpha, so the cost is exact along the whole search line (top: 0; bottom: plain quadratic;
+    middle: the cone potential 0.5*Dm*(N - con_mu*T)^2 differentiated through T = ||(mu*jar1, mu*jar2)||).
+    """
+    x0 = jar0 + alpha * jv0
+    x1 = jar1 + alpha * jv1
+    x2 = jar2 + alpha * jv2
+    zone, N, T = _func_cone_zone(x0, x1, x2, con_mu, mu)
+    cost = gs.qd_float(0.0)
+    grad = gs.qd_float(0.0)
+    hess = gs.qd_float(0.0)
+    if zone == 1:
+        cost = 0.5 * (d0 * x0 * x0 + d1 * x1 * x1 + d2 * x2 * x2)
+        grad = d0 * x0 * jv0 + d1 * x1 * jv1 + d2 * x2 * jv2
+        hess = d0 * jv0 * jv0 + d1 * jv1 * jv1 + d2 * jv2 * jv2
+    elif zone == 2:
+        Dm = _func_cone_Dm(d0, con_mu)
+        u1 = mu * x1
+        u2 = mu * x2
+        du1 = mu * jv1
+        du2 = mu * jv2
+        dN = con_mu * jv0
+        dT = (u1 * du1 + u2 * du2) / T
+        d2T = (du1 * du1 + du2 * du2 - dT * dT) / T
+        g = N - con_mu * T
+        dg = dN - con_mu * dT
+        d2g = -con_mu * d2T
+        cost = 0.5 * Dm * g * g
+        grad = Dm * g * dg
+        hess = Dm * (dg * dg + g * d2g)
+    return cost, grad, hess
+
+
+@qd.func
+def func_cone_update_rows(i_c, i_b, constraint_state: array_class.ConstraintState):
+    """Recompute active and efc_force for the three rows of the elliptic cone whose head (normal) row is i_c, and
+    return the coupled middle-zone cost contribution (0 outside the middle zone).
+
+    The normal row and its two tangent rows are one second-order cone (SOC), processed together at the head. The top
+    zone is inactive; the bottom zone reduces to the standard per-row quadratic (active=True lets the shared
+    cost/Hessian passes handle it); the middle zone is the analytic cone projection, excluded from the per-row
+    cost/Hessian (active=False) with its coupled cost returned here and its coupled Hessian block added in assembly.
+    Shared by every force-update path (serial batch, cooperative one-thread-per-row, decomposed) so the cone is
+    resolved identically across arms; per-row callers invoke it from the head thread only, keeping each row written
+    exactly once (race-free).
+    """
+    j1 = i_c + 1
+    j2 = i_c + 2
+    d0, d1, d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_c, i_b, constraint_state)
+    zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
+    cost = gs.qd_float(0.0)
+    if zone == 0:  # top: inactive
+        constraint_state.active[i_c, i_b] = False
+        constraint_state.active[j1, i_b] = False
+        constraint_state.active[j2, i_b] = False
+        constraint_state.efc_force[i_c, i_b] = 0.0
+        constraint_state.efc_force[j1, i_b] = 0.0
+        constraint_state.efc_force[j2, i_b] = 0.0
+    elif zone == 1:  # bottom: plain quadratic on all three rows
+        constraint_state.active[i_c, i_b] = True
+        constraint_state.active[j1, i_b] = True
+        constraint_state.active[j2, i_b] = True
+        constraint_state.efc_force[i_c, i_b] = -jar0 * d0
+        constraint_state.efc_force[j1, i_b] = -jar1 * d1
+        constraint_state.efc_force[j2, i_b] = -jar2 * d2
+    else:  # middle: cone boundary. Excluded from the per-row cost/Hessian; handled coupled.
+        constraint_state.active[i_c, i_b] = False
+        constraint_state.active[j1, i_b] = False
+        constraint_state.active[j2, i_b] = False
+        f0, f1, f2, cost_m, _h00, _h01, _h02, _h11, _h12, _h22 = _func_cone_middle(
+            jar0, jar1, jar2, d0, con_mu, friction, N, T
+        )
+        constraint_state.efc_force[i_c, i_b] = f0
+        constraint_state.efc_force[j1, i_b] = f1
+        constraint_state.efc_force[j2, i_b] = f2
+        cost = cost_m
+    return cost
+
+
+@qd.func
 def func_update_constraint_batch(
     i_b,
     qacc: qd.Tensor,
@@ -4411,35 +5267,58 @@ def func_update_constraint_batch(
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    ncone = nef
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        ncone = ncone + constraint_state.n_constraints_cone[i_b]
 
     constraint_state.prev_cost[i_b] = cost[i_b]
     cost_i = gs.qd_float(0.0)
     gauss_i = gs.qd_float(0.0)
 
+    # Snapshot the previous active set in a separate pass BEFORE any active is recomputed: a coupled elliptic-cone
+    # head writes active for its two tangent rows, so capturing prev_active inline (per row, in the recompute loop)
+    # would read a tangent row's already-updated value once the head ran first, hiding its flip from the incremental
+    # factor's changed-constraint list. Pyramidal rows only write their own active, so they keep the fused inline
+    # snapshot below.
+    if qd.static(
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        and static_rigid_sim_config.enable_elliptic_friction
+    ):
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+
     # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active
     for i_c in range(constraint_state.n_constraints[i_b]):
-        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-        constraint_state.active[i_c, i_b] = True
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
+            # Elliptic cone contact: the coupled triple is resolved at its head row, which also writes the two
+            # tangent rows.
+            if (i_c - nef) % 3 == 0:
+                cost_i = cost_i + func_cone_update_rows(i_c, i_b, constraint_state)
+        else:
+            if qd.static(
+                static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+                and not static_rigid_sim_config.enable_elliptic_friction
+            ):
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+            constraint_state.active[i_c, i_b] = True
+            floss_force = gs.qd_float(0.0)
+            if ne <= i_c and i_c < nef:  # Friction constraints
+                f = constraint_state.efc_frictionloss[i_c, i_b]
+                r = constraint_state.diag[i_c, i_b]
+                rf = r * f
+                linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+                linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+                constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+                floss_force = linear_neg * f + linear_pos * -f
+                floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
+                floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
+                cost_i = cost_i + floss_cost_local
+            elif nef <= i_c:  # Contact / joint-limit constraints (unilateral)
+                constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
 
-        floss_force = gs.qd_float(0.0)
-        if ne <= i_c and i_c < nef:  # Friction constraints
-            f = constraint_state.efc_frictionloss[i_c, i_b]
-            r = constraint_state.diag[i_c, i_b]
-            rf = r * f
-            linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-            linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-            constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
-            floss_force = linear_neg * f + linear_pos * -f
-            floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
-            floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
-            cost_i = cost_i + floss_cost_local
-        elif nef <= i_c:  # Contact constraints
-            constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
-
-        constraint_state.efc_force[i_c, i_b] = floss_force + (
-            -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-        )
+            constraint_state.efc_force[i_c, i_b] = floss_force + (
+                -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+            )
 
     # qfrc_constraint = J^T @ efc_force. Sparse scatter over each constraint's coupled DOFs (jac_dofs_idx) when that
     # helps (CPU skyline / per-island GPU); islands-OFF GPU gathers per-DOF (bit-identical to the non-island baseline)
@@ -4495,26 +5374,38 @@ def _func_update_efc_force_body(
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    ncone = nef
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        ncone = ncone + constraint_state.n_constraints_cone[i_b]
 
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-        constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-    constraint_state.active[i_c, i_b] = True
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
+        # Elliptic cone contact (cooperative one-thread-per-row): only the head thread resolves the coupled triple
+        # and writes all three rows; the two tangent threads are no-ops so each row is written exactly once
+        # (race-free). The coupled middle-zone cost is discarded here; _func_update_cost_coop recomputes it.
+        if (i_c - nef) % 3 == 0:
+            func_cone_update_rows(i_c, i_b, constraint_state)
+    else:
+        if qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and not static_rigid_sim_config.enable_elliptic_friction
+        ):
+            constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+        constraint_state.active[i_c, i_b] = True
+        floss_force = gs.qd_float(0.0)
+        if ne <= i_c and i_c < nef:
+            f = constraint_state.efc_frictionloss[i_c, i_b]
+            r = constraint_state.diag[i_c, i_b]
+            rf = r * f
+            linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+            linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+            constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+            floss_force = linear_neg * f + linear_pos * -f
+        elif nef <= i_c:
+            constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
 
-    floss_force = gs.qd_float(0.0)
-    if ne <= i_c and i_c < nef:
-        f = constraint_state.efc_frictionloss[i_c, i_b]
-        r = constraint_state.diag[i_c, i_b]
-        rf = r * f
-        linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-        linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-        constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
-        floss_force = linear_neg * f + linear_pos * -f
-    elif nef <= i_c:
-        constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
-
-    constraint_state.efc_force[i_c, i_b] = floss_force + (
-        -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-    )
+        constraint_state.efc_force[i_c, i_b] = floss_force + (
+            -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+        )
 
 
 @qd.func
@@ -4529,6 +5420,24 @@ def _func_update_efc_force(
     """
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
+
+    # Snapshot prev_active in its own parallel pass so every row is captured before any active recompute: the cone head
+    # thread rewrites its two tangent rows' active, which would otherwise race the tangent threads capturing
+    # prev_active. Pyramidal threads only write their own row, so they snapshot inline in the body (no extra pass).
+    if qd.static(
+        static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+        and static_rigid_sim_config.enable_elliptic_friction
+    ):
+        qd.loop_config(
+            name="snapshot_prev_active", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
+        )
+        for i_c, i_b in qd.ndrange(
+            len_constraints,
+            _B,
+            axes=qd.static((1, 0) if static_rigid_sim_config.constraint_layout_batch_first else None),
+        ):
+            if i_c < constraint_state.n_constraints[i_b]:
+                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
 
     qd.loop_config(
         name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL
@@ -4602,6 +5511,9 @@ def _func_update_cost_coop(
         n_dofs = constraint_state.qfrc_constraint.shape[0]
         ne = constraint_state.n_constraints_equality[i_b]
         nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        ncone = nef
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+            ncone = ncone + constraint_state.n_constraints_cone[i_b]
         n_con = constraint_state.n_constraints[i_b]
 
         if tid == 0:
@@ -4630,6 +5542,12 @@ def _func_update_cost_coop(
                 linear_neg = Jaref_c <= -rf
                 linear_pos = Jaref_c >= rf
                 cost_i = cost_i + linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+            if qd.static(static_rigid_sim_config.enable_elliptic_friction) and (
+                nef <= i_c and i_c < ncone and (i_c - nef) % 3 == 0
+            ):
+                # Middle-zone cone: add the coupled cost at the head only (per-row quadratics of bottom-zone rows are
+                # covered by the active-masked term above; top/middle rows are inactive there).
+                cost_i = cost_i + func_cone_middle_cost(i_c, i_b, constraint_state)
             i_c = i_c + _K
 
         cost_i = qd.simt.subgroup.reduce_all_add_tiled(cost_i, 5)
@@ -5179,6 +6097,13 @@ def func_solve_init(
         # func_update_gradient_tiled builds grad and runs the fused factor+solve, writing L back to nt_H for the
         # monolith body's incremental iterations (write_L_to_nt_H inside, gated on enable_fused_factor_solve_init).
         func_hessian_direct_tiled(constraint_state, rigid_global_info)
+        # The tiled kernel assembles M + J^T D J only; bake the coupled elliptic-cone block before the fused factor
+        # reads nt_H, so the seed search direction carries the middle-zone cone curvature.
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+            qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+            for i_b in range(_B):
+                if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+                    func_add_cone_hessian_block(i_b, constraint_state, static_rigid_sim_config)
         func_update_gradient_tiled(
             dofs_state=dofs_state,
             entities_info=entities_info,
@@ -5190,6 +6115,10 @@ def func_solve_init(
         static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
         and static_rigid_sim_config.enable_per_island_solve
         and static_rigid_sim_config.enable_cooperative_constraint_kernels
+        # The in-tile assembly builds M + J^T D J only and overwrites nt_H, so the coupled elliptic-cone block can
+        # neither be baked beforehand nor bracketed around it; elliptic seeds through the generic whole-env factor
+        # below, which bakes the cone.
+        and not static_rigid_sim_config.enable_elliptic_friction
     ):
         # GPU-island seed (hibernation): the per-island tiled assemble+factor+solve - the same barrier-free factor the
         # decomposed graph runs every iteration. The shared tile is sized per-island (tiled_n_island_dofs), so this runs
@@ -5356,12 +6285,30 @@ def func_solve_iter(
             elif qd.static(static_rigid_sim_config.sparse_solve):
                 func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
                 n_changed = constraint_state.incr_n_changed[i_b]
+                # Count middle-zone cone contacts: each rides six rank-1 sweeps (one per staged factor column of
+                # its downdated + updated blocks) on the incremental factor every iteration regardless of active-set
+                # flips, so it must weigh into the crossover below (and n_changed alone is often 0 while the cone
+                # still moves). The count reads cone_prev_jaref, which only the CPU
+                # backend allocates; a GPU build of this branch (explicit sparse_solve on GPU) rebuilds with the cone
+                # baked in each iteration instead, and the static backend gate keeps the cone helpers out of the GPU
+                # compilation. cone_passes stays 0 for the pyramidal cone.
+                cone_passes = 0
+                if qd.static(
+                    static_rigid_sim_config.enable_elliptic_friction and static_rigid_sim_config.backend == gs.cpu
+                ):
+                    nef = (
+                        constraint_state.n_constraints_equality[i_b] + constraint_state.n_constraints_frictionloss[i_b]
+                    )
+                    for i_head in range(constraint_state.n_constraints_cone[i_b] // 3):
+                        if _func_cone_head_is_middle(nef + i_head * 3, i_b, nef, constraint_state):
+                            cone_passes = cone_passes + 1
                 need_rebuild = True
-                if n_changed == 0:
+                if n_changed == 0 and cone_passes == 0:
                     need_rebuild = False
                 elif qd.static(static_rigid_sim_config.sparse_envelope):
                     # Same crossover as the per-island path, on the whole-env skyline (nt_H_env_start): incremental
-                    # beats a refactor while n_changed * sum_span < sum_span_sq (the flop-weighted effective bandwidth).
+                    # beats a refactor while (n_changed + 6 * cone_passes) * sum_span <= sum_span_sq (the flop-weighted
+                    # effective bandwidth; each of a cone's six rank-1 sweeps costs the same as one flip update).
                     n_dofs = constraint_state.nt_H.shape[1]
                     sum_span = gs.qd_float(0.0)
                     sum_span_sq = gs.qd_float(0.0)
@@ -5369,10 +6316,24 @@ def func_solve_iter(
                         row_span = gs.qd_float(p - constraint_state.nt_H_env_start[i_b, p])
                         sum_span = sum_span + row_span
                         sum_span_sq = sum_span_sq + row_span * row_span
-                    if gs.qd_float(n_changed) * sum_span <= sum_span_sq:
+                    if gs.qd_float(n_changed + 6 * cone_passes) * sum_span <= sum_span_sq:
                         need_rebuild = func_hessian_and_cholesky_factor_incremental_sparse_batch(
                             i_b, constraint_state, rigid_global_info
                         )
+                # The coupled middle-zone cone block varies with the residual, so whenever some cone sits in the
+                # middle zone on either side (cone_passes > 0) and the active-set update stayed incremental, it rides
+                # the same skyline factor via its rank-3 downdate/update. With cone_passes == 0 no block is baked in
+                # the factor and none is due, so the update is skipped; a skipped cone's stale cone_prev_jaref stays
+                # classified non-middle until its update runs again on current residuals.
+                if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                    if qd.static(static_rigid_sim_config.backend == gs.cpu):
+                        if not need_rebuild and cone_passes > 0:
+                            if func_cone_rank_update_whole_env(
+                                i_b, constraint_state, rigid_global_info, static_rigid_sim_config
+                            ):
+                                need_rebuild = True
+                    else:
+                        need_rebuild = True
                 if need_rebuild:
                     func_hessian_and_cholesky_factor_direct_batch(
                         i_b,
@@ -5591,10 +6552,17 @@ def func_update_contact_force(
 
             force = qd.Vector.zero(gs.qd_float, 3)
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
-            for i_dir in range(4):
-                d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
-                n = d * contact_data_friction - contact_data_normal
-                force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
+            if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+                # Cone rows [normal, t1, t2] contiguous in the collision segment.
+                base = i_c * 3 + const_start
+                force = -contact_data_normal * constraint_state.efc_force[base, i_b]
+                force = force + d1 * constraint_state.efc_force[base + 1, i_b]
+                force = force + d2 * constraint_state.efc_force[base + 2, i_b]
+            else:
+                for i_dir in qd.static(range(4)):
+                    d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
+                    n = d * contact_data_friction - contact_data_normal
+                    force = force + n * constraint_state.efc_force[i_c * 4 + i_dir + const_start, i_b]
 
             collider_state.contact_data.force[i_col, i_b] = force
 

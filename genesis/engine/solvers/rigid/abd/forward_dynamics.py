@@ -505,7 +505,6 @@ def func_factor_mass_tiled(
     the standard L D L^T. The tile primitive does forward Cholesky M = G G^T, so each block's reverse-indexed matrix
     M_rev[a, b] = M[n-1-a, n-1-b] (n the block size) is factored and its factor mapped back to the block's LTDL factor:
       L[i,j] = G_rev[n-1-j, n-1-i] / G_rev[n-1-i, n-1-i]  (i > j),  D_inv[i] = 1 / G_rev[n-1-i, n-1-i]^2,  diag(L) = 1.
-    See test_rigid_physics for the parity check against the cooperative factor.
 
     The qd.simt tile ops are batch-first while mass_mat_L is canonical batch-last (n_dofs, n_dofs, _B), so the
     factorization runs in each mass block's region of the batch-first scratch

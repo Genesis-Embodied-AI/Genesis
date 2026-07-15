@@ -1,5 +1,6 @@
+import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Callable, Final, NamedTuple, TypeVar
 
 import numpy as np
 import quadrants as qd
@@ -38,6 +39,10 @@ from .tactile_shared import (
     ContactDepthQueryMetadataMixin,
     ContactDepthQuerySensorMixin,
     GridFFTConvMetadataMixin,
+    SpatialCrosstalkMetadataMixin,
+    SpatialCrosstalkMixin,
+    ViscoelasticHysteresisMetadataMixin,
+    ViscoelasticHysteresisMixin,
     build_static_chunk_bvh,
     func_aabb_intersects_aabb,
     func_sphere_intersects_aabb,
@@ -85,8 +90,10 @@ class GridFFTMeta(NamedTuple):
     Per-grid-FFT-sensor record for HydroShear dilation.
 
     ``sensor_idx``/``g_ny``/``g_nx``/``probe_start``/``cache_start`` are the leading fields every grid-FFT sensor
-    shares (the contract ``register_grid_fft_sensor`` relies on); ``lambda_d``/``spacing_u``/``spacing_v`` are the
-    HydroShear kernel params consumed by ``_dilate_kernel_builder``.
+    shares (the contract ``register_grid_fft_sensor`` relies on); ``lambda_d``/``spacing_u``/``spacing_v`` plus
+    ``compressibility``/``dilation_reg`` are the HydroShear kernel params consumed by ``_dilate_kernel_builder``
+    (``compressibility``: 1 = local Gaussian, 0 = incompressible 1/r, in-between = blend; ``dilation_reg``: resolved
+    epsilon in meters).
     """
 
     sensor_idx: int
@@ -97,6 +104,9 @@ class GridFFTMeta(NamedTuple):
     lambda_d: float
     spacing_u: float
     spacing_v: float
+    compressibility: float
+    dilation_reg: float
+    elastomer_thickness: float = 0.0
 
 
 def _build_candidate_geom_mask(
@@ -683,6 +693,8 @@ class ProximityTaxelReturnType(NamedTuple):
 
 @dataclass
 class ProximityTaxelMetadata(
+    ViscoelasticHysteresisMetadataMixin,
+    SpatialCrosstalkMetadataMixin,
     PointCloudTactileSharedMetadata,
     ProbesWithNormalSensorMetadataMixin,
 ):
@@ -693,6 +705,8 @@ class ProximityTaxelMetadata(
 
 
 class ProximityTaxelSensor(
+    ViscoelasticHysteresisMixin[ProximityTaxelMetadata],
+    SpatialCrosstalkMixin[ProximityTaxelMetadata],
     PointCloudTactileSensorMixin[ProximityTaxelMetadata],
     ProbesWithNormalSensorMixin[ProximityTaxelMetadata],
     RigidSensorMixin[ProximityTaxelMetadata],
@@ -700,8 +714,25 @@ class ProximityTaxelSensor(
 ):
     """Spherical point-cloud taxels: per-taxel force and torque in link-local frame vs tracked meshes."""
 
+    # Two channel groups: force xyz followed by torque xyz (probe-major within each group).
+    _taxel_channel_groups: int = 2
+
+    def __init__(
+        self,
+        options: ProximityTaxelOptions,
+        idx: int,
+        shared_context,
+        shared_metadata,
+        manager: "SensorManager",
+    ):
+        super().__init__(options, idx, shared_context, shared_metadata, manager)
+        # Resolve the grid frame for spatial crosstalk (flat pos/normals are already populated by the base mixins).
+        self._setup_crosstalk_grid(options)
+
     def build(self):
         super().build()
+        if self._options.is_crosstalk_enabled and self._use_grid_crosstalk:
+            self._register_crosstalk()
         self._shared_metadata.stiffness = concat_with_tensor(
             self._shared_metadata.stiffness, float(self._options.stiffness), expand=(1,)
         )
@@ -864,12 +895,31 @@ def _func_elastomer_direct_dilate_contribution(
     lam: float,
     scale: float,
     normal_exponent: float,
+    compressibility: float,
+    eps: float,
 ) -> qd.types.vector(3):
-    # Tangential marker spreading is linear in penetration depth; the out-of-plane bulge follows a
-    # ``depth ** normal_exponent`` power law (mirrors the FFT path's H / H**normal_exponent channel split).
+    """
+    Single tracked-point dilation contribution: tangential spreading is linear in penetration depth, while the
+    out-of-plane bulge follows a ``depth ** normal_exponent`` power law (mirrors the FFT path's H / H**normal_exponent
+    channel split).
+
+    The normal bulge always keeps the Gaussian falloff; the in-plane term is set by ``compressibility`` (1 = local
+    Gaussian first-moment, 0 = incompressible ``r_hat/r``, in-between = peak-normalized blend).
+    """
     planar_diff = _func_elastomer_tangent(target_pos - source_pos, target_normal)
-    falloff = qd.exp(-lam * planar_diff.dot(planar_diff)) * scale
-    return (planar_diff * depth + target_normal * qd.pow(depth, normal_exponent)) * falloff
+    r2 = planar_diff.dot(planar_diff)
+    gaussian = qd.exp(-lam * r2)
+    normal_bulge = target_normal * qd.pow(depth, normal_exponent) * gaussian
+    w = depth * gaussian  # compressibility >= 1: pure local Gaussian
+    if compressibility < 1.0:
+        inv = gs.qd_float(1.0) / (r2 + eps * eps)
+        if compressibility <= 0.0:  # pure incompressible r_hat / r
+            w = depth * inv
+        else:  # blend, each kernel peak-normalized (see the FFT builder for the closed-form peaks)
+            norm_g = gs.qd_float(qd.static(_INV_SQRT_E)) / qd.sqrt(gs.qd_float(2.0) * lam)
+            norm_i = gs.qd_float(1.0) / (gs.qd_float(2.0) * eps)
+            w = depth * (compressibility * gaussian / norm_g + (gs.qd_float(1.0) - compressibility) * inv / norm_i)
+    return (planar_diff * w + normal_bulge) * scale
 
 
 @qd.func
@@ -909,31 +959,136 @@ def _collect_collision_geom_idx(solver, track_link_idx: np.ndarray) -> tuple[tor
     return torch.tensor(geom_idx, dtype=gs.tc_int, device=gs.device), torch.stack(active_masks, dim=0)
 
 
+# [numerical] Peak of the Gaussian first-moment kernel r * exp(-lambda r^2): value e^{-1/2} / sqrt(2 lambda)
+# at r = 1/sqrt(2 lambda). Peak-normalizes the local kernel in the compressibility blend.
+_INV_SQRT_E = math.exp(-0.5)
+
+# [numerical] Clamp range for q = |k| * h, the dimensionless wavenumber fed to _bonded_layer_transfer's S(q).
+# Q_MIN is set by the float64 conditioning of that 4x4 mode solve: cond(M) ~ 4.5/q^3 (lubrication limit), so
+# q = 1e-3 gives cond ~ 4.5e9 -- the smallest q still solved to ~6 digits in double. Clamping there costs no
+# accuracy: S has already reached its 1.5/q asymptote, and real FFT grids never get this low anyway (smallest
+# nonzero q ~ 2*pi*h / domain_size). Q_MAX = 30 is where S has decayed exponentially to ~0 (terms ~ e^{-2q}
+# < 1e-26), indistinguishable from S(Q_MAX). Neither bound is a tunable -- both bracket where S is flat.
+_LAYER_Q_MIN: Final[float] = 1e-3
+_LAYER_Q_MAX: Final[float] = 30.0
+
+
 @torch.jit.script
+def _bonded_layer_transfer(q: torch.Tensor, q_min: float = _LAYER_Q_MIN, q_max: float = _LAYER_Q_MAX) -> torch.Tensor:
+    """In-plane transfer ``S(q)``, ``q = |k| * h``, of an incompressible elastic layer bonded to a rigid base
+    (``u = w = 0`` at ``z = -h``) with a shear-free top surface where the normal displacement is prescribed:
+    ``u_hat(top) = -i * k_hat * S(q) * H_hat``.
+
+    Solved exactly per mode -- a 4x4 system in the ``[a, b*h, c, d*h]`` coefficients of ``w(z) = (a + b z) e^{kz} + (c +
+    d z) e^{-kz}`` -- which is the linear elasticity an FEM of a flat bonded slab converges to. Asymptotics: ``S ~
+    1.5/q`` for ``q -> 0`` (thin-layer squeeze flow, the free-space ``1/r``) and ``S -> 0`` for ``q -> inf``
+    (incompressible half-space: no in-plane surface motion), peaking around ``q ~ 1``.
+    """
+    # float64 is required here, not stylistic: the 4x4 mode system is ill-conditioned at small q
+    # (cond ~ 4.5/q^3, up to ~4.5e9 at q_min) -- far past float32's ~1e7 usable range. S(q) is O(1) so the
+    # caller safely downcasts the result.
+    q = q.to(torch.float64).clamp(min=q_min, max=q_max)
+    e2 = torch.exp(-2.0 * q)
+    one = torch.ones_like(q)
+    zero = torch.zeros_like(q)
+    # Rows: w(0)=1; zero top shear (w''(0) = -k^2 w(0)); w(-h)=0; u(-h)=0 (i.e. w'(-h)=0). Rows 3-4 are scaled by
+    # e^{-q} so entries stay O(1) at large q.
+    M = torch.stack(
+        (
+            torch.stack((one, zero, one, zero), dim=-1),
+            torch.stack((q, one, q, -one), dim=-1),
+            torch.stack((e2, -e2, one, -one), dim=-1),
+            torch.stack((q * e2, (1.0 - q) * e2, -q, one + q), dim=-1),
+        ),
+        dim=-2,
+    )
+    rhs = torch.stack((one, zero, zero, zero), dim=-1).unsqueeze(-1)
+    x = torch.linalg.solve(M, rhs).squeeze(-1)
+    # x = [a, b*h, c, d*h], the mode coefficients of w(z). S(q) is the in-plane transfer u_hat(top) read off
+    # this solved profile, which reduces to (a - c) + (b*h + d*h) / q.
+    return (x[..., 0] - x[..., 2]) + (x[..., 1] + x[..., 3]) / q
+
+
 def _precompute_hydroshear_dilate_kernel_fft(
-    lambda_d: float, grid_spacing: tuple[float, float], fft_n: tuple[int, int], device: torch.device, dtype: torch.dtype
+    lambda_d: float,
+    grid_spacing: tuple[float, float],
+    fft_n: tuple[int, int],
+    device: torch.device,
+    dtype: torch.dtype,
+    compressibility: float = 1.0,
+    dilation_reg: float = 0.0,
+    elastomer_thickness: float = 0.0,
 ) -> torch.Tensor:
     """Real FFT of the 3-plane HydroShear dilation kernel ``(Ku, Kv, Kn)``.
 
     ``fft_n`` is ``(fft_ny, fft_nx)`` row-major: axis 0 spans the tangent_v direction, axis 1 the tangent_u
     direction. ``grid_spacing`` is ``(spacing_u, spacing_v)``. The output is a complex
     ``(3, fft_ny, fft_nx // 2 + 1)`` half-spectrum ready to multiply against ``rfft2(field)``.
+
+    The in-plane planes ``(Ku, Kv)`` blend a local and a global kernel by ``compressibility`` (1 = local only,
+    0 = global only, each peak-normalized in between). Local: the first-moment Gaussian
+    ``offset * exp(-lambda_d r^2)``. Global: with ``elastomer_thickness`` set, the exact bonded incompressible
+    layer transfer ``-i k_hat S(|k| h)`` (see ``_bonded_layer_transfer``), built directly in k-space; otherwise the
+    free-space ``offset / (r^2 + eps^2)`` (gradient of the 2D inverse-Laplacian, ``~1/r``). The normal plane
+    ``Kn`` is always the Gaussian bulge.
     """
     iv = torch.arange(fft_n[0], dtype=dtype, device=device)
     iu = torch.arange(fft_n[1], dtype=dtype, device=device)
     vv, uu = torch.meshgrid(
         (iv - fft_n[0] // 2) * grid_spacing[1], (iu - fft_n[1] // 2) * grid_spacing[0], indexing="ij"
     )
-    g = torch.exp(torch.tensor(-lambda_d, dtype=dtype, device=device) * (uu * uu + vv * vv))
-    k = torch.stack((uu * g, vv * g, g), dim=0)
-    k = torch.fft.ifftshift(k, dim=(-2, -1))
-    return torch.fft.rfft2(k)
+    r2 = uu * uu + vv * vv
+    g = torch.exp(torch.tensor(-lambda_d, dtype=dtype, device=device) * r2)
+    if compressibility >= 1.0:
+        k = torch.stack((uu * g, vv * g, g), dim=0)
+        return torch.fft.rfft2(torch.fft.ifftshift(k, dim=(-2, -1)))
+
+    if elastomer_thickness > 0.0:
+        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=torch.float64, device=device)
+        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=torch.float64, device=device)
+        kvv, kuu = torch.meshgrid(kv1, ku1, indexing="ij")
+        kmag = torch.sqrt(kvv * kvv + kuu * kuu)
+        s_tf = torch.where(kmag > 0.0, _bonded_layer_transfer(kmag * elastomer_thickness), torch.zeros_like(kmag))
+        kmag_safe = kmag.clamp(min=gs.EPS)
+        gu_hat = (-1j) * (kuu / kmag_safe) * s_tf
+        gv_hat = (-1j) * (kvv / kmag_safe) * s_tf
+        # Peak of the real-space kernel magnitude, for the blend normalization below.
+        norm_i = float(
+            torch.sqrt(torch.fft.irfft2(gu_hat, s=fft_n) ** 2 + torch.fft.irfft2(gv_hat, s=fft_n) ** 2).max()
+        )
+        cdtype = torch.complex64 if dtype == torch.float32 else torch.complex128
+        gu_hat = gu_hat.to(cdtype)
+        gv_hat = gv_hat.to(cdtype)
+    else:
+        eps = dilation_reg if dilation_reg > 0.0 else 0.5 * (grid_spacing[0] + grid_spacing[1])
+        inv = 1.0 / (r2 + eps * eps)
+        sp = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * inv, vv * inv), dim=0), dim=(-2, -1)))
+        gu_hat, gv_hat = sp[0], sp[1]
+        norm_i = 1.0 / (2.0 * eps)  # peak of r/(r^2+eps^2) at r=eps
+
+    kn_hat = torch.fft.rfft2(torch.fft.ifftshift(g, dim=(-2, -1)))
+    if compressibility <= 0.0:
+        ku_hat, kv_hat = gu_hat, gv_hat
+    else:
+        loc = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * g, vv * g), dim=0), dim=(-2, -1)))
+        norm_g = _INV_SQRT_E / math.sqrt(2.0 * lambda_d)  # peak of r*exp(-lambda_d r^2), see _INV_SQRT_E
+        c = compressibility
+        ku_hat = c * loc[0] / norm_g + (1.0 - c) * gu_hat / norm_i
+        kv_hat = c * loc[1] / norm_g + (1.0 - c) * gv_hat / norm_i
+    return torch.stack((ku_hat, kv_hat, kn_hat), dim=0)
 
 
 def _dilate_kernel_builder(meta_entry: GridFFTMeta, fft_n: tuple[int, int]) -> torch.Tensor:
     """``register_grid_fft_sensor`` kernel builder for HydroShear dilation: 3 planes ``(Ku, Kv, Kn)``."""
     return _precompute_hydroshear_dilate_kernel_fft(
-        meta_entry.lambda_d, (meta_entry.spacing_u, meta_entry.spacing_v), fft_n, gs.device, gs.tc_float
+        meta_entry.lambda_d,
+        (meta_entry.spacing_u, meta_entry.spacing_v),
+        fft_n,
+        gs.device,
+        gs.tc_float,
+        meta_entry.compressibility,
+        meta_entry.dilation_reg,
+        meta_entry.elastomer_thickness,
     )
 
 
@@ -1127,6 +1282,8 @@ def _kernel_elastomer_dilate_accumulate(
     lambda_d: qd.types.ndarray(),
     dilate_scale: qd.types.ndarray(),
     normal_exponent: qd.types.ndarray(),
+    compressibility: qd.types.ndarray(),
+    dilation_reg: qd.types.ndarray(),
     probe_depth_buf: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
@@ -1150,9 +1307,11 @@ def _kernel_elastomer_dilate_accumulate(
         lam = lambda_d[i_s]
         scale = dilate_scale[i_s]
         n_exp = normal_exponent[i_s]
+        comp = compressibility[i_s]
+        eps = dilation_reg[i_s]
         _i_p = i_p - probe_start
 
-        # Inactive filler probe (probe_radius == 0): reads zero, no dilation accumulated.
+        # Inactive filler probe: reads zero, no dilation accumulated.
         if probe_radii[i_p] <= gs.qd_float(0.0):
             for k in qd.static(range(3)):
                 output[cache_start + _i_p * 3 + k, i_b] = gs.qd_float(0.0)
@@ -1175,6 +1334,8 @@ def _kernel_elastomer_dilate_accumulate(
                 lam,
                 scale,
                 n_exp,
+                comp,
+                eps,
             )
             for k in qd.static(range(3)):
                 acc[k] = acc[k] + contribution[k]
@@ -1222,8 +1383,10 @@ def _kernel_elastomer_surface_state_bvh(
         i_s = bvh_chunk_sensor_idx[i_c]
 
         # 1) Build the world-space elastomer-geom union AABB for sensor i_s, env i_b.
-        wmin = qd.Vector([gs.qd_float(1e30), gs.qd_float(1e30), gs.qd_float(1e30)], dt=gs.qd_float)
-        wmax = qd.Vector([gs.qd_float(-1e30), gs.qd_float(-1e30), gs.qd_float(-1e30)], dt=gs.qd_float)
+        wmin = qd.Vector([gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf)], dt=gs.qd_float)
+        wmax = qd.Vector(
+            [gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf)], dt=gs.qd_float
+        )
         any_active = False
         gm_start = sensor_elastomer_geom_start[i_s]
         gm_n = sensor_elastomer_geom_n[i_s]
@@ -1254,8 +1417,10 @@ def _kernel_elastomer_surface_state_bvh(
         track_link_idx = bvh.chunk_link_idx[i_c]
         track_pos = links_state.pos[track_link_idx, i_b]
         track_quat = links_state.quat[track_link_idx, i_b]
-        qmin = qd.Vector([gs.qd_float(1e30), gs.qd_float(1e30), gs.qd_float(1e30)], dt=gs.qd_float)
-        qmax = qd.Vector([gs.qd_float(-1e30), gs.qd_float(-1e30), gs.qd_float(-1e30)], dt=gs.qd_float)
+        qmin = qd.Vector([gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf)], dt=gs.qd_float)
+        qmax = qd.Vector(
+            [gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf)], dt=gs.qd_float
+        )
         for cx in qd.static(range(2)):
             for cy in qd.static(range(2)):
                 for cz in qd.static(range(2)):
@@ -1381,8 +1546,10 @@ def _kernel_elastomer_surface_state_via_global_bvh(
     for i_b, i_c in qd.ndrange(n_batches, n_chunks):
         i_s = bvh_chunk_sensor_idx[i_c]
 
-        wmin = qd.Vector([gs.qd_float(1e30), gs.qd_float(1e30), gs.qd_float(1e30)], dt=gs.qd_float)
-        wmax = qd.Vector([gs.qd_float(-1e30), gs.qd_float(-1e30), gs.qd_float(-1e30)], dt=gs.qd_float)
+        wmin = qd.Vector([gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf)], dt=gs.qd_float)
+        wmax = qd.Vector(
+            [gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf)], dt=gs.qd_float
+        )
         any_active = False
         gm_start = sensor_elastomer_geom_start[i_s]
         gm_n = sensor_elastomer_geom_n[i_s]
@@ -1410,8 +1577,10 @@ def _kernel_elastomer_surface_state_via_global_bvh(
         track_link_idx = bvh.chunk_link_idx[i_c]
         track_pos = links_state.pos[track_link_idx, i_b]
         track_quat = links_state.quat[track_link_idx, i_b]
-        qmin = qd.Vector([gs.qd_float(1e30), gs.qd_float(1e30), gs.qd_float(1e30)], dt=gs.qd_float)
-        qmax = qd.Vector([gs.qd_float(-1e30), gs.qd_float(-1e30), gs.qd_float(-1e30)], dt=gs.qd_float)
+        qmin = qd.Vector([gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf), gs.qd_float(qd.math.inf)], dt=gs.qd_float)
+        qmax = qd.Vector(
+            [gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf), gs.qd_float(-qd.math.inf)], dt=gs.qd_float
+        )
         for cx in qd.static(range(2)):
             for cy in qd.static(range(2)):
                 for cz in qd.static(range(2)):
@@ -1706,6 +1875,7 @@ def _elastomer_taxel_grid_fft_dilate(
 
 @dataclass
 class ElastomerTaxelSensorMetadata(
+    ViscoelasticHysteresisMetadataMixin,
     GridFFTConvMetadataMixin,
     ContactDepthQueryMetadataMixin,
     PointCloudTactileSharedMetadata,
@@ -1731,8 +1901,14 @@ class ElastomerTaxelSensorMetadata(
     dilate_scale: torch.Tensor = make_tensor_field((0,))
     shear_scale: torch.Tensor = make_tensor_field((0,))
     normal_exponent: torch.Tensor = make_tensor_field((0,))
-    elastomer_contact_sdf_enter: torch.Tensor = make_tensor_field((0,))
-    elastomer_contact_sdf_exit: torch.Tensor = make_tensor_field((0,))
+    # In-plane dilation blend weight (1 = local Gaussian, 0 = incompressible 1/r) and the resolved incompressible
+    # regularization epsilon (meters); consumed per-sensor by the direct dilate kernel and baked into the FFT kernel.
+    compressibility: torch.Tensor = make_tensor_field((0,))
+    dilation_reg: torch.Tensor = make_tensor_field((0,))
+    # Shear-anchor gate as signed-distance margins, derived at build from contact_threshold/release_threshold: a surface
+    # point anchors when its sd < -sd_enter and releases when sd > sd_exit (= -release_threshold).
+    shear_anchor_sd_enter: torch.Tensor = make_tensor_field((0,))
+    shear_anchor_sd_exit: torch.Tensor = make_tensor_field((0,))
 
     probe_depth_buf: torch.Tensor = make_tensor_field((0, 0))
     surface_pos_sensor_buf: torch.Tensor = make_tensor_field((0, 0, 3))
@@ -1769,6 +1945,7 @@ class ElastomerTaxelSensorMetadata(
 
 
 class ElastomerTaxelSensor(
+    ViscoelasticHysteresisMixin[ElastomerTaxelSensorMetadata],
     ContactDepthQuerySensorMixin,
     PointCloudTactileSensorMixin[ElastomerTaxelSensorMetadata],
     ProbesWithNormalSensorMixin[ElastomerTaxelSensorMetadata],
@@ -1864,17 +2041,47 @@ class ElastomerTaxelSensor(
         self._shared_metadata.normal_exponent = concat_with_tensor(
             self._shared_metadata.normal_exponent, float(self._options.normal_exponent), expand=(1,)
         )
+        # Resolve the in-plane dilation blend weight + the incompressible-kernel regularization epsilon once,
+        # shared by the direct kernel (per-sensor tensors below) and the FFT path (baked via GridFFTMeta). The
+        # physical scale is elastomer_thickness: grid sensors use it in the exact spectral layer kernel, the
+        # direct path approximates the layer by regularizing 1/r at epsilon = h. Without a thickness, epsilon is
+        # a numerical guard at the probe spacing (grid step, else sqrt(in-plane area / n_probes)).
+        self._compressibility = float(self._options.compressibility)
+        self._elastomer_thickness = float(self._options.elastomer_thickness)
+        if self._elastomer_thickness > 0.0:
+            self._dilation_reg = self._elastomer_thickness
+        elif self._use_grid_fft:
+            self._dilation_reg = 0.5 * (float(self._grid_spacing[0].item()) + float(self._grid_spacing[1].item()))
+        else:
+            pos = np.asarray(self._options.probe_local_pos, dtype=gs.np_float).reshape(-1, 3)
+            ext = np.sort(pos.max(axis=0) - pos.min(axis=0))[::-1]
+            area = float(ext[0] * ext[1]) if ext[1] > gs.EPS else float(ext[0] * ext[0])
+            self._dilation_reg = float(np.sqrt(max(area, gs.EPS) / max(pos.shape[0], 1)))
+        self._shared_metadata.compressibility = concat_with_tensor(
+            self._shared_metadata.compressibility, self._compressibility, expand=(1,)
+        )
+        self._shared_metadata.dilation_reg = concat_with_tensor(
+            self._shared_metadata.dilation_reg, self._dilation_reg, expand=(1,)
+        )
         self._shared_metadata.shear_scale = concat_with_tensor(
             self._shared_metadata.shear_scale, float(self._options.shear_scale), expand=(1,)
         )
-        self._shared_metadata.elastomer_contact_sdf_enter = concat_with_tensor(
-            self._shared_metadata.elastomer_contact_sdf_enter,
-            float(self._options.elastomer_contact_sdf_enter),
+        # Shear-anchor gate, converted from depth (contact_threshold/release_threshold, latch on at depth >= enter, release
+        # at depth <= exit) to the signed-distance margins the surface-state kernels test: sd < -enter anchors,
+        # sd > -exit releases.
+        release_threshold = (
+            self._options.release_threshold
+            if self._options.release_threshold is not None
+            else (self._options.contact_threshold)
+        )
+        self._shared_metadata.shear_anchor_sd_enter = concat_with_tensor(
+            self._shared_metadata.shear_anchor_sd_enter,
+            float(self._options.contact_threshold),
             expand=(1,),
         )
-        self._shared_metadata.elastomer_contact_sdf_exit = concat_with_tensor(
-            self._shared_metadata.elastomer_contact_sdf_exit,
-            float(self._options.elastomer_contact_sdf_exit),
+        self._shared_metadata.shear_anchor_sd_exit = concat_with_tensor(
+            self._shared_metadata.shear_anchor_sd_exit,
+            -float(release_threshold),
             expand=(1,),
         )
         if float(self._options.shear_scale) > 0.0:
@@ -1960,6 +2167,9 @@ class ElastomerTaxelSensor(
                     lambda_d=float(self._options.lambda_d),
                     spacing_u=spacing_u,
                     spacing_v=spacing_v,
+                    compressibility=self._compressibility,
+                    dilation_reg=self._dilation_reg,
+                    elastomer_thickness=self._elastomer_thickness,
                 ),
                 this_fft_n=this_fft_n,
                 kernel_builder=_dilate_kernel_builder,
@@ -1995,10 +2205,31 @@ class ElastomerTaxelSensor(
     @classmethod
     def reset(cls, shared_metadata: ElastomerTaxelSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
-        # probe_depth_buf is overwritten every step; surface_pos/entry/depth are only consumed where
-        # surface_initialized=True so they're implicitly invalidated by clearing it; surface_candidate_buf
-        # is .zero_()'d at step start.
+        # Only the hysteresis flag needs clearing on env reset. probe_depth_buf is overwritten every
+        # step; surface_pos/entry/depth are only consumed where surface_initialized=True so they're
+        # implicitly invalidated by clearing it; surface_candidate_buf is .zero_()'d at step start.
         shared_metadata.surface_initialized_buf[envs_idx, :] = False
+
+    @classmethod
+    def _apply_transform(
+        cls,
+        shared_metadata: ElastomerTaxelSensorMetadata,
+        data: torch.Tensor,
+        timeline: "TensorRingBuffer",
+        *,
+        is_measured: bool,
+    ):
+        super()._apply_transform(shared_metadata, data, timeline, is_measured=is_measured)
+        if not is_measured:
+            return
+        # ElastomerTaxel's kernel writes a single output used for both GT and measured (measured is .copy_'d from
+        # GT), so per-probe gain is applied here as a post-step multiplication on the measured branch only.
+        # Approximation note: tangential dilation and shear scale linearly with gain (exact), but the H^2
+        # normal-dilation term ideally scales as gain^2 -- here we apply gain^1 across all components. For typical
+        # gains near 1 this is a small error; for large deviations the normal component will be slightly off.
+        cls._maybe_build_cache_col_probe_idx(shared_metadata, data)
+        gain_per_col = shared_metadata.probe_gains[:, shared_metadata.cache_col_probe_idx]
+        data.mul_(gain_per_col)
 
     @classmethod
     def _update_current_timestep_data(
@@ -2061,6 +2292,8 @@ class ElastomerTaxelSensor(
             shared_metadata.lambda_d,
             shared_metadata.dilate_scale,
             shared_metadata.normal_exponent,
+            shared_metadata.compressibility,
+            shared_metadata.dilation_reg,
             shared_metadata.probe_depth_buf,
             current_ground_truth_data_T,
         )
@@ -2094,8 +2327,8 @@ class ElastomerTaxelSensor(
                     bvh.kernel_bvh,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
-                    shared_metadata.elastomer_contact_sdf_enter,
-                    shared_metadata.elastomer_contact_sdf_exit,
+                    shared_metadata.shear_anchor_sd_enter,
+                    shared_metadata.shear_anchor_sd_exit,
                     _ELASTOMER_QUERY_AABB_MARGIN,
                     solver.links_state,
                     solver.geoms_state,
@@ -2119,8 +2352,8 @@ class ElastomerTaxelSensor(
                     bvh.kernel_bvh,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
-                    shared_metadata.elastomer_contact_sdf_enter,
-                    shared_metadata.elastomer_contact_sdf_exit,
+                    shared_metadata.shear_anchor_sd_enter,
+                    shared_metadata.shear_anchor_sd_exit,
                     _ELASTOMER_QUERY_AABB_MARGIN,
                     _ELASTOMER_RAYCAST_QUERY_DIST,
                     shared_context.collision_bvh_context.bvh.nodes,
