@@ -181,6 +181,122 @@ def test_mesh_mpm_build(show_viewer):
     scene.build()
 
 
+@pytest.mark.slow  # ~200s
+@pytest.mark.debug(False)  # Disable debug for speedup
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_deformable_parallel(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=2e-3,
+            substeps=10,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=1e-2,
+        ),
+        sph_options=gs.options.SPHOptions(
+            lower_bound=(-0.03, -0.03, -0.08),
+            upper_bound=(0.33, 0.33, 1.0),
+        ),
+        fem_options=gs.options.FEMOptions(
+            damping=45.0,
+        ),
+        mpm_options=gs.options.MPMOptions(
+            lower_bound=(0.5, -0.1, -0.05),
+            upper_bound=(0.7, 0.1, 0.3),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.5, 0.0, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            camera_fov=40,
+        ),
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[1],
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        morph=gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=True,
+            coup_friction=0.0,
+        ),
+    )
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/cloth.obj",
+            scale=0.6,
+            pos=(0.0, 0.8, 0.3),
+            euler=(180.0, 0.0, 0.0),
+        ),
+        material=gs.materials.PBD.Cloth(),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.4, 0.8, 1.0),
+        ),
+    )
+    water = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.15, 0.15, 0.22),
+            size=(0.25, 0.25, 0.4),
+        ),
+        material=gs.materials.SPH.Liquid(),
+        surface=gs.surfaces.Default(
+            color=(0.2, 0.6, 1.0, 1.0),
+        ),
+    )
+    mpm_cube = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.6, 0, 0.1),
+            size=(0.1, 0.1, 0.1),
+        ),
+        material=gs.materials.MPM.Elastic(rho=200),
+        surface=gs.surfaces.Default(
+            color=(0.9, 0.8, 0.2, 1.0),
+        ),
+    )
+    entity_fem = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.8, 0.8, 0.1),
+            size=(0.1, 0.1, 0.1),
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=3.0e4,
+            nu=0.45,
+            rho=1000.0,
+            model="stable_neohookean",
+        ),
+    )
+    scene.build(n_envs=2)
+
+    init_mpm_cube_pos = mpm_cube.get_particles_pos()
+    init_cloth_pos = cloth.get_particles_pos()
+    init_water_pos = water.get_particles_pos()
+
+    scene.get_state()
+    for i in range(1500):
+        scene.step()
+
+    final_mpm_cube_pos = mpm_cube.get_particles_pos()
+    final_cloth_pos = cloth.get_particles_pos()
+    final_water_pos = water.get_particles_pos()
+
+    # check if the positions are changed
+    assert (init_mpm_cube_pos - final_mpm_cube_pos).abs().sum() > 0.1
+    assert (init_cloth_pos - final_cloth_pos).abs().sum() > 0.1
+    assert (init_water_pos - final_water_pos).abs().sum() > 0.1
+
+    # check if the particles are above the ground
+    assert final_mpm_cube_pos[..., 2].min() > -1e-5
+    assert final_cloth_pos[..., 2].min() > -1e-5
+    assert final_water_pos[..., 2].min() > -1e-5
+
+    assert_allclose(cloth.get_particles_vel(), 0.0, atol=1e-5)
+    assert_allclose(mpm_cube.get_particles_vel(), 0.0, atol=1e-4)
+    assert_allclose(entity_fem._solver.get_state(0).vel, 0, atol=1e-3)
+    assert_allclose(water.get_particles_vel(), 0.0, atol=5e-2)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize(
     "n_envs, material_type",
