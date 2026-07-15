@@ -58,8 +58,8 @@ def test_mjcf_parsing_with_include():
     assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
 
 
-def test_ground_plane_inclusion(box_plan):
-    mjcf = ET.tostring(box_plan, encoding="unicode")
+def test_ground_plane_inclusion(box_plan_with_static_plane):
+    mjcf = ET.tostring(box_plan_with_static_plane, encoding="unicode")
     scene = gs.Scene()
     entity_with_ground = scene.add_entity(
         morph=gs.morphs.MJCF(
@@ -76,8 +76,14 @@ def test_ground_plane_inclusion(box_plan):
     )
     scene.build(n_envs=0)
 
-    assert_equal(sum(geom.type == gs.GEOM_TYPE.PLANE for geom in entity_with_ground.geoms), 1)
-    assert_equal(sum(geom.type == gs.GEOM_TYPE.PLANE for geom in entity_without_ground.geoms), 0)
+    assert_equal(sum(geom.type == gs.GEOM_TYPE.PLANE for geom in entity_with_ground.geoms), 2)
+    assert_equal(
+        sum(
+            geom.type == gs.GEOM_TYPE.PLANE and geom.metadata["name"] == "fixed_plane"
+            for geom in entity_without_ground.geoms
+        ),
+        1,
+    )
     assert_equal(sum(geom.type == gs.GEOM_TYPE.BOX for geom in entity_without_ground.geoms), 1)
 
 

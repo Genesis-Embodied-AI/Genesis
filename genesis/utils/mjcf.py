@@ -61,7 +61,16 @@ def get_model_name(file_path):
     return None
 
 
-def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
+def build_model(
+    xml,
+    discard_visual,
+    default_armature=None,
+    merge_fixed_links=False,
+    links_to_keep=(),
+    is_ground_plane_included=True,
+):
+    worldbody_geom_names = set()
+    unnamed_worldbody_geom_names = set()
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
             is_urdf_file = True
@@ -103,6 +112,22 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                     mjcf.append(child)
                 mjcf.remove(elem)
                 root_parent_stack.append((include_root, include_path))
+
+        if not is_urdf_file and not is_ground_plane_included:
+            geom_names = {geom.attrib["name"] for geom in mjcf.iter("geom") if "name" in geom.attrib}
+            i_g = 0
+            for worldbody_elem in mjcf.findall("worldbody"):
+                for geom in worldbody_elem.findall("geom"):
+                    geom_name = geom.attrib.get("name")
+                    if geom_name is None:
+                        geom_name = f"genesis_worldbody_geom_{i_g}"
+                        while geom_name in geom_names:
+                            i_g += 1
+                            geom_name = f"genesis_worldbody_geom_{i_g}"
+                        geom.attrib["name"] = geom_name
+                        unnamed_worldbody_geom_names.add(geom_name)
+                    geom_names.add(geom_name)
+                    worldbody_geom_names.add(geom_name)
 
         # Make sure compiler options are defined
         compiler = mjcf.find("compiler")
@@ -179,6 +204,16 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             data = ET.tostring(root, encoding="utf8")
             mj = mujoco.MjModel.from_xml_string(data)
 
+            # Compiled link assignments lose source placement when fixed links are fused, so names preserve it.
+            empty_name_address = mj.names.find(b"\x00")
+            for geom_name in worldbody_geom_names:
+                i_g = mujoco.mj_name2id(mj, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
+                if geom_name in unnamed_worldbody_geom_names:
+                    mj.name_geomadr[i_g] = empty_name_address
+                if mj.geom_type[i_g] == mujoco.mjtGeom.mjGEOM_PLANE:
+                    # A negative link assignment keeps excluded source geoms out of the Genesis model.
+                    mj.geom_bodyid[i_g] = -1
+
             # Special treatment for URDF
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
@@ -208,8 +243,17 @@ def parse_xml(morph, surface):
         merge_fixed_links = morph.merge_fixed_links
         links_to_keep = morph.links_to_keep
 
+    is_ground_plane_included = not isinstance(morph, gs.morphs.MJCF) or morph.is_ground_plane_included
+
     # Build model from XML (either URDF or MJCF)
-    mj = build_model(morph.file, not morph.visualization, morph.default_armature, merge_fixed_links, links_to_keep)
+    mj = build_model(
+        morph.file,
+        not morph.visualization,
+        morph.default_armature,
+        merge_fixed_links,
+        links_to_keep,
+        is_ground_plane_included,
+    )
 
     # We have another more informative warning later so we suppress this one
     # gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for `{j_info['name']}`")
@@ -217,13 +261,7 @@ def parse_xml(morph, surface):
     #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    links_g_infos = parse_geoms(
-        mj,
-        morph.scale,
-        surface,
-        morph.file,
-        is_ground_plane_included=not isinstance(morph, gs.morphs.MJCF) or morph.is_ground_plane_included,
-    )
+    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
 
     # Parse all bodies (links and joints)
     l_infos, links_j_infos = parse_links(mj, morph.scale)
@@ -634,7 +672,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     return info
 
 
-def parse_geoms(mj, scale, surface, xml_path, is_ground_plane_included):
+def parse_geoms(mj, scale, surface, xml_path):
     links_g_info = [[] for _ in range(mj.nbody)]
 
     # Loop over all geometries sequentially
@@ -642,13 +680,6 @@ def parse_geoms(mj, scale, surface, xml_path, is_ground_plane_included):
     for i_g in range(mj.ngeom):
         if mj.geom_bodyid[i_g] < 0:
             continue
-        if (
-            not is_ground_plane_included
-            and mj.geom_bodyid[i_g] == 0
-            and mj.geom_type[i_g] == mujoco.mjtGeom.mjGEOM_PLANE
-        ):
-            continue
-
         # try parsing a given geometry
         g_info = parse_geom(mj, i_g, scale, surface, xml_path)
         if g_info is None:
