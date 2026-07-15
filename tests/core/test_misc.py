@@ -102,7 +102,7 @@ def test_scene_destroy_idempotent():
 
 @pytest.mark.required
 @pytest.mark.parametrize("raise_before_build", [True, False])
-def test_destroy_after_failed_camera_build(monkeypatch, raise_before_build):
+def test_destroy_after_aborted_camera_build(monkeypatch, raise_before_build):
     from genesis.engine.sensors.camera import RasterizerCameraSensor
 
     scene = gs.Scene(show_viewer=False)
