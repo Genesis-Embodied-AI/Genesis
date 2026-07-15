@@ -6,505 +6,35 @@ loaded from USD files match equivalent scenes loaded from compared files.
 """
 
 import os
-import time
 import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
-import trimesh
 
 try:
     from pxr import Usd
 except ImportError as e:
     pytest.skip("USD is not supported because 'pxr' module is not available.", allow_module_level=True)
 
-from pxr import Gf, Sdf, UsdGeom, UsdPhysics, UsdShade
+from pxr import Gf, Sdf, UsdGeom, UsdPhysics
 from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
 from ..conftest import SKIP_NO_OMNIVERSE_KIT
 
 import genesis as gs
-import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 
 from ..utils import assert_allclose, get_hf_dataset
-from .test_mesh import check_gs_meshes, check_gs_surfaces
-
-
-# Conversion from .usd to .glb significantly affects precision
-USD_COLOR_TOL = 1e-07
-USD_NORMALS_TOL = 1e-02
-
-
-def to_array(s: str) -> np.ndarray:
-    """Convert a string of space-separated floats to a numpy array."""
-    return np.array([float(x) for x in s.split()])
-
-
-def compare_links(compared_links, usd_links, tol):
-    """Compare links between two scenes."""
-    # Check number of links
-    assert len(compared_links) == len(usd_links)
-
-    # Create dictionaries keyed by link name for comparison
-    compared_links_by_name = {link.name: link for link in compared_links}
-    usd_links_by_name = {link.name: link for link in usd_links}
-
-    # Create index to name mappings for parent comparison
-    compared_idx_to_name = {i: link.name for i, link in enumerate(compared_links)}
-    usd_idx_to_name = {i: link.name for i, link in enumerate(usd_links)}
-
-    # Check that we have matching link names
-    compared_link_names = set(compared_links_by_name.keys())
-    usd_link_names = set(usd_links_by_name.keys())
-    assert compared_link_names == usd_link_names
-
-    # Compare all link properties by name
-    for link_name in sorted(compared_link_names):
-        compared_link = compared_links_by_name[link_name]
-        usd_link = usd_links_by_name[link_name]
-        err_msg = f"Properties mismatched for link {link_name}"
-
-        # Compare link properties
-        assert_allclose(compared_link.pos, usd_link.pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_link.quat, usd_link.quat, tol=tol, err_msg=err_msg)
-        assert compared_link.is_fixed == usd_link.is_fixed, err_msg
-        assert len(compared_link.geoms) == len(usd_link.geoms), err_msg
-        assert compared_link.n_joints == usd_link.n_joints, err_msg
-        assert len(compared_link.vgeoms) == len(usd_link.vgeoms), err_msg
-
-        # Compare parent link by name (mapping indices to names)
-        compared_parent_idx = compared_link.parent_idx
-        usd_parent_idx = usd_link.parent_idx
-        if compared_parent_idx == -1:
-            compared_parent_name = None
-        else:
-            compared_parent_name = compared_idx_to_name.get(compared_parent_idx, f"<unknown idx {compared_parent_idx}>")
-        if usd_parent_idx == -1:
-            usd_parent_name = None
-        else:
-            usd_parent_name = usd_idx_to_name.get(usd_parent_idx, f"<unknown idx {usd_parent_idx}>")
-        assert compared_parent_name == usd_parent_name, err_msg
-
-        # Compare inertial properties if available
-        assert_allclose(compared_link.inertial_pos, usd_link.inertial_pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_link.inertial_quat, usd_link.inertial_quat, tol=tol, err_msg=err_msg)
-
-        # Skip mass and inertia checks for fixed links - they're not used in simulation
-        if not compared_link.is_fixed:
-            assert_allclose(compared_link.inertial_mass, usd_link.inertial_mass, atol=tol, err_msg=err_msg)
-            assert_allclose(compared_link.inertial_i, usd_link.inertial_i, atol=tol, err_msg=err_msg)
-
-
-def compare_joints(compared_joints, usd_joints, tol):
-    """Compare joints between two scenes."""
-    # Check number of joints
-    assert len(compared_joints) == len(usd_joints)
-
-    # Create dictionaries keyed by joint name for comparison
-    compared_joints_by_name = {joint.name: joint for joint in compared_joints}
-    usd_joints_by_name = {joint.name: joint for joint in usd_joints}
-
-    # Check that we have matching joint names
-    compared_joint_names = set(compared_joints_by_name.keys())
-    usd_joint_names = set(usd_joints_by_name.keys())
-    assert compared_joint_names == usd_joint_names
-
-    # Compare all joint properties by name
-    for joint_name in sorted(compared_joint_names):
-        compared_joint = compared_joints_by_name[joint_name]
-        usd_joint = usd_joints_by_name[joint_name]
-
-        # Compare joint properties
-        assert compared_joint.type == usd_joint.type
-        err_msg = f"Properties mismatched for joint type {compared_joint.type}"
-
-        assert_allclose(compared_joint.pos, usd_joint.pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_joint.quat, usd_joint.quat, tol=tol, err_msg=err_msg)
-        assert compared_joint.n_qs == usd_joint.n_qs, err_msg
-        assert compared_joint.n_dofs == usd_joint.n_dofs, err_msg
-
-        # Compare initial qpos
-        assert_allclose(compared_joint.init_qpos, usd_joint.init_qpos, tol=tol, err_msg=err_msg)
-
-        # Skip mass/inertia-dependent property checks for fixed joints - they're not used in simulation
-        if compared_joint.type != gs.JOINT_TYPE.FIXED:
-            # Compare dof limits
-            assert_allclose(compared_joint.dofs_limit, usd_joint.dofs_limit, tol=tol, err_msg=err_msg)
-
-            # Compare dof motion properties
-            assert_allclose(compared_joint.dofs_motion_ang, usd_joint.dofs_motion_ang, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_motion_vel, usd_joint.dofs_motion_vel, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_damping, usd_joint.dofs_damping, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature, tol=tol, err_msg=err_msg)
-
-            # Compare dof control properties
-            assert_allclose(compared_joint.dofs_act_gain, usd_joint.dofs_act_gain, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_act_bias, usd_joint.dofs_act_bias, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol, err_msg=err_msg)
-
-
-def compare_geoms(compared_geoms, usd_geoms, tol):
-    """Compare geoms between two scenes."""
-    assert len(compared_geoms) == len(usd_geoms)
-
-    # Sort geoms by link name for consistent comparison
-    compared_geoms_sorted = sorted(compared_geoms, key=lambda g: (g.link.name, g.idx))
-    usd_geoms_sorted = sorted(usd_geoms, key=lambda g: (g.link.name, g.idx))
-
-    for compared_geom, usd_geom in zip(compared_geoms_sorted, usd_geoms_sorted):
-        assert compared_geom.type == usd_geom.type
-        err_msg = f"Properties mismatched for geom type {compared_geom.type}"
-
-        assert_allclose(compared_geom.init_pos, usd_geom.init_pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_geom.init_quat, usd_geom.init_quat, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_geom.get_AABB(), usd_geom.get_AABB(), tol=tol, err_msg=err_msg)
-
-
-def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol):
-    """Compare visual geoms between two scenes."""
-    assert len(compared_vgeoms) == len(usd_vgeoms)
-
-    # Sort geoms by link name for consistent comparison
-    compared_vgeoms_sorted = sorted(compared_vgeoms, key=lambda g: g.vmesh.metadata["name"])
-    usd_vgeoms_sorted = sorted(usd_vgeoms, key=lambda g: g.vmesh.metadata["name"].split("/")[-1])
-
-    for compared_vgeom, usd_vgeom in zip(compared_vgeoms_sorted, usd_vgeoms_sorted):
-        compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-            compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
-        )
-        usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-            usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
-        )
-        compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
-        usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)
-
-        compared_vgeom_mesh = compared_vgeom.vmesh.copy()
-        usd_vgeom_mesh = usd_vgeom.vmesh.copy()
-        mesh_name = usd_vgeom_mesh.metadata["name"]
-        compared_vgeom_mesh.apply_transform(compared_vgeom_T)
-        usd_vgeom_mesh.apply_transform(usd_vgeom_T)
-        check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name, tol, USD_NORMALS_TOL)
-
-        compared_vgeom_surface = compared_vgeom_mesh.surface
-        usd_vgeom_surface = usd_vgeom_mesh.surface
-        check_gs_surfaces(compared_vgeom_surface, usd_vgeom_surface, mesh_name)
-
-
-def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
-    """Compare structure and data between compared scene and USD scene."""
-    compared_entities = compared_scene.entities
-    usd_entities = usd_scene.entities
-
-    compared_geoms = [geom for entity in compared_entities for geom in entity.geoms]
-    usd_geoms = [geom for entity in usd_entities for geom in entity.geoms]
-    compare_geoms(compared_geoms, usd_geoms, tol=tol)
-
-    compared_joints = [joint for entity in compared_entities for joint in entity.joints]
-    usd_joints = [joint for entity in usd_entities for joint in entity.joints]
-    compare_joints(compared_joints, usd_joints, tol=tol)
-
-    compared_links = [link for entity in compared_entities for link in entity.links]
-    usd_links = [link for entity in usd_entities for link in entity.links]
-    compare_links(compared_links, usd_links, tol=tol)
-
-
-def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
-    """Compare mesh data between mesh scene and USD scene."""
-    compared_entities = compared_scene.entities
-    usd_entities = usd_scene.entities
-    compared_vgeoms = [vgeom for entity in compared_entities for vgeom in entity.vgeoms]
-    usd_vgeoms = [vgeom for entity in usd_entities for vgeom in entity.vgeoms]
-    compare_vgeoms(compared_vgeoms, usd_vgeoms, tol=tol)
-
-
-def build_mjcf_scene(xml_path: str, scale: float):
-    """Build a MJCF scene from its file path."""
-    # Create MJCF scene
-    mjcf_scene = gs.Scene()
-
-    mjcf_scene.add_entity(
-        gs.morphs.MJCF(
-            file=xml_path,
-            scale=scale,
-            convexify=False,
-            decimate=False,
-            align=False,
-        ),
-        material=gs.materials.Rigid(
-            rho=1000.0,
-        ),
-    )
-
-    mjcf_scene.build()
-    return mjcf_scene
-
-
-def build_usd_scene(
-    usd_file: str,
-    scale: float,
-    vis_mode: str = "collision",
-    is_stage: bool = True,
-    fixed: bool | None = None,
-    show_viewer: bool = False,
-):
-    """Build a USD scene from its file path."""
-    # Create USD scene
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
-
-    kwargs = dict(
-        morph=gs.morphs.USD(
-            usd_ctx=UsdContext(
-                usd_file,
-                use_bake_cache=False,
-            ),
-            scale=scale,
-            fixed=fixed,
-            convexify=False,
-            decimate=False,
-            watertighten=None,
-            align=False,
-        ),
-        material=gs.materials.Rigid(
-            rho=1000.0,
-        ),
-        vis_mode=vis_mode,
-    )
-
-    if is_stage:
-        scene.add_stage(**kwargs)
-    else:
-        scene.add_entity(**kwargs)
-
-    # Note that it is necessary to build the scene because spatial inertia of some geometries may not be specified.
-    # In such a case, it will be estimated from the geometry during build (RigidLink._build to be specific).
-    scene.build()
-
-    return scene
-
-
-def build_mesh_scene(mesh_file: str, scale: float):
-    """Build a mesh scene from its file path."""
-    mesh_scene = gs.Scene()
-    mesh_morph = gs.morphs.Mesh(
-        file=mesh_file,
-        scale=scale,
-        file_meshes_are_zup=True,
-        merge_submeshes_for_collision=False,
-        group_by_material=False,
-        convexify=False,
-        decimate=False,
-        align=False,
-    )
-    mesh_scene.add_entity(
-        mesh_morph,
-        material=gs.materials.Rigid(
-            rho=1000.0,
-        ),
-    )
-    mesh_scene.build()
-    return mesh_scene
-
-
-@pytest.fixture
-def xml_path(request, tmp_path, model_name):
-    """Create a temporary MJCF/XML file from the fixture."""
-    mjcf = request.getfixturevalue(model_name)
-    xml_tree = ET.ElementTree(mjcf)
-    file_name = f"{model_name}.xml"
-    file_path = str(tmp_path / file_name)
-    xml_tree.write(file_path, encoding="utf-8", xml_declaration=True)
-    return file_path
+from .conftest import (
+    USD_COLOR_TOL,
+    build_mesh_scene,
+    build_mjcf_scene,
+    build_usd_scene,
+    compare_mesh_scene,
+    compare_scene,
+)
 
 
 # ==================== Primitive Tests ====================
-
-
-@pytest.fixture(scope="session")
-def all_primitives_mjcf():
-    """Generate an MJCF model with various geometric primitives on a plane."""
-    mjcf = ET.Element("mujoco", model="primitives")
-
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
-    ET.SubElement(floor, "geom", type="plane", pos="0. 0. 0.", size="40. 40. 40.")
-
-    # Box
-    box = ET.SubElement(worldbody, "body", name="/worldbody/box", pos="-0.6 0. 0.3")
-    ET.SubElement(box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(box, "joint", name="/worldbody/box_joint", type="free")
-
-    # Cylinder
-    cylinder = ET.SubElement(worldbody, "body", name="/worldbody/cylinder", pos="-0.2 0. 0.3")
-    ET.SubElement(cylinder, "geom", type="cylinder", size="0.15 0.2", pos="0. 0. 0.")
-    ET.SubElement(cylinder, "joint", name="/worldbody/cylinder_joint", type="free")
-
-    # Capsule
-    capsule = ET.SubElement(worldbody, "body", name="/worldbody/capsule", pos="0.2 0. 0.3")
-    ET.SubElement(capsule, "geom", type="capsule", size="0.15 0.2", pos="0. 0. 0.")
-    ET.SubElement(capsule, "joint", name="/worldbody/capsule_joint", type="free")
-
-    # Sphere
-    sphere = ET.SubElement(worldbody, "body", name="/worldbody/sphere", pos="0.6 0. 0.3")
-    ET.SubElement(sphere, "geom", type="sphere", size="0.2", pos="0. 0. 0.")
-    ET.SubElement(sphere, "joint", name="/worldbody/sphere_joint", type="free")
-
-    return mjcf
-
-
-@pytest.fixture(scope="session")
-def all_primitives_usd(asset_tmp_path, all_primitives_mjcf: ET.ElementTree):
-    """Generate a USD file equivalent to the MJCF all_primitives_mjcf fixture."""
-    # Extract data from MJCF XML structure
-    worldbody = all_primitives_mjcf.find("worldbody")
-
-    # Floor: body contains a geom with pos and size
-    floor_body = worldbody.find("body[@name='/worldbody/floor']")
-    floor_geom = floor_body.find("geom[@type='plane']")
-    floor_pos_str = floor_geom.get("pos", "0. 0. 0.")
-    floor_pos = to_array(floor_pos_str)
-    floor_size = to_array(floor_geom.get("size", "40. 40. 40."))
-
-    # Box: body has pos, geom inside has size
-    box_body = worldbody.find("body[@name='/worldbody/box']")
-    box_pos_str = box_body.get("pos", "0. 0. 0.")
-    box_pos = to_array(box_pos_str)
-    box_geom = box_body.find("geom[@type='box']")
-    box_size_str = box_geom.get("size", "0.2 0.2 0.2")
-    box_size = to_array(box_size_str)
-
-    # Cylinder: body has pos, geom has size (radius, half-height)
-    cylinder_body = worldbody.find("body[@name='/worldbody/cylinder']")
-    cylinder_pos_str = cylinder_body.get("pos", "0. 0. 0.")
-    cylinder_pos = to_array(cylinder_pos_str)
-    cylinder_geom = cylinder_body.find("geom[@type='cylinder']")
-    cylinder_size_str = cylinder_geom.get("size", "0.15 0.2")
-    cylinder_size = to_array(cylinder_size_str)
-    cylinder_radius = cylinder_size[0]
-    cylinder_half_height = cylinder_size[1]
-
-    # Capsule: body has pos, geom has size (radius, half-height)
-    capsule_body = worldbody.find("body[@name='/worldbody/capsule']")
-    capsule_pos_str = capsule_body.get("pos", "0. 0. 0.")
-    capsule_pos = to_array(capsule_pos_str)
-    capsule_geom = capsule_body.find("geom[@type='capsule']")
-    capsule_size_str = capsule_geom.get("size", "0.15 0.2")
-    capsule_size = to_array(capsule_size_str)
-    capsule_radius = capsule_size[0]
-    capsule_half_height = capsule_size[1]
-
-    # Sphere: body has pos, geom has size (radius)
-    sphere_body = worldbody.find("body[@name='/worldbody/sphere']")
-    sphere_pos_str = sphere_body.get("pos", "0. 0. 0.")
-    sphere_pos = to_array(sphere_pos_str)
-    sphere_geom = sphere_body.find("geom[@type='sphere']")
-    sphere_size_str = sphere_geom.get("size", "0.2")
-    sphere_radius = float(sphere_size_str) if isinstance(sphere_size_str, str) else sphere_size_str[0]
-
-    # Create temporary USD file
-    usd_file = str(asset_tmp_path / "all_primitives.usda")
-
-    # Create USD stage
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    # Create root prim
-    root_prim = stage.DefinePrim("/worldbody", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    # Create floor plane (fixed, collision-only)
-    # In MJCF: plane at floor_pos with size floor_size
-    # In USD: Create a plane geometry with CollisionAPI (fixed rigid body)
-    floor = UsdGeom.Plane.Define(stage, "/worldbody/floor")
-    floor.GetAxisAttr().Set("Z")
-    floor.AddTranslateOp().Set(Gf.Vec3d(floor_pos[0], floor_pos[1], floor_pos[2]))
-    # MJCF plane size - the third value is typically ignored for plane
-    # For USD Plane, we use width and length
-    floor.GetWidthAttr().Set(floor_size[0] * 2)  # size[0] * 2
-    floor.GetLengthAttr().Set(floor_size[1] * 2)  # size[1] * 2
-
-    # Make it a fixed collision-only rigid body
-    UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
-    # No RigidBodyAPI means it's kinematic/fixed
-
-    # Create box (free rigid body)
-    # In MJCF: box at box_pos with size box_size (half-extent), free joint
-    box = UsdGeom.Cube.Define(stage, "/worldbody/box")
-    box.AddTranslateOp().Set(Gf.Vec3d(box_pos[0], box_pos[1], box_pos[2]))
-    # MJCF size is half-extent, USD size is full edge length
-    # So we need to multiply by 2
-    box.GetSizeAttr().Set(box_size[0] * 2.0)
-    box_rigid = UsdPhysics.RigidBodyAPI.Apply(box.GetPrim())
-    box_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create free joint for box
-    free_joint_prim = UsdPhysics.Joint.Define(stage, "/worldbody/box_joint")
-    free_joint_prim.CreateBody0Rel().SetTargets([root_prim.GetPath()])
-    free_joint_prim.CreateBody1Rel().SetTargets([box.GetPrim().GetPath()])
-    free_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    free_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    # Create cylinder (free rigid body)
-    # In MJCF: cylinder size is (radius, half-height)
-    # In USD: cylinder has radius and height (full height)
-    cylinder = UsdGeom.Cylinder.Define(stage, "/worldbody/cylinder")
-    cylinder.AddTranslateOp().Set(Gf.Vec3d(cylinder_pos[0], cylinder_pos[1], cylinder_pos[2]))
-    cylinder.GetRadiusAttr().Set(cylinder_radius)
-    cylinder.GetHeightAttr().Set(cylinder_half_height * 2.0)  # Convert half-height to full height
-    cylinder.GetAxisAttr().Set("Z")
-    cylinder_rigid = UsdPhysics.RigidBodyAPI.Apply(cylinder.GetPrim())
-    cylinder_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create free joint for cylinder
-    cylinder_joint_prim = UsdPhysics.Joint.Define(stage, "/worldbody/cylinder_joint")
-    cylinder_joint_prim.CreateBody0Rel().SetTargets([root_prim.GetPath()])
-    cylinder_joint_prim.CreateBody1Rel().SetTargets([cylinder.GetPrim().GetPath()])
-    cylinder_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    cylinder_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    # Create capsule (free rigid body)
-    # In MJCF: capsule size is (radius, half-height)
-    # In USD: capsule has radius and height (full height)
-    capsule = UsdGeom.Capsule.Define(stage, "/worldbody/capsule")
-    capsule.AddTranslateOp().Set(Gf.Vec3d(capsule_pos[0], capsule_pos[1], capsule_pos[2]))
-    capsule.GetRadiusAttr().Set(capsule_radius)
-    capsule.GetHeightAttr().Set(capsule_half_height * 2.0)  # Convert half-height to full height
-    capsule.GetAxisAttr().Set("Z")
-    capsule_rigid = UsdPhysics.RigidBodyAPI.Apply(capsule.GetPrim())
-    capsule_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create free joint for capsule
-    capsule_joint_prim = UsdPhysics.Joint.Define(stage, "/worldbody/capsule_joint")
-    capsule_joint_prim.CreateBody0Rel().SetTargets([root_prim.GetPath()])
-    capsule_joint_prim.CreateBody1Rel().SetTargets([capsule.GetPrim().GetPath()])
-    capsule_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    capsule_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    # Create sphere (free rigid body)
-    # In MJCF: sphere size is radius
-    # In USD: sphere has radius
-    sphere = UsdGeom.Sphere.Define(stage, "/worldbody/sphere")
-    sphere.AddTranslateOp().Set(Gf.Vec3d(sphere_pos[0], sphere_pos[1], sphere_pos[2]))
-    sphere.GetRadiusAttr().Set(sphere_radius)
-    sphere_rigid = UsdPhysics.RigidBodyAPI.Apply(sphere.GetPrim())
-    sphere_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create free joint for sphere
-    sphere_joint_prim = UsdPhysics.Joint.Define(stage, "/worldbody/sphere_joint")
-    sphere_joint_prim.CreateBody0Rel().SetTargets([root_prim.GetPath()])
-    sphere_joint_prim.CreateBody1Rel().SetTargets([sphere.GetPrim().GetPath()])
-    sphere_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    sphere_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    stage.Save()
-
-    return usd_file
 
 
 @pytest.mark.slow  # ~450s
@@ -518,273 +48,6 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
 
 
 # ==================== Joint Tests ====================
-
-
-@pytest.fixture(scope="session")
-def all_joints_mjcf():
-    """Generate an MJCF model with all joint types: prismatic, revolute, spherical, fixed, and free."""
-    mjcf = ET.Element("mujoco", model="all_joints")
-
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
-    ET.SubElement(floor, "geom", type="plane", pos="0. 0. 0.", size="40. 40. 40.")
-
-    base = ET.SubElement(worldbody, "body", name="/worldbody/base", pos="0. 0. 0.1")
-    ET.SubElement(base, "geom", type="box", size="0.1 0.1 0.1", pos="0. 0. 0.")
-
-    # Prismatic joint branch
-    prismatic_box = ET.SubElement(base, "body", name="/worldbody/base/prismatic_box", pos="-0.5 0. 0.2")
-    ET.SubElement(prismatic_box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(
-        prismatic_box,
-        "joint",
-        name="/worldbody/base/prismatic_box_joint",
-        type="slide",
-        axis="0. 0. 1.",
-        range="-0.1 0.4",
-        stiffness="50.0",
-        damping="5.0",
-    )
-
-    # Revolute joint branch
-    # Add actuator for PD controller (maps to dofs_kp and dofs_kv)
-    # The parser uses: dofs_kp = -gear * biasprm[1] * scale^3
-    # So to get dofs_kp=120.0, we need biasprm[1] = -120.0 (with gear=1, scale=1)
-    actuator = ET.SubElement(mjcf, "actuator")
-    revolute_box = ET.SubElement(base, "body", name="/worldbody/base/revolute_box", pos="0. 0. 0.2")
-    ET.SubElement(revolute_box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(
-        revolute_box,
-        "joint",
-        name="/worldbody/base/revolute_box_joint",
-        type="hinge",
-        axis="0. 0. 1.",
-        range="-45 45",
-        stiffness="50.0",
-        damping="5.0",
-    )
-
-    # Spherical joint branch
-    spherical_box = ET.SubElement(base, "body", name="/worldbody/base/spherical_box", pos="0.5 0. 0.2")
-    ET.SubElement(spherical_box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(spherical_box, "joint", name="/worldbody/base/spherical_box_joint", type="ball")
-
-    # Fixed joint branch (no joint element means fixed in MJCF)
-    fixed_box = ET.SubElement(base, "body", name="/worldbody/base/fixed_box", pos="-0.5 0.5 0.2")
-    ET.SubElement(fixed_box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    # No joint element = fixed joint
-
-    # Free joint branch (must be at top level in MJCF - directly under worldbody)
-    free_box = ET.SubElement(worldbody, "body", name="/worldbody/free_box", pos="0.5 0.5 0.3")
-    ET.SubElement(free_box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(free_box, "joint", name="/worldbody/free_box_joint", type="free")
-
-    # Add actuators for PD controllers (prismatic and revolute only)
-    actuator = ET.SubElement(mjcf, "actuator")
-    ET.SubElement(
-        actuator,
-        "general",
-        name="/worldbody/base/prismatic_box_joint_actuator",
-        joint="/worldbody/base/prismatic_box_joint",
-        biastype="affine",
-        gainprm="120.0 0 0",  # gainprm[0] must equal -biasprm[1] to avoid warning
-        biasprm="0 -120.0 -12.0",  # biasprm format: [b0, b1, b2] where b1=kp, b2=kv (negated)
-    )
-    ET.SubElement(
-        actuator,
-        "general",
-        name="/worldbody/base/revolute_box_joint_actuator",
-        joint="/worldbody/base/revolute_box_joint",
-        biastype="affine",
-        gainprm="120.0 0 0",
-        biasprm="0 -120.0 -12.0",
-    )
-
-    return mjcf
-
-
-@pytest.fixture(scope="session")
-def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
-    """Generate a USD file equivalent to the all joints MJCF fixture.
-
-    Supports both with and without ArticulationRootAPI based on request.param.
-    """
-    # Get the use_articulation_root parameter from request.param if available
-    use_articulation_root = getattr(request, "param", True)
-
-    worldbody = all_joints_mjcf.find("worldbody")
-
-    # Floor
-    floor_body = worldbody.find("body[@name='/worldbody/floor']")
-    floor_geom = floor_body.find("geom[@type='plane']")
-    floor_pos_str = floor_geom.get("pos")
-    floor_pos = to_array(floor_pos_str)
-    floor_size = to_array(floor_geom.get("size", "40. 40. 40."))
-
-    # Base
-    base_body = worldbody.find("body[@name='/worldbody/base']")
-    base_pos_str = base_body.get("pos")
-    base_pos = to_array(base_pos_str)
-    base_geom = base_body.find("geom[@type='box']")
-    base_size_str = base_geom.get("size")
-    base_size = to_array(base_size_str)
-
-    # Prismatic box
-    prismatic_box_body = base_body.find("body[@name='/worldbody/base/prismatic_box']")
-    prismatic_box_pos_str = prismatic_box_body.get("pos")
-    prismatic_box_pos = to_array(prismatic_box_pos_str)
-    prismatic_box_geom = prismatic_box_body.find("geom[@type='box']")
-    prismatic_box_size = to_array(prismatic_box_geom.get("size"))
-    prismatic_joint = prismatic_box_body.find("joint[@name='/worldbody/base/prismatic_box_joint']")
-    prismatic_range = to_array(prismatic_joint.get("range"))
-
-    # Revolute box
-    revolute_box_body = base_body.find("body[@name='/worldbody/base/revolute_box']")
-    revolute_box_pos_str = revolute_box_body.get("pos")
-    revolute_box_pos = to_array(revolute_box_pos_str)
-    revolute_box_geom = revolute_box_body.find("geom[@type='box']")
-    revolute_box_size = to_array(revolute_box_geom.get("size"))
-    revolute_joint = revolute_box_body.find("joint[@name='/worldbody/base/revolute_box_joint']")
-    revolute_range = to_array(revolute_joint.get("range"))
-
-    # Spherical box
-    spherical_box_body = base_body.find("body[@name='/worldbody/base/spherical_box']")
-    spherical_box_pos_str = spherical_box_body.get("pos")
-    spherical_box_pos = to_array(spherical_box_pos_str)
-    spherical_box_geom = spherical_box_body.find("geom[@type='box']")
-    spherical_box_size = to_array(spherical_box_geom.get("size"))
-
-    # Fixed box (no joint in MJCF means fixed)
-    fixed_box_body = base_body.find("body[@name='/worldbody/base/fixed_box']")
-    fixed_box_pos_str = fixed_box_body.get("pos")
-    fixed_box_pos = to_array(fixed_box_pos_str)
-    fixed_box_geom = fixed_box_body.find("geom[@type='box']")
-    fixed_box_size = to_array(fixed_box_geom.get("size"))
-
-    # Free box (at top level in MJCF)
-    free_box_body = worldbody.find("body[@name='/worldbody/free_box']")
-    free_box_pos_str = free_box_body.get("pos")
-    free_box_pos = to_array(free_box_pos_str)
-    free_box_geom = free_box_body.find("geom[@type='box']")
-    free_box_size = to_array(free_box_geom.get("size"))
-
-    # Create temporary USD file with suffix based on ArticulationRootAPI usage
-    suffix = "with_articulation_root" if use_articulation_root else "without_articulation_root"
-    usd_file = str(asset_tmp_path / f"all_joints_{suffix}.usda")
-
-    # Create USD stage
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    # Create root prim
-    root_prim = stage.DefinePrim("/worldbody", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    # Create floor plane (fixed, collision-only)
-    floor = UsdGeom.Plane.Define(stage, "/worldbody/floor")
-    floor.GetAxisAttr().Set("Z")
-    floor.AddTranslateOp().Set(Gf.Vec3d(floor_pos[0], floor_pos[1], floor_pos[2]))
-    floor.GetWidthAttr().Set(floor_size[0] * 2)
-    floor.GetLengthAttr().Set(floor_size[1] * 2)
-    UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
-
-    # Create base (fixed, collision-only)
-    base = UsdGeom.Cube.Define(stage, "/worldbody/base")
-    if use_articulation_root:
-        UsdPhysics.ArticulationRootAPI.Apply(base.GetPrim())
-    base.AddTranslateOp().Set(Gf.Vec3d(base_pos[0], base_pos[1], base_pos[2]))
-    base.GetSizeAttr().Set(base_size[0] * 2.0)
-    UsdPhysics.CollisionAPI.Apply(base.GetPrim())
-
-    # Create prismatic box
-    prismatic_box = UsdGeom.Cube.Define(stage, "/worldbody/base/prismatic_box")
-    prismatic_box.AddTranslateOp().Set(Gf.Vec3d(prismatic_box_pos[0], prismatic_box_pos[1], prismatic_box_pos[2]))
-    prismatic_box.GetSizeAttr().Set(prismatic_box_size[0] * 2.0)
-    prismatic_box_rigid = UsdPhysics.RigidBodyAPI.Apply(prismatic_box.GetPrim())
-    prismatic_box_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create prismatic joint
-    prismatic_joint_prim = UsdPhysics.PrismaticJoint.Define(stage, "/worldbody/base/prismatic_box_joint")
-    prismatic_joint_prim.CreateBody0Rel().SetTargets([base.GetPrim().GetPath()])
-    prismatic_joint_prim.CreateBody1Rel().SetTargets([prismatic_box.GetPrim().GetPath()])
-    prismatic_joint_prim.CreateAxisAttr().Set("Z")
-    prismatic_joint_prim.CreateLowerLimitAttr().Set(prismatic_range[0])
-    prismatic_joint_prim.CreateUpperLimitAttr().Set(prismatic_range[1])
-    prismatic_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    prismatic_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    prismatic_joint_prim.GetPrim().CreateAttribute("linear:stiffness", Sdf.ValueTypeNames.Float).Set(50.0)
-    prismatic_joint_prim.GetPrim().CreateAttribute("linear:damping", Sdf.ValueTypeNames.Float).Set(5.0)
-    prismatic_drive_api = UsdPhysics.DriveAPI.Apply(prismatic_joint_prim.GetPrim(), "linear")
-    prismatic_drive_api.CreateStiffnessAttr().Set(120.0)
-    prismatic_drive_api.CreateDampingAttr().Set(12.0)
-
-    # Create revolute box
-    revolute_box = UsdGeom.Cube.Define(stage, "/worldbody/base/revolute_box")
-    revolute_box.AddTranslateOp().Set(Gf.Vec3d(revolute_box_pos[0], revolute_box_pos[1], revolute_box_pos[2]))
-    revolute_box.GetSizeAttr().Set(revolute_box_size[0] * 2.0)
-    revolute_box_rigid = UsdPhysics.RigidBodyAPI.Apply(revolute_box.GetPrim())
-    revolute_box_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create revolute joint
-    revolute_joint_prim = UsdPhysics.RevoluteJoint.Define(stage, "/worldbody/base/revolute_box_joint")
-    revolute_joint_prim.CreateBody0Rel().SetTargets([base.GetPrim().GetPath()])
-    revolute_joint_prim.CreateBody1Rel().SetTargets([revolute_box.GetPrim().GetPath()])
-    revolute_joint_prim.CreateAxisAttr().Set("Z")
-    revolute_joint_prim.CreateLowerLimitAttr().Set(revolute_range[0])
-    revolute_joint_prim.CreateUpperLimitAttr().Set(revolute_range[1])
-    revolute_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    revolute_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    revolute_joint_prim.GetPrim().CreateAttribute("stiffness", Sdf.ValueTypeNames.Float).Set(50.0)
-    revolute_joint_prim.GetPrim().CreateAttribute("angular:damping", Sdf.ValueTypeNames.Float).Set(5.0)
-    revolute_drive_api = UsdPhysics.DriveAPI.Apply(revolute_joint_prim.GetPrim(), "angular")
-    revolute_drive_api.CreateStiffnessAttr().Set(120.0)
-    revolute_drive_api.CreateDampingAttr().Set(12.0)
-
-    # Create spherical box
-    spherical_box = UsdGeom.Cube.Define(stage, "/worldbody/base/spherical_box")
-    spherical_box.AddTranslateOp().Set(Gf.Vec3d(spherical_box_pos[0], spherical_box_pos[1], spherical_box_pos[2]))
-    spherical_box.GetSizeAttr().Set(spherical_box_size[0] * 2.0)
-    spherical_box_rigid = UsdPhysics.RigidBodyAPI.Apply(spherical_box.GetPrim())
-    spherical_box_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create spherical joint
-    spherical_joint_prim = UsdPhysics.SphericalJoint.Define(stage, "/worldbody/base/spherical_box_joint")
-    spherical_joint_prim.CreateBody0Rel().SetTargets([base.GetPrim().GetPath()])
-    spherical_joint_prim.CreateBody1Rel().SetTargets([spherical_box.GetPrim().GetPath()])
-    spherical_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    spherical_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    # Create fixed box
-    fixed_box = UsdGeom.Cube.Define(stage, "/worldbody/base/fixed_box")
-    fixed_box.AddTranslateOp().Set(Gf.Vec3d(fixed_box_pos[0], fixed_box_pos[1], fixed_box_pos[2]))
-    fixed_box.GetSizeAttr().Set(fixed_box_size[0] * 2.0)
-    fixed_box_rigid = UsdPhysics.RigidBodyAPI.Apply(fixed_box.GetPrim())
-    fixed_box_rigid.GetKinematicEnabledAttr().Set(False)
-
-    # Create fixed joint
-    fixed_joint_prim = UsdPhysics.FixedJoint.Define(stage, "/worldbody/base/fixed_box_joint")
-    fixed_joint_prim.CreateBody0Rel().SetTargets([base.GetPrim().GetPath()])
-    fixed_joint_prim.CreateBody1Rel().SetTargets([fixed_box.GetPrim().GetPath()])
-    fixed_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    fixed_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    # Create free box (at top level, not under base)
-    free_box = UsdGeom.Cube.Define(stage, "/worldbody/free_box")
-    free_box.AddTranslateOp().Set(Gf.Vec3d(free_box_pos[0], free_box_pos[1], free_box_pos[2]))
-    free_box.GetSizeAttr().Set(free_box_size[0] * 2.0)
-    free_box_rigid = UsdPhysics.RigidBodyAPI.Apply(free_box.GetPrim())
-    free_box_rigid.GetKinematicEnabledAttr().Set(False)
-
-    free_joint_prim = UsdPhysics.Joint.Define(stage, "/worldbody/free_box_joint")
-    free_joint_prim.CreateBody0Rel().SetTargets([root_prim.GetPath()])
-    free_joint_prim.CreateBody1Rel().SetTargets([free_box.GetPrim().GetPath()])
-    free_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    free_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    stage.Save()
-
-    return usd_file
 
 
 @pytest.mark.slow  # ~350s
@@ -953,33 +216,10 @@ def test_uv_size_mismatch_no_crash(asset_tmp_path):
     assert len(usd_scene.entities) > 0
 
 
-@pytest.fixture(scope="session")
-def pure_rigid_usd(asset_tmp_path):
-    """Create a minimal USD file with a single rigid body (cube) and no joints."""
-    usd_file = str(asset_tmp_path / "pure_rigid.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    cube = UsdGeom.Cube.Define(stage, "/root/body")
-    cube.GetSizeAttr().Set(1.0)
-
-    UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
-    UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
-    UsdPhysics.MassAPI.Apply(cube.GetPrim())
-    UsdPhysics.MassAPI(cube.GetPrim()).GetMassAttr().Set(1.0)
-
-    stage.Save()
-    return usd_file
-
-
 @pytest.mark.required
+@pytest.mark.parametrize("model_name", ["pure_rigid_usd"])
 @pytest.mark.parametrize("fixed", [False, True])
-def test_pure_rigid_body_fixed(pure_rigid_usd, fixed):
-    usd_scene = build_usd_scene(pure_rigid_usd, scale=1.0, fixed=fixed)
+def test_pure_rigid_body_fixed(usd_scene, fixed):
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
     expected_dofs = 0 if fixed else 6
@@ -987,90 +227,13 @@ def test_pure_rigid_body_fixed(pure_rigid_usd, fixed):
     assert entity.n_links == 1
 
 
-@pytest.fixture(scope="session")
-def collision_only_rigid_usd(asset_tmp_path):
-    usd_file = str(asset_tmp_path / "collision_only_rigid.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    cube = UsdGeom.Cube.Define(stage, "/root")
-    cube.GetSizeAttr().Set(1.0)
-    stage.SetDefaultPrim(cube.GetPrim())
-    UsdPhysics.CollisionAPI.Apply(cube.GetPrim())  # No RigidBodyAPI
-
-    stage.Save()
-    return usd_file
-
-
 @pytest.mark.required
+@pytest.mark.parametrize("model_name", ["collision_only_rigid_usd"])
 @pytest.mark.parametrize("fixed,expected_dofs", [(None, 0), (False, 6), (True, 0)])
-def test_collision_only_fixed_override(collision_only_rigid_usd, fixed, expected_dofs):
-    usd_scene = build_usd_scene(collision_only_rigid_usd, scale=1.0, fixed=fixed)
+def test_collision_only_fixed_override(usd_scene, expected_dofs):
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
     assert entity.n_dofs == expected_dofs
-
-
-@pytest.fixture(scope="session")
-def visual_collision_usd(asset_tmp_path):
-    """Create a USD file mimicking Pan011 structure: separate Visual/Collision groups + invisible Sites.
-
-    Structure:
-        /root
-        /root/Body  (RigidBodyAPI, MassAPI)
-            /root/Body/Collisions  (purpose=guide)
-                /root/Body/Collisions/Collider1  (Cube, CollisionAPI, purpose=guide)
-                /root/Body/Collisions/Collider2  (Sphere, CollisionAPI, purpose=guide)
-            /root/Body/Visuals
-                /root/Body/Visuals/Visual1  (Cube)
-            /root/Body/Sites  (visibility=invisible)
-                /root/Body/Sites/site_marker  (Cube, purpose=guide, invisible)
-    """
-    usd_file = str(asset_tmp_path / "visual_collision.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    # Rigid body
-    body = stage.DefinePrim("/root/Body", "Xform")
-    UsdPhysics.RigidBodyAPI.Apply(body)
-    UsdPhysics.MassAPI.Apply(body)
-    UsdPhysics.MassAPI(body).GetMassAttr().Set(1.0)
-
-    # Collisions group (purpose=guide, like Pan011)
-    collisions_xform = UsdGeom.Xform.Define(stage, "/root/Body/Collisions")
-    collisions_xform.GetPrim().CreateAttribute("purpose", Sdf.ValueTypeNames.Token).Set("guide")
-
-    col1 = UsdGeom.Cube.Define(stage, "/root/Body/Collisions/Collider1")
-    col1.GetSizeAttr().Set(0.5)
-    col1.GetPurposeAttr().Set("guide")
-    UsdPhysics.CollisionAPI.Apply(col1.GetPrim())
-
-    col2 = UsdGeom.Sphere.Define(stage, "/root/Body/Collisions/Collider2")
-    col2.GetRadiusAttr().Set(0.3)
-    col2.GetPurposeAttr().Set("guide")
-    UsdPhysics.CollisionAPI.Apply(col2.GetPrim())
-
-    # Visuals group
-    UsdGeom.Xform.Define(stage, "/root/Body/Visuals")
-
-    vis1 = UsdGeom.Cube.Define(stage, "/root/Body/Visuals/Visual1")
-    vis1.GetSizeAttr().Set(1.0)
-
-    # Sites group (invisible, like Pan011)
-    sites_xform = UsdGeom.Xform.Define(stage, "/root/Body/Sites")
-    UsdGeom.Imageable(sites_xform.GetPrim()).MakeInvisible()
-
-    site_marker = UsdGeom.Cube.Define(stage, "/root/Body/Sites/site_marker")
-    site_marker.GetSizeAttr().Set(0.1)
-    site_marker.GetPurposeAttr().Set("guide")
-
-    stage.Save()
-    return usd_file
 
 
 @pytest.mark.required
@@ -1112,141 +275,46 @@ def test_humanoid_generic_joint_detection():
     assert len(spherical_joints) > 0, "No SPHERICAL joints found — generic PhysicsJoint detection failed."
 
 
-@pytest.fixture(scope="session")
-def negative_scale_rigid_usd(asset_tmp_path):
-    """Rigid body whose mesh prim uses negative xformOp:scale (reflection)."""
-    usd_file = str(asset_tmp_path / "negative_scale_rigid.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    mesh = UsdGeom.Cube.Define(stage, "/root/body")
-    mesh.GetSizeAttr().Set(1.0)
-    mesh.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.5))
-    mesh.AddScaleOp().Set(Gf.Vec3d(-1.0, -1.0, -1.0))
-    UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
-    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
-
-    stage.Save()
-    return usd_file
-
-
 @pytest.mark.required
-def test_negative_scale_reflection(negative_scale_rigid_usd):
-    usd_scene = build_usd_scene(negative_scale_rigid_usd, scale=1.0, fixed=True)
+@pytest.mark.parametrize("model_name", ["negative_scale_rigid_usd"])
+def test_negative_scale_reflection(usd_scene):
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
     assert entity.n_links == 1
     assert entity.n_geoms >= 1
+
     box_geom = next(g for g in entity.geoms if g.type == gs.GEOM_TYPE.BOX)
     assert_allclose(box_geom.data[:3], (1.0, 1.0, 1.0), tol=gs.EPS)
 
 
-@pytest.fixture(scope="session")
-def nested_collision_joint_usd(asset_tmp_path):
-    """Articulation where joints reference child collision prims under RigidBodyAPI parents."""
-    usd_file = str(asset_tmp_path / "nested_collision_joint.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    base = stage.DefinePrim("/root/base", "Xform")
-    UsdPhysics.CollisionAPI.Apply(base)
-    base_col = UsdGeom.Cube.Define(stage, "/root/base/collision")
-    base_col.GetSizeAttr().Set(1.0)
-    UsdPhysics.CollisionAPI.Apply(base_col.GetPrim())
-
-    # Parent has RigidBodyAPI; joint references child collision prim (common USD authoring pattern).
-    child = stage.DefinePrim("/root/child", "Xform")
-    UsdPhysics.RigidBodyAPI.Apply(child)
-    child_col = UsdGeom.Cube.Define(stage, "/root/child/collision")
-    child_col.GetSizeAttr().Set(0.5)
-    child_col.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.5))
-    UsdPhysics.CollisionAPI.Apply(child_col.GetPrim())
-
-    joint_prim = UsdPhysics.RevoluteJoint.Define(stage, "/root/child/revolute_joint")
-    joint_prim.CreateBody0Rel().SetTargets([base_col.GetPrim().GetPath()])
-    joint_prim.CreateBody1Rel().SetTargets([child_col.GetPrim().GetPath()])
-    joint_prim.CreateAxisAttr().Set("Z")
-    joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-
-    stage.Save()
-    return usd_file
-
-
 @pytest.mark.required
-def test_nested_collision_joint_targets(nested_collision_joint_usd):
-    usd_scene = build_usd_scene(nested_collision_joint_usd, scale=1.0, fixed=True)
+@pytest.mark.parametrize("model_name", ["nested_collision_joint_usd"])
+def test_nested_collision_joint_targets(usd_scene):
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
     assert entity.n_links == 2
     assert entity.n_joints == 1
+
     # localPos1 is in the collision-child frame; anchor must land at the child offset in link space.
     joint = entity.joints[0]
     assert_allclose(joint.pos, (0.0, 0.0, 0.5), tol=gs.EPS)
 
 
-@pytest.fixture(scope="session")
-def physics_material_usd(asset_tmp_path):
-    """Three rigid bodies covering UsdPhysicsMaterialAPI parsing: full material (frictions,
-    restitution, and density), explicitly authored zero dynamic friction, and MassAPI density with
-    no explicit mass."""
-    usd_file = str(asset_tmp_path / "physics_material.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    for name in ("material_body", "frictionless_body", "density_body"):
-        body = UsdGeom.Cube.Define(stage, f"/root/{name}")
-        body.GetSizeAttr().Set(1.0)
-        UsdPhysics.RigidBodyAPI.Apply(body.GetPrim())
-        UsdPhysics.CollisionAPI.Apply(body.GetPrim())
-
-    material = UsdShade.Material.Define(stage, "/root/PhysicsMaterial")
-    material_api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
-    material_api.CreateStaticFrictionAttr(0.8)
-    material_api.CreateDynamicFrictionAttr(0.6)
-    material_api.CreateRestitutionAttr(0.4)
-    material_api.CreateDensityAttr(300.0)
-    UsdShade.MaterialBindingAPI.Apply(stage.GetPrimAtPath("/root/material_body")).Bind(
-        material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
-    )
-
-    frictionless = UsdShade.Material.Define(stage, "/root/FrictionlessMaterial")
-    UsdPhysics.MaterialAPI.Apply(frictionless.GetPrim()).CreateDynamicFrictionAttr(0.0)
-    UsdShade.MaterialBindingAPI.Apply(stage.GetPrimAtPath("/root/frictionless_body")).Bind(
-        frictionless, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
-    )
-
-    UsdPhysics.MassAPI.Apply(stage.GetPrimAtPath("/root/density_body")).CreateDensityAttr(500.0)
-
-    stage.Save()
-    return usd_file
-
-
 @pytest.mark.required
-def test_physics_material_friction_and_density(physics_material_usd):
-    usd_scene = build_usd_scene(physics_material_usd, scale=1.0, fixed=False)
+@pytest.mark.parametrize("model_name", ["physics_material_usd"])
+def test_physics_material_friction_and_density(usd_scene, physics_material_usd):
     assert len(usd_scene.entities) == 3
     entities = {entity.links[0].name: entity for entity in usd_scene.entities}
+
     # Dynamic friction (0.6) is preferred over static (0.8); restitution (0.4) is dropped.
     assert_allclose(entities["/root/material_body"].geoms[0].friction, 0.6, tol=gs.EPS)
     # An explicitly authored dynamic_friction = 0 is honored (frictionless collider).
     assert_allclose(entities["/root/frictionless_body"].geoms[0].friction, 0.0, tol=gs.EPS)
+
     # The explicitly set entity material density (rho=1000 in build_usd_scene) overrides the authored
     # per-geom densities, as material friction does for authored frictions: unit cubes weigh 1000 kg.
-    assert_allclose(entities["/root/material_body"].get_mass(), 1000.0, tol=1e-3)
-    assert_allclose(entities["/root/density_body"].get_mass(), 1000.0, tol=1e-3)
+    assert_allclose(entities["/root/material_body"].get_mass(), 1000.0, tol=gs.EPS)
+    assert_allclose(entities["/root/density_body"].get_mass(), 1000.0, tol=gs.EPS)
 
     # Without an explicit material density, the authored physics-material density (300) and MassAPI
     # density (500) drive the link mass; recompute_inertia re-derives from geometry and authored
@@ -1260,39 +328,8 @@ def test_physics_material_friction_and_density(physics_material_usd):
     )
     scene.build()
     entities = {entity.links[0].name: entity for entity in entities}
-    assert_allclose(entities["/root/material_body"].get_mass(), 300.0, tol=1e-3)
-    assert_allclose(entities["/root/density_body"].get_mass(), 500.0, tol=1e-3)
-
-
-@pytest.fixture(scope="session")
-def density_align_usd(asset_tmp_path):
-    """Free bodies with per-geom authored densities: 'uniform_body' has two unit cubes at x=-0.5/+0.5
-    with densities 100/300, 'mixed_body' authors a density on only one of its two cubes."""
-    usd_file = str(asset_tmp_path / "density_align.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    for body_name, densities in (("uniform_body", (100.0, 300.0)), ("mixed_body", (200.0, None))):
-        body = stage.DefinePrim(f"/root/{body_name}", "Xform")
-        UsdPhysics.RigidBodyAPI.Apply(body)
-        for i_cube, (x, density) in enumerate(zip((-0.5, 0.5), densities)):
-            cube = UsdGeom.Cube.Define(stage, f"/root/{body_name}/cube_{i_cube}")
-            cube.GetSizeAttr().Set(1.0)
-            cube.AddTranslateOp().Set(Gf.Vec3d(x, 0.0, 0.0))
-            UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
-            if density is not None:
-                material = UsdShade.Material.Define(stage, f"/root/{body_name}/Material_{i_cube}")
-                UsdPhysics.MaterialAPI.Apply(material.GetPrim()).CreateDensityAttr(density)
-                UsdShade.MaterialBindingAPI.Apply(cube.GetPrim()).Bind(
-                    material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
-                )
-
-    stage.Save()
-    return usd_file
+    assert_allclose(entities["/root/material_body"].get_mass(), 300.0, tol=gs.EPS)
+    assert_allclose(entities["/root/density_body"].get_mass(), 500.0, tol=gs.EPS)
 
 
 @pytest.mark.required
@@ -1317,108 +354,61 @@ def test_align_anchor_with_geom_densities(density_align_usd):
     # Two unit cubes at x = -0.5 / +0.5 with densities 100 / 300: mass 400, center of mass at
     # x = 0.25. The aligned body frame anchors at the density-weighted center of mass, identically
     # for the rigid body and its kinematic ghost.
-    assert_allclose(body.get_mass(), 400.0, tol=1e-3)
-    assert_allclose(body.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=1e-5)
-    assert_allclose(body.base_link.inertial_pos, 0.0, tol=1e-5)
-    assert_allclose(ghost.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=1e-5)
+    assert_allclose(body.get_mass(), 400.0, tol=gs.EPS)
+    assert_allclose(body.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=gs.EPS)
+    assert_allclose(body.base_link.inertial_pos, 0.0, tol=gs.EPS)
+    assert_allclose(ghost.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=gs.EPS)
 
 
 @pytest.mark.required
-def test_align_geom_density_coverage_gate(density_align_usd):
-    # A density authored on only part of a link's geoms leaves neither an exact nor a uniformly
-    # rescalable inertial estimate: explicit align=True raises.
-    scene = gs.Scene()
-    scene.add_entity(
-        gs.morphs.USD(
-            file=density_align_usd,
-            prim_path="/root/mixed_body",
-            align=True,
-        ),
-    )
-    with pytest.raises(gs.GenesisException, match="with and without an authored density"):
-        scene.build()
-
-    # An explicitly set material density overrides the authored per-geom density, leaving a plain
-    # uniform-density body: both unit cubes weigh 1000 kg and auto-alignment proceeds.
+@pytest.mark.parametrize("align, rho", [(True, None), (None, 1000.0), (None, None)])
+def test_align_requires_all_or_none_geom_densities(density_align_usd, align, rho):
     scene = gs.Scene()
     body = scene.add_entity(
         gs.morphs.USD(
             file=density_align_usd,
             prim_path="/root/mixed_body",
+            align=align,
         ),
         material=gs.materials.Rigid(
-            rho=1000.0,
+            rho=rho,
         ),
     )
+
+    # A density authored on only part of a link's geoms leaves an inertial estimate that is neither explicit
+    # nor a uniform material-density rescale, so an explicit align=True raises.
+    if align:
+        with pytest.raises(gs.GenesisException, match="with and without an authored density"):
+            scene.build()
+        return
+
+    # An explicitly set material density overrides the authored per-geom density, leaving a plain
+    # uniform-density body for which auto-alignment proceeds; otherwise auto-alignment quietly declines
+    # and the density-less geom follows the entity material's density.
     scene.build()
-    assert_allclose(body.get_mass(), 2000.0, tol=1e-3)
-
-    # Without an explicit material density, the partially-densified body quietly declines
-    # auto-alignment and builds, the density-less geom following the entity material's density.
-    scene = gs.Scene()
-    body = scene.add_entity(
-        gs.morphs.USD(
-            file=density_align_usd,
-            prim_path="/root/mixed_body",
-        ),
-    )
-    scene.build()
-    assert not body.base_link.aligned
-
-
-@pytest.fixture(scope="session")
-def collision_approximation_usd(asset_tmp_path):
-    """Mesh colliders exercising MeshCollisionAPI approximations: boundingCube and boundingSphere on
-    a 2x1x1 box, convexHull and sdf on a concave (two disjoint boxes) mesh, none on a dense box,
-    plus a dense box with no authored approximation at all."""
-    usd_file = str(asset_tmp_path / "collision_approximation.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    box = trimesh.creation.box(extents=(2.0, 1.0, 1.0))
-    shifted_box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
-    shifted_box.apply_translation((3.0, 0.0, 0.0))
-    concave = trimesh.util.concatenate([trimesh.creation.box(extents=(1.0, 1.0, 1.0)), shifted_box])
-    dense_box = trimesh.creation.box(extents=(1.0, 1.0, 1.0)).subdivide().subdivide().subdivide()
-    for name, tmesh, approximation in (
-        ("bounding_cube_body", box, "boundingCube"),
-        ("bounding_sphere_body", box, "boundingSphere"),
-        ("convex_hull_body", concave, "convexHull"),
-        ("sdf_body", concave, "sdf"),
-        ("raw_body", dense_box, "none"),
-        ("plain_body", dense_box, None),
-    ):
-        mesh = UsdGeom.Mesh.Define(stage, f"/root/{name}")
-        mesh.GetPointsAttr().Set([Gf.Vec3f(*map(float, v)) for v in tmesh.vertices])
-        mesh.GetFaceVertexIndicesAttr().Set([int(i) for i in tmesh.faces.reshape(-1)])
-        mesh.GetFaceVertexCountsAttr().Set([3] * len(tmesh.faces))
-        UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
-        UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
-        if approximation is not None:
-            UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(approximation)
-
-    stage.Save()
-    return usd_file
+    assert body.base_link.aligned == (rho is not None)
+    if rho is not None:
+        assert_allclose(body.get_mass(), 2000.0, tol=gs.EPS)
 
 
 @pytest.mark.required
-def test_collision_approximations(collision_approximation_usd):
-    usd_scene = build_usd_scene(collision_approximation_usd, scale=1.0, fixed=True)
+@pytest.mark.parametrize("model_name", ["collision_approximation_usd"])
+def test_collision_approximations(usd_scene, collision_approximation_usd):
     assert len(usd_scene.entities) == 6
     entities = {entity.links[0].name: entity for entity in usd_scene.entities}
+
     box_geom = next(g for g in entities["/root/bounding_cube_body"].geoms if g.type == gs.GEOM_TYPE.BOX)
-    assert_allclose(box_geom.data[:3], (2.0, 1.0, 1.0), tol=1e-5)
+    assert_allclose(box_geom.data[:3], (2.0, 1.0, 1.0), tol=gs.EPS)
+
     sphere_geom = next(g for g in entities["/root/bounding_sphere_body"].geoms if g.type == gs.GEOM_TYPE.SPHERE)
     # Half the AABB diagonal of a 2x1x1 box: 0.5 * sqrt(4+1+1).
-    assert_allclose(sphere_geom.data[0], 0.5 * np.sqrt(6.0), tol=1e-3)
+    assert_allclose(sphere_geom.data[0], 0.5 * np.sqrt(6.0), tol=gs.EPS)
+
     # convexHull forces a single convex collision geom even though morph.convexify is False.
     hull_entity = entities["/root/convex_hull_body"]
     assert hull_entity.n_geoms == 1
     assert hull_entity.geoms[0].mesh.trimesh.is_convex
+
     # sdf maps to the SDF-based nonconvex mesh path: a single exact concave geom.
     sdf_entity = entities["/root/sdf_body"]
     assert sdf_entity.n_geoms == 1
@@ -1441,50 +431,9 @@ def test_collision_approximations(collision_approximation_usd):
     assert len(entities["/root/plain_body"].geoms[0].mesh.trimesh.faces) < 768
 
 
-@pytest.fixture(scope="session")
-def collision_filtering_usd(asset_tmp_path):
-    """Two rigid bodies with in-model collision filtering: one via FilteredPairsAPI between its two
-    collision cubes, one via CollisionGroups (A filters B, plus an ungrouped collider)."""
-    usd_file = str(asset_tmp_path / "collision_filtering.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    pair_body = stage.DefinePrim("/root/pair_body", "Xform")
-    UsdPhysics.RigidBodyAPI.Apply(pair_body)
-    for name, x in (("col_a", 0.0), ("col_b", 0.3)):
-        cube = UsdGeom.Cube.Define(stage, f"/root/pair_body/{name}")
-        cube.GetSizeAttr().Set(0.2)
-        cube.AddTranslateOp().Set(Gf.Vec3d(x, 0.0, 0.1))
-        UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
-    UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath("/root/pair_body/col_a")).CreateFilteredPairsRel().AddTarget(
-        "/root/pair_body/col_b"
-    )
-
-    group_body = stage.DefinePrim("/root/group_body", "Xform")
-    UsdPhysics.RigidBodyAPI.Apply(group_body)
-    UsdGeom.Xform(group_body).AddTranslateOp().Set(Gf.Vec3d(0.0, 1.0, 0.0))
-    for name, x in (("col_c", 0.0), ("col_d", 0.3), ("col_e", 0.6)):
-        cube = UsdGeom.Cube.Define(stage, f"/root/group_body/{name}")
-        cube.GetSizeAttr().Set(0.2)
-        cube.AddTranslateOp().Set(Gf.Vec3d(x, 0.0, 0.1))
-        UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
-    group_a = UsdPhysics.CollisionGroup.Define(stage, "/root/collision_groups/A")
-    group_b = UsdPhysics.CollisionGroup.Define(stage, "/root/collision_groups/B")
-    group_a.GetCollidersCollectionAPI().CreateIncludesRel().AddTarget("/root/group_body/col_c")
-    group_b.GetCollidersCollectionAPI().CreateIncludesRel().AddTarget("/root/group_body/col_d")
-    group_a.CreateFilteredGroupsRel().AddTarget("/root/collision_groups/B")
-
-    stage.Save()
-    return usd_file
-
-
 @pytest.mark.required
-def test_collision_filtering_masks(collision_filtering_usd):
-    usd_scene = build_usd_scene(collision_filtering_usd, scale=1.0, fixed=True)
+@pytest.mark.parametrize("model_name", ["collision_filtering_usd"])
+def test_collision_filtering_masks(usd_scene):
     assert len(usd_scene.entities) == 2
     entities = {entity.links[0].name: entity for entity in usd_scene.entities}
 
@@ -1524,32 +473,7 @@ def test_filtered_entity_still_collides_with_ground(collision_filtering_usd, sho
     # Both filtered bodies must be stopped by the ground plane, resting on it without penetration.
     for entity in entities:
         aabb_min, _aabb_max = tensor_to_array(entity.get_AABB())
-        assert -5e-4 < aabb_min[-1] < 1e-3
-
-
-@pytest.fixture(scope="session")
-def cross_entity_filtering_usd(asset_tmp_path):
-    """Two separate rigid bodies (split into two entities by add_stage) with a FilteredPairsAPI
-    relationship spanning them."""
-    usd_file = str(asset_tmp_path / "cross_entity_filtering.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    for name in ("body_a", "body_b"):
-        cube = UsdGeom.Cube.Define(stage, f"/root/{name}")
-        cube.GetSizeAttr().Set(0.2)
-        UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
-        UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
-    UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath("/root/body_a")).CreateFilteredPairsRel().AddTarget(
-        "/root/body_b"
-    )
-
-    stage.Save()
-    return usd_file
+        assert -5e-4 < aabb_min[-1] < 0.0
 
 
 @pytest.mark.required
@@ -1561,31 +485,6 @@ def test_cross_entity_filtering_not_applied(cross_entity_filtering_usd, caplog):
     assert len(usd_scene.entities) == 2
     geom_a, geom_b = (entity.geoms[0] for entity in usd_scene.entities)
     assert ((geom_a.contype & geom_b.conaffinity) | (geom_b.contype & geom_a.conaffinity)) != 0
-
-
-@pytest.fixture(scope="session")
-def oriented_capsule_usd(asset_tmp_path):
-    usd_file = str(asset_tmp_path / "oriented_capsule.usda")
-    stage = Usd.Stage.CreateNew(usd_file)
-    UsdGeom.SetStageUpAxis(stage, "Z")
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-
-    root_prim = stage.DefinePrim("/root", "Xform")
-    stage.SetDefaultPrim(root_prim)
-
-    body = stage.DefinePrim("/root/body", "Xform")
-    UsdPhysics.RigidBodyAPI.Apply(body)
-    UsdPhysics.MassAPI.Apply(body)
-    UsdPhysics.MassAPI(body).GetMassAttr().Set(1.0)
-
-    capsule = UsdGeom.Capsule.Define(stage, "/root/body/capsule")
-    capsule.GetRadiusAttr().Set(0.08)
-    capsule.GetHeightAttr().Set(0.4)
-    capsule.GetAxisAttr().Set("X")
-    UsdPhysics.CollisionAPI.Apply(capsule.GetPrim())
-
-    stage.Save()
-    return usd_file
 
 
 @pytest.mark.slow  # ~250s
