@@ -641,7 +641,9 @@ class BSDF(Surface):
         )
 
     def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
-        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
+        color = self.diffuse_texture
+        if (color is None or color.is_black) and self.emissive_texture is not None:
+            color = self.emissive_texture
         return _make_rgba(color, self.opacity_texture, batch)
 
     @model_validator(mode="after")

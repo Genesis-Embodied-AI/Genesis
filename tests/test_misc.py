@@ -235,6 +235,40 @@ def test_surface_shortcut_resolution():
 
 
 @pytest.mark.required
+def test_bsdf_rgba_prefers_base_color_over_emissive_texture():
+    diffuse = gs.textures.ImageTexture(image_array=np.full((4, 4, 3), (201, 166, 105), dtype=np.uint8))
+    opacity = gs.textures.ImageTexture(image_array=np.full((4, 4), 255, dtype=np.uint8))
+    emissive = gs.textures.ImageTexture(image_array=np.full((2, 2, 3), 9, dtype=np.uint8))
+
+    rgba = gs.surfaces.BSDF(
+        diffuse_texture=diffuse,
+        opacity_texture=opacity,
+        emissive_texture=emissive,
+    ).get_rgba()
+
+    assert rgba.image_array.shape == (4, 4, 4)
+    assert np.array_equal(rgba.image_array[..., :3], diffuse.image_array)
+    assert np.array_equal(rgba.image_array[..., 3], opacity.image_array)
+
+    black_diffuse = gs.textures.ImageTexture(
+        image_array=np.full((2, 2, 3), (201, 166, 105), dtype=np.uint8),
+        image_color=(0.0, 0.0, 0.0),
+    )
+    emissive_terrain = gs.textures.ImageTexture(image_array=np.full((2, 2, 3), (76, 122, 64), dtype=np.uint8))
+    rgba = gs.surfaces.BSDF(
+        diffuse_texture=black_diffuse,
+        opacity_texture=gs.textures.ImageTexture(image_array=np.full((2, 2), 255, dtype=np.uint8)),
+        emissive_texture=emissive_terrain,
+    ).get_rgba()
+
+    assert np.array_equal(rgba.image_array[..., :3], emissive_terrain.image_array)
+
+    rgba = gs.surfaces.BSDF(color=(0.0, 0.0, 0.0)).get_rgba()
+
+    assert rgba.color == (0.0, 0.0, 0.0, 1.0)
+
+
+@pytest.mark.required
 def test_fps_algorithm_core():
     # Shape, dtype, determinism, anchor-on-no-seed, and invalid n_samples all in one test.
     points = np.random.default_rng(1).random((50, 3))
