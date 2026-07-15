@@ -156,6 +156,9 @@ def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
     check_gs_textures(gs_surface1.emissive_texture, gs_surface2.emissive_texture, 0.0, material_name, "emissive")
 
 
+# ==================== Scale Tests ====================
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [(0.5, 2.0, 8.0), (2.0, 2.0, 2.0)])
 @pytest.mark.parametrize("mesh_file", ["meshes/camera/camera.glb", "meshes/axis.obj"])
@@ -293,6 +296,9 @@ def test_urdf_scale(mesh_file, tmp_path, show_viewer):
     assert_allclose(SCALE_FACTOR * mesh_1.extents, mesh_2.extents, tol=gs.EPS)
 
 
+# ==================== Y-Up Coordinate Tests ====================
+
+
 @pytest.mark.required
 def test_mesh_yup(show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
@@ -412,6 +418,9 @@ def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
     assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
 
 
+# ==================== Geometry Parsing Tests ====================
+
+
 @pytest.mark.required
 def test_urdf_mesh_processing(tmp_path, show_viewer):
     stl_file = "1707/base_link.stl"
@@ -508,6 +517,9 @@ def test_glb_draco_missing_normals_texcoord(glb_file):
         assert verts.shape[1] == 3, "Vertices should be 3D"
         assert faces.shape[0] > 0, "Mesh has no faces"
         assert faces.shape[1] == 3, "Faces should be triangles"
+
+
+# ==================== Material/Texture Parsing Tests ====================
 
 
 @pytest.mark.required
@@ -999,6 +1011,9 @@ def test_mjcf_parse_mesh_normals(normals_mjcf):
     assert_allclose(parsed.vertex_normals[parsed_order], raw.vertex_normals[raw_order], atol=1e-3)
 
 
+# ==================== Surface Reconstruction Tests ====================
+
+
 @pytest.mark.required
 def test_splashsurf_surface_reconstruction(show_viewer):
     scene = gs.Scene(
@@ -1022,6 +1037,9 @@ def test_splashsurf_surface_reconstruction(show_viewer):
     )
     scene.build()
     cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+
+
+# ==================== Mesh Processing/Caching Tests ====================
 
 
 # FIXME: This test is taking too much time on some platform (~1200s)
