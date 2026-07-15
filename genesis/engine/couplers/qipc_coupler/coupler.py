@@ -82,6 +82,25 @@ def _func_mat3_to_quat(
     return w / norm, x / norm, y / norm, z / norm
 
 
+@qd.func
+def _func_q12_to_T(t, R):
+    """Build 4x4 transform from translation vector and 3x3 rotation matrix."""
+    T = qd.Matrix.identity(gs.qd_float, 4)
+    T[:3, :3] = R
+    T[:3, 3] = t
+    return T
+
+
+@qd.func
+def _func_R_to_quat(R):
+    """3x3 rotation matrix to quaternion (w,x,y,z) via Shepperd's method."""
+    return _func_mat3_to_quat(
+        R[0, 0], R[0, 1], R[0, 2],
+        R[1, 0], R[1, 1], R[1, 2],
+        R[2, 0], R[2, 1], R[2, 2],
+    )
+
+
 @qd.kernel(fastcache=True)
 def _kernel_qipc_writeback(
     abd_q: qd.types.ndarray(),
@@ -93,57 +112,42 @@ def _kernel_qipc_writeback(
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
 ):
-    """ABD q -> pos/quat with per-link relative transform for merged bodies."""
+    """Write QIPC ABD body poses and joint theta back to Genesis link/dof state.
+
+    Fixed-joint merging maps multiple Genesis links to one ABD body. Each link
+    carries a fixed relative transform (identity for the representative, a
+    constant offset for merged members). The world pose of each link is
+    T_body @ T_relative, where T_body comes from the ABD q of the merged body.
+    """
     n_links = link_indices.shape[0]
     n_dofs = dof_indices.shape[0]
 
     for i in range(n_links):
-        body_idx = body_indices[i]
+        i_b = body_indices[i]
         link_idx = link_indices[i]
 
-        t0 = abd_q[body_idx, 0]
-        t1 = abd_q[body_idx, 1]
-        t2 = abd_q[body_idx, 2]
-        a00 = abd_q[body_idx, 3]
-        a01 = abd_q[body_idx, 4]
-        a02 = abd_q[body_idx, 5]
-        a10 = abd_q[body_idx, 6]
-        a11 = abd_q[body_idx, 7]
-        a12 = abd_q[body_idx, 8]
-        a20 = abd_q[body_idx, 9]
-        a21 = abd_q[body_idx, 10]
-        a22 = abd_q[body_idx, 11]
+        T_body = _func_q12_to_T(
+            qd.Vector([abd_q[i_b, 0], abd_q[i_b, 1], abd_q[i_b, 2]]),
+            qd.Matrix([
+                [abd_q[i_b, 3], abd_q[i_b, 4], abd_q[i_b, 5]],
+                [abd_q[i_b, 6], abd_q[i_b, 7], abd_q[i_b, 8]],
+                [abd_q[i_b, 9], abd_q[i_b, 10], abd_q[i_b, 11]],
+            ]),
+        )
 
-        rt0 = rel_transforms[i, 0]
-        rt1 = rel_transforms[i, 1]
-        rt2 = rel_transforms[i, 2]
-        rr00 = rel_transforms[i, 3]
-        rr01 = rel_transforms[i, 4]
-        rr02 = rel_transforms[i, 5]
-        rr10 = rel_transforms[i, 6]
-        rr11 = rel_transforms[i, 7]
-        rr12 = rel_transforms[i, 8]
-        rr20 = rel_transforms[i, 9]
-        rr21 = rel_transforms[i, 10]
-        rr22 = rel_transforms[i, 11]
+        T_rel = _func_q12_to_T(
+            qd.Vector([rel_transforms[i, 0], rel_transforms[i, 1], rel_transforms[i, 2]]),
+            qd.Matrix([
+                [rel_transforms[i, 3], rel_transforms[i, 4], rel_transforms[i, 5]],
+                [rel_transforms[i, 6], rel_transforms[i, 7], rel_transforms[i, 8]],
+                [rel_transforms[i, 9], rel_transforms[i, 10], rel_transforms[i, 11]],
+            ]),
+        )
 
-        # pos = A @ rel_t + t
-        links_state.pos[link_idx, 0][0] = a00 * rt0 + a01 * rt1 + a02 * rt2 + t0
-        links_state.pos[link_idx, 0][1] = a10 * rt0 + a11 * rt1 + a12 * rt2 + t1
-        links_state.pos[link_idx, 0][2] = a20 * rt0 + a21 * rt1 + a22 * rt2 + t2
+        T_link = T_body @ T_rel
 
-        # R_link = A @ rel_R
-        m00 = a00 * rr00 + a01 * rr10 + a02 * rr20
-        m01 = a00 * rr01 + a01 * rr11 + a02 * rr21
-        m02 = a00 * rr02 + a01 * rr12 + a02 * rr22
-        m10 = a10 * rr00 + a11 * rr10 + a12 * rr20
-        m11 = a10 * rr01 + a11 * rr11 + a12 * rr21
-        m12 = a10 * rr02 + a11 * rr12 + a12 * rr22
-        m20 = a20 * rr00 + a21 * rr10 + a22 * rr20
-        m21 = a20 * rr01 + a21 * rr11 + a22 * rr21
-        m22 = a20 * rr02 + a21 * rr12 + a22 * rr22
-
-        w, x, y, z = _func_mat3_to_quat(m00, m01, m02, m10, m11, m12, m20, m21, m22)
+        links_state.pos[link_idx, 0] = T_link[:3, 3]
+        w, x, y, z = _func_R_to_quat(T_link[:3, :3])
         links_state.quat[link_idx, 0][0] = w
         links_state.quat[link_idx, 0][1] = x
         links_state.quat[link_idx, 0][2] = y
@@ -185,7 +189,7 @@ class QIPCCoupler(RBC):
         """Read per-entity QIPC config from material, with hardcoded defaults."""
         mat = entity.material
         return {
-            "abd_kappa": getattr(mat, "qipc_abd_kappa", None) or 1e5,
+            "abd_kappa": getattr(mat, "qipc_abd_kappa", None) or 1e8,
             "kappa_pivot": getattr(mat, "qipc_kappa_pivot", None) or 1e8,
             "kappa_axis": getattr(mat, "qipc_kappa_axis", None) or 1e8,
             "default_kp": getattr(mat, "qipc_default_kp", None) or 100.0,
