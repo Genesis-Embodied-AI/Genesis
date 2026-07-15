@@ -583,73 +583,6 @@ def _parse_links(
     return l_infos, links_j_infos
 
 
-def _apply_density_derived_mass(
-    links: List[Usd.Prim],
-    l_infos: List[Dict],
-    links_g_infos: List[List[Dict]],
-):
-    """
-    Fill link mass/inertia from density when no explicit mass is authored.
-
-    USD lets a body specify its mass implicitly through a density (on ``MassAPI`` or the collision's
-    bound ``UsdPhysicsMaterialAPI``) rather than an explicit mass. Genesis has no per-link density
-    (``RigidMaterial.rho`` is a single per-entity scalar), so we resolve the density here and set the
-    link's explicit inertial from its collision geometry, reusing the same helpers the rigid build
-    uses. Precedence follows USD: an explicit ``MassAPI`` mass (already parsed) wins; otherwise
-    ``MassAPI`` density on the link overrides a per-geom material density. Authored center-of-mass and
-    inertia are never overwritten.
-
-    The collision g_infos are already expressed in final (scaled) units, so the composed mass/inertia
-    need no further ``morph.scale`` correction.
-    """
-    # Imported lazily to avoid a utils->engine import cycle at module load.
-    from genesis.engine.entities.rigid_entity.rigid_link import (
-        GeomInertialInfo,
-        compose_inertial_properties,
-        get_local_inertial_from_geom_info,
-    )
-
-    for link, l_info, link_g_infos in zip(links, l_infos, links_g_infos):
-        if l_info.get("inertial_mass") is not None:
-            continue  # explicit mass authored; leave it untouched
-
-        link_density = None
-        if link.HasAPI(UsdPhysics.MassAPI):
-            link_density = usd_density_to_float(UsdPhysics.MassAPI(link).GetDensityAttr().Get())
-
-        collision_g_infos = [g for g in link_g_infos if g.get("contype") or g.get("conaffinity")]
-        if not collision_g_infos:
-            continue
-
-        # Resolve a density for every collision geom (link density wins over per-geom material
-        # density). Bail out unless the whole link is covered, to avoid a partial/incorrect mass.
-        geoms_inertial_info = []
-        for g_info in collision_g_infos:
-            rho = link_density if link_density is not None else g_info.get("density")
-            if rho is None:
-                geoms_inertial_info = []
-                break
-            geoms_inertial_info.append(
-                GeomInertialInfo(
-                    get_local_inertial_from_geom_info(g_info, rho),
-                    np.asarray(g_info.get("pos", gu.zero_pos()), dtype=gs.np_float),
-                    np.asarray(g_info.get("quat", gu.identity_quat()), dtype=gs.np_float),
-                )
-            )
-        if not geoms_inertial_info:
-            continue
-
-        props = compose_inertial_properties(geoms_inertial_info)
-        if props.mass <= 0.0:
-            continue
-        l_info["inertial_mass"] = props.mass
-        # Only fill center-of-mass / inertia when not authored, to preserve any explicit values.
-        if l_info.get("inertial_pos") is None:
-            l_info["inertial_pos"] = props.com
-        if l_info.get("inertial_i") is None:
-            l_info["inertial_i"] = props.i
-
-
 def _compute_joint_prim_paths(stage: Usd.Stage, entity_prim: Usd.Prim) -> List[str] | None:
     """
     Compute joint prim paths for an entity. Joints are those that reference (body0 or body1)
@@ -786,15 +719,25 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     apply_collision_filtering(context, cg_infos)
 
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
-    # Fill link mass/inertia from density (MassAPI or physics-material) when no explicit mass is set.
-    _apply_density_derived_mass(links, l_infos, links_g_infos)
 
-    # The USD-side g_info annotations are fully consumed at this point; strip them so they do not leak
-    # into the generic entity-building pipeline (including the visual copies of collision geoms).
+    # A density authored on the link's MassAPI overrides any per-geom physics-material density (USD
+    # precedence); the per-geom densities then drive the rigid build's link inertial estimate wherever
+    # no explicit mass is authored.
+    for link, link_g_infos in zip(links, links_g_infos):
+        if not link.HasAPI(UsdPhysics.MassAPI):
+            continue
+        link_density = usd_density_to_float(UsdPhysics.MassAPI(link).GetDensityAttr().Get())
+        if link_density is None:
+            continue
+        for g_info in link_g_infos:
+            if g_info.get("contype") or g_info.get("conaffinity"):
+                g_info["density"] = link_density
+
+    # The prim paths are fully consumed at this point; strip them so they do not leak into the generic
+    # entity-building pipeline (including the visual copies of collision geoms).
     for link_g_infos in links_g_infos:
         for g_info in link_g_infos:
             g_info.pop("prim_path", None)
-            g_info.pop("density", None)
 
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils.order_links_depth_first(l_infos, links_j_infos, links_g_infos)
     eqs_info = []  # USD doesn't support equality constraints

@@ -1195,9 +1195,9 @@ def test_nested_collision_joint_targets(nested_collision_joint_usd):
 
 @pytest.fixture(scope="session")
 def physics_material_usd(asset_tmp_path):
-    """Three rigid bodies covering UsdPhysicsMaterialAPI parsing: full material (frictions and
-    restitution), explicitly authored zero dynamic friction, and MassAPI density with no explicit
-    mass."""
+    """Three rigid bodies covering UsdPhysicsMaterialAPI parsing: full material (frictions,
+    restitution, and density), explicitly authored zero dynamic friction, and MassAPI density with
+    no explicit mass."""
     usd_file = str(asset_tmp_path / "physics_material.usda")
     stage = Usd.Stage.CreateNew(usd_file)
     UsdGeom.SetStageUpAxis(stage, "Z")
@@ -1217,6 +1217,7 @@ def physics_material_usd(asset_tmp_path):
     material_api.CreateStaticFrictionAttr(0.8)
     material_api.CreateDynamicFrictionAttr(0.6)
     material_api.CreateRestitutionAttr(0.4)
+    material_api.CreateDensityAttr(300.0)
     UsdShade.MaterialBindingAPI.Apply(stage.GetPrimAtPath("/root/material_body")).Bind(
         material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
     )
@@ -1235,15 +1236,134 @@ def physics_material_usd(asset_tmp_path):
 
 @pytest.mark.required
 def test_physics_material_friction_and_density(physics_material_usd):
-    usd_scene = build_usd_scene(physics_material_usd, scale=1.0, fixed=True)
+    usd_scene = build_usd_scene(physics_material_usd, scale=1.0, fixed=False)
     assert len(usd_scene.entities) == 3
     entities = {entity.links[0].name: entity for entity in usd_scene.entities}
     # Dynamic friction (0.6) is preferred over static (0.8); restitution (0.4) is dropped.
     assert_allclose(entities["/root/material_body"].geoms[0].friction, 0.6, tol=gs.EPS)
     # An explicitly authored dynamic_friction = 0 is honored (frictionless collider).
     assert_allclose(entities["/root/frictionless_body"].geoms[0].friction, 0.0, tol=gs.EPS)
-    # Unit cube (1 m^3) at MassAPI density 500 -> 500 kg, independent of the material's default rho.
-    assert_allclose(entities["/root/density_body"].get_mass(), 500.0, tol=1e-4)
+    # The explicitly set entity material density (rho=1000 in build_usd_scene) overrides the authored
+    # per-geom densities, as material friction does for authored frictions: unit cubes weigh 1000 kg.
+    assert_allclose(entities["/root/material_body"].get_mass(), 1000.0, tol=1e-3)
+    assert_allclose(entities["/root/density_body"].get_mass(), 1000.0, tol=1e-3)
+
+    # Without an explicit material density, the authored physics-material density (300) and MassAPI
+    # density (500) drive the link mass; recompute_inertia re-derives from geometry and authored
+    # densities keep driving that estimate.
+    scene = gs.Scene()
+    entities = scene.add_stage(
+        morph=gs.morphs.USD(
+            file=physics_material_usd,
+            recompute_inertia=True,
+        ),
+    )
+    scene.build()
+    entities = {entity.links[0].name: entity for entity in entities}
+    assert_allclose(entities["/root/material_body"].get_mass(), 300.0, tol=1e-3)
+    assert_allclose(entities["/root/density_body"].get_mass(), 500.0, tol=1e-3)
+
+
+@pytest.fixture(scope="session")
+def density_align_usd(asset_tmp_path):
+    """Free bodies with per-geom authored densities: 'uniform_body' has two unit cubes at x=-0.5/+0.5
+    with densities 100/300, 'mixed_body' authors a density on only one of its two cubes."""
+    usd_file = str(asset_tmp_path / "density_align.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    for body_name, densities in (("uniform_body", (100.0, 300.0)), ("mixed_body", (200.0, None))):
+        body = stage.DefinePrim(f"/root/{body_name}", "Xform")
+        UsdPhysics.RigidBodyAPI.Apply(body)
+        for i_cube, (x, density) in enumerate(zip((-0.5, 0.5), densities)):
+            cube = UsdGeom.Cube.Define(stage, f"/root/{body_name}/cube_{i_cube}")
+            cube.GetSizeAttr().Set(1.0)
+            cube.AddTranslateOp().Set(Gf.Vec3d(x, 0.0, 0.0))
+            UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+            if density is not None:
+                material = UsdShade.Material.Define(stage, f"/root/{body_name}/Material_{i_cube}")
+                UsdPhysics.MaterialAPI.Apply(material.GetPrim()).CreateDensityAttr(density)
+                UsdShade.MaterialBindingAPI.Apply(cube.GetPrim()).Bind(
+                    material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics"
+                )
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_align_anchor_with_geom_densities(density_align_usd):
+    scene = gs.Scene()
+    body = scene.add_entity(
+        gs.morphs.USD(
+            file=density_align_usd,
+            prim_path="/root/uniform_body",
+            align=True,
+        ),
+    )
+    ghost = scene.add_entity(
+        gs.morphs.USD(
+            file=density_align_usd,
+            prim_path="/root/uniform_body",
+            align=True,
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    scene.build()
+    # Two unit cubes at x = -0.5 / +0.5 with densities 100 / 300: mass 400, center of mass at
+    # x = 0.25. The aligned body frame anchors at the density-weighted center of mass, identically
+    # for the rigid body and its kinematic ghost.
+    assert_allclose(body.get_mass(), 400.0, tol=1e-3)
+    assert_allclose(body.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=1e-5)
+    assert_allclose(body.base_link.inertial_pos, 0.0, tol=1e-5)
+    assert_allclose(ghost.base_link.get_pos(relative=False), (0.25, 0.0, 0.0), tol=1e-5)
+
+
+@pytest.mark.required
+def test_align_geom_density_coverage_gate(density_align_usd):
+    # A density authored on only part of a link's geoms leaves neither an exact nor a uniformly
+    # rescalable inertial estimate: explicit align=True raises.
+    scene = gs.Scene()
+    scene.add_entity(
+        gs.morphs.USD(
+            file=density_align_usd,
+            prim_path="/root/mixed_body",
+            align=True,
+        ),
+    )
+    with pytest.raises(gs.GenesisException, match="with and without an authored density"):
+        scene.build()
+
+    # An explicitly set material density overrides the authored per-geom density, leaving a plain
+    # uniform-density body: both unit cubes weigh 1000 kg and auto-alignment proceeds.
+    scene = gs.Scene()
+    body = scene.add_entity(
+        gs.morphs.USD(
+            file=density_align_usd,
+            prim_path="/root/mixed_body",
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    scene.build()
+    assert_allclose(body.get_mass(), 2000.0, tol=1e-3)
+
+    # Without an explicit material density, the partially-densified body quietly declines
+    # auto-alignment and builds, the density-less geom following the entity material's density.
+    scene = gs.Scene()
+    body = scene.add_entity(
+        gs.morphs.USD(
+            file=density_align_usd,
+            prim_path="/root/mixed_body",
+        ),
+    )
+    scene.build()
+    assert not body.base_link.aligned
 
 
 @pytest.fixture(scope="session")

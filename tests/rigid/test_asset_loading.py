@@ -911,7 +911,7 @@ def test_align_mixed_mass_raises():
             ),
             material=material,
         )
-        with pytest.raises(gs.GenesisException, match="mixes user-specified and geometry-estimated"):
+        with pytest.raises(gs.GenesisException, match="geometry-estimated link masses"):
             scene.build()
 
 
