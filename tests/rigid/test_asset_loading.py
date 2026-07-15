@@ -360,7 +360,7 @@ def test_urdf_parsing_merge_fixed_links(urdf_path, fixed, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_freejoint_offset"])
 def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
-    """Test that get_pos reflects set_qpos for MJCF robots with freejoint and non-zero initial body position."""
+    # get_pos must reflect set_qpos for MJCF robots with a freejoint and a non-zero initial body position.
     POS = (1.0, 2.0, 3.0)
     QUAT = (0.0, 1.0, 0.0, 0.0)
 
@@ -982,7 +982,6 @@ def test_multi_root_offset(show_viewer, tol):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_xacro_loading(xacro_robot, show_viewer, tol):
-    """Test that .urdf.xacro files are preprocessed and loaded with correct structure and properties."""
     scene = gs.Scene(show_viewer=show_viewer)
 
     # Load with default args (mass=1.0, length=0.4)

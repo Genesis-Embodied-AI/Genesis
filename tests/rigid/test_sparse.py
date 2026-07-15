@@ -9,7 +9,7 @@ from ..utils import assert_allclose
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sparse_noslip_resting_stability(show_viewer):
+def test_noslip_resting_stability(show_viewer):
     TABLE_Z = 0.762
 
     scene = gs.Scene(

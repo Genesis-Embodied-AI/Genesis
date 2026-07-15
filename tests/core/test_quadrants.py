@@ -366,12 +366,8 @@ def test_ndarray_no_compile(
 
 @pytest.mark.parametrize("n_dofs", [32, 62, 64, 92])
 def test_linear_to_lower_tri(n_dofs):
-    """Verify that the sqrt-based triangular index formula produces correct results.
-
-    Metal's GPU sqrt can return slightly-below-exact results for perfect squares
-    (e.g. sqrt(11881) -> ~108.999 instead of 109), which broke the original
-    formula. The post-correction in linear_to_lower_tri fixes this.
-    """
+    # Metal's GPU sqrt can return slightly-below-exact results for perfect squares, so the sqrt-based
+    # triangular index formula must guard against off-by-one row selection.
     import quadrants as qd
     from genesis.engine.solvers.rigid.constraint.solver import linear_to_lower_tri
 

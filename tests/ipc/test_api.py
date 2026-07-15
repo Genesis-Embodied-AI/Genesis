@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 @pytest.mark.required
 def test_needs_coup():
-    """needs_coup=False excludes entity from IPC."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
@@ -37,7 +36,6 @@ def test_needs_coup():
 
 @pytest.mark.required
 def test_link_filter_strict():
-    """Verify that IPC link filter controls which links are actually added to IPC."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,
@@ -80,7 +78,6 @@ def test_link_filter_strict():
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 @pytest.mark.parametrize("merge_fixed_links", [True, False])
 def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
-    """Test that find_target_link_for_fixed_merge correctly groups ABD bodies."""
     from genesis.engine.couplers.ipc_coupler.utils import find_target_link_for_fixed_merge
 
     scene = gs.Scene(
@@ -142,7 +139,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 @pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
 @pytest.mark.parametrize("coup_type", ["ipc_only", "two_way_soft_constraint"])
 def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contact):
-    """Verify collision pair delegation between IPC and rigid solver based on coup_type and ground contact."""
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=True,
@@ -255,7 +251,6 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
 
 @pytest.mark.required
 def test_coup_collision_links():
-    """Verify that coup_collision_links positive filter correctly limits IPC collision to named links."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,

@@ -435,15 +435,8 @@ class AnalyticalVsGJKSceneCreator:
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
-    """
-    Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
-    Tests multiple configurations with a single scene build (moving objects between tests).
-
-    Two-phase approach to avoid kernel caching interference:
-    1. Run ALL analytical scenarios first (original kernel)
-    2. Apply monkey-patch (replaces the @qd.kernel with a new object from a tmp file)
-    3. Run ALL GJK scenarios (patched kernel with its own empty cache)
-    """
+    # Compare the analytical capsule-capsule narrowphase against GJK by monkey-patching the collider;
+    # multiple configurations reuse a single scene build by moving the objects between checks.
     test_cases = [
         # (pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal)
         # Segments cross at origin (distance=0), pen = sum of radii, normal is degenerate
@@ -570,9 +563,6 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: float):
-    """
-    Test that analytical capsule-capsule gives exact results for simple cases.
-    """
     # Simple test case: two vertical capsules offset horizontally
     # Capsule 1: center at origin, radius=0.1, half_length=0.25
     # Capsule 2: center at (0.15, 0, 0), same size
@@ -656,19 +646,8 @@ def scene_add_box(tmp_path: Path, scene: gs.Scene, size) -> "RigidEntity":
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
-    """
-    Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
-    Tests multiple configurations with a single scene build (moving objects between tests).
-
-    Two-phase approach to avoid kernel caching interference:
-    1. Run ALL analytical scenarios first (original kernel)
-    2. Apply monkey-patch (replaces the @qd.kernel with a new object from a tmp file)
-    3. Run ALL GJK scenarios (patched kernel with its own empty cache)
-
-    Note that these can be visualized, for verification purposes, using the script at:
-    https://github.com/Genesis-Embodied-AI/perso_hugh/blob/main/genesis/visualize_sphere_capsule.py
-    (note: only accessible internally)
-    """
+    # Compare the analytical sphere-capsule narrowphase against GJK by monkey-patching the collider;
+    # multiple configurations reuse a single scene build by moving the objects between checks.
     test_cases = [
         # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal)
         # Sphere above top cap: dist to segment endpoint (0,0,0.25) = 0.15, pen = 0.05
@@ -931,15 +910,8 @@ def test_sphere_box_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bo
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
-    """
-    Regression test for sphere-sphere GJK collision detection.
-
-    Smooth geometries like spheres produce extremely small polytope faces near EPA convergence,
-    which amplifies the relative reprojection error and causes false contact rejections.
-    The diagonal_3d case (pos_b=(0.08, 0.06, 0.06)) is the original bug report configuration.
-
-    Uses asymmetric radii (r_a=0.10, r_b=0.08, combined_r=0.18) for all cases.
-    """
+    # Smooth geometries like spheres produce extremely small polytope faces near EPA convergence, which
+    # amplifies the relative reprojection error the tolerances must absorb.
     test_cases = [
         # (pos_b, should_collide, description, exp_pen, exp_normal)
         # Original bug report: diagonal offset, dist ≈ 0.1166, pen ≈ 0.0634

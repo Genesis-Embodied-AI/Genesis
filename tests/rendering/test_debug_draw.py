@@ -98,7 +98,6 @@ def test_draw_debug(renderer, show_viewer):
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
-    """Test that sensor debug drawing works correctly and renders visible debug elements."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.2, 1.2, 1.2),
@@ -214,7 +213,6 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_snapshot):
-    """Test that draw_debug_frustum and draw_debug_trajectory render visible content in the viewer."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),

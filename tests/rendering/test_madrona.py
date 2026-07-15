@@ -75,19 +75,19 @@ def _test_madrona_scene(
 @pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
-def test_madrona_lights(show_viewer, renderer, png_snapshot):
+def test_lights(show_viewer, renderer, png_snapshot):
     _test_madrona_scene(show_viewer, renderer, png_snapshot, use_directional_light=True)
 
 
 @pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
-def test_madrona_batch_texture(show_viewer, renderer, png_snapshot):
+def test_batch_texture(show_viewer, renderer, png_snapshot):
     _test_madrona_scene(show_viewer, renderer, png_snapshot, use_batch_texture=True, n_envs=3)
 
 
 @pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
-def test_madrona_fisheye_camera(show_viewer, renderer, png_snapshot):
+def test_fisheye_camera(show_viewer, renderer, png_snapshot):
     _test_madrona_scene(show_viewer, renderer, png_snapshot, use_fisheye_camera=True)

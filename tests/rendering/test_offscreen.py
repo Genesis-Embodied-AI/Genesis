@@ -693,7 +693,6 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
 @pytest.mark.parametrize("segmentation_level", ["entity", "link", "geom"])
 @pytest.mark.parametrize("particle_mode", ["visual", "particle"])
 def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
-    """Test segmentation rendering."""
     scene = gs.Scene(
         fem_options=gs.options.FEMOptions(
             use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
@@ -960,7 +959,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_offscreen_context_isolation(renderer_type):
+def test_context_isolation(renderer_type):
     # Each offscreen scene owns a separate GL context, but the platform's current-context state is process/thread
     # global. Tearing down one scene's renderer while another is mid-render - which happens under cyclic GC, or
     # when the render thread deletes a retired renderer - must leave the rendering scene's context untouched. Force
@@ -1011,7 +1010,7 @@ def test_offscreen_context_isolation(renderer_type):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_render_offscreen_oversized_resolution(renderer):
+def test_render_oversized_resolution(renderer):
     # Verify that ``render_offscreen`` honors the user-requested viewport size even when it exceeds the available
     # display area, by requesting a viewer larger than GitHub-hosted Apple M1 macos-15 runners can actually allocate
     # and checking the returned image dimensions still match the request.
@@ -1122,10 +1121,6 @@ def test_camera_follow_entity(n_envs, renderer, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_camera_gimbal_lock_singularity(renderer, show_viewer):
-    """
-    Test that camera maintains continuous orientation when moving through singularity conditions.
-    """
-
     # Minimal scene
     scene = gs.Scene(
         renderer=renderer,

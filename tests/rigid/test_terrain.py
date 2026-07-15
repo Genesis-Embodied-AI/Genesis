@@ -146,7 +146,7 @@ def test_multicontact_sphere_vs_terrain(show_viewer, tol):
     ],
 )
 @pytest.mark.parametrize("is_named", [True, False])
-def test_terrain_generation(is_named, show_viewer, tol):
+def test_generation(is_named, show_viewer, tol):
     TERRAIN_PATTERN = [
         ["flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain", "flat_terrain"],
         ["flat_terrain", "fractal_terrain", "random_uniform_terrain", "sloped_terrain", "flat_terrain"],
@@ -230,7 +230,7 @@ def test_terrain_generation(is_named, show_viewer, tol):
 
 
 @pytest.mark.required
-def test_terrain_discrete_obstacles():
+def test_discrete_obstacles():
     scene = gs.Scene()
     terrain = scene.add_entity(
         gs.morphs.Terrain(

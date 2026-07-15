@@ -360,7 +360,6 @@ def test_fps_tracker():
 
 @pytest.mark.required
 def test_compose_inertial_properties():
-    """Test composition of inertial properties combining multiple effects."""
     mass1, com1 = 1.0, np.array([1.0, 0.0, 0.0])
     inertia1 = np.array([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 
@@ -412,7 +411,6 @@ def test_slerp(batch_shape, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("side", ["right", "left"])
 def test_polar_decomposition(side, tol):
-    """Test polar decomposition for numpy inputs with scipy validation."""
     # Generate random matrices (not necessarily square)
     M, N = 3, 3
     np_A = np.random.randn(M, N).astype(gs.np_float)
@@ -448,7 +446,6 @@ def test_polar_decomposition(side, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("is_pure", [False, True])
 def test_polar_pure_rotation(is_pure, tol):
-    """Test that pure_rotation parameter ensures det(U) = 1 for square matrices."""
     M, N = 3, 3  # Square matrices only
 
     # Create a matrix that will have det(U) = -1 by using a reflection
@@ -472,7 +469,6 @@ def test_polar_pure_rotation(is_pure, tol):
 @pytest.mark.parametrize("side", ["right", "left"])
 @pytest.mark.parametrize("batch_shape", [(5,), (3, 4), (2, 3, 4)])
 def test_polar_decomposition_batched_numpy(side, batch_shape, tol):
-    """Test batched polar decomposition for numpy inputs."""
     M, N = 3, 3
     np_A = np.random.randn(*batch_shape, M, N).astype(gs.np_float)
 
@@ -499,12 +495,6 @@ def test_polar_decomposition_batched_numpy(side, batch_shape, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("side", ["right", "left"])
 def test_polar_decomposition_batched_pure_rotation(side, tol):
-    """Test batched polar decomposition with pure_rotation parameter.
-
-    Note: This test verifies that batched polar decomposition works with pure_rotation=True.
-    The reconstruction accuracy is verified, though the pure_rotation fix for batched arrays
-    may have limitations. The single-matrix pure_rotation test validates that functionality.
-    """
     batch_shape = (5,)
     M, N = 3, 3
     np_A = np.random.randn(*batch_shape, M, N).astype(gs.np_float)

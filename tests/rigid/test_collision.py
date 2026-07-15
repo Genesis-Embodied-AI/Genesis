@@ -1100,7 +1100,7 @@ def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, err
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_collision_edge_cases(gs_sim, mode):
+def test_edge_cases(gs_sim, mode):
     qpos_0 = gs_sim.rigid_solver.get_dofs_position()
     for _ in range(200):
         gs_sim.scene.step()
@@ -1115,7 +1115,7 @@ def test_collision_edge_cases(gs_sim, mode):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_collision_plane_convex(show_viewer, tol):
+def test_plane_convex(show_viewer, tol):
     for morph in (
         gs.morphs.Plane(),
         gs.morphs.Box(

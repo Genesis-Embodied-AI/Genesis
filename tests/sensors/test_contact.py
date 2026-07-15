@@ -10,8 +10,7 @@ from ..utils import assert_allclose
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
-    """Test if the sensor will detect the correct forces being applied on a falling box."""
+def test_gravity_force(n_envs, show_viewer, tol):
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
     NOISE = 0.01
@@ -172,8 +171,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_contact_sensor_filter_link_idx(show_viewer):
-    """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
+def test_filter_link_idx(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -10.0),

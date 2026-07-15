@@ -13,7 +13,7 @@ from ..utils import (
 
 
 @pytest.mark.required
-def test_heterogeneous_physics_parity(show_viewer, tol):
+def test_physics_parity(show_viewer, tol):
     # Uses the fixed-child mesh objects from 'test_convexify' (offset center of mass, distinct mass) so the per-env
     # parity check exercises the inertia alignment, not just trivially-symmetric primitives.
     N_STEPS = 100
@@ -85,8 +85,7 @@ def test_heterogeneous_physics_parity(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_heterogeneous_invalid_material_raises():
-    """Test that heterogeneous morphs with unsupported material raises an exception."""
+def test_invalid_material_raises():
     scene = gs.Scene(
         show_viewer=False,
     )
@@ -106,7 +105,7 @@ def test_heterogeneous_invalid_material_raises():
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_heterogeneous_morph_property_raises():
+def test_morph_property_raises():
     scene = gs.Scene(show_viewer=False)
 
     single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
@@ -140,16 +139,8 @@ def test_heterogeneous_morph_property_raises():
 
 
 @pytest.mark.required
-def test_heterogeneous_fewer_envs_than_variants():
-    """Test that having fewer environments than variants works correctly.
-
-    Variant Assignment Rule (when n_envs < n_het):
-        Environment i gets variant i (0-indexed). Variants beyond n_envs are unused.
-        For example, with 4 variants and 2 environments:
-        - Environment 0 -> Variant 0 (first morph in list)
-        - Environment 1 -> Variant 1 (second morph in list)
-        - Variants 2 and 3 are unused
-    """
+def test_fewer_envs_than_variants():
+    # With n_envs < n_variants, environment i gets variant i and the variants beyond n_envs stay unused.
     scene = gs.Scene(
         show_viewer=False,
     )
@@ -176,8 +167,7 @@ def test_heterogeneous_fewer_envs_than_variants():
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_heterogeneous_aabb(tol):
-    """Test that get_AABB and get_vAABB work correctly with heterogeneous simulation."""
+def test_aabb(tol):
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
@@ -235,7 +225,6 @@ def test_heterogeneous_aabb(tol):
 @pytest.mark.slow  # ~250s
 @pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
 def test_pick_heterogenous_objects(show_viewer):
-    """Test heterogeneous simulation: CoM at rest, lifting, and gripper width differ per variant."""
     scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
@@ -324,8 +313,7 @@ def test_pick_heterogenous_objects(show_viewer):
 
 
 @pytest.mark.required
-def test_heterogeneous_articulated_structure_mismatch():
-    """Test that mismatched joint structure raises an exception."""
+def test_articulated_structure_mismatch():
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 

@@ -14,7 +14,6 @@ from ..utils import assert_allclose, assert_equal
 
 @pytest.mark.required
 def test_lazy_sensor_discovery(show_viewer, tmp_path):
-    """Test that add_sensor auto-discovers sensor classes from the options class's sibling modules."""
     from genesis.engine.sensors.camera import RasterizerCameraSensor
     from genesis.engine.sensors.contact_force import ContactSensor
     from genesis.engine.sensors.depth_camera import DepthCameraSensor
@@ -417,7 +416,6 @@ def test_pipeline_contract_uint8_delay(tol):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_add_and_read_all_registered_sensors():
-    """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
     from genesis.engine.sensors.sensor_manager import SensorManager
 
     scene = gs.Scene(
@@ -478,7 +476,7 @@ def test_add_and_read_all_registered_sensors():
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
-    """history_length stacks recent frames from ring snapshot buffers (Contact + IMU)."""
+    # history_length stacks recent frames from the ring snapshot buffers.
     GRAVITY = -10.0
     DT = 1e-2
     HISTORY_LEN = 4

@@ -16,7 +16,6 @@ def pbd_material():
 
 @pytest.mark.required
 def test_maxvolume(pbd_material, show_viewer, box_obj_path):
-    """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
         pbd_options=gs.options.PBDOptions(
             particle_size=0.1,
@@ -155,7 +154,6 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_get_mass(n_envs, show_viewer, tol):
-    """Test that ParticleEntity.get_mass() returns a positive mass for each environment."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=4e-3,
@@ -182,8 +180,6 @@ def test_get_mass(n_envs, show_viewer, tol):
 
 @pytest.mark.required
 def test_cloth_attach_rigid_link(show_viewer):
-    """Attach 8 cloth particles to a cube with initial velocity, batched (n_envs=2), verify attachment constraints."""
-
     particle_size = 0.01
     box_height = 2.25
 

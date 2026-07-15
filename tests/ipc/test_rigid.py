@@ -128,7 +128,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
 
 
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_rigid_ground_sliding(n_envs, show_viewer):
+def test_ground_sliding(n_envs, show_viewer):
     GRAVITY = np.array([5.0, 0.0, -10.0], dtype=gs.np_float)
 
     scene = gs.Scene(
@@ -194,7 +194,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
+def test_ground_clearance(n_envs, show_viewer):
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
 
     scene = gs.Scene(

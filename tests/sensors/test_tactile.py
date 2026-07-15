@@ -131,7 +131,6 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
-    """Test ContactProbe, ContactDepthProbe, and KinematicTaxel on a box resting on ground with sphere on top."""
     BOX_SIZE = 0.5
     PROBE_RADIUS = 0.05
     PENETRATION = 0.02
@@ -765,7 +764,6 @@ def test_proximity_taxel_crosstalk(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
-    """ElastomerTaxel should separate dilation and shear on a dome-like sensor surface."""
     SPHERE_RADIUS = 0.2
     PROBE_RADIUS = 0.02
     PENETRATION = 0.01
@@ -889,7 +887,6 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
-    """ElastomerTaxel grid and flat probe layouts should agree on the same flat pad."""
     SPHERE_RADIUS = 0.1
     BOX_SIZE = 0.1
     PENETRATION = 0.01
@@ -1113,7 +1110,7 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_tactile_filler_probes_radius_zero(show_viewer, tol, n_envs):
+def test_filler_probes_radius_zero(show_viewer, tol, n_envs):
     # probe_radius == 0 marks inactive filler probes on ElastomerTaxel / KinematicTaxel: they read 0 and are
     # excluded from dilation / force, letting an irregular taxel set be padded into a regular grid for FFT.
     SPHERE_RADIUS = 0.1
@@ -1240,7 +1237,6 @@ def test_tactile_filler_probes_radius_zero(show_viewer, tol, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
-    """ProximityTaxel reports a nonzero point-cloud force in contact and near-zero force in air."""
     BOX_SIZE = 0.2
     PENETRATION = 0.01
     GAIN = 1.5
@@ -1317,8 +1313,7 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
 
 
 @pytest.mark.required
-def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
-    """Heterogeneous active-env masks should keep tactile readings variant-specific."""
+def test_heterogeneous_object(show_viewer, tol):
     PAD_SIZE = (0.4, 0.4, 0.1)
     PAD_TOP_Z = PAD_SIZE[2]
     OBJECT_Z_SIZE = 0.16
@@ -1446,7 +1441,7 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_tactile_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
+def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
     # SDF and raycast contact-depth backends should agree on a face-on contact across the probe sensors. The backend
     # is class-wide (all sensors of a class share one mode), so each mode is built in its own scene and compared.
     PAD_SIZE = (0.2, 0.2, 0.05)

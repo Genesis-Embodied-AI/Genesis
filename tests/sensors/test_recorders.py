@@ -77,7 +77,6 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
 
 @pytest.mark.required
 def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
-    """Test if the plotter recorders works."""
     DT = 0.01
     STEPS = 10
     HISTORY_LENGTH = 5
@@ -148,7 +147,6 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
 
 @pytest.mark.required
 def test_file_writers(tmp_path):
-    """Test if the file writer recorders works."""
     STEPS = 10
 
     scene = gs.Scene(
@@ -203,7 +201,6 @@ def test_file_writers(tmp_path):
 
 @pytest.mark.required
 def test_video_writer(tmp_path):
-    """Test if the VideoFileWriter works with camera rendering."""
     STEPS = 10
 
     scene = gs.Scene(

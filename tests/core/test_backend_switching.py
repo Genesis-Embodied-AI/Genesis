@@ -29,11 +29,8 @@ MODULE = ".".join((FILE_PATH.parents[1].name, FILE_PATH.parent.name, FILE_PATH.s
     ids=["ndarray-field-ndarray", "field-ndarray-field"],
 )
 def test_backend_switching(backend, order):
-    """Three consecutive init/destroy cycles switching between backends.
-
-    Each cycle builds a rigid-body scene (box on plane, 10 steps) and verifies
-    that _tensor_backend() and V/V_VEC resolve the correct backend.
-    """
+    # Each cycle rebuilds a box-on-plane scene and verifies the quadrants type wrappers re-resolve for the
+    # newly selected backend.
     for cycle_idx, use_nd in enumerate(order):
         old_val = os.environ.get("GS_ENABLE_NDARRAY")
         os.environ["GS_ENABLE_NDARRAY"] = "1" if use_nd else "0"
@@ -75,9 +72,8 @@ def test_backend_switching(backend, order):
 
 @pytest.mark.parametrize("backend", [None])
 def test_set_gravity_accepts_field_and_tensor():
-    """set_gravity uses ``gravity: qd.Tensor`` annotation which must accept both a raw qd.field() (subclass solvers
-    like MPM) and a qd.Tensor wrapper (base_solver / rigid solver).
-    """
+    # The 'gravity: qd.Tensor' annotation must accept both a raw qd.field() (subclass solvers like MPM) and
+    # a qd.Tensor wrapper (base_solver / rigid solver).
     os.environ["GS_ENABLE_NDARRAY"] = "0"
     try:
         gs.init(backend=gs.cpu, seed=0)
@@ -142,7 +138,6 @@ def _basic_sim_child(args: list[str]):
 @pytest.mark.parametrize("test_backend", ["cpu"])
 @pytest.mark.parametrize("use_ndarray", [False, True])
 def test_basic_sim_subprocess(test_backend: str, use_ndarray: bool):
-    """Run a basic simulation in a fresh subprocess to verify genesis import + init works cleanly."""
     cmd_line = [
         sys.executable,
         "-m",

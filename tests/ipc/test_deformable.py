@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 @pytest.mark.required
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_fem(coup_type, show_viewer):
-    """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
     BOX_POS = (0.65, 0.0, 0.03)
@@ -172,11 +171,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_cloth_corner_drag(n_envs, show_viewer):
-    """Drag a cloth by one corner under gravity using a sandwich grip of two boxes.
-
-    Verify that FEM vertices near the gripped corner follow the imposed trajectory,
-    while the rest of the cloth hangs freely under gravity.
-    """
     DT = 0.01
     CLOTH_HALF = 0.5
     BOX_SIZE = 0.05
@@ -280,7 +274,6 @@ def test_cloth_corner_drag(n_envs, show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("E, nu, strech_scale", [(1e4, 0.3, 1.0), (5e4, 0.49, 0.3)])
 def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_viewer):
-    """Stretch a square cloth uniformly via position-controlled boxes at corners. Verify stretch physics."""
     CLOTH_HALF = 0.5
     BOX_SIZE = 0.05
     GAP = 0.005

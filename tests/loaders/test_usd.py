@@ -511,7 +511,6 @@ def all_primitives_usd(asset_tmp_path, all_primitives_mjcf: ET.ElementTree):
 @pytest.mark.parametrize("model_name", ["all_primitives_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
 def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
-    """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
     usd_scene = build_usd_scene(all_primitives_usd, scale=scale)
     compare_scene(mjcf_scene, usd_scene, tol=tol)
@@ -795,13 +794,6 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
     "all_joints_usd", [True, False], indirect=True, ids=["with_articulation_root", "without_articulation_root"]
 )
 def test_joints_mjcf_vs_usd(xml_path, all_joints_usd, scale, tol):
-    """
-    Test that MJCF and USD scenes with all joint types (prismatic, revolute, spherical, fixed, free)
-    produce equivalent Genesis entities.
-
-    This test verifies that all five joint types are correctly parsed from both
-    MJCF and USD formats and produce equivalent results, with and without ArticulationRootAPI.
-    """
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
     usd_scene = build_usd_scene(all_joints_usd, scale=scale)
 
@@ -811,7 +803,7 @@ def test_joints_mjcf_vs_usd(xml_path, all_joints_usd, scale, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
-def test_usd_visual_parse(model_name, tol):
+def test_visual_parse(model_name, tol):
     glb_asset_path = get_hf_dataset(pattern=f"{model_name}.glb")
     glb_file = os.path.join(glb_asset_path, f"{model_name}.glb")
     usd_asset_path = get_hf_dataset(pattern=f"{model_name}.usdz")
@@ -825,7 +817,7 @@ def test_usd_visual_parse(model_name, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
-def test_usd_parse_nodegraph(usd_file):
+def test_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
     usd_file = os.path.join(asset_path, usd_file)
 
@@ -846,7 +838,7 @@ def test_usd_parse_nodegraph(usd_file):
 )
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason=SKIP_NO_OMNIVERSE_KIT)
-def test_usd_bake(usd_file, tmp_path):
+def test_bake(usd_file, tmp_path):
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir=tmp_path)
     usd_fullpath = os.path.join(asset_path, usd_file)
 
@@ -870,19 +862,8 @@ def test_usd_bake(usd_file, tmp_path):
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [1.0, 2.0])
 def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
-    """
-    Test that USD MassAPI with invalid default values produces equivalent results to MJCF.
-
-    USD Physics MassAPI defines some attributes with invalid default values:
-    - centerOfMass: default (-inf, -inf, -inf) - invalid, should be recomputed
-    - principalAxes: default (0, 0, 0, 0) - invalid quaternion, should be recomputed
-    - diagonalInertia: default (0, 0, 0) - valid but means ignored, should be recomputed
-    - mass: default 0 - valid but means ignored, should be recomputed
-
-    This test creates equivalent MJCF and USD scenes where mass properties are computed
-    from geometry (MJCF has no inertial element, USD has MassAPI with invalid defaults).
-    Both should produce equivalent results.
-    """
+    # USD Physics MassAPI defines some attributes with sentinel 'invalid' default values (e.g. centerOfMass)
+    # that must be treated as unset rather than taken literally.
     mjcf = ET.Element("mujoco", model="massapi_test")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
@@ -939,9 +920,7 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
 
 @pytest.mark.required
 def test_uv_size_mismatch_no_crash(asset_tmp_path):
-    """
-    Test that a USD mesh with mismatched UV size does not crash the parser for consistency with Nvidia omniverse.
-    """
+    # Nvidia Omniverse tolerates USD meshes with mismatched UV sizes, so the parser must too.
     usd_file = str(asset_tmp_path / "uv_mismatch.usda")
 
     stage = Usd.Stage.CreateNew(usd_file)
@@ -998,7 +977,6 @@ def pure_rigid_usd(asset_tmp_path):
 @pytest.mark.required
 @pytest.mark.parametrize("fixed", [False, True])
 def test_pure_rigid_body_fixed(pure_rigid_usd, fixed):
-    """Pure rigid body USD: fixed=False → 6 DOFs (FREE), fixed=True → 0 DOFs (FIXED)."""
     usd_scene = build_usd_scene(pure_rigid_usd, scale=1.0, fixed=fixed)
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
@@ -1095,7 +1073,6 @@ def visual_collision_usd(asset_tmp_path):
 
 @pytest.mark.required
 def test_visual_collision_parsing(visual_collision_usd):
-    """Collision geoms (purpose=guide) are parsed as collision; visual geoms as visual; invisible sites are excluded."""
     usd_scene = build_usd_scene(visual_collision_usd, scale=1.0, fixed=True)
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]

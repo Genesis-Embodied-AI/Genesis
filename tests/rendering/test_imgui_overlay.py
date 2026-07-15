@@ -21,7 +21,7 @@ except ImportError:
 
 
 @pytest.mark.required
-def test_imgui_overlay_capture_pending_entities_preserves_heterogeneous_morphs():
+def test_capture_pending_entities_preserves_heterogeneous_morphs():
     scene = gs.Scene(show_viewer=False)
     single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
     single_entity = scene.add_entity(

@@ -12,8 +12,7 @@ from ..utils import assert_allclose, assert_equal
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_raycaster_hits(show_viewer, n_envs):
-    """Test if the Raycaster sensor with GridPattern rays pointing to ground returns the correct distance."""
+def test_hits(show_viewer, n_envs):
     NUM_RAYS_XY = (3, 5)
     SPHERE_POS = (2.5, 0.5, 1.0)
     BOX_SIZE = 0.05
@@ -189,7 +188,7 @@ def test_raycaster_hits(show_viewer, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("kin_raycastable", [True, False])
-def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):
+def test_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):
     # Two depth cameras, one per entity:
     #   - cam_kin -> KinematicEntity sphere. When use_visual_raycasting=True the depth camera reads the entity's
     #     visual mesh (including set_vverts overrides, which survive step() until set_vverts(None) hands control
@@ -324,7 +323,6 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable
 
 @pytest.mark.required
 def test_lidar_bvh_parallel_env(show_viewer, tol):
-    """Verify each environment receives a different lidar distance when geometries differ."""
     SHARED_OBSTACLE_1_X = 1.2
     SHARED_OBSTACLE_2_X = 1.3
     scene = gs.Scene(
@@ -474,7 +472,7 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_raycaster_heterogeneous_object(show_viewer, tol):
+def test_heterogeneous_object(show_viewer, tol):
     scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     sensor_mount = scene.add_entity(

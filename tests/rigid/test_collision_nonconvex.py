@@ -22,7 +22,7 @@ from ..utils import (
 # Force CPU because it would be too slow otherwise
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_nonconvex_collision(show_viewer):
+def test_collision(show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -61,7 +61,7 @@ def test_nonconvex_collision(show_viewer):
 
 # Force CPU because it would be too slow otherwise
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_nonconvex_nonwatertight_collision(show_viewer):
+def test_nonwatertight_collision(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.002,
@@ -115,7 +115,7 @@ def test_nonconvex_nonwatertight_collision(show_viewer):
 
 @pytest.mark.parametrize("obj_shape", ["box", "sphere_mesh"])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
+def test_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
     INIT_GAP = 1e-4  # initial gap between the body and the L-mesh surfaces (no overlap)
     # An object wedged at the inner corner of a non-convex L-shaped mesh under gravity tilted into both surfaces.
     # The object must settle in the corner with at least one contact on each surface (floor and wall). A single
@@ -234,7 +234,7 @@ def test_nonconvex_inner_corner_multi_contact(obj_shape, show_viewer, tmp_path):
 
 # Force CPU because nonconvex SDF is slow on GPU
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_nonconvex_tunneling(show_viewer):
+def test_tunneling(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.002,
@@ -276,7 +276,7 @@ def test_nonconvex_tunneling(show_viewer):
 
 # Force CPU because nonconvex SDF is slow on GPU
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_nonconvex_overlap(show_viewer):
+def test_overlap(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.001,
@@ -361,7 +361,7 @@ def test_nonconvex_overlap(show_viewer):
 # Force CPU because nonconvex SDF is slow on GPU
 @pytest.mark.parametrize("backend", [gs.cpu])
 @pytest.mark.xfail(reason="Recovery is too slow: the separating push is creep-rate-bound by the thin-shell pen cap.")
-def test_nonconvex_shell_crossing_recovery(show_viewer):
+def test_shell_crossing_recovery(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.004,
@@ -427,7 +427,7 @@ def test_nonconvex_shell_crossing_recovery(show_viewer):
 # Force CPU because nonconvex SDF is slow on GPU
 @pytest.mark.parametrize("backend", [gs.cpu])
 @pytest.mark.parametrize("direction", ["down", "up"])
-def test_nonconvex_concentric_contact(direction, show_viewer):
+def test_concentric_contact(direction, show_viewer):
     PITCH = 3.0e-3  # matches genesis/assets/meshes/bolt_nut/generate_bolt_nut.py
     PITCH_RATE = PITCH / (2.0 * np.pi)  # axial advance per radian of rotation
     # Head top is at z = 11 mm, so the 18 mm nut seats with its center at z ~ 20 mm. Driving down, release just above
@@ -569,7 +569,7 @@ def test_nonconvex_concentric_contact(direction, show_viewer):
         (0.001, False),
     ],
 )
-def test_nonconvex_concave_slanted_wall(timestep, decimate, show_viewer):
+def test_concave_slanted_wall(timestep, decimate, show_viewer):
     BOWL_THICKNESS = 0.013
     NUM_BOWLS = 32
 

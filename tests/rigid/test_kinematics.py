@@ -311,8 +311,7 @@ def test_inverse_kinematics_multilink(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
-    """Test IK with local_point parameter - positions an offset point at the target instead of link origin."""
-
+    # local_point positions an offset point of the link at the target instead of the link origin.
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
@@ -399,8 +398,6 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
-    """Test multi-link IK with local_points parameter."""
-
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),

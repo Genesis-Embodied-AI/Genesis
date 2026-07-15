@@ -334,13 +334,10 @@ def test_set_vverts(renderer, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_set_vverts_sphere_to_box(renderer, show_viewer):
-    # Build a grid-subdivided cube (10 segments per edge -> 602 vertices) so the topology has vertices at every cube
-    # corner and edge. ``spherify`` maps the cube grid onto the sphere surface with the same triangulation. The
-    # deformable is loaded with the spherified mesh and ``set_vverts`` later swaps the verts back to the cube
-    # positions. The reference sphere and box are the standard ``gs.morphs.Sphere`` / ``gs.morphs.Box`` primitives;
-    # the cube grid already has vertices at every cube corner, so the post-morph silhouette is byte-equal to the
-    # primitive box, while the spherified mesh differs from the primitive sphere by a handful of boundary pixels
-    # (different tessellations of the same circle outline).
+    # A grid-subdivided cube spherified onto the sphere surface gives two shapes sharing one topology, so
+    # set_vverts can morph between them. Since the grid has vertices at every cube corner, the morphed silhouette
+    # matches the primitive box exactly, while the spherified one differs from the primitive sphere by only a few
+    # boundary pixels (two tessellations of the same outline).
     n_seg = 10
     coords = np.linspace(-1.0, 1.0, n_seg + 1)
     cube_verts_list: list[np.ndarray] = []

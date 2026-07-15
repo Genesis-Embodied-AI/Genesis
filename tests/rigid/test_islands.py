@@ -314,7 +314,7 @@ def test_solve_correctness(show_viewer, noslip_iterations, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_island_monolith_seed_oversaturated(show_viewer, monkeypatch):
+def test_monolith_seed_oversaturated(show_viewer, monkeypatch):
     # enable_cooperative_constraint_kernels is bounded by get_gpu_core_count(), so faking extreme GPU saturation
     # (get_gpu_core_count -> 1) disables the cooperative kernels at 2 envs - a small-scale stand-in for the
     # >get_gpu_core_count() env regime. With islands on and the monolith arm pinned the whole env is a single

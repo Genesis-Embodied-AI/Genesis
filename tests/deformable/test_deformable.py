@@ -109,7 +109,7 @@ def test_muscle(n_envs, muscle_material, show_viewer):
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
-def test_deformable_parallel(show_viewer):
+def test_parallel(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=2e-3,
@@ -223,7 +223,6 @@ def test_deformable_parallel(show_viewer):
 
 @pytest.mark.required
 def test_mpm_particle_constraints(show_viewer):
-    """Test MPM particle constraints: bbox selection, attachment, and following."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=2e-3,

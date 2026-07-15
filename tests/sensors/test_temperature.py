@@ -8,8 +8,7 @@ from ..utils import assert_allclose, assert_equal
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
-    """After build, grid is at base temp. Hot box on center heats center above corner; cold box cools it. Move away -> near base; reset -> exactly base."""
+def test_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
     BOX_SIZE = 0.06
     PLATFORM_SIZE = 0.2
     FAR_POS = (PLATFORM_SIZE * 1.5, PLATFORM_SIZE * 1.5, PLATFORM_SIZE * 1.5)
@@ -114,8 +113,7 @@ def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
-    """With simulate_all_link_temperatures=True, two boxes in contact exchange heat."""
+def test_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
     BOX_SIZE = 0.06
     BASE_TEMP = 22.0
     HOT_BASE = BASE_TEMP + 80.0

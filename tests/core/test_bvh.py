@@ -38,10 +38,7 @@ def test_morton_code(lbvh):
 
 @pytest.mark.required
 def test_expand_bits():
-    """
-    Test the expand_bits function for LBVH.
-    A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
-    """
+    # expand_bits turns a 10-bit integer into a 30-bit one by inserting two zeros before each bit.
     import quadrants as qd
 
     @qd.kernel

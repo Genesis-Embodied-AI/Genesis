@@ -397,7 +397,6 @@ def test_batch_renderer(n_envs, png_snapshot):
 
 @pytest.mark.required
 def test_destroy_unbuilt_scene_with_camera():
-    """Test that destroy on an unbuilt scene with cameras doesn't crash."""
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(morph=gs.morphs.Plane())
     scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
@@ -407,7 +406,6 @@ def test_destroy_unbuilt_scene_with_camera():
 
 @pytest.mark.required
 def test_destroy_idempotent_with_camera():
-    """Test that calling destroy twice on a scene with cameras doesn't crash."""
     scene = gs.Scene(show_viewer=False)
     camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
 
@@ -494,11 +492,6 @@ def test_raytracer_destroy():
 @pytest.mark.required
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
 def test_raytracer_attached_without_offset_T():
-    """Test that RaytracerCameraSensor works when attached without explicit offset_T.
-
-    Also checks consistency with a scene-level camera (scene.add_camera) using the same
-    pose and attachment, to make sure both camera APIs produce matching output.
-    """
     CAM_RES = (128, 64)
     CAM_POS = (1.0, 0.5, 2.0)
 
@@ -637,7 +630,7 @@ def test_raytracer(n_envs, png_snapshot):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-def test_camera_lookat_entity(show_viewer, png_snapshot):
+def test_lookat_entity(show_viewer, png_snapshot):
     scene = gs.Scene(show_viewer=show_viewer)
 
     scene.add_entity(morph=gs.morphs.Plane())

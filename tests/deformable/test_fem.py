@@ -13,12 +13,8 @@ from ..utils import assert_allclose, get_hf_dataset
 
 @pytest.mark.required
 def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
-    """
-    Test tetrahedralization of a FEM entity with a small maxvolume value that introduces
-    internal vertices during tetrahedralization:
-      1. Verify all surface vertices lie exactly on the original quad faces of the mesh.
-      2. Ensure the visualizer's mesh triangles match the FEM entity's surface triangles.
-    """
+    # A small maxvolume introduces internal vertices during tetrahedralization: all surface vertices must
+    # still lie exactly on the original surface and the internal ones strictly inside.
     verts, faces = cube_verts_and_faces
 
     scene = gs.Scene(
@@ -124,7 +120,6 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
 
 @pytest.mark.required
 def test_maxvolume(box_obj_path, show_viewer):
-    """Test that imposing a maximum element volume constraint produces a finer mesh (i.e., more elements)."""
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -353,7 +348,6 @@ def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
 @pytest.mark.xfail(raises=AssertionError, reason="Constraint dynamics inconsistent with analytical formula")
 @pytest.mark.parametrize("precision", ["64"])
 def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
-    """Test if a box with strong soft vertex constraints has those vertices near."""
     DT = 0.01
     BOX_SIZE = 0.1
     CONSTRAINT_STIFFNESS = 1e1

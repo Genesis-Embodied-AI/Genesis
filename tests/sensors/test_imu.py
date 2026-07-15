@@ -10,8 +10,7 @@ from ..utils import assert_allclose, assert_equal
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_imu_sensor(show_viewer, tol, n_envs):
-    """Test if the IMU sensor returns the correct data."""
+def test_sensor(show_viewer, tol, n_envs):
     GRAVITY = -10.0
     DT = 1e-2
     BIAS = (0.1, 0.2, 0.3)
@@ -174,7 +173,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_imu_resolution_only_quantizes(show_viewer, n_envs):
+def test_resolution_only_quantizes(show_viewer, n_envs):
     # IMU with only `*_resolution` set (no other noise/delay) returns acceleration components quantized to that
     # resolution.
     RESOLUTION = 0.5

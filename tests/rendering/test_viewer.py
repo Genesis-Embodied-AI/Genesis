@@ -36,8 +36,6 @@ def wait_for_viewer_events(viewer, condition_fn, timeout=300.0, sleep_interval=0
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_interactive_viewer_disable_viewer_defaults():
-    """Test that keyboard shortcuts can be disabled in the interactive viewer."""
-
     # Test with keyboard shortcuts DISABLED
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -192,9 +190,7 @@ def test_default_viewer_plugin(n_envs):
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_viewer_thread_crash_reports_traceback():
-    """Crash in the viewer must expose the original traceback, whether threaded or not."""
-
+def test_thread_crash_reports_traceback():
     class CrashOnDrawPlugin(gs.vis.viewer_plugins.ViewerPlugin):
         def __init__(self):
             super().__init__()
@@ -582,11 +578,7 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_rasterizer_camera_sensor_with_viewer(renderer):
-    """Test that RasterizerCameraSensor works correctly when interactive viewer is enabled.
-
-    This verifies that the sensor properly shares the viewer's OpenGL context instead of
-    creating a conflicting separate context.
-    """
+    # The sensor must share the interactive viewer's OpenGL context instead of creating a conflicting one.
     CAM_RES = (128, 64)
 
     scene = gs.Scene(

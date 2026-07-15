@@ -427,7 +427,6 @@ def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("glb_file", ["glb/combined_srt.glb", "glb/combined_transform.glb"])
 def test_glb_parse_geometry(glb_file, tol):
-    """Test glb mesh geometry parsing."""
     asset_path = get_hf_dataset(pattern=glb_file)
     glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
@@ -528,7 +527,6 @@ def test_urdf_mesh_processing(tmp_path, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("glb_file", ["glb/chopper.glb"])
 def test_glb_parse_material(glb_file):
-    """Test glb mesh geometry parsing."""
     asset_path = get_hf_dataset(pattern=glb_file)
     glb_file = os.path.join(asset_path, glb_file)
     gs_meshes = gltf_utils.parse_mesh_glb(
@@ -831,7 +829,6 @@ def material_mjcf(tmp_path):
 
 @pytest.mark.parametrize("precision", ["32"])
 def test_mjcf_parse_material(material_mjcf, tol):
-    """Test that MJCF materials and geom colors are correctly parsed."""
     scene = gs.Scene()
     entity = scene.add_entity(
         gs.morphs.MJCF(
@@ -959,7 +956,6 @@ def test_2_channels_luminance_alpha_textures(show_viewer):
 
 @pytest.mark.required
 def test_plane_texture_path_preservation(show_viewer):
-    """Test that plane primitives preserve texture paths in metadata."""
     scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
     plane = scene.add_entity(gs.morphs.Plane())
 
