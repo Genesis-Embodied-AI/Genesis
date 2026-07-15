@@ -180,21 +180,16 @@ class QIPCCoupler(RBC):
     def options(self) -> QIPCCouplerOptions:
         return self._options
 
-    def _get_entity_config(self, entity):
-        """Resolve per-entity QIPC config: material fields override coupler option defaults."""
+    @staticmethod
+    def _get_entity_config(entity):
+        """Read per-entity QIPC config from material, with hardcoded defaults."""
         mat = entity.material
-        opt = self._options
-
-        def _pick(mat_attr, opt_attr):
-            v = getattr(mat, mat_attr, None)
-            return v if v is not None else getattr(opt, opt_attr)
-
         return {
-            "abd_kappa": _pick("qipc_abd_kappa", "rigid_abd_kappa"),
-            "kappa_pivot": _pick("qipc_kappa_pivot", "joint_kappa_pivot"),
-            "kappa_axis": _pick("qipc_kappa_axis", "joint_kappa_axis"),
-            "default_kp": _pick("qipc_default_kp", "default_kp"),
-            "default_kv": _pick("qipc_default_kv", "default_kv"),
+            "abd_kappa": getattr(mat, "qipc_abd_kappa", None) or 1e5,
+            "kappa_pivot": getattr(mat, "qipc_kappa_pivot", None) or 1e8,
+            "kappa_axis": getattr(mat, "qipc_kappa_axis", None) or 1e8,
+            "default_kp": getattr(mat, "qipc_default_kp", None) or 100.0,
+            "default_kv": getattr(mat, "qipc_default_kv", None) or 10.0,
             "home_qpos": getattr(mat, "qipc_home_qpos", None),
         }
 
@@ -679,7 +674,7 @@ class QIPCCoupler(RBC):
             if act_gain is not None and len(act_gain) > 0 and float(act_gain[0]) > 0:
                 kp = float(act_gain[0])
             else:
-                kp = float(self._options.default_kp)
+                kp = float(self._entity_config["default_kp"])
 
         if mat_kv is not None:
             kv = float(mat_kv) if not isinstance(mat_kv, str) else 0.0
@@ -688,7 +683,7 @@ class QIPCCoupler(RBC):
             if act_bias is not None and len(act_bias) > 0 and len(act_bias[0]) >= 3 and float(-act_bias[0][2]) > 0:
                 kv = float(-act_bias[0][2])
             else:
-                default_kv = self._options.default_kv
+                default_kv = self._entity_config["default_kv"]
                 kv = float(default_kv) if not isinstance(default_kv, str) else 0.0
 
         return kp, kv

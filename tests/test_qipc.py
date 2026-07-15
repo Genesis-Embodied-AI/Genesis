@@ -124,11 +124,6 @@ def build_genesis_scene(urdf_path, position=(0.0, 0.0, 0.0), is_fixed=True, kapp
             gravity=(0.0, 0.0, -9.81),
         ),
         coupler_options=gs.options.QIPCCouplerOptions(
-            rigid_abd_kappa=kappa,
-            joint_kappa_pivot=kappa_pivot,
-            joint_kappa_axis=kappa_axis,
-            default_kp=kp,
-            default_kv=kv,
             contact_enable=False,
             debug_viewer=False,
         ),
@@ -141,6 +136,9 @@ def build_genesis_scene(urdf_path, position=(0.0, 0.0, 0.0), is_fixed=True, kapp
             fixed=is_fixed,
         ),
         material=gs.materials.Rigid(
+            qipc_abd_kappa=kappa,
+            qipc_kappa_pivot=kappa_pivot,
+            qipc_kappa_axis=kappa_axis,
             qipc_default_kp=kp,
             qipc_default_kv=kv,
         ),

@@ -193,25 +193,12 @@ class QIPCCouplerOptions(BaseCouplerOptions):
 
     Parameters
     ----------
-    rigid_abd_kappa : float, optional
-        ABD shape stiffness. Penalizes deviation from rigidity. Defaults to 1e5.
-    joint_kappa_pivot : float, optional
-        Joint pivot coincidence stiffness. Defaults to 1e8.
-    joint_kappa_axis : float, optional
-        Joint axis alignment stiffness. Defaults to 1e8.
-    default_kp : float, optional
-        Default PD controller proportional gain. Defaults to 100.0.
-    default_kv : float or str, optional
-        Default PD controller derivative gain. "auto" means 2*sqrt(kp). Defaults to "auto".
     contact_enable : bool, optional
         Whether to enable IPC contact detection. Defaults to False.
+    debug_viewer : bool, optional
+        Whether to show the QIPC debug viewer. Defaults to False.
     """
 
-    rigid_abd_kappa: PositiveFloat = 1e5
-    joint_kappa_pivot: PositiveFloat = 1e8
-    joint_kappa_axis: PositiveFloat = 1e8
-    default_kp: NonNegativeFloat = 100.0
-    default_kv: float | str = "auto"
     contact_enable: StrictBool = False
     debug_viewer: StrictBool = False
 
