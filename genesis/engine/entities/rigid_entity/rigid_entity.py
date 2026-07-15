@@ -1,4 +1,5 @@
 import inspect
+import math
 import os
 from itertools import chain
 from typing import TYPE_CHECKING, Literal, Any, Sequence
@@ -1250,27 +1251,27 @@ class KinematicEntity(Entity):
             else:
                 decompose_error_threshold = morph.decompose_object_error_threshold
 
-            # A collision geom may carry per-geom post-processing overrides (e.g. a USD
-            # MeshCollisionAPI approximation hint sets "convexify"/"decimate"/"decompose_error_threshold";
-            # None = inherit the morph-level value). Group geoms by their effective settings and
-            # post-process each group separately. Geoms without overrides share one group, i.e. the
-            # previous whole-entity behavior.
-            groups: dict[tuple, list] = {}
+            # A collision geom may carry per-geom post-processing overrides (a USD MeshCollisionAPI approximation
+            # hint sets "convexify"/"decimate"/"decompose_error_threshold"), with the morph options as defaults for
+            # whatever is left unset. Post-processing merges geoms within a call, so each set of effective options
+            # gets its own call; geoms without overrides share one, preserving the whole-entity merge behavior.
+            # Thresholds match under gs.EPS tolerance so float noise cannot split a group.
+            cg_infos_by_options: list[tuple[tuple, list]] = []
             for g_info in cg_infos:
-                convexify = g_info.pop("convexify", None)
-                decimate = g_info.pop("decimate", None)
-                threshold = g_info.pop("decompose_error_threshold", None)
-                settings = (
-                    morph.convexify if convexify is None else convexify,
-                    morph.decimate if decimate is None else decimate,
-                    decompose_error_threshold if threshold is None else threshold,
-                )
-                groups.setdefault(settings, []).append(g_info)
+                convexify = g_info.pop("convexify", morph.convexify)
+                decimate = g_info.pop("decimate", morph.decimate)
+                threshold = g_info.pop("decompose_error_threshold", decompose_error_threshold)
+                for options, options_cg_infos in cg_infos_by_options:
+                    if options[:2] == (convexify, decimate) and math.isclose(options[2], threshold, abs_tol=gs.EPS):
+                        options_cg_infos.append(g_info)
+                        break
+                else:
+                    cg_infos_by_options.append(((convexify, decimate, threshold), [g_info]))
 
             cg_infos = []
-            for (convexify, decimate, threshold), group_g_infos in groups.items():
+            for (convexify, decimate, threshold), options_cg_infos in cg_infos_by_options:
                 cg_infos += mu.postprocess_collision_geoms(
-                    group_g_infos,
+                    options_cg_infos,
                     decimate,
                     morph.decimate_face_num,
                     morph.decimate_aggressiveness,

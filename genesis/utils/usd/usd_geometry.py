@@ -13,13 +13,14 @@ from .usd_utils import AXES_T, AXES_VECTOR, usd_attr_array_to_numpy, usd_primvar
 
 
 # UsdPhysics.MeshCollisionAPI 'approximation' tokens -> per-geom collision post-processing overrides
-# consumed by RigidEntity._postprocess_geoms_info (an absent field inherits the morph default).
-# 'boundingCube'/'boundingSphere' are handled separately by fitting a primitive geom in the parser.
+# consumed by RigidEntity._postprocess_geoms_info. 'boundingCube'/'boundingSphere' are handled
+# separately by fitting a primitive geom in the parser.
 _APPROXIMATION_OVERRIDES = {
     "convexHull": {"convexify": True, "decompose_error_threshold": float("inf")},  # single hull, no decomposition
     "convexDecomposition": {"convexify": True},  # allow decomposition per the morph threshold
-    "none": {"convexify": False},  # raw triangle mesh
+    "none": {"convexify": False, "decimate": False},  # exact raw triangle mesh
     "meshSimplification": {"convexify": False, "decimate": True},  # decimated triangle mesh
+    "sdf": {"convexify": False},  # signed distance field (SDF): Genesis' nonconvex mesh path is SDF-based
 }
 
 

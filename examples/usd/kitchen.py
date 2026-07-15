@@ -15,7 +15,6 @@ MouseInteractionPlugin (drag entities with the mouse); press ``Esc`` to quit.
 import argparse
 import os
 
-import numpy as np
 from huggingface_hub import snapshot_download
 
 import genesis as gs
@@ -32,41 +31,6 @@ SAMPLE_ASSETS = {
 FULL_ROOM_ASSETS = ("Lightwheel_Kitchen/KitchenRoom.usd", ["Lightwheel_Kitchen/*"])
 
 
-def place_on_ground(entities, gap=0.05):
-    """Lay entities out in a row on the ground plane."""
-    x = 0.0
-    for entity in entities:
-        lo, hi = tensor_to_array(entity.get_AABB())
-        size = hi - lo
-        target_min = np.array([x, -0.5 * size[1], gap])
-        entity.set_pos(tensor_to_array(entity.get_pos()) + (target_min - lo))
-        x += size[0] + gap
-
-
-def load_asset(scene, root, rel_path, fixed):
-    usd_file = os.path.join(root, rel_path)
-    if not os.path.isfile(usd_file):
-        gs.raise_exception(f"USD file not found: {usd_file}")
-
-    gs.logger.info(f"Loading {rel_path} ...")
-    entities = scene.add_stage(
-        morph=gs.morphs.USD(
-            file=usd_file,
-            fixed=fixed,
-            convexify=False,  # Don't force convex hulls; honor the asset's MeshCollisionAPI approximation per geom.
-            decimate=True,  # Simplify collision meshes (fewer faces) for speed and stability.
-        ),
-        vis_mode="visual",  # Render the entity's own USD materials, not the randomized per-collision colors.
-    )
-    gs.logger.info(f"  -> parsed {len(entities)} entities")
-    for entity in entities:
-        gs.logger.info(
-            f"     {entity.__class__.__name__}: "
-            f"n_links={entity.n_links} n_joints={entity.n_joints} n_geoms={entity.n_geoms}"
-        )
-    return entities
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -75,15 +39,21 @@ def main():
     parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples.")
     parser.add_argument("-n", "--num_steps", type=int, default=0, help="Number of sim steps after build (headless).")
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show the interactive viewer.")
+    parser.add_argument(
+        "--collision", action="store_true", help="Visualize collision geometry instead of the visual meshes."
+    )
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
-        show_viewer=args.vis,
         rigid_options=gs.options.RigidOptions(
             enable_neutral_collision=True,  # Enable so articulated parts (e.g. dishwasher) don't clip
         ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=args.vis,
     )
     scene.add_entity(gs.morphs.Plane())
 
@@ -106,7 +76,23 @@ def main():
 
     all_entities = []
     for rel_path in rel_paths:
-        all_entities += load_asset(scene, asset_path, rel_path, fixed=fixed)
+        usd_file = os.path.join(asset_path, rel_path)
+        if not os.path.isfile(usd_file):
+            gs.raise_exception(f"USD file not found: {usd_file}")
+        gs.logger.info(f"Loading {rel_path} ...")
+        entities = scene.add_stage(
+            morph=gs.morphs.USD(
+                file=usd_file,
+                fixed=fixed,
+            ),
+            vis_mode="collision" if args.collision else "visual",
+        )
+        for entity in entities:
+            gs.logger.info(
+                f"     {entity.__class__.__name__}: "
+                f"n_links={entity.n_links} n_joints={entity.n_joints} n_geoms={entity.n_geoms}"
+            )
+        all_entities += entities
 
     if args.vis:
         # Drag entities around with the mouse; the plugin must be attached before build.
@@ -119,7 +105,14 @@ def main():
 
     scene.build()
     if not args.full:
-        place_on_ground(all_entities)
+        # Lay the sample entities out in a row on the ground plane.
+        x, gap = 0.0, 0.05
+        for entity in all_entities:
+            lo, hi = tensor_to_array(entity.get_AABB())
+            size = hi - lo
+            target_min = (x, -0.5 * size[1], gap)
+            entity.set_pos(tensor_to_array(entity.get_pos()) + (target_min - lo))
+            x += size[0] + gap
     gs.logger.info(f"Scene built successfully with {len(all_entities)} entities.")
 
     if args.vis:

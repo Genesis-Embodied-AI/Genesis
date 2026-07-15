@@ -1248,8 +1248,9 @@ def test_physics_material_friction_and_density(physics_material_usd):
 
 @pytest.fixture(scope="session")
 def collision_approximation_usd(asset_tmp_path):
-    """Three mesh colliders exercising MeshCollisionAPI approximations: boundingCube and
-    boundingSphere on a 2x1x1 box, convexHull on a concave (two disjoint boxes) mesh."""
+    """Mesh colliders exercising MeshCollisionAPI approximations: boundingCube and boundingSphere on
+    a 2x1x1 box, convexHull and sdf on a concave (two disjoint boxes) mesh, none on a dense box,
+    plus a dense box with no authored approximation at all."""
     usd_file = str(asset_tmp_path / "collision_approximation.usda")
     stage = Usd.Stage.CreateNew(usd_file)
     UsdGeom.SetStageUpAxis(stage, "Z")
@@ -1262,10 +1263,14 @@ def collision_approximation_usd(asset_tmp_path):
     shifted_box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     shifted_box.apply_translation((3.0, 0.0, 0.0))
     concave = trimesh.util.concatenate([trimesh.creation.box(extents=(1.0, 1.0, 1.0)), shifted_box])
+    dense_box = trimesh.creation.box(extents=(1.0, 1.0, 1.0)).subdivide().subdivide().subdivide()
     for name, tmesh, approximation in (
         ("bounding_cube_body", box, "boundingCube"),
         ("bounding_sphere_body", box, "boundingSphere"),
         ("convex_hull_body", concave, "convexHull"),
+        ("sdf_body", concave, "sdf"),
+        ("raw_body", dense_box, "none"),
+        ("plain_body", dense_box, None),
     ):
         mesh = UsdGeom.Mesh.Define(stage, f"/root/{name}")
         mesh.GetPointsAttr().Set([Gf.Vec3f(*map(float, v)) for v in tmesh.vertices])
@@ -1273,7 +1278,8 @@ def collision_approximation_usd(asset_tmp_path):
         mesh.GetFaceVertexCountsAttr().Set([3] * len(tmesh.faces))
         UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
         UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
-        UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(approximation)
+        if approximation is not None:
+            UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(approximation)
 
     stage.Save()
     return usd_file
@@ -1282,7 +1288,7 @@ def collision_approximation_usd(asset_tmp_path):
 @pytest.mark.required
 def test_collision_approximations(collision_approximation_usd):
     usd_scene = build_usd_scene(collision_approximation_usd, scale=1.0, fixed=True)
-    assert len(usd_scene.entities) == 3
+    assert len(usd_scene.entities) == 6
     entities = {entity.links[0].name: entity for entity in usd_scene.entities}
     box_geom = next(g for g in entities["/root/bounding_cube_body"].geoms if g.type == gs.GEOM_TYPE.BOX)
     assert_allclose(box_geom.data[:3], (2.0, 1.0, 1.0), tol=1e-5)
@@ -1293,6 +1299,26 @@ def test_collision_approximations(collision_approximation_usd):
     hull_entity = entities["/root/convex_hull_body"]
     assert hull_entity.n_geoms == 1
     assert hull_entity.geoms[0].mesh.trimesh.is_convex
+    # sdf maps to the SDF-based nonconvex mesh path: a single exact concave geom.
+    sdf_entity = entities["/root/sdf_body"]
+    assert sdf_entity.n_geoms == 1
+    assert not sdf_entity.geoms[0].mesh.trimesh.is_convex
+
+    # An authored 'none' pins the exact mesh: morph-level decimation only applies to colliders
+    # without an authored approximation.
+    scene = gs.Scene()
+    entities = scene.add_stage(
+        morph=gs.morphs.USD(
+            file=collision_approximation_usd,
+            fixed=True,
+            convexify=False,
+            decimate=True,
+        ),
+    )
+    scene.build()
+    entities = {entity.links[0].name: entity for entity in entities}
+    assert len(entities["/root/raw_body"].geoms[0].mesh.trimesh.faces) == 768
+    assert len(entities["/root/plain_body"].geoms[0].mesh.trimesh.faces) < 768
 
 
 @pytest.fixture(scope="session")
