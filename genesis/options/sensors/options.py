@@ -609,9 +609,9 @@ class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"], SimpleSensorOpti
     return_world_frame : bool, optional
         Whether to return points in the world frame. Defaults to False (local frame).
     return_points : bool, optional
-        Whether to compute and store the per-ray hit ``points``. Defaults to True. Set False for a
-        distances-only sensor to shrink the output cache ~4x (``H*W`` distances instead of ``H*W*(3+1)``);
-        ``read().points`` is then ``None``.
+        Whether to return the per-ray hit points. Defaults to True. When False, ``read().points`` is None and only
+        the hit distances are measured, cutting the sensor's memory footprint and per-step cost to about a quarter.
+        Pick False for distance-only sensing (e.g. depth images); keep True when the point cloud is needed.
     debug_sphere_radius: float, optional
         The radius of each debug sphere drawn in the scene. Defaults to 0.02.
     debug_ray_start_color: array-like[float, float, float, float], optional

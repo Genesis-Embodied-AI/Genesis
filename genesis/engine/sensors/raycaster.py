@@ -239,6 +239,7 @@ class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata
 
     sensors_ray_start_idx: list[int] = field(default_factory=list)
     total_n_rays: int = 0
+    total_cache_size: int = 0
 
     min_ranges: torch.Tensor = make_tensor_field((0,))
     max_ranges: torch.Tensor = make_tensor_field((0,))
@@ -259,7 +260,7 @@ class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata
 
 
 class RaycasterReturnType(NamedTuple):
-    points: torch.Tensor
+    points: torch.Tensor | None
     distances: torch.Tensor
 
 
@@ -312,11 +313,11 @@ class RaycasterSensor(
         num_rays = math.prod(self._options.pattern.return_shape)
         self._shared_metadata.sensors_ray_start_idx.append(self._shared_metadata.total_n_rays)
 
-        # Cache offsets are a running cumulative sum (start + own cache size), so sensors with different cache sizes
+        # Cache offsets are a running cumulative sum of the per-sensor cache sizes, so sensors with different sizes
         # (e.g. a points lidar next to a distances-only depth camera) pack without gaps or overlap.
-        prev_offset = int(self._shared_metadata.sensor_cache_offsets[-1].item())
+        self._shared_metadata.total_cache_size += self._cache_size
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
-            self._shared_metadata.sensor_cache_offsets, prev_offset + self._cache_size
+            self._shared_metadata.sensor_cache_offsets, self._shared_metadata.total_cache_size
         )
         self._shared_metadata.sensor_point_offsets = concat_with_tensor(
             self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays
@@ -460,8 +461,12 @@ class RaycasterSensor(
             if not self._options.return_world_frame:
                 points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
         else:
-            # No stored points: reconstruct them as distance * unit ray_dir (local frame) so debug drawing works.
-            hit_points_local = data.distances.reshape((-1, 1)) * normalize(self.ray_dirs)
+            # Reconstruct the local-frame hit points as distance * unit ray_dir. Missed rays carry no_hit_value as
+            # distance and collapse onto the ray start, matching the (0, 0, 0) stored for them when points are enabled.
+            distances = data.distances.reshape((-1, 1))
+            hit_points_local = torch.where(
+                distances < self._options.no_hit_value, distances * normalize(self.ray_dirs), 0.0
+            )
             points = transform_by_trans_quat(hit_points_local + self.ray_starts, pos, quat)
 
         for debug_object in self.debug_objects:

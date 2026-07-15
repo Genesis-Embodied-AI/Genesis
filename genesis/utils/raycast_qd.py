@@ -640,7 +640,7 @@ def kernel_cast_rays(
 
     See write_ray_hit for `is_merge` semantics. The result `output_hits` is a 2D array of shape (total_cache_size,
     n_env) where in the first dimension each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges
-    (n_points)].
+    (n_points)], the point block being present only for sensors with sensor_return_points set.
 
     shared_bvh is a compile-time flag set when the collision geometry is identical across envs; the cast then reads a
     single BVH copy (batch 0) for every env. It also selects the thread -> (ray, env) mapping below, so the homogeneous

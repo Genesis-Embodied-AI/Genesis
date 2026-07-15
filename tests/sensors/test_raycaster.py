@@ -92,6 +92,15 @@ def test_hits(show_viewer, n_envs):
             debug_ray_hit_color=(0.0, 0.0, 1.0, 1.0),
         ),
     )
+    depth_camera_depth_only = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.raycaster.DepthCameraPattern(
+                res=NUM_RAYS_XY[::-1],
+            ),
+            entity_idx=spherical_sensor.idx,
+            return_points=False,
+        ),
+    )
 
     obstacle_1 = scene.add_entity(
         gs.morphs.Box(
@@ -159,6 +168,22 @@ def test_hits(show_viewer, n_envs):
     assert_equal(depth_camera.read_image().shape, batch_shape + NUM_RAYS_XY)
     # Note that the tolerance must be large because the sphere geometry is discretized
     assert_allclose(depth_camera.read_image(), RAYCAST_HEIGHT, tol=5e-3)
+
+    # Check the distances-only depth camera: distances bit-identical to its points-enabled twin
+    assert_equal(depth_camera_depth_only.read().distances, depth_camera.read().distances)
+    # The points-enabled twin keeps consistent points while packed next to a smaller distances-only cache block
+    assert_allclose(depth_camera.read().points.norm(dim=-1), depth_camera.read().distances, tol=gs.EPS)
+
+    # Imperfections must land on the sensor they are set on, whatever the per-sensor cache sizes
+    depth_camera_depth_only.set_bias(0.05)
+    scene.sim._sensor_manager.step()
+    assert_allclose(
+        depth_camera_depth_only.read().distances,
+        depth_camera_depth_only.read_ground_truth().distances + 0.05,
+        tol=gs.EPS,
+    )
+    assert_equal(depth_camera.read().points, depth_camera.read_ground_truth().points)
+    assert_equal(depth_camera.read().distances, depth_camera.read_ground_truth().distances)
 
     # Simulate for a while and check again that the ray is casted properly
     offset = torch.from_numpy(np.random.rand(*batch_shape, 3)).to(dtype=gs.tc_float, device=gs.device)
