@@ -1,5 +1,3 @@
-"""Test that gs.init() / gs.destroy() can cycle between field and ndarray backends."""
-
 import os
 import pathlib
 import subprocess
@@ -28,7 +26,7 @@ MODULE = ".".join((FILE_PATH.parents[1].name, FILE_PATH.parent.name, FILE_PATH.s
     ],
     ids=["ndarray-field-ndarray", "field-ndarray-field"],
 )
-def test_backend_switching(backend, order):
+def test_switching(backend, order):
     # Each cycle rebuilds a box-on-plane scene and verifies the quadrants type wrappers re-resolve for the
     # newly selected backend.
     for cycle_idx, use_nd in enumerate(order):
@@ -68,43 +66,6 @@ def test_backend_switching(backend, order):
                 os.environ.pop("GS_ENABLE_NDARRAY", None)
             else:
                 os.environ["GS_ENABLE_NDARRAY"] = old_val
-
-
-@pytest.mark.parametrize("backend", [None])
-def test_set_gravity_accepts_field_and_tensor():
-    # The 'gravity: qd.Tensor' annotation must accept both a raw qd.field() (subclass solvers like MPM) and
-    # a qd.Tensor wrapper (base_solver / rigid solver).
-    os.environ["GS_ENABLE_NDARRAY"] = "0"
-    try:
-        gs.init(backend=gs.cpu, seed=0)
-
-        scene = gs.Scene(
-            show_viewer=False,
-            rigid_options=gs.options.RigidOptions(gravity=(0.0, 0.0, -9.81)),
-            mpm_options=gs.options.MPMOptions(gravity=(0.0, 0.0, -9.81)),
-        )
-        scene.add_entity(gs.morphs.Plane())
-        scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5)))
-        scene.add_entity(gs.morphs.Sphere(pos=(0.0, 0.0, 0.5), radius=0.1), material=gs.materials.MPM.Liquid())
-        scene.build()
-
-        new_gravity = [0.0, 0.0, -5.0]
-
-        # Rigid solver: _gravity is a qd.Tensor (from base_solver.build via V())
-        rigid = scene.sim.rigid_solver
-        assert isinstance(rigid._gravity, qd.Tensor), f"Expected qd.Tensor, got {type(rigid._gravity)}"
-        rigid.set_gravity(new_gravity)
-        np.testing.assert_allclose(rigid.get_gravity(), new_gravity, atol=1e-6)
-
-        # MPM solver: _gravity is a raw qd.field() (subclass override)
-        mpm = scene.sim.mpm_solver
-        assert isinstance(mpm._gravity, qd.Field), f"Expected qd.Field, got {type(mpm._gravity)}"
-        mpm.set_gravity(new_gravity)
-        np.testing.assert_allclose(mpm._gravity.to_numpy().flatten(), new_gravity, atol=1e-6)
-
-    finally:
-        gs.destroy()
-        os.environ.pop("GS_ENABLE_NDARRAY", None)
 
 
 def _basic_sim_child(args: list[str]):

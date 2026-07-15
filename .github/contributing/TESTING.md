@@ -18,7 +18,8 @@ Tests are organized per component, with one file per capability inside each fold
 
 - `tests/core/` - engine framework: backends, quadrants integration, math/geometry utilities, BVH, differentiability
 - `tests/rigid/` - rigid solver: dynamics, kinematics, collision, constraints, friction, terrain, asset loading, ...
-- `tests/deformable/` - FEM / MPM / SPH / PBD solvers
+- `tests/deformable/` - mesh-based deformable solvers (FEM, muscle actuation)
+- `tests/particles/` - particle and fluid solvers (MPM, SPH, PBD, SF)
 - `tests/ipc/` - IPC solver stack (rigid and deformable coupling, collision delegation, link filtering)
 - `tests/coupling/` - classical inter-solver couplers (SAP, hybrid scenes)
 - `tests/sensors/` - sensor framework and individual sensor types

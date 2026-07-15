@@ -7,6 +7,8 @@ import pytest
 import trimesh
 from pydantic import BaseModel
 
+import quadrants as qd
+
 import genesis as gs
 import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
@@ -445,3 +447,40 @@ def test_solver_state_change_subscribers(show_viewer):
     solver.subscribe(both)
     cube.set_pos([[0.0, 0.0, 4.0], [0.0, 0.0, 5.0]])
     assert both.pending == frozenset({StateChange.GEOMETRY, StateChange.DYNAMICS})
+
+
+@pytest.mark.parametrize("backend", [None])
+def test_set_gravity_accepts_field_and_tensor():
+    # The 'gravity: qd.Tensor' annotation must accept both a raw qd.field() (subclass solvers like MPM) and
+    # a qd.Tensor wrapper (base_solver / rigid solver).
+    os.environ["GS_ENABLE_NDARRAY"] = "0"
+    try:
+        gs.init(backend=gs.cpu, seed=0)
+
+        scene = gs.Scene(
+            show_viewer=False,
+            rigid_options=gs.options.RigidOptions(gravity=(0.0, 0.0, -9.81)),
+            mpm_options=gs.options.MPMOptions(gravity=(0.0, 0.0, -9.81)),
+        )
+        scene.add_entity(gs.morphs.Plane())
+        scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5)))
+        scene.add_entity(gs.morphs.Sphere(pos=(0.0, 0.0, 0.5), radius=0.1), material=gs.materials.MPM.Liquid())
+        scene.build()
+
+        new_gravity = [0.0, 0.0, -5.0]
+
+        # Rigid solver: _gravity is a qd.Tensor (from base_solver.build via V())
+        rigid = scene.sim.rigid_solver
+        assert isinstance(rigid._gravity, qd.Tensor), f"Expected qd.Tensor, got {type(rigid._gravity)}"
+        rigid.set_gravity(new_gravity)
+        np.testing.assert_allclose(rigid.get_gravity(), new_gravity, atol=1e-6)
+
+        # MPM solver: _gravity is a raw qd.field() (subclass override)
+        mpm = scene.sim.mpm_solver
+        assert isinstance(mpm._gravity, qd.Field), f"Expected qd.Field, got {type(mpm._gravity)}"
+        mpm.set_gravity(new_gravity)
+        np.testing.assert_allclose(mpm._gravity.to_numpy().flatten(), new_gravity, atol=1e-6)
+
+    finally:
+        gs.destroy()
+        os.environ.pop("GS_ENABLE_NDARRAY", None)
