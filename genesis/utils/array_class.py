@@ -315,10 +315,18 @@ class ConstraintState:
     # Optional Newton fields
     # Hessian matrix of the optimization problem as a dense 2D tensor.
     # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
-    # As a result, the values of the strictly upper triangular part is undefined.
+    # As a result, the values of the strictly upper triangular part is undefined - except under
+    # enable_cone_free_hessian_reuse, where each used lower-triangle slot's mirror persists the cone-free assembled
+    # Hessian (M + J^T D J of the active rows only), maintained across a step's Newton iterations by signed flip
+    # scatters; its diagonal lives in nt_H_cone_free_diag since the lower diagonal belongs to the factor. A rebuild
+    # restores the mirror into the lower triangle and bakes the current cone blocks on top, skipping the full
+    # J^T D J reassembly.
     # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: qd.Tensor
+    # Diagonal of the persisted cone-free Hessian packed in nt_H's mirror slots (see nt_H). Only meaningful with
+    # enable_cone_free_hessian_reuse.
+    nt_H_cone_free_diag: qd.Tensor
     # Skyline envelope: nt_H_env_start[i_b, i_d] is the first (smallest) column index with a structural
     # nonzero in row i_d of the Hessian. Cholesky fill-in stays within this envelope, so the factor and
     # solve loops only need to visit columns [nt_H_env_start[i_d], i_d]. Only meaningful with sparse_solve.
@@ -517,6 +525,10 @@ def get_constraint_state(constraint_solver, solver):
         solver_iter_counter=V(dtype=qd.i32, shape=()),
         graph_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
+        nt_H_cone_free_diag=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape((_B, solver.n_dofs_), solver._static_rigid_sim_config.enable_cone_free_hessian_reuse),
+        ),
     )
 
 
@@ -2327,6 +2339,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     requires_grad: bool
     prefer_decomposed_solver: int = -1  # -1 = None (auto), 0 = False, 1 = True
     use_contact_island: bool = False  # per-island Newton solve (gated; the legacy island solver is retired)
+    # Whether the cone-free assembled Hessian is persisted in nt_H's mirror slots (diagonal in nt_H_cone_free_diag);
+    # see the nt_H declaration for the packed-storage mechanics and the rigid solver's resolution for the gating.
+    enable_cone_free_hessian_reuse: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
     hibernation_min_steps: int = 10

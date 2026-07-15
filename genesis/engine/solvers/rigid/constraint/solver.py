@@ -2094,6 +2094,9 @@ def func_add_cone_hessian_block(
     dense path, permuted via dof_iperm for the sparse skyline. scale is +1 to add the block before a factor and -1
     to remove it after a non-destructive factor, so a caller can carry the cone through an incrementally-maintained
     nt_H without a rebuild.
+
+    On the CPU backend every cone's cone_prev_jaref is seeded from its current residuals, so the incremental factor's
+    rank-3 downdate targets exactly the block baked here (a +1 caller always precedes the factor there).
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
@@ -2103,6 +2106,10 @@ def func_add_cone_hessian_block(
         j1 = i_head + 1
         j2 = i_head + 2
         d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_head, i_b, constraint_state)
+        if qd.static(static_rigid_sim_config.backend == gs.cpu):
+            constraint_state.cone_prev_jaref[i_cone * 3, i_b] = jar0
+            constraint_state.cone_prev_jaref[i_cone * 3 + 1, i_b] = jar1
+            constraint_state.cone_prev_jaref[i_cone * 3 + 2, i_b] = jar2
         zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
         if zone == 2:
             _f0, _f1, _f2, _c, h00, h01, h02, h11, h12, h22 = _func_cone_middle(
@@ -2138,6 +2145,189 @@ def func_add_cone_hessian_block(
                         w_row = qd.max(p1, p2)
                         w_col = qd.min(p1, p2)
                     constraint_state.nt_H[i_b, w_row, w_col] = constraint_state.nt_H[i_b, w_row, w_col] + scale * block
+
+
+@qd.func
+def func_add_cone_hessian_block_island(
+    i_b,
+    i_island,
+    island_state: array_class.IslandState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Accumulate the coupled elliptic-cone contribution J_c^T H_c J_c of one island's middle-zone cones into nt_H.
+
+    Island analogue of func_add_cone_hessian_block: a cone's three rows share one DOF support and land in one island,
+    so its middle-zone 3x3 coupling is scattered over that support in the same island-local orientation as the
+    assembly's J^T D J loop; the per-row J^T D J of the active rows is the caller's job. On the CPU backend every
+    cone's cone_prev_jaref is seeded from its current residuals, so the incremental factor's rank-3 downdate targets
+    exactly the block baked here.
+    """
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_cone = constraint_state.n_constraints_cone[i_b]
+    con_base = island_state.constraint_slices.start[i_island, i_b]
+    con_n = island_state.constraint_slices.n[i_island, i_b]
+    for i_lcon in range(con_n):
+        i_c = island_state.constraint_id[con_base + i_lcon, i_b]
+        if i_c >= nef and i_c < nef + n_cone and (i_c - nef) % 3 == 0:
+            j1 = i_c + 1
+            j2 = i_c + 2
+            d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_c, i_b, constraint_state)
+            # cone_prev_jaref backs the CPU incremental rank-3 downdate, so seed it on the CPU backend.
+            if qd.static(static_rigid_sim_config.backend == gs.cpu):
+                i_cone_row = i_c - nef
+                constraint_state.cone_prev_jaref[i_cone_row, i_b] = jar0
+                constraint_state.cone_prev_jaref[i_cone_row + 1, i_b] = jar1
+                constraint_state.cone_prev_jaref[i_cone_row + 2, i_b] = jar2
+            zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
+            if zone == 2:
+                _f0, _f1, _f2, _c, h00, h01, h02, h11, h12, h22 = _func_cone_middle(
+                    jar0, jar1, jar2, d0, con_mu, friction, N, T
+                )
+                jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+                for i_d1_ in range(jac_n):
+                    i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+                    for i_d2_ in range(i_d1_, jac_n):
+                        i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                        row = qd.max(i_d1, i_d2)
+                        col = qd.min(i_d1, i_d2)
+                        if qd.static(
+                            static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope
+                        ):
+                            if (island_state.dof_local_pos[i_d1, i_b] >= island_state.dof_local_pos[i_d2, i_b]) != (
+                                i_d1 >= i_d2
+                            ):
+                                row, col = col, row
+                        block = _func_cone_block_product(
+                            h00,
+                            h01,
+                            h02,
+                            h11,
+                            h12,
+                            h22,
+                            constraint_state.jac[i_c, row, i_b],
+                            constraint_state.jac[j1, row, i_b],
+                            constraint_state.jac[j2, row, i_b],
+                            constraint_state.jac[i_c, col, i_b],
+                            constraint_state.jac[j1, col, i_b],
+                            constraint_state.jac[j2, col, i_b],
+                        )
+                        constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + block
+
+
+@qd.func
+def func_copy_cone_free_hessian_island(
+    i_b,
+    i_island,
+    island_state: array_class.IslandState,
+    constraint_state: array_class.ConstraintState,
+    save: qd.template(),
+):
+    """Copy one island's skyline-envelope block between nt_H's factor slots and its packed cone-free mirror.
+
+    save=True snapshots the freshly assembled cone-free block (before the cone blocks land) into each slot's mirror
+    (diagonal into nt_H_cone_free_diag, whose lower slot belongs to the factor); save=False restores it for a
+    rebuild. The islands partition the DOFs, so a block's mirror slots are never touched by another island or by any
+    factor-side consumer. The envelope footprint covers every entry the assembly, cone bake and factor touch, so the
+    copy is a complete block transfer.
+    """
+    n = island_state.dof_slices.n[i_island, i_b]
+    dof_base = island_state.dof_slices.start[i_island, i_b]
+    for i_d in range(n):
+        i_dg = island_state.dof_id[dof_base + i_d, i_b]
+        env_i = island_state.dof_env_start_local[dof_base + i_d, i_b]
+        if qd.static(save):
+            constraint_state.nt_H_cone_free_diag[i_b, i_dg] = constraint_state.nt_H[i_b, i_dg, i_dg]
+        else:
+            constraint_state.nt_H[i_b, i_dg, i_dg] = constraint_state.nt_H_cone_free_diag[i_b, i_dg]
+        for j_d in range(env_i, i_d):
+            j_dg = island_state.dof_id[dof_base + j_d, i_b]
+            if qd.static(save):
+                constraint_state.nt_H[i_b, j_dg, i_dg] = constraint_state.nt_H[i_b, i_dg, j_dg]
+            else:
+                constraint_state.nt_H[i_b, i_dg, j_dg] = constraint_state.nt_H[i_b, j_dg, i_dg]
+
+
+@qd.func
+def func_copy_cone_free_hessian_whole_env(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    save: qd.template(),
+):
+    """Copy the whole-env skyline-envelope region between nt_H's factor slots and its packed cone-free mirror.
+
+    Whole-env analogue of func_copy_cone_free_hessian_island, walking each permuted row's envelope
+    [nt_H_env_start, i_d] in the lower triangle with the mirror transposed (diagonal in nt_H_cone_free_diag).
+    """
+    n_dofs = constraint_state.nt_H.shape[1]
+    for i_d in range(n_dofs):
+        if qd.static(save):
+            constraint_state.nt_H_cone_free_diag[i_b, i_d] = constraint_state.nt_H[i_b, i_d, i_d]
+        else:
+            constraint_state.nt_H[i_b, i_d, i_d] = constraint_state.nt_H_cone_free_diag[i_b, i_d]
+        for j_d in range(constraint_state.nt_H_env_start[i_b, i_d], i_d):
+            if qd.static(save):
+                constraint_state.nt_H[i_b, j_d, i_d] = constraint_state.nt_H[i_b, i_d, j_d]
+            else:
+                constraint_state.nt_H[i_b, i_d, j_d] = constraint_state.nt_H[i_b, j_d, i_d]
+
+
+@qd.func
+def func_update_cone_free_hessian_flip(
+    i_b,
+    i_c,
+    island_state: array_class.IslandState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Accumulate a flipped constraint's signed J^T D J rank-1 block into the packed cone-free Hessian.
+
+    The sign follows the constraint's current active state (+D turned active, -D turned inactive), keeping the
+    cone-free mirror of nt_H equal to the assembly of the current active set. The scatter mirrors the assembly's
+    storage orientation - island-local under the per-island solve, permuted via dof_iperm on the whole-env skyline -
+    transposed into each slot's mirror, with the diagonal in nt_H_cone_free_diag.
+    """
+    EPS = rigid_global_info.EPS[None]
+    efc_D = constraint_state.efc_D[i_c, i_b]
+    if not constraint_state.active[i_c, i_b]:
+        efc_D = -efc_D
+    jac_n = constraint_state.jac_n_dofs[i_c, i_b]
+    for i_d1_ in range(jac_n):
+        i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
+        if qd.static(static_rigid_sim_config.enable_per_island_solve):
+            for i_d2_ in range(i_d1_, jac_n):
+                i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                v = constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                if i_d1 == i_d2:
+                    constraint_state.nt_H_cone_free_diag[i_b, i_d1] = (
+                        constraint_state.nt_H_cone_free_diag[i_b, i_d1] + v
+                    )
+                else:
+                    row = qd.max(i_d1, i_d2)
+                    col = qd.min(i_d1, i_d2)
+                    if qd.static(static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope):
+                        if (island_state.dof_local_pos[i_d1, i_b] >= island_state.dof_local_pos[i_d2, i_b]) != (
+                            i_d1 >= i_d2
+                        ):
+                            row, col = col, row
+                    constraint_state.nt_H[i_b, col, row] = constraint_state.nt_H[i_b, col, row] + v
+        else:
+            if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
+                for i_d2_ in range(i_d1_, jac_n):
+                    i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
+                    v = constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
+                    p1 = constraint_state.dof_iperm[i_b, i_d1]
+                    p2 = constraint_state.dof_iperm[i_b, i_d2]
+                    if p1 == p2:
+                        constraint_state.nt_H_cone_free_diag[i_b, p1] = (
+                            constraint_state.nt_H_cone_free_diag[i_b, p1] + v
+                        )
+                    else:
+                        row = qd.max(p1, p2)
+                        col = qd.min(p1, p2)
+                        constraint_state.nt_H[i_b, col, row] = constraint_state.nt_H[i_b, col, row] + v
 
 
 @qd.func
@@ -2206,61 +2396,6 @@ def func_hessian_direct_batch(
                             constraint_state.nt_H[i_b, row, col]
                             + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
                         )
-        # Coupled elliptic-cone Hessian block for this island's middle-zone cones. A cone's three rows share one DOF
-        # support and land in one island, so its middle-zone 3x3 coupling J_c^T H_c J_c is scattered over that support
-        # in the same island-local orientation as the J^T D J loop; the per-row J^T D J of the active rows was already
-        # added above. Seed cone_prev_jaref from these residuals so the incremental factor downdates exactly this block
-        # next iteration.
-        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
-            ne = constraint_state.n_constraints_equality[i_b]
-            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-            n_cone = constraint_state.n_constraints_cone[i_b]
-            for i_lcon in range(con_n):
-                i_c = island_state.constraint_id[con_base + i_lcon, i_b]
-                if i_c >= nef and i_c < nef + n_cone and (i_c - nef) % 3 == 0:
-                    j1 = i_c + 1
-                    j2 = i_c + 2
-                    d0, _d1, _d2, friction, con_mu, jar0, jar1, jar2 = _func_cone_head_load(i_c, i_b, constraint_state)
-                    # cone_prev_jaref backs the CPU incremental rank-3 downdate, so seed it on the CPU backend.
-                    if qd.static(static_rigid_sim_config.backend == gs.cpu):
-                        i_cone_row = i_c - nef
-                        constraint_state.cone_prev_jaref[i_cone_row, i_b] = jar0
-                        constraint_state.cone_prev_jaref[i_cone_row + 1, i_b] = jar1
-                        constraint_state.cone_prev_jaref[i_cone_row + 2, i_b] = jar2
-                    zone, N, T = _func_cone_zone(jar0, jar1, jar2, con_mu, friction)
-                    if zone == 2:
-                        _f0, _f1, _f2, _c, h00, h01, h02, h11, h12, h22 = _func_cone_middle(
-                            jar0, jar1, jar2, d0, con_mu, friction, N, T
-                        )
-                        jac_n = constraint_state.jac_n_dofs[i_c, i_b]
-                        for i_d1_ in range(jac_n):
-                            i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
-                            for i_d2_ in range(i_d1_, jac_n):
-                                i_d2 = constraint_state.jac_dofs_idx[i_c, i_d2_, i_b]
-                                row = qd.max(i_d1, i_d2)
-                                col = qd.min(i_d1, i_d2)
-                                if qd.static(
-                                    static_rigid_sim_config.sparse_solve and not static_rigid_sim_config.sparse_envelope
-                                ):
-                                    if (
-                                        island_state.dof_local_pos[i_d1, i_b] >= island_state.dof_local_pos[i_d2, i_b]
-                                    ) != (i_d1 >= i_d2):
-                                        row, col = col, row
-                                block = _func_cone_block_product(
-                                    h00,
-                                    h01,
-                                    h02,
-                                    h11,
-                                    h12,
-                                    h22,
-                                    constraint_state.jac[i_c, row, i_b],
-                                    constraint_state.jac[j1, row, i_b],
-                                    constraint_state.jac[j2, row, i_b],
-                                    constraint_state.jac[i_c, col, i_b],
-                                    constraint_state.jac[j1, col, i_b],
-                                    constraint_state.jac[j2, col, i_b],
-                                )
-                                constraint_state.nt_H[i_b, row, col] = constraint_state.nt_H[i_b, row, col] + block
         # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same kinematic-tree block, which
         # is a contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add
         # by that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
@@ -2276,6 +2411,14 @@ def func_hessian_direct_batch(
                 constraint_state.nt_H[i_b, i_dg, j_dg] = (
                     constraint_state.nt_H[i_b, i_dg, j_dg] + rigid_global_info.mass_mat[i_dg, j_dg, i_b]
                 )
+        # Persist the cone-free block before the cone blocks land, so a rebuild restores it by an envelope copy and
+        # bakes the current cone blocks on top instead of reassembling J^T D J (func_factor_island_incremental_or_direct).
+        if qd.static(static_rigid_sim_config.enable_cone_free_hessian_reuse):
+            func_copy_cone_free_hessian_island(i_b, i_island, island_state, constraint_state, save=True)
+        # Coupled elliptic-cone Hessian block for this island's middle-zone cones; the per-row J^T D J of the active
+        # rows was already added above.
+        if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+            func_add_cone_hessian_block_island(i_b, i_island, island_state, constraint_state, static_rigid_sim_config)
         return
 
     n_dofs = constraint_state.nt_H.shape[1]
@@ -2319,21 +2462,6 @@ def func_hessian_direct_batch(
                         * constraint_state.efc_D[i_c, i_b]
                     )
 
-    # Coupled elliptic-cone Hessian: a middle-zone contact contributes J_c^T H_c J_c with the symmetric 3x3 local block
-    # H_c (top zone contributes nothing; bottom zone is the plain per-row J^T D J already added above with active=True).
-    # The three cone rows share one DOF support, so the block is scattered over that support once and keeps the Hessian
-    # symmetric positive definite (SPD), leaving the factor kernels unchanged. Seed cone_prev_jaref from these residuals
-    # so the incremental factor downdates exactly this block next iteration.
-    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
-        func_add_cone_hessian_block(i_b, constraint_state, static_rigid_sim_config)
-        # cone_prev_jaref backs the CPU incremental rank-3 downdate, so seed it on the CPU backend.
-        if qd.static(static_rigid_sim_config.backend == gs.cpu):
-            ne = constraint_state.n_constraints_equality[i_b]
-            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-            n_cone = constraint_state.n_constraints_cone[i_b]
-            for i_cone_row in range(n_cone):
-                constraint_state.cone_prev_jaref[i_cone_row, i_b] = constraint_state.Jaref[nef + i_cone_row, i_b]
-
     # Compute `H += M`. With sparse_solve the storage position is permuted via dof_iperm; otherwise it is natural
     # (dof_iperm is only populated on the sparse path).
     for i_e in range(n_entities):
@@ -2352,6 +2480,18 @@ def func_hessian_direct_batch(
                     constraint_state.nt_H[i_b, i_d1, i_d2] = (
                         constraint_state.nt_H[i_b, i_d1, i_d2] + rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                     )
+
+    # Persist the cone-free Hessian before the cone blocks land, so a rebuild restores it by an envelope copy and
+    # bakes the current cone blocks on top instead of reassembling J^T D J (func_solve_iter).
+    if qd.static(static_rigid_sim_config.enable_cone_free_hessian_reuse):
+        func_copy_cone_free_hessian_whole_env(i_b, constraint_state, save=True)
+
+    # Coupled elliptic-cone Hessian: a middle-zone contact contributes J_c^T H_c J_c with the symmetric 3x3 local block
+    # H_c (top zone contributes nothing; bottom zone is the plain per-row J^T D J already added above with active=True).
+    # The three cone rows share one DOF support, so the block is scattered over that support once and keeps the Hessian
+    # symmetric positive definite (SPD), leaving the factor kernels unchanged.
+    if qd.static(static_rigid_sim_config.enable_elliptic_friction):
+        func_add_cone_hessian_block(i_b, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -3846,6 +3986,13 @@ def func_factor_island_incremental_or_direct(
             i_c = island_state.constraint_id[c_start + k, i_b]
             if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
                 n_changed = n_changed + 1
+                # Keep the persisted cone-free Hessian synced with the current active set, whichever factor path
+                # runs below: the incremental path leaves it the only cone-free image of the flip, and the rebuild
+                # path restores it into nt_H right after.
+                if qd.static(static_rigid_sim_config.enable_cone_free_hessian_reuse):
+                    func_update_cone_free_hessian_flip(
+                        i_b, i_c, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                    )
             if i_c >= nef and i_c < ncone and (i_c - nef) % 3 == 0:
                 if _func_cone_head_is_middle(i_c, i_b, nef, constraint_state):
                     cone_passes = cone_passes + 1
@@ -3922,9 +4069,24 @@ def func_factor_island_incremental_or_direct(
                     ):
                         need_rebuild = True
         if need_rebuild:
-            func_hessian_direct_batch(
-                i_b, i_island, island_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
-            )
+            # The persisted cone-free Hessian already reflects the current active set (flip scatters above), so the
+            # rebuild restores it by an envelope copy and bakes the current cone blocks on top; without it, the full
+            # J^T D J reassembly runs.
+            if qd.static(static_rigid_sim_config.enable_cone_free_hessian_reuse):
+                func_copy_cone_free_hessian_island(i_b, i_island, island_state, constraint_state, save=False)
+                func_add_cone_hessian_block_island(
+                    i_b, i_island, island_state, constraint_state, static_rigid_sim_config
+                )
+            else:
+                func_hessian_direct_batch(
+                    i_b,
+                    i_island,
+                    island_state,
+                    entities_info,
+                    constraint_state,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                )
             func_cholesky_factor_direct_batch(
                 i_b, i_island, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
@@ -6285,6 +6447,19 @@ def func_solve_iter(
             elif qd.static(static_rigid_sim_config.sparse_solve):
                 func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
                 n_changed = constraint_state.incr_n_changed[i_b]
+                # Keep the persisted cone-free Hessian synced with the current active set, whichever factor path runs
+                # below: the incremental path leaves it the only cone-free image of the flips, and the rebuild path
+                # restores it into nt_H right after.
+                if qd.static(static_rigid_sim_config.enable_cone_free_hessian_reuse):
+                    for idx in range(constraint_state.incr_n_changed[i_b]):
+                        func_update_cone_free_hessian_flip(
+                            i_b,
+                            constraint_state.incr_changed_idx[idx, i_b],
+                            island_state,
+                            constraint_state,
+                            rigid_global_info,
+                            static_rigid_sim_config,
+                        )
                 # Count middle-zone cone contacts: each rides six rank-1 sweeps (one per staged factor column of
                 # its downdated + updated blocks) on the incremental factor every iteration regardless of active-set
                 # flips, so it must weigh into the crossover below (and n_changed alone is often 0 while the cone
@@ -6335,14 +6510,24 @@ def func_solve_iter(
                     else:
                         need_rebuild = True
                 if need_rebuild:
-                    func_hessian_and_cholesky_factor_direct_batch(
-                        i_b,
-                        island_state=island_state,
-                        entities_info=entities_info,
-                        constraint_state=constraint_state,
-                        rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                    )
+                    # The persisted cone-free Hessian already reflects the current active set (flip scatters above),
+                    # so the rebuild restores it by an envelope copy and bakes the current cone blocks on top;
+                    # without it, the full J^T D J reassembly runs.
+                    if qd.static(static_rigid_sim_config.enable_cone_free_hessian_reuse):
+                        func_copy_cone_free_hessian_whole_env(i_b, constraint_state, save=False)
+                        func_add_cone_hessian_block(i_b, constraint_state, static_rigid_sim_config)
+                        func_cholesky_factor_direct_batch(
+                            i_b, 0, island_state, constraint_state, rigid_global_info, static_rigid_sim_config
+                        )
+                    else:
+                        func_hessian_and_cholesky_factor_direct_batch(
+                            i_b,
+                            island_state=island_state,
+                            entities_info=entities_info,
+                            constraint_state=constraint_state,
+                            rigid_global_info=rigid_global_info,
+                            static_rigid_sim_config=static_rigid_sim_config,
+                        )
             else:
                 is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
                     i_b,
