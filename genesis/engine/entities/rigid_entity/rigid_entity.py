@@ -1392,7 +1392,13 @@ class KinematicEntity(Entity):
         self._links_offset_quat[link_idx - self._link_start] = offset_quat
 
     @gs.assert_unbuilt
-    def attach(self, parent_entity, parent_link_name: str | None = None):
+    def attach(
+        self,
+        parent_entity,
+        parent_link_name: str | None = None,
+        pos: Sequence[float] | None = None,
+        quat: Sequence[float] | None = None,
+    ):
         """
         Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
         another entity.
@@ -1408,9 +1414,26 @@ class KinematicEntity(Entity):
         parent_link_name : str
             The name of the link in the parent entity to be linked. Default to the latest link the parent kinematic
             tree.
+        pos : array_like, shape (3,), optional
+            Mounting position of this entity's base link relative to the parent link frame. If neither `pos` nor
+            `quat` is provided, the base link keeps its current local pose, i.e. the morph `pos` / `quat` this entity
+            was created with acts as the mounting transform. If only `quat` is provided, defaults to (0, 0, 0).
+        quat : array_like, shape (4,), optional
+            Mounting orientation (w, x, y, z) of this entity's base link relative to the parent link frame. If only
+            `pos` is provided, defaults to the identity quaternion. Providing `pos` and/or `quat` overrides the pose
+            inherited from the morph.
         """
         if self._is_attached:
             gs.raise_exception("Entity already attached.")
+
+        if pos is not None or quat is not None:
+            mount_pos = gu.zero_pos() if pos is None else np.asarray(pos, dtype=gs.np_float)
+            mount_quat = gu.identity_quat() if quat is None else np.asarray(quat, dtype=gs.np_float)
+            if mount_pos.shape != (3,):
+                gs.raise_exception(f"Mounting 'pos' must have shape (3,), got {mount_pos.shape}.")
+            if mount_quat.shape != (4,):
+                gs.raise_exception(f"Mounting 'quat' must have shape (4,) (w, x, y, z), got {mount_quat.shape}.")
+            mount_quat = mount_quat / np.linalg.norm(mount_quat)
 
         if not isinstance(parent_entity, KinematicEntity):
             gs.raise_exception("Parent entity must derive from 'KinematicEntity'.")
@@ -1502,6 +1525,15 @@ class KinematicEntity(Entity):
                 link._root_idx = parent_link.root_idx
                 link._is_fixed &= parent_link.is_fixed
                 link._invweight = None
+
+        # Apply the explicit mounting transform. Forward kinematics interprets the base link's local pose relative to
+        # its (new) parent link, so overwriting it here mounts the entity at (pos, quat) in the parent link frame.
+        # Compose with the morph frame offset exactly as '_align_link' does for the morph pose at load time, so the
+        # relative pose getters keep stripping the offset correctly.
+        if pos is not None or quat is not None:
+            base_link._pos, base_link._quat = gu.transform_pos_quat_by_trans_quat(
+                self._offset_pos, self._offset_quat, mount_pos, mount_quat
+            )
 
         self._is_attached = True
 
