@@ -375,6 +375,8 @@ def test_mesh_yup(show_viewer):
         combined = trimesh.util.concatenate(tmeshes)
         assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
         bounding_boxes.append(combined.bounding_box.bounds)
+    # FIXME: The STL files are actually different from the glTF...
+    # assert_allclose(np.diff(bounding_boxes, axis=0), 0.0, tol=0.001)
 
 
 @pytest.mark.required
