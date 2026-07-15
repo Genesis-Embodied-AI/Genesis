@@ -35,7 +35,7 @@ def wait_for_viewer_events(viewer, condition_fn, timeout=300.0, sleep_interval=0
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_interactive_viewer_disable_viewer_defaults():
+def test_disable_defaults():
     # Test with keyboard shortcuts DISABLED
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -61,7 +61,7 @@ def test_interactive_viewer_disable_viewer_defaults():
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_default_viewer_plugin(n_envs):
+def test_default_plugin(n_envs):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 0.0, 1.0),
@@ -420,7 +420,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
+def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
     # Mock 'get_save_filename' to avoid poping up an interactive dialog
@@ -507,7 +507,7 @@ def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, rend
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("add_box", [False, True])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, show_viewer):
+def test_add_camera_consistency(add_box, renderer_type, show_viewer):
     CAM_RES = (128, 128)
     CAM_POS = (0.0, -2.0, 1.5)
     CAM_LOOKAT = (0.0, 0.0, 0.0)
@@ -577,7 +577,7 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_rasterizer_camera_sensor_with_viewer(renderer):
+def test_rasterizer_camera_sensor(renderer):
     # The sensor must share the interactive viewer's OpenGL context instead of creating a conflicting one.
     CAM_RES = (128, 64)
 
@@ -611,7 +611,7 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_camera_render_honors_resolution_with_viewer(renderer):
+def test_camera_render_honors_resolution(renderer):
     # A camera renders into its own offscreen FBO, sized to the camera resolution and independent of the
     # interactive window. With an interactive viewer shown, the rendered image must still match the camera
     # resolution, not the (different) viewer resolution, otherwise it no longer matches the camera intrinsics.

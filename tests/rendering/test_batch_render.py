@@ -6,7 +6,7 @@ from ..utils import rgb_array_to_png_bytes
 from .conftest import RENDERER_TYPE
 
 
-def _test_madrona_scene(
+def _batch_render_scene(
     show_viewer,
     renderer,
     png_snapshot,
@@ -76,18 +76,18 @@ def _test_madrona_scene(
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
 def test_lights(show_viewer, renderer, png_snapshot):
-    _test_madrona_scene(show_viewer, renderer, png_snapshot, use_directional_light=True)
+    _batch_render_scene(show_viewer, renderer, png_snapshot, use_directional_light=True)
 
 
 @pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
-def test_batch_texture(show_viewer, renderer, png_snapshot):
-    _test_madrona_scene(show_viewer, renderer, png_snapshot, use_batch_texture=True, n_envs=3)
+def test_texture(show_viewer, renderer, png_snapshot):
+    _batch_render_scene(show_viewer, renderer, png_snapshot, use_batch_texture=True, n_envs=3)
 
 
 @pytest.mark.slow  # ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER])
 def test_fisheye_camera(show_viewer, renderer, png_snapshot):
-    _test_madrona_scene(show_viewer, renderer, png_snapshot, use_fisheye_camera=True)
+    _batch_render_scene(show_viewer, renderer, png_snapshot, use_fisheye_camera=True)
