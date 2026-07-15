@@ -14,6 +14,14 @@ Two things to keep in mind throughout:
 - **Runtime hot paths: efficiency first.** Anything executed every simulation step must minimize GPU-CPU transfers and use bulk, vectorized operations.
 - **No legacy code.** Experimental subsystems carry no deprecation or backward-compatibility burden. Dead code, unused helpers, and commented-out experiments must be removed, not kept "just in case". Do not implement private helpers proactively because they "might be useful later"; add them when they are actually needed.
 
+### 1.1 When a contribution earns its place
+
+Every addition is a cost before it is a benefit: a new algorithm adds maintenance burden, and modifying an existing one risks new bugs. A pull request is merged only when its benefit to end users outweighs that cost - "it works" is not a benefit, since working on its own brings nothing concrete. Benefit is measured on three axes, and a contribution that improves none of them is rejected:
+
+- **Speed.** Demonstrate a significant gain on the existing performance benchmarks under `tests/benchmarks/` - above +5% on at least one. Any regression counts against the contribution, weighed case by case against which benchmark it hits. If a real gain is invisible to the current benchmarks, extend the suite so it shows up rather than asserting it in prose.
+- **Robustness and numerical stability.** Add unit tests that fail before the change and pass after, exactly as a bug fix must (see 12.1). Each corner case newly covered is a benefit; each previously-covered case now broken is a cost.
+- **Ease of use.** Removing a parameter users must tune case by case is highly valued; introducing one is a heavy cost. This concerns *real* parameters - values genuinely tuned per scene (`noslip_iterations`), not incidental knobs (`noslip_tolerance`). A new option whose default works out of the box everywhere is not a real parameter, but then the contribution is judged as if that default were hardcoded: an algorithm reachable only by flipping a non-default flag brings zero benefit on its own. If the flag is instead meant to be tuned, it counts as a real parameter, and its cost must be bought back by the speed or robustness it unlocks.
+
 ## 2. Naming conventions
 
 Consistent naming is one of the most heavily enforced aspects of Genesis reviews. The scheme below applies everywhere, including throwaway debug and instrumentation code: a cryptic one-off local like `wt` (for `is_watertight`) will be flagged even in a script you plan to delete.
@@ -166,6 +174,7 @@ Genesis strongly resists the accumulation of small wrappers. Helpers accrete, ge
 - When no analytical expectation exists, run the simulation once, hardcode the resulting reference values, and assert against them with a loose tolerance, leaving a `FIXME` asking for physics-informed assertions later. This non-regression fallback is far better than checking nothing.
 - For exact analytical dynamics checks, force `gs.integrator.Euler` so the finite-differenced acceleration matches the solver's, and account for rigid-body rotational inertia plus the implicit-damping first-order correction (`effective_inertia = I + damping*dt`) rather than loosening tolerances or distorting the geometry.
 - **Tests are reference documentation.** They must exercise the public API we want users to adopt - default getters, user-frame values compared against the hard-coded morph inputs - never internal solver-frame access or non-default flags pinned to dodge a new default.
+- **MuJoCo-compatibility mode is the sanctioned exception to that default-flag rule.** The `enable_mujoco_compatibility` solver option (off by default) makes the rigid solver reproduce MuJoCo's dynamics to floating-point tolerance, letting Genesis serve as its own baseline: toggling it on and off proves a faster or more robust replacement integrates to the same state, with no runtime dependency on MuJoCo. Tests may run both arms deliberately - flag on as ground truth, off as the shipped path - asserting parity through `check_mujoco_model_consistency` / `check_mujoco_data_consistency` in `tests/utils.py`. This differs from pinning a non-default flag to dodge a new default, which stays prohibited. The mode exists for maintainer-guided debugging and validation, not production, so it must match, never be fast.
 - Do not write tests that verify deprecation warnings are emitted; feature tests exercise behavior, not warning machinery.
 
 ### 12.2 Test structure
