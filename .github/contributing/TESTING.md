@@ -24,7 +24,7 @@ Tests are organized per component, with one file per capability inside each fold
 - `tests/coupling/` - classical inter-solver couplers (SAP, hybrid scenes)
 - `tests/sensors/` - sensor framework and individual sensor types
 - `tests/rendering/` - renderers, interactive viewer, ImGui overlay
-- `tests/loaders/` - asset parsing (meshes, materials, USD)
+- `tests/parsers/` - asset parsing (meshes, materials, USD)
 - `tests/integration/` - end-to-end integration scenarios
 - `tests/benchmarks/` - performance benchmarks (run with `-m benchmarks`, excluded from regular runs)
 - `tests/test_examples.py` - runner exposing the `examples/` scripts as tests (`-m examples`)
