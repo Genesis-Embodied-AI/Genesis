@@ -862,8 +862,9 @@ def test_bake(usd_file, tmp_path):
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [1.0, 2.0])
 def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
-    # USD Physics MassAPI defines some attributes with sentinel 'invalid' default values (e.g. centerOfMass)
-    # that must be treated as unset rather than taken literally.
+    # USD Physics MassAPI defines attributes with sentinel default values - centerOfMass (-inf, -inf, -inf),
+    # principalAxes (0, 0, 0, 0), diagonalInertia (0, 0, 0), mass (0) - that must be treated as unset and
+    # recomputed from geometry, matching an MJCF scene without inertial element.
     mjcf = ET.Element("mujoco", model="massapi_test")
 
     worldbody = ET.SubElement(mjcf, "worldbody")

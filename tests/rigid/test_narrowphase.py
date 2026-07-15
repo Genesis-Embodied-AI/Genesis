@@ -436,7 +436,9 @@ class AnalyticalVsGJKSceneCreator:
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
     # Compare the analytical capsule-capsule narrowphase against GJK by monkey-patching the collider;
-    # multiple configurations reuse a single scene build by moving the objects between checks.
+    # multiple configurations reuse a single scene build by moving the objects between checks. All analytical
+    # scenarios run first, then the patch swaps in a fresh kernel object (from a tmp file) so the GJK pass
+    # cannot hit the cached analytical kernel.
     test_cases = [
         # (pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal)
         # Segments cross at origin (distance=0), pen = sum of radii, normal is degenerate
@@ -647,7 +649,9 @@ def scene_add_box(tmp_path: Path, scene: gs.Scene, size) -> "RigidEntity":
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
     # Compare the analytical sphere-capsule narrowphase against GJK by monkey-patching the collider;
-    # multiple configurations reuse a single scene build by moving the objects between checks.
+    # multiple configurations reuse a single scene build by moving the objects between checks. All analytical
+    # scenarios run first, then the patch swaps in a fresh kernel object (from a tmp file) so the GJK pass
+    # cannot hit the cached analytical kernel.
     test_cases = [
         # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal)
         # Sphere above top cap: dist to segment endpoint (0,0,0.25) = 0.15, pen = 0.05
@@ -911,7 +915,7 @@ def test_sphere_box_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bo
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
     # Smooth geometries like spheres produce extremely small polytope faces near EPA convergence, which
-    # amplifies the relative reprojection error the tolerances must absorb.
+    # amplifies the relative reprojection error and can cause false contact rejections.
     test_cases = [
         # (pos_b, should_collide, description, exp_pen, exp_normal)
         # Original bug report: diagonal offset, dist ≈ 0.1166, pen ≈ 0.0634

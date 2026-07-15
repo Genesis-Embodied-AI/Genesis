@@ -102,8 +102,9 @@ def get_sph_density_pressure(scene, n_particles):
 @pytest.mark.required
 @pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
 def test_initial_density_regular_sampler(show_viewer, pressure_solver, tol):
-    # A regular sampler places particles at uniform spacing, so the initial density must sit at or slightly
-    # below the rest density everywhere.
+    # A regular sampler places particles at uniform spacing: interior particles see a consistent near-rest
+    # density while boundary particles sit lower (fewer neighbors inside the kernel support), so the mean lands
+    # below the rest density with a bounded spread.
     scene, _ = create_sph_scene(show_viewer, pressure_solver=pressure_solver)
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles
@@ -140,8 +141,9 @@ def test_initial_density_regular_sampler(show_viewer, pressure_solver, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
 def test_initial_pressure_regular_sampler(show_viewer, pressure_solver, tol):
-    # With density at or below rest density after regular sampling, the equation of state must yield
-    # near-zero initial pressure.
+    # Regular sampling yields densities at or below the rest density, and the equation of state clamps density
+    # to the rest density, so the initial pressure must be exactly zero. A nonzero initial pressure would inject
+    # spurious forces that destabilize the simulation.
     scene, _ = create_sph_scene(show_viewer, pressure_solver=pressure_solver)
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles
@@ -216,6 +218,8 @@ def test_simulation_stability_regular_sampler(show_viewer, pressure_solver, tol)
 @pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
 @pytest.mark.parametrize("particle_size", [0.01, 0.02])
 def test_density_consistency_different_particle_sizes(show_viewer, pressure_solver, particle_size, tol):
+    # The SPH kernel support scales with the particle size, so the density distribution normalized by the rest
+    # density must be independent of the particle size.
     scene, _ = create_sph_scene(
         show_viewer,
         particle_size=particle_size,

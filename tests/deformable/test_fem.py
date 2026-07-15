@@ -14,7 +14,8 @@ from ..utils import assert_allclose, get_hf_dataset
 @pytest.mark.required
 def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
     # A small maxvolume introduces internal vertices during tetrahedralization: all surface vertices must
-    # still lie exactly on the original surface and the internal ones strictly inside.
+    # still lie exactly on the original quad faces, and the visualizer's mesh triangles must match the FEM
+    # entity's surface triangles.
     verts, faces = cube_verts_and_faces
 
     scene = gs.Scene(

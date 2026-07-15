@@ -499,6 +499,8 @@ def test_polar_decomposition_batched_pure_rotation(side, tol):
     M, N = 3, 3
     np_A = np.random.randn(*batch_shape, M, N).astype(gs.np_float)
 
+    # Only the reconstruction accuracy is verified for batched inputs; the single-matrix test is what
+    # validates the pure_rotation property (det(U) = 1) itself.
     # Test with pure_rotation - reconstruction should still work
     np_U, np_P = gu.polar(np_A, pure_rotation=True, side=side)
 
