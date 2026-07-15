@@ -1,13 +1,11 @@
 """Shared helpers for translating a desired collision matrix into contype/conaffinity bitmasks."""
 
-from typing import FrozenSet, List, Set, Tuple
-
 import z3
 
 
 def solve_contype_conaffinity(
-    n: int, invalid_pairs: Set[FrozenSet[int]], max_bits: int = 31
-) -> List[Tuple[int, int]] | None:
+    n: int, invalid_pairs: set[frozenset[int]], max_bits: int = 31
+) -> list[tuple[int, int]] | None:
     """
     Synthesize per-geom ``(contype, conaffinity)`` bitmasks realizing a desired collision matrix.
 
@@ -16,6 +14,10 @@ def solve_contype_conaffinity(
     that must **not** collide, this finds bitmasks (using as few bits as possible, hence the ascending
     ``K``) such that every excluded pair is disabled and every other pair is enabled. Used by both the
     MJCF importer (``<contact><exclude>``) and the USD importer (CollisionGroup / FilteredPairsAPI).
+
+    Every geom is constrained to keep at least one bit set across its two masks: a geom whose masks
+    are both zero would be demoted to a visual-only geom downstream (``contype or conaffinity`` is the
+    collision-geom discriminator), silently disabling its collision against every other entity as well.
 
     Parameters
     ----------
@@ -37,6 +39,7 @@ def solve_contype_conaffinity(
         contype_bits = [[z3.Bool(f"contype_{i}_{b}") for b in range(num_bits)] for i in range(n)]
         conaffinity_bits = [[z3.Bool(f"conaffinity_{i}_{b}") for b in range(num_bits)] for i in range(n)]
         for i in range(n):
+            solver.add(z3.Or([*contype_bits[i], *conaffinity_bits[i]]))
             for j in range(i + 1, n):
                 cond1 = z3.Or([z3.And(contype_bits[i][b], conaffinity_bits[j][b]) for b in range(num_bits)])
                 cond2 = z3.Or([z3.And(contype_bits[j][b], conaffinity_bits[i][b]) for b in range(num_bits)])

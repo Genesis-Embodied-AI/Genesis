@@ -2491,7 +2491,11 @@ class RigidEntity(KinematicEntity):
     def _load_model(self):
         self._equalities = gs.List()
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK
-        self._is_local_collision_mask = isinstance(self._morph, gs.morphs.MJCF)
+        # MJCF and USD express in-model collision filtering (MJCF '<contact><exclude>', USD CollisionGroup /
+        # FilteredPairsAPI) through synthesized contype/conaffinity bitmasks. Those masks are only consistent within
+        # the entity: applied across entities, they would spuriously disable collision against geoms whose default
+        # masks happen not to overlap (e.g. the ground plane).
+        self._is_local_collision_mask = isinstance(self._morph, (gs.morphs.MJCF, gs.morphs.USD))
 
         super()._load_model()
 
