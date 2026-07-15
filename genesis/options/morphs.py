@@ -39,6 +39,9 @@ from .options import Options
 URDF_FORMAT = ".urdf"
 XACRO_FORMAT = ".xacro"
 MJCF_FORMAT = ".xml"
+
+# Root tags identifying the format of inline XML content passed as 'FileMorph.file'.
+XML_ROOT_TAG_TO_FORMAT = {"mujoco": MJCF_FORMAT, "robot": URDF_FORMAT}
 GLTF_FORMATS = (".glb", ".gltf")
 MESH_FORMATS = (".obj", ".stl", ".dae", *GLTF_FORMATS)
 USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
@@ -688,7 +691,12 @@ class FileMorph(Morph):
     def is_format(self, format):
         if not isinstance(self.file, (str, os.PathLike)):
             return False
-        return str(self.file).lower().endswith(format)
+        # Inline XML content is identified by its root tag rather than a file extension.
+        try:
+            root_tag = ET.fromstring(self.file).tag
+        except (ET.ParseError, TypeError):
+            return str(self.file).lower().endswith(format)
+        return XML_ROOT_TAG_TO_FORMAT.get(root_tag) == format
 
 
 class Mesh(FileMorph, TetGenMixin):
@@ -995,13 +1003,7 @@ class MJCF(FileMorph):
         return data
 
     def model_post_init(self, context: Any) -> None:
-        # Inline XML content parses directly and bypasses the file extension check.
-        try:
-            ET.fromstring(self.file)
-            is_inline_xml = True
-        except (ET.ParseError, TypeError):
-            is_inline_xml = False
-        if not is_inline_xml and not self.is_format(MJCF_FORMAT):
+        if not self.is_format(MJCF_FORMAT):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
     def _identifier(self) -> str:

@@ -162,19 +162,7 @@ def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [(0.5, 2.0, 8.0), (2.0, 2.0, 2.0)])
 @pytest.mark.parametrize("mesh_file", ["meshes/camera/camera.glb", "meshes/axis.obj"])
-def test_morph_scale(scale, mesh_file, tmp_path):
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="cannon">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{mu.get_asset_path(mesh_file)}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-
+def test_morph_scale(scale, mesh_file, mesh_urdf):
     scene = gs.Scene(show_viewer=False)
     obj_orig = scene.add_entity(
         morph=gs.morphs.Mesh(
@@ -213,7 +201,7 @@ def test_morph_scale(scale, mesh_file, tmp_path):
     with nullcontext() if is_isotropic else pytest.raises(gs.GenesisException):
         robot_scaled = scene.add_entity(
             gs.morphs.URDF(
-                file=urdf_path,
+                file=mesh_urdf,
                 file_meshes_are_zup=True,
                 pos=(0, 0, 1.0),
                 scale=scale,
@@ -254,22 +242,8 @@ def test_morph_scale(scale, mesh_file, tmp_path):
 
 @pytest.mark.required
 @pytest.mark.parametrize("mesh_file", ["glb/combined_transform.glb", "yup_zup_coverage/cannon_y_-z.stl"])
-def test_urdf_scale(mesh_file, tmp_path, show_viewer):
+def test_urdf_scale(mesh_urdf, show_viewer):
     SCALE_FACTOR = 2.0
-
-    asset_path = get_hf_dataset(pattern=mesh_file)
-
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="shoe">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{os.path.join(asset_path, mesh_file)}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
 
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -277,7 +251,7 @@ def test_urdf_scale(mesh_file, tmp_path, show_viewer):
     )
     obj_1 = scene.add_entity(
         gs.morphs.URDF(
-            file=urdf_path,
+            file=mesh_urdf,
             convexify=False,
             fixed=True,
         ),
@@ -285,7 +259,7 @@ def test_urdf_scale(mesh_file, tmp_path, show_viewer):
     mesh_1 = obj_1.vgeoms[0].vmesh.trimesh
     obj_2 = scene.add_entity(
         gs.morphs.URDF(
-            file=urdf_path,
+            file=mesh_urdf,
             scale=SCALE_FACTOR,
             convexify=False,
             fixed=True,
@@ -384,24 +358,11 @@ def test_mesh_yup(show_viewer):
     "mesh_file, file_meshes_are_zup",
     [("yup_zup_coverage/cannon_z.glb", True), ("yup_zup_coverage/cannon_y_-z.stl", False)],
 )
-def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
-    asset_path = get_hf_dataset(pattern=mesh_file)
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="cannon">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{os.path.join(asset_path, mesh_file)}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-
+def test_urdf_yup(file_meshes_are_zup, mesh_urdf, show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
     robot = scene.add_entity(
         gs.morphs.URDF(
-            file=urdf_path,
+            file=mesh_urdf,
             convexify=False,
             fixed=True,
             file_meshes_are_zup=file_meshes_are_zup,
@@ -424,35 +385,20 @@ def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
 
 
 @pytest.mark.required
-def test_urdf_mesh_processing(tmp_path, show_viewer):
-    stl_file = "1707/base_link.stl"
-    asset_path = get_hf_dataset(pattern=stl_file)
-    stl_path = os.path.join(asset_path, stl_file)
-
-    urdf_path = tmp_path / "model.urdf"
-    urdf_path.write_text(
-        f"""<robot name="shoe">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{stl_path}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
-    )
-
+@pytest.mark.parametrize("mesh_file", ["1707/base_link.stl"])
+def test_urdf_mesh_processing(mesh_path, mesh_urdf, show_viewer):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
     )
     obj = scene.add_entity(
         gs.morphs.Mesh(
-            file=stl_path,
+            file=mesh_path,
         ),
     )
     robot = scene.add_entity(
         gs.morphs.URDF(
-            file=urdf_path,
+            file=mesh_urdf,
         ),
     )
 
@@ -774,17 +720,16 @@ def test_glb_multi_primitive_distinct_materials(tmp_path):
 @pytest.mark.parametrize(
     "n_channels, float_type",
     [
-        (1, np.float32),  # grayscale → H×W
-        (2, np.float64),  # L+A       → H×W×2
+        (1, np.float32),  # grayscale -> HxW
+        (2, np.float64),  # L+A       -> HxWx2
     ],
 )
-def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_type):
+def test_float_texture_conversion(show_viewer, n_channels, float_type):
     vertices = np.array(
         [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]],
         dtype=np.float32,
     )
     faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
-
     mesh = trimesh.Trimesh(vertices, faces, process=False)
 
     H = W = 16
@@ -792,32 +737,29 @@ def test_urdf_with_float_texture_glb(tmp_path, show_viewer, n_channels, float_ty
         img = np.random.rand(H, W).astype(float_type)
     else:
         img = np.random.rand(H, W, n_channels).astype(float_type)
-
     mesh.visual = trimesh.visual.texture.TextureVisuals(
         uv=np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float32),
         material=trimesh.visual.material.SimpleMaterial(image=img),
     )
 
-    glb_path = tmp_path / f"tex_{n_channels}c.glb"
-    urdf_path = tmp_path / f"tex_{n_channels}c.urdf"
-    trimesh.Scene([mesh]).export(glb_path)
-    urdf_path.write_text(
-        f"""<robot name="tex{n_channels}c">
-              <link name="base">
-                <visual>
-                  <geometry><mesh filename="{glb_path}"/></geometry>
-                </visual>
-              </link>
-            </robot>
-         """
+    # Feed the in-memory mesh directly: a glTF export would drop the float image entirely, as the format only
+    # supports 8-bit images.
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
     )
-
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
-    robot = scene.add_entity(
-        gs.morphs.URDF(
-            file=urdf_path,
+    entity = scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            files=(mesh,),
         ),
     )
+
+    texture = entity.vgeoms[0].vmesh.surface.diffuse_texture
+    assert isinstance(texture, gs.textures.ImageTexture)
+    image = np.asarray(texture.image_array)
+    assert image.dtype == np.uint8
+    assert image.shape == img.shape
+    assert_allclose(image, 255.0 * img, atol=0.5)
 
 
 @pytest.mark.required
