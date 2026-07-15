@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,6 +14,22 @@ from genesis.repr_base import RBC
 from genesis.utils.misc import qd_to_torch
 
 from .utils import rotate_inertia_to_link_frame
+
+
+def _rodrigues(axis: np.ndarray, theta: float) -> np.ndarray:
+    """Rodrigues rotation: sign-preserving axis-angle to 3x3 matrix.
+
+    Unlike gu.axis_angle_to_R which derives sin from sqrt(1-cos^2) (losing sign),
+    this computes sin(theta) directly so negative angles rotate correctly.
+    """
+    axis = axis / np.linalg.norm(axis)
+    c = np.cos(theta)
+    s = np.sin(theta)
+    K = np.array([[0, -axis[2], axis[1]],
+                  [axis[2], 0, -axis[0]],
+                  [-axis[1], axis[0], 0]], dtype=np.float64)
+    return np.eye(3, dtype=np.float64) * c + (1 - c) * np.outer(axis, axis) + s * K
+
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -30,7 +47,7 @@ def _func_mat3_to_quat(
     r10: gs.qd_float, r11: gs.qd_float, r12: gs.qd_float,
     r20: gs.qd_float, r21: gs.qd_float, r22: gs.qd_float,
 ):
-    """3x3 matrix → quaternion (w,x,y,z) via Shepperd's method. No SVD needed for high-kappa ABD."""
+    """3x3 matrix -> quaternion (w,x,y,z) via Shepperd's method. No SVD needed for high-kappa ABD."""
     trace = r00 + r11 + r22
     w = 0.0
     x = 0.0
@@ -70,12 +87,13 @@ def _kernel_qipc_writeback(
     abd_q: qd.types.ndarray(),
     body_indices: qd.types.ndarray(),
     link_indices: qd.types.ndarray(),
+    rel_transforms: qd.types.ndarray(),
     dofs_pos: qd.types.ndarray(),
     dof_indices: qd.types.ndarray(),
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
 ):
-    """Single kernel: ABD q → pos/quat (skip SVD, high kappa), joint theta → dofs, zero vel."""
+    """ABD q -> pos/quat with per-link relative transform for merged bodies."""
     n_links = link_indices.shape[0]
     n_dofs = dof_indices.shape[0]
 
@@ -83,17 +101,49 @@ def _kernel_qipc_writeback(
         body_idx = body_indices[i]
         link_idx = link_indices[i]
 
-        # pos = q[0:3]
-        links_state.pos[link_idx, 0][0] = abd_q[body_idx, 0]
-        links_state.pos[link_idx, 0][1] = abd_q[body_idx, 1]
-        links_state.pos[link_idx, 0][2] = abd_q[body_idx, 2]
+        t0 = abd_q[body_idx, 0]
+        t1 = abd_q[body_idx, 1]
+        t2 = abd_q[body_idx, 2]
+        a00 = abd_q[body_idx, 3]
+        a01 = abd_q[body_idx, 4]
+        a02 = abd_q[body_idx, 5]
+        a10 = abd_q[body_idx, 6]
+        a11 = abd_q[body_idx, 7]
+        a12 = abd_q[body_idx, 8]
+        a20 = abd_q[body_idx, 9]
+        a21 = abd_q[body_idx, 10]
+        a22 = abd_q[body_idx, 11]
 
-        # A = q[3:12] treated directly as rotation (valid for high kappa)
-        w, x, y, z = _func_mat3_to_quat(
-            abd_q[body_idx, 3], abd_q[body_idx, 4], abd_q[body_idx, 5],
-            abd_q[body_idx, 6], abd_q[body_idx, 7], abd_q[body_idx, 8],
-            abd_q[body_idx, 9], abd_q[body_idx, 10], abd_q[body_idx, 11],
-        )
+        rt0 = rel_transforms[i, 0]
+        rt1 = rel_transforms[i, 1]
+        rt2 = rel_transforms[i, 2]
+        rr00 = rel_transforms[i, 3]
+        rr01 = rel_transforms[i, 4]
+        rr02 = rel_transforms[i, 5]
+        rr10 = rel_transforms[i, 6]
+        rr11 = rel_transforms[i, 7]
+        rr12 = rel_transforms[i, 8]
+        rr20 = rel_transforms[i, 9]
+        rr21 = rel_transforms[i, 10]
+        rr22 = rel_transforms[i, 11]
+
+        # pos = A @ rel_t + t
+        links_state.pos[link_idx, 0][0] = a00 * rt0 + a01 * rt1 + a02 * rt2 + t0
+        links_state.pos[link_idx, 0][1] = a10 * rt0 + a11 * rt1 + a12 * rt2 + t1
+        links_state.pos[link_idx, 0][2] = a20 * rt0 + a21 * rt1 + a22 * rt2 + t2
+
+        # R_link = A @ rel_R
+        m00 = a00 * rr00 + a01 * rr10 + a02 * rr20
+        m01 = a00 * rr01 + a01 * rr11 + a02 * rr21
+        m02 = a00 * rr02 + a01 * rr12 + a02 * rr22
+        m10 = a10 * rr00 + a11 * rr10 + a12 * rr20
+        m11 = a10 * rr01 + a11 * rr11 + a12 * rr21
+        m12 = a10 * rr02 + a11 * rr12 + a12 * rr22
+        m20 = a20 * rr00 + a21 * rr10 + a22 * rr20
+        m21 = a20 * rr01 + a21 * rr11 + a22 * rr21
+        m22 = a20 * rr02 + a21 * rr12 + a22 * rr22
+
+        w, x, y, z = _func_mat3_to_quat(m00, m01, m02, m10, m11, m12, m20, m21, m22)
         links_state.quat[link_idx, 0][0] = w
         links_state.quat[link_idx, 0][1] = x
         links_state.quat[link_idx, 0][2] = y
@@ -130,14 +180,34 @@ class QIPCCoupler(RBC):
     def options(self) -> QIPCCouplerOptions:
         return self._options
 
+    def _get_entity_config(self, entity):
+        """Resolve per-entity QIPC config: material fields override coupler option defaults."""
+        mat = entity.material
+        opt = self._options
+
+        def _pick(mat_attr, opt_attr):
+            v = getattr(mat, mat_attr, None)
+            return v if v is not None else getattr(opt, opt_attr)
+
+        return {
+            "abd_kappa": _pick("qipc_abd_kappa", "rigid_abd_kappa"),
+            "kappa_pivot": _pick("qipc_kappa_pivot", "joint_kappa_pivot"),
+            "kappa_axis": _pick("qipc_kappa_axis", "joint_kappa_axis"),
+            "default_kp": _pick("qipc_default_kp", "default_kp"),
+            "default_kv": _pick("qipc_default_kv", "default_kv"),
+            "home_qpos": getattr(mat, "qipc_home_qpos", None),
+        }
+
     def build(self):
         from qipc import Scene as QIPCScene, trimesh
         from qipc.constitution import AffineBodyConstitution
+        from qipc.scene.joint_collection import JointCollection
 
         assert self._sim.n_envs <= 1, "QIPCCoupler: n_envs > 1 not supported"
 
         entity = self._sim.rigid_solver.entities[0]
         self._entity = entity
+        self._entity_config = self._get_entity_config(entity)
 
         self._scene = QIPCScene(
             dt=self._sim.dt,
@@ -148,129 +218,173 @@ class QIPCCoupler(RBC):
         abd = AffineBodyConstitution()
 
         T_world = self._compute_initial_transforms()
+        self._T_world = T_world
+
+        merge_groups, link_to_rep = self._build_merge_groups(entity)
+
+        self._link_to_rep = link_to_rep
+        self._merge_groups = merge_groups
 
         self._link_slots = {}
-        for link in entity.links:
-            verts, faces = self._collect_link_mesh(link)
-            if verts is None:
-                continue
-            geo = trimesh(verts, faces)
-            geo.instances.resize(1)
-            geo.transforms = T_world[link.idx_local].reshape(1, 4, 4)
+        self._group_slots = {}
 
-            is_base_fixed = (link.parent_idx < 0 and getattr(entity.morph, "fixed", False))
-            if link.inertial_mass is None or link.inertial_mass <= 0:
-                gs.raise_exception(
-                    f"QIPCCoupler: link '{link.name}' has invalid mass ({link.inertial_mass}). "
-                    "All links must have positive mass."
-                )
-            if link.inertial_pos is None:
-                gs.raise_exception(f"QIPCCoupler: link '{link.name}' has no center_of_mass defined.")
-            vol = self._compute_link_volume(link)
-            inertia_link_frame = rotate_inertia_to_link_frame(link.inertial_i, link.inertial_quat)
-
-            abd.apply_to(
-                geo,
-                kappa=self._options.rigid_abd_kappa,
-                mass=link.inertial_mass,
-                center_of_mass=link.inertial_pos,
-                inertia=inertia_link_frame,
-                volume=vol,
-                is_fixed=is_base_fixed,
+        for rep, members in merge_groups:
+            slot = self._create_merged_body(
+                entity, rep, members, T_world, abd, trimesh,
             )
-            self._link_slots[link.idx_local] = self._scene.geometries.create(link.name, geo)
+            if slot is None:
+                continue
+            self._group_slots[rep] = slot
+            for m in members:
+                self._link_slots[m] = slot
 
-        # Create joints one-by-one, then merge into single JointCollection
-        from qipc.scene.joint_collection import JointCollection
-
+        # --- Joint creation ---
         per_joint_jcs = []
-        self._genesis_dof_order = []  # entity-local DOF index for each joint (creation order)
+        self._genesis_dof_order = []
+
+        home_qpos = self._entity_config["home_qpos"]
+        init_qpos = home_qpos if home_qpos is not None else entity.init_qpos
 
         for joint in entity.joints:
+            if joint.type == gs.JOINT_TYPE.FIXED:
+                continue
+
             child_link = joint.link
             parent_local = child_link.parent_idx - entity.link_start
             child_local = child_link.idx_local
 
+            parent_rep = link_to_rep[parent_local]
+            child_rep = link_to_rep[child_local]
+
+            if parent_rep == child_rep:
+                continue
+
+            if parent_rep not in self._group_slots or child_rep not in self._group_slots:
+                gs.logger.warning(
+                    f"QIPCCoupler: skipping joint '{joint.name}' — "
+                    f"parent or child body not created."
+                )
+                continue
+
             if joint.type == gs.JOINT_TYPE.REVOLUTE:
                 jtype = "revolute"
                 axis_local = joint.dofs_motion_ang[0]
-                extra_kwargs = {"kappa_pivot": self._options.joint_kappa_pivot}
+                extra_kwargs = {"kappa_pivot": self._entity_config["kappa_pivot"]}
             elif joint.type == gs.JOINT_TYPE.PRISMATIC:
                 jtype = "prismatic"
                 axis_local = joint.dofs_motion_vel[0]
-                extra_kwargs = {"kappa_lateral": self._options.joint_kappa_pivot}
+                extra_kwargs = {"kappa_lateral": self._entity_config["kappa_pivot"]}
             else:
-                gs.raise_exception(
-                    f"QIPCCoupler: unsupported joint type {joint.type} for joint '{joint.name}'."
+                gs.logger.warning(
+                    f"QIPCCoupler: skipping unsupported joint type "
+                    f"{joint.type} for joint '{joint.name}'."
                 )
+                continue
 
-            # Anchor/axis in each body's rest frame (= link local frame)
-            # anchor_left: joint pivot in parent link local frame = child_link.pos
-            # anchor_right: joint pivot in child link local frame = joint.pos (usually [0,0,0])
-            # axis_left: axis in parent local frame = R_child_in_parent @ axis_local
-            # axis_right: axis in child local frame = axis_local
+            T_parent_rep = T_world[parent_rep]
+            T_child_rep = T_world[child_rep]
+            T_parent_link = T_world[parent_local]
+            T_child_link = T_world[child_local]
+
+            R_parent_rep_inv = T_parent_rep[:3, :3].T
+            R_child_rep_inv = T_child_rep[:3, :3].T
+
+            # Joint pivot in world frame
+            T_joint_world = T_parent_link @ self._make_link_to_child_T(child_link)
+            anchor_world = T_joint_world[:3, 3]
+
+            # anchor in each rep's local frame
+            anchor_left = R_parent_rep_inv @ (anchor_world - T_parent_rep[:3, 3])
+            anchor_right = R_child_rep_inv @ (anchor_world - T_child_rep[:3, 3])
+
+            # axis in world frame
             R_child_in_parent = gu.quat_to_R(np.array(child_link.quat, dtype=np.float64))
-            axis_in_parent = R_child_in_parent @ np.array(axis_local, dtype=np.float64)
+            axis_world = T_parent_link[:3, :3] @ R_child_in_parent @ np.array(axis_local, dtype=np.float64)
+            axis_world = axis_world / np.linalg.norm(axis_world)
 
+            # axis in each rep's local frame
+            axis_left = R_parent_rep_inv @ axis_world
+            axis_right = R_child_rep_inv @ axis_world
+
+            kp, kv = self._resolve_joint_gains(joint)
+
+            dof_local = joint.dofs_idx_local[0]
             jc = self._scene.add_joint(
                 joint.name,
                 type=jtype,
-                left=self._link_slots[parent_local],
-                right=self._link_slots[child_local],
-                anchor_left=child_link.pos.tolist(),
-                anchor_right=joint.pos.tolist(),
-                axis_left=axis_in_parent.tolist(),
-                axis_right=np.array(axis_local, dtype=np.float64).tolist(),
-                kappa_axis=self._options.joint_kappa_axis,
+                left=self._group_slots[parent_rep],
+                right=self._group_slots[child_rep],
+                anchor_left=anchor_left.tolist(),
+                anchor_right=anchor_right.tolist(),
+                axis_left=axis_left.tolist(),
+                axis_right=axis_right.tolist(),
+                kappa_axis=self._entity_config["kappa_axis"],
                 enable_controller=True,
-                kp=self._options.default_kp,
-                kv=self._options.default_kv,
+                kp=kp,
+                kv=kv,
                 theta_lower=float(joint.dofs_limit[0, 0]),
                 theta_upper=float(joint.dofs_limit[0, 1]),
+                init_theta=float(init_qpos[dof_local]),
                 **extra_kwargs,
             )
             per_joint_jcs.append(jc)
             self._genesis_dof_order.append(joint.dofs_idx_local[0])
 
-        # Merge into single JC (invalidates per-joint JCs)
         self._jc = JointCollection.merge(per_joint_jcs) if per_joint_jcs else None
 
-        # Convert DOF order to GPU tensor for indexed ops
         self._genesis_dof_order = torch.tensor(
             self._genesis_dof_order, dtype=torch.int64, device=gs.device
         )
 
         self._scene.init()
 
-        # Build body index mapping (after init)
+        # --- Build body index mapping (after init) ---
         self._link_body_indices = {}
         for link in entity.links:
-            slot = self._link_slots[link.idx_local]
+            rep = link_to_rep[link.idx_local]
+            if rep not in self._group_slots:
+                continue
+            slot = self._group_slots[rep]
             body_offset = int(slot.geometry.meta["abd_body_offset"].cpu()[0])
             self._link_body_indices[link.idx_local] = body_offset
 
-        # Pre-compute GPU index tensors for kernel calls (allocated once, reused every frame)
-        n_links = len(entity.links)
-        link_idx_list = [entity.link_start + link.idx_local for link in entity.links]
+        # --- Pre-compute GPU index tensors ---
+        active_links = [link for link in entity.links if link.idx_local in self._link_body_indices]
+
+        link_idx_list = [entity.link_start + link.idx_local for link in active_links]
         self._link_indices_t = torch.tensor(link_idx_list, dtype=torch.int32, device=gs.device)
         self._body_indices_t = torch.tensor(
-            [self._link_body_indices[link.idx_local] for link in entity.links],
+            [self._link_body_indices[link.idx_local] for link in active_links],
             dtype=torch.int64, device=gs.device,
         )
+
+        # Per-link relative transforms for writeback (12-DOF: [t_rel(3), R_rel(9)])
+        rel_data = np.zeros((len(active_links), 12), dtype=np.float64)
+        for i, link in enumerate(active_links):
+            rep = link_to_rep[link.idx_local]
+            if link.idx_local == rep:
+                rel_data[i, 3] = 1.0   # identity rotation
+                rel_data[i, 7] = 1.0
+                rel_data[i, 11] = 1.0
+            else:
+                T_rep = T_world[rep]
+                T_member = T_world[link.idx_local]
+                T_rel = np.linalg.inv(T_rep) @ T_member
+                rel_data[i, 0:3] = T_rel[:3, 3]
+                rel_data[i, 3:12] = T_rel[:3, :3].flatten()
+        self._rel_transforms_t = torch.tensor(rel_data, dtype=torch.float64, device=gs.device)
 
         n_dofs = entity.n_dofs
         dof_idx_list = []
         for joint in entity.joints:
+            if joint.type == gs.JOINT_TYPE.FIXED:
+                continue
             for d in range(joint.n_dofs):
                 dof_idx_list.append(entity.dof_start + joint.dofs_idx_local[d])
         self._dof_indices_t = torch.tensor(dof_idx_list, dtype=torch.int32, device=gs.device)
 
-        # Pre-allocate dofs writeback buffer on GPU
         self._wb_dofs_pos = torch.zeros(n_dofs, dtype=gs.tc_float, device=gs.device)
 
-
-
-        # QIPC debug viewer (independent window alongside Genesis viewer)
         self._debug_viewer = None
         if self._options.debug_viewer:
             self._debug_viewer = self._scene.viewer
@@ -278,18 +392,19 @@ class QIPCCoupler(RBC):
 
         self._substep_count = 0
         self._substeps_per_step = self._sim._substeps
-        self._skip_first_step = True  # Genesis runs one step during build() for kernel compilation
+        self._skip_first_step = True
+
+        self._writeback_state()
 
     def reset(self, envs_idx=None):
         pass
 
     def preprocess(self, f):
-        """Read ctrl_pos from Genesis, forward to merged QIPC JointCollection."""
+        """Read ctrl_pos from Genesis and forward to QIPC (absolute frame)."""
         if self._jc is None:
             return
         ctrl_pos_view = qd_to_torch(self._sim.rigid_solver.dofs_state.ctrl_pos)
         entity_ctrl = ctrl_pos_view[self._entity.dof_start:self._entity.dof_end, 0].to(torch.float64)
-        # Reorder Genesis DOFs to QIPC joint creation order and set all at once
         targets = entity_ctrl[self._genesis_dof_order]
         self._jc.control_dofs_position(targets)
 
@@ -321,24 +436,22 @@ class QIPCCoupler(RBC):
         pass
 
     # -------------------------------------------------------------------------
-    # State writeback — all GPU, no host transfer
+    # State writeback
     # -------------------------------------------------------------------------
 
     def _writeback_state(self):
-        """Write QIPC state → Genesis buffers. Single kernel for links, batch theta readback."""
-        abd_q = self._scene.affine_body.q  # (n_bodies, 12) GPU tensor, float64
+        """Write QIPC state -> Genesis buffers (absolute frame, no offset needed)."""
+        abd_q = self._scene.affine_body.q
 
-        # Read all joint theta from merged JC (single indexed read from solver tensor)
         if self._jc is not None:
-            theta = self._jc.get_dofs_position()  # (n_dofs,) GPU, creation order
-            # Scatter into Genesis DOF order
+            theta = self._jc.get_dofs_position()
             self._wb_dofs_pos[self._genesis_dof_order] = theta.to(gs.tc_float)
 
-        # Single kernel: ABD q → pos/quat + dofs writeback
         _kernel_qipc_writeback(
             abd_q=abd_q,
             body_indices=self._body_indices_t,
             link_indices=self._link_indices_t,
+            rel_transforms=self._rel_transforms_t,
             dofs_pos=self._wb_dofs_pos,
             dof_indices=self._dof_indices_t,
             links_state=self._sim.rigid_solver.links_state,
@@ -346,41 +459,266 @@ class QIPCCoupler(RBC):
         )
 
     # -------------------------------------------------------------------------
-    # Build-time helpers (run once, can use host)
+    # Build-time helpers
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _compute_link_volume(link):
-        """Compute link volume with priority: visual meshes > collision meshes > 1.0 m^3 default."""
+    def _build_merge_groups(entity):
+        """Group links connected by fixed joints.
+
+        Returns (groups, link_to_rep) where groups is a list of (rep, members)
+        tuples and link_to_rep maps each idx_local to its group representative.
+        """
+        fixed_adj: dict[int, list[int]] = defaultdict(list)
+
+        for link in entity.links:
+            for joint in link.joints:
+                if joint.type == gs.JOINT_TYPE.FIXED:
+                    parent_local = link.parent_idx - entity.link_start
+                    fixed_adj[link.idx_local].append(parent_local)
+                    fixed_adj[parent_local].append(link.idx_local)
+
+        # Also treat jointless non-root links as fixed (MJCF bodies without <joint>)
+        for link in entity.links:
+            if link.parent_idx >= 0 and len(link.joints) == 0:
+                parent_local = link.parent_idx - entity.link_start
+                fixed_adj[link.idx_local].append(parent_local)
+                fixed_adj[parent_local].append(link.idx_local)
+
+        # Compute link depth via BFS from root
+        depth: dict[int, int] = {}
+        for link in entity.links:
+            if link.parent_idx < 0:
+                depth[link.idx_local] = 0
+        bfs_queue = [idx for idx in depth]
+        while bfs_queue:
+            current = bfs_queue.pop(0)
+            for link in entity.links:
+                parent_local = link.parent_idx - entity.link_start
+                if parent_local == current and link.idx_local not in depth:
+                    depth[link.idx_local] = depth[current] + 1
+                    bfs_queue.append(link.idx_local)
+
+        # BFS through fixed adjacency to build groups
+        visited: set[int] = set()
+        groups: list[tuple[int, list[int]]] = []
+
+        for link in entity.links:
+            if link.idx_local in visited:
+                continue
+            members: list[int] = []
+            queue = [link.idx_local]
+            while queue:
+                n = queue.pop(0)
+                if n in visited:
+                    continue
+                visited.add(n)
+                members.append(n)
+                for neighbor in fixed_adj.get(n, []):
+                    if neighbor not in visited:
+                        queue.append(neighbor)
+
+            rep = min(members, key=lambda x: depth.get(x, 999))
+            groups.append((rep, members))
+
+        link_to_rep = {}
+        for rep, members in groups:
+            for m in members:
+                link_to_rep[m] = rep
+
+        return groups, link_to_rep
+
+    def _create_merged_body(self, entity, rep, members, T_world, abd, trimesh_factory):
+        """Create a single ABD body from a merge group."""
+        T_rep = T_world[rep]
+        T_rep_inv = np.linalg.inv(T_rep)
+        R_rep = T_rep[:3, :3]
+        t_rep = T_rep[:3, 3]
+
+        all_verts = []
+        all_faces = []
+        vert_offset = 0
+
+        link_by_idx = {link.idx_local: link for link in entity.links}
+
+        for m_idx in members:
+            link = link_by_idx[m_idx]
+            if not hasattr(link, "geoms") or len(link.geoms) == 0:
+                continue
+
+            T_member = T_world[m_idx]
+
+            for geom in link.geoms:
+                v = geom.init_verts.copy().astype(np.float64)
+                R_geom = gu.quat_to_R(np.array(geom.init_quat, dtype=np.float64))
+                v = (R_geom @ v.T).T + geom.init_pos
+
+                # Transform from link-local to world, then to rep-local
+                T_geom_world = T_member
+                T_geom_in_rep = T_rep_inv @ T_geom_world
+                v_h = np.hstack([v, np.ones((len(v), 1))])
+                v_rep = (T_geom_in_rep @ v_h.T).T[:, :3]
+
+                all_verts.append(v_rep)
+                all_faces.append(geom.init_faces.copy() + vert_offset)
+                vert_offset += len(v_rep)
+
+        total_mass, com_world, I_world = self._merge_inertials(
+            entity, members, T_world,
+        )
+        com_local = R_rep.T @ (com_world - t_rep)
+        I_local = R_rep.T @ I_world @ R_rep
+
+        is_fixed = any(link_by_idx[m].is_fixed for m in members)
+
+        if all_verts:
+            merged_verts = np.concatenate(all_verts, axis=0)
+            merged_faces = np.concatenate(all_faces, axis=0)
+
+            geo = trimesh_factory(merged_verts, merged_faces)
+            geo.instances.resize(1)
+            geo.transforms = T_rep.reshape(1, 4, 4)
+
+            if total_mass > 0:
+                vol = self._compute_merged_volume(entity, members)
+                abd.apply_to(
+                    geo,
+                    kappa=self._entity_config["abd_kappa"],
+                    mass=total_mass,
+                    center_of_mass=com_local,
+                    inertia=I_local,
+                    volume=vol,
+                    is_fixed=is_fixed,
+                )
+            else:
+                abd.apply_to(
+                    geo,
+                    kappa=self._entity_config["abd_kappa"],
+                    mass_density=1e3,
+                    is_fixed=is_fixed,
+                )
+
+            rep_link = link_by_idx[rep]
+            slot = self._scene.geometries.create(rep_link.name, geo)
+            return slot
+        elif total_mass > 0:
+            vol = total_mass / 1e3
+            geo = abd.create_proxy(
+                kappa=self._entity_config["abd_kappa"],
+                mass=total_mass,
+                center_of_mass=com_local,
+                inertia=I_local,
+                volume=vol,
+            )
+            if is_fixed:
+                geo.instances["is_fixed"] = np.array([1], dtype=np.int32)
+            geo.instances["transform"] = T_rep.reshape(1, 4, 4)
+
+            rep_link = link_by_idx[rep]
+            slot = self._scene.geometries.create(rep_link.name, geo)
+            return slot
+
+        return None
+
+    @staticmethod
+    def _merge_inertials(entity, members, T_world):
+        """Combine inertials of multiple links using parallel axis theorem.
+
+        Returns (total_mass, com_world, inertia_world_at_com).
+        """
+        link_by_idx = {link.idx_local: link for link in entity.links}
+
+        total_mass = 0.0
+        weighted_com = np.zeros(3, dtype=np.float64)
+        entries = []
+
+        for m_idx in members:
+            link = link_by_idx[m_idx]
+            if link.inertial_mass is None or link.inertial_mass <= 0:
+                continue
+
+            m = float(link.inertial_mass)
+            T_link = T_world[m_idx]
+
+            inertial_pos = np.array(link.inertial_pos, dtype=np.float64)
+            com_link_h = np.array([*inertial_pos, 1.0], dtype=np.float64)
+            com_world = (T_link @ com_link_h)[:3]
+
+            R_link = T_link[:3, :3]
+            R_inertial = gu.quat_to_R(np.array(link.inertial_quat, dtype=np.float64))
+            R_world = R_link @ R_inertial
+            I_principal = np.array(link.inertial_i, dtype=np.float64)
+            I_world = R_world @ I_principal @ R_world.T
+
+            entries.append((m, com_world, I_world))
+            total_mass += m
+            weighted_com += m * com_world
+
+        if total_mass <= 0:
+            return 0.0, np.zeros(3), np.zeros((3, 3))
+
+        com = weighted_com / total_mass
+
+        I_combined = np.zeros((3, 3), dtype=np.float64)
+        for m, com_i, I_i in entries:
+            d = com_i - com
+            I_combined += I_i + m * (np.dot(d, d) * np.eye(3) - np.outer(d, d))
+
+        return total_mass, com, I_combined
+
+    def _resolve_joint_gains(self, joint) -> tuple[float, float]:
+        """Resolve kp/kv: material-specified values override actuator gains override coupler defaults."""
+        mat = self._entity.material
+        mat_kp = getattr(mat, "qipc_default_kp", None)
+        mat_kv = getattr(mat, "qipc_default_kv", None)
+
+        if mat_kp is not None:
+            kp = float(mat_kp)
+        else:
+            act_gain = getattr(joint, "dofs_act_gain", None)
+            if act_gain is not None and len(act_gain) > 0 and float(act_gain[0]) > 0:
+                kp = float(act_gain[0])
+            else:
+                kp = float(self._options.default_kp)
+
+        if mat_kv is not None:
+            kv = float(mat_kv) if not isinstance(mat_kv, str) else 0.0
+        else:
+            act_bias = getattr(joint, "dofs_act_bias", None)
+            if act_bias is not None and len(act_bias) > 0 and len(act_bias[0]) >= 3 and float(-act_bias[0][2]) > 0:
+                kv = float(-act_bias[0][2])
+            else:
+                default_kv = self._options.default_kv
+                kv = float(default_kv) if not isinstance(default_kv, str) else 0.0
+
+        return kp, kv
+
+    @staticmethod
+    def _compute_merged_volume(entity, members):
+        """Compute total volume for a merge group."""
         from qipc.solver.affine_body import compute_mesh_volume_trimesh
 
-        # Priority 1: visual meshes
-        if hasattr(link, "vgeoms") and len(link.vgeoms) > 0:
-            total_vol = 0.0
-            for vgeom in link.vgeoms:
-                v = vgeom.init_vverts.copy().astype(np.float64)
-                R = gu.quat_to_R(np.array(vgeom.init_quat, dtype=np.float64))
-                v = (R @ v.T).T + vgeom.init_pos
-                f = vgeom.init_vfaces
-                total_vol += abs(compute_mesh_volume_trimesh(v, f))
-            if total_vol > 1e-12:
-                return total_vol
+        link_by_idx = {link.idx_local: link for link in entity.links}
+        total_vol = 0.0
 
-        # Priority 2: collision meshes
-        if hasattr(link, "geoms") and len(link.geoms) > 0:
-            total_vol = 0.0
+        for m_idx in members:
+            link = link_by_idx[m_idx]
             for geom in link.geoms:
                 v = geom.init_verts.copy().astype(np.float64)
                 R = gu.quat_to_R(np.array(geom.init_quat, dtype=np.float64))
                 v = (R @ v.T).T + geom.init_pos
                 f = geom.init_faces
                 total_vol += abs(compute_mesh_volume_trimesh(v, f))
-            if total_vol > 1e-12:
-                return total_vol
 
-        # Priority 3: no mesh available
-        gs.warn(f"QIPCCoupler: link '{link.name}' has no collision geometry. Using default volume 1.0m^3.")
-        return 1.0 
+        return max(total_vol, 1e-12)
+
+    @staticmethod
+    def _make_link_to_child_T(child_link):
+        """Build the 4x4 transform from parent link frame to child link frame origin."""
+        T = np.eye(4, dtype=np.float64)
+        T[:3, 3] = child_link.pos
+        T[:3, :3] = gu.quat_to_R(np.array(child_link.quat, dtype=np.float64))
+        return T
 
     def _compute_initial_transforms(self):
         """Compute world-frame 4x4 transforms for each link via FK at init_qpos."""
@@ -394,7 +732,8 @@ class QIPCCoupler(RBC):
         if hasattr(morph, "quat") and morph.quat is not None:
             T_root[:3, :3] = gu.quat_to_R(np.array(morph.quat, dtype=np.float64))
 
-        init_qpos = entity.init_qpos
+        home_qpos = self._entity_config["home_qpos"] if hasattr(self, "_entity_config") else None
+        init_qpos = home_qpos if home_qpos is not None else entity.init_qpos
 
         for link in entity.links:
             if link.parent_idx < 0:
@@ -419,7 +758,7 @@ class QIPCCoupler(RBC):
                         theta = init_qpos[dof_local]
                         if joint.type == gs.JOINT_TYPE.REVOLUTE:
                             axis = np.array(joint.dofs_motion_ang[d], dtype=np.float64)
-                            T_joint[:3, :3] = T_joint[:3, :3] @ gu.axis_angle_to_R(axis, np.array(theta))
+                            T_joint[:3, :3] = T_joint[:3, :3] @ _rodrigues(axis, float(theta))
                         elif joint.type == gs.JOINT_TYPE.PRISMATIC:
                             axis = joint.dofs_motion_vel[d]
                             T_joint[:3, 3] += axis * theta
@@ -427,26 +766,3 @@ class QIPCCoupler(RBC):
                 T_world[link.idx_local] = T_parent @ T_child_in_parent @ T_joint
 
         return T_world
-
-    def _collect_link_mesh(self, link):
-        """Union all collision geoms for a link into link-frame vertices and faces."""
-        all_verts = []
-        all_faces = []
-        offset = 0
-
-        for geom in link.geoms:
-            v = geom.init_verts.copy().astype(np.float64)
-            R = gu.quat_to_R(np.array(geom.init_quat, dtype=np.float64))
-            v = (R @ v.T).T + geom.init_pos
-            all_verts.append(v)
-            all_faces.append(geom.init_faces.copy() + offset)
-            offset += len(v)
-
-        if len(all_verts) == 0:
-            gs.raise_exception(
-                f"QIPCCoupler: link '{link.name}' has no collision geometry. "
-                "All links must have at least one collision geom for QIPC."
-            )
-
-        return np.concatenate(all_verts, axis=0), np.concatenate(all_faces, axis=0)
-

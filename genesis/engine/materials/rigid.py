@@ -74,6 +74,25 @@ class Rigid(Kinematic["RigidEntity"]):
     contact_resistance : float or None, optional
         IPC coupling contact resistance/stiffness override for this entity. ``None`` means use
         ``IPCCouplerOptions.contact_resistance``. Default is None.
+    qipc_abd_kappa : float or None, optional
+        ABD shape stiffness for this entity. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.rigid_abd_kappa``. Default is None.
+    qipc_kappa_pivot : float or None, optional
+        Joint pivot penalty stiffness. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.joint_kappa_pivot``. Default is None.
+    qipc_kappa_axis : float or None, optional
+        Joint axis alignment penalty stiffness. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.joint_kappa_axis``. Default is None.
+    qipc_default_kp : float or None, optional
+        Fallback PD proportional gain (used when MJCF actuator gains are not available).
+        Only used by the QIPC coupler. ``None`` means use ``QIPCCouplerOptions.default_kp``.
+        Default is None.
+    qipc_default_kv : float, str, or None, optional
+        Fallback PD derivative gain. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.default_kv``. Default is None.
+    qipc_home_qpos : list of float or None, optional
+        Initial joint configuration for FK. When set, ``theta=0`` in QIPC corresponds
+        to this pose. Only used by the QIPC coupler. Default is None.
     """
 
     use_visual_raycasting: StrictBool = False
@@ -93,6 +112,13 @@ class Rigid(Kinematic["RigidEntity"]):
     enable_coup_collision: StrictBool = True
     coup_collision_links: StrArrayType | None = None
     contact_resistance: PositiveFloat | None = None
+
+    qipc_abd_kappa: PositiveFloat | None = None
+    qipc_kappa_pivot: PositiveFloat | None = None
+    qipc_kappa_axis: PositiveFloat | None = None
+    qipc_default_kp: NonNegativeFloat | None = None
+    qipc_default_kv: float | str | None = None
+    qipc_home_qpos: tuple[float, ...] | list[float] | None = None
 
     @model_validator(mode="before")
     @classmethod
