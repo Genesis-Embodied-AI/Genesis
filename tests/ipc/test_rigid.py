@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 def build_two_cube_joint_mjcf(joint_type, joint_limits, *, fixed=True):
     """Build a two-cube MJCF with a revolute or prismatic joint."""
     mjcf = ET.Element("mujoco", model=f"two_cube_{joint_type}")
+    ET.SubElement(mjcf, "compiler", angle="radian")
     worldbody = ET.SubElement(mjcf, "worldbody")
     base = ET.SubElement(worldbody, "body", name="base")
     if not fixed:
