@@ -85,60 +85,6 @@ def test_physics_parity(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_invalid_material_raises():
-    scene = gs.Scene(
-        show_viewer=False,
-    )
-
-    morphs_heterogeneous = (
-        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
-        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
-    )
-
-    # PBD material should raise an exception
-    with pytest.raises(gs.GenesisException):
-        scene.add_entity(
-            morph=morphs_heterogeneous,
-            material=gs.materials.PBD.Cloth(),
-        )
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_morph_property_raises():
-    scene = gs.Scene(show_viewer=False)
-
-    single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
-    single_obj = scene.add_entity(morph=single_morph)
-
-    rigid_morphs_heterogeneous = (
-        gs.morphs.Box(size=(0.1, 0.1, 0.1)),
-        gs.morphs.Cylinder(radius=0.05, height=0.2),
-    )
-    rigid_obj = scene.add_entity(morph=rigid_morphs_heterogeneous)
-    kinematic_morphs_heterogeneous = (
-        gs.morphs.Box(size=(0.2, 0.2, 0.2)),
-        gs.morphs.Sphere(radius=0.1),
-    )
-    kinematic_obj = scene.add_entity(
-        morph=kinematic_morphs_heterogeneous,
-        material=gs.materials.Kinematic(),
-    )
-
-    assert single_obj.morph is single_morph
-    assert rigid_obj.main_morph is rigid_morphs_heterogeneous[0]
-    assert list(rigid_obj.morphs) == list(rigid_morphs_heterogeneous)
-    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs") as exc_info:
-        _ = rigid_obj.morph
-    assert ".main_morph" in str(exc_info.value)
-
-    assert kinematic_obj.main_morph is kinematic_morphs_heterogeneous[0]
-    assert list(kinematic_obj.morphs) == list(kinematic_morphs_heterogeneous)
-    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs"):
-        _ = kinematic_obj.morph
-
-
-@pytest.mark.required
 def test_fewer_envs_than_variants():
     # With n_envs < n_variants, environment i gets variant i and the variants beyond n_envs stay unused.
     scene = gs.Scene(
@@ -310,6 +256,60 @@ def test_pick_heterogenous_objects(show_viewer):
     post_lift_z = het_obj.get_pos()[:, 2]
     lift_deltas = tensor_to_array(post_lift_z - pre_lift_z)
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas})"
+
+
+@pytest.mark.required
+def test_invalid_material_raises():
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+
+    morphs_heterogeneous = (
+        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
+        gs.morphs.Box(size=(1.0, 1.0, 1.0)),
+    )
+
+    # PBD material should raise an exception
+    with pytest.raises(gs.GenesisException):
+        scene.add_entity(
+            morph=morphs_heterogeneous,
+            material=gs.materials.PBD.Cloth(),
+        )
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_morph_property_raises():
+    scene = gs.Scene(show_viewer=False)
+
+    single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
+    single_obj = scene.add_entity(morph=single_morph)
+
+    rigid_morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.1, 0.1, 0.1)),
+        gs.morphs.Cylinder(radius=0.05, height=0.2),
+    )
+    rigid_obj = scene.add_entity(morph=rigid_morphs_heterogeneous)
+    kinematic_morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+        gs.morphs.Sphere(radius=0.1),
+    )
+    kinematic_obj = scene.add_entity(
+        morph=kinematic_morphs_heterogeneous,
+        material=gs.materials.Kinematic(),
+    )
+
+    assert single_obj.morph is single_morph
+    assert rigid_obj.main_morph is rigid_morphs_heterogeneous[0]
+    assert list(rigid_obj.morphs) == list(rigid_morphs_heterogeneous)
+    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs") as exc_info:
+        _ = rigid_obj.morph
+    assert ".main_morph" in str(exc_info.value)
+
+    assert kinematic_obj.main_morph is kinematic_morphs_heterogeneous[0]
+    assert list(kinematic_obj.morphs) == list(kinematic_morphs_heterogeneous)
+    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs"):
+        _ = kinematic_obj.morph
 
 
 @pytest.mark.required

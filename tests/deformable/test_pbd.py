@@ -52,6 +52,33 @@ def test_maxvolume(pbd_material, show_viewer, box_obj_path):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_get_mass(n_envs, show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=4e-3,
+            substeps=10,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/cloth.obj",
+            pos=(0, 0, 0.5),
+            scale=1.0,
+        ),
+        material=gs.materials.PBD.Cloth(),
+    )
+    scene.build(n_envs=n_envs)
+
+    mass = cloth.get_mass()
+    expected_n = max(n_envs, 1)
+    assert mass.shape == (expected_n,), f"Expected shape ({expected_n},), got {mass.shape}"
+    assert (mass > 0).all(), f"Expected positive mass, got {mass}"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("material_type", [gs.materials.PBD.Cloth])
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
@@ -149,33 +176,6 @@ def test_cloth_attach_fixed_point(n_envs, material_type, show_viewer, tol):
     assert -0.6 < poss[..., :1].min() and poss[..., :1].max() < 0.6
     vels = cloth_2.get_particles_vel()
     assert_allclose(vels[..., 2].mean(dim=-1), 0.0, tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_get_mass(n_envs, show_viewer, tol):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=4e-3,
-            substeps=10,
-        ),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-    cloth = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/cloth.obj",
-            pos=(0, 0, 0.5),
-            scale=1.0,
-        ),
-        material=gs.materials.PBD.Cloth(),
-    )
-    scene.build(n_envs=n_envs)
-
-    mass = cloth.get_mass()
-    expected_n = max(n_envs, 1)
-    assert mass.shape == (expected_n,), f"Expected shape ({expected_n},), got {mass.shape}"
-    assert (mass > 0).all(), f"Expected positive mass, got {mass}"
 
 
 @pytest.mark.required

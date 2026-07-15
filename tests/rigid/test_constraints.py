@@ -175,41 +175,6 @@ def test_dynamic_weld_scene_reset():
     assert solver.constraint_solver.constraint_state.qd_n_equalities[1] == n_eq_base + 1
 
 
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs, batched", [(0, False), (3, True)])
-def test_set_sol_params(n_envs, batched, tol):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-            substeps=1,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            batch_joints_info=batched,
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-            pos=(0.0, 0.4, 0.1),
-            euler=(0, 0, 90),
-        ),
-    )
-    scene.build(n_envs=2)
-    assert scene.sim._substep_dt == 0.01
-
-    for objs, batched in ((robot.joints, batched), (robot.geoms, False), (robot.equalities, True)):
-        for obj in objs:
-            sol_params = obj.sol_params + 1.0
-            obj.set_sol_params(sol_params)
-            with pytest.raises(AssertionError):
-                assert_allclose(obj.sol_params, sol_params, tol=tol)
-            obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
-            assert_allclose(obj.sol_params, [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
-
-
 @pytest.mark.required
 def test_urdf_mimic(show_viewer, tol):
     # create and build the scene
@@ -268,3 +233,38 @@ def test_get_constraints_api(show_viewer, tol):
         else:
             assert_allclose((link_a_[0], link_b_[0]), ((), ()), tol=0)
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs, batched", [(0, False), (3, True)])
+def test_set_sol_params(n_envs, batched, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            substeps=1,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            batch_joints_info=batched,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            pos=(0.0, 0.4, 0.1),
+            euler=(0, 0, 90),
+        ),
+    )
+    scene.build(n_envs=2)
+    assert scene.sim._substep_dt == 0.01
+
+    for objs, batched in ((robot.joints, batched), (robot.geoms, False), (robot.equalities, True)):
+        for obj in objs:
+            sol_params = obj.sol_params + 1.0
+            obj.set_sol_params(sol_params)
+            with pytest.raises(AssertionError):
+                assert_allclose(obj.sol_params, sol_params, tol=tol)
+            obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+            assert_allclose(obj.sol_params, [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)

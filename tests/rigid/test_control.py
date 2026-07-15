@@ -192,6 +192,32 @@ def test_position_control(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("robot_path", ["xml/franka_emika_panda/panda.xml"])
+def test_reset_control(robot_path, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(gs.morphs.MJCF(file=robot_path))
+    scene.build()
+    qpos = np.random.rand(robot.n_dofs)
+    robot.set_dofs_position(qpos)
+    robot.control_dofs_position(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+    old_control_force = robot.get_dofs_control_force()
+    scene.reset()
+    new_control_force = robot.get_dofs_control_force()
+    assert old_control_force.abs().max() > gs.EPS
+    assert_allclose(new_control_force, 0, tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_drone_propellers_force_substep_consistency(show_viewer, tol):
     BASE_RPM = 15000
 
@@ -313,29 +339,3 @@ def test_drone_advanced(show_viewer):
     assert abs(quat_1[1] + quat_2[1]) < tol
     assert abs(quat_1[2] - quat_2[2]) < tol
     assert abs(quat_1[2] - quat_2[2]) < tol
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("robot_path", ["xml/franka_emika_panda/panda.xml"])
-def test_reset_control(robot_path, tol):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=False,
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-    robot = scene.add_entity(gs.morphs.MJCF(file=robot_path))
-    scene.build()
-    qpos = np.random.rand(robot.n_dofs)
-    robot.set_dofs_position(qpos)
-    robot.control_dofs_position(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-    old_control_force = robot.get_dofs_control_force()
-    scene.reset()
-    new_control_force = robot.get_dofs_control_force()
-    assert old_control_force.abs().max() > gs.EPS
-    assert_allclose(new_control_force, 0, tol=gs.EPS)

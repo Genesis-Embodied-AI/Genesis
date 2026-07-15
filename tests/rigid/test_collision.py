@@ -38,6 +38,117 @@ def _ellipsoid_mjcf_path(tmp_path, semi_axes):
     return str(path)
 
 
+@pytest.mark.required
+@pytest.mark.mujoco_compatibility(False)
+@pytest.mark.parametrize("mode", range(9))
+@pytest.mark.parametrize("model_name", ["collision_edge_cases"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("gjk_collision", [True, False])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_edge_cases(gs_sim, mode):
+    qpos_0 = gs_sim.rigid_solver.get_dofs_position()
+    for _ in range(200):
+        gs_sim.scene.step()
+
+    qvel = gs_sim.rigid_solver.get_dofs_velocity()
+    assert_allclose(qvel, 0, atol=1e-2)
+    qpos = gs_sim.rigid_solver.get_dofs_position()
+    atol = 1e-3 if mode in (4, 6) else 1e-4
+    assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=atol)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_plane_convex(show_viewer, tol):
+    for morph in (
+        gs.morphs.Plane(),
+        gs.morphs.Box(
+            pos=(0.5, 0.0, -0.5),
+            size=(1.0, 1.0, 1.0),
+            fixed=True,
+        ),
+    ):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=0.001,
+            ),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(1.0, -0.5, 0.5),
+                camera_lookat=(0.5, 0.0, 0.0),
+            ),
+            show_viewer=show_viewer,
+            show_FPS=False,
+        )
+
+        scene.add_entity(morph)
+
+        asset_path = get_hf_dataset(pattern="image_0000_segmented.glb")
+        asset = scene.add_entity(
+            gs.morphs.Mesh(
+                file=f"{asset_path}/image_0000_segmented.glb",
+                scale=0.03196910891804585,
+                pos=(0.45184245, 0.05020455, 0.02),
+                quat=(0.51982231, 0.44427745, 0.49720965, 0.53402704),
+            ),
+            vis_mode="collision",
+            visualize_contact=True,
+        )
+
+        scene.build()
+
+        for i in range(500):
+            scene.step()
+            if i > 400:
+                qvel = asset.get_dofs_velocity()
+                assert_allclose(qvel, 0, atol=0.14)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["ellipsoid"])
+def test_ellipsoid(xml_path, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.02,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.4, 0.4, 0.3),
+            camera_lookat=(0.0, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            pos=(0, 0, 0.2),
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    entity.set_dofs_velocity(20 * np.random.rand(3), dofs_idx_local=slice(3, 6))
+    entity.set_dofs_kv(0.002, dofs_idx_local=slice(3, 6))
+    entity.control_dofs_velocity(0.0, dofs_idx_local=slice(3, 6))
+
+    # AABB must match the ellipsoid semi-axes
+    aabb = entity.get_AABB()
+    aabb_extent = aabb[1] - aabb[0]
+    assert_allclose(aabb_extent, (0.10, 0.10, 0.04), atol=1e-3)
+
+    # Free-fall onto plane: ellipsoid must come to rest
+    for _ in range(100):
+        scene.step()
+
+    assert_allclose(entity.get_dofs_velocity(), 0, tol=5e-3)
+    assert (-0.005 < entity.get_AABB()[0, 2] < 0.0).all()
+    roll, pitch, _yaw = gu.quat_to_xyz(entity.get_quat(), rpy=True)
+    assert_allclose((roll, pitch), (0.0, 0.0), tol=5e-3)
+
+
 @pytest.mark.parametrize(
     "entity_kind, entity_type, ground_type",
     [
@@ -256,6 +367,188 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
     pos_local = tensor_to_array(entity.get_pos()) @ R
     # The tolerance must be large enough to accomate small numerical error for mesh-mesh.
     assert_allclose(pos_local[..., :2], smooth_xy_local, atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer, tol):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.1, -0.08, 0.06),
+            camera_lookat=(0.0, 0.0, 0.01),
+            camera_fov=20,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.005),
+            size=(0.002, 0.02, 0.01),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0, 0, 1),
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.01495),
+            size=(0.002, 0.0199, 0.01),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1, 0, 0),
+        ),
+        visualize_contact=True,
+    )
+    scene.build()
+
+    scene.step()
+    contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
+    normals = contacts["normal"]
+    assert len(normals) > 0
+    assert_allclose(np.abs(normals[..., 2]), 1, atol=1e2 * tol)
+
+    for _ in range(100):
+        scene.step()
+    pos = box.get_pos()
+    assert_allclose(pos[..., :2], 0, atol=1e1 * tol)
+    assert_allclose(pos[..., 2], 0.015, atol=1e1 * tol)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_robot_scaling_primitive_collision(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    asset_path = get_hf_dataset(pattern="cross.xml")
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=f"{asset_path}/cross.xml",
+            scale=0.5,
+        ),
+        vis_mode="collision",
+    )
+    scene.build()
+
+    robot.set_qpos([0.0, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0, 1.0, -1.0, -1.0, 1.0])
+    for _ in range(50):
+        scene.step()
+
+    # Robot not moving anymore
+    assert_allclose(robot.get_links_vel(), 0.0, atol=5e-3)
+
+    # Robot in contact with the ground
+    robot_min_corner, _ = robot.get_AABB()
+    assert_allclose(robot_min_corner[2], 0.0, tol=1e-3)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_contact_forces(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            # Enabling box-box algorithm to improve code coverage
+            box_box_detection=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3, -1, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.65, 0.0, 0.02),
+        ),
+        # visualize_contact=True,
+    )
+    scene.build(n_envs=5)
+
+    cube_weight = scene.rigid_solver._gravity[0] * cube.get_mass()
+    motors_dof = np.arange(7)
+    fingers_dof = np.arange(7, 9)
+    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+    franka.set_qpos(qpos)
+    scene.step()
+
+    end_effector = franka.get_link("hand")
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.tile([0.65, 0.0, 0.13], (scene.n_envs, 1)),
+        quat=np.tile([0, 1, 0, 0], (scene.n_envs, 1)),
+    )
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+
+    # hold
+    for i in range(50):
+        scene.step()
+    contact_forces = cube.get_links_net_contact_force()
+    assert_allclose(contact_forces[:, 0], -cube_weight, atol=1e-5)
+
+    # grasp
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+    franka.control_dofs_position(0.0, fingers_dof)
+    for i in range(20):
+        scene.step()
+
+    # lift
+    qpos = franka.inverse_kinematics(
+        link=end_effector,
+        pos=np.tile([0.65, 0.0, 0.2], (scene.n_envs, 1)),
+        quat=np.tile([0.0, 1, 0, 0], (scene.n_envs, 1)),
+    )
+    franka.control_dofs_position(qpos[:, :-2], motors_dof)
+    for i in range(100):
+        scene.step()
+
+    # Check contact forces while randomizing gripper orientations across parallel envs.
+    # Note that it is necessary to reset the scene state because the box is slowly falling without noslip solver.
+    state = scene.get_state()
+    rng = np.random.RandomState(0)
+    all_errors = []
+    for i_trial in range(10):
+        scene.reset(state)
+
+        angles = rng.uniform(-np.deg2rad(45), np.deg2rad(45), size=scene.n_envs).astype(gs.np_float)
+        axes = rng.randn(scene.n_envs, 3).astype(gs.np_float)
+        perturbs = gu.axis_angle_to_quat(angles, axes)
+        lift_quats = gu.transform_quat_by_quat(perturbs, np.tile([0, 1, 0, 0], (scene.n_envs, 1)).astype(gs.np_float))
+        qpos = franka.inverse_kinematics(
+            link=end_effector,
+            pos=np.tile([0.65, 0.0, 0.2], (scene.n_envs, 1)).astype(gs.np_float),
+            quat=lift_quats,
+        )
+        franka.control_dofs_position(qpos[:, :-2], motors_dof)
+        franka.control_dofs_position(0.0, fingers_dof)
+        for _ in range(160):
+            scene.step()
+
+        contact_forces = tensor_to_array(cube.get_links_net_contact_force())
+        errors = np.linalg.norm(contact_forces[:, 0, :] + cube_weight, ord=np.inf, axis=-1)
+        all_errors.append(errors)
+    assert np.percentile(all_errors, 95) < 2e-4
 
 
 @pytest.mark.slow  # ~200s
@@ -583,6 +876,333 @@ def test_contact_pruning_authored_decomp(gjk_collision, show_viewer):
         assert is_vertical and is_pruned
 
 
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "side_by_side_capsules",
+        "collinear_capsules",
+        "side_by_side_cylinders",
+        "collinear_cylinders",
+        "collinear_spheres",
+    ],
+)
+def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
+    HEIGHT = 0.02
+    BOX_HALFSIZE = 0.15
+    PRIM_RADIUS = 0.0025
+    PRIM_LENGTH = 0.02
+    N_ENVS = 16
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.25, 0.25, 0.2),
+            camera_lookat=(0.0, 0.0, 0.5 * HEIGHT),
+            camera_fov=30.0,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2 * BOX_HALFSIZE, 2 * BOX_HALFSIZE, HEIGHT),
+            pos=(0.0, 0.0, 0.5 * HEIGHT),
+            fixed=True,
+        ),
+        visualize_contact=True,
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=xml_path,
+        ),
+        surface=gs.surfaces.Default(
+            smooth=False,
+        ),
+    )
+    scene.build(n_envs=N_ENVS)
+
+    # Randomly sample position in local frame.
+    # Add small vertical offset to ensure contact at init; otherwise the primitive will sink before bouncing up.
+    smooth_xy = np.random.uniform(
+        low=-(BOX_HALFSIZE - 2.0 * PRIM_LENGTH), high=BOX_HALFSIZE - 2.0 * PRIM_LENGTH, size=(N_ENVS, 2)
+    )
+    smooth_pos = np.concatenate([smooth_xy, np.full((N_ENVS, 1), HEIGHT + PRIM_RADIUS - 1e-4)], axis=-1)
+    entity.set_pos(smooth_pos)
+
+    # Random yaw about world z; capsules/cylinders stay horizontal since their fromto axis lies in the body xy plane.
+    angle_yaw = np.random.uniform(low=-np.pi, high=np.pi, size=(N_ENVS, 1))
+    smooth_quat = gu.xyz_to_quat(np.concatenate([np.zeros((N_ENVS, 2)), angle_yaw], axis=-1), rpy=True)
+    entity.set_quat(smooth_quat)
+
+    if show_viewer:
+        scene.visualizer.update()
+
+    for _ in range(20):
+        scene.step()
+    for _ in range(300):
+        scene.step()
+        n_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
+        assert n_contacts.all()
+        if model_name.startswith("side_by_side"):
+            assert (n_contacts == 4).all()
+        elif model_name == "collinear_spheres":
+            assert (n_contacts == 2).all()
+
+    assert_allclose(entity.get_pos()[..., :2], smooth_xy, atol=1e-3)
+
+
+@pytest.mark.slow("gpu")  # gpu ~250s
+@pytest.mark.parametrize(
+    "scene_kind, max_collision_pairs, max_contacts, error_pattern",
+    [
+        # Post-pruning contact budget overflow, with the candidate buffer large enough (2x margin) that it cannot
+        # trip first. The automatic budget resolves to 32 contact points per link pair floored at 512, far below
+        # what the piled-up bowls produce.
+        pytest.param("bowls", 1_000, None, "max number of post-pruning contact points", marks=pytest.mark.required),
+        # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
+        # the buffer itself can overflow.
+        ("bowls", 150, 1_000, "max number of candidate contact points"),
+        # Buffers large enough for the whole pile: no overflow at all. Both values keep a 2x margin over the peaks
+        # reached within the stepped window (about 500 colliding geom pairs and 1040 post-pruning contact points).
+        ("bowls", 1_000, 2_000, None),
+        # Two contacts against a budget of one: the clamp must also run when the contact count is below the pruning
+        # gate (n_contacts < 3), in both the serial and the GPU cooperative kernel variants.
+        ("spheres", 150, 1, "max number of post-pruning contact points"),
+    ],
+)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, error_pattern, show_viewer):
+    from genesis.engine.simulator import RATE_CHECK_ERRNO
+
+    N_BOWLS = 4
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=max_collision_pairs,
+            max_contacts=max_contacts,
+        ),
+        show_viewer=show_viewer,
+        renderer=gs.renderers.Rasterizer(),
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    if scene_kind == "bowls":
+        asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
+        for _ in range(N_BOWLS):
+            scene.add_entity(
+                morph=gs.morphs.Mesh(
+                    file=f"{asset_path}/glb/orange_plastic_bowl.glb",
+                    pos=(0, 0, 0.5),
+                    euler=(90, 0, 0),
+                    convexify=True,
+                    file_meshes_are_zup=True,
+                ),
+            )
+    else:
+        # Non-contacting nonconvex mesh: makes the scene prunable so that the GPU cooperative kernel is exercised.
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file="meshes/duck.obj",
+                scale=0.04,
+                pos=(5.0, 5.0, 5.0),
+                convexify=False,
+            ),
+        )
+        for i in range(2):
+            scene.add_entity(
+                morph=gs.morphs.Sphere(
+                    pos=(0.5 * i, 0.0, 0.0999),
+                    radius=0.1,
+                ),
+            )
+    scene.build()
+    assert scene.rigid_solver.collider._collider_static_config.has_prunable_contacts
+
+    # The resolved contact budget must match the documented resolution: 32 contact points per link pair floored at
+    # 512 when automatic (every link pair here has more than 32 candidate contact points), the explicit value clamped
+    # to the candidate buffer size otherwise. The constraint buffers are sized accordingly, with 4 constraint rows
+    # per contact point (all joints are free so there is no joint-limit term).
+    solver = scene.rigid_solver
+    collider_info = solver.collider._collider_info
+    if max_contacts is None:
+        n_link_pairs = (N_BOWLS + 1) * N_BOWLS // 2
+        expected_max_contacts = max(32 * n_link_pairs, 512)
+    else:
+        expected_max_contacts = min(max_contacts, int(collider_info.max_candidate_contacts[None]))
+    assert int(collider_info.max_contacts[None]) == expected_max_contacts
+    expected_len_constraints = 4 * expected_max_contacts + solver.n_dofs + 6 * solver.n_candidate_equalities_
+    assert solver.constraint_solver.len_constraints == expected_len_constraints
+
+    # All overflows occur on the very first step (the bowls start fully overlapping, the spheres start resting on the
+    # plane), but errno is only polled every RATE_CHECK_ERRNO substeps, so one extra step is required to guarantee
+    # that the error gets raised.
+    with nullcontext() if error_pattern is None else pytest.raises(gs.GenesisException, match=error_pattern):
+        for _ in range(RATE_CHECK_ERRNO + 1):
+            scene.step()
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_filter_neutral_self_collisions(show_viewer):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            enable_neutral_collision=False,
+            enable_adjacent_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.08,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 2.0, 0.0, 1.0),
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    sphere.attach(robot, "hand")
+    scene.build()
+    eq_type = scene.rigid_solver.equalities_info.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj1id = scene.rigid_solver.equalities_info.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj2id = scene.rigid_solver.equalities_info.eq_obj2id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+
+    scene.rigid_solver.collider.detection()
+    contacts_data = scene.rigid_solver.collider.get_contacts()
+    assert ((contacts_data["link_a"] == 12) & (contacts_data["link_b"] == 0)).any()
+
+    for i in range(2):
+        for i_ga in range(robot.geom_start, box.geom_start):
+            for i_gb in range(i_ga + 1, box.geom_start):
+                geom_a = scene.rigid_solver.geoms[i_ga]
+                geom_b = scene.rigid_solver.geoms[i_gb]
+                link_a = geom_a.link
+                link_b = geom_b.link
+
+                if link_a.idx == link_b.idx:
+                    continue
+
+                if link_a.is_fixed and link_b.is_fixed:
+                    continue
+
+                if (
+                    (eq_type == gs.EQUALITY_TYPE.WELD)
+                    & (
+                        (eq_obj1id == link_a.idx & eq_obj2id == link_b.idx)
+                        | (eq_obj1id == link_b.idx & eq_obj2id == link_a.idx)
+                    )
+                ).any():
+                    continue
+
+                is_adjacent = False
+                link = link_b
+                while link.parent_idx > 0:
+                    if link.parent_idx == link_a.idx:
+                        is_adjacent = True
+                        break
+                    if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
+                        break
+                    link = scene.rigid_solver.links[link.parent_idx]
+                if is_adjacent:
+                    continue
+
+                verts_a = tensor_to_array(geom_a.get_verts())
+                verts_a = (1.0 - 1e-3) * verts_a + 1e-3 * verts_a.mean(axis=0, keepdims=True)
+                mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
+                geom_b = scene.rigid_solver.geoms[i_gb]
+                verts_b = tensor_to_array(geom_b.get_verts())
+                verts_b = (1.0 - 1e-3) * verts_b + 1e-3 * verts_b.mean(axis=0, keepdims=True)
+                mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
+                is_colliding = mesh_a.contains(mesh_b.vertices).any() or mesh_b.contains(mesh_a.vertices).any()
+                assert is_colliding == ({(i_ga, i_gb)} in ({(5, 10)}, {(6, 10)}, {(11, 23)}, {(17, 23)}))
+        scene.step()
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_contype_conaffinity(show_viewer, tol):
+    GRAVITY = (0.0, 0.0, -10.0)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=GRAVITY,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(
+        gs.morphs.Plane(
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    box1 = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 0.5),
+            contype=3,
+            conaffinity=3,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0),
+        ),
+    )
+    box2 = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.0),
+            contype=2,
+            conaffinity=2,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 1.0, 0.0, 1.0),
+        ),
+    )
+    box3 = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 1.5),
+            contype=1,
+            conaffinity=1,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 0.0, 1.0, 1.0),
+        ),
+        visualize_contact=True,
+    )
+    box4 = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 2.0),
+            contype=0,
+            conaffinity=0,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.8, 0.8, 0.8, 1.0),
+        ),
+        visualize_contact=True,
+    )
+    scene.build()
+
+    for _ in range(80):
+        scene.step()
+
+    assert_allclose(box1.get_pos(), (0.0, 0.0, 0.25), atol=5e-4)
+    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=2e-3)
+    assert_allclose(box2.get_pos(), box3.get_pos(), atol=2e-3)
+    assert_allclose(scene.rigid_solver.get_links_acc(slice(box4.link_start, box4.link_end)), GRAVITY, atol=tol)
+
+
 @pytest.mark.required
 @pytest.mark.precision("32")
 @pytest.mark.parametrize("backend", [gs.gpu])
@@ -706,459 +1326,6 @@ def test_gpu_simulation_determinism(prefer_decomposed_solver, contact_pruning_to
             assert_equal(cur_pos, ref_pos)
 
 
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize(
-    "model_name",
-    [
-        "side_by_side_capsules",
-        "collinear_capsules",
-        "side_by_side_cylinders",
-        "collinear_cylinders",
-        "collinear_spheres",
-    ],
-)
-def test_contact_pruning_degenerated_hull(model_name, xml_path, show_viewer):
-    HEIGHT = 0.02
-    BOX_HALFSIZE = 0.15
-    PRIM_RADIUS = 0.0025
-    PRIM_LENGTH = 0.02
-    N_ENVS = 16
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.004,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.25, 0.25, 0.2),
-            camera_lookat=(0.0, 0.0, 0.5 * HEIGHT),
-            camera_fov=30.0,
-        ),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(2 * BOX_HALFSIZE, 2 * BOX_HALFSIZE, HEIGHT),
-            pos=(0.0, 0.0, 0.5 * HEIGHT),
-            fixed=True,
-        ),
-        visualize_contact=True,
-    )
-    entity = scene.add_entity(
-        morph=gs.morphs.MJCF(
-            file=xml_path,
-        ),
-        surface=gs.surfaces.Default(
-            smooth=False,
-        ),
-    )
-    scene.build(n_envs=N_ENVS)
-
-    # Randomly sample position in local frame.
-    # Add small vertical offset to ensure contact at init; otherwise the primitive will sink before bouncing up.
-    smooth_xy = np.random.uniform(
-        low=-(BOX_HALFSIZE - 2.0 * PRIM_LENGTH), high=BOX_HALFSIZE - 2.0 * PRIM_LENGTH, size=(N_ENVS, 2)
-    )
-    smooth_pos = np.concatenate([smooth_xy, np.full((N_ENVS, 1), HEIGHT + PRIM_RADIUS - 1e-4)], axis=-1)
-    entity.set_pos(smooth_pos)
-
-    # Random yaw about world z; capsules/cylinders stay horizontal since their fromto axis lies in the body xy plane.
-    angle_yaw = np.random.uniform(low=-np.pi, high=np.pi, size=(N_ENVS, 1))
-    smooth_quat = gu.xyz_to_quat(np.concatenate([np.zeros((N_ENVS, 2)), angle_yaw], axis=-1), rpy=True)
-    entity.set_quat(smooth_quat)
-
-    if show_viewer:
-        scene.visualizer.update()
-
-    for _ in range(20):
-        scene.step()
-    for _ in range(300):
-        scene.step()
-        n_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
-        assert n_contacts.all()
-        if model_name.startswith("side_by_side"):
-            assert (n_contacts == 4).all()
-        elif model_name == "collinear_spheres":
-            assert (n_contacts == 2).all()
-
-    assert_allclose(entity.get_pos()[..., :2], smooth_xy, atol=1e-3)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_robot_scaling_primitive_collision(show_viewer):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    asset_path = get_hf_dataset(pattern="cross.xml")
-    robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file=f"{asset_path}/cross.xml",
-            scale=0.5,
-        ),
-        vis_mode="collision",
-    )
-    scene.build()
-
-    robot.set_qpos([0.0, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0, 1.0, -1.0, -1.0, 1.0])
-    for _ in range(50):
-        scene.step()
-
-    # Robot not moving anymore
-    assert_allclose(robot.get_links_vel(), 0.0, atol=5e-3)
-
-    # Robot in contact with the ground
-    robot_min_corner, _ = robot.get_AABB()
-    assert_allclose(robot_min_corner[2], 0.0, tol=1e-3)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_filter_neutral_self_collisions(show_viewer):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            enable_self_collision=True,
-            enable_neutral_collision=False,
-            enable_adjacent_collision=False,
-        ),
-        show_viewer=show_viewer,
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.08,
-        ),
-        surface=gs.surfaces.Default(
-            color=(0.0, 2.0, 0.0, 1.0),
-        ),
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-        ),
-        surface=gs.surfaces.Default(
-            color=(1.0, 0.0, 0.0, 1.0),
-        ),
-    )
-    sphere.attach(robot, "hand")
-    scene.build()
-    eq_type = scene.rigid_solver.equalities_info.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
-    eq_obj1id = scene.rigid_solver.equalities_info.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
-    eq_obj2id = scene.rigid_solver.equalities_info.eq_obj2id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
-
-    scene.rigid_solver.collider.detection()
-    contacts_data = scene.rigid_solver.collider.get_contacts()
-    assert ((contacts_data["link_a"] == 12) & (contacts_data["link_b"] == 0)).any()
-
-    for i in range(2):
-        for i_ga in range(robot.geom_start, box.geom_start):
-            for i_gb in range(i_ga + 1, box.geom_start):
-                geom_a = scene.rigid_solver.geoms[i_ga]
-                geom_b = scene.rigid_solver.geoms[i_gb]
-                link_a = geom_a.link
-                link_b = geom_b.link
-
-                if link_a.idx == link_b.idx:
-                    continue
-
-                if link_a.is_fixed and link_b.is_fixed:
-                    continue
-
-                if (
-                    (eq_type == gs.EQUALITY_TYPE.WELD)
-                    & (
-                        (eq_obj1id == link_a.idx & eq_obj2id == link_b.idx)
-                        | (eq_obj1id == link_b.idx & eq_obj2id == link_a.idx)
-                    )
-                ).any():
-                    continue
-
-                is_adjacent = False
-                link = link_b
-                while link.parent_idx > 0:
-                    if link.parent_idx == link_a.idx:
-                        is_adjacent = True
-                        break
-                    if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints):
-                        break
-                    link = scene.rigid_solver.links[link.parent_idx]
-                if is_adjacent:
-                    continue
-
-                verts_a = tensor_to_array(geom_a.get_verts())
-                verts_a = (1.0 - 1e-3) * verts_a + 1e-3 * verts_a.mean(axis=0, keepdims=True)
-                mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
-                geom_b = scene.rigid_solver.geoms[i_gb]
-                verts_b = tensor_to_array(geom_b.get_verts())
-                verts_b = (1.0 - 1e-3) * verts_b + 1e-3 * verts_b.mean(axis=0, keepdims=True)
-                mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
-                is_colliding = mesh_a.contains(mesh_b.vertices).any() or mesh_b.contains(mesh_a.vertices).any()
-                assert is_colliding == ({(i_ga, i_gb)} in ({(5, 10)}, {(6, 10)}, {(11, 23)}, {(17, 23)}))
-        scene.step()
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("precision", ["32"])
-@pytest.mark.parametrize("backend", [gs.gpu])
-def test_contact_forces(show_viewer):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            # Enabling box-box algorithm to improve code coverage
-            box_box_detection=True,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, -1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-
-    scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    cube = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            pos=(0.65, 0.0, 0.02),
-        ),
-        # visualize_contact=True,
-    )
-    scene.build(n_envs=5)
-
-    cube_weight = scene.rigid_solver._gravity[0] * cube.get_mass()
-    motors_dof = np.arange(7)
-    fingers_dof = np.arange(7, 9)
-    qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
-    franka.set_qpos(qpos)
-    scene.step()
-
-    end_effector = franka.get_link("hand")
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.tile([0.65, 0.0, 0.13], (scene.n_envs, 1)),
-        quat=np.tile([0, 1, 0, 0], (scene.n_envs, 1)),
-    )
-    franka.control_dofs_position(qpos[:, :-2], motors_dof)
-
-    # hold
-    for i in range(50):
-        scene.step()
-    contact_forces = cube.get_links_net_contact_force()
-    assert_allclose(contact_forces[:, 0], -cube_weight, atol=1e-5)
-
-    # grasp
-    franka.control_dofs_position(qpos[:, :-2], motors_dof)
-    franka.control_dofs_position(0.0, fingers_dof)
-    for i in range(20):
-        scene.step()
-
-    # lift
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.tile([0.65, 0.0, 0.2], (scene.n_envs, 1)),
-        quat=np.tile([0.0, 1, 0, 0], (scene.n_envs, 1)),
-    )
-    franka.control_dofs_position(qpos[:, :-2], motors_dof)
-    for i in range(100):
-        scene.step()
-
-    # Check contact forces while randomizing gripper orientations across parallel envs.
-    # Note that it is necessary to reset the scene state because the box is slowly falling without noslip solver.
-    state = scene.get_state()
-    rng = np.random.RandomState(0)
-    all_errors = []
-    for i_trial in range(10):
-        scene.reset(state)
-
-        angles = rng.uniform(-np.deg2rad(45), np.deg2rad(45), size=scene.n_envs).astype(gs.np_float)
-        axes = rng.randn(scene.n_envs, 3).astype(gs.np_float)
-        perturbs = gu.axis_angle_to_quat(angles, axes)
-        lift_quats = gu.transform_quat_by_quat(perturbs, np.tile([0, 1, 0, 0], (scene.n_envs, 1)).astype(gs.np_float))
-        qpos = franka.inverse_kinematics(
-            link=end_effector,
-            pos=np.tile([0.65, 0.0, 0.2], (scene.n_envs, 1)).astype(gs.np_float),
-            quat=lift_quats,
-        )
-        franka.control_dofs_position(qpos[:, :-2], motors_dof)
-        franka.control_dofs_position(0.0, fingers_dof)
-        for _ in range(160):
-            scene.step()
-
-        contact_forces = tensor_to_array(cube.get_links_net_contact_force())
-        errors = np.linalg.norm(contact_forces[:, 0, :] + cube_weight, ord=np.inf, axis=-1)
-        all_errors.append(errors)
-    assert np.percentile(all_errors, 95) < 2e-4
-
-
-@pytest.mark.slow("gpu")  # gpu ~250s
-@pytest.mark.parametrize(
-    "scene_kind, max_collision_pairs, max_contacts, error_pattern",
-    [
-        # Post-pruning contact budget overflow, with the candidate buffer large enough (2x margin) that it cannot
-        # trip first. The automatic budget resolves to 32 contact points per link pair floored at 512, far below
-        # what the piled-up bowls produce.
-        pytest.param("bowls", 1_000, None, "max number of post-pruning contact points", marks=pytest.mark.required),
-        # Candidate contact buffer overflow. The explicit contact budget is clamped down to the buffer size, so only
-        # the buffer itself can overflow.
-        ("bowls", 150, 1_000, "max number of candidate contact points"),
-        # Buffers large enough for the whole pile: no overflow at all. Both values keep a 2x margin over the peaks
-        # reached within the stepped window (about 500 colliding geom pairs and 1040 post-pruning contact points).
-        ("bowls", 1_000, 2_000, None),
-        # Two contacts against a budget of one: the clamp must also run when the contact count is below the pruning
-        # gate (n_contacts < 3), in both the serial and the GPU cooperative kernel variants.
-        ("spheres", 150, 1, "max number of post-pruning contact points"),
-    ],
-)
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_num_contact_overflow(scene_kind, max_collision_pairs, max_contacts, error_pattern, show_viewer):
-    from genesis.engine.simulator import RATE_CHECK_ERRNO
-
-    N_BOWLS = 4
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            max_collision_pairs=max_collision_pairs,
-            max_contacts=max_contacts,
-        ),
-        show_viewer=show_viewer,
-        renderer=gs.renderers.Rasterizer(),
-    )
-    scene.add_entity(morph=gs.morphs.Plane())
-    if scene_kind == "bowls":
-        asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
-        for _ in range(N_BOWLS):
-            scene.add_entity(
-                morph=gs.morphs.Mesh(
-                    file=f"{asset_path}/glb/orange_plastic_bowl.glb",
-                    pos=(0, 0, 0.5),
-                    euler=(90, 0, 0),
-                    convexify=True,
-                    file_meshes_are_zup=True,
-                ),
-            )
-    else:
-        # Non-contacting nonconvex mesh: makes the scene prunable so that the GPU cooperative kernel is exercised.
-        scene.add_entity(
-            morph=gs.morphs.Mesh(
-                file="meshes/duck.obj",
-                scale=0.04,
-                pos=(5.0, 5.0, 5.0),
-                convexify=False,
-            ),
-        )
-        for i in range(2):
-            scene.add_entity(
-                morph=gs.morphs.Sphere(
-                    pos=(0.5 * i, 0.0, 0.0999),
-                    radius=0.1,
-                ),
-            )
-    scene.build()
-    assert scene.rigid_solver.collider._collider_static_config.has_prunable_contacts
-
-    # The resolved contact budget must match the documented resolution: 32 contact points per link pair floored at
-    # 512 when automatic (every link pair here has more than 32 candidate contact points), the explicit value clamped
-    # to the candidate buffer size otherwise. The constraint buffers are sized accordingly, with 4 constraint rows
-    # per contact point (all joints are free so there is no joint-limit term).
-    solver = scene.rigid_solver
-    collider_info = solver.collider._collider_info
-    if max_contacts is None:
-        n_link_pairs = (N_BOWLS + 1) * N_BOWLS // 2
-        expected_max_contacts = max(32 * n_link_pairs, 512)
-    else:
-        expected_max_contacts = min(max_contacts, int(collider_info.max_candidate_contacts[None]))
-    assert int(collider_info.max_contacts[None]) == expected_max_contacts
-    expected_len_constraints = 4 * expected_max_contacts + solver.n_dofs + 6 * solver.n_candidate_equalities_
-    assert solver.constraint_solver.len_constraints == expected_len_constraints
-
-    # All overflows occur on the very first step (the bowls start fully overlapping, the spheres start resting on the
-    # plane), but errno is only polled every RATE_CHECK_ERRNO substeps, so one extra step is required to guarantee
-    # that the error gets raised.
-    with nullcontext() if error_pattern is None else pytest.raises(gs.GenesisException, match=error_pattern):
-        for _ in range(RATE_CHECK_ERRNO + 1):
-            scene.step()
-
-
-@pytest.mark.required
-@pytest.mark.mujoco_compatibility(False)
-@pytest.mark.parametrize("mode", range(9))
-@pytest.mark.parametrize("model_name", ["collision_edge_cases"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
-@pytest.mark.parametrize("gjk_collision", [True, False])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_edge_cases(gs_sim, mode):
-    qpos_0 = gs_sim.rigid_solver.get_dofs_position()
-    for _ in range(200):
-        gs_sim.scene.step()
-
-    qvel = gs_sim.rigid_solver.get_dofs_velocity()
-    assert_allclose(qvel, 0, atol=1e-2)
-    qpos = gs_sim.rigid_solver.get_dofs_position()
-    atol = 1e-3 if mode in (4, 6) else 1e-4
-    assert_allclose(qpos[[0, 1, 3, 4, 5]], qpos_0[[0, 1, 3, 4, 5]], atol=atol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_plane_convex(show_viewer, tol):
-    for morph in (
-        gs.morphs.Plane(),
-        gs.morphs.Box(
-            pos=(0.5, 0.0, -0.5),
-            size=(1.0, 1.0, 1.0),
-            fixed=True,
-        ),
-    ):
-        scene = gs.Scene(
-            sim_options=gs.options.SimOptions(
-                dt=0.001,
-            ),
-            viewer_options=gs.options.ViewerOptions(
-                camera_pos=(1.0, -0.5, 0.5),
-                camera_lookat=(0.5, 0.0, 0.0),
-            ),
-            show_viewer=show_viewer,
-            show_FPS=False,
-        )
-
-        scene.add_entity(morph)
-
-        asset_path = get_hf_dataset(pattern="image_0000_segmented.glb")
-        asset = scene.add_entity(
-            gs.morphs.Mesh(
-                file=f"{asset_path}/image_0000_segmented.glb",
-                scale=0.03196910891804585,
-                pos=(0.45184245, 0.05020455, 0.02),
-                quat=(0.51982231, 0.44427745, 0.49720965, 0.53402704),
-            ),
-            vis_mode="collision",
-            visualize_contact=True,
-        )
-
-        scene.build()
-
-        for i in range(500):
-            scene.step()
-            if i > 400:
-                qvel = asset.get_dofs_velocity()
-                assert_allclose(qvel, 0, atol=0.14)
-
-
 @pytest.mark.required
 @pytest.mark.xfail(reason="No reliable way to generate nan...")
 @pytest.mark.parametrize("mode", [3])
@@ -1179,170 +1346,3 @@ def test_nan_reset(gs_sim, mode):
         gs_sim.scene.step()
     qvel = gs_sim.rigid_solver.get_dofs_velocity()
     assert not torch.isnan(qvel).any()
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("precision", ["32"])
-def test_mpr_thin_box_stack_no_lateral_phantom(show_viewer, tol):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=False,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.1, -0.08, 0.06),
-            camera_lookat=(0.0, 0.0, 0.01),
-            camera_fov=20,
-        ),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(
-        gs.morphs.Box(
-            pos=(0.0, 0.0, 0.005),
-            size=(0.002, 0.02, 0.01),
-            fixed=True,
-        ),
-        surface=gs.surfaces.Default(
-            color=(0, 0, 1),
-        ),
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            pos=(0.0, 0.0, 0.01495),
-            size=(0.002, 0.0199, 0.01),
-        ),
-        surface=gs.surfaces.Default(
-            color=(1, 0, 0),
-        ),
-        visualize_contact=True,
-    )
-    scene.build()
-
-    scene.step()
-    contacts = scene.rigid_solver.collider.get_contacts(to_torch=False)
-    normals = contacts["normal"]
-    assert len(normals) > 0
-    assert_allclose(np.abs(normals[..., 2]), 1, atol=1e2 * tol)
-
-    for _ in range(100):
-        scene.step()
-    pos = box.get_pos()
-    assert_allclose(pos[..., :2], 0, atol=1e1 * tol)
-    assert_allclose(pos[..., 2], 0.015, atol=1e1 * tol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_contype_conaffinity(show_viewer, tol):
-    GRAVITY = (0.0, 0.0, -10.0)
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=GRAVITY,
-        ),
-        show_viewer=show_viewer,
-    )
-
-    plane = scene.add_entity(
-        gs.morphs.Plane(
-            pos=(0.0, 0.0, 0.0),
-        )
-    )
-    box1 = scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.5, 0.5, 0.5),
-            pos=(0.0, 0.0, 0.5),
-            contype=3,
-            conaffinity=3,
-        ),
-        surface=gs.surfaces.Default(
-            color=(1.0, 0.0, 0.0, 1.0),
-        ),
-    )
-    box2 = scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.5, 0.5, 0.5),
-            pos=(0.0, 0.0, 1.0),
-            contype=2,
-            conaffinity=2,
-        ),
-        surface=gs.surfaces.Default(
-            color=(0.0, 1.0, 0.0, 1.0),
-        ),
-    )
-    box3 = scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.5, 0.5, 0.5),
-            pos=(0.0, 0.0, 1.5),
-            contype=1,
-            conaffinity=1,
-        ),
-        surface=gs.surfaces.Default(
-            color=(0.0, 0.0, 1.0, 1.0),
-        ),
-        visualize_contact=True,
-    )
-    box4 = scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(0.5, 0.5, 0.5),
-            pos=(0.0, 0.0, 2.0),
-            contype=0,
-            conaffinity=0,
-        ),
-        surface=gs.surfaces.Default(
-            color=(0.8, 0.8, 0.8, 1.0),
-        ),
-        visualize_contact=True,
-    )
-    scene.build()
-
-    for _ in range(80):
-        scene.step()
-
-    assert_allclose(box1.get_pos(), (0.0, 0.0, 0.25), atol=5e-4)
-    assert_allclose(box2.get_pos(), (0.0, 0.0, 0.75), atol=2e-3)
-    assert_allclose(box2.get_pos(), box3.get_pos(), atol=2e-3)
-    assert_allclose(scene.rigid_solver.get_links_acc(slice(box4.link_start, box4.link_end)), GRAVITY, atol=tol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("model_name", ["ellipsoid"])
-def test_ellipsoid(xml_path, show_viewer):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.02,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.4, 0.4, 0.3),
-            camera_lookat=(0.0, 0.0, 0.1),
-        ),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-    entity = scene.add_entity(
-        gs.morphs.MJCF(
-            file=xml_path,
-            pos=(0, 0, 0.2),
-        ),
-        vis_mode="collision",
-        visualize_contact=True,
-    )
-    scene.build()
-
-    entity.set_dofs_velocity(20 * np.random.rand(3), dofs_idx_local=slice(3, 6))
-    entity.set_dofs_kv(0.002, dofs_idx_local=slice(3, 6))
-    entity.control_dofs_velocity(0.0, dofs_idx_local=slice(3, 6))
-
-    # AABB must match the ellipsoid semi-axes
-    aabb = entity.get_AABB()
-    aabb_extent = aabb[1] - aabb[0]
-    assert_allclose(aabb_extent, (0.10, 0.10, 0.04), atol=1e-3)
-
-    # Free-fall onto plane: ellipsoid must come to rest
-    for _ in range(100):
-        scene.step()
-
-    assert_allclose(entity.get_dofs_velocity(), 0, tol=5e-3)
-    assert (-0.005 < entity.get_AABB()[0, 2] < 0.0).all()
-    roll, pitch, _yaw = gu.quat_to_xyz(entity.get_quat(), rpy=True)
-    assert_allclose((roll, pitch), (0.0, 0.0), tol=5e-3)

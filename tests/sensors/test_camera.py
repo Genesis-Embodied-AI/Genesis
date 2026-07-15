@@ -335,6 +335,23 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
 
 
 @pytest.mark.required
+def test_rasterizer_destroy():
+    scene = gs.Scene(show_viewer=False)
+    cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+    cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    offscreen_renderer_ref = weakref.ref(cam1._shared_metadata.renderer._renderer)
+    scene.destroy()
+    gc.collect()
+
+    assert offscreen_renderer_ref() is None
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.skipif(not ENABLE_MADRONA, reason=SKIP_NO_MADRONA)
@@ -396,44 +413,6 @@ def test_batch_renderer(n_envs, png_snapshot):
 
 
 @pytest.mark.required
-def test_destroy_unbuilt_scene_with_camera():
-    scene = gs.Scene(show_viewer=False)
-    scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
-
-    scene.destroy()
-
-
-@pytest.mark.required
-def test_destroy_idempotent_with_camera():
-    scene = gs.Scene(show_viewer=False)
-    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
-
-    scene.build()
-    camera.read()
-
-    scene.destroy()
-    scene.destroy()
-
-
-@pytest.mark.required
-def test_rasterizer_destroy():
-    scene = gs.Scene(show_viewer=False)
-    cam1 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
-    cam2 = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(32, 32)))
-
-    scene.build()
-    cam1.read()
-    cam2.read()
-
-    offscreen_renderer_ref = weakref.ref(cam1._shared_metadata.renderer._renderer)
-    scene.destroy()
-    gc.collect()
-
-    assert offscreen_renderer_ref() is None
-
-
-@pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not ENABLE_MADRONA, reason=SKIP_NO_MADRONA)
 def test_batch_renderer_destroy():
@@ -456,95 +435,6 @@ def test_batch_renderer_destroy():
 
     assert shared_metadata.sensors is None
     assert shared_metadata.renderer is None
-
-
-@pytest.mark.required
-@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
-def test_raytracer_destroy():
-    scene = gs.Scene(
-        renderer=gs.renderers.RayTracer(
-            env_surface=gs.surfaces.Emission(
-                emissive_texture=gs.textures.ColorTexture(color=(0.2, 0.3, 0.5)),
-            ),
-            env_radius=20.0,
-        ),
-        show_viewer=False,
-    )
-
-    cam1 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
-    cam2 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
-
-    scene.build()
-    cam1.read()
-    cam2.read()
-
-    shared_metadata = cam1._shared_metadata
-    assert cam1._shared_metadata is cam2._shared_metadata
-    assert len(shared_metadata.sensors) == 2
-    assert shared_metadata.renderer is not None
-
-    scene.destroy()
-
-    assert shared_metadata.sensors is None
-    assert shared_metadata.renderer is None
-
-
-@pytest.mark.required
-@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
-def test_raytracer_attached_without_offset_T():
-    CAM_RES = (128, 64)
-    CAM_POS = (1.0, 0.5, 2.0)
-
-    scene = gs.Scene(renderer=gs.renderers.RayTracer())
-    scene.add_entity(morph=gs.morphs.Plane())
-    sphere = scene.add_entity(morph=gs.morphs.Sphere())
-
-    # Sensor camera attached WITHOUT offset_T - should use pos as offset.
-    # The off-axis pos/lookat produce a non-identity rotation in the offset transform.
-    camera_common_options = dict(
-        res=CAM_RES,
-        lookat=(0.0, 0.0, 0.0),
-        up=(0.0, 1.0, 0.0),
-        fov=30.0,
-        spp=64,
-        denoise=False,
-    )
-    sensor_camera = scene.add_sensor(
-        gs.sensors.RaytracerCameraOptions(
-            **camera_common_options,
-            pos=CAM_POS,
-            entity_idx=sphere.idx,
-        )
-    )
-
-    # Scene-level camera with the same pose, attached with explicit offset_T
-    scene_camera = scene.add_camera(
-        **camera_common_options,
-    )
-
-    scene.build()
-
-    # Attach scene-level camera with equivalent offset_T
-    cam_lookat = np.array(camera_common_options["lookat"], dtype=np.float32)
-    cam_up = np.array(camera_common_options["up"], dtype=np.float32)
-    scene_camera.attach(
-        sphere.base_link,
-        offset_T=pos_lookat_up_to_T(np.array(CAM_POS, dtype=np.float32), cam_lookat, cam_up),
-    )
-
-    scene.step()
-
-    sensor_data = sensor_camera.read()
-    assert sensor_data.rgb.shape == (CAM_RES[1], CAM_RES[0], 3)
-    assert sensor_data.rgb.float().std() > 1.0, "Sensor camera RGB std too low, image may be blank"
-
-    scene_camera.move_to_attach()
-    scene_rgb, *_ = scene_camera.render(rgb=True, force_render=True)
-    scene_rgb = tensor_to_array(scene_rgb, dtype=np.int32)
-    sensor_rgb = tensor_to_array(sensor_data.rgb, dtype=np.int32)
-
-    # Both cameras should produce the same image
-    assert_equal(sensor_rgb, scene_rgb)
 
 
 @pytest.mark.required
@@ -628,6 +518,95 @@ def test_raytracer(n_envs, png_snapshot):
             assert rgb_array_to_png_bytes(data.rgb) == png_snapshot
 
 
+@pytest.mark.required
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
+def test_raytracer_attached_without_offset_T():
+    CAM_RES = (128, 64)
+    CAM_POS = (1.0, 0.5, 2.0)
+
+    scene = gs.Scene(renderer=gs.renderers.RayTracer())
+    scene.add_entity(morph=gs.morphs.Plane())
+    sphere = scene.add_entity(morph=gs.morphs.Sphere())
+
+    # Sensor camera attached WITHOUT offset_T - should use pos as offset.
+    # The off-axis pos/lookat produce a non-identity rotation in the offset transform.
+    camera_common_options = dict(
+        res=CAM_RES,
+        lookat=(0.0, 0.0, 0.0),
+        up=(0.0, 1.0, 0.0),
+        fov=30.0,
+        spp=64,
+        denoise=False,
+    )
+    sensor_camera = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            **camera_common_options,
+            pos=CAM_POS,
+            entity_idx=sphere.idx,
+        )
+    )
+
+    # Scene-level camera with the same pose, attached with explicit offset_T
+    scene_camera = scene.add_camera(
+        **camera_common_options,
+    )
+
+    scene.build()
+
+    # Attach scene-level camera with equivalent offset_T
+    cam_lookat = np.array(camera_common_options["lookat"], dtype=np.float32)
+    cam_up = np.array(camera_common_options["up"], dtype=np.float32)
+    scene_camera.attach(
+        sphere.base_link,
+        offset_T=pos_lookat_up_to_T(np.array(CAM_POS, dtype=np.float32), cam_lookat, cam_up),
+    )
+
+    scene.step()
+
+    sensor_data = sensor_camera.read()
+    assert sensor_data.rgb.shape == (CAM_RES[1], CAM_RES[0], 3)
+    assert sensor_data.rgb.float().std() > 1.0, "Sensor camera RGB std too low, image may be blank"
+
+    scene_camera.move_to_attach()
+    scene_rgb, *_ = scene_camera.render(rgb=True, force_render=True)
+    scene_rgb = tensor_to_array(scene_rgb, dtype=np.int32)
+    sensor_rgb = tensor_to_array(sensor_data.rgb, dtype=np.int32)
+
+    # Both cameras should produce the same image
+    assert_equal(sensor_rgb, scene_rgb)
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
+def test_raytracer_destroy():
+    scene = gs.Scene(
+        renderer=gs.renderers.RayTracer(
+            env_surface=gs.surfaces.Emission(
+                emissive_texture=gs.textures.ColorTexture(color=(0.2, 0.3, 0.5)),
+            ),
+            env_radius=20.0,
+        ),
+        show_viewer=False,
+    )
+
+    cam1 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
+    cam2 = scene.add_sensor(gs.sensors.RaytracerCameraOptions(res=(64, 64)))
+
+    scene.build()
+    cam1.read()
+    cam2.read()
+
+    shared_metadata = cam1._shared_metadata
+    assert cam1._shared_metadata is cam2._shared_metadata
+    assert len(shared_metadata.sensors) == 2
+    assert shared_metadata.renderer is not None
+
+    scene.destroy()
+
+    assert shared_metadata.sensors is None
+    assert shared_metadata.renderer is None
+
+
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_lookat_entity(show_viewer, png_snapshot):
@@ -692,3 +671,24 @@ def test_lookat_entity(show_viewer, png_snapshot):
             if sys.platform == "darwin" and scene.visualizer.is_software:
                 pytest.xfail("Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered.")
             raise
+
+
+@pytest.mark.required
+def test_destroy_unbuilt_scene_with_camera():
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+
+    scene.destroy()
+
+
+@pytest.mark.required
+def test_destroy_idempotent_with_camera():
+    scene = gs.Scene(show_viewer=False)
+    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+
+    scene.build()
+    camera.read()
+
+    scene.destroy()
+    scene.destroy()

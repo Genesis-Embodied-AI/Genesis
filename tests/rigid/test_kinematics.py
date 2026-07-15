@@ -250,6 +250,106 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
         check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.merge_fixed_links(False)
+@pytest.mark.parametrize("model_name", ["pendulum"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+def test_jacobian(gs_sim, tol):
+    (pendulum,) = gs_sim.entities
+
+    angle = 0.7
+    pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
+    gs_sim.scene.step()
+
+    link = pendulum.get_link("PendulumArm_0")
+
+    p_local = np.array([0.05, -0.02, 0.12], dtype=gs.np_float)
+    J_o = tensor_to_array(pendulum.get_jacobian(link))
+    J_p = tensor_to_array(pendulum.get_jacobian(link, p_local))
+
+    c, s = np.cos(angle), np.sin(angle)
+    Rx = np.array(
+        [
+            [1, 0, 0],
+            [0, c, -s],
+            [0, s, c],
+        ],
+        dtype=gs.np_float,
+    )
+    r_world = Rx @ p_local
+    r_cross = np.array(
+        [
+            [0, -r_world[2], r_world[1]],
+            [r_world[2], 0, -r_world[0]],
+            [-r_world[1], r_world[0], 0],
+        ],
+        dtype=gs.np_float,
+    )
+
+    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
+    lin_expected = lin_o - r_cross @ ang_o
+
+    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
+    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["compound_joint"])
+def test_jacobian_compound_joints(xml_path, tol):
+    scene = gs.Scene(show_viewer=False)
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            requires_jac_and_IK=True,
+        ),
+    )
+    scene.build()
+    end_link = robot.get_link("seg2")
+
+    mj_model = mujoco.MjModel.from_xml_path(xml_path)
+    mj_data = mujoco.MjData(mj_model)
+    end_body_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "seg2")
+    jacp = np.empty((3, mj_model.nv), dtype=np.float64)
+    jacr = np.empty((3, mj_model.nv), dtype=np.float64)
+
+    for qpos in (np.zeros(3), np.array([0.3, -0.5, 0.7])):
+        robot.set_qpos(qpos.astype(gs.np_float))
+        mj_data.qpos[:] = qpos
+        mujoco.mj_forward(mj_model, mj_data)
+        mujoco.mj_jacBody(mj_model, mj_data, jacp, jacr, end_body_id)
+
+        assert_allclose(robot.get_jacobian(end_link), np.concatenate([jacp, jacr]), tol=tol)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_joint_get_anchor_pos_and_axis(n_envs):
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    batch_shape = (n_envs,) if n_envs > 0 else ()
+
+    joint = robot.joints[1]
+    anchor_pos = joint.get_anchor_pos()
+    assert anchor_pos.shape == (*batch_shape, 3)
+    expected_pos = scene.rigid_solver.joints_state.xanchor.to_numpy()
+    assert_allclose(anchor_pos, expected_pos[joint.idx], tol=gs.EPS)
+
+    anchor_axis = joint.get_anchor_axis()
+    assert anchor_axis.shape == (*batch_shape, 3)
+    expected_axis = scene.rigid_solver.joints_state.xaxis.to_numpy()
+    assert_allclose(anchor_axis, expected_axis[joint.idx], tol=gs.EPS)
+
+
 @pytest.mark.slow("gpu")  # gpu ~250s
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -614,106 +714,6 @@ def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
         hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
         theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[..., 1:]), torch.abs(hand_quat_diff[..., 0]))
         assert_allclose(theta, 0.0, tol=5e-3)
-
-
-@pytest.mark.required
-@pytest.mark.merge_fixed_links(False)
-@pytest.mark.parametrize("model_name", ["pendulum"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
-def test_jacobian(gs_sim, tol):
-    (pendulum,) = gs_sim.entities
-
-    angle = 0.7
-    pendulum.set_qpos(np.array([angle], dtype=gs.np_float))
-    gs_sim.scene.step()
-
-    link = pendulum.get_link("PendulumArm_0")
-
-    p_local = np.array([0.05, -0.02, 0.12], dtype=gs.np_float)
-    J_o = tensor_to_array(pendulum.get_jacobian(link))
-    J_p = tensor_to_array(pendulum.get_jacobian(link, p_local))
-
-    c, s = np.cos(angle), np.sin(angle)
-    Rx = np.array(
-        [
-            [1, 0, 0],
-            [0, c, -s],
-            [0, s, c],
-        ],
-        dtype=gs.np_float,
-    )
-    r_world = Rx @ p_local
-    r_cross = np.array(
-        [
-            [0, -r_world[2], r_world[1]],
-            [r_world[2], 0, -r_world[0]],
-            [-r_world[1], r_world[0], 0],
-        ],
-        dtype=gs.np_float,
-    )
-
-    lin_o, ang_o = J_o[:3, 0], J_o[3:, 0]
-    lin_expected = lin_o - r_cross @ ang_o
-
-    assert_allclose(J_p[3:, 0], ang_o, tol=tol)
-    assert_allclose(J_p[:3, 0], lin_expected, tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("model_name", ["compound_joint"])
-def test_jacobian_compound_joints(xml_path, tol):
-    scene = gs.Scene(show_viewer=False)
-    robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file=xml_path,
-            requires_jac_and_IK=True,
-        ),
-    )
-    scene.build()
-    end_link = robot.get_link("seg2")
-
-    mj_model = mujoco.MjModel.from_xml_path(xml_path)
-    mj_data = mujoco.MjData(mj_model)
-    end_body_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "seg2")
-    jacp = np.empty((3, mj_model.nv), dtype=np.float64)
-    jacr = np.empty((3, mj_model.nv), dtype=np.float64)
-
-    for qpos in (np.zeros(3), np.array([0.3, -0.5, 0.7])):
-        robot.set_qpos(qpos.astype(gs.np_float))
-        mj_data.qpos[:] = qpos
-        mujoco.mj_forward(mj_model, mj_data)
-        mujoco.mj_jacBody(mj_model, mj_data, jacp, jacr, end_body_id)
-
-        assert_allclose(robot.get_jacobian(end_link), np.concatenate([jacp, jacr]), tol=tol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_joint_get_anchor_pos_and_axis(n_envs):
-    scene = gs.Scene(
-        show_viewer=False,
-        show_FPS=False,
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-        ),
-    )
-    scene.build(n_envs=n_envs)
-    batch_shape = (n_envs,) if n_envs > 0 else ()
-
-    joint = robot.joints[1]
-    anchor_pos = joint.get_anchor_pos()
-    assert anchor_pos.shape == (*batch_shape, 3)
-    expected_pos = scene.rigid_solver.joints_state.xanchor.to_numpy()
-    assert_allclose(anchor_pos, expected_pos[joint.idx], tol=gs.EPS)
-
-    anchor_axis = joint.get_anchor_axis()
-    assert anchor_axis.shape == (*batch_shape, 3)
-    expected_axis = scene.rigid_solver.joints_state.xaxis.to_numpy()
-    assert_allclose(anchor_axis, expected_axis[joint.idx], tol=gs.EPS)
 
 
 @pytest.mark.required

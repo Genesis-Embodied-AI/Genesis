@@ -279,130 +279,6 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         assert_allclose(-state.pos[..., 2].min(), penetration_depth_ref, tol=tol)
 
 
-# This test cannot be flagged as required because it takes 250s to run on CPU.
-# @pytest.mark.required
-@pytest.mark.parametrize("precision", ["64"])
-def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
-    SPHERE_RADIUS = 0.1
-    BOX_SIZE = 0.015
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1.0 / 60.0,
-            substeps=2,
-        ),
-        fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,
-        ),
-        coupler_options=gs.options.SAPCouplerOptions(),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.6, 0.6, 0.45),
-            camera_lookat=(0.0, 0.0, 0.15),
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.0, 0.0, SPHERE_RADIUS),
-            radius=SPHERE_RADIUS,
-        ),
-        material=gs.materials.FEM.Elastic(
-            friction_mu=1.0,
-            model="linear_corotated",
-        ),
-    )
-    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
-    box = scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file=f"{asset_path}/meshes/cube8.obj",
-            pos=(0.0, 0.0, 2 * SPHERE_RADIUS + BOX_SIZE),
-            scale=BOX_SIZE,
-        ),
-        material=gs.materials.FEM.Elastic(
-            E=1e4,
-            rho=50.0,
-            friction_mu=1.0,
-            model="linear_corotated",
-        ),
-    )
-    scene.build()
-
-    # Run simulation
-    for _ in range(40):
-        scene.step()
-
-    for entity, init_height in zip(scene.entities, (SPHERE_RADIUS, 2 * SPHERE_RADIUS + BOX_SIZE)):
-        # Barely moving
-        state = entity.get_state()
-        assert_allclose(state.vel, 0.0, tol=0.05)
-
-        # More or less at the initial position
-        pos = tensor_to_array(state.pos[0])
-        BV, *_ = igl.bounding_box(pos)
-        entity_center = 0.5 * (BV[0] + BV[-1])
-        assert_allclose(entity_center[:2], 0.0, tol=0.02)
-        assert_allclose(entity_center[2], init_height, tol=5e-3)
-
-
-@pytest.mark.required
-@pytest.mark.xfail(raises=AssertionError, reason="Constraint dynamics inconsistent with analytical formula")
-@pytest.mark.parametrize("precision", ["64"])
-def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
-    DT = 0.01
-    BOX_SIZE = 0.1
-    CONSTRAINT_STIFFNESS = 1e1
-    BOX_VELOCITY = torch.tensor([0.2, 0.0, 0.0])
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=DT,
-            substeps=10,
-            gravity=(0.0, 0.0, 0.0),
-        ),
-        fem_options=gs.options.FEMOptions(
-            enable_vertex_constraints=True,
-            use_implicit_solver=False,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.6, 0.6, 0.5),
-            camera_lookat=(0.0, 0.0, 0.0),
-        ),
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    box = scene.add_entity(
-        morph=gs.morphs.Box(
-            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, 0.0),
-        ),
-        material=gs.materials.FEM.Elastic(
-            rho=1.0 / BOX_SIZE**3,  # Unit mass
-        ),
-        surface=gs.surfaces.Default(
-            color=(1, 1, 1, 0.5),
-        ),
-    )
-    scene.build()
-
-    verts_idx = [0, 1, 2, 3, 4, 5, 6, 7]
-    target_poss = box.init_positions[verts_idx]
-    box.set_vertex_constraints(verts_idx, target_poss, is_soft_constraint=True, stiffness=CONSTRAINT_STIFFNESS)
-    if show_viewer:
-        scene.draw_debug_spheres(poss=target_poss, radius=0.01, color=(1, 0, 1, 1))
-
-    # Initialize box velocity to non-zero value
-    box.set_velocity(BOX_VELOCITY)
-
-    # Check that the box has a spring dynamics
-    omega = math.sqrt(8 * CONSTRAINT_STIFFNESS)
-    for i in range(2000):
-        pos = box.get_state().pos[..., :8, :].sum(dim=-2)
-        pos_ref = BOX_VELOCITY * (i * DT) * math.exp(-omega * (i * DT))
-        assert_allclose(pos, pos_ref, tol=1e-3)
-        scene.step()
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("use_implicit_solver", [False, True])
 @pytest.mark.parametrize("precision", ["64"])
@@ -495,6 +371,130 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
     com_pos_z_f = box.get_state().pos[..., 8, 2]
     com_pos_delta = -0.5 * 9.81 * (n_steps * DT) ** 2
     assert_allclose(com_pos_z_f - com_pos_z_0, com_pos_delta, tol=0.05)
+
+
+@pytest.mark.required
+@pytest.mark.xfail(raises=AssertionError, reason="Constraint dynamics inconsistent with analytical formula")
+@pytest.mark.parametrize("precision", ["64"])
+def test_explicit_legacy_coupler_soft_constraint_box(show_viewer):
+    DT = 0.01
+    BOX_SIZE = 0.1
+    CONSTRAINT_STIFFNESS = 1e1
+    BOX_VELOCITY = torch.tensor([0.2, 0.0, 0.0])
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            substeps=10,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        fem_options=gs.options.FEMOptions(
+            enable_vertex_constraints=True,
+            use_implicit_solver=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, 0.6, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, 0.0),
+        ),
+        material=gs.materials.FEM.Elastic(
+            rho=1.0 / BOX_SIZE**3,  # Unit mass
+        ),
+        surface=gs.surfaces.Default(
+            color=(1, 1, 1, 0.5),
+        ),
+    )
+    scene.build()
+
+    verts_idx = [0, 1, 2, 3, 4, 5, 6, 7]
+    target_poss = box.init_positions[verts_idx]
+    box.set_vertex_constraints(verts_idx, target_poss, is_soft_constraint=True, stiffness=CONSTRAINT_STIFFNESS)
+    if show_viewer:
+        scene.draw_debug_spheres(poss=target_poss, radius=0.01, color=(1, 0, 1, 1))
+
+    # Initialize box velocity to non-zero value
+    box.set_velocity(BOX_VELOCITY)
+
+    # Check that the box has a spring dynamics
+    omega = math.sqrt(8 * CONSTRAINT_STIFFNESS)
+    for i in range(2000):
+        pos = box.get_state().pos[..., :8, :].sum(dim=-2)
+        pos_ref = BOX_VELOCITY * (i * DT) * math.exp(-omega * (i * DT))
+        assert_allclose(pos, pos_ref, tol=1e-3)
+        scene.step()
+
+
+# This test cannot be flagged as required because it takes 250s to run on CPU.
+# @pytest.mark.required
+@pytest.mark.parametrize("precision", ["64"])
+def test_implicit_sap_coupler_collide_sphere_box(show_viewer):
+    SPHERE_RADIUS = 0.1
+    BOX_SIZE = 0.015
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1.0 / 60.0,
+            substeps=2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,
+        ),
+        coupler_options=gs.options.SAPCouplerOptions(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.6, 0.6, 0.45),
+            camera_lookat=(0.0, 0.0, 0.15),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            radius=SPHERE_RADIUS,
+        ),
+        material=gs.materials.FEM.Elastic(
+            friction_mu=1.0,
+            model="linear_corotated",
+        ),
+    )
+    asset_path = get_hf_dataset(pattern="meshes/cube8.obj")
+    box = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/meshes/cube8.obj",
+            pos=(0.0, 0.0, 2 * SPHERE_RADIUS + BOX_SIZE),
+            scale=BOX_SIZE,
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=1e4,
+            rho=50.0,
+            friction_mu=1.0,
+            model="linear_corotated",
+        ),
+    )
+    scene.build()
+
+    # Run simulation
+    for _ in range(40):
+        scene.step()
+
+    for entity, init_height in zip(scene.entities, (SPHERE_RADIUS, 2 * SPHERE_RADIUS + BOX_SIZE)):
+        # Barely moving
+        state = entity.get_state()
+        assert_allclose(state.vel, 0.0, tol=0.05)
+
+        # More or less at the initial position
+        pos = tensor_to_array(state.pos[0])
+        BV, *_ = igl.bounding_box(pos)
+        entity_center = 0.5 * (BV[0] + BV[-1])
+        assert_allclose(entity_center[:2], 0.0, tol=0.02)
+        assert_allclose(entity_center[2], init_height, tol=5e-3)
 
 
 # This test cannot be flagged as required because it takes 400s to run on CPU.

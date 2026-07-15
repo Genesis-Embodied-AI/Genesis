@@ -31,38 +31,6 @@ def clear_seen_fixture():
     warnings_mod._seen.clear()
 
 
-@pytest.mark.required
-def test_warn_once_logs_once(clear_seen_fixture):
-    msg = "This is a warning"
-    with patch.object(gs, "logger", create=True) as mock_logger:
-        with patch.object(mock_logger, "warning") as mock_warning:
-            warn_once(msg)
-            warn_once(msg)
-            mock_warning.assert_called_once_with(msg)
-
-
-@pytest.mark.required
-def test_warn_once_logs_different_messages(clear_seen_fixture):
-    msg1 = "Warning 1"
-    msg2 = "Warning 2"
-    with patch.object(gs, "logger", create=True) as mock_logger:
-        with patch.object(mock_logger, "warning") as mock_warning:
-            warn_once(msg1)
-            warn_once(msg2)
-            assert mock_warning.call_count == 2
-            mock_warning.assert_any_call(msg1)
-            mock_warning.assert_any_call(msg2)
-
-
-@pytest.mark.required
-def test_warn_once_with_empty_message(clear_seen_fixture):
-    with patch.object(gs, "logger", create=True) as mock_logger:
-        with patch.object(mock_logger, "warning") as mock_warning:
-            warn_once("")
-            warn_once("")
-            mock_warning.assert_called_once_with("")
-
-
 def _qd_kernel_wrapper(qd_func, num_inputs, num_outputs, *args):
     import quadrants as qd
 
@@ -109,6 +77,33 @@ def _qd_kernel_wrapper(qd_func, num_inputs, num_outputs, *args):
         raise NotImplementedError(f"Quadrants func with arity in={num_inputs},out={num_outputs} not supported")
 
     return kernel
+
+
+def polar(A, pure_rotation: bool, side, tol):
+    # filter out singular A (which is not invertible)
+    # non-invertible matrix makes non-unique SVD which may break the consistency.
+    N = A.shape[-1]
+    if isinstance(A, np.ndarray):
+        dets = np.linalg.det(A)
+        mask = np.abs(dets) < tol
+        if A.ndim > 2:
+            if mask.any():
+                I = np.eye(N, dtype=A.dtype)
+                A = np.where(mask[..., None, None], I, A)
+        else:
+            if mask:
+                A = np.eye(N, dtype=A.dtype)
+    elif isinstance(A, torch.Tensor):
+        dets = torch.linalg.det(A.reshape((-1, 3, 3))).reshape(A.shape[:-2])
+        mask = torch.abs(dets) < tol
+        if A.ndim > 2:
+            if mask.any():
+                I = torch.eye(N, dtype=A.dtype, device=A.device)
+                A = torch.where(mask[..., None, None], I, A)
+        else:
+            if mask:
+                A = torch.eye(N, dtype=A.dtype, device=A.device)
+    return gu.polar(A, pure_rotation=pure_rotation, side=side)
 
 
 @pytest.mark.slow  # ~200s
@@ -166,33 +161,6 @@ def test_geom_quadrants_vs_tensor_consistency(batch_shape):
         for np_out, tc_out, qd_out in zip(np_outs, tc_outs, qd_outs):
             np.testing.assert_allclose(np_out, qd_out.to_numpy(), atol=1e2 * gs.EPS)
             np.testing.assert_allclose(np_out, tc_out, atol=1e2 * gs.EPS)
-
-
-def polar(A, pure_rotation: bool, side, tol):
-    # filter out singular A (which is not invertible)
-    # non-invertible matrix makes non-unique SVD which may break the consistency.
-    N = A.shape[-1]
-    if isinstance(A, np.ndarray):
-        dets = np.linalg.det(A)
-        mask = np.abs(dets) < tol
-        if A.ndim > 2:
-            if mask.any():
-                I = np.eye(N, dtype=A.dtype)
-                A = np.where(mask[..., None, None], I, A)
-        else:
-            if mask:
-                A = np.eye(N, dtype=A.dtype)
-    elif isinstance(A, torch.Tensor):
-        dets = torch.linalg.det(A.reshape((-1, 3, 3))).reshape(A.shape[:-2])
-        mask = torch.abs(dets) < tol
-        if A.ndim > 2:
-            if mask.any():
-                I = torch.eye(N, dtype=A.dtype, device=A.device)
-                A = torch.where(mask[..., None, None], I, A)
-        else:
-            if mask:
-                A = torch.eye(N, dtype=A.dtype, device=A.device)
-    return gu.polar(A, pure_rotation=pure_rotation, side=side)
 
 
 @pytest.mark.required
@@ -332,30 +300,24 @@ def test_geom_tensor_identity(batch_shape):
 
 
 @pytest.mark.required
-def test_fps_tracker():
-    n_envs = 23
-    tracker = FPSTracker(alpha=0.0, minimum_interval_seconds=0.1, n_envs=n_envs)
-    tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    assert not tracker.step(current_time=10.0)
-    fps = tracker.step(current_time=10.2)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.2)
+@pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
+def test_slerp(batch_shape, tol):
+    INTERP_RATIO = 0.7
 
-    assert not tracker.step(current_time=10.21)
-    assert not tracker.step(current_time=10.22)
-    assert not tracker.step(current_time=10.29)
-    fps = tracker.step(current_time=10.31)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.11)
+    numel = math.prod(batch_shape)
+    q0 = np.random.rand(numel, 4)
+    q0 /= np.linalg.norm(q0)
+    q1 = np.random.rand(numel, 4)
+    q1 /= np.linalg.norm(q1)
 
-    assert not tracker.step(current_time=10.33)
-    assert not tracker.step(current_time=10.37)
-    assert not tracker.step(current_time=10.39)
-    fps = tracker.step(current_time=10.45)
-    # num envs * [num steps] / (delta time)
-    assert math.isclose(fps, n_envs * 4 / 0.14)
+    lerp_true = np.empty_like(q0)
+    for i in range(numel):
+        rots = R.from_quat([q0[i], q1[i]], scalar_first=True)
+        slerp = Slerp([0, 1], rots)
+        lerp_true[i] = slerp([INTERP_RATIO]).as_quat(scalar_first=True)
+
+    lerp = gu.slerp(q0.reshape((*batch_shape, 4)), q1.reshape((*batch_shape, 4)), np.full(batch_shape, INTERP_RATIO))
+    assert_allclose(lerp_true.reshape((*batch_shape, 4)), lerp, tol=tol)
 
 
 @pytest.mark.required
@@ -385,27 +347,6 @@ def test_compose_inertial_properties():
     assert_allclose(combined_mass, expected_mass, tol=TOL)
     assert_allclose(combined_com, expected_com, tol=TOL)
     assert_allclose(combined_inertia, expected_inertia, tol=TOL)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_slerp(batch_shape, tol):
-    INTERP_RATIO = 0.7
-
-    numel = math.prod(batch_shape)
-    q0 = np.random.rand(numel, 4)
-    q0 /= np.linalg.norm(q0)
-    q1 = np.random.rand(numel, 4)
-    q1 /= np.linalg.norm(q1)
-
-    lerp_true = np.empty_like(q0)
-    for i in range(numel):
-        rots = R.from_quat([q0[i], q1[i]], scalar_first=True)
-        slerp = Slerp([0, 1], rots)
-        lerp_true[i] = slerp([INTERP_RATIO]).as_quat(scalar_first=True)
-
-    lerp = gu.slerp(q0.reshape((*batch_shape, 4)), q1.reshape((*batch_shape, 4)), np.full(batch_shape, INTERP_RATIO))
-    assert_allclose(lerp_true.reshape((*batch_shape, 4)), lerp, tol=tol)
 
 
 @pytest.mark.required
@@ -970,3 +911,62 @@ def test_genuine_interpenetration(show_viewer):
 
     if show_viewer:
         display_collision_pairs(pairs_viz)
+
+
+@pytest.mark.required
+def test_fps_tracker():
+    n_envs = 23
+    tracker = FPSTracker(alpha=0.0, minimum_interval_seconds=0.1, n_envs=n_envs)
+    tracker.step(current_time=10.0)
+    assert not tracker.step(current_time=10.0)
+    assert not tracker.step(current_time=10.0)
+    assert not tracker.step(current_time=10.0)
+    fps = tracker.step(current_time=10.2)
+    # num envs * [num steps] / (delta time)
+    assert math.isclose(fps, n_envs * 4 / 0.2)
+
+    assert not tracker.step(current_time=10.21)
+    assert not tracker.step(current_time=10.22)
+    assert not tracker.step(current_time=10.29)
+    fps = tracker.step(current_time=10.31)
+    # num envs * [num steps] / (delta time)
+    assert math.isclose(fps, n_envs * 4 / 0.11)
+
+    assert not tracker.step(current_time=10.33)
+    assert not tracker.step(current_time=10.37)
+    assert not tracker.step(current_time=10.39)
+    fps = tracker.step(current_time=10.45)
+    # num envs * [num steps] / (delta time)
+    assert math.isclose(fps, n_envs * 4 / 0.14)
+
+
+@pytest.mark.required
+def test_warn_once_logs_once(clear_seen_fixture):
+    msg = "This is a warning"
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            warn_once(msg)
+            warn_once(msg)
+            mock_warning.assert_called_once_with(msg)
+
+
+@pytest.mark.required
+def test_warn_once_logs_different_messages(clear_seen_fixture):
+    msg1 = "Warning 1"
+    msg2 = "Warning 2"
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            warn_once(msg1)
+            warn_once(msg2)
+            assert mock_warning.call_count == 2
+            mock_warning.assert_any_call(msg1)
+            mock_warning.assert_any_call(msg2)
+
+
+@pytest.mark.required
+def test_warn_once_with_empty_message(clear_seen_fixture):
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            warn_once("")
+            warn_once("")
+            mock_warning.assert_called_once_with("")

@@ -189,45 +189,90 @@ def test_default_plugin(n_envs):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_thread_crash_reports_traceback():
-    class CrashOnDrawPlugin(gs.vis.viewer_plugins.ViewerPlugin):
-        def __init__(self):
-            super().__init__()
-            self.should_crash = False
+def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
+    IMAGE_FILENAME = tmp_path / "screenshot.png"
 
-        def on_draw(self):
-            if self.should_crash:
-                raise RuntimeError("Deliberate viewer thread crash.")
+    # Mock 'get_save_filename' to avoid poping up an interactive dialog
+    def get_save_filename(self, file_exts):
+        return IMAGE_FILENAME
 
-    run_in_thread = sys.platform == "linux"
+    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
+
+    # Mock 'on_key_release' to determine whether requests have been processed
+    is_done = False
+    on_key_release_orig = gs.ext.pyrender.viewer.Viewer.on_key_release
+
+    def on_key_release(self, symbol: int, modifiers: int):
+        nonlocal is_done
+        assert not is_done
+        ret = on_key_release_orig(self, symbol, modifiers)
+        is_done = True
+        return ret
+
+    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_release", on_key_release)
+
+    # Create a scene
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(run_in_thread=run_in_thread),
+        viewer_options=gs.options.ViewerOptions(
+            # Force screen-independent low-quality resolution when running unit tests for consistency.
+            # Still, it must be large enough since rendering text involved alpha blending, which is platform-dependent.
+            res=(640, 480),
+            # Enable running in background thread if supported by the platform.
+            # Note that windows is not supported because it would trigger the following exception if some previous tests
+            # was only using rasterizer without interactive viewer:
+            # 'EventLoop.run() must be called from the same thread that imports pyglet.app'.
+            run_in_thread=(sys.platform == "linux"),
+        ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
+        renderer=renderer,
         show_viewer=True,
+        show_FPS=False,
     )
-    scene.add_entity(morph=gs.morphs.Plane())
-    crash_plugin = CrashOnDrawPlugin()
-    scene.viewer.add_plugin(crash_plugin)
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.5, 0.5, 0.5),
+            pos=(0.0, 0.0, 0.0),
+        ),
+    )
     scene.build()
-
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
 
-    # Enable crashing only after init is complete to avoid corrupting the init path
-    crash_plugin.should_crash = True
+    # Try saving the current frame
+    pyrender_viewer.dispatch_event("on_key_release", Key.S, 0)
 
-    if run_in_thread:
-        # Wait until the viewer thread has died, then check the traceback is preserved
-        wait_for_viewer_events(pyrender_viewer, lambda: not pyrender_viewer.is_active)
-        with pytest.raises(gs.GenesisException) as exc_info:
-            scene.step()
-        assert exc_info.type is gs.GenesisException
-        assert isinstance(exc_info.value.__cause__, RuntimeError)
-        assert "Deliberate viewer thread crash." in str(exc_info.value.__cause__)
+    # Waiting for request completion
+    if pyrender_viewer.run_in_thread:
+        for i in range(100):
+            if is_done:
+                is_done = False
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("Keyboard event not processed before timeout")
     else:
-        # Non-threaded: exception propagates directly through scene.step()
-        with pytest.raises(RuntimeError, match="Deliberate viewer thread crash."):
-            scene.step()
+        pyrender_viewer.dispatch_pending_events()
+        pyrender_viewer.dispatch_events()
+
+    # Skip the rest of the test if necessary.
+    # Similarly, 'glBlitFramebuffer(..., GL_DEPTH_BUFFER_BIT, GL_NEAREST)' involved in offscreen rendering of depth map
+    # with interactive viewer enabled takes ages on old CPU-based Mesa rendering driver (~15000s).
+    if sys.platform == "linux":
+        glinfo = pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        if "llvmpipe" in renderer:
+            llvm_version = re.search(r"LLVM\s+([\d.]+)", renderer).group(1)
+            if llvm_version < "20":
+                pytest.xfail("Text is blurry on Linux using old CPU-based Mesa rendering driver.")
+
+    # Make sure that the result is valid
+    with open(IMAGE_FILENAME, "rb") as f:
+        assert f.read() == png_snapshot
 
 
 @pytest.mark.required
@@ -417,93 +462,6 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     )
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
-    IMAGE_FILENAME = tmp_path / "screenshot.png"
-
-    # Mock 'get_save_filename' to avoid poping up an interactive dialog
-    def get_save_filename(self, file_exts):
-        return IMAGE_FILENAME
-
-    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
-
-    # Mock 'on_key_release' to determine whether requests have been processed
-    is_done = False
-    on_key_release_orig = gs.ext.pyrender.viewer.Viewer.on_key_release
-
-    def on_key_release(self, symbol: int, modifiers: int):
-        nonlocal is_done
-        assert not is_done
-        ret = on_key_release_orig(self, symbol, modifiers)
-        is_done = True
-        return ret
-
-    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_release", on_key_release)
-
-    # Create a scene
-    scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            # Force screen-independent low-quality resolution when running unit tests for consistency.
-            # Still, it must be large enough since rendering text involved alpha blending, which is platform-dependent.
-            res=(640, 480),
-            # Enable running in background thread if supported by the platform.
-            # Note that windows is not supported because it would trigger the following exception if some previous tests
-            # was only using rasterizer without interactive viewer:
-            # 'EventLoop.run() must be called from the same thread that imports pyglet.app'.
-            run_in_thread=(sys.platform == "linux"),
-        ),
-        vis_options=gs.options.VisOptions(
-            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
-            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
-        ),
-        renderer=renderer,
-        show_viewer=True,
-        show_FPS=False,
-    )
-    scene.add_entity(
-        gs.morphs.Box(
-            size=(0.5, 0.5, 0.5),
-            pos=(0.0, 0.0, 0.0),
-        ),
-    )
-    scene.build()
-    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
-    assert pyrender_viewer.is_active
-
-    # Try saving the current frame
-    pyrender_viewer.dispatch_event("on_key_release", Key.S, 0)
-
-    # Waiting for request completion
-    if pyrender_viewer.run_in_thread:
-        for i in range(100):
-            if is_done:
-                is_done = False
-                break
-            time.sleep(0.1)
-        else:
-            raise AssertionError("Keyboard event not processed before timeout")
-    else:
-        pyrender_viewer.dispatch_pending_events()
-        pyrender_viewer.dispatch_events()
-
-    # Skip the rest of the test if necessary.
-    # Similarly, 'glBlitFramebuffer(..., GL_DEPTH_BUFFER_BIT, GL_NEAREST)' involved in offscreen rendering of depth map
-    # with interactive viewer enabled takes ages on old CPU-based Mesa rendering driver (~15000s).
-    if sys.platform == "linux":
-        glinfo = pyrender_viewer.context.get_info()
-        renderer = glinfo.get_renderer()
-        if "llvmpipe" in renderer:
-            llvm_version = re.search(r"LLVM\s+([\d.]+)", renderer).group(1)
-            if llvm_version < "20":
-                pytest.xfail("Text is blurry on Linux using old CPU-based Mesa rendering driver.")
-
-    # Make sure that the result is valid
-    with open(IMAGE_FILENAME, "rb") as f:
-        assert f.read() == png_snapshot
-
-
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("add_box", [False, True])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
@@ -649,3 +607,45 @@ def test_camera_render_honors_resolution(renderer):
 
     # The on-axis center pixel hits the front face of the box, at metric depth camera_dist - box_halfsize.
     assert_allclose(depth[camera_res[1] // 2, camera_res[0] // 2], camera_dist - box_halfsize, atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_thread_crash_reports_traceback():
+    class CrashOnDrawPlugin(gs.vis.viewer_plugins.ViewerPlugin):
+        def __init__(self):
+            super().__init__()
+            self.should_crash = False
+
+        def on_draw(self):
+            if self.should_crash:
+                raise RuntimeError("Deliberate viewer thread crash.")
+
+    run_in_thread = sys.platform == "linux"
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(run_in_thread=run_in_thread),
+        show_viewer=True,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    crash_plugin = CrashOnDrawPlugin()
+    scene.viewer.add_plugin(crash_plugin)
+    scene.build()
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    # Enable crashing only after init is complete to avoid corrupting the init path
+    crash_plugin.should_crash = True
+
+    if run_in_thread:
+        # Wait until the viewer thread has died, then check the traceback is preserved
+        wait_for_viewer_events(pyrender_viewer, lambda: not pyrender_viewer.is_active)
+        with pytest.raises(gs.GenesisException) as exc_info:
+            scene.step()
+        assert exc_info.type is gs.GenesisException
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert "Deliberate viewer thread crash." in str(exc_info.value.__cause__)
+    else:
+        # Non-threaded: exception propagates directly through scene.step()
+        with pytest.raises(RuntimeError, match="Deliberate viewer thread crash."):
+            scene.step()

@@ -16,354 +16,6 @@ from ..utils import (
 
 
 @pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_reset(show_viewer):
-    BOOL_MASK = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
-
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/plane/plane.urdf",
-            fixed=True,
-        )
-    )
-    scene.add_entity(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0, 0, 0.5),
-        )
-    )
-    scene.build(n_envs=4)
-
-    init_state = scene.get_state()
-    init_rigid_state = next(s for s in init_state.solvers_state if isinstance(s, RigidSolverState))
-    for _ in range(50):
-        scene.step()
-    fallen_state = scene.get_state()
-    fallen_rigid_state = next(s for s in fallen_state.solvers_state if isinstance(s, RigidSolverState))
-
-    for envs_idx in (BOOL_MASK, torch.where(BOOL_MASK)[0]):
-        scene.reset(state=fallen_state)
-        scene.reset(state=init_state, envs_idx=envs_idx)
-        for actual, init_ref, fallen_ref in (
-            (
-                qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True),
-                init_rigid_state.qpos,
-                fallen_rigid_state.qpos,
-            ),
-            (
-                qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True),
-                init_rigid_state.dofs_vel,
-                fallen_rigid_state.dofs_vel,
-            ),
-            (
-                qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True),
-                init_rigid_state.links_pos,
-                fallen_rigid_state.links_pos,
-            ),
-        ):
-            assert_allclose(actual[BOOL_MASK], init_ref[BOOL_MASK], tol=gs.EPS)
-            assert_allclose(actual[~BOOL_MASK], fallen_ref[~BOOL_MASK], tol=gs.EPS)
-
-    # After reset, simulation from init_state should reproduce the original fallen_state trajectory
-    for _ in range(50):
-        scene.step()
-    for actual, fallen_ref in (
-        (qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
-        (qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
-        (qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True), fallen_rigid_state.links_pos),
-    ):
-        assert_allclose(actual[BOOL_MASK], fallen_ref[BOOL_MASK], tol=gs.EPS)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_info_batching(tol):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            batch_dofs_info=True,
-            batch_joints_info=True,
-            batch_links_info=True,
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    scene.build(n_envs=2)
-
-    scene.step()
-    qposs = robot.get_qpos()
-    assert_allclose(qposs[0], qposs[1], tol=tol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("batch_fixed_verts", [False, True])
-@pytest.mark.parametrize("relative", [False, True])
-def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
-    ROBOT_POS_ZERO = (0.0, 0.4, 0.1)
-    ROBOT_EULER_ZERO = (0.0, 0.0, 90.0)
-    CUBE_POS_ZERO = (0.65, 0.0, 0.02)
-    CUBE_EULER_ZERO = (0.0, 90.0, 0.0)
-
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    plane = scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    robot = scene.add_entity(
-        gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
-            offset_pos=ROBOT_POS_ZERO,
-            offset_euler=ROBOT_EULER_ZERO,
-            batch_fixed_verts=batch_fixed_verts,
-        ),
-    )
-    sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.04,
-            batch_fixed_verts=False,
-            fixed=True,
-        ),
-    )
-    cube = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.04, 0.04, 0.04),
-            offset_pos=CUBE_POS_ZERO,
-            offset_euler=CUBE_EULER_ZERO,
-        ),
-    )
-    plain_box = scene.add_entity(
-        gs.morphs.Box(
-            pos=(2.0, 0.0, 0.2),
-            size=(0.04, 0.04, 0.04),
-        ),
-    )
-    POSED_BOX_POS = (2.0, 0.5, 0.3)
-    POSED_BOX_OFFSET_EULER = (0.0, 0.0, 45.0)
-    posed_box = scene.add_entity(
-        gs.morphs.Box(
-            pos=POSED_BOX_POS,
-            size=(0.04, 0.04, 0.04),
-            offset_pos=(0.0, 0.0, 0.5),
-            offset_euler=POSED_BOX_OFFSET_EULER,
-        ),
-    )
-    scene.build(n_envs=2)
-
-    # A no-offset entity reports the same pose in the user and world frames.
-    assert_allclose(plain_box.get_pos(relative=True), plain_box.get_pos(relative=False), tol=tol)
-    assert_allclose(plain_box.get_pos(), (2.0, 0.0, 0.2), tol=tol)
-
-    # With both a morph pose and an offset, the relative getter returns the morph pose while the world getter carries
-    # the offset composed onto it (the offset position adds in z since the user orientation is identity).
-    assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
-    assert_allclose(posed_box.get_quat(relative=True), gu.identity_quat(), tol=tol)
-    assert_allclose(posed_box.get_pos(relative=False), (2.0, 0.5, 0.8), tol=tol)
-    assert_allclose(
-        posed_box.get_quat(relative=False),
-        gu.xyz_to_quat(np.array(POSED_BOX_OFFSET_EULER), rpy=True, degrees=True),
-        tol=tol,
-    )
-
-    # Setting the orientation in the user frame keeps the user-frame position fixed: the offset position rotates with
-    # the orientation, so the world position is rewritten to preserve the reported relative position. Rotating about x
-    # while the offset position is along z makes that offset contribution change, exercising the rewrite.
-    new_quat = gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), rpy=True, degrees=True)
-    posed_box.set_quat(new_quat, relative=True)
-    assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
-    assert_allclose(posed_box.get_quat(relative=True), new_quat, tol=tol)
-
-    robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
-    cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
-
-    # Make sure that it is not possible to end up in an inconsistent state for fixed geometries. These place entities
-    # at absolute world positions, so they bypass the pose offset (relative=False).
-    pos_delta = np.random.rand(2, 3)
-    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
-        robot.set_pos(pos_delta, relative=False)
-        if show_viewer:
-            scene.visualizer.update()
-    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
-        robot.set_pos(pos_delta[[0]], envs_idx=[0], relative=False)
-        if show_viewer:
-            scene.visualizer.update()
-    cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0], relative=False)
-    cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=[1], relative=False)
-    sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0, relative=False)
-    quat_delta = np.random.rand(2, 4)
-    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
-        robot.set_quat(quat_delta, relative=False)
-        if show_viewer:
-            scene.visualizer.update()
-    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
-        robot.set_quat(quat_delta[[0]], envs_idx=[0], relative=False)
-        if show_viewer:
-            scene.visualizer.update()
-    cube.set_quat(quat_delta, relative=False)
-    if show_viewer:
-        scene.visualizer.update()
-
-    sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
-    assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
-    assert_allclose(sphere_aabb, sphere_base_aabb, tol=tol)
-
-    # Simulate for a while to check if the dynamic object is colliding with the static one
-    if batch_fixed_verts:
-        has_collided = torch.tensor([False, False], dtype=torch.bool, device=gs.device)
-        for _ in range(20):
-            scene.step()
-            contacts_state = cube.get_contacts(with_entity=robot, exclude_self_contact=True)
-            has_collided |= contacts_state["valid_mask"].any(dim=-1)
-            if has_collided.all():
-                break
-        else:
-            raise AssertionError("Cube never collided with robot for at least one of the environments.")
-
-    for _ in range(2):
-        scene.reset()
-
-        for entity, pos_zero, euler_zero, entity_aabb_init, base_aabb_init in (
-            (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO, robot_aabb_init, robot_base_aabb_init),
-            (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO, cube_aabb_init, cube_base_aabb_init),
-        ):
-            pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
-            euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
-            quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
-            # The pose lives in the offset, so the world frame (relative=False) carries it; the user frame is identity.
-            assert_allclose(entity.get_pos(relative=False), pos_zero, tol=tol)
-            assert_allclose(entity.get_pos(relative=True), 0.0, tol=tol)
-            # Use quaternion for comparison to avoid gymbal lock issue in euler angles
-            quat = entity.get_quat(relative=False)
-            assert_allclose(quat, quat_zero, tol=tol)
-            base_aabb = entity.geoms[0].get_AABB()
-            assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
-            assert_allclose(base_aabb, base_aabb_init, tol=tol)
-            assert_allclose(entity.get_AABB(), entity_aabb_init, tol=tol)
-
-            pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device).expand((2, 3))
-            entity.set_pos(pos_delta, relative=relative)
-
-            pos_ref = pos_delta + pos_zero if relative else pos_delta
-            # Round-trip in the frame it was set in: the getter must report back exactly what set_pos received.
-            assert_allclose(entity.get_pos(relative=relative), pos_delta, tol=tol)
-            assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init + (pos_ref - pos_zero), tol=tol)
-            assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
-
-            quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
-            quat_delta /= torch.linalg.norm(quat_delta, axis=1, keepdim=True)
-            entity.set_quat(quat_delta, relative=relative)
-            assert_allclose(entity.get_quat(relative=relative), quat_delta, tol=tol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_normalized_quat(show_viewer, tol):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    robot = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/go2/urdf/go2.urdf",
-        ),
-    )
-    scene.build()
-
-    # Make sure that the simulation state is not sensitive to qpos normalization
-    quat = torch.randn((4,), dtype=gs.tc_float, device=gs.device)
-
-    qpos = robot.get_qpos()
-    qpos[3:7] = quat / torch.linalg.norm(quat)
-    robot.set_qpos(qpos)
-    scene.step()
-    qpos_post = robot.get_qpos()
-    assert_allclose(torch.linalg.norm(qpos_post[3:7]), 1.0, tol=tol)
-
-    qpos[3:7] = quat
-    scene.reset()
-    robot.set_qpos(qpos)
-    # assert_allclose(qpos, robot.get_qpos(), tol=tol)  # True, but not specification requirement
-    scene.step()
-    assert_allclose(qpos_post, robot.get_qpos(), tol=tol)
-
-    scene.reset()
-    robot.set_quat(quat)
-    # assert_allclose(quat, qpos[3:7], tol=tol)  # True, but not specification requirement
-    scene.step()
-    assert_allclose(qpos_post, robot.get_qpos(), tol=tol)
-
-    # Make sure that entity, link and geom quaternions are normalized.
-    # "RigidEntity.set_quat" is calling 'kernel_forward_kinematics_links_geoms', which is relying on
-    # 'func_update_cartesian_space' under the hood.
-    # Let's check that everything is properly normalized at this stage already. If so, it means that all quaternions of
-    # interest are guaranteed to be always normalized, since 'func_update_cartesian_space' is called internally during
-    # forward dynamics 'step_1' at the very beginning of 'RigidSolver.step'.
-    scene.reset()
-    robot.set_quat(quat)
-    assert_allclose(torch.linalg.norm(robot.get_quat()), 1.0, tol=tol)
-    for link in robot.links:
-        assert_allclose(torch.linalg.norm(link.get_quat()), 1.0, tol=tol)
-    for geom in robot.geoms:
-        assert_allclose(torch.linalg.norm(geom.get_quat()), 1.0, tol=tol)
-    assert_allclose(torch.linalg.norm(scene.rigid_solver.get_links_quat(), dim=-1), 1.0, tol=tol)
-    assert_allclose(torch.linalg.norm(scene.rigid_solver.get_geoms_quat(), dim=-1), 1.0, tol=tol)
-
-
-@pytest.mark.slow  # ~350s
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_scene_saver_franka(tmp_path, show_viewer, tol):
-    scene1 = gs.Scene(
-        show_viewer=show_viewer,
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
-    )
-    franka1 = scene1.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    scene1.build()
-
-    dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
-
-    franka1.set_dofs_kp(np.full(len(dof_idx), 3000), dof_idx)
-    franka1.set_dofs_kv(np.full(len(dof_idx), 300), dof_idx)
-
-    target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
-    franka1.control_dofs_position(target_pose, dof_idx)
-
-    for _ in range(100):
-        scene1.step()
-
-    pose_ref = franka1.get_dofs_position(dof_idx)
-
-    ckpt_path = tmp_path / "franka_unit.pkl"
-    scene1.save_checkpoint(ckpt_path)
-
-    scene2 = gs.Scene(show_viewer=show_viewer)
-    franka2 = scene2.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-    )
-    scene2.build()
-    scene2.load_checkpoint(ckpt_path)
-
-    pose_loaded = franka2.get_dofs_position(dof_idx)
-
-    # FIXME: It should be possible to achieve better accuracy with 64bits precision
-    assert_allclose(pose_ref, pose_loaded, tol=2e-6)
-
-
-@pytest.mark.slow  # ~200s
 @pytest.mark.parametrize(
     "n_envs, batched, backend",
     [
@@ -703,46 +355,6 @@ def test_data_accessor(n_envs, batched, tol):
 
 
 @pytest.mark.required
-def test_deprecated_properties(caplog):
-    scene = gs.Scene(
-        show_viewer=False,
-        show_FPS=False,
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(1.0, 1.0, 1.0),
-            pos=(0.0, 0.0, 0.0),
-        )
-    )
-    scene.build()
-
-    joint = box.joints[0]
-
-    # Verify introspection doesn't trigger warnings
-    caplog.clear()
-    with caplog.at_level("WARNING"):
-        repr(joint)
-        vars(joint)
-    assert len(caplog.records) == 0
-
-    for name_old, name_new in (
-        ("dof_idx", "dofs_idx"),
-        ("dof_idx_local", "dofs_idx_local"),
-        ("q_idx", "qs_idx"),
-        ("q_idx_local", "qs_idx_local"),
-    ):
-        # Make sure that deprecated properties are hidden
-        assert name_old not in dir(joint)
-
-        # Verify deprecated properties emit warnings but work correctly
-        caplog.clear()
-        with caplog.at_level("WARNING"):
-            deprecated_value = getattr(joint, name_old)
-        assert len(caplog.records) > 0
-        assert_allclose(deprecated_value, getattr(joint, name_new), tol=gs.EPS)
-
-
-@pytest.mark.required
 @pytest.mark.parametrize("enable_mujoco_compatibility", [True, False])
 def test_getter_vs_state_post_step_consistency(enable_mujoco_compatibility):
     DT = 0.01
@@ -808,6 +420,61 @@ def test_extended_broadcasting():
     assert_allclose(entity.get_dofs_velocity(), np.array([(3.0,) * 6, (0.0,) * 6]), tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~250s
+@pytest.mark.required
+@pytest.mark.parametrize("batch_links_info", [False, True])
+@pytest.mark.parametrize("batch_joints_info", [False, True])
+@pytest.mark.parametrize("batch_dofs_info", [False, True])
+def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            batch_links_info=batch_links_info,
+            batch_joints_info=batch_joints_info,
+            batch_dofs_info=batch_dofs_info,
+        ),
+    )
+    terrain = scene.add_entity(gs.morphs.Terrain())
+    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build(n_envs=2)
+
+    links_info = terrain.solver.data_manager.links_info
+    entity_idx = links_info.entity_idx.to_numpy()
+    assert entity_idx.shape == (12, 2) if batch_links_info else (12,)
+
+    joints_info = terrain.solver.data_manager.joints_info
+    pos = joints_info.pos.to_numpy()
+    assert pos.shape == (10, 2, 3) if batch_joints_info else (10, 3)
+
+    dofs_info = terrain.solver.data_manager.dofs_info
+    act_gain = dofs_info.act_gain.to_numpy()
+    assert act_gain.shape == (9, 2) if batch_dofs_info else (9,)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_info_batching(tol):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            batch_dofs_info=True,
+            batch_joints_info=True,
+            batch_links_info=True,
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=2)
+
+    scene.step()
+    qposs = robot.get_qpos()
+    assert_allclose(qposs[0], qposs[1], tol=tol)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_geom_pos_quat(n_envs, show_viewer):
@@ -840,6 +507,267 @@ def test_geom_pos_quat(n_envs, show_viewer):
             assert vgeom_quat.shape == (*batch_shape, 4)
             assert_allclose(geom_pos, vgeom_pos, atol=gs.EPS)
             assert_allclose(geom_quat, vgeom_quat, atol=gs.EPS)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("batch_fixed_verts", [False, True])
+@pytest.mark.parametrize("relative", [False, True])
+def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
+    ROBOT_POS_ZERO = (0.0, 0.4, 0.1)
+    ROBOT_EULER_ZERO = (0.0, 0.0, 90.0)
+    CUBE_POS_ZERO = (0.65, 0.0, 0.02)
+    CUBE_EULER_ZERO = (0.0, 90.0, 0.0)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            offset_pos=ROBOT_POS_ZERO,
+            offset_euler=ROBOT_EULER_ZERO,
+            batch_fixed_verts=batch_fixed_verts,
+        ),
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.04,
+            batch_fixed_verts=False,
+            fixed=True,
+        ),
+    )
+    cube = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            offset_pos=CUBE_POS_ZERO,
+            offset_euler=CUBE_EULER_ZERO,
+        ),
+    )
+    plain_box = scene.add_entity(
+        gs.morphs.Box(
+            pos=(2.0, 0.0, 0.2),
+            size=(0.04, 0.04, 0.04),
+        ),
+    )
+    POSED_BOX_POS = (2.0, 0.5, 0.3)
+    POSED_BOX_OFFSET_EULER = (0.0, 0.0, 45.0)
+    posed_box = scene.add_entity(
+        gs.morphs.Box(
+            pos=POSED_BOX_POS,
+            size=(0.04, 0.04, 0.04),
+            offset_pos=(0.0, 0.0, 0.5),
+            offset_euler=POSED_BOX_OFFSET_EULER,
+        ),
+    )
+    scene.build(n_envs=2)
+
+    # A no-offset entity reports the same pose in the user and world frames.
+    assert_allclose(plain_box.get_pos(relative=True), plain_box.get_pos(relative=False), tol=tol)
+    assert_allclose(plain_box.get_pos(), (2.0, 0.0, 0.2), tol=tol)
+
+    # With both a morph pose and an offset, the relative getter returns the morph pose while the world getter carries
+    # the offset composed onto it (the offset position adds in z since the user orientation is identity).
+    assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
+    assert_allclose(posed_box.get_quat(relative=True), gu.identity_quat(), tol=tol)
+    assert_allclose(posed_box.get_pos(relative=False), (2.0, 0.5, 0.8), tol=tol)
+    assert_allclose(
+        posed_box.get_quat(relative=False),
+        gu.xyz_to_quat(np.array(POSED_BOX_OFFSET_EULER), rpy=True, degrees=True),
+        tol=tol,
+    )
+
+    # Setting the orientation in the user frame keeps the user-frame position fixed: the offset position rotates with
+    # the orientation, so the world position is rewritten to preserve the reported relative position. Rotating about x
+    # while the offset position is along z makes that offset contribution change, exercising the rewrite.
+    new_quat = gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), rpy=True, degrees=True)
+    posed_box.set_quat(new_quat, relative=True)
+    assert_allclose(posed_box.get_pos(relative=True), POSED_BOX_POS, tol=tol)
+    assert_allclose(posed_box.get_quat(relative=True), new_quat, tol=tol)
+
+    robot_aabb_init, robot_base_aabb_init = robot.get_AABB(), robot.geoms[0].get_AABB()
+    cube_aabb_init, cube_base_aabb_init = cube.get_AABB(), cube.geoms[0].get_AABB()
+
+    # Make sure that it is not possible to end up in an inconsistent state for fixed geometries. These place entities
+    # at absolute world positions, so they bypass the pose offset (relative=False).
+    pos_delta = np.random.rand(2, 3)
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_pos(pos_delta, relative=False)
+        if show_viewer:
+            scene.visualizer.update()
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_pos(pos_delta[[0]], envs_idx=[0], relative=False)
+        if show_viewer:
+            scene.visualizer.update()
+    cube.set_pos(pos_delta[[0]] + (0.0, 0.0, 0.16), envs_idx=[0], relative=False)
+    cube.set_pos(pos_delta[[1]] + (0.0, 0.0, 0.11), envs_idx=[1], relative=False)
+    sphere.set_pos(np.tile(pos_delta[[0]], (2, 1)) + 1.0, relative=False)
+    quat_delta = np.random.rand(2, 4)
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_quat(quat_delta, relative=False)
+        if show_viewer:
+            scene.visualizer.update()
+    with nullcontext() if batch_fixed_verts else pytest.raises(gs.GenesisException):
+        robot.set_quat(quat_delta[[0]], envs_idx=[0], relative=False)
+        if show_viewer:
+            scene.visualizer.update()
+    cube.set_quat(quat_delta, relative=False)
+    if show_viewer:
+        scene.visualizer.update()
+
+    sphere_aabb, sphere_base_aabb = sphere.get_AABB(), sphere.geoms[0].get_AABB()
+    assert_allclose(sphere_aabb.mean(dim=-2), pos_delta[0] + 1.0, tol=tol)
+    assert_allclose(sphere_aabb, sphere_base_aabb, tol=tol)
+
+    # Simulate for a while to check if the dynamic object is colliding with the static one
+    if batch_fixed_verts:
+        has_collided = torch.tensor([False, False], dtype=torch.bool, device=gs.device)
+        for _ in range(20):
+            scene.step()
+            contacts_state = cube.get_contacts(with_entity=robot, exclude_self_contact=True)
+            has_collided |= contacts_state["valid_mask"].any(dim=-1)
+            if has_collided.all():
+                break
+        else:
+            raise AssertionError("Cube never collided with robot for at least one of the environments.")
+
+    for _ in range(2):
+        scene.reset()
+
+        for entity, pos_zero, euler_zero, entity_aabb_init, base_aabb_init in (
+            (robot, ROBOT_POS_ZERO, ROBOT_EULER_ZERO, robot_aabb_init, robot_base_aabb_init),
+            (cube, CUBE_POS_ZERO, CUBE_EULER_ZERO, cube_aabb_init, cube_base_aabb_init),
+        ):
+            pos_zero = torch.tensor(pos_zero, device=gs.device, dtype=gs.tc_float)
+            euler_zero = torch.deg2rad(torch.tensor(euler_zero, dtype=gs.tc_float))
+            quat_zero = gu.xyz_to_quat(euler_zero, rpy=True)
+            # The pose lives in the offset, so the world frame (relative=False) carries it; the user frame is identity.
+            assert_allclose(entity.get_pos(relative=False), pos_zero, tol=tol)
+            assert_allclose(entity.get_pos(relative=True), 0.0, tol=tol)
+            # Use quaternion for comparison to avoid gymbal lock issue in euler angles
+            quat = entity.get_quat(relative=False)
+            assert_allclose(quat, quat_zero, tol=tol)
+            base_aabb = entity.geoms[0].get_AABB()
+            assert base_aabb.shape == ((2, 2, 3) if not entity.geoms[0].is_fixed or batch_fixed_verts else (2, 3))
+            assert_allclose(base_aabb, base_aabb_init, tol=tol)
+            assert_allclose(entity.get_AABB(), entity_aabb_init, tol=tol)
+
+            pos_delta = torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device).expand((2, 3))
+            entity.set_pos(pos_delta, relative=relative)
+
+            pos_ref = pos_delta + pos_zero if relative else pos_delta
+            # Round-trip in the frame it was set in: the getter must report back exactly what set_pos received.
+            assert_allclose(entity.get_pos(relative=relative), pos_delta, tol=tol)
+            assert_allclose(entity.geoms[0].get_AABB(), base_aabb_init + (pos_ref - pos_zero), tol=tol)
+            assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
+
+            quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
+            quat_delta /= torch.linalg.norm(quat_delta, axis=1, keepdim=True)
+            entity.set_quat(quat_delta, relative=relative)
+            assert_allclose(entity.get_quat(relative=relative), quat_delta, tol=tol)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_normalized_quat(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+        ),
+    )
+    scene.build()
+
+    # Make sure that the simulation state is not sensitive to qpos normalization
+    quat = torch.randn((4,), dtype=gs.tc_float, device=gs.device)
+
+    qpos = robot.get_qpos()
+    qpos[3:7] = quat / torch.linalg.norm(quat)
+    robot.set_qpos(qpos)
+    scene.step()
+    qpos_post = robot.get_qpos()
+    assert_allclose(torch.linalg.norm(qpos_post[3:7]), 1.0, tol=tol)
+
+    qpos[3:7] = quat
+    scene.reset()
+    robot.set_qpos(qpos)
+    # assert_allclose(qpos, robot.get_qpos(), tol=tol)  # True, but not specification requirement
+    scene.step()
+    assert_allclose(qpos_post, robot.get_qpos(), tol=tol)
+
+    scene.reset()
+    robot.set_quat(quat)
+    # assert_allclose(quat, qpos[3:7], tol=tol)  # True, but not specification requirement
+    scene.step()
+    assert_allclose(qpos_post, robot.get_qpos(), tol=tol)
+
+    # Make sure that entity, link and geom quaternions are normalized.
+    # "RigidEntity.set_quat" is calling 'kernel_forward_kinematics_links_geoms', which is relying on
+    # 'func_update_cartesian_space' under the hood.
+    # Let's check that everything is properly normalized at this stage already. If so, it means that all quaternions of
+    # interest are guaranteed to be always normalized, since 'func_update_cartesian_space' is called internally during
+    # forward dynamics 'step_1' at the very beginning of 'RigidSolver.step'.
+    scene.reset()
+    robot.set_quat(quat)
+    assert_allclose(torch.linalg.norm(robot.get_quat()), 1.0, tol=tol)
+    for link in robot.links:
+        assert_allclose(torch.linalg.norm(link.get_quat()), 1.0, tol=tol)
+    for geom in robot.geoms:
+        assert_allclose(torch.linalg.norm(geom.get_quat()), 1.0, tol=tol)
+    assert_allclose(torch.linalg.norm(scene.rigid_solver.get_links_quat(), dim=-1), 1.0, tol=tol)
+    assert_allclose(torch.linalg.norm(scene.rigid_solver.get_geoms_quat(), dim=-1), 1.0, tol=tol)
+
+
+@pytest.mark.required
+def test_mass_setters(tol):
+    # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
+    # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.Box(size=(0.01, 0.01, 0.01)),
+            gs.morphs.Box(size=(0.02, 0.02, 0.02)),
+            gs.morphs.Sphere(radius=0.01),
+            gs.morphs.Sphere(radius=0.02),
+        ],
+    )
+    scene.build(n_envs=4)
+    link = next(link for link in het_obj.links if not link.is_fixed)
+    with pytest.raises(gs.GenesisException):
+        link.set_mass((1.0, 2.0))
+    het_obj.set_mass(1.0)
+    assert_allclose(het_obj.get_mass(), 1.0, tol=tol)
+    target_mass = (0.2, 0.4, 0.6, 0.8)
+    link.set_mass(target_mass)
+    assert_allclose(link.get_mass(), target_mass, tol=tol)
+
+    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
+    scene = gs.Scene(
+        show_viewer=False,
+        rigid_options=gs.options.RigidOptions(
+            batch_links_info=False,
+        ),
+    )
+    obj = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        )
+    )
+    scene.build(n_envs=4)
+    link = next(link for link in obj.links if not link.is_fixed)
+    link.set_mass(2.0)
+    assert_allclose(link.get_mass(), 2.0, tol=tol)
+    with pytest.raises(gs.GenesisException):
+        link.set_mass((1.0, 2.0, 3.0, 4.0))
 
 
 @pytest.mark.slow  # ~250s
@@ -929,76 +857,148 @@ def test_axis_aligned_bounding_boxes(n_envs):
     assert_allclose(robot_vaabb, robot_aabb, atol=1e-3)
 
 
-@pytest.mark.slow  # ~250s
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
-@pytest.mark.parametrize("batch_links_info", [False, True])
-@pytest.mark.parametrize("batch_joints_info", [False, True])
-@pytest.mark.parametrize("batch_dofs_info", [False, True])
-def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
+def test_reset(show_viewer):
+    BOOL_MASK = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
+
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            batch_links_info=batch_links_info,
-            batch_joints_info=batch_joints_info,
-            batch_dofs_info=batch_dofs_info,
-        ),
+        show_viewer=show_viewer,
     )
-    terrain = scene.add_entity(gs.morphs.Terrain())
-    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
-    scene.build(n_envs=2)
-
-    links_info = terrain.solver.data_manager.links_info
-    entity_idx = links_info.entity_idx.to_numpy()
-    assert entity_idx.shape == (12, 2) if batch_links_info else (12,)
-
-    joints_info = terrain.solver.data_manager.joints_info
-    pos = joints_info.pos.to_numpy()
-    assert pos.shape == (10, 2, 3) if batch_joints_info else (10, 3)
-
-    dofs_info = terrain.solver.data_manager.dofs_info
-    act_gain = dofs_info.act_gain.to_numpy()
-    assert act_gain.shape == (9, 2) if batch_dofs_info else (9,)
-
-
-@pytest.mark.required
-def test_mass_setters(tol):
-    # Batched links info (default): entity- and link-level set_mass apply, link masses may differ per env, and a
-    # wrong-length array is rejected. The heterogeneous entity gives each env a distinct starting mass.
-    scene = gs.Scene(
-        show_viewer=False,
+    scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+            fixed=True,
+        )
     )
-    het_obj = scene.add_entity(
-        morph=[
-            gs.morphs.Box(size=(0.01, 0.01, 0.01)),
-            gs.morphs.Box(size=(0.02, 0.02, 0.02)),
-            gs.morphs.Sphere(radius=0.01),
-            gs.morphs.Sphere(radius=0.02),
-        ],
-    )
-    scene.build(n_envs=4)
-    link = next(link for link in het_obj.links if not link.is_fixed)
-    with pytest.raises(gs.GenesisException):
-        link.set_mass((1.0, 2.0))
-    het_obj.set_mass(1.0)
-    assert_allclose(het_obj.get_mass(), 1.0, tol=tol)
-    target_mass = (0.2, 0.4, 0.6, 0.8)
-    link.set_mass(target_mass)
-    assert_allclose(link.get_mass(), target_mass, tol=tol)
-
-    # Non-batched links info: link mass is shared across envs, so a scalar applies uniformly and a per-env array raises.
-    scene = gs.Scene(
-        show_viewer=False,
-        rigid_options=gs.options.RigidOptions(
-            batch_links_info=False,
-        ),
-    )
-    obj = scene.add_entity(
-        morph=gs.morphs.Box(
+    scene.add_entity(
+        gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
         )
     )
     scene.build(n_envs=4)
-    link = next(link for link in obj.links if not link.is_fixed)
-    link.set_mass(2.0)
-    assert_allclose(link.get_mass(), 2.0, tol=tol)
-    with pytest.raises(gs.GenesisException):
-        link.set_mass((1.0, 2.0, 3.0, 4.0))
+
+    init_state = scene.get_state()
+    init_rigid_state = next(s for s in init_state.solvers_state if isinstance(s, RigidSolverState))
+    for _ in range(50):
+        scene.step()
+    fallen_state = scene.get_state()
+    fallen_rigid_state = next(s for s in fallen_state.solvers_state if isinstance(s, RigidSolverState))
+
+    for envs_idx in (BOOL_MASK, torch.where(BOOL_MASK)[0]):
+        scene.reset(state=fallen_state)
+        scene.reset(state=init_state, envs_idx=envs_idx)
+        for actual, init_ref, fallen_ref in (
+            (
+                qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True),
+                init_rigid_state.qpos,
+                fallen_rigid_state.qpos,
+            ),
+            (
+                qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True),
+                init_rigid_state.dofs_vel,
+                fallen_rigid_state.dofs_vel,
+            ),
+            (
+                qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True),
+                init_rigid_state.links_pos,
+                fallen_rigid_state.links_pos,
+            ),
+        ):
+            assert_allclose(actual[BOOL_MASK], init_ref[BOOL_MASK], tol=gs.EPS)
+            assert_allclose(actual[~BOOL_MASK], fallen_ref[~BOOL_MASK], tol=gs.EPS)
+
+    # After reset, simulation from init_state should reproduce the original fallen_state trajectory
+    for _ in range(50):
+        scene.step()
+    for actual, fallen_ref in (
+        (qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
+        (qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
+        (qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True), fallen_rigid_state.links_pos),
+    ):
+        assert_allclose(actual[BOOL_MASK], fallen_ref[BOOL_MASK], tol=gs.EPS)
+
+
+@pytest.mark.slow  # ~350s
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_scene_saver_franka(tmp_path, show_viewer, tol):
+    scene1 = gs.Scene(
+        show_viewer=show_viewer,
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+    )
+    franka1 = scene1.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene1.build()
+
+    dof_idx = [j.dofs_idx_local[0] for j in franka1.joints]
+
+    franka1.set_dofs_kp(np.full(len(dof_idx), 3000), dof_idx)
+    franka1.set_dofs_kv(np.full(len(dof_idx), 300), dof_idx)
+
+    target_pose = np.array([0.3, -0.8, 0.4, -1.6, 0.5, 1.0, -0.6, 0.03, 0.03], dtype=float)
+    franka1.control_dofs_position(target_pose, dof_idx)
+
+    for _ in range(100):
+        scene1.step()
+
+    pose_ref = franka1.get_dofs_position(dof_idx)
+
+    ckpt_path = tmp_path / "franka_unit.pkl"
+    scene1.save_checkpoint(ckpt_path)
+
+    scene2 = gs.Scene(show_viewer=show_viewer)
+    franka2 = scene2.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene2.build()
+    scene2.load_checkpoint(ckpt_path)
+
+    pose_loaded = franka2.get_dofs_position(dof_idx)
+
+    # FIXME: It should be possible to achieve better accuracy with 64bits precision
+    assert_allclose(pose_ref, pose_loaded, tol=2e-6)
+
+
+@pytest.mark.required
+def test_deprecated_properties(caplog):
+    scene = gs.Scene(
+        show_viewer=False,
+        show_FPS=False,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 0.0),
+        )
+    )
+    scene.build()
+
+    joint = box.joints[0]
+
+    # Verify introspection doesn't trigger warnings
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        repr(joint)
+        vars(joint)
+    assert len(caplog.records) == 0
+
+    for name_old, name_new in (
+        ("dof_idx", "dofs_idx"),
+        ("dof_idx_local", "dofs_idx_local"),
+        ("q_idx", "qs_idx"),
+        ("q_idx_local", "qs_idx_local"),
+    ):
+        # Make sure that deprecated properties are hidden
+        assert name_old not in dir(joint)
+
+        # Verify deprecated properties emit warnings but work correctly
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            deprecated_value = getattr(joint, name_old)
+        assert len(caplog.records) > 0
+        assert_allclose(deprecated_value, getattr(joint, name_new), tol=gs.EPS)

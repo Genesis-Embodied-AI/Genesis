@@ -46,101 +46,6 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
         assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
 
 
-@pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml", "urdf/go2/urdf/go2.urdf"])
-def test_robot_scale_and_dofs_armature(xml_path, tol):
-    ROBOT_SCALES = (1.0, 0.2, 5.0)
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0, 0, -10.0),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=False,
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-    for i, scale in enumerate(ROBOT_SCALES):
-        morph_kwargs = dict(file=xml_path, scale=scale)
-        if xml_path.endswith(".xml"):
-            morph = gs.morphs.MJCF(**morph_kwargs)
-        else:
-            morph = gs.morphs.URDF(**morph_kwargs)
-        scene.add_entity(morph)
-    scene.build()
-
-    # Disable armature because it messes up with the mass matrix.
-    # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
-    attr_orig = {}
-    for scale, robot in zip(ROBOT_SCALES, scene.entities):
-        links_invweight = robot.get_links_invweight()
-        dofs_invweight = robot.get_dofs_invweight()
-        robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-        assert torch.all(robot.get_dofs_invweight() < 1.0)
-        with pytest.raises(AssertionError):
-            assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=tol)
-        with pytest.raises(AssertionError):
-            assert_allclose(robot.get_links_invweight(), links_invweight, tol=tol)
-        robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-        links_invweight = robot.get_links_invweight()
-        dofs_invweight = robot.get_dofs_invweight()
-        qpos = np.random.rand(robot.n_dofs)
-        robot.set_dofs_position(qpos)
-        robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-        assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=gs.EPS)
-        assert_allclose(robot.get_links_invweight(), links_invweight, tol=gs.EPS)
-        scene.reset()
-        assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=gs.EPS)
-        assert_allclose(robot.get_links_invweight(), links_invweight, tol=gs.EPS)
-
-        mass = robot.get_mass() / scale**3
-        attr_orig.setdefault("mass", mass)
-        assert_allclose(mass, attr_orig["mass"], tol=tol)
-
-        inertia = np.stack([link.inertial_i for link in robot.links], axis=0) / scale**5
-        attr_orig.setdefault("inertia", inertia)
-        assert_allclose(inertia, attr_orig["inertia"], tol=tol)
-
-        joint_pos = np.stack([joint.pos for joint in robot.joints], axis=0) / scale
-        attr_orig.setdefault("joint_pos", joint_pos)
-        assert_allclose(joint_pos, attr_orig["joint_pos"], tol=tol)
-
-        links_pos = robot.get_links_pos() / scale
-        attr_orig.setdefault("links_pos", links_pos)
-        assert_allclose(links_pos, attr_orig["links_pos"], tol=tol)
-
-        # Check that links and dofs invweight are approximately valid.
-        # Note that assessing whether the value is truly correct would be quite tricky.
-        # FIXME: The tolerance must be very high when using 32bits precision. This means that our computation of the
-        # inverse mass matrix has poor numerical robustness due to ill conditioning of the mass matrix. This is
-        # concerning as it would impact the numerical stability of constraint solving, and by extension of the entire
-        # rigid body dynamics.
-        tol_ = tol if gs.backend == gs.cpu else 2e-3
-        attr_orig.setdefault("links_invweight", links_invweight)
-        attr_orig.setdefault("dofs_invweight", dofs_invweight)
-        if scale > 1.0:
-            scale_ratio_min, scale_ratio_max = scale**3, scale**5
-        else:
-            scale_ratio_min, scale_ratio_max = scale**5, scale**3
-        assert torch.all(scale_ratio_min * links_invweight - tol_ < attr_orig["links_invweight"])
-        assert torch.all(attr_orig["links_invweight"] < scale_ratio_max * links_invweight + tol_)
-        dofs_invweight = robot.get_dofs_invweight()
-        assert torch.all(scale_ratio_min * dofs_invweight - tol_ < attr_orig["dofs_invweight"])
-        assert torch.all(attr_orig["dofs_invweight"] < scale_ratio_max * dofs_invweight + tol_)
-
-    # Make sure that we are scaling bounds properly for linear joints
-    # TODO: None of the robots being tested for now have linear joints...
-    # TODO: Scaling of bounds depending on the type of joint should be explicitly checked.
-    for robot in scene.entities:
-        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
-        robot.set_dofs_position(dofs_lower_bound)
-    scene.step()
-    qf_passive = scene.rigid_solver.dofs_state.qf_passive.to_numpy()
-    assert_allclose(qf_passive, 0.0, tol=tol)
-
-
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
 def test_mjcf_parsing_with_include():
@@ -452,6 +357,103 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("model_name", ["pendulum_with_joint_dynamics"])
+@pytest.mark.parametrize("joint_damping, joint_friction", [(1.0, 2.0)])
+def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
+    scene = gs.Scene()
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=xml_path,
+            pos=(0, 0, 0.8),
+            convexify=True,
+        ),
+    )
+    assert_allclose(robot.joints[0].dofs_damping, 0.0, tol=gs.EPS)
+    assert_allclose(robot.joints[1].dofs_damping, joint_damping, tol=gs.EPS)
+    assert_allclose(robot.joints[0].dofs_frictionloss, 0.0, tol=gs.EPS)
+    assert_allclose(robot.joints[1].dofs_frictionloss, joint_friction, tol=gs.EPS)
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["freeflyer_mjcf", "freeflyer_urdf"])
+def test_default_armature_freeflyer(xml_path):
+    DEFAULT_ARMATURE = 1000.0
+
+    if xml_path.endswith(".urdf"):
+        morph = gs.morphs.URDF(
+            file=xml_path,
+            default_armature=DEFAULT_ARMATURE,
+        )
+    else:
+        morph = gs.morphs.MJCF(
+            file=xml_path,
+            default_armature=DEFAULT_ARMATURE,
+        )
+
+    scene = gs.Scene()
+    robot = scene.add_entity(morph)
+    scene.build()
+
+    armature = robot.get_dofs_armature()
+    assert_allclose(armature[:6], 0.0, tol=gs.EPS)
+    assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
+    if xml_path.endswith(".mjcf"):
+        assert abs(armature[7]) > gs.EPS and abs(armature[7] - DEFAULT_ARMATURE) > gs.EPS
+
+
+@pytest.mark.slow  # ~200s
+@pytest.mark.required
+def test_xacro_loading(xacro_robot, show_viewer, tol):
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    # Load with default args (mass=1.0, length=0.4)
+    morph = gs.morphs.URDF(
+        file=xacro_robot,
+        fixed=True,
+        merge_fixed_links=False,
+    )
+
+    # After xacro processing, morph.file is a urdfpy.URDF with absolute mesh paths
+    assert isinstance(morph.file, urdfpy.URDF)
+    for link in morph.file.links:
+        for geom_prop in (*link.collisions, *link.visuals):
+            if isinstance(geom_prop.geometry.geometry, urdfpy.Mesh):
+                assert os.path.isabs(geom_prop.geometry.geometry.filename)
+
+    entity = scene.add_entity(morph)
+
+    # Load again with overridden mass via xacro_args
+    heavy = scene.add_entity(
+        gs.morphs.URDF(
+            file=xacro_robot,
+            fixed=True,
+            merge_fixed_links=False,
+            xacro_args={"link_mass": "5.0"},
+        ),
+    )
+    scene.build()
+
+    # Entity name from <robot name="xacro_chain">
+    assert entity.name.startswith("xacro_chain_")
+
+    # Three links (base_link + child_link + mesh_link), one revolute DOF
+    assert entity.n_links == 3
+    assert [l.name for l in entity.links] == ["base_link", "child_link", "mesh_link"]
+    assert entity.n_dofs == 1
+    assert entity.links[1].joints[0].type == gs.JOINT_TYPE.REVOLUTE
+
+    # Geom types: cylinder on first two links, mesh on third
+    assert entity.links[0].geoms[0].type == gs.GEOM_TYPE.CYLINDER
+    assert entity.links[1].geoms[0].type == gs.GEOM_TYPE.CYLINDER
+    assert entity.links[2].geoms[0].type == gs.GEOM_TYPE.MESH
+
+    # Mass check: 3 links at 1.0 each (default) vs 5.0 each (overridden)
+    assert_allclose(entity.get_mass(), 3.0, tol=tol)
+    assert_allclose(heavy.get_mass(), 15.0, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
 def test_color_overwrite(overwrite, show_viewer):
@@ -560,49 +562,98 @@ def test_color_overwrite(overwrite, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("model_name", ["pendulum_with_joint_dynamics"])
-@pytest.mark.parametrize("joint_damping, joint_friction", [(1.0, 2.0)])
-def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
-    scene = gs.Scene()
-    robot = scene.add_entity(
-        gs.morphs.URDF(
-            file=xml_path,
-            pos=(0, 0, 0.8),
-            convexify=True,
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml", "urdf/go2/urdf/go2.urdf"])
+def test_robot_scale_and_dofs_armature(xml_path, tol):
+    ROBOT_SCALES = (1.0, 0.2, 5.0)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0, 0, -10.0),
         ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=False,
+        show_FPS=False,
     )
-    assert_allclose(robot.joints[0].dofs_damping, 0.0, tol=gs.EPS)
-    assert_allclose(robot.joints[1].dofs_damping, joint_damping, tol=gs.EPS)
-    assert_allclose(robot.joints[0].dofs_frictionloss, 0.0, tol=gs.EPS)
-    assert_allclose(robot.joints[1].dofs_frictionloss, joint_friction, tol=gs.EPS)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-@pytest.mark.parametrize("model_name", ["freeflyer_mjcf", "freeflyer_urdf"])
-def test_default_armature_freeflyer(xml_path):
-    DEFAULT_ARMATURE = 1000.0
-
-    if xml_path.endswith(".urdf"):
-        morph = gs.morphs.URDF(
-            file=xml_path,
-            default_armature=DEFAULT_ARMATURE,
-        )
-    else:
-        morph = gs.morphs.MJCF(
-            file=xml_path,
-            default_armature=DEFAULT_ARMATURE,
-        )
-
-    scene = gs.Scene()
-    robot = scene.add_entity(morph)
+    for i, scale in enumerate(ROBOT_SCALES):
+        morph_kwargs = dict(file=xml_path, scale=scale)
+        if xml_path.endswith(".xml"):
+            morph = gs.morphs.MJCF(**morph_kwargs)
+        else:
+            morph = gs.morphs.URDF(**morph_kwargs)
+        scene.add_entity(morph)
     scene.build()
 
-    armature = robot.get_dofs_armature()
-    assert_allclose(armature[:6], 0.0, tol=gs.EPS)
-    assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
-    if xml_path.endswith(".mjcf"):
-        assert abs(armature[7]) > gs.EPS and abs(armature[7] - DEFAULT_ARMATURE) > gs.EPS
+    # Disable armature because it messes up with the mass matrix.
+    # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
+    attr_orig = {}
+    for scale, robot in zip(ROBOT_SCALES, scene.entities):
+        links_invweight = robot.get_links_invweight()
+        dofs_invweight = robot.get_dofs_invweight()
+        robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+        assert torch.all(robot.get_dofs_invweight() < 1.0)
+        with pytest.raises(AssertionError):
+            assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=tol)
+        with pytest.raises(AssertionError):
+            assert_allclose(robot.get_links_invweight(), links_invweight, tol=tol)
+        robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+        links_invweight = robot.get_links_invweight()
+        dofs_invweight = robot.get_dofs_invweight()
+        qpos = np.random.rand(robot.n_dofs)
+        robot.set_dofs_position(qpos)
+        robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
+        assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=gs.EPS)
+        assert_allclose(robot.get_links_invweight(), links_invweight, tol=gs.EPS)
+        scene.reset()
+        assert_allclose(robot.get_dofs_invweight(), dofs_invweight, tol=gs.EPS)
+        assert_allclose(robot.get_links_invweight(), links_invweight, tol=gs.EPS)
+
+        mass = robot.get_mass() / scale**3
+        attr_orig.setdefault("mass", mass)
+        assert_allclose(mass, attr_orig["mass"], tol=tol)
+
+        inertia = np.stack([link.inertial_i for link in robot.links], axis=0) / scale**5
+        attr_orig.setdefault("inertia", inertia)
+        assert_allclose(inertia, attr_orig["inertia"], tol=tol)
+
+        joint_pos = np.stack([joint.pos for joint in robot.joints], axis=0) / scale
+        attr_orig.setdefault("joint_pos", joint_pos)
+        assert_allclose(joint_pos, attr_orig["joint_pos"], tol=tol)
+
+        links_pos = robot.get_links_pos() / scale
+        attr_orig.setdefault("links_pos", links_pos)
+        assert_allclose(links_pos, attr_orig["links_pos"], tol=tol)
+
+        # Check that links and dofs invweight are approximately valid.
+        # Note that assessing whether the value is truly correct would be quite tricky.
+        # FIXME: The tolerance must be very high when using 32bits precision. This means that our computation of the
+        # inverse mass matrix has poor numerical robustness due to ill conditioning of the mass matrix. This is
+        # concerning as it would impact the numerical stability of constraint solving, and by extension of the entire
+        # rigid body dynamics.
+        tol_ = tol if gs.backend == gs.cpu else 2e-3
+        attr_orig.setdefault("links_invweight", links_invweight)
+        attr_orig.setdefault("dofs_invweight", dofs_invweight)
+        if scale > 1.0:
+            scale_ratio_min, scale_ratio_max = scale**3, scale**5
+        else:
+            scale_ratio_min, scale_ratio_max = scale**5, scale**3
+        assert torch.all(scale_ratio_min * links_invweight - tol_ < attr_orig["links_invweight"])
+        assert torch.all(attr_orig["links_invweight"] < scale_ratio_max * links_invweight + tol_)
+        dofs_invweight = robot.get_dofs_invweight()
+        assert torch.all(scale_ratio_min * dofs_invweight - tol_ < attr_orig["dofs_invweight"])
+        assert torch.all(attr_orig["dofs_invweight"] < scale_ratio_max * dofs_invweight + tol_)
+
+    # Make sure that we are scaling bounds properly for linear joints
+    # TODO: None of the robots being tested for now have linear joints...
+    # TODO: Scaling of bounds depending on the type of joint should be explicitly checked.
+    for robot in scene.entities:
+        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+        robot.set_dofs_position(dofs_lower_bound)
+    scene.step()
+    qf_passive = scene.rigid_solver.dofs_state.qf_passive.to_numpy()
+    assert_allclose(qf_passive, 0.0, tol=tol)
 
 
 @pytest.mark.slow  # ~200s
@@ -915,219 +966,6 @@ def test_align_relative_offset_on_link_relative_geoms(show_viewer, tol):
         expected_world_quat = gu.transform_quat_by_quat(geom_user_quat, offset_quat)
         assert_allclose(geom.get_pos(relative=False), expected_world_pos, tol=tol)
         assert_allclose(geom.get_quat(relative=False), expected_world_quat, tol=tol)
-
-
-def create_two_free_bodies_mjcf(name, pos_a, geom_a, pos_b, geom_b):
-    """Helper to create an MJCF with two free root bodies, each a single box geom offset from its body origin."""
-    mjcf = ET.Element("mujoco", model=name)
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    body_a = ET.SubElement(worldbody, "body", name="a", pos=f"{pos_a[0]} {pos_a[1]} {pos_a[2]}")
-    ET.SubElement(body_a, "joint", name="a_free", type="free")
-    ET.SubElement(
-        body_a, "geom", type="box", size="0.05 0.05 0.05", pos=f"{geom_a[0]} {geom_a[1]} {geom_a[2]}", density="1000"
-    )
-    body_b = ET.SubElement(worldbody, "body", name="b", pos=f"{pos_b[0]} {pos_b[1]} {pos_b[2]}")
-    ET.SubElement(body_b, "joint", name="b_free", type="free")
-    ET.SubElement(
-        body_b, "geom", type="box", size="0.05 0.08 0.03", pos=f"{geom_b[0]} {geom_b[1]} {geom_b[2]}", density="1000"
-    )
-    return mjcf
-
-
-@pytest.mark.required
-def test_multi_root_offset(show_viewer, tol):
-    # To exercise per-root offset tracking the entity MUST hold more than one free root (one MJCF, several free
-    # bodies) with DISTINCT per-root geometry, so each root gets its own alignment offset; a single root - or
-    # identical roots - would not surface the cross-contamination bug (one root's offset leaking into another).
-    BODY_A_POS = (1.0, 0.0, 0.5)
-    BODY_B_POS = (-1.0, 0.0, 0.5)
-    GEOM_A_POS = (0.02, 0.01, 0.0)
-    GEOM_B_POS = (0.0, 0.03, 0.02)
-
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    entity = scene.add_entity(
-        gs.morphs.MJCF(
-            file=ET.tostring(
-                create_two_free_bodies_mjcf("two_bodies", BODY_A_POS, GEOM_A_POS, BODY_B_POS, GEOM_B_POS),
-                encoding="unicode",
-            ),
-            align=True,
-        ),
-    )
-    scene.build()
-
-    link_a, link_b = entity.links
-    # Each root reports its own user-specified pose in the relative frame, independent of the other root.
-    assert_allclose(link_a.get_pos(), BODY_A_POS, tol=tol)
-    assert_allclose(link_b.get_pos(), BODY_B_POS, tol=tol)
-    assert_allclose(link_a.get_quat(), gu.identity_quat(), tol=tol)
-    assert_allclose(link_b.get_quat(), gu.identity_quat(), tol=tol)
-
-    # The world frame carries each root's own COM shift (the box center), confirming the offsets are not shared.
-    assert_allclose(link_a.get_pos(relative=False), np.add(BODY_A_POS, GEOM_A_POS), tol=tol)
-    assert_allclose(link_b.get_pos(relative=False), np.add(BODY_B_POS, GEOM_B_POS), tol=tol)
-
-    # Both roots free-fall under gravity: the relative getter tracks each user frame, holding x/y and dropping z
-    # equally (free fall is mass-independent).
-    for _ in range(20):
-        scene.step()
-    assert_allclose(link_a.get_pos()[..., :2], BODY_A_POS[:2], tol=tol)
-    assert_allclose(link_b.get_pos()[..., :2], BODY_B_POS[:2], tol=tol)
-    assert_allclose(link_a.get_pos()[..., 2], link_b.get_pos()[..., 2], tol=tol)
-
-
-@pytest.mark.slow  # ~200s
-@pytest.mark.required
-def test_xacro_loading(xacro_robot, show_viewer, tol):
-    scene = gs.Scene(show_viewer=show_viewer)
-
-    # Load with default args (mass=1.0, length=0.4)
-    morph = gs.morphs.URDF(
-        file=xacro_robot,
-        fixed=True,
-        merge_fixed_links=False,
-    )
-
-    # After xacro processing, morph.file is a urdfpy.URDF with absolute mesh paths
-    assert isinstance(morph.file, urdfpy.URDF)
-    for link in morph.file.links:
-        for geom_prop in (*link.collisions, *link.visuals):
-            if isinstance(geom_prop.geometry.geometry, urdfpy.Mesh):
-                assert os.path.isabs(geom_prop.geometry.geometry.filename)
-
-    entity = scene.add_entity(morph)
-
-    # Load again with overridden mass via xacro_args
-    heavy = scene.add_entity(
-        gs.morphs.URDF(
-            file=xacro_robot,
-            fixed=True,
-            merge_fixed_links=False,
-            xacro_args={"link_mass": "5.0"},
-        ),
-    )
-    scene.build()
-
-    # Entity name from <robot name="xacro_chain">
-    assert entity.name.startswith("xacro_chain_")
-
-    # Three links (base_link + child_link + mesh_link), one revolute DOF
-    assert entity.n_links == 3
-    assert [l.name for l in entity.links] == ["base_link", "child_link", "mesh_link"]
-    assert entity.n_dofs == 1
-    assert entity.links[1].joints[0].type == gs.JOINT_TYPE.REVOLUTE
-
-    # Geom types: cylinder on first two links, mesh on third
-    assert entity.links[0].geoms[0].type == gs.GEOM_TYPE.CYLINDER
-    assert entity.links[1].geoms[0].type == gs.GEOM_TYPE.CYLINDER
-    assert entity.links[2].geoms[0].type == gs.GEOM_TYPE.MESH
-
-    # Mass check: 3 links at 1.0 each (default) vs 5.0 each (overridden)
-    assert_allclose(entity.get_mass(), 3.0, tol=tol)
-    assert_allclose(heavy.get_mass(), 15.0, tol=tol)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("is_fixed", [False, True])
-@pytest.mark.parametrize("merge_fixed_links", [False, True])
-def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypatch):
-    # Force parallelism on CPU to trigger any cross-entity race condition
-    if gs.backend == gs.cpu:
-        monkeypatch.setenv("GS_PARA_LEVEL", "2")
-        monkeypatch.setenv("QD_NUM_THREADS", "3")
-
-    EULER_OFFSET = (0, 0, 45)
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_self_collision=True,
-            enable_neutral_collision=True,
-            enable_adjacent_collision=False,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0, -3.5, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-        ),
-        show_viewer=show_viewer,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    franka = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/panda_bullet/panda_nohand.urdf",
-            merge_fixed_links=False,
-            fixed=True,
-        ),
-        vis_mode="collision",
-    )
-    hand = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/panda_bullet/hand.urdf",
-            euler=EULER_OFFSET,
-            fixed=is_fixed,
-            merge_fixed_links=merge_fixed_links,
-            batch_fixed_verts=is_fixed,
-        ),
-        vis_mode="collision",
-    )
-    tool = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.005,
-        ),
-    )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.02, 0.02, 0.02),
-            pos=(0.3, 0.0, 0.01),
-        ),
-    )
-    with pytest.raises(gs.GenesisException):
-        franka.attach(hand, "right_finger")
-    hand.attach(franka, "attachment")
-    tool.attach(hand, "right_finger")
-    scene.build()
-    with pytest.raises(gs.GenesisException):
-        box.attach(hand, "right_finger")
-
-    # Make sure that collision between hand base link and franka attachment point has been filtered out as adjacent
-    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
-    assert collision_pair_idx[franka.get_link("attachment").idx, hand.base_link_idx] == -1
-
-    with pytest.raises(gs.GenesisException):
-        hand.set_pos(0.0)
-    with pytest.raises(gs.GenesisException):
-        hand.set_quat(0.0)
-
-    # The free box is dynamically isolated from the robot, so its lateral position must stay put while the
-    # gripper actuates. Attaching the floating-base hand re-indexes joints by dropping its free base joint;
-    # the hand's mimic (joint-equality) references must follow that re-indexing, otherwise they alias this
-    # box's free-joint DOFs and the corrupted constraint drags the box sideways as the fingers move.
-    box_pos_init = box.get_pos()
-
-    franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
-    hand.control_dofs_position([0.04, 0.04])
-    for _ in range(30):
-        scene.step()
-
-    assert_allclose(box.get_pos()[..., :2], box_pos_init[..., :2], tol=1e-3)
-
-    attach_link = franka.get_link("attachment")
-    assert_allclose(attach_link.get_pos(), hand.links[0].get_pos(), tol=gs.EPS)
-    offset_quat = gu.transform_quat_by_quat(hand.links[0].get_quat(), gu.inv_quat(attach_link.get_quat()))
-    assert_allclose(gu.quat_to_xyz(offset_quat, rpy=False, degrees=True), EULER_OFFSET, tol=tol)
-    for link in hand.links[slice(0, None) if merge_fixed_links else slice(1, -1)]:
-        assert torch.linalg.norm(link.get_pos() - attach_link.get_pos(), dim=-1) < 0.08
-    if not merge_fixed_links:
-        assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
-
-    assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
 
 
 def _build_two_link_revolute_urdf(
@@ -1518,3 +1356,165 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
         scene.rigid_solver.apply_links_external_force(force, links_idx=links_idx, ref="link_com")
         scene.step()
         assert_allclose(het_obj.get_links_acc(), 0.0, tol=tol)
+
+
+def create_two_free_bodies_mjcf(name, pos_a, geom_a, pos_b, geom_b):
+    """Helper to create an MJCF with two free root bodies, each a single box geom offset from its body origin."""
+    mjcf = ET.Element("mujoco", model=name)
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body_a = ET.SubElement(worldbody, "body", name="a", pos=f"{pos_a[0]} {pos_a[1]} {pos_a[2]}")
+    ET.SubElement(body_a, "joint", name="a_free", type="free")
+    ET.SubElement(
+        body_a, "geom", type="box", size="0.05 0.05 0.05", pos=f"{geom_a[0]} {geom_a[1]} {geom_a[2]}", density="1000"
+    )
+    body_b = ET.SubElement(worldbody, "body", name="b", pos=f"{pos_b[0]} {pos_b[1]} {pos_b[2]}")
+    ET.SubElement(body_b, "joint", name="b_free", type="free")
+    ET.SubElement(
+        body_b, "geom", type="box", size="0.05 0.08 0.03", pos=f"{geom_b[0]} {geom_b[1]} {geom_b[2]}", density="1000"
+    )
+    return mjcf
+
+
+@pytest.mark.required
+def test_multi_root_offset(show_viewer, tol):
+    # To exercise per-root offset tracking the entity MUST hold more than one free root (one MJCF, several free
+    # bodies) with DISTINCT per-root geometry, so each root gets its own alignment offset; a single root - or
+    # identical roots - would not surface the cross-contamination bug (one root's offset leaking into another).
+    BODY_A_POS = (1.0, 0.0, 0.5)
+    BODY_B_POS = (-1.0, 0.0, 0.5)
+    GEOM_A_POS = (0.02, 0.01, 0.0)
+    GEOM_B_POS = (0.0, 0.03, 0.02)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=ET.tostring(
+                create_two_free_bodies_mjcf("two_bodies", BODY_A_POS, GEOM_A_POS, BODY_B_POS, GEOM_B_POS),
+                encoding="unicode",
+            ),
+            align=True,
+        ),
+    )
+    scene.build()
+
+    link_a, link_b = entity.links
+    # Each root reports its own user-specified pose in the relative frame, independent of the other root.
+    assert_allclose(link_a.get_pos(), BODY_A_POS, tol=tol)
+    assert_allclose(link_b.get_pos(), BODY_B_POS, tol=tol)
+    assert_allclose(link_a.get_quat(), gu.identity_quat(), tol=tol)
+    assert_allclose(link_b.get_quat(), gu.identity_quat(), tol=tol)
+
+    # The world frame carries each root's own COM shift (the box center), confirming the offsets are not shared.
+    assert_allclose(link_a.get_pos(relative=False), np.add(BODY_A_POS, GEOM_A_POS), tol=tol)
+    assert_allclose(link_b.get_pos(relative=False), np.add(BODY_B_POS, GEOM_B_POS), tol=tol)
+
+    # Both roots free-fall under gravity: the relative getter tracks each user frame, holding x/y and dropping z
+    # equally (free fall is mass-independent).
+    for _ in range(20):
+        scene.step()
+    assert_allclose(link_a.get_pos()[..., :2], BODY_A_POS[:2], tol=tol)
+    assert_allclose(link_b.get_pos()[..., :2], BODY_B_POS[:2], tol=tol)
+    assert_allclose(link_a.get_pos()[..., 2], link_b.get_pos()[..., 2], tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("is_fixed", [False, True])
+@pytest.mark.parametrize("merge_fixed_links", [False, True])
+def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypatch):
+    # Force parallelism on CPU to trigger any cross-entity race condition
+    if gs.backend == gs.cpu:
+        monkeypatch.setenv("GS_PARA_LEVEL", "2")
+        monkeypatch.setenv("QD_NUM_THREADS", "3")
+
+    EULER_OFFSET = (0, 0, 45)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            enable_neutral_collision=True,
+            enable_adjacent_collision=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0, -3.5, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    franka = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/panda_bullet/panda_nohand.urdf",
+            merge_fixed_links=False,
+            fixed=True,
+        ),
+        vis_mode="collision",
+    )
+    hand = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/panda_bullet/hand.urdf",
+            euler=EULER_OFFSET,
+            fixed=is_fixed,
+            merge_fixed_links=merge_fixed_links,
+            batch_fixed_verts=is_fixed,
+        ),
+        vis_mode="collision",
+    )
+    tool = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.005,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.02, 0.02, 0.02),
+            pos=(0.3, 0.0, 0.01),
+        ),
+    )
+    with pytest.raises(gs.GenesisException):
+        franka.attach(hand, "right_finger")
+    hand.attach(franka, "attachment")
+    tool.attach(hand, "right_finger")
+    scene.build()
+    with pytest.raises(gs.GenesisException):
+        box.attach(hand, "right_finger")
+
+    # Make sure that collision between hand base link and franka attachment point has been filtered out as adjacent
+    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+    assert collision_pair_idx[franka.get_link("attachment").idx, hand.base_link_idx] == -1
+
+    with pytest.raises(gs.GenesisException):
+        hand.set_pos(0.0)
+    with pytest.raises(gs.GenesisException):
+        hand.set_quat(0.0)
+
+    # The free box is dynamically isolated from the robot, so its lateral position must stay put while the
+    # gripper actuates. Attaching the floating-base hand re-indexes joints by dropping its free base joint;
+    # the hand's mimic (joint-equality) references must follow that re-indexing, otherwise they alias this
+    # box's free-joint DOFs and the corrupted constraint drags the box sideways as the fingers move.
+    box_pos_init = box.get_pos()
+
+    franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
+    hand.control_dofs_position([0.04, 0.04])
+    for _ in range(30):
+        scene.step()
+
+    assert_allclose(box.get_pos()[..., :2], box_pos_init[..., :2], tol=1e-3)
+
+    attach_link = franka.get_link("attachment")
+    assert_allclose(attach_link.get_pos(), hand.links[0].get_pos(), tol=gs.EPS)
+    offset_quat = gu.transform_quat_by_quat(hand.links[0].get_quat(), gu.inv_quat(attach_link.get_quat()))
+    assert_allclose(gu.quat_to_xyz(offset_quat, rpy=False, degrees=True), EULER_OFFSET, tol=tol)
+    for link in hand.links[slice(0, None) if merge_fixed_links else slice(1, -1)]:
+        assert torch.linalg.norm(link.get_pos() - attach_link.get_pos(), dim=-1) < 0.08
+    if not merge_fixed_links:
+        assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
+
+    assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
