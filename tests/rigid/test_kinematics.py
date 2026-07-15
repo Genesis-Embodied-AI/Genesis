@@ -312,6 +312,7 @@ def test_jacobian_compound_joints(gs_sim, mj_sim, tol):
         assert_allclose(gs_robot.get_jacobian(end_link), np.concatenate([jacp, jacr]), tol=tol)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_joint_get_anchor_pos_and_axis(n_envs):
