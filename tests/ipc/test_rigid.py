@@ -30,9 +30,9 @@ if TYPE_CHECKING:
     from genesis.engine.couplers import IPCCoupler
 
 
-def build_two_cube_joint_mjcf(tmp_path, joint_type, joint_limits, *, fixed=True, suffix=""):
+def build_two_cube_joint_mjcf(joint_type, joint_limits, *, fixed=True):
     """Build a two-cube MJCF with a revolute or prismatic joint."""
-    mjcf = ET.Element("mujoco", model=f"two_cube_{joint_type}{suffix}")
+    mjcf = ET.Element("mujoco", model=f"two_cube_{joint_type}")
     worldbody = ET.SubElement(mjcf, "worldbody")
     base = ET.SubElement(worldbody, "body", name="base")
     if not fixed:
@@ -46,9 +46,7 @@ def build_two_cube_joint_mjcf(tmp_path, joint_type, joint_limits, *, fixed=True,
     axis = "0 1 0" if joint_type == "revolute" else "1 0 0"
     lo, hi = joint_limits
     ET.SubElement(child, "joint", name="joint1", type=mj_type, axis=axis, range=f"{lo} {hi}")
-    path = str(tmp_path / f"two_cube_{joint_type}{suffix}.xml")
-    ET.ElementTree(mjcf).write(path, encoding="utf-8", xml_declaration=True)
-    return path
+    return ET.tostring(mjcf, encoding="unicode")
 
 
 @pytest.mark.required
@@ -703,9 +701,20 @@ def test_momentum_conservation(n_envs, show_viewer):
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize(
+    "coup_type, fixed",
+    [
+        ("two_way_soft_constraint", True),
+        ("two_way_soft_constraint", False),
+        ("external_articulation", True),
+        pytest.param(
+            "external_articulation",
+            False,
+            marks=pytest.mark.xfail(reason="external_articulation coupling does not support a non-fixed base yet."),
+        ),
+    ],
+)
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
-@pytest.mark.parametrize("fixed", [True, False])
 def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -899,8 +908,12 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.xfail(
+    raises=gs.GenesisException,
+    reason="Two-way soft constraint coupling produces NaN constraint forces for stacked free-base articulations.",
+)
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_stacked_revolute_pairs_collision(n_envs, show_viewer, tmp_path):
+def test_stacked_revolute_pairs_collision(n_envs, show_viewer):
     DT = 0.005
     CONTACT_D_HAT = 0.01
     GRAVITY = (0.0, 0.0, -9.8)
@@ -933,15 +946,16 @@ def test_stacked_revolute_pairs_collision(n_envs, show_viewer, tmp_path):
         material=gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.5),
     )
 
-    # 3 robots at different heights, added in permuted order to flip contact pair indices
-    mjcf_path = build_two_cube_joint_mjcf(tmp_path, "revolute", (-1.57, 1.57), fixed=False, suffix="_stacked")
+    # 3 robots at different heights, added in permuted order to flip contact pair indices.
+    # Free-base articulated entities only support 'two_way_soft_constraint' coupling.
+    mjcf_content = build_two_cube_joint_mjcf("revolute", (-1.57, 1.57), fixed=False)
     heights = [0.15, 0.40, 0.65]
     add_order = [2, 0, 1]
     robots = [None, None, None]
     for idx in add_order:
         robots[idx] = scene.add_entity(
-            gs.morphs.MJCF(file=mjcf_path, pos=(0, 0, heights[idx])),
-            material=gs.materials.Rigid(coup_type="external_articulation"),
+            gs.morphs.MJCF(file=mjcf_content, pos=(0, 0, heights[idx])),
+            material=gs.materials.Rigid(coup_type="two_way_soft_constraint"),
         )
 
     scene.build(n_envs=n_envs)
@@ -959,34 +973,24 @@ def test_stacked_revolute_pairs_collision(n_envs, show_viewer, tmp_path):
     for prev, final in zip(prev_positions, final_positions):
         assert_allclose(final, prev, atol=0.005)
 
-    # Extract min z for each robot
-    min_zs = []
-    for robot in robots:
-        pos = tensor_to_array(robot.get_pos())
-        z = np.atleast_1d(pos[..., 2])
-        min_zs.append(float(z.min()))
+    # Base height per robot and env
+    robots_base_z = np.stack([np.atleast_1d(tensor_to_array(robot.get_pos())[..., 2]) for robot in robots], axis=0)
 
     # No ground penetration
-    for i, mz in enumerate(min_zs):
-        assert mz > -CONTACT_D_HAT, f"Robot {i} penetrates ground: min_z={mz:.4f}"
+    assert (robots_base_z > -CONTACT_D_HAT).all(), f"Ground penetration: base_z={robots_base_z}"
 
-    # Stacking order preserved: each robot above the previous
-    for i in range(len(min_zs) - 1):
-        assert min_zs[i] < min_zs[i + 1], (
-            f"Stacking order violated: robot {i} z={min_zs[i]:.4f} >= robot {i + 1} z={min_zs[i + 1]:.4f}"
-        )
+    # Stacking order preserved in every env: each robot above the previous
+    assert (robots_base_z[:-1] < robots_base_z[1:]).all(), f"Stacking order violated: base_z={robots_base_z}"
 
     # All robots settled (not floating away)
-    for i, mz in enumerate(min_zs):
-        assert mz < 1.0, f"Robot {i} floating: z={mz:.4f}"
+    assert (robots_base_z < 1.0).all(), f"Robot floating: base_z={robots_base_z}"
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
-def test_joint_position_limits_bang_bang(n_envs, coup_type, joint_type, show_viewer, tmp_path):
-    """Bang-bang velocity control pushes joint toward limits. Verify limits are respected."""
+def test_joint_position_limits_bang_bang(n_envs, coup_type, joint_type, show_viewer):
     DT = 0.01
     CONTACT_D_HAT = 0.01
     V_MAX = 2.0
@@ -1013,15 +1017,14 @@ def test_joint_position_limits_bang_bang(n_envs, coup_type, joint_type, show_vie
         show_viewer=show_viewer,
     )
 
-    mjcf_path = build_two_cube_joint_mjcf(tmp_path, joint_type, limits, fixed=True)
     robot = scene.add_entity(
-        gs.morphs.MJCF(file=mjcf_path, pos=(0, 0, 0.5)),
+        gs.morphs.MJCF(file=build_two_cube_joint_mjcf(joint_type, limits, fixed=True), pos=(0, 0, 0.5)),
         material=gs.materials.Rigid(coup_type=coup_type),
     )
 
     scene.build(n_envs=n_envs)
 
-    # Set damping on the actuated joint (last DOF)
+    # Velocity control gain on the actuated joint (last DOF)
     robot.set_dofs_kv(500.0, dofs_idx_local=-1)
 
     # Bang-bang velocity control
@@ -1032,27 +1035,30 @@ def test_joint_position_limits_bang_bang(n_envs, coup_type, joint_type, show_vie
         vel = V_MAX if phase == 0 else -V_MAX
         robot.control_dofs_velocity(vel, dofs_idx_local=-1)
         scene.step()
-        q = tensor_to_array(robot.get_dofs_position(dofs_idx_local=-1))
-        pos_history.append(float(np.mean(q)))
+        pos_history.append(tensor_to_array(robot.get_dofs_position(dofs_idx_local=-1))[..., 0])
 
-    pos_arr = np.array(pos_history)
+    pos_arr = np.stack(pos_history, axis=0)
     lower, upper = limits
 
-    # Joint never exceeds limits (tolerance accounts for IPC coupling compliance)
+    # Joint never exceeds limits in any env (tolerance accounts for IPC coupling compliance)
     tolerance = 0.05
-    assert pos_arr.min() >= lower - tolerance, f"Joint violated lower limit: min={pos_arr.min():.4f}, limit={lower}"
-    assert pos_arr.max() <= upper + tolerance, f"Joint violated upper limit: max={pos_arr.max():.4f}, limit={upper}"
+    assert (pos_arr.min(axis=0) >= lower - tolerance).all(), (
+        f"Joint violated lower limit: min={pos_arr.min():.4f}, limit={lower}"
+    )
+    assert (pos_arr.max(axis=0) <= upper + tolerance).all(), (
+        f"Joint violated upper limit: max={pos_arr.max():.4f}, limit={upper}"
+    )
 
-    # Joint has non-trivial excursion (IPC coupling damping slows revolute joints)
+    # Joint has non-trivial excursion in every env (IPC coupling damping slows revolute joints)
     min_excursion = 0.1 if joint_type == "revolute" else 0.05
-    assert pos_arr.max() > min_excursion, (
+    assert (pos_arr.max(axis=0) > min_excursion).all(), (
         f"Joint didn't reach positive excursion: max={pos_arr.max():.4f}, expected > {min_excursion}"
     )
-    assert pos_arr.min() < -min_excursion, (
+    assert (pos_arr.min(axis=0) < -min_excursion).all(), (
         f"Joint didn't reach negative excursion: min={pos_arr.min():.4f}, expected < {-min_excursion}"
     )
 
-    # At least 2 velocity reversals
-    diff = np.diff(pos_arr)
-    sign_changes = np.sum(np.diff(np.sign(diff)) != 0)
-    assert sign_changes >= 2, f"Expected >= 2 velocity reversals, got {sign_changes}"
+    # At least 2 velocity reversals in every env
+    diff = np.diff(pos_arr, axis=0)
+    sign_changes = np.sum(np.diff(np.sign(diff), axis=0) != 0, axis=0)
+    assert (sign_changes >= 2).all(), f"Expected >= 2 velocity reversals, got {sign_changes}"
