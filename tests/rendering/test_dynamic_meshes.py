@@ -1,3 +1,4 @@
+import os
 import sys
 
 import numpy as np
@@ -7,7 +8,7 @@ import trimesh
 import genesis as gs
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
+from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_METAL_DEFORMABLE_RENDER, SKIP_NO_VIEWER
 from ..utils import assert_allclose, assert_equal, get_hf_dataset, rgb_array_to_png_bytes
 from .conftest import RENDERER_TYPE
 
@@ -131,7 +132,18 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
-def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapshot):
+def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapshot, backend):
+    # On the macOS CI runners the GPU is a virtualized "Apple Paravirtual device". This test's FEM Elastic
+    # deformable drives that virtualized Metal driver into a persistent, VM-wide broken state: afterwards
+    # newComputePipelineStateWithFunction returns "Compilation failed (code=2)" for *every* kernel - even a
+    # trivial copy kernel - which is unrecoverable within the VM (survives MTLCompilerService restart and
+    # process exit) and cascades to every later test in the job. Component isolation narrowed the trigger to
+    # the FEM implicit (Newton/PCG) solve run for many iterations: the rasterizer render, the UV textures, the
+    # PBD Cloth solver, and the explicit / low-PCG FEM solvers do NOT wedge the GPU. Skip on the macOS Metal
+    # backend until the underlying Apple driver bug is resolved.
+    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("QD_ENABLE_METAL", "1") != "0":
+        pytest.skip(SKIP_METAL_DEFORMABLE_RENDER)
+
     # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
     # without denoiser.
     png_snapshot.extension._std_err_threshold = 3.0
