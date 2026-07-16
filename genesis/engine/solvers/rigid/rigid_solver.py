@@ -957,6 +957,20 @@ class RigidSolver(KinematicSolver):
                 seen_roots.add(root)
                 previous_root = root
 
+        # A parent in another tree is only sound as a fixed (0-DOF-chain) anchor: the CRB fold and the cartesian-space
+        # tree walk both stop at tree boundaries, so a moving cross-tree parent would never receive its child subtree's
+        # composite inertia nor propagate its motion - the roots are inconsistent with the kinematic structure and mass
+        # would be silently lost (see the crb tree walk in forward_dynamics.py).
+        for link in self.links:
+            if link.parent_idx != -1:
+                parent_link = links_by_idx[link.parent_idx]
+                if link.root_idx != parent_link.root_idx and not parent_link.is_fixed:
+                    gs.raise_exception(
+                        f"Link '{link.name}' and its moving parent link '{parent_link.name}' belong to different "
+                        f"kinematic trees (root {link.root_idx} vs {parent_link.root_idx}). Kinematic tree root "
+                        f"indices are inconsistent with the parent structure."
+                    )
+
         # An aligned free body whose only DOFs are its own free joint has a diagonal joint-space mass block, so zero its
         # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it
         # rotates) and the skyline envelope tighter. A DOF-bearing (articulated) descendant adds off-diagonal base

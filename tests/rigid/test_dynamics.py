@@ -10,6 +10,7 @@ from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..utils import (
     assert_allclose,
+    assert_equal,
     init_simulators,
 )
 
@@ -465,6 +466,11 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, n_envs, 
     )
     hand.attach(arm, "tip")
     scene.build(n_envs=n_envs)
+
+    # attach() re-roots every child link into the parent's kinematic tree.
+    tip_link = arm.get_link("tip")
+    assert hand.base_link.parent_idx == tip_link.idx
+    assert_equal([link.root_idx for link in hand.links], tip_link.root_idx)
 
     mono_dofs = torch.arange(mono.dof_start, mono.dof_start + mono.n_dofs)
     pair_dofs = torch.cat(

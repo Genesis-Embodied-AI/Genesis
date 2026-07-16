@@ -804,11 +804,14 @@ class KinematicEntity(Entity):
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
             links_j_infos[0] = [j_info]
 
-            # Shift root idx for all child links and replace root if no longer fixed wrt world
-            for i_l in range(len(l_infos)):
-                l_info = l_infos[i_l]
-                if "root_idx" in l_info and l_info["root_idx"] in (1, i_l):
-                    l_info["root_idx"] = 0
+            # The base link is now moving, which merges every kinematic tree connected to it into a single tree rooted
+            # at it. Parser-provided root indices assume a base welded to the world (one tree per child of the base),
+            # so recompute them by propagating each parent's root: parents precede children in the depth-first link
+            # ordering, and links with no parent (free bodies) root their own tree.
+            for i_l, l_info in enumerate(l_infos):
+                if "root_idx" in l_info:
+                    parent_idx = l_info["parent_idx"]
+                    l_info["root_idx"] = l_infos[parent_idx]["root_idx"] if parent_idx != -1 else i_l
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
