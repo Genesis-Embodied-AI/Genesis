@@ -572,7 +572,14 @@ class RigidSolver(KinematicSolver):
             # every core busy and the scalar path wins; below it the parallel kernels hide latency by swapping warps.
             # The crossover is also hardware- and kernel-dependent, so the env threshold (GPU core count) is a heuristic
             # and a dynamic timer-based selection would be more accurate still.
-            max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
+            # Largest mass block in DOFs = largest kinematic tree, grouped by the moving-tree root link (root_idx). A
+            # tree spans merged entities (so a block can exceed any single entity) while a multi-tree entity's blocks
+            # are each smaller than the entity, so this - not the per-entity DOF count - is what the per-block factor
+            # actually processes and must be sized for.
+            tree_dofs: dict[int, int] = {}
+            for link in self.links:
+                tree_dofs[link.root_idx] = tree_dofs.get(link.root_idx, 0) + link.n_dofs
+            max_block_dofs = max(tree_dofs.values()) if tree_dofs else 0
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
                 envs_undersaturate = self.n_envs <= max_tiled_envs
@@ -586,7 +593,7 @@ class RigidSolver(KinematicSolver):
                 # Confirmed by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
                 cholesky_tile_size = 16 if (self.n_dofs <= 16 or 32 < self.n_dofs <= 48) else 32
                 tiled_n_dofs = max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size
-                tiled_n_dofs_per_entity = max(math.ceil(max_n_dofs_per_entity / 32), 1) * 32
+                tiled_n_dofs_per_block = max(math.ceil(max_block_dofs / 32), 1) * 32
 
                 # The decomposed arm's cooperative per-island solve stages one island's tile in shared memory.
                 # Size it to the largest tile-size multiple that fits shared (precision-aware), but no larger
@@ -610,12 +617,10 @@ class RigidSolver(KinematicSolver):
                 enable_tiled_cholesky_hessian = self.n_dofs >= 16 and (not hessian_fits_shared or envs_undersaturate)
 
                 # The cooperative in-place LDL^T has no cap; the shared-memory tile is faster but capped. Same env logic
-                # as the Hessian: tile from n_dofs_per_entity >= 8, drop the env guard above the cap where the scalar
-                # O(n_dofs^3) per-(entity, env) factor is always worse.
-                mass_matrix_fits_shared = fits_in_gpu_shared_memory(
-                    tiled_n_dofs_per_entity, tiled_n_dofs_per_entity + 1
-                )
-                enable_tiled_cholesky_mass_matrix = max_n_dofs_per_entity >= 8 and (
+                # as the Hessian: tile from the largest block >= 8 DOFs, drop the env guard above the cap where the
+                # scalar O(n_block_dofs^3) per-(block, env) factor is always worse.
+                mass_matrix_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs_per_block, tiled_n_dofs_per_block + 1)
+                enable_tiled_cholesky_mass_matrix = max_block_dofs >= 8 and (
                     not mass_matrix_fits_shared or envs_undersaturate
                 )
 
@@ -648,7 +653,7 @@ class RigidSolver(KinematicSolver):
                     enable_per_island_solve=(
                         self._use_contact_island and (self._use_hibernation or not hessian_fits_shared)
                     ),
-                    tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
+                    tiled_n_dofs_per_block=tiled_n_dofs_per_block,
                     tiled_n_dofs=tiled_n_dofs,
                     tiled_n_island_dofs=tiled_n_island_dofs,
                     # Persistent block grid for the cooperative per-island factor+solve: enough T-lane blocks to fill the
@@ -932,6 +937,25 @@ class RigidSolver(KinematicSolver):
         for i_d in range(self.n_dofs_):
             block_end[block_start[i_d]] = i_d + 1
         block_end = block_end[block_start]
+
+        # Each kinematic tree's links must form one contiguous range: the CRB fold reduces a tree over the contiguous
+        # run of links sharing its root (root_idx), and the mass-block partition assumes the same. attach() can leave
+        # them split when a third entity is numbered between the parent and its attached child - including a zero-DOF
+        # prop, which keeps the DOFs contiguous yet still interleaves a link. Raise clearly instead of silently dropping
+        # the child's inertia; the resolution is to instantiate the child right after its parent, or attach before
+        # adding the intervening entity.
+        previous_root = -1
+        seen_roots = set()
+        for root in (link.root_idx for link in self.links):
+            if root != previous_root:
+                if root in seen_roots:
+                    gs.raise_exception(
+                        "Attaching an entity onto a parent that is not adjacent in the entity ordering (another "
+                        "entity's links fall between them) is not supported: it splits a kinematic tree. Instantiate "
+                        "the child entity right after its parent, or attach before adding the intervening entity."
+                    )
+                seen_roots.add(root)
+                previous_root = root
 
         # An aligned free body whose only DOFs are its own free joint has a diagonal joint-space mass block, so zero its
         # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it

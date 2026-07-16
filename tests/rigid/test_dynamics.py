@@ -429,6 +429,75 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
     assert_allclose(mass_mat_L.T @ torch.diag(1.0 / mass_mat_D_inv) @ mass_mat_L, mass_mat, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, n_envs, show_viewer, tol):
+    # A tree merged across two entities by attach() has the same mass matrix, LTDL factor, and one-step dynamics as
+    # the single equivalent entity built as one model, and a dynamically-independent free body stays block-diagonal
+    # from it. The equivalent entity is added first so its mass block is the contiguous prefix [0, n).
+    mono_xml, arm_xml, hand_xml = merged_arm_hand_models
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    mono = scene.add_entity(
+        gs.morphs.MJCF(
+            file=mono_xml,
+        ),
+    )
+    arm = scene.add_entity(
+        gs.morphs.MJCF(
+            file=arm_xml,
+        ),
+    )
+    hand = scene.add_entity(
+        gs.morphs.MJCF(
+            file=hand_xml,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 2.0, 1.0),
+        ),
+    )
+    hand.attach(arm, "tip")
+    scene.build(n_envs=n_envs)
+
+    mono_dofs = torch.arange(mono.dof_start, mono.dof_start + mono.n_dofs)
+    pair_dofs = torch.cat(
+        [
+            torch.arange(arm.dof_start, arm.dof_start + arm.n_dofs),
+            torch.arange(hand.dof_start, hand.dof_start + hand.n_dofs),
+        ]
+    )
+    box_dofs = torch.arange(box.dof_start, box.dof_start + box.n_dofs)
+
+    solver = scene.rigid_solver
+    mass_mat = solver.get_mass_mat(decompose=False)
+    # The merged pair reproduces the single equivalent entity's full coupled mass matrix.
+    assert_allclose(mass_mat[..., pair_dofs[:, None], pair_dofs], mass_mat[..., mono_dofs[:, None], mono_dofs], tol=tol)
+    # The free body is a separate kinematic tree, so it stays block-diagonal from the merged pair.
+    assert_allclose(mass_mat[..., pair_dofs[:, None], box_dofs], 0.0, tol=tol)
+    # The LTDL factor reconstructs the mass matrix.
+    mass_mat_L, mass_mat_D_inv = solver.get_mass_mat(decompose=True)
+    reconstructed = mass_mat_L.transpose(-2, -1) @ (mass_mat_L * (1.0 / mass_mat_D_inv).unsqueeze(-1))
+    assert_allclose(reconstructed, mass_mat, tol=tol)
+
+    # One step from a nontrivial pose at rest: the post-step velocities (accelerations times dt, from zero) match the
+    # single equivalent entity's, exercising the solve.
+    q = np.linspace(-0.3, 0.3, mono.n_dofs)
+    mono.set_dofs_position(q)
+    arm.set_dofs_position(q[: arm.n_dofs])
+    hand.set_dofs_position(q[arm.n_dofs :])
+    scene.step()
+
+    pair_vel = torch.cat([arm.get_dofs_velocity(), hand.get_dofs_velocity()], dim=-1)
+    assert_allclose(pair_vel, mono.get_dofs_velocity(), tol=tol)
+
+
 @pytest.mark.slow  # ~500s
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32", "64"])

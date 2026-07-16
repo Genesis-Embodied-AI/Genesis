@@ -2388,7 +2388,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
     # reductions) keys on enable_cooperative_constraint_kernels alone.
     constraint_layout_batch_first: bool = False
-    tiled_n_dofs_per_entity: int = -1
+    tiled_n_dofs_per_block: int = -1
     tiled_n_dofs: int = -1
     tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
     # Number of persistent T-lane blocks the cooperative per-island factor+solve launches. The grid is static (for
