@@ -113,28 +113,18 @@ class RigidGlobalInfo:
     mass_mat_D_inv: qd.Tensor
     mass_mat_tiled_scratch: qd.Tensor
     mass_mat_mask: qd.Tensor
-    # Per-DOF bounds of the mass block the DOF belongs to: a maximal contiguous set of DOFs coupled through chains of
-    # moving joints (contiguity is enforced by RigidEntity.attach). A mass block is FINER than a kinematic tree (the
-    # root_idx link unit): a tree splits into one block per moving-rooted branch hanging under its fixed links (e.g. per
-    # arm of a fixed-base robot), while attach() welds merge blocks across entities. The mass matrix is block-diagonal
-    # across mass blocks, so the assemble/factor/solve restrict to [block_start, block_end) instead of the full entity
-    # DOF range - making a multi-block entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent
-    # separate entities.
+    # Per-DOF bounds of the mass block the DOF belongs to: the DOFs of its branch rooted where the fixed structure
+    # ends (deeper branches stay mass-coupled to their chain and belong to the enclosing block), merged across
+    # entities and kept contiguous by attach(). The assemble/factor/solve restrict to these bounds.
     dofs_mass_block_start: qd.Tensor
     dofs_mass_block_end: qd.Tensor
     # One-past-the-last link of the kinematic tree rooted at each root link (root_idx == itself); unused for non-root
-    # links. attach() can leave other trees' links interleaved inside the span (only 0-DOF entities created between
-    # attached ones - DOF-level interleaving is rejected by attach itself), so consumers gate each link on the tree's
-    # root. This cannot be derived from the mass-block DOF bounds above (a tree's trailing fixed links carry no DOF) and
-    # is precomputed at build time so the CRB tree fold reads its bounds directly - autodiff supports no while-loop
-    # scan.
+    # links. The span may contain interleaved links of 0-DOF entities created between attached ones, so consumers gate
+    # each link on the tree's root. Underivable from the DOF bounds above: trailing fixed links carry no DOF.
     links_tree_end: qd.Tensor
-    # DOF range spanned by the mass blocks rooted in each entity. Rooted blocks chain contiguously, so the per-DOF block
-    # bounds above fully partition the range: a leading run of DOFs merged into an earlier-rooted block (see attach) is
-    # excluded, and the last rooted block may extend past the entity's own DOFs into a merged child. A fully-merged
-    # child entity gets an empty range. Precomputed at build time so the per-entity assemble/factor/solve iterate their
-    # blocks as one flat range-for over DOFs, which reverse-mode autodiff supports (a nested per-block loop overflows
-    # the autodiff stack, and a while loop is not supported at all).
+    # DOF range spanned by the mass blocks rooted in each entity: a leading run merged into an earlier-rooted block is
+    # excluded, and the last rooted block may extend into a merged child (empty range for a fully-merged child). Lets
+    # the per-entity assemble/factor/solve iterate their blocks as one flat, autodiff-compatible loop over DOFs.
     entities_mass_block_dof_start: qd.Tensor
     entities_mass_block_dof_end: qd.Tensor
     meaninertia: qd.Tensor

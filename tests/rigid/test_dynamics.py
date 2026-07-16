@@ -442,14 +442,10 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
     ],
 )
 def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_position, n_envs, show_viewer, tol):
-    # A tree merged across several entities by attach() - one hand on the arm tip, a second hand chained onto the first
-    # hand's palm, and a third hand on another branch (a2) - has the same mass matrix, LTDL factor, and one-step
-    # dynamics as the single equivalent entity built as one model, and a dynamically-independent free body stays
-    # block-diagonal from it. The equivalent entity is added first so its mass block is the contiguous DOF prefix [0,
-    # n). A free body whose DOFs would end up interleaved inside the merged block makes attach() raise the
-    # cause-specific error: created 'between' the arm and the hands, declared 'inside' the arm's own file after the arm
-    # ('inside_target' declares it before and attaches a fourth hand onto it, extending two trees of the same entity);
-    # 'after' is contiguous and simulates.
+    # A tree merged across several entities by attach() - a hand on the arm tip, a second chained onto that hand's
+    # palm, a third on another branch - has the same mass matrix, LTDL factor, and one-step dynamics as the single
+    # equivalent entity, and a free body stays block-diagonal from it. Layouts interleaving the free body's DOFs
+    # inside the merged block ('between', 'inside', 'inside_target') make attach() raise their cause-specific error.
     mono_xml, arm_xml, arm_box_last_xml, arm_box_first_xml, hand_xml = merged_arm_hand_models
     arm_xml_by_box_position = {
         "after": arm_xml,

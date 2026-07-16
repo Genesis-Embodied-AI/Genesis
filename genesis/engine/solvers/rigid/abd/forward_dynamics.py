@@ -317,17 +317,10 @@ def func_compute_mass_matrix(
                 links_state.crb_quat[i_l, i_b] = links_state.cinr_quat[i_l, i_b]
                 links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
 
-    # crb: composite-rigid-body inertia, folded leaf-to-root. Parallelized over kinematic TREES, not entities: each tree
-    # is reduced by one thread rooted at its root link (root_idx == itself), over its precomputed link span [i_l_root,
-    # links_tree_end[i_l_root]), iterated high-index-to-low so a child folds into its parent before the parent
-    # propagates further. attach() can interleave other trees' links inside the span (only 0-DOF entities; see
-    # links_tree_end in array_class.py), so each link is gated on the thread's root: interleaved links are folded by
-    # their own tree's thread, race-free since the threads touch disjoint links. A tree spans merged entities (a merged
-    # child's links share the parent tree's root_idx; see attach) and, conversely, a single entity holding several free
-    # bodies (e.g. dominos) splits into one tree per body - so this exposes far more parallelism than the per-entity
-    # fold on multi-tree entities. A tree's top link may fold into a fixed (0-DOF) anchor of another tree (e.g. a world
-    # link); that anchor carries no DOF so its crb is unused, making the cross-tree write harmless even if several trees
-    # share it. Mirrors the root_idx tree walk in func_update_cartesian_space.
+    # crb: composite-rigid-body inertia, folded leaf-to-root, one thread per kinematic tree (root_idx == itself) over
+    # its link span in descending order so children fold before their parent propagates, gating each link on the
+    # thread's root (see links_tree_end in array_class.py). A tree's top link may fold into a fixed 0-DOF anchor of
+    # another tree, whose crb is unused. Mirrors the root_idx tree walk in func_update_cartesian_space.
     qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
@@ -414,11 +407,9 @@ def func_compute_mass_matrix(
             i_e = i_eb % n_entities
             i_b = i_eb // n_entities
 
-            # Assemble each mass block whose root DOF lies in this entity, over its full [block_start, block_end) lower
-            # triangle. When two entities are merged (see attach) the child's DOFs belong to a block rooted in the
-            # parent, so the parent assembles the whole coupled block (its columns extend past the entity into the
-            # child) and the child assembles nothing; iterating only the entity's own DOF range would drop the
-            # parent-child coupling. mass_parent_mask zeroes the within-block ancestor gaps.
+            # Assemble each mass block whose root DOF lies in this entity over its full lower triangle: a merged child
+            # owns no root and assembles nothing, while the parent assembles the whole coupled block (its columns
+            # extend past the entity). mass_parent_mask zeroes the within-block ancestor gaps.
             entity_dof_start = entities_info.dof_start[i_e]
             entity_dof_end = entities_info.dof_end[i_e]
             block_start = entity_dof_start
@@ -429,10 +420,9 @@ def func_compute_mass_matrix(
                     n_lower_tri = n_block_dofs * (n_block_dofs + 1) // 2
                     i_pair = tid
                     while i_pair < n_lower_tri:
-                        # Compressed lower-tri-inclusive index (matches tiled func_factor_mass): i_pair = i_d_ * (i_d_ +
-                        # 1) / 2 + j_d_, with j_d_ in [0, i_d_]. The fast-math-robust inversion is required here: a raw
-                        # sqrt drops the j=0 entry of every perfect-square row on GPU, leaving M missing long-range
-                        # coupling -> indefinite.
+                        # Compressed lower-tri-inclusive index: i_pair = i_d_ * (i_d_ + 1) / 2 + j_d_, with j_d_ in
+                        # [0, i_d_]. The fast-math-robust inversion is required: a raw sqrt drops the j=0 entry of
+                        # every perfect-square row on GPU, leaving M indefinite.
                         i_d_, j_d_ = linear_to_lower_tri(i_pair)
                         i_d = block_start + i_d_
                         j_d = block_start + j_d_
@@ -470,9 +460,7 @@ def func_compute_mass_matrix(
 
                     # Assemble each mass block rooted in this entity over its full range (see
                     # entities_mass_block_dof_start in array_class.py): the mirror pass reads rows of the whole block,
-                    # so the block-root entity must write them all itself - mirroring per entity would copy a merged
-                    # child's rows before the child's own iteration has written them, leaving the cross-entity
-                    # couplings one recompute stale.
+                    # so the block-root entity must write them all itself before mirroring.
                     blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
                     blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
                     for i_d in range(blocks_dof_start, blocks_dof_end):
@@ -566,12 +554,9 @@ def func_factor_mass_tiled(
         if not rigid_global_info.mass_mat_mask[i_e, i_b]:
             continue
 
-        # Factor each mass block whose root DOF lies in this entity, over its full [block_start, block_end) range. A
-        # single-block entity (the common case) has one block spanning it; a multi-block entity has several. When two
-        # entities are merged (see attach) the child's DOFs belong to a block rooted in the parent, so the child owns
-        # no root and factors nothing while the parent factors the whole coupled block (whose range extends past the
-        # entity). Each block owns its own scratch region [block_start, block_end); distinct blocks (across entities
-        # too) are disjoint, so the scatter stays race-free.
+        # Factor each mass block whose root DOF lies in this entity over its full range: a merged child owns no root
+        # and factors nothing, while the parent factors the whole coupled block. Each block owns its own scratch
+        # region [block_start, block_end), disjoint across entities too, so the scatter stays race-free.
         entity_dof_start = entities_info.dof_start[i_e]
         entity_dof_end = entities_info.dof_end[i_e]
         block_start = entity_dof_start
@@ -731,10 +716,8 @@ def func_factor_mass(
 
                     pivot_row = qd.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.qd_float)
 
-                    # Factor each mass block rooted in this entity in-place in global memory over its full
-                    # [block_start, block_end) range, block-relative so shared indices are >= 0. When two entities are
-                    # merged (see attach) the child's DOFs belong to a block rooted in the parent; the child owns no
-                    # root and factors nothing while the parent factors the whole coupled block.
+                    # Factor each mass block rooted in this entity in-place in global memory over its full range,
+                    # block-relative so shared indices stay >= 0; a merged child owns no root and factors nothing.
                     block_start = entity_dof_start
                     while block_start < entity_dof_end:
                         block_end = rigid_global_info.dofs_mass_block_end[block_start]
@@ -815,11 +798,8 @@ def func_factor_mass(
                     i_e = rigid_global_info.awake_entities[i_slot, i_b]
                 if rigid_global_info.mass_mat_mask[i_e, i_b]:
                     # Factor each mass block rooted in this entity, iterated flat over the rooted range with per-DOF
-                    # block bounds (see entities_mass_block_dof_start in array_class.py): each elimination step only
-                    # touches rows of its own block, so interleaving independent blocks in one descending scan is exact.
-                    # When two entities are merged (see attach) the child owns no root and factors nothing; the parent
-                    # factors the whole coupled block. Blocks are disjoint per root, so distinct entities never write
-                    # the same rows.
+                    # block bounds (see entities_mass_block_dof_start in array_class.py): elimination never leaves a
+                    # block, so interleaving independent blocks in one descending scan is exact.
                     blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
                     blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
                     for i_d in range(blocks_dof_start, blocks_dof_end):
@@ -881,11 +861,9 @@ def func_factor_mass(
 
                     mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.qd_float)
 
-                    # Factor each mass block rooted in this entity in shared memory, indexed block-relative so shared
-                    # indices are always >= 0. When two entities are merged (see attach) the child's DOFs belong to a
-                    # block rooted in the parent; using entity_dof_start as the origin would make the child's
-                    # block-local indices negative. The child entity owns no root and factors nothing; the parent
-                    # factors the whole coupled block, whose range extends past entity_dof_end.
+                    # Factor each mass block rooted in this entity in shared memory, indexed block-relative so
+                    # shared indices stay >= 0 (a merged child's block starts before its entity); the child owns no
+                    # root and factors nothing, while the parent factors the whole coupled block.
                     block_start = entity_dof_start
                     while block_start < entity_dof_end:
                         block_end = rigid_global_info.dofs_mass_block_end[block_start]
@@ -967,10 +945,8 @@ def func_factor_mass(
             if rigid_global_info.mass_mat_mask[i_e, i_b]:
                 EPS = rigid_global_info.EPS[None]
 
-                # Factor each mass block rooted in this entity, iterated flat over the rooted range with per-DOF block
-                # bounds (see entities_mass_block_dof_start in array_class.py and the forward scalar arm); the
-                # per-block index reversal this AD-safe factor uses maps each block onto itself, so the perturbed
-                # indices stay within the DOF's own block.
+                # Factor each mass block rooted in this entity, iterated flat like the forward scalar arm; the
+                # per-block index reversal this AD-safe factor uses maps each block onto itself.
                 blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
                 blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
                 for i_d in range(blocks_dof_start, blocks_dof_end):
@@ -1052,10 +1028,8 @@ def func_solve_mass_entity(
 
     if rigid_global_info.mass_mat_mask[i_e, i_b]:
         # Solve M x = y for each mass block rooted in this entity, iterated flat over the rooted range with per-DOF
-        # block bounds (see entities_mass_block_dof_start in array_class.py); the triangular substitutions never cross
-        # block boundaries, so interleaving independent blocks in one scan is exact. When two entities are merged (see
-        # attach) the child owns no root and solves nothing; the parent solves the whole coupled block, as splitting the
-        # substitutions at the entity boundary would break them.
+        # block bounds (see entities_mass_block_dof_start in array_class.py); the substitutions never cross block
+        # boundaries, and a merged child owns no root and solves nothing.
         blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
         blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
 
@@ -1865,9 +1839,8 @@ def func_implicit_damping(
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_e, i_b in qd.ndrange(n_entities, _B):
             # Set the mask over the mass blocks ROOTED in this entity (see entities_mass_block_dof_start in
-            # array_class.py). The block-root entity factors the whole coupled block (which for a merged pair extends
-            # into the child), so the refactor must be triggered by damping/act_bias anywhere in that range - including
-            # a merged child whose own DOFs live in a later entity.
+            # array_class.py): the block-root entity factors the whole coupled block, so damping/act_bias anywhere in
+            # it - including a merged child - must trigger the refactor.
             blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
             blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
             for i_d in range(blocks_dof_start, blocks_dof_end):

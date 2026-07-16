@@ -566,10 +566,8 @@ class RigidSolver(KinematicSolver):
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0
 
-        # Per-DOF mass-block bounds (see dofs_mass_block_start in array_class.py): each DOF's block is rooted at its
-        # topmost DOF-bearing ancestor reachable before the world; DOFs are numbered depth-first, so a block is an
-        # interval whose root's first DOF is the block start. Computed here because the tiled factor arms below must be
-        # sized for the largest block; _init_mass_mat consumes and uploads the bounds.
+        # Per-DOF mass-block bounds (see dofs_mass_block_start in array_class.py), computed here because the tiled
+        # factor arms below are sized for the largest block; _init_mass_mat uploads them.
         links_by_idx = {link.idx: link for link in self.links}
         dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
         for link in self.links:
@@ -597,10 +595,9 @@ class RigidSolver(KinematicSolver):
             # only help while envs alone do not already saturate the GPU. Above that env count one-thread-per-env keeps
             # every core busy and the scalar path wins; below it the parallel kernels hide latency by swapping warps.
             # The crossover is also hardware- and kernel-dependent, so the env threshold (GPU core count) is a heuristic
-            # and a dynamic timer-based selection would be more accurate still. Largest mass block in DOFs: the biggest
-            # independently-factorable unit, which the per-block factor must be sized for. A block can span merged
-            # entities (see attach), so it can exceed any single entity, while a multi-block entity's blocks are each
-            # smaller than the entity.
+            # and a dynamic timer-based selection would be more accurate still.
+            # Largest mass block in DOFs, the unit the per-block factor is sized for: merged entities can make a block
+            # exceed any single entity (see attach).
             max_block_dofs = int((dofs_mass_block_end - dofs_mass_block_start).max()) if self.n_dofs else 0
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
@@ -646,10 +643,9 @@ class RigidSolver(KinematicSolver):
                     not mass_matrix_fits_shared or envs_undersaturate
                 )
 
-                # Register-streaming tiled mass factor for the >shared-cap forward GPU path: it factors each kinematic
-                # tree in registers via the same primitive as the Hessian, and is faster than and numerically matches
-                # the cooperative LDL^T. Reuses cholesky_tile_size (always 32 here, since the path needs a tree
-                # exceeding shared memory).
+                # Register-streaming tiled mass factor for the >shared-cap forward GPU path: factors each mass
+                # block in registers via the same primitive as the Hessian, faster than and numerically matching the
+                # cooperative LDL^T. Reuses cholesky_tile_size (always 32 here).
                 enable_register_tiled_mass = (
                     enable_tiled_cholesky_mass_matrix and not mass_matrix_fits_shared and not self._requires_grad
                 )
