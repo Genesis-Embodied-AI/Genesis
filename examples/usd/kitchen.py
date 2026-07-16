@@ -8,8 +8,8 @@ Usage
     python examples/usd/kitchen.py --vis              # interactive viewer (drag with the mouse)
     python examples/usd/kitchen.py --full --vis       # the whole kitchen scene
 
-With ``-v``/``--vis`` the scene runs indefinitely in the interactive viewer with the
-MouseInteractionPlugin (drag entities with the mouse); press ``Esc`` to quit.
+Headless, the scene runs a short bounded settle and exits. With ``-v``/``--vis`` it runs indefinitely in the
+interactive viewer with the MouseInteractionPlugin (drag entities with the mouse); press ``Esc`` to quit.
 """
 
 import argparse
@@ -37,7 +37,6 @@ def main():
         "--asset", default="all", choices=[*SAMPLE_ASSETS, "all"], help="Which sample asset(s) to load."
     )
     parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples.")
-    parser.add_argument("-n", "--num_steps", type=int, default=0, help="Number of sim steps after build (headless).")
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show the interactive viewer.")
     parser.add_argument(
         "--collision", action="store_true", help="Visualize collision geometry instead of the visual meshes."
@@ -115,8 +114,18 @@ def main():
             x += size[0] + gap
     gs.logger.info(f"Scene built successfully with {len(all_entities)} entities.")
 
+    is_running = True
+
+    # The viewer runs until the window is closed (Esc); a headless run has no such terminator,
+    # so it is bounded to a finite settle. Under pytest both stop after a few steps.
+    if "PYTEST_VERSION" in os.environ:
+        horizon = 5
+    elif args.vis:
+        horizon = None
+    else:
+        horizon = 200
+
     if args.vis:
-        is_running = True
 
         def stop():
             nonlocal is_running
@@ -126,11 +135,17 @@ def main():
             kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.RELEASE, callback=stop),
         )
 
-        while is_running and scene.viewer.is_alive():
+    try:
+        frame = 0
+        while is_running and (not args.vis or scene.viewer.is_alive()):
             scene.step()
-    else:
-        for _ in range(args.num_steps):
-            scene.step()
+            frame += 1
+            if horizon is not None and frame >= horizon:
+                break
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
 
 
 if __name__ == "__main__":

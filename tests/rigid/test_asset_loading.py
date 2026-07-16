@@ -563,7 +563,13 @@ def test_color_overwrite(overwrite, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml", "urdf/go2/urdf/go2.urdf"])
+@pytest.mark.parametrize(
+    "xml_path",
+    [
+        pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
+        "urdf/go2/urdf/go2.urdf",
+    ],
+)
 def test_robot_scale_and_dofs_armature(xml_path, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 

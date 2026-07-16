@@ -455,6 +455,7 @@ def test_polar_decomposition_batched_pure_rotation(side, tol):
 
 
 @pytest.mark.required
+@pytest.mark.slow  # ~300s
 @pytest.mark.parametrize("backend", [gs.cpu])
 def test_genuine_interpenetration(show_viewer):
     RADIUS = 0.03
