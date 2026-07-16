@@ -991,12 +991,18 @@ class MJCF(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    skip_root_plane : bool, optional
+        If True, skip plane geoms attached to the MJCF worldbody (body id 0) when loading the entity. Many MJCF robot
+        models ship with an embedded ground plane that is inconvenient when the scene already has its own floor, or
+        when the robot is placed so that its links would otherwise penetrate that plane. This is opt-in: planes that
+        are part of the MJCF file are kept by default. Defaults to False.
     """
 
     pos: Vec3FType | None = None
     quat: UnitVec4FType | None = None
     requires_jac_and_IK: StrictBool = True
     default_armature: float | None = Field(default=0.1, ge=0)
+    skip_root_plane: StrictBool = False
 
     @model_validator(mode="before")
     @classmethod

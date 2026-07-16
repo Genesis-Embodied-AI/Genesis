@@ -237,6 +237,26 @@ def test_urdf_mjcf_names_from_file():
 
 
 @pytest.mark.required
+def test_mjcf_skip_root_plane():
+    # ant.xml embeds a worldbody floor plane. Default loading keeps it; skip_root_plane drops only that plane.
+    ant_file = "xml/ant.xml"
+
+    scene_default = gs.Scene(show_viewer=False)
+    ant_default = scene_default.add_entity(gs.morphs.MJCF(file=ant_file))
+    scene_default.build()
+    n_planes_default = sum(1 for geom in ant_default.geoms if geom.type == gs.GEOM_TYPE.PLANE)
+    assert n_planes_default >= 1
+
+    scene_skip = gs.Scene(show_viewer=False)
+    ant_skip = scene_skip.add_entity(gs.morphs.MJCF(file=ant_file, skip_root_plane=True))
+    scene_skip.build()
+    n_planes_skip = sum(1 for geom in ant_skip.geoms if geom.type == gs.GEOM_TYPE.PLANE)
+    assert n_planes_skip == n_planes_default - 1
+    # Non-plane geoms are preserved (visual/collision copies may inflate counts; compare plane drop only).
+    assert len(ant_skip.geoms) < len(ant_default.geoms)
+
+
+@pytest.mark.required
 def test_surface_shortcut_resolution():
     # Plastic family: color resolves to diffuse_texture; the Rough subclass roughness default (1.0) feeds
     # roughness_texture and default_roughness.

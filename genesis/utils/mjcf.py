@@ -217,7 +217,13 @@ def parse_xml(morph, surface):
     #     gs.logger.warning("(MJCF) Tendon not supported")
 
     # Parse all geometries grouped by parent joint (or world)
-    links_g_infos = parse_geoms(mj, morph.scale, surface, morph.file)
+    links_g_infos = parse_geoms(
+        mj,
+        morph.scale,
+        surface,
+        morph.file,
+        skip_root_plane=getattr(morph, "skip_root_plane", False),
+    )
 
     # Parse all bodies (links and joints)
     l_infos, links_j_infos = parse_links(mj, morph.scale)
@@ -628,13 +634,22 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
     return info
 
 
-def parse_geoms(mj, scale, surface, xml_path):
+def parse_geoms(mj, scale, surface, xml_path, *, skip_root_plane=False):
     links_g_info = [[] for _ in range(mj.nbody)]
 
     # Loop over all geometries sequentially
     is_any_col = False
     for i_g in range(mj.ngeom):
         if mj.geom_bodyid[i_g] < 0:
+            continue
+
+        # Opt-in: drop plane geoms on the MJCF worldbody so robot models that embed a floor can be loaded into a
+        # scene that already provides its own ground (or when the embedded plane would penetrate the robot).
+        if (
+            skip_root_plane
+            and mj.geom_bodyid[i_g] == 0
+            and mj.geom_type[i_g] == mujoco.mjtGeom.mjGEOM_PLANE
+        ):
             continue
 
         # try parsing a given geometry
