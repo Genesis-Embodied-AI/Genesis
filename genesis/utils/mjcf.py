@@ -104,8 +104,14 @@ def build_model(
             for elem in tuple(xml_root.findall("include")):
                 include_path = parent_path / elem.attrib["file"]
                 include_root = ET.parse(Path(asset_path) / include_path).getroot()
+                # Rewrite relative mesh paths against the included file's directory. Mesh elements under
+                # <default> (e.g. <mesh maxhullvert="64"/>) are valid MuJoCo and have no `file` attribute —
+                # skip those so include preprocessing does not raise KeyError (issue #3016).
                 for include_elem in include_root.findall(".//mesh"):
-                    include_elem.attrib["file"] = str(include_path.parent / include_elem.attrib["file"])
+                    mesh_file = include_elem.attrib.get("file")
+                    if mesh_file is None:
+                        continue
+                    include_elem.attrib["file"] = str(include_path.parent / mesh_file)
                 for child in include_root:
                     mjcf.append(child)
                 mjcf.remove(elem)
