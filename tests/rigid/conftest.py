@@ -34,15 +34,6 @@ def box_plan():
 
 
 @pytest.fixture(scope="session")
-def box_plan_with_static_plane(box_plan):
-    mjcf = ET.fromstring(ET.tostring(box_plan))
-    mjcf.insert(0, ET.Element("compiler", fusestatic="true"))
-    fixed_link = ET.SubElement(mjcf.find("worldbody"), "body", name="fixed_plane_link", pos="0 0 -1")
-    ET.SubElement(fixed_link, "geom", type="plane", name="fixed_plane", size="1 1 0.1")
-    return mjcf
-
-
-@pytest.fixture(scope="session")
 def mimic_hinges():
     mjcf = ET.Element("mujoco", model="mimic_hinges")
     ET.SubElement(mjcf, "compiler", angle="degree")

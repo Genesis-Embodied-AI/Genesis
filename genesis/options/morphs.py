@@ -992,8 +992,10 @@ class MJCF(FileMorph):
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
     is_ground_plane_included : bool, optional
-        Whether to include plane geometries authored directly under the MJCF world body. Keep this enabled to preserve
-        the authored ground, or disable it when the Genesis scene supplies its own ground. Defaults to True.
+        Whether to keep plane geometries authored directly under the MJCF worldbody. Enabled by default so the model
+        keeps its embedded floor. Disable it when the scene already provides a ground, to avoid a duplicated
+        overlapping plane; the scene must then supply its own floor, otherwise the model has nothing to rest on.
+        Defaults to True.
     """
 
     pos: Vec3FType | None = None

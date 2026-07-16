@@ -69,8 +69,6 @@ def build_model(
     links_to_keep=(),
     is_ground_plane_included=True,
 ):
-    worldbody_geom_names = set()
-    unnamed_worldbody_geom_names = set()
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
             is_urdf_file = True
@@ -113,21 +111,14 @@ def build_model(
                 mjcf.remove(elem)
                 root_parent_stack.append((include_root, include_path))
 
+        # Drop ground planes authored directly under the worldbody so a model that embeds its own floor can be
+        # loaded into a scene that already provides a ground. Removing the source geoms before compilation leaves
+        # planes authored under child bodies untouched, even when the compiler fuses them into the worldbody.
         if not is_urdf_file and not is_ground_plane_included:
-            geom_names = {geom.attrib["name"] for geom in mjcf.iter("geom") if "name" in geom.attrib}
-            i_g = 0
-            for worldbody_elem in mjcf.findall("worldbody"):
-                for geom in worldbody_elem.findall("geom"):
-                    geom_name = geom.attrib.get("name")
-                    if geom_name is None:
-                        geom_name = f"genesis_worldbody_geom_{i_g}"
-                        while geom_name in geom_names:
-                            i_g += 1
-                            geom_name = f"genesis_worldbody_geom_{i_g}"
-                        geom.attrib["name"] = geom_name
-                        unnamed_worldbody_geom_names.add(geom_name)
-                    geom_names.add(geom_name)
-                    worldbody_geom_names.add(geom_name)
+            for worldbody in mjcf.findall("worldbody"):
+                for geom in tuple(worldbody.findall("geom")):
+                    if geom.attrib.get("type") == "plane":
+                        worldbody.remove(geom)
 
         # Make sure compiler options are defined
         compiler = mjcf.find("compiler")
@@ -203,16 +194,6 @@ def build_model(
             # Parse updated URDF file as a string
             data = ET.tostring(root, encoding="utf8")
             mj = mujoco.MjModel.from_xml_string(data)
-
-            # Compiled link assignments lose source placement when fixed links are fused, so names preserve it.
-            empty_name_address = mj.names.find(b"\x00")
-            for geom_name in worldbody_geom_names:
-                i_g = mujoco.mj_name2id(mj, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
-                if geom_name in unnamed_worldbody_geom_names:
-                    mj.name_geomadr[i_g] = empty_name_address
-                if mj.geom_type[i_g] == mujoco.mjtGeom.mjGEOM_PLANE:
-                    # A negative link assignment keeps excluded source geoms out of the Genesis model.
-                    mj.geom_bodyid[i_g] = -1
 
             # Special treatment for URDF
             if is_urdf_file:
@@ -680,6 +661,7 @@ def parse_geoms(mj, scale, surface, xml_path):
     for i_g in range(mj.ngeom):
         if mj.geom_bodyid[i_g] < 0:
             continue
+
         # try parsing a given geometry
         g_info = parse_geom(mj, i_g, scale, surface, xml_path)
         if g_info is None:
