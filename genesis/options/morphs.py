@@ -991,18 +991,15 @@ class MJCF(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
-    is_ground_plane_included : bool, optional
-        Whether to keep plane geometries authored directly under the MJCF worldbody. Enabled by default so the model
-        keeps its embedded floor. Disable it when the scene already provides a ground, to avoid a duplicated
-        overlapping plane; the scene must then supply its own floor, otherwise the model has nothing to rest on.
-        Defaults to True.
+    exclude_ground_plane : bool, optional
+        Whether to exclude plane geometries authored directly under the MJCF worldbody if any. Defaults to False.
     """
 
     pos: Vec3FType | None = None
     quat: UnitVec4FType | None = None
     requires_jac_and_IK: StrictBool = True
     default_armature: float | None = Field(default=0.1, ge=0)
-    is_ground_plane_included: StrictBool = True
+    exclude_ground_plane: StrictBool = False
 
     @model_validator(mode="before")
     @classmethod

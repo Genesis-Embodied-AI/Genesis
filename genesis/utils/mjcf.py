@@ -66,8 +66,8 @@ def build_model(
     discard_visual,
     default_armature=None,
     merge_fixed_links=False,
+    exclude_ground_plane=False,
     links_to_keep=(),
-    is_ground_plane_included=True,
 ):
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
@@ -114,7 +114,7 @@ def build_model(
         # Drop ground planes authored directly under the worldbody so a model that embeds its own floor can be
         # loaded into a scene that already provides a ground. Removing the source geoms before compilation leaves
         # planes authored under child bodies untouched, even when the compiler fuses them into the worldbody.
-        if not is_urdf_file and not is_ground_plane_included:
+        if not is_urdf_file and exclude_ground_plane:
             for worldbody in mjcf.findall("worldbody"):
                 for geom in tuple(worldbody.findall("geom")):
                     if geom.attrib.get("type") == "plane":
@@ -224,16 +224,15 @@ def parse_xml(morph, surface):
         merge_fixed_links = morph.merge_fixed_links
         links_to_keep = morph.links_to_keep
 
-    is_ground_plane_included = not isinstance(morph, gs.morphs.MJCF) or morph.is_ground_plane_included
-
     # Build model from XML (either URDF or MJCF)
+    exclude_ground_plane = isinstance(morph, gs.morphs.MJCF) and morph.exclude_ground_plane
     mj = build_model(
         morph.file,
         not morph.visualization,
         morph.default_armature,
         merge_fixed_links,
+        exclude_ground_plane,
         links_to_keep,
-        is_ground_plane_included,
     )
 
     # We have another more informative warning later so we suppress this one

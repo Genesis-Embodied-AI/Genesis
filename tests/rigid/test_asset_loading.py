@@ -59,14 +59,19 @@ def test_mjcf_parsing_with_include():
 
 
 @pytest.mark.required
-def test_ground_plane_inclusion(box_plan):
+def test_ground_plane_preservation(box_plan):
     mjcf = ET.tostring(box_plan, encoding="unicode")
+
     scene = gs.Scene()
-    entity_with_ground = scene.add_entity(gs.morphs.MJCF(file=mjcf))
+    entity_with_ground = scene.add_entity(
+        gs.morphs.MJCF(
+            file=mjcf,
+        )
+    )
     entity_without_ground = scene.add_entity(
         gs.morphs.MJCF(
             file=mjcf,
-            is_ground_plane_included=False,
+            exclude_ground_plane=True,
         )
     )
     scene.build()
