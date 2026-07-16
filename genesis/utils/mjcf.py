@@ -9,7 +9,6 @@ import mujoco
 
 import numpy as np
 import trimesh
-import z3
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
@@ -18,6 +17,7 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import urdf as uu
+from .collision import solve_contype_conaffinity
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
@@ -61,7 +61,14 @@ def get_model_name(file_path):
     return None
 
 
-def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
+def build_model(
+    xml,
+    discard_visual,
+    default_armature=None,
+    merge_fixed_links=False,
+    exclude_ground_plane=False,
+    links_to_keep=(),
+):
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):
             is_urdf_file = True
@@ -103,6 +110,15 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                     mjcf.append(child)
                 mjcf.remove(elem)
                 root_parent_stack.append((include_root, include_path))
+
+        # Drop ground planes authored directly under the worldbody so a model that embeds its own floor can be
+        # loaded into a scene that already provides a ground. Removing the source geoms before compilation leaves
+        # planes authored under child bodies untouched, even when the compiler fuses them into the worldbody.
+        if not is_urdf_file and exclude_ground_plane:
+            for worldbody in mjcf.findall("worldbody"):
+                for geom in tuple(worldbody.findall("geom")):
+                    if geom.attrib.get("type") == "plane":
+                        worldbody.remove(geom)
 
         # Make sure compiler options are defined
         compiler = mjcf.find("compiler")
@@ -209,7 +225,15 @@ def parse_xml(morph, surface):
         links_to_keep = morph.links_to_keep
 
     # Build model from XML (either URDF or MJCF)
-    mj = build_model(morph.file, not morph.visualization, morph.default_armature, merge_fixed_links, links_to_keep)
+    exclude_ground_plane = isinstance(morph, gs.morphs.MJCF) and morph.exclude_ground_plane
+    mj = build_model(
+        morph.file,
+        not morph.visualization,
+        morph.default_armature,
+        merge_fixed_links,
+        exclude_ground_plane,
+        links_to_keep,
+    )
 
     # We have another more informative warning later so we suppress this one
     # gs.logger.warning(f"(MJCF) Approximating tendon by joint actuator for `{j_info['name']}`")
@@ -688,38 +712,17 @@ def parse_geoms(mj, scale, surface, xml_path):
                     invalid_set.add(frozenset((geom_1, geom_2)))
 
         # Compute updated contype and conaffinity from the complete list of invalid collision pairs
-        is_success = False
-        N = len(cg_infos)
-        for K in range(1, 32):
-            s = z3.Solver()
-            contype_bits = [[z3.Bool(f"contype_{i}_{b}") for b in range(K)] for i in range(N)]
-            conaffinity_bits = [[z3.Bool(f"conaffinity_{i}_{b}") for b in range(K)] for i in range(N)]
-            for i in range(N):
-                for j in range(i + 1, N):
-                    cond1 = z3.Or([z3.And(contype_bits[i][b], conaffinity_bits[j][b]) for b in range(K)])
-                    cond2 = z3.Or([z3.And(contype_bits[j][b], conaffinity_bits[i][b]) for b in range(K)])
-                    pair = frozenset((i, j))
-                    if pair in invalid_set:
-                        s.add(z3.Not(cond1), z3.Not(cond2))
-                    else:
-                        s.add(z3.Or(cond1, cond2))
-            if s.check() == z3.sat:
-                is_success = True
-                model = s.model()
-                for g_info, contype_bits_i, conaffinity_bits_i in zip(cg_infos, contype_bits, conaffinity_bits):
-                    g_info["contype"], g_info["conaffinity"] = (
-                        sum((1 << b) if z3.is_true(model[e]) else 0 for b, e in enumerate(bits))
-                        for bits in (contype_bits_i, conaffinity_bits_i)
-                    )
-                break
-
-        if not is_success:
+        masks = solve_contype_conaffinity(len(cg_infos), invalid_set)
+        if masks is None:
             gs.logger.warning(
                 "Compatible collision geometries cannot be described using bitmasks 'contype' and 'conaffinity'. "
                 "Using default values..."
             )
             for g_info in cg_infos:
                 g_info["contype"], g_info["conaffinity"] = 1, 1
+        else:
+            for g_info, (contype, conaffinity) in zip(cg_infos, masks):
+                g_info["contype"], g_info["conaffinity"] = contype, conaffinity
 
     # Inform the user that collision geometries are not displayed by default
     if is_any_col and surface.vis_mode != "collision":

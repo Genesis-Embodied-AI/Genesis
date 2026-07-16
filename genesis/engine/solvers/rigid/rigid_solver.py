@@ -493,6 +493,19 @@ class RigidSolver(KinematicSolver):
             and not self._use_contact_island
         )
 
+        # Under the elliptic cone any middle-zone contact invalidates the Cholesky factor every Newton iteration, so
+        # a contact-dense solve rebuilds it nearly every iteration; persisting the cone-free assembled Hessian turns
+        # each rebuild into an envelope copy (see the nt_H declaration in array_class.py for the packed storage).
+        # Confined to the CPU skyline paths that own per-iteration rebuilds: the differentiable adjoint solve reuses
+        # nt_H with dense indexing and the GPU arms rebuild through the tiled assembly.
+        enable_cone_free_hessian_reuse = (
+            self._options.friction_cone == gs.friction_cone.elliptic
+            and gs.backend == gs.cpu
+            and sparse_solve
+            and not self.sim.options.requires_grad
+            and self._options.constraint_solver == gs.constraint_solver.Newton
+        )
+
         # The layout-flippable constraint-state tensors are stored batch-first either for the GPU cooperative kernels or
         # under serialized execution, where the env loop is outermost and per-env rows must be contiguous to avoid
         # stride-n_envs access. Batched sweeps key their iteration-axis order on the same flag, so that iteration order
@@ -537,6 +550,7 @@ class RigidSolver(KinematicSolver):
             enable_per_island_solve=self._use_contact_island,
             sparse_solve=sparse_solve,
             sparse_envelope=sparse_envelope,
+            enable_cone_free_hessian_reuse=enable_cone_free_hessian_reuse,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
             broadphase_traversal=self._resolve_broadphase_traversal(),

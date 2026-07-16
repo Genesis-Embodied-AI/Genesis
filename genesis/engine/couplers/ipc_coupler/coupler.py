@@ -53,7 +53,9 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     from .utils import (
         build_ipc_scene_config,
         compute_link_to_link_transform,
+        default_coup_type,
         find_target_link_for_fixed_merge,
+        has_articulation_dofs,
         read_ipc_geometry_metadata,
         update_coupling_forces,
     )
@@ -208,11 +210,7 @@ class IPCCoupler(RBC):
                 continue
             coup_type = entity.material.coup_type
             if coup_type is None:
-                # Auto-select based on entity type
-                if entity.n_joints > 0:
-                    coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
-                else:
-                    coup_type = "ipc_only"
+                coup_type = default_coup_type(entity)
 
             self._coup_type_by_entity[entity] = coup_type = getattr(COUPLING_TYPE, coup_type.upper())
             if coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
@@ -220,9 +218,10 @@ class IPCCoupler(RBC):
                     gs.raise_exception(
                         f"Rigid entity {i_e} is not fixed. Coupling type 'external_articulation' is not supported."
                     )
-                if entity.n_joints == 0:
+                if not has_articulation_dofs(entity):
                     gs.raise_exception(
-                        f"Rigid entity {i_e} has no joint. Coupling type 'external_articulation' is not supported."
+                        f"Rigid entity {i_e} has no articulation DOFs. "
+                        f"Coupling type 'external_articulation' is not supported."
                     )
             gs.logger.debug(f"Rigid entity {i_e}: coupling type '{coup_type.name.lower()}'")
 

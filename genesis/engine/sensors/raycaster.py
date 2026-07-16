@@ -11,7 +11,7 @@ from genesis.engine.solvers.base_solver import StateChange, Subscriber
 from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 from genesis.options.sensors import Raycaster as RaycasterOptions
 from genesis.options.sensors import RaycastPattern
-from genesis.utils.geom import transform_by_quat, transform_by_trans_quat
+from genesis.utils.geom import normalize, transform_by_quat, transform_by_trans_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy, qd_to_torch
 from genesis.utils.raycast_qd import (
     kernel_cast_rays,
@@ -239,6 +239,7 @@ class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata
 
     sensors_ray_start_idx: list[int] = field(default_factory=list)
     total_n_rays: int = 0
+    total_cache_size: int = 0
 
     min_ranges: torch.Tensor = make_tensor_field((0,))
     max_ranges: torch.Tensor = make_tensor_field((0,))
@@ -255,10 +256,11 @@ class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata
     sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_return_points: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
 
 
 class RaycasterReturnType(NamedTuple):
-    points: torch.Tensor
+    points: torch.Tensor | None
     distances: torch.Tensor
 
 
@@ -277,6 +279,7 @@ class RaycasterSensor(
         super().__init__(options, idx, shared_context, shared_metadata, manager)
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
+        self.ray_dirs: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
     def build(self):
         super().build()
@@ -304,21 +307,26 @@ class RaycasterSensor(
         self._shared_metadata.ray_starts = torch.cat([self._shared_metadata.ray_starts, self.ray_starts])
 
         ray_dirs = self._options.pattern.ray_dirs.reshape(-1, 3)
-        ray_dirs = transform_by_quat(ray_dirs, self._shared_metadata.offsets_quat[0, -1, :])
-        self._shared_metadata.ray_dirs = torch.cat([self._shared_metadata.ray_dirs, ray_dirs])
+        self.ray_dirs = transform_by_quat(ray_dirs, self._shared_metadata.offsets_quat[0, -1, :])
+        self._shared_metadata.ray_dirs = torch.cat([self._shared_metadata.ray_dirs, self.ray_dirs])
 
         num_rays = math.prod(self._options.pattern.return_shape)
         self._shared_metadata.sensors_ray_start_idx.append(self._shared_metadata.total_n_rays)
 
-        # These fields are used to properly index into the big cache tensor in kernel_cast_rays
+        # Cache offsets are a running cumulative sum of the per-sensor cache sizes, so sensors with different sizes
+        # (e.g. a points lidar next to a distances-only depth camera) pack without gaps or overlap.
+        self._shared_metadata.total_cache_size += self._cache_size
         self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
-            self._shared_metadata.sensor_cache_offsets, self._cache_size * (self._idx + 1)
+            self._shared_metadata.sensor_cache_offsets, self._shared_metadata.total_cache_size
         )
         self._shared_metadata.sensor_point_offsets = concat_with_tensor(
             self._shared_metadata.sensor_point_offsets, self._shared_metadata.total_n_rays
         )
         self._shared_metadata.sensor_point_counts = concat_with_tensor(
             self._shared_metadata.sensor_point_counts, num_rays
+        )
+        self._shared_metadata.sensor_return_points = concat_with_tensor(
+            self._shared_metadata.sensor_return_points, self._options.return_points
         )
         self._shared_metadata.total_n_rays += num_rays
 
@@ -344,7 +352,18 @@ class RaycasterSensor(
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.return_shape
+        # Distances-only: drop the (*shape, 3) points field so the cache holds just the distances.
+        if not self._options.return_points:
+            return (shape,)
         return ((*shape, 3), shape)
+
+    def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> RaycasterReturnType:
+        # With points disabled the base class returns a bare distances tensor; re-wrap it as RaycasterReturnType so
+        # the (points, distances) NamedTuple contract holds, with points=None.
+        data = super()._get_formatted_data(tensor, envs_idx)
+        if self._options.return_points:
+            return data
+        return RaycasterReturnType(points=None, distances=data)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
@@ -401,6 +420,7 @@ class RaycasterSensor(
                 shared_metadata.sensor_cache_offsets,
                 shared_metadata.sensor_point_offsets,
                 shared_metadata.sensor_point_counts,
+                shared_metadata.sensor_return_points,
                 raw_data_T,
                 gs.EPS,
                 i > 0,
@@ -428,7 +448,6 @@ class RaycasterSensor(
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
         data = self.read(env_idx)
-        points = data.points.reshape((-1, 3))
 
         pos = self._link.get_pos(env_idx, relative=False)
         quat = self._link.get_quat(env_idx, relative=False)
@@ -437,8 +456,18 @@ class RaycasterSensor(
 
         ray_starts = transform_by_trans_quat(self.ray_starts, pos, quat)
 
-        if not self._options.return_world_frame:
-            points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
+        if self._options.return_points:
+            points = data.points.reshape((-1, 3))
+            if not self._options.return_world_frame:
+                points = transform_by_trans_quat(points + self.ray_starts, pos, quat)
+        else:
+            # Reconstruct the local-frame hit points as distance * unit ray_dir. Missed rays carry no_hit_value as
+            # distance and collapse onto the ray start, matching the (0, 0, 0) stored for them when points are enabled.
+            distances = data.distances.reshape((-1, 1))
+            hit_points_local = torch.where(
+                distances < self._options.no_hit_value, distances * normalize(self.ray_dirs), 0.0
+            )
+            points = transform_by_trans_quat(hit_points_local + self.ray_starts, pos, quat)
 
         for debug_object in self.debug_objects:
             context.clear_debug_object(debug_object)

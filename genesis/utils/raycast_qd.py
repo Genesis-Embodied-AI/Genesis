@@ -574,6 +574,7 @@ def write_ray_hit(
     i_p_dist: int,
     is_world_frame: qd.types.ndarray(ndim=1),
     no_hit_values: qd.types.ndarray(ndim=1),
+    sensor_return_points: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
@@ -584,26 +585,29 @@ def write_ray_hit(
     no_hit_value), initializing the cache. When True the function only writes when it found a closer hit than what
     is already in the cache, so multiple BVH casts can be composed by chaining calls (first with is_merge=False,
     subsequent with is_merge=True) into the same output buffer with no scratch storage.
+
+    `sensor_return_points[i_s]` gates the hit-point writes; a distances-only sensor skips them.
     """
     if hit_face >= 0 and (not is_merge or hit_distance < output_hits[i_p_dist, i_b]):
-        # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
         output_hits[i_p_dist, i_b] = hit_distance
 
-        hit_point = qd.math.vec3(0.0, 0.0, 0.0)
-        if is_world_frame[i_s]:
-            hit_point = ray_start_world + hit_distance * ray_direction_world
-        else:
-            # Local frame output along provided local ray direction
-            hit_point = hit_distance * gu.qd_normalize(ray_dir_local, eps)
-        # Store points at: cache_offset + point_idx_in_sensor * 3
-        output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
-        output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
-        output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
+        if sensor_return_points[i_s]:
+            hit_point = qd.math.vec3(0.0, 0.0, 0.0)
+            if is_world_frame[i_s]:
+                hit_point = ray_start_world + hit_distance * ray_direction_world
+            else:
+                # Local frame output along provided local ray direction
+                hit_point = hit_distance * gu.qd_normalize(ray_dir_local, eps)
+            # Store points at: cache_offset + point_idx_in_sensor * 3
+            output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
+            output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
+            output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
     elif not is_merge:
         # No hit
-        output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
-        output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
-        output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
+        if sensor_return_points[i_s]:
+            output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
+            output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
+            output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
         output_hits[i_p_dist, i_b] = no_hit_values[i_s]
 
 
@@ -626,6 +630,7 @@ def kernel_cast_rays(
     sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
+    sensor_return_points: qd.types.ndarray(ndim=1),  # [n_sensors] - True to store hit points, False for distances-only
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: float,
     is_merge: qd.template(),
@@ -635,7 +640,7 @@ def kernel_cast_rays(
 
     See write_ray_hit for `is_merge` semantics. The result `output_hits` is a 2D array of shape (total_cache_size,
     n_env) where in the first dimension each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges
-    (n_points)].
+    (n_points)], the point block being present only for sensors with sensor_return_points set.
 
     shared_bvh is a compile-time flag set when the collision geometry is identical across envs; the cast then reads a
     single BVH copy (batch 0) for every env. It also selects the thread -> (ray, env) mapping below, so the homogeneous
@@ -685,7 +690,10 @@ def kernel_cast_rays(
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
         i_p_offset = sensor_cache_offsets[i_s]
-        i_p_dist = i_p_offset + sensor_point_counts[i_s] * 3 + i_p_sensor
+        # Distances follow the point block (num_rays*3) when points are stored, else start at the block front.
+        i_p_dist = i_p_offset + i_p_sensor
+        if sensor_return_points[i_s]:
+            i_p_dist += sensor_point_counts[i_s] * 3
         write_ray_hit(
             hit_face,
             hit_distance,
@@ -699,6 +707,7 @@ def kernel_cast_rays(
             i_p_dist,
             is_world_frame,
             no_hit_values,
+            sensor_return_points,
             output_hits,
             eps,
             is_merge,
@@ -724,6 +733,7 @@ def kernel_cast_rays_visual(
     sensor_cache_offsets: qd.types.ndarray(ndim=1),
     sensor_point_offsets: qd.types.ndarray(ndim=1),
     sensor_point_counts: qd.types.ndarray(ndim=1),
+    sensor_return_points: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
@@ -772,7 +782,10 @@ def kernel_cast_rays_visual(
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
         i_p_offset = sensor_cache_offsets[i_s]
-        i_p_dist = i_p_offset + sensor_point_counts[i_s] * 3 + i_p_sensor
+        # Distances follow the point block (num_rays*3) when points are stored, else start at the block front.
+        i_p_dist = i_p_offset + i_p_sensor
+        if sensor_return_points[i_s]:
+            i_p_dist += sensor_point_counts[i_s] * 3
         write_ray_hit(
             hit_face,
             hit_distance,
@@ -786,6 +799,7 @@ def kernel_cast_rays_visual(
             i_p_dist,
             is_world_frame,
             no_hit_values,
+            sensor_return_points,
             output_hits,
             eps,
             is_merge,
