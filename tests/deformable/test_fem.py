@@ -6,6 +6,7 @@ import pytest
 import torch
 
 import genesis as gs
+from genesis.engine.couplers import IPCCoupler
 from genesis.utils.misc import tensor_to_array
 
 from ..utils import assert_allclose, get_hf_dataset
@@ -277,6 +278,20 @@ def test_implicit_falling_sphere_box(coupler_type, material_model, show_viewer):
         penetration_depth_ref = 0.0
         tol = 1e-3 if coupler_type == gs.options.SAPCouplerOptions else 0.05
         assert_allclose(-state.pos[..., 2].min(), penetration_depth_ref, tol=tol)
+
+
+@pytest.mark.required
+def test_vertex_constraints_reject_ipc_coupler(show_viewer, monkeypatch):
+    scene = gs.Scene(show_viewer=show_viewer)
+    box = scene.add_entity(
+        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)),
+        material=gs.materials.FEM.Elastic(),
+    )
+    scene.build()
+    monkeypatch.setattr(scene.sim, "_coupler", object.__new__(IPCCoupler))
+
+    with pytest.raises(gs.GenesisException, match="Vertex constraints are not supported by the IPC coupler"):
+        box.set_vertex_constraints([0])
 
 
 @pytest.mark.required

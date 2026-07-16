@@ -905,7 +905,7 @@ class FEMEntity(Entity):
             )
 
         if isinstance(self.sim.coupler, IPCCoupler):
-            gs.raise_exception("This method is only supported by IPC coupler.")
+            gs.raise_exception("Vertex constraints are not supported by the IPC coupler.")
 
         if not self._solver._constraints_initialized:
             self._solver.init_constraints()
