@@ -66,6 +66,7 @@ def test_ground_plane_preservation(box_plan):
     entity_with_ground = scene.add_entity(
         gs.morphs.MJCF(
             file=mjcf,
+            exclude_ground_plane=False,
         )
     )
     entity_without_ground = scene.add_entity(
