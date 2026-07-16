@@ -2396,9 +2396,9 @@ def func_hessian_direct_batch(
                             constraint_state.nt_H[i_b, row, col]
                             + constraint_state.jac[i_c, i_d1, i_b] * constraint_state.jac[i_c, i_d2, i_b] * efc_D
                         )
-        # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same kinematic-tree block, which
-        # is a contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add
-        # by that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
+        # H += M, restricted to the island's DOFs. Mass couples only DOFs within the same mass block, which is a
+        # contiguous global DOF range and so maps to a contiguous local range (dof_id is ascending). Bound the add by
+        # that block (dofs_mass_block_start, mapped to local via dof_local_pos) rather than the full constraint
         # envelope: the envelope already includes mass coupling so block_start >= env_start, and entries below
         # block_start are structurally zero mass. For an aligned free body the block is the diagonal, so only the
         # diagonal mass is added; for articulated bodies the whole branch block is added.

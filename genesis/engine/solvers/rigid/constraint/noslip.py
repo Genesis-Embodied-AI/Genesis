@@ -11,10 +11,10 @@ def func_solve_mass_block(
     vec: qd.Tensor,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """LDL^T forward-backward substitution on vec, restricted to the mass-matrix block containing dof i_d0.
+    """LDL^T forward-backward substitution on vec, restricted to the mass block containing dof i_d0.
 
-    The factor is block-diagonal per kinematic tree, with constant block bounds shared by every member dof
-    (dofs_mass_block_start/end), so a block is solvable independently from any member dof.
+    The factor is block-diagonal per mass block (see dofs_mass_block_start in array_class.py), with constant block
+    bounds shared by every member dof, so a block is solvable independently from any member dof.
     """
     block_start = rigid_global_info.dofs_mass_block_start[i_d0]
     block_end = rigid_global_info.dofs_mass_block_end[i_d0]
@@ -60,23 +60,23 @@ def func_apply_Minv_rows(
     per pass. Working at block granularity (not entity granularity) keeps the touched dof range within the row's own
     island, which makes concurrent per-island sweeps of the same env race-free.
     """
-    block_start_prev = gs.qd_int(-1)
+    tree_start_prev = gs.qd_int(-1)
     for i_d_ in range(jac_n_dofs[i_row_0, i_b]):
         i_d = jac_dofs_idx[i_row_0, i_d_, i_b]
         block_start = rigid_global_info.dofs_mass_block_start[i_d]
-        if block_start != block_start_prev:
+        if block_start != tree_start_prev:
             for j_d in range(block_start, rigid_global_info.dofs_mass_block_end[i_d]):
                 vec[j_d, i_b] = gs.qd_float(0.0)
-            block_start_prev = block_start
+            tree_start_prev = block_start
         vec[i_d, i_b] = coef_0 * jac[i_row_0, i_d, i_b] + coef_1 * jac[i_row_1, i_d, i_b]
 
-    block_start_prev = gs.qd_int(-1)
+    tree_start_prev = gs.qd_int(-1)
     for i_d_ in range(jac_n_dofs[i_row_0, i_b]):
         i_d = jac_dofs_idx[i_row_0, i_d_, i_b]
         block_start = rigid_global_info.dofs_mass_block_start[i_d]
-        if block_start != block_start_prev:
+        if block_start != tree_start_prev:
             func_solve_mass_block(i_d, i_b, vec, rigid_global_info)
-            block_start_prev = block_start
+            tree_start_prev = block_start
 
 
 @qd.func
@@ -90,14 +90,14 @@ def func_accumulate_row_blocks(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """Add vec_src to vec_dst over the mass blocks touched by constraint row i_row."""
-    block_start_prev = gs.qd_int(-1)
+    tree_start_prev = gs.qd_int(-1)
     for i_d_ in range(jac_n_dofs[i_row, i_b]):
         i_d = jac_dofs_idx[i_row, i_d_, i_b]
         block_start = rigid_global_info.dofs_mass_block_start[i_d]
-        if block_start != block_start_prev:
+        if block_start != tree_start_prev:
             for j_d in range(block_start, rigid_global_info.dofs_mass_block_end[i_d]):
                 vec_dst[j_d, i_b] = vec_dst[j_d, i_b] + vec_src[j_d, i_b]
-            block_start_prev = block_start
+            tree_start_prev = block_start
 
 
 @qd.func
