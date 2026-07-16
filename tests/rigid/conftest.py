@@ -699,11 +699,11 @@ def merged_arm_hand_models():
     equivalent entity by construction: an arm (fixed base -> a1 -> a2 -> tip, hinges about z, links along +x so the
     neutral tip frame is identity) and a branching hand (palm + 4 fingers x 3 hinges = 12 DOFs).
 
-    Returns (monolith, arm_only, arm_with_free_box, hand_only): the monolith splices three hands rigidly - one under
-    the tip, one chained under the first hand's palm, and one under a2 (a second branch of the same tree) - declared
-    in that depth-first order so its DOF layout matches attaching three hand entities in the same creation order, each
-    with an identity offset (child morph pos 0 == coincident with the parent link). arm_with_free_box additionally
-    declares a free body after the arm, making it a two-tree entity.
+    Returns (monolith, arm_only, arm_free_box_last, arm_free_box_first, hand_only): the monolith splices three hands
+    rigidly - one under the tip, one chained under the first hand's palm, and one under a2 (a second branch of the
+    same tree) - declared in that depth-first order so its DOF layout matches attaching three hand entities in the
+    same creation order, each with an identity offset (child morph pos 0 == coincident with the parent link). The
+    arm_free_box variants additionally declare a free body after or before the arm, making it a two-tree entity.
     """
 
     def _finger(parent, name, y):
@@ -737,14 +737,19 @@ def merged_arm_hand_models():
         ET.SubElement(tip, "geom", type="capsule", fromto="0 0 0 0.02 0 0", size="0.02", mass="0.2")
         return a2, tip
 
-    def _arm_model(with_free_box):
+    def _free_box(worldbody):
+        box = ET.SubElement(worldbody, "body", name="freebox", pos="0 2 1")
+        ET.SubElement(box, "freejoint")
+        ET.SubElement(box, "geom", type="box", size="0.05 0.05 0.05", mass="0.2")
+
+    def _arm_model(free_box_position):
         mjcf = ET.Element("mujoco")
         wb = ET.SubElement(mjcf, "worldbody")
+        if free_box_position == "first":
+            _free_box(wb)
         _arm_tip(wb)
-        if with_free_box:
-            box = ET.SubElement(wb, "body", name="freebox", pos="0 2 1")
-            ET.SubElement(box, "freejoint")
-            ET.SubElement(box, "geom", type="box", size="0.05 0.05 0.05", mass="0.2")
+        if free_box_position == "last":
+            _free_box(wb)
         return ET.tostring(mjcf, encoding="unicode")
 
     mono_mjcf = ET.Element("mujoco")
@@ -757,8 +762,9 @@ def merged_arm_hand_models():
     _palm(ET.SubElement(hand_mjcf, "worldbody"), is_root=True)
     return (
         ET.tostring(mono_mjcf, encoding="unicode"),
-        _arm_model(with_free_box=False),
-        _arm_model(with_free_box=True),
+        _arm_model(free_box_position=None),
+        _arm_model(free_box_position="last"),
+        _arm_model(free_box_position="first"),
         ET.tostring(hand_mjcf, encoding="unicode"),
     )
 

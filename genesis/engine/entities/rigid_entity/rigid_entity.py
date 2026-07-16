@@ -1435,10 +1435,9 @@ class KinematicEntity(Entity):
         Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
         another entity.
 
-        The merged pair is simulated as one kinematic tree, so its dynamics cost scales with the range of degrees of
-        freedom spanning both entities, including any entity created in between. Instantiating attached entities
-        consecutively keeps that range tight; entities in between are still simulated correctly but inflate the cost
-        of the merged pair.
+        The merged pair is simulated as one kinematic tree, whose degrees of freedom must form one contiguous range.
+        This method enforces it: instantiate attached entities consecutively, attach onto the last kinematic tree of a
+        multi-tree parent, and attach all children of an entity onto the same tree.
 
         Parameters
         ----------
@@ -1468,6 +1467,36 @@ class KinematicEntity(Entity):
                 gs.raise_exception(
                     "Attaching fixed-based entity to parent link requires setting Morph option 'batch_fixed_verts=True'."
                 )
+
+        # The merged kinematic tree must keep contiguous DOFs (the mass-matrix assemble/factor/solve process each block
+        # as one contiguous interval), so every DOF-carrying link numbered between the target tree's root and this
+        # entity must already belong to that tree. Each violation gets its own actionable error: the foreign tree either
+        # lives in the same file as the target tree's root (an extra tree declared after it - passive, or already
+        # extended across entities by an earlier attach) or belongs to entities created in between.
+        root_link = self._solver.links[parent_link.root_idx]
+        for link in self._solver.links[root_link.idx + 1 : self.link_start]:
+            if link.n_dofs == 0 or link.root_idx == root_link.idx:
+                continue
+            foreign_root_link = self._solver.links[link.root_idx]
+            if foreign_root_link.entity is root_link.entity:
+                is_foreign_tree_merged = any(
+                    other_link.root_idx == link.root_idx and other_link.entity is not foreign_root_link.entity
+                    for other_link in self._solver.links[link.root_idx :]
+                )
+                if is_foreign_tree_merged:
+                    gs.raise_exception(
+                        "Attaching entities onto different kinematic trees of the same parent entity is not "
+                        "supported. Load the parent's trees as separate entities."
+                    )
+                gs.raise_exception(
+                    "Attaching an entity onto a kinematic tree that is not the last one declared in its file is not "
+                    "supported. Declare the attached-onto tree last, or load the file's other trees as separate "
+                    "entities."
+                )
+            gs.raise_exception(
+                "Creating entities between attached entities is not supported. Instantiate attached entities "
+                "consecutively."
+            )
 
         # Remove all root joints if necessary.
         # The requires shifting joint and dof indices of all subsequent entities.
@@ -1506,9 +1535,9 @@ class KinematicEntity(Entity):
         base_link._parent_idx = parent_link.idx
 
         # Re-root the whole tree hanging from this entity's base link into the parent's tree - scene-wide, because
-        # entities previously attached into this one already share its root and must follow it (chained attaches may
-        # run in any order). This entity's links belonging to other trees (e.g. free bodies declared in the same file)
-        # keep their own root. The fixed flag and invweight follow the new root for every re-rooted link.
+        # entities previously attached into this one already share its root and must follow it (chained attaches may run
+        # in any order). This entity's links belonging to other trees (e.g. free bodies declared in the same file) keep
+        # their own root. The fixed flag and invweight follow the new root for every re-rooted link.
         for link in self._solver.links:
             if link.root_idx == base_link.idx:
                 link._root_idx = parent_link.root_idx

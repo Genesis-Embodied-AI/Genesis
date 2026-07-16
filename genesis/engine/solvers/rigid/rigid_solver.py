@@ -568,8 +568,8 @@ class RigidSolver(KinematicSolver):
 
         # Per-DOF mass-block bounds (see dofs_mass_block_start in array_class.py): each DOF's block is rooted at its
         # topmost DOF-bearing ancestor reachable before the world; DOFs are numbered depth-first, so a block is an
-        # interval whose root's first DOF is the block start. Computed here because the tiled factor arms below must
-        # be sized for the largest block; _init_mass_mat consumes and uploads the bounds.
+        # interval whose root's first DOF is the block start. Computed here because the tiled factor arms below must be
+        # sized for the largest block; _init_mass_mat consumes and uploads the bounds.
         links_by_idx = {link.idx: link for link in self.links}
         dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
         for link in self.links:
@@ -587,42 +587,20 @@ class RigidSolver(KinematicSolver):
             dofs_mass_block_end[dofs_mass_block_start[i_d]] = i_d + 1
         dofs_mass_block_end = dofs_mass_block_end[dofs_mass_block_start]
 
-        # Interval closure: attach() can leave other entities' DOFs interleaved inside a merged block's interval (the
-        # entities created between the parent and its attached child keep their numbering). Coupling never crosses
-        # blocks, so widening each block to its enclosing interval and merging overlaps keeps the factorization exact:
-        # the swallowed DOFs carry exactly zero coupling (see mass_parent_mask) which the elimination preserves, at
-        # the price of wasted flops on their rows - proportional to the DOFs created between attached entities, hence
-        # the advice to instantiate them consecutively (see RigidEntity.attach).
-        roots_idx = np.flatnonzero(dofs_mass_block_start == np.arange(self.n_dofs_, dtype=gs.np_int))
-        has_interleaved_blocks = False
-        span_start, span_end = 0, 0
-        for i_d_root in roots_idx:
-            if i_d_root < span_end:
-                span_end = max(span_end, dofs_mass_block_end[i_d_root])
-                has_interleaved_blocks = True
-            else:
-                dofs_mass_block_start[span_start:span_end] = span_start
-                dofs_mass_block_end[span_start:span_end] = span_end
-                span_start, span_end = i_d_root, dofs_mass_block_end[i_d_root]
-        dofs_mass_block_start[span_start:span_end] = span_start
-        dofs_mass_block_end[span_start:span_end] = span_end
+        # Blocks form clean intervals: attach() is the only source of cross-entity blocks and rejects any layout that
+        # would interleave foreign DOFs inside a merged one (see RigidEntity.attach).
         self._dofs_mass_block_start = dofs_mass_block_start
         self._dofs_mass_block_end = dofs_mass_block_end
-        if has_interleaved_blocks:
-            gs.logger.warning(
-                "Attached entities are interleaved with unrelated degrees of freedom, which inflates the mass "
-                "factorization cost. Instantiate attached entities consecutively to avoid it."
-            )
 
         if self.is_active:
             # The tiled and cooperative Cholesky kernels trade per-env serial work for cross-lane parallelism, so they
             # only help while envs alone do not already saturate the GPU. Above that env count one-thread-per-env keeps
             # every core busy and the scalar path wins; below it the parallel kernels hide latency by swapping warps.
             # The crossover is also hardware- and kernel-dependent, so the env threshold (GPU core count) is a heuristic
-            # and a dynamic timer-based selection would be more accurate still.
-            # Largest mass block in DOFs: the biggest independently-factorable unit, which the per-block factor must
-            # be sized for. A block can span merged entities (see attach), so it can exceed any single entity, while a
-            # multi-block entity's blocks are each smaller than the entity.
+            # and a dynamic timer-based selection would be more accurate still. Largest mass block in DOFs: the biggest
+            # independently-factorable unit, which the per-block factor must be sized for. A block can span merged
+            # entities (see attach), so it can exceed any single entity, while a multi-block entity's blocks are each
+            # smaller than the entity.
             max_block_dofs = int((dofs_mass_block_end - dofs_mass_block_start).max()) if self.n_dofs else 0
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
@@ -989,9 +967,9 @@ class RigidSolver(KinematicSolver):
                 dofs_mass_block_start[i_d] = i_d
                 dofs_mass_block_end[i_d] = i_d + 1
 
-        # See entities_mass_block_dof_start in array_class.py: skip a leading run of DOFs merged into an
-        # earlier-rooted block; the end is the last rooted block's end, which may extend past the entity's own DOFs
-        # into a merged child.
+        # See entities_mass_block_dof_start in array_class.py: skip a leading run of DOFs merged into an earlier-rooted
+        # block; the end is the last rooted block's end, which may extend past the entity's own DOFs into a merged
+        # child.
         entities_mass_block_dof_start = np.zeros(self.n_entities_, dtype=gs.np_int)
         entities_mass_block_dof_end = np.zeros(self.n_entities_, dtype=gs.np_int)
         for i_e, entity in enumerate(self.entities):

@@ -317,16 +317,16 @@ def func_compute_mass_matrix(
                 links_state.crb_quat[i_l, i_b] = links_state.cinr_quat[i_l, i_b]
                 links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
 
-    # crb: composite-rigid-body inertia, folded leaf-to-root. Parallelized over kinematic TREES, not entities: each
-    # tree is reduced by one thread rooted at its root link (root_idx == itself), over its precomputed link span
-    # [i_l_root, links_tree_end[i_l_root]), iterated high-index-to-low so a child folds into its parent before the
-    # parent propagates further. attach() can interleave other trees' links inside the span (see links_tree_end in
-    # array_class.py), so each link is gated on the thread's root: interleaved links are folded by their own tree's
-    # thread, race-free since the threads touch disjoint links. A tree spans merged entities (a merged child's links
-    # share the parent tree's root_idx; see attach) and, conversely, a single entity holding several free bodies (e.g.
-    # dominos) splits into one tree per body - so this exposes far more parallelism than the per-entity fold on
-    # multi-tree entities. A tree's top link may fold into a fixed (0-DOF) anchor of another tree (e.g. a world link);
-    # that anchor carries no DOF so its crb is unused, making the cross-tree write harmless even if several trees
+    # crb: composite-rigid-body inertia, folded leaf-to-root. Parallelized over kinematic TREES, not entities: each tree
+    # is reduced by one thread rooted at its root link (root_idx == itself), over its precomputed link span [i_l_root,
+    # links_tree_end[i_l_root]), iterated high-index-to-low so a child folds into its parent before the parent
+    # propagates further. attach() can interleave other trees' links inside the span (only 0-DOF entities; see
+    # links_tree_end in array_class.py), so each link is gated on the thread's root: interleaved links are folded by
+    # their own tree's thread, race-free since the threads touch disjoint links. A tree spans merged entities (a merged
+    # child's links share the parent tree's root_idx; see attach) and, conversely, a single entity holding several free
+    # bodies (e.g. dominos) splits into one tree per body - so this exposes far more parallelism than the per-entity
+    # fold on multi-tree entities. A tree's top link may fold into a fixed (0-DOF) anchor of another tree (e.g. a world
+    # link); that anchor carries no DOF so its crb is unused, making the cross-tree write harmless even if several trees
     # share it. Mirrors the root_idx tree walk in func_update_cartesian_space.
     qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
@@ -414,9 +414,9 @@ def func_compute_mass_matrix(
             i_e = i_eb % n_entities
             i_b = i_eb // n_entities
 
-            # Assemble each mass block whose root DOF lies in this entity, over its full [block_start, block_end)
-            # lower triangle. When two entities are merged (see attach) the child's DOFs belong to a block rooted in
-            # the parent, so the parent assembles the whole coupled block (its columns extend past the entity into the
+            # Assemble each mass block whose root DOF lies in this entity, over its full [block_start, block_end) lower
+            # triangle. When two entities are merged (see attach) the child's DOFs belong to a block rooted in the
+            # parent, so the parent assembles the whole coupled block (its columns extend past the entity into the
             # child) and the child assembles nothing; iterating only the entity's own DOF range would drop the
             # parent-child coupling. mass_parent_mask zeroes the within-block ancestor gaps.
             entity_dof_start = entities_info.dof_start[i_e]
@@ -742,8 +742,8 @@ def func_factor_mass(
                             n_block_dofs = block_end - block_start
 
                             # Copy the block's lower triangle into mass_mat_L (+ implicit damping on the diagonal),
-                            # cooperatively. Restricting to the block makes the factorization cost the sum of
-                            # per-block cubes instead of the whole (possibly multi-block) entity cube.
+                            # cooperatively. Restricting to the block makes the factorization cost the sum of per-block
+                            # cubes instead of the whole (possibly multi-block) entity cube.
                             i_d_ = tid
                             while i_d_ < n_block_dofs:
                                 i_d = block_start + i_d_
@@ -816,10 +816,10 @@ def func_factor_mass(
                 if rigid_global_info.mass_mat_mask[i_e, i_b]:
                     # Factor each mass block rooted in this entity, iterated flat over the rooted range with per-DOF
                     # block bounds (see entities_mass_block_dof_start in array_class.py): each elimination step only
-                    # touches rows of its own block, so interleaving independent blocks in one descending scan is
-                    # exact. When two entities are merged (see attach) the child owns no root and factors nothing; the
-                    # parent factors the whole coupled block. Blocks are disjoint per root, so distinct entities never
-                    # write the same rows.
+                    # touches rows of its own block, so interleaving independent blocks in one descending scan is exact.
+                    # When two entities are merged (see attach) the child owns no root and factors nothing; the parent
+                    # factors the whole coupled block. Blocks are disjoint per root, so distinct entities never write
+                    # the same rows.
                     blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
                     blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
                     for i_d in range(blocks_dof_start, blocks_dof_end):
@@ -995,8 +995,8 @@ def func_factor_mass(
                                     -dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None],
                                 )
 
-                # Cholesky-Banachiewicz algorithm (in the perturbed indices), access pattern is safe for
-                # autodiff https://en.wikipedia.org/wiki/Cholesky_decomposition
+                # Cholesky-Banachiewicz algorithm (in the perturbed indices), access pattern is safe for autodiff
+                # https://en.wikipedia.org/wiki/Cholesky_decomposition
                 for i_pr in range(blocks_dof_start, blocks_dof_end):
                     block_start = rigid_global_info.dofs_mass_block_start[i_pr]
                     for j_pr in range(block_start, i_pr + 1):
@@ -1054,8 +1054,8 @@ def func_solve_mass_entity(
         # Solve M x = y for each mass block rooted in this entity, iterated flat over the rooted range with per-DOF
         # block bounds (see entities_mass_block_dof_start in array_class.py); the triangular substitutions never cross
         # block boundaries, so interleaving independent blocks in one scan is exact. When two entities are merged (see
-        # attach) the child owns no root and solves nothing; the parent solves the whole coupled block, as splitting
-        # the substitutions at the entity boundary would break them.
+        # attach) the child owns no root and solves nothing; the parent solves the whole coupled block, as splitting the
+        # substitutions at the entity boundary would break them.
         blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
         blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
 
