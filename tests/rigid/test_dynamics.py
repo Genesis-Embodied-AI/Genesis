@@ -440,7 +440,7 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
         ("inside", 2),
     ],
 )
-def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_position, n_envs, show_viewer, tol):
+def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_position, n_envs, show_viewer, caplog, tol):
     # A tree merged across several entities by attach() - one hand on the arm tip, a second hand chained onto the
     # first hand's palm, and a third hand on another branch (a2) - has the same mass matrix, LTDL factor, and one-step
     # dynamics as the single equivalent entity built as one model, and a dynamically-independent free body stays
@@ -499,7 +499,12 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_posi
             ),
         )
         hand_box.attach(arm, "freebox")
-    scene.build(n_envs=n_envs)
+    with caplog.at_level("WARNING"):
+        scene.build(n_envs=n_envs)
+
+    # Interleaved DOFs inflate the mass factorization cost, which build reports; contiguous merges stay silent.
+    has_interleaved_warning = any("Instantiate attached entities" in record.getMessage() for record in caplog.records)
+    assert has_interleaved_warning == (box_position in ("between", "inside"))
 
     # attach() re-roots every child link - including previously attached grandchildren - into the parent's tree.
     tip_link = arm.get_link("tip")
@@ -554,6 +559,11 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_posi
 
     pair_vel = torch.cat([arm.get_dofs_velocity(arm_dofs_local), *(h.get_dofs_velocity() for h in hands)], dim=-1)
     assert_allclose(pair_vel, mono.get_dofs_velocity(), tol=tol)
+
+    # The mass matrix reassembled at the new configuration matches too: cross-entity couplings are written by the
+    # block-root entity, so they cannot lag one recompute behind when the configuration changes.
+    mass_mat = solver.get_mass_mat(decompose=False)
+    assert_allclose(mass_mat[..., pair_dofs[:, None], pair_dofs], mass_mat[..., mono_dofs[:, None], mono_dofs], tol=tol)
 
 
 @pytest.mark.slow  # ~500s

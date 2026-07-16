@@ -594,10 +594,12 @@ class RigidSolver(KinematicSolver):
         # the price of wasted flops on their rows - proportional to the DOFs created between attached entities, hence
         # the advice to instantiate them consecutively (see RigidEntity.attach).
         roots_idx = np.flatnonzero(dofs_mass_block_start == np.arange(self.n_dofs_, dtype=gs.np_int))
+        has_interleaved_blocks = False
         span_start, span_end = 0, 0
         for i_d_root in roots_idx:
             if i_d_root < span_end:
                 span_end = max(span_end, dofs_mass_block_end[i_d_root])
+                has_interleaved_blocks = True
             else:
                 dofs_mass_block_start[span_start:span_end] = span_start
                 dofs_mass_block_end[span_start:span_end] = span_end
@@ -606,6 +608,11 @@ class RigidSolver(KinematicSolver):
         dofs_mass_block_end[span_start:span_end] = span_end
         self._dofs_mass_block_start = dofs_mass_block_start
         self._dofs_mass_block_end = dofs_mass_block_end
+        if has_interleaved_blocks:
+            gs.logger.warning(
+                "Attached entities are interleaved with unrelated degrees of freedom, which inflates the mass "
+                "factorization cost. Instantiate attached entities consecutively to avoid it."
+            )
 
         if self.is_active:
             # The tiled and cooperative Cholesky kernels trade per-env serial work for cross-lane parallelism, so they

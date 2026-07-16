@@ -468,7 +468,14 @@ def func_compute_mass_matrix(
                         else i_0
                     )
 
-                    for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                    # Assemble each mass block rooted in this entity over its full range (see
+                    # entities_mass_block_dof_start in array_class.py): the mirror pass reads rows of the whole block,
+                    # so the block-root entity must write them all itself - mirroring per entity would copy a merged
+                    # child's rows before the child's own iteration has written them, leaving the cross-entity
+                    # couplings one recompute stale.
+                    blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
+                    blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
+                    for i_d in range(blocks_dof_start, blocks_dof_end):
                         for j_d in range(
                             rigid_global_info.dofs_mass_block_start[i_d], rigid_global_info.dofs_mass_block_end[i_d]
                         ):
@@ -477,7 +484,7 @@ def func_compute_mass_matrix(
                                 + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
                             ) * rigid_global_info.mass_parent_mask[i_d, j_d]
 
-                    for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                    for i_d in range(blocks_dof_start, blocks_dof_end):
                         for j_d in range(i_d + 1, rigid_global_info.dofs_mass_block_end[i_d]):
                             rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
 
