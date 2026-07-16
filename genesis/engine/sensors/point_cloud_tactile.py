@@ -959,54 +959,35 @@ def _collect_collision_geom_idx(solver, track_link_idx: np.ndarray) -> tuple[tor
     return torch.tensor(geom_idx, dtype=gs.tc_int, device=gs.device), torch.stack(active_masks, dim=0)
 
 
-# [numerical] Peak of the Gaussian first-moment kernel r * exp(-lambda r^2): value e^{-1/2} / sqrt(2 lambda)
-# at r = 1/sqrt(2 lambda). Peak-normalizes the local kernel in the compressibility blend.
+# Peak of r * exp(-lambda r^2) is this / sqrt(2 lambda); peak-normalizes the local kernel in the blend.
 _INV_SQRT_E = math.exp(-0.5)
 
-# [numerical] Clamp range for q = |k| * h, the dimensionless wavenumber fed to _bonded_layer_transfer's S(q).
-# Q_MIN is set by the float64 conditioning of that 4x4 mode solve: cond(M) ~ 4.5/q^3 (lubrication limit), so
-# q = 1e-3 gives cond ~ 4.5e9 -- the smallest q still solved to ~6 digits in double. Clamping there costs no
-# accuracy: S has already reached its 1.5/q asymptote, and real FFT grids never get this low anyway (smallest
-# nonzero q ~ 2*pi*h / domain_size). Q_MAX = 30 is where S has decayed exponentially to ~0 (terms ~ e^{-2q}
-# < 1e-26), indistinguishable from S(Q_MAX). Neither bound is a tunable -- both bracket where S is flat.
+# Clamp bounds for q = |k| * h in _bonded_layer_transfer, chosen where S(q) is already flat.
 _LAYER_Q_MIN: Final[float] = 1e-3
 _LAYER_Q_MAX: Final[float] = 30.0
 
 
 @torch.jit.script
 def _bonded_layer_transfer(q: torch.Tensor, q_min: float = _LAYER_Q_MIN, q_max: float = _LAYER_Q_MAX) -> torch.Tensor:
-    """In-plane transfer ``S(q)``, ``q = |k| * h``, of an incompressible elastic layer bonded to a rigid base
-    (``u = w = 0`` at ``z = -h``) with a shear-free top surface where the normal displacement is prescribed:
-    ``u_hat(top) = -i * k_hat * S(q) * H_hat``.
+    """In-plane transfer ``S(q)`` of an incompressible elastic layer of thickness ``h`` bonded to a rigid base,
+    with a shear-free top surface of prescribed normal displacement. For dimensionless wavenumber ``q = |k| * h``,
+    the tangential surface displacement spectrum is ``-i * k_hat * S(q) * H_hat`` from the height spectrum ``H_hat``.
 
-    Solved exactly per mode -- a 4x4 system in the ``[a, b*h, c, d*h]`` coefficients of ``w(z) = (a + b z) e^{kz} + (c +
-    d z) e^{-kz}`` -- which is the linear elasticity an FEM of a flat bonded slab converges to. Asymptotics: ``S ~
-    1.5/q`` for ``q -> 0`` (thin-layer squeeze flow, the free-space ``1/r``) and ``S -> 0`` for ``q -> inf``
-    (incompressible half-space: no in-plane surface motion), peaking around ``q ~ 1``.
+    ``S(q) = 2 q^2 / (sinh(2q) - 2q)`` is the exact per-mode solution: it grows as ``1.5/q`` for small ``q``
+    (thin-layer squeeze flow, the free-space ``1/r``), peaks near ``q ~ 1``, and decays to ``0`` for large ``q``
+    (incompressible half-space limit). ``q`` is clamped to where ``S`` is already flat.
     """
-    # float64 is required here, not stylistic: the 4x4 mode system is ill-conditioned at small q
-    # (cond ~ 4.5/q^3, up to ~4.5e9 at q_min) -- far past float32's ~1e7 usable range. S(q) is O(1) so the
-    # caller safely downcasts the result.
-    q = q.to(torch.float64).clamp(min=q_min, max=q_max)
-    e2 = torch.exp(-2.0 * q)
-    one = torch.ones_like(q)
-    zero = torch.zeros_like(q)
-    # Rows: w(0)=1; zero top shear (w''(0) = -k^2 w(0)); w(-h)=0; u(-h)=0 (i.e. w'(-h)=0). Rows 3-4 are scaled by
-    # e^{-q} so entries stay O(1) at large q.
-    M = torch.stack(
-        (
-            torch.stack((one, zero, one, zero), dim=-1),
-            torch.stack((q, one, q, -one), dim=-1),
-            torch.stack((e2, -e2, one, -one), dim=-1),
-            torch.stack((q * e2, (1.0 - q) * e2, -q, one + q), dim=-1),
-        ),
-        dim=-2,
-    )
-    rhs = torch.stack((one, zero, zero, zero), dim=-1).unsqueeze(-1)
-    x = torch.linalg.solve(M, rhs).squeeze(-1)
-    # x = [a, b*h, c, d*h], the mode coefficients of w(z). S(q) is the in-plane transfer u_hat(top) read off
-    # this solved profile, which reduces to (a - c) + (b*h + d*h) / q.
-    return (x[..., 0] - x[..., 2]) + (x[..., 1] + x[..., 3]) / q
+    q = q.clamp(min=q_min, max=q_max)
+    two_q = 2.0 * q
+    two_q_sq = two_q * two_q
+    # sinh(2q) - 2q cancels for small q: sum its Taylor series (2q)^(2n+1)/(2n+1)! by recurrence, direct otherwise.
+    term = two_q * two_q_sq / 6.0  # first term, (2q)^3 / 3!
+    series = term
+    for n in range(2, 6):  # n_terms = 5, float32-accurate at the direct-form crossover
+        term = term * two_q_sq / ((2 * n) * (2 * n + 1))
+        series = series + term
+    denom = torch.where(two_q < 1.0, series, torch.sinh(two_q) - two_q)
+    return 2.0 * q * q / denom
 
 
 @torch.jit.script
@@ -1046,12 +1027,8 @@ def _precompute_hydroshear_dilate_kernel_fft(
         return torch.fft.rfft2(torch.fft.ifftshift(k, dim=(-2, -1)))
 
     if elastomer_thickness > 0.0:
-        # The transfer needs float64 intermediates (ill-conditioned mode solve, see _bonded_layer_transfer), which
-        # torch on Apple Metal provides on CPU only, so build it there; the result is downcast to the simulation
-        # dtype and moved to the device below.
-        cpu = torch.device("cpu")
-        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=torch.float64, device=cpu)
-        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=torch.float64, device=cpu)
+        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=dtype, device=device)
+        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=dtype, device=device)
         kvv, kuu = torch.meshgrid(kv1, ku1, indexing="ij")
         kmag = torch.sqrt(kvv * kvv + kuu * kuu)
         s_tf = torch.where(kmag > 0.0, _bonded_layer_transfer(kmag * elastomer_thickness), torch.zeros_like(kmag))
@@ -1063,8 +1040,8 @@ def _precompute_hydroshear_dilate_kernel_fft(
             torch.sqrt(torch.fft.irfft2(gu_hat, s=fft_n) ** 2 + torch.fft.irfft2(gv_hat, s=fft_n) ** 2).max()
         )
         cdtype = torch.complex64 if dtype == torch.float32 else torch.complex128
-        gu_hat = gu_hat.to(device=device, dtype=cdtype)
-        gv_hat = gv_hat.to(device=device, dtype=cdtype)
+        gu_hat = gu_hat.to(cdtype)
+        gv_hat = gv_hat.to(cdtype)
     else:
         eps_reg = dilation_reg if dilation_reg > 0.0 else 0.5 * (grid_spacing[0] + grid_spacing[1])
         inv = 1.0 / (r2 + eps_reg * eps_reg)
