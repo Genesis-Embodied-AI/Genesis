@@ -1009,12 +1009,14 @@ def _bonded_layer_transfer(q: torch.Tensor, q_min: float = _LAYER_Q_MIN, q_max: 
     return (x[..., 0] - x[..., 2]) + (x[..., 1] + x[..., 3]) / q
 
 
+@torch.jit.script
 def _precompute_hydroshear_dilate_kernel_fft(
     lambda_d: float,
     grid_spacing: tuple[float, float],
     fft_n: tuple[int, int],
     device: torch.device,
     dtype: torch.dtype,
+    eps: float,
     compressibility: float = 1.0,
     dilation_reg: float = 0.0,
     elastomer_thickness: float = 0.0,
@@ -1044,12 +1046,16 @@ def _precompute_hydroshear_dilate_kernel_fft(
         return torch.fft.rfft2(torch.fft.ifftshift(k, dim=(-2, -1)))
 
     if elastomer_thickness > 0.0:
-        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=torch.float64, device=device)
-        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=torch.float64, device=device)
+        # The transfer needs float64 intermediates (ill-conditioned mode solve, see _bonded_layer_transfer), which
+        # torch on Apple Metal provides on CPU only, so build it there; the result is downcast to the simulation
+        # dtype and moved to the device below.
+        cpu = torch.device("cpu")
+        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=torch.float64, device=cpu)
+        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=torch.float64, device=cpu)
         kvv, kuu = torch.meshgrid(kv1, ku1, indexing="ij")
         kmag = torch.sqrt(kvv * kvv + kuu * kuu)
         s_tf = torch.where(kmag > 0.0, _bonded_layer_transfer(kmag * elastomer_thickness), torch.zeros_like(kmag))
-        kmag_safe = kmag.clamp(min=gs.EPS)
+        kmag_safe = kmag.clamp(min=eps)
         gu_hat = (-1j) * (kuu / kmag_safe) * s_tf
         gv_hat = (-1j) * (kvv / kmag_safe) * s_tf
         # Peak of the real-space kernel magnitude, for the blend normalization below.
@@ -1057,21 +1063,21 @@ def _precompute_hydroshear_dilate_kernel_fft(
             torch.sqrt(torch.fft.irfft2(gu_hat, s=fft_n) ** 2 + torch.fft.irfft2(gv_hat, s=fft_n) ** 2).max()
         )
         cdtype = torch.complex64 if dtype == torch.float32 else torch.complex128
-        gu_hat = gu_hat.to(cdtype)
-        gv_hat = gv_hat.to(cdtype)
+        gu_hat = gu_hat.to(device=device, dtype=cdtype)
+        gv_hat = gv_hat.to(device=device, dtype=cdtype)
     else:
-        eps = dilation_reg if dilation_reg > 0.0 else 0.5 * (grid_spacing[0] + grid_spacing[1])
-        inv = 1.0 / (r2 + eps * eps)
+        eps_reg = dilation_reg if dilation_reg > 0.0 else 0.5 * (grid_spacing[0] + grid_spacing[1])
+        inv = 1.0 / (r2 + eps_reg * eps_reg)
         sp = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * inv, vv * inv), dim=0), dim=(-2, -1)))
         gu_hat, gv_hat = sp[0], sp[1]
-        norm_i = 1.0 / (2.0 * eps)  # peak of r/(r^2+eps^2) at r=eps
+        norm_i = 1.0 / (2.0 * eps_reg)  # peak of r/(r^2+eps^2) at r=eps_reg
 
     kn_hat = torch.fft.rfft2(torch.fft.ifftshift(g, dim=(-2, -1)))
     if compressibility <= 0.0:
         ku_hat, kv_hat = gu_hat, gv_hat
     else:
         loc = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * g, vv * g), dim=0), dim=(-2, -1)))
-        norm_g = _INV_SQRT_E / math.sqrt(2.0 * lambda_d)  # peak of r*exp(-lambda_d r^2), see _INV_SQRT_E
+        norm_g = math.exp(-0.5) / math.sqrt(2.0 * lambda_d)  # peak of r*exp(-lambda_d r^2), see _INV_SQRT_E
         c = compressibility
         ku_hat = c * loc[0] / norm_g + (1.0 - c) * gu_hat / norm_i
         kv_hat = c * loc[1] / norm_g + (1.0 - c) * gv_hat / norm_i
@@ -1086,6 +1092,7 @@ def _dilate_kernel_builder(meta_entry: GridFFTMeta, fft_n: tuple[int, int]) -> t
         fft_n,
         gs.device,
         gs.tc_float,
+        gs.EPS,
         meta_entry.compressibility,
         meta_entry.dilation_reg,
         meta_entry.elastomer_thickness,
@@ -1795,6 +1802,7 @@ def _build_shear_active_pc_index(
             active_pc_idx[bs, pc_start + write_pos[bs, js]] = (pc_start + js).to(idx_dtype)
 
 
+@torch.jit.script
 def _elastomer_taxel_grid_fft_dilate(
     grid_fft_meta: list[GridFFTMeta],
     grid_fft_kernels_stacked: torch.Tensor,
@@ -1820,7 +1828,7 @@ def _elastomer_taxel_grid_fft_dilate(
     view/copy and per-sensor tangent decomposition). Grid axes are ``(ny, nx)`` row-major throughout (matching
     the probe flat index ``iy * nx + ix``), so no transpose is needed on either the fill or write-back side.
     """
-    if not grid_fft_meta:
+    if len(grid_fft_meta) == 0:
         return
     n_batches = probe_depth_buf.shape[0]
     fft_ny, fft_nx = grid_fft_buffer.shape[-2], grid_fft_buffer.shape[-1]
@@ -1836,7 +1844,8 @@ def _elastomer_taxel_grid_fft_dilate(
     H_fft = torch.fft.rfft2(grid_fft_buffer)
     # The normal channel follows depth ** normal_exponent, so it convolves the per-grid powered depth field;
     # the tangential (u, v) channels stay linear in depth and convolve the raw field H.
-    exps = normal_exponent[[meta.sensor_idx for meta in grid_fft_meta]].reshape(1, -1, 1, 1)
+    sensors_idx = torch.tensor([meta.sensor_idx for meta in grid_fft_meta], device=normal_exponent.device)
+    exps = normal_exponent[sensors_idx].reshape(1, -1, 1, 1)
     Hp_fft = torch.fft.rfft2(grid_fft_buffer.pow(exps))
     Ku_all = grid_fft_kernels_stacked[:, 0]  # (n_grid, fft_ny, fft_nx // 2 + 1) complex
     Kv_all = grid_fft_kernels_stacked[:, 1]
