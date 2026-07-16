@@ -14,6 +14,14 @@ Two things to keep in mind throughout:
 - **Runtime hot paths: efficiency first.** Anything executed every simulation step must minimize GPU-CPU transfers and use bulk, vectorized operations.
 - **No legacy code.** Experimental subsystems carry no deprecation or backward-compatibility burden. Dead code, unused helpers, and commented-out experiments must be removed, not kept "just in case". Do not implement private helpers proactively because they "might be useful later"; add them when they are actually needed.
 
+### 1.1 When a contribution earns its place
+
+Every addition is a cost before it is a benefit: a new algorithm adds maintenance burden, and modifying an existing one risks new bugs. A pull request is merged only when its benefit to end users outweighs that cost - "it works" is not a benefit, since working on its own brings nothing concrete. Benefit is measured on three axes, and a contribution that improves none of them is rejected:
+
+- **Speed.** Demonstrate a significant gain on the existing performance benchmarks under `tests/benchmarks/` - above +5% on at least one. Any regression counts against the contribution, weighed case by case against which benchmark it hits. If a real gain is invisible to the current benchmarks, extend the suite so it shows up rather than asserting it in prose.
+- **Robustness and numerical stability.** Add unit tests that fail before the change and pass after, exactly as a bug fix must (see 12.1). Each corner case newly covered is a benefit; each previously-covered case now broken is a cost.
+- **Ease of use.** Removing a parameter users must tune case by case is highly valued; introducing one is a heavy cost. This concerns *real* parameters - values genuinely tuned per scene (`noslip_iterations`), not incidental knobs (`noslip_tolerance`). A new option whose default works out of the box everywhere is not a real parameter, but then the contribution is judged as if that default were hardcoded: an algorithm reachable only by flipping a non-default flag brings zero benefit on its own. If the flag is instead meant to be tuned, it counts as a real parameter, and its cost must be bought back by the speed or robustness it unlocks.
+
 ## 2. Naming conventions
 
 Consistent naming is one of the most heavily enforced aspects of Genesis reviews. The scheme below applies everywhere, including throwaway debug and instrumentation code: a cryptic one-off local like `wt` (for `is_watertight`) will be flagged even in a script you plan to delete.
@@ -66,6 +74,7 @@ The default is **no comment**. A comment earns its place only when a reader look
 - **Each fact lives in exactly one comment; other sites cross-reference it.** Mechanics belong at the data/declaration they describe, motivation and gating rationale at the decision site that owns them. Never restate the same information at several sites - but every dependent site keeps a one-liner with an explicit pointer to the source of truth (e.g. "see nt_H in array_class.py"): a single source of truth only works if readers are made aware of it, since nobody reads the entire codebase. This is the one place a pointer comment is required rather than banned.
 - Do not justify a design by citing external projects a reader cannot verify. Decide from Genesis's own conventions; if a real external consumer genuinely matters, name it with a URL the reviewer can open.
 - **When porting a feature from a known external project (e.g. MuJoCo), reference it at the right granularity: name the feature being re-implemented, optionally point to the official doc section, and/or give the math formula. Never cite the external repo's specific file / function / constant / symbol names** - those are cross-repo, go stale as the other project changes, add no signal a reader cannot rederive, and are easy to find manually later. "matches MuJoCo's elliptic cone" is good; "matches MuJoCo's `ellipticCostDif` in `engine_solver.c`" is not.
+- **Comments go on their own line above the code they annotate, never trailing inline, whenever possible.** A full-line comment survives reformatting and line-length pressure; a trailing comment competes with the code for the 120-character budget and gets truncated or dropped first.
 - Punctuation: single dash `-`, not double `--`; single-line comments do not end with a period; no RST double backticks in `#` comments (they only render in docstrings).
 - Commented-out `print` statements are prohibited; convert them to `gs.logger.debug` traces.
 - **Never delete a comment that is still applicable.** If it has gone stale, update it to describe current behavior. If you believe it is truly irrelevant, raise it with the maintainer rather than deleting it silently - a comment documenting a non-obvious decision is easy to destroy and hard to recover.
@@ -166,6 +175,7 @@ Genesis strongly resists the accumulation of small wrappers. Helpers accrete, ge
 - When no analytical expectation exists, run the simulation once, hardcode the resulting reference values, and assert against them with a loose tolerance, leaving a `FIXME` asking for physics-informed assertions later. This non-regression fallback is far better than checking nothing.
 - For exact analytical dynamics checks, force `gs.integrator.Euler` so the finite-differenced acceleration matches the solver's, and account for rigid-body rotational inertia plus the implicit-damping first-order correction (`effective_inertia = I + damping*dt`) rather than loosening tolerances or distorting the geometry.
 - **Tests are reference documentation.** They must exercise the public API we want users to adopt - default getters, user-frame values compared against the hard-coded morph inputs - never internal solver-frame access or non-default flags pinned to dodge a new default.
+- **MuJoCo-compatibility mode is the sanctioned exception to that default-flag rule.** The `enable_mujoco_compatibility` solver option (off by default) makes the rigid solver reproduce MuJoCo's dynamics to floating-point tolerance, letting Genesis serve as its own baseline: toggling it on and off proves a faster or more robust replacement integrates to the same state, with no runtime dependency on MuJoCo. Tests may run both arms deliberately - flag on as ground truth, off as the shipped path - asserting parity through `check_mujoco_model_consistency` / `check_mujoco_data_consistency` in `tests/utils.py`. This differs from pinning a non-default flag to dodge a new default, which stays prohibited. The mode exists for maintainer-guided debugging and validation, not production, so it must match, never be fast.
 - Do not write tests that verify deprecation warnings are emitted; feature tests exercise behavior, not warning machinery.
 
 ### 12.2 Test structure
@@ -180,7 +190,9 @@ Genesis strongly resists the accumulation of small wrappers. Helpers accrete, ge
 
 ### 12.3 Assertions
 
-- Use `assert_allclose` from `tests/utils.py`; it handles tensors, numpy arrays, and scalars uniformly.
+- **Every assertion is a specification.** Whatever a unit test asserts automatically becomes a requirement the implementation must guarantee from then on, and every requirement makes refactoring more challenging. Assert only behavior we genuinely want to commit to; the fewer requirements, the better.
+- **No irrelevant assertions.** Drop any assert already implied by a stricter one nearby (a shape check before an exact full-tensor comparison, an is-not-None check before an access that would fail anyway).
+- Use `assert_allclose` / `assert_equal` from `tests/utils.py`; they handle tensors, numpy arrays, and scalars uniformly, provide extended broadcasting, and format failures with the full mismatch details. Prefer `assert_equal` for exact comparisons over framework-specific forms (`torch.equal`, `np.array_equal`).
 - Do not gate per-step assertions behind `float(...)`/`.item()` casts on tensor reductions. Design the scenario (for example, a warmup loop) so the assertion holds unconditionally, then assert on the full tensor with `.all()`.
 - Use the built-in `envs_idx` argument on getters rather than indexing the batched result: `get_pos(envs_idx=[i])`, not `get_pos()[i]`.
 - Assert orientation via `gu.quat_to_xyz(...) == 0.0`, never by comparing to `gu.identity_quat()`.

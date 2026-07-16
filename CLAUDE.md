@@ -73,6 +73,7 @@
 - **Each fact lives in exactly one comment; other sites cross-reference it.** Mechanics belong at the data/declaration they describe, motivation and gating rationale at the decision site that owns them. Never restate the same information at several sites - but every dependent site keeps a one-liner with an explicit pointer to the source of truth (e.g. "see nt_H in array_class.py").
 - **State what IS, never what is NOT.** In comments, docstrings, and reports, drop "not X", "unlike Y", "does not ...", "it is X, not Y" unless the negation was explicitly asked for or is the literal spec. If a property is not mentioned, it does not exist - defending against an unraised concern is noise. Say the positive fact and stop.
 - **Function-level description goes in a docstring, never a block of leading `#` comments** at the top of the body. Reserve inline comments for non-obvious implementation details at their point of use (e.g. a constraint-layout invariant a few lines rely on). A getter/method that opens with a paragraph of `#` prose is wrong; that prose is its docstring.
+- **Comments go on their own line above the code they annotate, never trailing inline, whenever possible.**
 - **No local imports** unless strictly necessary (e.g., circular dependency avoidance). All imports at module top level.
 - No import aliasing (`Cloth` not `ClothMaterial`).
 - No temporary variables for `isinstance` checks. Use `isinstance(...)` directly in `if` statements.
@@ -101,7 +102,8 @@
 - **Pack tests.** Prefer one comprehensive scene with diverse entities and options over many small single-option tests. Add entities with different configurations to the same scene instead of creating separate test functions.
 - **Assert physics, not just execution.** "Simulation runs without error" is not a test. Check quantities with physical meaning: free-fall displacement (`z = z0 - 0.5*g*t^2`), no ground penetration (`min_z > -d_hat`), velocity → 0 at rest, contact stops fall.
 - **Non-regression fallback.** If no analytical expectation is available, run the simulation once to get reference values, hardcode them, and assert with a loose tolerance. Add a `FIXME` comment asking to replace with physics-informed assertions later.
-- **Use `assert_allclose` from `tests/utils.py`.** It handles tensors, numpy arrays, and scalars uniformly.
+- **Use `assert_allclose` / `assert_equal` from `tests/utils.py`.** Prefer `assert_equal` for exact comparisons over framework-specific forms (`torch.equal`, `np.array_equal`).
+- **Every assertion is a specification.** Assert only behavior we genuinely want to commit to, and drop any assert already implied by a stricter one nearby.
 - **FEM entity positions:** `entity.get_state().pos` has shape `[B, n_verts, 3]`. Use `[..., 2]` to select z across all envs and vertices.
 - **Rigid entity positions:** `entity.get_pos()` returns `[B, 3]` or `[3]`. Use `np.atleast_1d(...)[..., 2]` and `.all()` for multi-env checks.
 - **Parametrize batched tests over `n_envs=[0, 2]`.** Multi-env is where shape bugs hide; never test single-env only. Do not add a dead parametrize dimension that a conftest fixture already controls (e.g. `backend`).

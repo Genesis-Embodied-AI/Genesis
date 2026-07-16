@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import quadrants as qd
 
 import genesis as gs
+import genesis.utils.geom as gu
 import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.options.textures import ColorTexture
@@ -281,6 +282,37 @@ def test_surface_shortcut_resolution():
         gs.surfaces.Rough(color=(1.0, 0.0, 0.0), diffuse_texture=ColorTexture(color=(0.0, 1.0, 0.0)))
     with pytest.raises(Exception, match="'thickness' and 'thickness_texture' cannot both be set"):
         gs.surfaces.Glass(thickness=0.02, thickness_texture=ColorTexture(color=(0.05,)))
+
+
+@pytest.mark.required
+def test_morph_orientation_offset_resolution():
+    quat_90z = gu.xyz_to_quat(np.array((0.0, 0.0, 90.0)), rpy=True, degrees=True)
+
+    # An unset offset resolves to identity, whether omitted or passed as the None unset sentinel.
+    assert_equal(gs.morphs.Box(size=(0.1, 0.1, 0.1)).offset_quat, (1.0, 0.0, 0.0, 0.0))
+    assert_equal(gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_quat=None).offset_quat, (1.0, 0.0, 0.0, 0.0))
+
+    # 'offset_euler' resolves into 'offset_quat'.
+    assert_allclose(
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_euler=(0.0, 0.0, 90.0)).offset_quat, quat_90z, tol=gs.EPS
+    )
+
+    # An explicit 'offset_quat' is kept verbatim.
+    assert_equal(
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_quat=(0.0, 1.0, 0.0, 0.0)).offset_quat, (0.0, 1.0, 0.0, 0.0)
+    )
+
+    # A None 'offset_quat' means unset, so a serializer can forward it unconditionally alongside 'offset_euler';
+    # it resolves to 'offset_euler'.
+    assert_allclose(
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_euler=(0.0, 0.0, 90.0), offset_quat=None).offset_quat,
+        quat_90z,
+        tol=gs.EPS,
+    )
+
+    # 'offset_euler' and 'offset_quat' are mutually exclusive.
+    with pytest.raises(Exception, match="'offset_euler' and 'offset_quat' cannot both be set"):
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), offset_euler=(0.0, 0.0, 90.0), offset_quat=(0.0, 1.0, 0.0, 0.0))
 
 
 @pytest.mark.required

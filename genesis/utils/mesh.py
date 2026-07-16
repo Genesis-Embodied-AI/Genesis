@@ -427,6 +427,7 @@ def postprocess_collision_geoms(
         mesh = g_info["mesh"]
         geom_type = g_info.get("type")
         friction = g_info.get("friction")
+        density = g_info.get("density")
         sol_params = g_info.get("sol_params")
         key_parts += [
             discretize_array_for_hashing(mesh.verts),
@@ -435,6 +436,7 @@ def postprocess_collision_geoms(
             int(g_info.get("contype", 0)),
             int(g_info.get("conaffinity", 0)),
             float("nan") if friction is None else float(friction),
+            float("nan") if density is None else float(density),
             np.zeros(0) if sol_params is None else np.ascontiguousarray(sol_params, dtype=np.float64),
             np.ascontiguousarray(g_info.get("pos", gu.zero_pos()), dtype=np.float64),
             np.ascontiguousarray(g_info.get("quat", gu.identity_quat()), dtype=np.float64),
@@ -601,7 +603,9 @@ def _postprocess_collision_geoms_impl(
                         and all(first_g_info.get(name) == g_info.get(name) for name in ("contype", "conaffinity"))
                         and all(
                             np.allclose(first_g_info.get(name, np.nan), g_info.get(name, np.nan), equal_nan=True)
-                            for name in ("friction", "sol_params")
+                            # A fused mesh carries a single density, so geoms with different authored densities must
+                            # stay separate for the density-weighted link inertial to survive fusion.
+                            for name in ("friction", "sol_params", "density")
                         )
                     ):
                         fusion_group.append(i)

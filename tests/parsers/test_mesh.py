@@ -1,9 +1,7 @@
 import io
 import os
-import platform
 from contextlib import nullcontext
 
-import xml.etree.ElementTree as ET
 import numpy as np
 import pygltflib
 import pytest
@@ -16,144 +14,14 @@ import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 
 from ..utils import assert_allclose, assert_equal, get_hf_dataset
-
-
-def extract_mesh(gs_mesh):
-    """Extract vertices, normals, uvs, and faces from a gs.Mesh object."""
-    vertices = gs_mesh.trimesh.vertices
-    normals = gs_mesh.trimesh.vertex_normals
-    uvs = gs_mesh.trimesh.visual.uv
-    faces = gs_mesh.trimesh.faces
-
-    indices = np.lexsort(
-        [
-            uvs[:, 1],
-            uvs[:, 0],
-            normals[:, 2],
-            normals[:, 1],
-            normals[:, 0],
-            vertices[:, 2],
-            vertices[:, 1],
-            vertices[:, 0],
-        ]
-    )
-
-    vertices = vertices[indices]
-    normals = normals[indices]
-    uvs = uvs[indices]
-    invdices = np.argsort(indices)
-    faces = invdices[faces]
-    return vertices, faces, normals, uvs
-
-
-def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name, vertices_tol, normals_tol):
-    """Check if two gs.Mesh objects are equal."""
-    vertices1, faces1, normals1, uvs1 = extract_mesh(gs_mesh1)
-    vertices2, faces2, normals2, uvs2 = extract_mesh(gs_mesh2)
-
-    assert_allclose(vertices1, vertices2, atol=vertices_tol, err_msg=f"Vertices match failed in mesh {mesh_name}.")
-    assert_equal(faces1, faces2, err_msg=f"Faces match failed in mesh {mesh_name}.")
-    assert_allclose(normals1, normals2, atol=normals_tol, err_msg=f"Normals match failed in mesh {mesh_name}.")
-    assert_allclose(uvs1, uvs2, rtol=gs.EPS, err_msg=f"UVs match failed in mesh {mesh_name}.")
-
-
-def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name, vertices_tol, normals_tol):
-    """Check if a gs.Mesh object and a trimesh.Trimesh object are equal."""
-    assert_allclose(
-        tm_mesh.vertices,
-        gs_mesh.trimesh.vertices,
-        tol=vertices_tol,
-        err_msg=f"Vertices match failed in mesh {mesh_name}.",
-    )
-    assert_equal(
-        tm_mesh.faces,
-        gs_mesh.trimesh.faces,
-        err_msg=f"Faces match failed in mesh {mesh_name}.",
-    )
-    assert_allclose(
-        tm_mesh.vertex_normals,
-        gs_mesh.trimesh.vertex_normals,
-        tol=normals_tol,
-        err_msg=f"Normals match failed in mesh {mesh_name}.",
-    )
-    if not isinstance(tm_mesh.visual, trimesh.visual.color.ColorVisuals):
-        assert_allclose(
-            tm_mesh.visual.uv,
-            gs_mesh.trimesh.visual.uv,
-            rtol=gs.EPS,
-            err_msg=f"UVs match failed in mesh {mesh_name}.",
-        )
-
-
-def check_gs_tm_textures(gs_texture, tm_color, tm_image, default_value, dim, material_name, texture_name):
-    """Check if a gs.Texture object and a trimesh.Texture object are equal."""
-    if isinstance(gs_texture, gs.textures.ColorTexture):
-        tm_color = tm_color or (default_value,) * dim
-        assert_allclose(
-            tm_color,
-            gs_texture.color,
-            rtol=gs.EPS,
-            err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
-        )
-    elif isinstance(gs_texture, gs.textures.ImageTexture):
-        tm_color = tm_color or (1.0,) * dim
-        assert_allclose(
-            tm_color,
-            gs_texture.image_color,
-            rtol=gs.EPS,
-            err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
-        )
-        assert_equal(
-            tm_image,
-            gs_texture.image_array,
-            err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
-        )
-
-
-def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, texture_name):
-    """Check if two gs.Texture objects are equal."""
-    if gs_texture1 is None:
-        gs_texture1, gs_texture2 = gs_texture2, gs_texture1
-    if gs_texture1 is not None:
-        gs_texture1 = gs_texture1.check_simplify()
-    if gs_texture2 is not None:
-        gs_texture2 = gs_texture2.check_simplify()
-
-    if isinstance(gs_texture1, gs.textures.ColorTexture):
-        gs_color2 = (default_value,) * len(gs_texture1.color) if gs_texture2 is None else gs_texture2.color
-        assert_allclose(
-            gs_texture1.color,
-            gs_color2,
-            rtol=gs.EPS,
-            err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
-        )
-    elif isinstance(gs_texture1, gs.textures.ImageTexture):
-        assert isinstance(gs_texture2, gs.textures.ImageTexture)
-        assert_allclose(
-            gs_texture1.image_color,
-            gs_texture2.image_color,
-            rtol=gs.EPS,
-            err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
-        )
-        assert_equal(
-            gs_texture1.image_array,
-            gs_texture2.image_array,
-            err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
-        )
-    else:
-        assert gs_texture1 is None and gs_texture2 is None, (
-            f"Both textures should be None for material {material_name} in {texture_name}."
-        )
-
-
-def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
-    """Check if two gs.Surface objects are equal."""
-    check_gs_textures(gs_surface1.texture, gs_surface2.texture, 1.0, material_name, "color")
-    check_gs_textures(gs_surface1.opacity_texture, gs_surface2.opacity_texture, 1.0, material_name, "opacity")
-    check_gs_textures(gs_surface1.roughness_texture, gs_surface2.roughness_texture, 1.0, material_name, "roughness")
-    check_gs_textures(gs_surface1.metallic_texture, gs_surface2.metallic_texture, 0.0, material_name, "metallic")
-    check_gs_textures(gs_surface1.normal_texture, gs_surface2.normal_texture, 0.0, material_name, "normal")
-    check_gs_textures(gs_surface1.emissive_texture, gs_surface2.emissive_texture, 0.0, material_name, "emissive")
+from .conftest import (
+    check_gs_meshes,
+    check_gs_surfaces,
+    check_gs_textures,
+    check_gs_tm_meshes,
+    check_gs_tm_textures,
+    extract_mesh,
+)
 
 
 # ==================== Scale Tests ====================
@@ -786,63 +654,6 @@ def test_plane_texture_path_preservation(show_viewer):
     assert plane.vgeoms[0].vmesh.metadata["texture_path"] == "textures/checker.png"
 
 
-@pytest.fixture
-def material_mjcf(tmp_path):
-    """Generate an MJCF model with materials and geom-level colors."""
-    mjcf = ET.Element("mujoco", model="materials")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
-
-    # Define materials with different properties (at top level, not in default)
-    asset = ET.SubElement(mjcf, "asset")
-    ET.SubElement(
-        asset,
-        "material",
-        name="red_material",
-        rgba="1.0 0.0 0.0 0.6",
-        specular="0.5",
-        shininess="0.3",
-    )
-
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
-    ET.SubElement(floor, "geom", type="plane", pos="0. 0. 0.", size="40. 40. 40.")
-
-    # Box with red material (material-level rgba)
-    box1 = ET.SubElement(worldbody, "body", name="/worldbody/box1", pos="-0.3 0. 0.3")
-    ET.SubElement(
-        box1,
-        "geom",
-        type="box",
-        size="0.2 0.2 0.2",
-        pos="0. 0. 0.",
-        material="red_material",
-        contype="0",
-        conaffinity="0",
-    )
-    ET.SubElement(box1, "joint", name="/worldbody/box1_joint", type="free")
-
-    # Box with geom-level rgba (no material, tests geom-level color)
-    box2 = ET.SubElement(worldbody, "body", name="/worldbody/box2", pos="0.0 0. 0.6")
-    ET.SubElement(
-        box2,
-        "geom",
-        type="box",
-        size="0.2 0.2 0.2",
-        pos="0. 0. 0.",
-        rgba="0.0 1.0 0.0 1.0",
-        contype="0",
-        conaffinity="0",
-    )
-    ET.SubElement(box2, "joint", name="/worldbody/box2_joint", type="free")
-
-    # Write to temporary file
-    xml_tree = ET.ElementTree(mjcf)
-    file_path = str(tmp_path / "material_mjcf.xml")
-    xml_tree.write(file_path, encoding="utf-8", xml_declaration=True)
-    return file_path
-
-
 @pytest.mark.parametrize("precision", ["32"])
 def test_mjcf_parse_material(material_mjcf, tol):
     scene = gs.Scene()
@@ -881,53 +692,6 @@ def test_mjcf_parse_material(material_mjcf, tol):
         box2_surface.diffuse_texture, gs.textures.ColorTexture(color=(0.0, 1.0, 0.0)), 1.0, "box2", "color"
     )
     check_gs_textures(box2_surface.opacity_texture, None, 1.0, "box2", "opacity")
-
-
-@pytest.fixture
-def normals_mjcf(tmp_path):
-    # MuJoCo packs vertices and normals in separately-addressed blocks. The first mesh has a different number of
-    # vertices than normals (a flat-shaded bipyramid: shared positions, per-face normals), which shifts the second
-    # mesh's normal block away from its vertex block. The second mesh (a smooth icosphere, whose normals are exactly
-    # radial) is the one whose normals must be read at the correct offset and routed through the per-face normal
-    # indices, so it is the comparison target.
-    n_sides = 24
-    radius, half_height = 0.3, 0.4
-    angles = 2.0 * np.pi * np.arange(n_sides) / n_sides
-    ring = np.stack([radius * np.cos(angles), radius * np.sin(angles), np.zeros(n_sides)], axis=1)
-    bipyr_verts = np.vstack([ring, (0.0, 0.0, half_height), (0.0, 0.0, -half_height)])
-    top_idx, bot_idx = n_sides, n_sides + 1
-    bipyr_faces = []
-    for k in range(n_sides):
-        a, b = k, (k + 1) % n_sides
-        bipyr_faces.append((a, b, top_idx))
-        bipyr_faces.append((b, a, bot_idx))
-    bipyr_normals = []
-    for a, b, c in bipyr_faces:
-        normal = np.cross(bipyr_verts[b] - bipyr_verts[a], bipyr_verts[c] - bipyr_verts[a])
-        bipyr_normals.append(normal / np.linalg.norm(normal))
-    obj_lines = [f"v {v[0]} {v[1]} {v[2]}" for v in bipyr_verts]
-    obj_lines += [f"vn {n[0]} {n[1]} {n[2]}" for n in bipyr_normals]
-    for i, (a, b, c) in enumerate(bipyr_faces):
-        obj_lines.append(f"f {a + 1}//{i + 1} {b + 1}//{i + 1} {c + 1}//{i + 1}")
-    bipyr_path = tmp_path / "bipyr.obj"
-    bipyr_path.write_text("\n".join(obj_lines) + "\n")
-
-    ico_path = tmp_path / "ico.obj"
-    trimesh.creation.icosphere(radius=0.3, subdivisions=3).export(str(ico_path), include_normals=True)
-
-    mjcf = ET.Element("mujoco", model="normals")
-    asset = ET.SubElement(mjcf, "asset")
-    ET.SubElement(asset, "mesh", name="bipyr", file=str(bipyr_path))
-    ET.SubElement(asset, "mesh", name="ico", file=str(ico_path))
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    body = ET.SubElement(worldbody, "body", name="/worldbody/obj")
-    ET.SubElement(body, "freejoint")
-    ET.SubElement(body, "geom", type="mesh", mesh="bipyr", contype="0", conaffinity="0")
-    ET.SubElement(body, "geom", type="mesh", mesh="ico", contype="0", conaffinity="0")
-
-    file_path = str(tmp_path / "normals_mjcf.xml")
-    ET.ElementTree(mjcf).write(file_path, encoding="utf-8", xml_declaration=True)
-    return file_path, str(ico_path)
 
 
 def test_mjcf_parse_mesh_normals(normals_mjcf):

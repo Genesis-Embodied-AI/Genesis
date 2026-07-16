@@ -9,7 +9,6 @@ import mujoco
 
 import numpy as np
 import trimesh
-import z3
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
@@ -18,6 +17,7 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from . import urdf as uu
+from .collision import solve_contype_conaffinity
 from .misc import get_assets_dir, redirect_libc_stderr
 
 
@@ -688,38 +688,17 @@ def parse_geoms(mj, scale, surface, xml_path):
                     invalid_set.add(frozenset((geom_1, geom_2)))
 
         # Compute updated contype and conaffinity from the complete list of invalid collision pairs
-        is_success = False
-        N = len(cg_infos)
-        for K in range(1, 32):
-            s = z3.Solver()
-            contype_bits = [[z3.Bool(f"contype_{i}_{b}") for b in range(K)] for i in range(N)]
-            conaffinity_bits = [[z3.Bool(f"conaffinity_{i}_{b}") for b in range(K)] for i in range(N)]
-            for i in range(N):
-                for j in range(i + 1, N):
-                    cond1 = z3.Or([z3.And(contype_bits[i][b], conaffinity_bits[j][b]) for b in range(K)])
-                    cond2 = z3.Or([z3.And(contype_bits[j][b], conaffinity_bits[i][b]) for b in range(K)])
-                    pair = frozenset((i, j))
-                    if pair in invalid_set:
-                        s.add(z3.Not(cond1), z3.Not(cond2))
-                    else:
-                        s.add(z3.Or(cond1, cond2))
-            if s.check() == z3.sat:
-                is_success = True
-                model = s.model()
-                for g_info, contype_bits_i, conaffinity_bits_i in zip(cg_infos, contype_bits, conaffinity_bits):
-                    g_info["contype"], g_info["conaffinity"] = (
-                        sum((1 << b) if z3.is_true(model[e]) else 0 for b, e in enumerate(bits))
-                        for bits in (contype_bits_i, conaffinity_bits_i)
-                    )
-                break
-
-        if not is_success:
+        masks = solve_contype_conaffinity(len(cg_infos), invalid_set)
+        if masks is None:
             gs.logger.warning(
                 "Compatible collision geometries cannot be described using bitmasks 'contype' and 'conaffinity'. "
                 "Using default values..."
             )
             for g_info in cg_infos:
                 g_info["contype"], g_info["conaffinity"] = 1, 1
+        else:
+            for g_info, (contype, conaffinity) in zip(cg_infos, masks):
+                g_info["contype"], g_info["conaffinity"] = contype, conaffinity
 
     # Inform the user that collision geometries are not displayed by default
     if is_any_col and surface.vis_mode != "collision":

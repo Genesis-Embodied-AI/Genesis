@@ -97,11 +97,11 @@ class Morph(Options):
         world-frame shift, and when the orientation is identity it simply adds to `pos`. Defaults to (0.0, 0.0, 0.0).
     offset_euler : tuple, shape (3,), optional
         The orientation offset `offset_quat` given as an euler angle in degrees (scipy extrinsic x-y-z convention).
-        Setting both `offset_euler` and `offset_quat` raises an error. Defaults to None.
+        Mutually exclusive with `offset_quat`. Defaults to None.
     offset_quat : tuple, shape (4,), optional
         A fixed orientation offset (w-x-y-z convention); see `offset_pos` for how it compounds with `pos`/`quat` to
         form the world pose. Up-axis conversions (e.g. loading a Z-up asset) are stored here.
-        Defaults to (1.0, 0.0, 0.0, 0.0).
+        Mutually exclusive with `offset_euler`. Defaults to None.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -122,7 +122,7 @@ class Morph(Options):
     quat: UnitVec4FType | None = None
     offset_pos: Vec3FType = (0.0, 0.0, 0.0)
     offset_euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
-    offset_quat: UnitVec4FType = (1.0, 0.0, 0.0, 0.0)
+    offset_quat: UnitVec4FType | None = None
     visualization: StrictBool = True
     collision: StrictBool = True
     requires_jac_and_IK: StrictBool = False
@@ -143,10 +143,17 @@ class Morph(Options):
         elif quat is None:
             data["quat"] = (1.0, 0.0, 0.0, 0.0)
         offset_euler = data.get("offset_euler")
-        if offset_euler is not None and data.get("offset_quat") is not None:
-            gs.raise_exception("'offset_euler' and 'offset_quat' cannot both be set.")
+        offset_quat = data.get("offset_quat")
         if offset_euler is not None:
-            data["offset_quat"] = tuple(gu.xyz_to_quat(np.array(offset_euler), rpy=True, degrees=True))
+            euler_quat = gu.xyz_to_quat(np.array(offset_euler), rpy=True, degrees=True)
+            # A quaternion and its negation encode the same rotation, so accept either sign.
+            if offset_quat is not None and not (
+                np.allclose(offset_quat, euler_quat, atol=gs.EPS) or np.allclose(offset_quat, -euler_quat, atol=gs.EPS)
+            ):
+                gs.raise_exception("'offset_euler' and 'offset_quat' cannot both be set.")
+            data["offset_quat"] = tuple(euler_quat)
+        elif offset_quat is None:
+            data["offset_quat"] = (1.0, 0.0, 0.0, 0.0)
         return data
 
     def model_post_init(self, context: Any) -> None:
