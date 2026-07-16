@@ -99,10 +99,6 @@ SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madro
 SKIP_NO_LUISA = _skip_reason("RayTracer is not supported because 'LuisaRenderPy' is not available.")
 SKIP_NO_VIEWER = _skip_reason("Interactive viewer not supported on this platform.")
 SKIP_NO_OMNIVERSE_KIT = _skip_reason("omniverse-kit support not available")
-SKIP_METAL_DEFORMABLE_RENDER = _skip_reason(
-    "FEM Elastic implicit (PCG) solver wedges the virtualized Apple Metal GPU on macOS CI runners "
-    "(newComputePipelineStateWithFunction returns code=2 VM-wide afterwards); skip until the driver bug is fixed."
-)
 
 
 def is_mem_monitoring_supported():
