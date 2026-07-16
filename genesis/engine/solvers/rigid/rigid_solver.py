@@ -572,14 +572,15 @@ class RigidSolver(KinematicSolver):
             # every core busy and the scalar path wins; below it the parallel kernels hide latency by swapping warps.
             # The crossover is also hardware- and kernel-dependent, so the env threshold (GPU core count) is a heuristic
             # and a dynamic timer-based selection would be more accurate still.
-            # Largest mass block in DOFs = largest kinematic tree, grouped by the moving-tree root link (root_idx). A
-            # tree spans merged entities (so a block can exceed any single entity) while a multi-tree entity's blocks
-            # are each smaller than the entity, so this - not the per-entity DOF count - is what the per-block factor
-            # actually processes and must be sized for.
+            # Largest kinematic tree in DOFs, grouped by the tree root link (root_idx): an upper bound on the largest
+            # mass block (blocks split trees at fixed links; see dofs_mass_block_start in array_class.py). A tree
+            # spans merged entities (so it can exceed any single entity) while a multi-block entity's blocks are each
+            # smaller than the entity, so this - not the per-entity DOF count - is what the per-block factor must be
+            # sized for.
             tree_dofs: dict[int, int] = {}
             for link in self.links:
                 tree_dofs[link.root_idx] = tree_dofs.get(link.root_idx, 0) + link.n_dofs
-            max_block_dofs = max(tree_dofs.values()) if tree_dofs else 0
+            max_tree_dofs = max(tree_dofs.values()) if tree_dofs else 0
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
                 envs_undersaturate = self.n_envs <= max_tiled_envs
@@ -593,7 +594,7 @@ class RigidSolver(KinematicSolver):
                 # Confirmed by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
                 cholesky_tile_size = 16 if (self.n_dofs <= 16 or 32 < self.n_dofs <= 48) else 32
                 tiled_n_dofs = max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size
-                tiled_n_dofs_per_block = max(math.ceil(max_block_dofs / 32), 1) * 32
+                tiled_n_dofs_per_tree = max(math.ceil(max_tree_dofs / 32), 1) * 32
 
                 # The decomposed arm's cooperative per-island solve stages one island's tile in shared memory.
                 # Size it to the largest tile-size multiple that fits shared (precision-aware), but no larger
@@ -619,15 +620,15 @@ class RigidSolver(KinematicSolver):
                 # The cooperative in-place LDL^T has no cap; the shared-memory tile is faster but capped. Same env logic
                 # as the Hessian: tile from the largest block >= 8 DOFs, drop the env guard above the cap where the
                 # scalar O(n_block_dofs^3) per-(block, env) factor is always worse.
-                mass_matrix_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs_per_block, tiled_n_dofs_per_block + 1)
-                enable_tiled_cholesky_mass_matrix = max_block_dofs >= 8 and (
+                mass_matrix_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs_per_tree, tiled_n_dofs_per_tree + 1)
+                enable_tiled_cholesky_mass_matrix = max_tree_dofs >= 8 and (
                     not mass_matrix_fits_shared or envs_undersaturate
                 )
 
-                # Register-streaming tiled mass factor for the >shared-cap forward GPU path: it factors each mass block
-                # (kinematic tree) in registers via the same primitive as the Hessian, and is faster than and
-                # numerically matches the cooperative LDL^T. Reuses cholesky_tile_size (always 32 here, since the path
-                # needs a per-entity block exceeding shared memory).
+                # Register-streaming tiled mass factor for the >shared-cap forward GPU path: it factors each kinematic
+                # tree in registers via the same primitive as the Hessian, and is faster than and numerically matches
+                # the cooperative LDL^T. Reuses cholesky_tile_size (always 32 here, since the path needs a tree
+                # exceeding shared memory).
                 enable_register_tiled_mass = (
                     enable_tiled_cholesky_mass_matrix and not mass_matrix_fits_shared and not self._requires_grad
                 )
@@ -653,7 +654,7 @@ class RigidSolver(KinematicSolver):
                     enable_per_island_solve=(
                         self._use_contact_island and (self._use_hibernation or not hessian_fits_shared)
                     ),
-                    tiled_n_dofs_per_block=tiled_n_dofs_per_block,
+                    tiled_n_dofs_per_tree=tiled_n_dofs_per_tree,
                     tiled_n_dofs=tiled_n_dofs,
                     tiled_n_island_dofs=tiled_n_island_dofs,
                     # Persistent block grid for the cooperative per-island factor+solve: enough T-lane blocks to fill the
@@ -922,7 +923,7 @@ class RigidSolver(KinematicSolver):
         # is rooted at the topmost DOF-bearing ancestor reachable before the world; DOFs are numbered depth-first, so a
         # block is a contiguous range whose root link's first DOF is the block start.
         links_by_idx = {link.idx: link for link in self.links}
-        block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
+        dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
         for link in self.links:
             if link.n_dofs == 0:
                 continue
@@ -932,11 +933,11 @@ class RigidSolver(KinematicSolver):
                 node = links_by_idx[node.parent_idx]
                 if node.n_dofs > 0:
                     root_link = node
-            block_start[link.dof_start : link.dof_end] = root_link.dof_start
-        block_end = np.empty(self.n_dofs_, dtype=gs.np_int)
+            dofs_mass_block_start[link.dof_start : link.dof_end] = root_link.dof_start
+        dofs_mass_block_end = np.empty(self.n_dofs_, dtype=gs.np_int)
         for i_d in range(self.n_dofs_):
-            block_end[block_start[i_d]] = i_d + 1
-        block_end = block_end[block_start]
+            dofs_mass_block_end[dofs_mass_block_start[i_d]] = i_d + 1
+        dofs_mass_block_end = dofs_mass_block_end[dofs_mass_block_start]
 
         # Each kinematic tree's links must form one contiguous range: the CRB fold reduces a tree over the contiguous
         # run of links sharing its root (root_idx), and the mass-block partition assumes the same. attach() can leave
@@ -956,6 +957,14 @@ class RigidSolver(KinematicSolver):
                     )
                 seen_roots.add(root)
                 previous_root = root
+
+        # See links_tree_end in array_class.py. The contiguity check above certifies each tree's link run, so a run
+        # ends where the next one starts.
+        links_root_idx = np.array([link.root_idx for link in self.links], dtype=gs.np_int)
+        links_tree_end = np.zeros(self.n_links_, dtype=gs.np_int)
+        if self.links:
+            run_starts = np.flatnonzero(np.r_[True, links_root_idx[1:] != links_root_idx[:-1]])
+            links_tree_end[run_starts] = np.r_[run_starts[1:], self.n_links]
 
         # A parent in another tree is only sound as a fixed (0-DOF-chain) anchor: the CRB fold and the cartesian-space
         # tree walk both stop at tree boundaries, so a moving cross-tree parent would never receive its child subtree's
@@ -980,20 +989,38 @@ class RigidSolver(KinematicSolver):
             # (no DOF-bearing ancestor or descendant), otherwise the coupled block is not diagonal.
             if (
                 not link.aligned
-                or block_start[link.dof_start] != link.dof_start
-                or block_end[link.dof_start] != link.dof_end
+                or dofs_mass_block_start[link.dof_start] != link.dof_start
+                or dofs_mass_block_end[link.dof_start] != link.dof_end
             ):
                 continue
             for i_d in range(link.dof_start, link.dof_end):
                 for j_d in range(link.dof_start, link.dof_end):
                     if i_d != j_d:
                         mass_parent_mask[i_d, j_d] = 0.0
-                block_start[i_d] = i_d
-                block_end[i_d] = i_d + 1
+                dofs_mass_block_start[i_d] = i_d
+                dofs_mass_block_end[i_d] = i_d + 1
+
+        # See entities_mass_block_dof_start in array_class.py: skip a leading run of DOFs merged into an
+        # earlier-rooted block; the end is the last rooted block's end, which may extend past the entity's own DOFs
+        # into a merged child.
+        entities_mass_block_dof_start = np.zeros(self.n_entities_, dtype=gs.np_int)
+        entities_mass_block_dof_end = np.zeros(self.n_entities_, dtype=gs.np_int)
+        for i_e, entity in enumerate(self.entities):
+            blocks_dof_start = entity.dof_start
+            blocks_dof_end = entity.dof_start
+            if entity.n_dofs > 0:
+                if dofs_mass_block_start[entity.dof_start] != entity.dof_start:
+                    blocks_dof_start = dofs_mass_block_end[entity.dof_start]
+                blocks_dof_end = dofs_mass_block_end[entity.dof_end - 1]
+            entities_mass_block_dof_start[i_e] = blocks_dof_start
+            entities_mass_block_dof_end[i_e] = blocks_dof_end
 
         self._rigid_global_info.mass_parent_mask.from_numpy(mass_parent_mask)
-        self._rigid_global_info.dofs_mass_block_start.from_numpy(block_start)
-        self._rigid_global_info.dofs_mass_block_end.from_numpy(block_end)
+        self._rigid_global_info.dofs_mass_block_start.from_numpy(dofs_mass_block_start)
+        self._rigid_global_info.dofs_mass_block_end.from_numpy(dofs_mass_block_end)
+        self._rigid_global_info.links_tree_end.from_numpy(links_tree_end)
+        self._rigid_global_info.entities_mass_block_dof_start.from_numpy(entities_mass_block_dof_start)
+        self._rigid_global_info.entities_mass_block_dof_end.from_numpy(entities_mass_block_dof_end)
 
         self._rigid_global_info.gravity.from_numpy(self.gravity)
 

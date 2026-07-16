@@ -113,12 +113,27 @@ class RigidGlobalInfo:
     mass_mat_D_inv: qd.Tensor
     mass_mat_tiled_scratch: qd.Tensor
     mass_mat_mask: qd.Tensor
-    # Per-DOF bounds of the contiguous, independently-factorable mass-matrix block the DOF belongs to (a kinematic
-    # tree, or merged trees whose DOF intervals interleave). The mass matrix is block-diagonal across these blocks, so
-    # the assemble/factor/solve restrict to [block_start, block_end) instead of the full entity DOF range - making a
-    # multi-tree entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent separate entities.
+    # Per-DOF bounds of the mass block the DOF belongs to: a maximal contiguous set of DOFs coupled through chains of
+    # moving joints. A mass block is FINER than a kinematic tree (the root_idx link unit): a tree splits into one
+    # block per moving-rooted branch hanging under its fixed links (e.g. per arm of a fixed-base robot), while
+    # attach() welds merge blocks across entities. The mass matrix is block-diagonal across mass blocks, so the
+    # assemble/factor/solve restrict to [block_start, block_end) instead of the full entity DOF range - making a
+    # multi-block entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent separate entities.
     dofs_mass_block_start: qd.Tensor
     dofs_mass_block_end: qd.Tensor
+    # One-past-the-last link of the kinematic tree rooted at each root link (root_idx == itself); unused for non-root
+    # links. This cannot be derived from the mass-block DOF bounds above (a tree's trailing fixed links carry no DOF)
+    # and is precomputed at build time so the CRB tree fold reads its bounds directly - autodiff supports no
+    # while-loop scan, and the contiguity of each tree's links is validated at build time anyway.
+    links_tree_end: qd.Tensor
+    # DOF range spanned by the mass blocks rooted in each entity. Rooted blocks chain contiguously, so the per-DOF
+    # block bounds above fully partition the range: a leading run of DOFs merged into an earlier-rooted block (see
+    # attach) is excluded, and the last rooted block may extend past the entity's own DOFs into a merged child. A
+    # fully-merged child entity gets an empty range. Precomputed at build time so the per-entity assemble/factor/solve
+    # iterate their blocks as one flat range-for over DOFs, which reverse-mode autodiff supports (a nested per-block
+    # loop overflows the autodiff stack, and a while loop is not supported at all).
+    entities_mass_block_dof_start: qd.Tensor
+    entities_mass_block_dof_end: qd.Tensor
     meaninertia: qd.Tensor
     mass_parent_mask: qd.Tensor
     gravity: qd.Tensor
@@ -199,6 +214,9 @@ def get_rigid_global_info(solver, kinematic_only):
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
             dofs_mass_block_start=V(dtype=gs.qd_int, shape=()),
             dofs_mass_block_end=V(dtype=gs.qd_int, shape=()),
+            links_tree_end=V(dtype=gs.qd_int, shape=()),
+            entities_mass_block_dof_start=V(dtype=gs.qd_int, shape=()),
+            entities_mass_block_dof_end=V(dtype=gs.qd_int, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
             substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
@@ -237,6 +255,9 @@ def get_rigid_global_info(solver, kinematic_only):
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
         dofs_mass_block_start=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
         dofs_mass_block_end=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
+        links_tree_end=V(dtype=gs.qd_int, shape=(solver.n_links_,)),
+        entities_mass_block_dof_start=V(dtype=gs.qd_int, shape=(solver.n_entities_,)),
+        entities_mass_block_dof_end=V(dtype=gs.qd_int, shape=(solver.n_entities_,)),
         mass_parent_mask=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._substep_dt),
         iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.iterations),
@@ -2388,7 +2409,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
     # reductions) keys on enable_cooperative_constraint_kernels alone.
     constraint_layout_batch_first: bool = False
-    tiled_n_dofs_per_block: int = -1
+    tiled_n_dofs_per_tree: int = -1
     tiled_n_dofs: int = -1
     tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
     # Number of persistent T-lane blocks the cooperative per-island factor+solve launches. The grid is static (for

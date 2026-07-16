@@ -402,7 +402,7 @@ def test_mass_mat(xml_path, show_viewer, tol):
 @pytest.mark.parametrize("model_name", ["two_fixed_branches"])
 def test_mass_block_partition(xml_path, show_viewer, tol):
     # Two chains rigidly attached to the fixed world are kinematically independent: the mass matrix is block-diagonal,
-    # so it must partition into one mass block per branch (factoring two n/2 blocks instead of one dense n block).
+    # so it must partition into one kinematic tree per branch (factoring two n/2 trees instead of one dense n tree).
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
@@ -435,7 +435,7 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
 def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, n_envs, show_viewer, tol):
     # A tree merged across two entities by attach() has the same mass matrix, LTDL factor, and one-step dynamics as
     # the single equivalent entity built as one model, and a dynamically-independent free body stays block-diagonal
-    # from it. The equivalent entity is added first so its mass block is the contiguous prefix [0, n).
+    # from it. The equivalent entity is added first so its tree is the contiguous DOF prefix [0, n).
     mono_xml, arm_xml, hand_xml = merged_arm_hand_models
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

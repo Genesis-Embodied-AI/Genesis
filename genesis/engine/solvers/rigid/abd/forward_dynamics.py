@@ -28,7 +28,7 @@ from .misc import (
 
 # Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
 # enable_cooperative_constraint_kernels=True (and not use_hibernation). One warp per (entity, env); lanes stride i_d_
-# within the entity dof block to coalesce the flipped mass_mat writes.
+# within the entity dof range to coalesce the flipped mass_mat writes.
 _MASS_MAT_BLOCK = 32
 
 
@@ -318,13 +318,14 @@ def func_compute_mass_matrix(
                 links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
 
     # crb: composite-rigid-body inertia, folded leaf-to-root. Parallelized over kinematic TREES, not entities: each tree
-    # is reduced by one thread rooted at its root link (root_idx == itself), over the contiguous run of links sharing
-    # that root_idx, iterated high-index-to-low so a child folds into its parent before the parent propagates further. A
-    # tree spans merged entities (a merged child's links share the parent tree's root_idx; see attach) and, conversely,
-    # a single entity holding several free bodies (e.g. dominos) splits into one tree per body - so this exposes far more
-    # parallelism than the per-entity fold on multi-tree entities. A tree's top link may fold into a fixed (0-DOF) anchor
-    # of another tree (e.g. a world link); that anchor carries no DOF so its crb is unused, making the cross-tree write
-    # harmless even if several trees share it. Mirrors the root_idx tree walk in func_update_cartesian_space.
+    # is reduced by one thread rooted at its root link (root_idx == itself), over its precomputed contiguous link run
+    # [i_l_root, links_tree_end[i_l_root]), iterated high-index-to-low so a child folds into its parent before
+    # the parent propagates further. A tree spans merged entities (a merged child's links share the parent tree's
+    # root_idx; see attach) and, conversely, a single entity holding several free bodies (e.g. dominos) splits into one
+    # tree per body - so this exposes far more parallelism than the per-entity fold on multi-tree entities. A tree's
+    # top link may fold into a fixed (0-DOF) anchor of another tree (e.g. a world link); that anchor carries no DOF so
+    # its crb is unused, making the cross-tree write harmless even if several trees share it. Mirrors the root_idx tree
+    # walk in func_update_cartesian_space.
     qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
@@ -346,14 +347,7 @@ def func_compute_mass_matrix(
                 )
                 I_l_root = [i_l_root, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l_root
                 if links_info.root_idx[I_l_root] == i_l_root:
-                    n_links_total = links_state.pos.shape[0]
-                    tree_end = i_l_root + 1
-                    while tree_end < n_links_total:
-                        I_l_next = [tree_end, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else tree_end
-                        if links_info.root_idx[I_l_next] != i_l_root:
-                            break
-                        tree_end = tree_end + 1
-
+                    tree_end = rigid_global_info.links_tree_end[i_l_root]
                     for k in range(tree_end - i_l_root):
                         i_l = tree_end - 1 - k
                         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -418,19 +412,19 @@ def func_compute_mass_matrix(
             i_e = i_eb % n_entities
             i_b = i_eb // n_entities
 
-            # Assemble each mass block (kinematic tree) whose root DOF lies in this entity, over its full
-            # [block_start, block_end) lower triangle. When two entities are merged (see attach) the child's DOFs
-            # belong to a block rooted in the parent, so the parent assembles the whole coupled block (its columns
-            # extend past the entity into the child) and the child assembles nothing; iterating only the entity's own
-            # DOF range would drop the parent-child coupling. mass_parent_mask zeroes the within-block ancestor gaps.
+            # Assemble each mass block whose root DOF lies in this entity, over its full [block_start, block_end)
+            # lower triangle. When two entities are merged (see attach) the child's DOFs belong to a block rooted in
+            # the parent, so the parent assembles the whole coupled block (its columns extend past the entity into the
+            # child) and the child assembles nothing; iterating only the entity's own DOF range would drop the
+            # parent-child coupling. mass_parent_mask zeroes the within-block ancestor gaps.
             entity_dof_start = entities_info.dof_start[i_e]
             entity_dof_end = entities_info.dof_end[i_e]
             block_start = entity_dof_start
             while block_start < entity_dof_end:
                 block_end = rigid_global_info.dofs_mass_block_end[block_start]
                 if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                    n_blk = block_end - block_start
-                    n_lower_tri = n_blk * (n_blk + 1) // 2
+                    n_block_dofs = block_end - block_start
+                    n_lower_tri = n_block_dofs * (n_block_dofs + 1) // 2
                     i_pair = tid
                     while i_pair < n_lower_tri:
                         # Compressed lower-tri-inclusive index (matches tiled func_factor_mass): i_pair = i_d_ * (i_d_ +
@@ -520,24 +514,25 @@ def func_factor_mass_tiled(
     """Register-streaming tiled per-entity mass factor for the >shared-cap branch (GPU forward only).
 
     Replaces the shared-pivot cooperative LDL^T when an entity's mass submatrix exceeds GPU shared memory. M is
-    block-diagonal per kinematic tree, so one warp of T lanes factors each of the entity's mass blocks independently
-    (a single-tree entity has just one block spanning it) via the same qd.simt.TileNxN blocked Cholesky as the
-    constraint Hessian.
+    block-diagonal per mass block (see dofs_mass_block_start in array_class.py), so one warp of T lanes factors each
+    of the entity's blocks independently (a single-block entity has just one block spanning it) via the same
+    qd.simt.TileNxN blocked Cholesky as the constraint Hessian.
 
     func_solve_mass consumes the LTDL form M = L^T D L (L unit-lower), produced by eliminating DOFs last-to-first, not
     the standard L D L^T. The tile primitive does forward Cholesky M = G G^T, so each block's reverse-indexed matrix
-    M_rev[a, b] = M[n-1-a, n-1-b] (n the block size) is factored and its factor mapped back to the block's LTDL factor:
+    M_rev[a, b] = M[n-1-a, n-1-b] (n the block's DOF count) is factored and its factor mapped back to the block's LTDL
+    factor:
       L[i,j] = G_rev[n-1-j, n-1-i] / G_rev[n-1-i, n-1-i]  (i > j),  D_inv[i] = 1 / G_rev[n-1-i, n-1-i]^2,  diag(L) = 1.
 
     The qd.simt tile ops are batch-first while mass_mat_L is canonical batch-last (n_dofs, n_dofs, _B), so the
-    factorization runs in each mass block's region of the batch-first scratch
+    factorization runs in each block's region of the batch-first scratch
     rigid_global_info.mass_mat_tiled_scratch and is scattered into mass_mat_L / mass_mat_D_inv. To avoid a dedicated
     allocation, that scratch aliases the constraint Hessian buffer nt_H (same shape, and free at mass-factor time since
     the constraint solve only populates it later in the step); see get_constraint_state. The scratch and mass_mat_L are
     distinct buffers, so the scatter is race-free. Backward keeps its own branch in func_factor_mass.
     """
     # Reuse the Hessian's tile width; TileCls is dispatched to match it at the call site, so T and the tile class stay
-    # consistent for either value. In practice this path only runs for per-entity blocks exceeding shared memory (total
+    # consistent for either value. In practice this path only runs for mass blocks exceeding shared memory (total
     # n_dofs > 48), where the rule lands on 32.
     T = qd.static(static_rigid_sim_config.cholesky_tile_size)
     EPS = rigid_global_info.EPS[None]
@@ -562,12 +557,12 @@ def func_factor_mass_tiled(
         if not rigid_global_info.mass_mat_mask[i_e, i_b]:
             continue
 
-        # Factor each mass block (kinematic tree) whose root DOF lies in this entity, over its full [block_start,
-        # block_end) range. A single-tree entity (the common case) has one block spanning it; a multi-tree entity has
-        # several. When two entities are merged (see attach) the child's DOFs belong to a block rooted in the parent, so
-        # the child owns no root and factors nothing while the parent factors the whole coupled block (whose range
-        # extends past the entity). Each block owns its own scratch region [block_start, block_end); distinct blocks
-        # (across entities too) are disjoint, so the scatter stays race-free.
+        # Factor each mass block whose root DOF lies in this entity, over its full [block_start, block_end) range. A
+        # single-block entity (the common case) has one block spanning it; a multi-block entity has several. When two
+        # entities are merged (see attach) the child's DOFs belong to a block rooted in the parent, so the child owns
+        # no root and factors nothing while the parent factors the whole coupled block (whose range extends past the
+        # entity). Each block owns its own scratch region [block_start, block_end); distinct blocks (across entities
+        # too) are disjoint, so the scatter stays race-free.
         entity_dof_start = entities_info.dof_start[i_e]
         entity_dof_end = entities_info.dof_end[i_e]
         block_start = entity_dof_start
@@ -705,7 +700,7 @@ def func_factor_mass(
             # trailing submatrix, so the parallel per-row updates only READ the pivot row (from shared) -- race-free
             # regardless of scheduling. Numerically identical to the scalar branch below; only parallelization differs.
             BLOCK_DIM = qd.static(32)
-            MAX_DOFS_PER_BLOCK = qd.static(static_rigid_sim_config.tiled_n_dofs_per_block)
+            MAX_DOFS_PER_TREE = qd.static(static_rigid_sim_config.tiled_n_dofs_per_tree)
 
             qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
             for i in range(n_entities * _B * BLOCK_DIM):
@@ -725,23 +720,23 @@ def func_factor_mass(
                     entity_dof_start = entities_info.dof_start[i_e]
                     entity_dof_end = entities_info.dof_end[i_e]
 
-                    pivot_row = qd.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.qd_float)
+                    pivot_row = qd.simt.block.SharedArray((MAX_DOFS_PER_TREE,), gs.qd_float)
 
-                    # Factor each mass block (kinematic tree) rooted in this entity in-place in global memory over its
-                    # full [block_start, block_end) range, block-relative so shared indices are >= 0. When two entities
-                    # are merged (see attach) the child's DOFs belong to a block rooted in the parent; the child owns no
+                    # Factor each mass block rooted in this entity in-place in global memory over its full
+                    # [block_start, block_end) range, block-relative so shared indices are >= 0. When two entities are
+                    # merged (see attach) the child's DOFs belong to a block rooted in the parent; the child owns no
                     # root and factors nothing while the parent factors the whole coupled block.
                     block_start = entity_dof_start
                     while block_start < entity_dof_end:
                         block_end = rigid_global_info.dofs_mass_block_end[block_start]
                         if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                            n_blk = block_end - block_start
+                            n_block_dofs = block_end - block_start
 
-                            # Copy the lower triangle of the block into mass_mat_L (+ implicit damping on the diagonal),
-                            # cooperatively. Restricting to the block makes the factorization cost the sum of per-tree
-                            # cubes instead of the whole (possibly multi-body) entity cube.
+                            # Copy the block's lower triangle into mass_mat_L (+ implicit damping on the diagonal),
+                            # cooperatively. Restricting to the block makes the factorization cost the sum of
+                            # per-block cubes instead of the whole (possibly multi-block) entity cube.
                             i_d_ = tid
-                            while i_d_ < n_blk:
+                            while i_d_ < n_block_dofs:
                                 i_d = block_start + i_d_
                                 for j_d in range(block_start, i_d + 1):
                                     rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[
@@ -763,7 +758,7 @@ def func_factor_mass(
                             qd.simt.block.sync()
 
                             # In-place LDL^T, eliminating dofs from last to first (matches the scalar branch).
-                            for j in range(n_blk):
+                            for j in range(n_block_dofs):
                                 i_d = block_end - j - 1
                                 i_d_local = i_d - block_start
                                 D_inv = 1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
@@ -810,57 +805,51 @@ def func_factor_mass(
                         continue
                     i_e = rigid_global_info.awake_entities[i_slot, i_b]
                 if rigid_global_info.mass_mat_mask[i_e, i_b]:
-                    entity_dof_start = entities_info.dof_start[i_e]
-                    entity_dof_end = entities_info.dof_end[i_e]
-
-                    # Factor each mass block (kinematic tree) whose root DOF lies in this entity, over its full
-                    # [block_start, block_end) range. When two entities are merged (see attach), the child's DOFs
-                    # belong to a block rooted in the parent, so the child owns no root and factors nothing while the
+                    # Factor each mass block rooted in this entity, iterated flat over the rooted range with per-DOF
+                    # block bounds (see entities_mass_block_dof_start in array_class.py): each elimination step only
+                    # touches rows of its own block, so interleaving independent blocks in one descending scan is
+                    # exact. When two entities are merged (see attach) the child owns no root and factors nothing; the
                     # parent factors the whole coupled block. Blocks are disjoint per root, so distinct entities never
-                    # write the same rows. block_end may extend past entity_dof_end into a merged child.
-                    block_start = entity_dof_start
-                    while block_start < entity_dof_end:
-                        block_end = rigid_global_info.dofs_mass_block_end[block_start]
-                        if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                            for i_d in range(block_start, block_end):
-                                for j_d in range(block_start, i_d + 1):
-                                    rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[
-                                        i_d, j_d, i_b
-                                    ]
+                    # write the same rows.
+                    blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
+                    blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
+                    for i_d in range(blocks_dof_start, blocks_dof_end):
+                        for j_d in range(rigid_global_info.dofs_mass_block_start[i_d], i_d + 1):
+                            rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
 
-                                if qd.static(implicit_damping):
-                                    I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        if qd.static(implicit_damping):
+                            I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
+                                rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                                + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+                            )
+                            if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
+                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
                                     rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
                                         rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                                        + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
+                                        - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
                                     )
-                                    if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                        if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                                            rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
-                                                rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                                                - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
-                                            )
 
-                            for i_d_ in range(block_end - block_start):
-                                i_d = block_end - i_d_ - 1
-                                D_inv = 1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                                rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
+                    for i_d_ in range(blocks_dof_end - blocks_dof_start):
+                        i_d = blocks_dof_end - i_d_ - 1
+                        block_start = rigid_global_info.dofs_mass_block_start[i_d]
+                        D_inv = 1.0 / rigid_global_info.mass_mat_L[i_d, i_d, i_b]
+                        rigid_global_info.mass_mat_D_inv[i_d, i_b] = D_inv
 
-                                for j_d_ in range(i_d - block_start):
-                                    j_d = i_d - j_d_ - 1
-                                    a = rigid_global_info.mass_mat_L[i_d, j_d, i_b] * D_inv
-                                    for k_d in range(block_start, j_d + 1):
-                                        rigid_global_info.mass_mat_L[j_d, k_d, i_b] -= (
-                                            a * rigid_global_info.mass_mat_L[i_d, k_d, i_b]
-                                        )
-                                    rigid_global_info.mass_mat_L[i_d, j_d, i_b] = a
+                        for j_d_ in range(i_d - block_start):
+                            j_d = i_d - j_d_ - 1
+                            a = rigid_global_info.mass_mat_L[i_d, j_d, i_b] * D_inv
+                            for k_d in range(block_start, j_d + 1):
+                                rigid_global_info.mass_mat_L[j_d, k_d, i_b] -= (
+                                    a * rigid_global_info.mass_mat_L[i_d, k_d, i_b]
+                                )
+                            rigid_global_info.mass_mat_L[i_d, j_d, i_b] = a
 
-                                # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
-                                rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
-                        block_start = block_end
+                        # FIXME: Diagonal coeffs of L are ignored in computations, so no need to update them.
+                        rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
         else:
             BLOCK_DIM = qd.static(32)
-            MAX_DOFS_PER_BLOCK = qd.static(static_rigid_sim_config.tiled_n_dofs_per_block)
+            MAX_DOFS_PER_TREE = qd.static(static_rigid_sim_config.tiled_n_dofs_per_tree)
             WARP_SIZE = qd.static(32)
 
             qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
@@ -881,19 +870,19 @@ def func_factor_mass(
                     entity_dof_start = entities_info.dof_start[i_e]
                     entity_dof_end = entities_info.dof_end[i_e]
 
-                    mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.qd_float)
+                    mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_TREE, MAX_DOFS_PER_TREE + 1), gs.qd_float)
 
-                    # Factor each mass block (kinematic tree) rooted in this entity in shared memory, indexed
-                    # block-relative so shared indices are always >= 0. When two entities are merged (see attach) the
-                    # child's DOFs belong to a block rooted in the parent; using entity_dof_start as the origin would
-                    # make the child's block-local indices negative. The child entity owns no root and factors nothing;
-                    # the parent factors the whole coupled block, whose range extends past entity_dof_end.
+                    # Factor each mass block rooted in this entity in shared memory, indexed block-relative so shared
+                    # indices are always >= 0. When two entities are merged (see attach) the child's DOFs belong to a
+                    # block rooted in the parent; using entity_dof_start as the origin would make the child's
+                    # block-local indices negative. The child entity owns no root and factors nothing; the parent
+                    # factors the whole coupled block, whose range extends past entity_dof_end.
                     block_start = entity_dof_start
                     while block_start < entity_dof_end:
                         block_end = rigid_global_info.dofs_mass_block_end[block_start]
                         if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                            n_blk = block_end - block_start
-                            n_lower_tri = n_blk * (n_blk + 1) // 2
+                            n_block_dofs = block_end - block_start
+                            n_lower_tri = n_block_dofs * (n_block_dofs + 1) // 2
 
                             i_pair = tid
                             while i_pair < n_lower_tri:
@@ -906,7 +895,7 @@ def func_factor_mass(
 
                             if qd.static(implicit_damping):
                                 i_d_ = tid
-                                while i_d_ < n_blk:
+                                while i_d_ < n_block_dofs:
                                     i_d = block_start + i_d_
                                     I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
                                     mass_mat[i_d_, i_d_] = (
@@ -922,8 +911,8 @@ def func_factor_mass(
                                     i_d_ = i_d_ + BLOCK_DIM
                                 qd.simt.block.sync()
 
-                            for j in range(n_blk):
-                                i_d_ = n_blk - j - 1
+                            for j in range(n_block_dofs):
+                                i_d_ = n_block_dofs - j - 1
                                 i_d = block_end - j - 1
 
                                 D_inv = 1.0 / mass_mat[i_d_, i_d_]
@@ -948,7 +937,7 @@ def func_factor_mass(
                                     qd.simt.block.sync()
 
                             i_pair = tid
-                            n_strict_lower_tri = n_blk * (n_blk - 1) // 2
+                            n_strict_lower_tri = n_block_dofs * (n_block_dofs - 1) // 2
                             while i_pair < n_strict_lower_tri:
                                 i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
                                 rigid_global_info.mass_mat_L[block_start + i_d_, block_start + j_d_, i_b] = mass_mat[
@@ -969,92 +958,73 @@ def func_factor_mass(
             if rigid_global_info.mass_mat_mask[i_e, i_b]:
                 EPS = rigid_global_info.EPS[None]
 
-                entity_dof_start = entities_info.dof_start[i_e]
-                entity_dof_end = entities_info.dof_end[i_e]
+                # Factor each mass block rooted in this entity, iterated flat over the rooted range with per-DOF block
+                # bounds (see entities_mass_block_dof_start in array_class.py and the forward scalar arm); the
+                # per-block index reversal this AD-safe factor uses maps each block onto itself, so the perturbed
+                # indices stay within the DOF's own block.
+                blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
+                blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
+                for i_d in range(blocks_dof_start, blocks_dof_end):
+                    block_start = rigid_global_info.dofs_mass_block_start[i_d]
+                    block_end = rigid_global_info.dofs_mass_block_end[i_d]
+                    i_pr = (block_start + block_end - 1) - i_d
+                    for j_d in range(block_start, i_d + 1):
+                        j_pr = (block_start + block_end - 1) - j_d
+                        rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
+                        rigid_global_info.mass_mat_L_bw[0, j_pr, i_pr, i_b] = rigid_global_info.mass_mat[i_d, j_d, i_b]
 
-                # Factor each mass block (kinematic tree) rooted in this entity over its full [block_start, block_end)
-                # range. When two entities are merged (see attach) the child's DOFs belong to a block rooted in the
-                # parent, so the child owns no root and factors nothing while the parent factors the whole coupled
-                # block; factoring per entity would drop the parent-child coupling. Mirrors func_factor_mass's forward
-                # arms, in the perturbed (reversed) indices this AD-safe factor uses.
-                block_start = entity_dof_start
-                while block_start < entity_dof_end:
-                    block_end = rigid_global_info.dofs_mass_block_end[block_start]
-                    if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                        n_blk = block_end - block_start
-
-                        for i_d0 in range(n_blk):
-                            i_d = block_start + i_d0
-                            i_pr = (block_start + block_end - 1) - i_d
-                            for j_d in range(block_start, i_d + 1):
-                                j_pr = (block_start + block_end - 1) - j_d
-                                rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] = rigid_global_info.mass_mat[
-                                    i_d, j_d, i_b
-                                ]
-                                rigid_global_info.mass_mat_L_bw[0, j_pr, i_pr, i_b] = rigid_global_info.mass_mat[
-                                    i_d, j_d, i_b
-                                ]
-
-                            if qd.static(implicit_damping):
-                                I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                    if qd.static(implicit_damping):
+                        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                        qd.atomic_add(
+                            rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b],
+                            (dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]),
+                        )
+                        if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
+                            if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
                                 qd.atomic_add(
                                     rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b],
-                                    (dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]),
+                                    -dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None],
                                 )
-                                if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                    if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
-                                        qd.atomic_add(
-                                            rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b],
-                                            -dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None],
-                                        )
 
-                        # Cholesky-Banachiewicz algorithm (in the perturbed indices), access pattern is safe for
-                        # autodiff https://en.wikipedia.org/wiki/Cholesky_decomposition
-                        for p_i0 in range(n_blk):
-                            for p_j0 in range(p_i0 + 1):
-                                # j_pr <= i_pr
-                                i_pr = block_start + p_i0
-                                j_pr = block_start + p_j0
+                # Cholesky-Banachiewicz algorithm (in the perturbed indices), access pattern is safe for
+                # autodiff https://en.wikipedia.org/wiki/Cholesky_decomposition
+                for i_pr in range(blocks_dof_start, blocks_dof_end):
+                    block_start = rigid_global_info.dofs_mass_block_start[i_pr]
+                    for j_pr in range(block_start, i_pr + 1):
+                        sum = gs.qd_float(0.0)
+                        for k_pr in range(block_start, j_pr):
+                            sum = sum + (
+                                rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
+                                * rigid_global_info.mass_mat_L_bw[1, j_pr, k_pr, i_b]
+                            )
 
-                                sum = gs.qd_float(0.0)
-                                for p_k0 in range(p_j0):
-                                    # k_pr < j_pr
-                                    k_pr = block_start + p_k0
-                                    sum = sum + (
-                                        rigid_global_info.mass_mat_L_bw[1, i_pr, k_pr, i_b]
-                                        * rigid_global_info.mass_mat_L_bw[1, j_pr, k_pr, i_b]
-                                    )
+                        a = rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] - sum
+                        b = qd.math.clamp(
+                            rigid_global_info.mass_mat_L_bw[1, j_pr, j_pr, i_b],
+                            EPS,
+                            qd.math.inf,
+                        )
+                        if i_pr == j_pr:
+                            rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = qd.sqrt(
+                                qd.math.clamp(a, EPS, qd.math.inf)
+                            )
+                        else:
+                            rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = a / b
 
-                                a = rigid_global_info.mass_mat_L_bw[0, i_pr, j_pr, i_b] - sum
-                                b = qd.math.clamp(
-                                    rigid_global_info.mass_mat_L_bw[1, j_pr, j_pr, i_b],
-                                    EPS,
-                                    qd.math.inf,
-                                )
-                                if p_i0 == p_j0:
-                                    rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = qd.sqrt(
-                                        qd.math.clamp(a, EPS, qd.math.inf)
-                                    )
-                                else:
-                                    rigid_global_info.mass_mat_L_bw[1, i_pr, j_pr, i_b] = a / b
+                for i_d in range(blocks_dof_start, blocks_dof_end):
+                    block_start = rigid_global_info.dofs_mass_block_start[i_d]
+                    block_end = rigid_global_info.dofs_mass_block_end[i_d]
+                    i_pr = (block_start + block_end - 1) - i_d
+                    for j_d in range(block_start, i_d + 1):
+                        j_pr = (block_start + block_end - 1) - j_d
 
-                        for i_d0 in range(n_blk):
-                            for i_d1 in range(i_d0 + 1):
-                                i_d = block_start + i_d0
-                                j_d = block_start + i_d1
-                                i_pr = (block_start + block_end - 1) - i_d
-                                j_pr = (block_start + block_end - 1) - j_d
+                        a = rigid_global_info.mass_mat_L_bw[1, i_pr, i_pr, i_b]
+                        rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat_L_bw[
+                            1, j_pr, i_pr, i_b
+                        ] / qd.math.clamp(a, EPS, qd.math.inf)
 
-                                a = rigid_global_info.mass_mat_L_bw[1, i_pr, i_pr, i_b]
-                                rigid_global_info.mass_mat_L[i_d, j_d, i_b] = rigid_global_info.mass_mat_L_bw[
-                                    1, j_pr, i_pr, i_b
-                                ] / qd.math.clamp(a, EPS, qd.math.inf)
-
-                                if i_d == j_d:
-                                    rigid_global_info.mass_mat_D_inv[i_d, i_b] = 1.0 / (
-                                        qd.math.clamp(a**2, EPS, qd.math.inf)
-                                    )
-                    block_start = block_end
+                        if i_d == j_d:
+                            rigid_global_info.mass_mat_D_inv[i_d, i_b] = 1.0 / (qd.math.clamp(a**2, EPS, qd.math.inf))
 
 
 @qd.func
@@ -1072,56 +1042,53 @@ def func_solve_mass_entity(
     BW = qd.static(is_backward)
 
     if rigid_global_info.mass_mat_mask[i_e, i_b]:
-        entity_dof_start = entities_info.dof_start[i_e]
-        entity_dof_end = entities_info.dof_end[i_e]
+        # Solve M x = y for each mass block rooted in this entity, iterated flat over the rooted range with per-DOF
+        # block bounds (see entities_mass_block_dof_start in array_class.py); the triangular substitutions never cross
+        # block boundaries, so interleaving independent blocks in one scan is exact. When two entities are merged (see
+        # attach) the child owns no root and solves nothing; the parent solves the whole coupled block, as splitting
+        # the substitutions at the entity boundary would break them.
+        blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
+        blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
 
-        # Solve M x = y for each mass block (kinematic tree) whose root DOF lies in this entity, over its full
-        # [block_start, block_end) range. When two entities are merged (see attach) the child's DOFs belong to a block
-        # rooted in the parent, so the child owns no root and solves nothing while the parent solves the whole coupled
-        # block; splitting the triangular solve at the entity boundary would break the back/forward substitution.
-        # Mirrors func_factor_mass's per-block loop.
-        block_start = entity_dof_start
-        while block_start < entity_dof_end:
-            block_end = rigid_global_info.dofs_mass_block_end[block_start]
-            if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                # Step 1: Solve w st. L^T @ w = y
-                for i_d_ in range(block_end - block_start):
-                    i_d = block_end - i_d_ - 1
-                    curr_out = vec[i_d, i_b]
-                    if qd.static(BW):
-                        out_bw[0, i_d, i_b] = vec[i_d, i_b]
+        # Step 1: Solve w st. L^T @ w = y
+        for i_d_ in range(blocks_dof_end - blocks_dof_start):
+            i_d = blocks_dof_end - i_d_ - 1
+            block_end = rigid_global_info.dofs_mass_block_end[i_d]
+            curr_out = vec[i_d, i_b]
+            if qd.static(BW):
+                out_bw[0, i_d, i_b] = vec[i_d, i_b]
 
-                    for j_d in range(i_d + 1, block_end):
-                        # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
-                        # finalized at this point, we don't need to care about AD mutation rule.
-                        if qd.static(BW):
-                            out_bw[0, i_d, i_b] = (
-                                out_bw[0, i_d, i_b] - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
-                            )
-                        else:
-                            curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
+            for j_d in range(i_d + 1, block_end):
+                # Since we read out[j_d, i_b], and j_d > i_d, which means that out[j_d, i_b] is already
+                # finalized at this point, we don't need to care about AD mutation rule.
+                if qd.static(BW):
+                    out_bw[0, i_d, i_b] = (
+                        out_bw[0, i_d, i_b] - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out_bw[0, j_d, i_b]
+                    )
+                else:
+                    curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * out[j_d, i_b]
 
-                    if qd.static(not BW):
-                        out[i_d, i_b] = curr_out
+            if qd.static(not BW):
+                out[i_d, i_b] = curr_out
 
-                # Step 2: z = D^{-1} w
-                for i_d in range(block_start, block_end):
-                    if qd.static(BW):
-                        out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
-                    else:
-                        out[i_d, i_b] = out[i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+        # Step 2: z = D^{-1} w
+        for i_d in range(blocks_dof_start, blocks_dof_end):
+            if qd.static(BW):
+                out_bw[1, i_d, i_b] = out_bw[0, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+            else:
+                out[i_d, i_b] = out[i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
 
-                # Step 3: Solve x st. L @ x = z
-                for i_d in range(block_start, block_end):
-                    curr_out = out[i_d, i_b]
-                    if qd.static(BW):
-                        curr_out = out_bw[1, i_d, i_b]
+        # Step 3: Solve x st. L @ x = z
+        for i_d in range(blocks_dof_start, blocks_dof_end):
+            block_start = rigid_global_info.dofs_mass_block_start[i_d]
+            curr_out = out[i_d, i_b]
+            if qd.static(BW):
+                curr_out = out_bw[1, i_d, i_b]
 
-                    for j_d in range(block_start, i_d):
-                        curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
+            for j_d in range(block_start, i_d):
+                curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * out[j_d, i_b]
 
-                    out[i_d, i_b] = curr_out
-            block_start = block_end
+            out[i_d, i_b] = curr_out
 
 
 @qd.func
@@ -1888,27 +1855,22 @@ def func_implicit_damping(
 
         qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_e, i_b in qd.ndrange(n_entities, _B):
-            entity_dof_start = entities_info.dof_start[i_e]
-            entity_dof_end = entities_info.dof_end[i_e]
-            # Set the mask over each mass block ROOTED in this entity, spanning its full [block_start, block_end) range.
-            # The block-root entity factors the whole coupled block (which for a merged pair extends into the child), so
-            # the refactor must be triggered by damping/act_bias anywhere in that range - including a merged child whose
-            # own DOFs live in a later entity. Mirrors func_factor_mass's per-block iteration.
-            block_start = entity_dof_start
-            while block_start < entity_dof_end:
-                block_end = rigid_global_info.dofs_mass_block_end[block_start]
-                if rigid_global_info.dofs_mass_block_start[block_start] == block_start:
-                    for i_d in range(block_start, block_end):
-                        I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                        if dofs_info.damping[I_d] > EPS:
-                            rigid_global_info.mass_mat_mask[i_e, i_b] = True
-                        if qd.static(static_rigid_sim_config.integrator != gs.integrator.Euler):
-                            if (
-                                dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY
-                                and qd.abs(dofs_info.act_bias[I_d][2]) > EPS
-                            ):
-                                rigid_global_info.mass_mat_mask[i_e, i_b] = True
-                block_start = block_end
+            # Set the mask over the mass blocks ROOTED in this entity (see entities_mass_block_dof_start in
+            # array_class.py). The block-root entity factors the whole coupled block (which for a merged pair extends
+            # into the child), so the refactor must be triggered by damping/act_bias anywhere in that range - including
+            # a merged child whose own DOFs live in a later entity.
+            blocks_dof_start = rigid_global_info.entities_mass_block_dof_start[i_e]
+            blocks_dof_end = rigid_global_info.entities_mass_block_dof_end[i_e]
+            for i_d in range(blocks_dof_start, blocks_dof_end):
+                I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                if dofs_info.damping[I_d] > EPS:
+                    rigid_global_info.mass_mat_mask[i_e, i_b] = True
+                if qd.static(static_rigid_sim_config.integrator != gs.integrator.Euler):
+                    if (
+                        dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY
+                        and qd.abs(dofs_info.act_bias[I_d][2]) > EPS
+                    ):
+                        rigid_global_info.mass_mat_mask[i_e, i_b] = True
 
     func_factor_mass(
         implicit_damping=True,

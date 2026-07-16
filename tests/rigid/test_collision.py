@@ -1372,7 +1372,7 @@ def test_neutral_self_collision_masks_across_merged_entities(merged_overlapping_
         ),
     )
     hand.attach(arm, "tip")
-    scene.build(n_envs=0)
+    scene.build()
 
     # The merged hand shares the arm's kinematic-tree root, so cross-entity pairs are self-collision candidates.
     geoms_root_idx = np.array([geom.link.root_idx for geom in scene.rigid_solver.geoms])
