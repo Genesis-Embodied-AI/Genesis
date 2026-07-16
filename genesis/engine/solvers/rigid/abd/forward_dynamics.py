@@ -317,15 +317,17 @@ def func_compute_mass_matrix(
                 links_state.crb_quat[i_l, i_b] = links_state.cinr_quat[i_l, i_b]
                 links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
 
-    # crb: composite-rigid-body inertia, folded leaf-to-root. Parallelized over kinematic TREES, not entities: each tree
-    # is reduced by one thread rooted at its root link (root_idx == itself), over its precomputed contiguous link run
-    # [i_l_root, links_tree_end[i_l_root]), iterated high-index-to-low so a child folds into its parent before
-    # the parent propagates further. A tree spans merged entities (a merged child's links share the parent tree's
-    # root_idx; see attach) and, conversely, a single entity holding several free bodies (e.g. dominos) splits into one
-    # tree per body - so this exposes far more parallelism than the per-entity fold on multi-tree entities. A tree's
-    # top link may fold into a fixed (0-DOF) anchor of another tree (e.g. a world link); that anchor carries no DOF so
-    # its crb is unused, making the cross-tree write harmless even if several trees share it. Mirrors the root_idx tree
-    # walk in func_update_cartesian_space.
+    # crb: composite-rigid-body inertia, folded leaf-to-root. Parallelized over kinematic TREES, not entities: each
+    # tree is reduced by one thread rooted at its root link (root_idx == itself), over its precomputed link span
+    # [i_l_root, links_tree_end[i_l_root]), iterated high-index-to-low so a child folds into its parent before the
+    # parent propagates further. attach() can interleave other trees' links inside the span (see links_tree_end in
+    # array_class.py), so each link is gated on the thread's root: interleaved links are folded by their own tree's
+    # thread, race-free since the threads touch disjoint links. A tree spans merged entities (a merged child's links
+    # share the parent tree's root_idx; see attach) and, conversely, a single entity holding several free bodies (e.g.
+    # dominos) splits into one tree per body - so this exposes far more parallelism than the per-entity fold on
+    # multi-tree entities. A tree's top link may fold into a fixed (0-DOF) anchor of another tree (e.g. a world link);
+    # that anchor carries no DOF so its crb is unused, making the cross-tree write harmless even if several trees
+    # share it. Mirrors the root_idx tree walk in func_update_cartesian_space.
     qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
@@ -354,7 +356,7 @@ def func_compute_mass_matrix(
                         i_p = links_info.parent_idx[I_l]
                         I_p = [i_p, i_b]
 
-                        if i_p != -1:
+                        if links_info.root_idx[I_l] == i_l_root and i_p != -1:
                             func_add_safe_backward(
                                 links_state.crb_inertial, I_p, links_state.crb_inertial[i_l, i_b], BW
                             )
@@ -700,7 +702,7 @@ def func_factor_mass(
             # trailing submatrix, so the parallel per-row updates only READ the pivot row (from shared) -- race-free
             # regardless of scheduling. Numerically identical to the scalar branch below; only parallelization differs.
             BLOCK_DIM = qd.static(32)
-            MAX_DOFS_PER_TREE = qd.static(static_rigid_sim_config.tiled_n_dofs_per_tree)
+            MAX_DOFS_PER_BLOCK = qd.static(static_rigid_sim_config.tiled_n_dofs_per_block)
 
             qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
             for i in range(n_entities * _B * BLOCK_DIM):
@@ -720,7 +722,7 @@ def func_factor_mass(
                     entity_dof_start = entities_info.dof_start[i_e]
                     entity_dof_end = entities_info.dof_end[i_e]
 
-                    pivot_row = qd.simt.block.SharedArray((MAX_DOFS_PER_TREE,), gs.qd_float)
+                    pivot_row = qd.simt.block.SharedArray((MAX_DOFS_PER_BLOCK,), gs.qd_float)
 
                     # Factor each mass block rooted in this entity in-place in global memory over its full
                     # [block_start, block_end) range, block-relative so shared indices are >= 0. When two entities are
@@ -849,7 +851,7 @@ def func_factor_mass(
                         rigid_global_info.mass_mat_L[i_d, i_d, i_b] = 1.0
         else:
             BLOCK_DIM = qd.static(32)
-            MAX_DOFS_PER_TREE = qd.static(static_rigid_sim_config.tiled_n_dofs_per_tree)
+            MAX_DOFS_PER_BLOCK = qd.static(static_rigid_sim_config.tiled_n_dofs_per_block)
             WARP_SIZE = qd.static(32)
 
             qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
@@ -870,7 +872,7 @@ def func_factor_mass(
                     entity_dof_start = entities_info.dof_start[i_e]
                     entity_dof_end = entities_info.dof_end[i_e]
 
-                    mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_TREE, MAX_DOFS_PER_TREE + 1), gs.qd_float)
+                    mass_mat = qd.simt.block.SharedArray((MAX_DOFS_PER_BLOCK, MAX_DOFS_PER_BLOCK + 1), gs.qd_float)
 
                     # Factor each mass block rooted in this entity in shared memory, indexed block-relative so shared
                     # indices are always >= 0. When two entities are merged (see attach) the child's DOFs belong to a

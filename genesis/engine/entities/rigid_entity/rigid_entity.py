@@ -1435,6 +1435,11 @@ class KinematicEntity(Entity):
         Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
         another entity.
 
+        The merged pair is simulated as one kinematic tree, so its dynamics cost scales with the range of degrees of
+        freedom spanning both entities, including any entity created in between. Instantiating attached entities
+        consecutively keeps that range tight; entities in between are still simulated correctly but inflate the cost
+        of the merged pair.
+
         Parameters
         ----------
         parent_entity : genesis.Entity
@@ -1500,20 +1505,15 @@ class KinematicEntity(Entity):
         # Overwrite parent link
         base_link._parent_idx = parent_link.idx
 
-        for link in self.links:
-            # Break as soon as the root idx is -1, because the following links correspond to a different kinematic tree
-            if link.root_idx == -1:
-                break
-
-            # Override root idx for child links
-            assert link.root_idx == base_link.idx
-            link._root_idx = parent_link.root_idx
-
-            # Update fixed link flag
-            link._is_fixed &= parent_link.is_fixed
-
-            # Must invalidate invweight for all child links and joints
-            link._invweight = None
+        # Re-root the whole tree hanging from this entity's base link into the parent's tree - scene-wide, because
+        # entities previously attached into this one already share its root and must follow it (chained attaches may
+        # run in any order). This entity's links belonging to other trees (e.g. free bodies declared in the same file)
+        # keep their own root. The fixed flag and invweight follow the new root for every re-rooted link.
+        for link in self._solver.links:
+            if link.root_idx == base_link.idx:
+                link._root_idx = parent_link.root_idx
+                link._is_fixed &= parent_link.is_fixed
+                link._invweight = None
 
         self._is_attached = True
 

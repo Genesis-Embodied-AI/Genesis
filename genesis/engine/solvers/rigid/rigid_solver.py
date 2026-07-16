@@ -566,21 +566,57 @@ class RigidSolver(KinematicSolver):
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             static_rigid_sim_config["prefer_decomposed_solver"] = 0
 
+        # Per-DOF mass-block bounds (see dofs_mass_block_start in array_class.py): each DOF's block is rooted at its
+        # topmost DOF-bearing ancestor reachable before the world; DOFs are numbered depth-first, so a block is an
+        # interval whose root's first DOF is the block start. Computed here because the tiled factor arms below must
+        # be sized for the largest block; _init_mass_mat consumes and uploads the bounds.
+        links_by_idx = {link.idx: link for link in self.links}
+        dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
+        for link in self.links:
+            if link.n_dofs == 0:
+                continue
+            root_link = link
+            node = link
+            while node.parent_idx != -1:
+                node = links_by_idx[node.parent_idx]
+                if node.n_dofs > 0:
+                    root_link = node
+            dofs_mass_block_start[link.dof_start : link.dof_end] = root_link.dof_start
+        dofs_mass_block_end = np.empty(self.n_dofs_, dtype=gs.np_int)
+        for i_d in range(self.n_dofs_):
+            dofs_mass_block_end[dofs_mass_block_start[i_d]] = i_d + 1
+        dofs_mass_block_end = dofs_mass_block_end[dofs_mass_block_start]
+
+        # Interval closure: attach() can leave other entities' DOFs interleaved inside a merged block's interval (the
+        # entities created between the parent and its attached child keep their numbering). Coupling never crosses
+        # blocks, so widening each block to its enclosing interval and merging overlaps keeps the factorization exact:
+        # the swallowed DOFs carry exactly zero coupling (see mass_parent_mask) which the elimination preserves, at
+        # the price of wasted flops on their rows - proportional to the DOFs created between attached entities, hence
+        # the advice to instantiate them consecutively (see RigidEntity.attach).
+        roots_idx = np.flatnonzero(dofs_mass_block_start == np.arange(self.n_dofs_, dtype=gs.np_int))
+        span_start, span_end = 0, 0
+        for i_d_root in roots_idx:
+            if i_d_root < span_end:
+                span_end = max(span_end, dofs_mass_block_end[i_d_root])
+            else:
+                dofs_mass_block_start[span_start:span_end] = span_start
+                dofs_mass_block_end[span_start:span_end] = span_end
+                span_start, span_end = i_d_root, dofs_mass_block_end[i_d_root]
+        dofs_mass_block_start[span_start:span_end] = span_start
+        dofs_mass_block_end[span_start:span_end] = span_end
+        self._dofs_mass_block_start = dofs_mass_block_start
+        self._dofs_mass_block_end = dofs_mass_block_end
+
         if self.is_active:
             # The tiled and cooperative Cholesky kernels trade per-env serial work for cross-lane parallelism, so they
             # only help while envs alone do not already saturate the GPU. Above that env count one-thread-per-env keeps
             # every core busy and the scalar path wins; below it the parallel kernels hide latency by swapping warps.
             # The crossover is also hardware- and kernel-dependent, so the env threshold (GPU core count) is a heuristic
             # and a dynamic timer-based selection would be more accurate still.
-            # Largest kinematic tree in DOFs, grouped by the tree root link (root_idx): an upper bound on the largest
-            # mass block (blocks split trees at fixed links; see dofs_mass_block_start in array_class.py). A tree
-            # spans merged entities (so it can exceed any single entity) while a multi-block entity's blocks are each
-            # smaller than the entity, so this - not the per-entity DOF count - is what the per-block factor must be
-            # sized for.
-            tree_dofs: dict[int, int] = {}
-            for link in self.links:
-                tree_dofs[link.root_idx] = tree_dofs.get(link.root_idx, 0) + link.n_dofs
-            max_tree_dofs = max(tree_dofs.values()) if tree_dofs else 0
+            # Largest mass block in DOFs: the biggest independently-factorable unit, which the per-block factor must
+            # be sized for. A block can span merged entities (see attach), so it can exceed any single entity, while a
+            # multi-block entity's blocks are each smaller than the entity.
+            max_block_dofs = int((dofs_mass_block_end - dofs_mass_block_start).max()) if self.n_dofs else 0
             if gs.backend != gs.cpu:
                 max_tiled_envs = get_gpu_core_count()
                 envs_undersaturate = self.n_envs <= max_tiled_envs
@@ -594,7 +630,7 @@ class RigidSolver(KinematicSolver):
                 # Confirmed by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %).
                 cholesky_tile_size = 16 if (self.n_dofs <= 16 or 32 < self.n_dofs <= 48) else 32
                 tiled_n_dofs = max(math.ceil(self.n_dofs / cholesky_tile_size), 1) * cholesky_tile_size
-                tiled_n_dofs_per_tree = max(math.ceil(max_tree_dofs / 32), 1) * 32
+                tiled_n_dofs_per_block = max(math.ceil(max_block_dofs / 32), 1) * 32
 
                 # The decomposed arm's cooperative per-island solve stages one island's tile in shared memory.
                 # Size it to the largest tile-size multiple that fits shared (precision-aware), but no larger
@@ -620,8 +656,8 @@ class RigidSolver(KinematicSolver):
                 # The cooperative in-place LDL^T has no cap; the shared-memory tile is faster but capped. Same env logic
                 # as the Hessian: tile from the largest block >= 8 DOFs, drop the env guard above the cap where the
                 # scalar O(n_block_dofs^3) per-(block, env) factor is always worse.
-                mass_matrix_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs_per_tree, tiled_n_dofs_per_tree + 1)
-                enable_tiled_cholesky_mass_matrix = max_tree_dofs >= 8 and (
+                mass_matrix_fits_shared = fits_in_gpu_shared_memory(tiled_n_dofs_per_block, tiled_n_dofs_per_block + 1)
+                enable_tiled_cholesky_mass_matrix = max_block_dofs >= 8 and (
                     not mass_matrix_fits_shared or envs_undersaturate
                 )
 
@@ -654,7 +690,7 @@ class RigidSolver(KinematicSolver):
                     enable_per_island_solve=(
                         self._use_contact_island and (self._use_hibernation or not hessian_fits_shared)
                     ),
-                    tiled_n_dofs_per_tree=tiled_n_dofs_per_tree,
+                    tiled_n_dofs_per_block=tiled_n_dofs_per_block,
                     tiled_n_dofs=tiled_n_dofs,
                     tiled_n_island_dofs=tiled_n_island_dofs,
                     # Persistent block grid for the cooperative per-island factor+solve: enough T-lane blocks to fill the
@@ -915,70 +951,16 @@ class RigidSolver(KinematicSolver):
                     mass_parent_mask[i_d, j_d] = 1.0
                 j_l = self.links[j_l].parent_idx
 
-        # Partition each entity's DOFs into contiguous, independently-factorable blocks. M is block-diagonal between
-        # DOFs whose links are not kinematic ancestor/descendant of one another, so the per-block bounds let the
-        # assemble/factor/solve restrict to one block instead of the whole entity. A block is the set of DOFs coupled
-        # through a chain of moving joints; a fixed link (0 DOFs) does not couple, so several bodies attached to the
-        # world - or the independent arms of a fixed-base robot - factor as separate per-branch blocks. Each DOF's block
-        # is rooted at the topmost DOF-bearing ancestor reachable before the world; DOFs are numbered depth-first, so a
-        # block is a contiguous range whose root link's first DOF is the block start.
-        links_by_idx = {link.idx: link for link in self.links}
-        dofs_mass_block_start = np.arange(self.n_dofs_, dtype=gs.np_int)
-        for link in self.links:
-            if link.n_dofs == 0:
-                continue
-            root_link = link
-            node = link
-            while node.parent_idx != -1:
-                node = links_by_idx[node.parent_idx]
-                if node.n_dofs > 0:
-                    root_link = node
-            dofs_mass_block_start[link.dof_start : link.dof_end] = root_link.dof_start
-        dofs_mass_block_end = np.empty(self.n_dofs_, dtype=gs.np_int)
-        for i_d in range(self.n_dofs_):
-            dofs_mass_block_end[dofs_mass_block_start[i_d]] = i_d + 1
-        dofs_mass_block_end = dofs_mass_block_end[dofs_mass_block_start]
+        # Per-DOF mass-block bounds, computed by _build_static_config (which sizes the tiled factor arms from them).
+        dofs_mass_block_start = self._dofs_mass_block_start
+        dofs_mass_block_end = self._dofs_mass_block_end
 
-        # Each kinematic tree's links must form one contiguous range: the CRB fold reduces a tree over the contiguous
-        # run of links sharing its root (root_idx), and the mass-block partition assumes the same. attach() can leave
-        # them split when a third entity is numbered between the parent and its attached child - including a zero-DOF
-        # prop, which keeps the DOFs contiguous yet still interleaves a link. Raise clearly instead of silently dropping
-        # the child's inertia; the resolution is to instantiate the child right after its parent, or attach before
-        # adding the intervening entity.
-        previous_root = -1
-        seen_roots = set()
-        for root in (link.root_idx for link in self.links):
-            if root != previous_root:
-                if root in seen_roots:
-                    gs.raise_exception(
-                        "Attaching an entity onto a parent that is not adjacent in the entity ordering (another "
-                        "entity's links fall between them) is not supported: it splits a kinematic tree. Instantiate "
-                        "the child entity right after its parent, or attach before adding the intervening entity."
-                    )
-                seen_roots.add(root)
-                previous_root = root
-
-        # See links_tree_end in array_class.py. The contiguity check above certifies each tree's link run, so a run
-        # ends where the next one starts.
+        # See links_tree_end in array_class.py: one past the last link of each tree, which may reach past interleaved
+        # links of other trees (the CRB fold gates on root_idx).
         links_root_idx = np.array([link.root_idx for link in self.links], dtype=gs.np_int)
         links_tree_end = np.zeros(self.n_links_, dtype=gs.np_int)
         if self.links:
-            run_starts = np.flatnonzero(np.r_[True, links_root_idx[1:] != links_root_idx[:-1]])
-            links_tree_end[run_starts] = np.r_[run_starts[1:], self.n_links]
-
-        # A parent in another tree is only sound as a fixed (0-DOF-chain) anchor: the CRB fold and the cartesian-space
-        # tree walk both stop at tree boundaries, so a moving cross-tree parent would never receive its child subtree's
-        # composite inertia nor propagate its motion - the roots are inconsistent with the kinematic structure and mass
-        # would be silently lost (see the crb tree walk in forward_dynamics.py).
-        for link in self.links:
-            if link.parent_idx != -1:
-                parent_link = links_by_idx[link.parent_idx]
-                if link.root_idx != parent_link.root_idx and not parent_link.is_fixed:
-                    gs.raise_exception(
-                        f"Link '{link.name}' and its moving parent link '{parent_link.name}' belong to different "
-                        f"kinematic trees (root {link.root_idx} vs {parent_link.root_idx}). Kinematic tree root "
-                        f"indices are inconsistent with the parent structure."
-                    )
+            np.maximum.at(links_tree_end, links_root_idx, np.arange(self.n_links) + 1)
 
         # An aligned free body whose only DOFs are its own free joint has a diagonal joint-space mass block, so zero its
         # within-link off-diagonal mask to make the assembled mass exactly diagonal (else ~1e-6 round-off once it

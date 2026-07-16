@@ -113,18 +113,21 @@ class RigidGlobalInfo:
     mass_mat_D_inv: qd.Tensor
     mass_mat_tiled_scratch: qd.Tensor
     mass_mat_mask: qd.Tensor
-    # Per-DOF bounds of the mass block the DOF belongs to: a maximal contiguous set of DOFs coupled through chains of
-    # moving joints. A mass block is FINER than a kinematic tree (the root_idx link unit): a tree splits into one
-    # block per moving-rooted branch hanging under its fixed links (e.g. per arm of a fixed-base robot), while
-    # attach() welds merge blocks across entities. The mass matrix is block-diagonal across mass blocks, so the
-    # assemble/factor/solve restrict to [block_start, block_end) instead of the full entity DOF range - making a
-    # multi-block entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent separate entities.
+    # Per-DOF bounds of the mass block the DOF belongs to: the enclosing interval of a maximal set of DOFs coupled
+    # through chains of moving joints, with overlapping intervals merged (see the closure in _build_static_config). A
+    # mass block is FINER than a kinematic tree (the root_idx link unit): a tree splits into one block per
+    # moving-rooted branch hanging under its fixed links (e.g. per arm of a fixed-base robot), while attach() welds
+    # merge blocks across entities - possibly swallowing the DOFs created in between, which carry exactly zero
+    # coupling. The mass matrix is block-diagonal across mass blocks, so the assemble/factor/solve restrict to
+    # [block_start, block_end) instead of the full entity DOF range - making a multi-block entity (e.g. an MJCF file
+    # with many free bodies) cost the same as the equivalent separate entities.
     dofs_mass_block_start: qd.Tensor
     dofs_mass_block_end: qd.Tensor
     # One-past-the-last link of the kinematic tree rooted at each root link (root_idx == itself); unused for non-root
-    # links. This cannot be derived from the mass-block DOF bounds above (a tree's trailing fixed links carry no DOF)
-    # and is precomputed at build time so the CRB tree fold reads its bounds directly - autodiff supports no
-    # while-loop scan, and the contiguity of each tree's links is validated at build time anyway.
+    # links. attach() can leave other trees' links interleaved inside the span, so consumers gate each link on the
+    # tree's root. This cannot be derived from the mass-block DOF bounds above (a tree's trailing fixed links carry no
+    # DOF) and is precomputed at build time so the CRB tree fold reads its bounds directly - autodiff supports no
+    # while-loop scan.
     links_tree_end: qd.Tensor
     # DOF range spanned by the mass blocks rooted in each entity. Rooted blocks chain contiguously, so the per-DOF
     # block bounds above fully partition the range: a leading run of DOFs merged into an earlier-rooted block (see
@@ -2409,7 +2412,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
     # reductions) keys on enable_cooperative_constraint_kernels alone.
     constraint_layout_batch_first: bool = False
-    tiled_n_dofs_per_tree: int = -1
+    tiled_n_dofs_per_block: int = -1
     tiled_n_dofs: int = -1
     tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
     # Number of persistent T-lane blocks the cooperative per-island factor+solve launches. The grid is static (for

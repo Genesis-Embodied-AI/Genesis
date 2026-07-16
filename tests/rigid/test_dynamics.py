@@ -431,12 +431,24 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, n_envs, show_viewer, tol):
-    # A tree merged across two entities by attach() has the same mass matrix, LTDL factor, and one-step dynamics as
-    # the single equivalent entity built as one model, and a dynamically-independent free body stays block-diagonal
-    # from it. The equivalent entity is added first so its tree is the contiguous DOF prefix [0, n).
-    mono_xml, arm_xml, hand_xml = merged_arm_hand_models
+@pytest.mark.parametrize(
+    "box_position, n_envs",
+    [
+        ("after", 0),
+        ("after", 2),
+        ("between", 2),
+        ("inside", 2),
+    ],
+)
+def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, box_position, n_envs, show_viewer, tol):
+    # A tree merged across several entities by attach() - one hand on the arm tip, a second hand chained onto the
+    # first hand's palm, and a third hand on another branch (a2) - has the same mass matrix, LTDL factor, and one-step
+    # dynamics as the single equivalent entity built as one model, and a dynamically-independent free body stays
+    # block-diagonal from it. The equivalent entity is added first so its mass block is the contiguous DOF prefix
+    # [0, n). The free body 'between' the arm and the hands leaves its DOFs interleaved inside the merged block's
+    # interval; 'inside' declares it in the arm's own file (a second tree of the parent entity) and attaches a fourth
+    # hand onto it, so two merged trees interleave each other; 'after' is already contiguous.
+    mono_xml, arm_xml, arm_box_xml, hand_xml = merged_arm_hand_models
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
@@ -450,43 +462,79 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, n_envs, 
     )
     arm = scene.add_entity(
         gs.morphs.MJCF(
-            file=arm_xml,
+            file=arm_box_xml if box_position == "inside" else arm_xml,
         ),
     )
+    box_morph = gs.morphs.Box(
+        size=(0.1, 0.1, 0.1),
+        pos=(0.0, 2.0, 1.0),
+    )
+    if box_position == "between":
+        box = scene.add_entity(box_morph)
     hand = scene.add_entity(
         gs.morphs.MJCF(
             file=hand_xml,
         ),
     )
-    box = scene.add_entity(
-        gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
-            pos=(0.0, 2.0, 1.0),
+    hand_chained = scene.add_entity(
+        gs.morphs.MJCF(
+            file=hand_xml,
         ),
     )
+    hand_branch = scene.add_entity(
+        gs.morphs.MJCF(
+            file=hand_xml,
+        ),
+    )
+    if box_position == "after":
+        box = scene.add_entity(box_morph)
+    # Chained attach runs before its own parent is attached: re-rooting is transitive, so the order is free.
+    hand_chained.attach(hand, "palm")
     hand.attach(arm, "tip")
+    hand_branch.attach(arm, "a2")
+    if box_position == "inside":
+        hand_box = scene.add_entity(
+            gs.morphs.MJCF(
+                file=hand_xml,
+            ),
+        )
+        hand_box.attach(arm, "freebox")
     scene.build(n_envs=n_envs)
 
-    # attach() re-roots every child link into the parent's kinematic tree.
+    # attach() re-roots every child link - including previously attached grandchildren - into the parent's tree.
     tip_link = arm.get_link("tip")
     assert hand.base_link.parent_idx == tip_link.idx
-    assert_equal([link.root_idx for link in hand.links], tip_link.root_idx)
+    assert hand_chained.base_link.parent_idx == hand.get_link("palm").idx
+    assert hand_branch.base_link.parent_idx == arm.get_link("a2").idx
+    for child in (hand, hand_chained, hand_branch):
+        assert_equal([link.root_idx for link in child.links], tip_link.root_idx)
 
     mono_dofs = torch.arange(mono.dof_start, mono.dof_start + mono.n_dofs)
-    pair_dofs = torch.cat(
-        [
-            torch.arange(arm.dof_start, arm.dof_start + arm.n_dofs),
-            torch.arange(hand.dof_start, hand.dof_start + hand.n_dofs),
-        ]
-    )
-    box_dofs = torch.arange(box.dof_start, box.dof_start + box.n_dofs)
+    if box_position == "inside":
+        box_link = arm.get_link("freebox")
+        box_dofs = torch.arange(box_link.dof_start, box_link.dof_end)
+        arm_dofs = torch.cat(
+            [
+                torch.arange(arm.dof_start, box_link.dof_start),
+                torch.arange(box_link.dof_end, arm.dof_end),
+            ]
+        )
+        assert_equal([link.root_idx for link in hand_box.links], box_link.root_idx)
+    else:
+        box_dofs = torch.arange(box.dof_start, box.dof_start + box.n_dofs)
+        arm_dofs = torch.arange(arm.dof_start, arm.dof_start + arm.n_dofs)
+    hands = (hand, hand_chained, hand_branch)
+    pair_dofs = torch.cat([arm_dofs, *(torch.arange(h.dof_start, h.dof_start + h.n_dofs) for h in hands)])
 
     solver = scene.rigid_solver
     mass_mat = solver.get_mass_mat(decompose=False)
-    # The merged pair reproduces the single equivalent entity's full coupled mass matrix.
+    # The merged tree reproduces the single equivalent entity's full coupled mass matrix.
     assert_allclose(mass_mat[..., pair_dofs[:, None], pair_dofs], mass_mat[..., mono_dofs[:, None], mono_dofs], tol=tol)
-    # The free body is a separate kinematic tree, so it stays block-diagonal from the merged pair.
+    # The free body is a separate kinematic tree, so it stays block-diagonal from the merged tree.
     assert_allclose(mass_mat[..., pair_dofs[:, None], box_dofs], 0.0, tol=tol)
+    if box_position == "inside":
+        hand_box_dofs = torch.arange(hand_box.dof_start, hand_box.dof_start + hand_box.n_dofs)
+        assert_allclose(mass_mat[..., pair_dofs[:, None], hand_box_dofs], 0.0, tol=tol)
     # The LTDL factor reconstructs the mass matrix.
     mass_mat_L, mass_mat_D_inv = solver.get_mass_mat(decompose=True)
     reconstructed = mass_mat_L.transpose(-2, -1) @ (mass_mat_L * (1.0 / mass_mat_D_inv).unsqueeze(-1))
@@ -494,13 +542,17 @@ def test_merge_matches_single_equivalent_entity(merged_arm_hand_models, n_envs, 
 
     # One step from a nontrivial pose at rest: the post-step velocities (accelerations times dt, from zero) match the
     # single equivalent entity's, exercising the solve.
+    arm_dofs_local = arm_dofs - arm.dof_start
     q = np.linspace(-0.3, 0.3, mono.n_dofs)
     mono.set_dofs_position(q)
-    arm.set_dofs_position(q[: arm.n_dofs])
-    hand.set_dofs_position(q[arm.n_dofs :])
+    arm.set_dofs_position(q[: len(arm_dofs)], arm_dofs_local)
+    i_q = len(arm_dofs)
+    for h in hands:
+        h.set_dofs_position(q[i_q : i_q + h.n_dofs])
+        i_q += h.n_dofs
     scene.step()
 
-    pair_vel = torch.cat([arm.get_dofs_velocity(), hand.get_dofs_velocity()], dim=-1)
+    pair_vel = torch.cat([arm.get_dofs_velocity(arm_dofs_local), *(h.get_dofs_velocity() for h in hands)], dim=-1)
     assert_allclose(pair_vel, mono.get_dofs_velocity(), tol=tol)
 
 
