@@ -1,9 +1,34 @@
+import io
+
 import numpy as np
 from PIL import Image
-from pxr import Usd, UsdShade
+from pxr import Ar, Usd, UsdShade
 
 import genesis as gs
 from genesis.utils import mesh as mu
+
+
+def _load_texture_image(texture):
+    """Load a ``UsdUVTexture`` image as a numpy array.
+
+    Handles textures packed inside ``.usdz`` archives, whose ``resolvedPath`` is
+    an archive-internal path (e.g. ``mesh.usdz[0/texture.jpg]``) that PIL cannot
+    open directly — USD's asset resolver reads those correctly. Returns ``None``
+    if the texture can't be read (matching the MDL branch's graceful fallback),
+    so geometry still loads untextured.
+    """
+    path = texture.resolvedPath
+    try:
+        asset = Ar.GetResolver().OpenAsset(Ar.ResolvedPath(path))
+        if asset is not None:
+            return np.asarray(Image.open(io.BytesIO(bytes(asset.GetBuffer()))))
+    except Exception:
+        pass
+    try:
+        return np.asarray(Image.open(path))
+    except Exception as e:
+        gs.logger.warning(f"Failed to load UsdUVTexture {path}: {e}")
+        return None
 
 
 CS_ENCODE = {
@@ -117,8 +142,8 @@ def parse_preview_surface(prim: Usd.Prim, output_name):
     elif shader_id == "UsdUVTexture":
         texture = get_input_attribute_value(shader, "file", "value")[0]
         if texture is not None:
-            texture_image = np.asarray(Image.open(texture.resolvedPath))
-            if texture_image.ndim == 3:
+            texture_image = _load_texture_image(texture)
+            if texture_image is not None and texture_image.ndim == 3:
                 if output_name == "r":
                     texture_image = texture_image[:, :, 0]
                 elif output_name == "g":
