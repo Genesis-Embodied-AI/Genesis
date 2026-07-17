@@ -422,8 +422,9 @@ def test_default_armature_freeflyer(xml_path):
     armature = robot.get_dofs_armature()
     assert_allclose(armature[:6], 0.0, tol=gs.EPS)
     assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
-    if xml_path.endswith(".mjcf"):
-        assert abs(armature[7]) > gs.EPS and abs(armature[7] - DEFAULT_ARMATURE) > gs.EPS
+    if xml_path.endswith(".xml"):
+        assert_allclose(armature[7], 42.0, tol=gs.EPS)
+        assert_allclose(armature[8], 0.0002, tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s

@@ -579,6 +579,9 @@ def box_freejoint_offset():
 @pytest.fixture(scope="session")
 def freeflyer_mjcf():
     mjcf = ET.Element("mujoco", model="freeflyer")
+    default = ET.SubElement(mjcf, "default")
+    default_authored = ET.SubElement(default, "default", {"class": "authored"})
+    ET.SubElement(default_authored, "joint", armature="0.0002")
     worldbody = ET.SubElement(mjcf, "worldbody")
     body = ET.SubElement(worldbody, "body", name="base", pos="0 0 1")
     ET.SubElement(body, "joint", type="free")
@@ -592,6 +595,10 @@ def freeflyer_mjcf():
     ET.SubElement(grandchild, "joint", type="slide", axis="1 0 0", armature="42.0")
     ET.SubElement(grandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
     ET.SubElement(grandchild, "geom", type="sphere", size="0.01")
+    greatgrandchild = ET.SubElement(grandchild, "body", name="greatgrandchild", pos="0 0 0.1")
+    ET.SubElement(greatgrandchild, "joint", {"type": "slide", "axis": "0 1 0", "class": "authored"})
+    ET.SubElement(greatgrandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
+    ET.SubElement(greatgrandchild, "geom", type="sphere", size="0.01")
     return mjcf
 
 
