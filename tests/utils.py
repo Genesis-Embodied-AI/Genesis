@@ -1056,8 +1056,7 @@ def check_mujoco_data_consistency(
     mj_qacc_smooth = mj_sim.data.qacc_smooth
     assert_allclose(gs_qacc_smooth[gs_dofs_idx], mj_qacc_smooth[mj_dofs_idx], tol=tol)
 
-    # Acceleration pre- VS post-implicit damping
-    # gs_qacc_post = gs_sim.rigid_solver.dyn_state.dofs.acc.to_numpy()[:, 0]
+    # Acceleration pre- VS post-implicit damping gs_qacc_post = gs_sim.rigid_solver.dyn_state.dofs.acc.to_numpy()[:, 0]
     if gs_n_constraints:
         gs_qacc_pre = gs_sim.rigid_solver.constraint_solver.qacc.to_numpy()[:, 0]
     else:

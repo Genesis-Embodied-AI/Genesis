@@ -2849,11 +2849,11 @@ def _cholesky_factor_direct_tiled_impl(
     shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
     opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
-    The tile size T (16 or 32) is dispatched at build time from rigid_config.cholesky_tile_size based on
-    n_dofs (see rigid_solver.py): T=16 for n_dofs in [1..16] or [33..48], T=32 for n_dofs in [17..32] or [49..].
-    Confirmed at the endpoints by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %). TileCls is
-    passed as a qd.template() so the value is part of the kernel's compile-time signature (selecting a Tile type as a
-    local via ternary fails type inference); the func_cholesky_factor_direct_tiled wrapper guarantees TileCls matches T.
+    The tile size T (16 or 32) is dispatched at build time from rigid_config.cholesky_tile_size based on n_dofs (see
+    rigid_solver.py): T=16 for n_dofs in [1..16] or [33..48], T=32 for n_dofs in [17..32] or [49..]. Confirmed at the
+    endpoints by dex_hand (n_dofs=62, T=32 +2.6 %) and g1_fall (n_dofs=35, T=16 +2.9 %). TileCls is passed as a
+    qd.template() so the value is part of the kernel's compile-time signature (selecting a Tile type as a local via
+    ternary fails type inference); the func_cholesky_factor_direct_tiled wrapper guarantees TileCls matches T.
 
     Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
 
@@ -5695,8 +5695,7 @@ def func_solve_init(
 
         initialize_Ma(constraint_state.Ma, constraint_state.qacc, dyn_info, rigid_info, rigid_config)
 
-    # Initialize solver accordingly
-    # Keyword calls: see the quadrants member-expansion note in func_solve_init.
+    # Initialize solver accordingly Keyword calls: see the quadrants member-expansion note in func_solve_init.
     initialize_Jaref(qacc=constraint_state.qacc, constraint_state=constraint_state, rigid_config=rigid_config)
     func_update_constraint(
         qacc=constraint_state.qacc,

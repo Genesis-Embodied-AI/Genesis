@@ -355,11 +355,11 @@ def func_factor_mass_tiled(
       L[i,j] = G_rev[n-1-j, n-1-i] / G_rev[n-1-i, n-1-i]  (i > j),  D_inv[i] = 1 / G_rev[n-1-i, n-1-i]^2,  diag(L) = 1.
 
     The qd.simt tile ops are batch-first while mass_mat_L is canonical batch-last (n_dofs, n_dofs, _B), so the
-    factorization runs in each block's region of the batch-first scratch
-    rigid_info.mass_mat_tiled_scratch and is scattered into mass_mat_L / mass_mat_D_inv. To avoid a dedicated
-    allocation, that scratch aliases the constraint Hessian buffer nt_H (same shape, and free at mass-factor time since
-    the constraint solve only populates it later in the step); see get_constraint_state. The scratch and mass_mat_L are
-    distinct buffers, so the scatter is race-free. Backward keeps its own branch in func_factor_mass.
+    factorization runs in each block's region of the batch-first scratch rigid_info.mass_mat_tiled_scratch and is
+    scattered into mass_mat_L / mass_mat_D_inv. To avoid a dedicated allocation, that scratch aliases the constraint
+    Hessian buffer nt_H (same shape, and free at mass-factor time since the constraint solve only populates it later in
+    the step); see get_constraint_state. The scratch and mass_mat_L are distinct buffers, so the scatter is race-free.
+    Backward keeps its own branch in func_factor_mass.
     """
     # Reuse the Hessian's tile width; TileCls is dispatched to match it at the call site, so T and the tile class stay
     # consistent for either value. In practice this path only runs for mass blocks exceeding shared memory (total

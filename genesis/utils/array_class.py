@@ -270,9 +270,9 @@ def get_rigid_info(solver, kinematic_only):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class IslandSlices:
-    # Per-(island, env) slices into a packed id array: island i_island's items are id[start[i_island, i_b] :
-    # start + n[i_island, i_b]]. curr is the write cursor the partition build advances while filling each slice; once
-    # built, curr == start + n. Indexed [n_entities, B] since an env has at most n_entities islands.
+    # Per-(island, env) slices into a packed id array: island i_island's items are id[start[i_island, i_b] : start +
+    # n[i_island, i_b]]. curr is the write cursor the partition build advances while filling each slice; once built,
+    # curr == start + n. Indexed [n_entities, B] since an env has at most n_entities islands.
     curr: qd.Tensor
     n: qd.Tensor
     start: qd.Tensor
@@ -280,8 +280,8 @@ class IslandSlices:
 
 def get_slices(solver, is_active=True):
     _B = solver._B
-    # An island is a dynamic component (a floating-base kinematic subtree), so there are at most n_links islands
-    # (each link can be its own component). Slices are therefore indexed by island in [0, n_links).
+    # An island is a dynamic component (a floating-base kinematic subtree), so there are at most n_links islands (each
+    # link can be its own component). Slices are therefore indexed by island in [0, n_links).
     n_links = max(solver.n_links, 1)
 
     return IslandSlices(
@@ -300,9 +300,9 @@ class IslandState:
     # links collapse to one island. links_island_idx is -1 for links whose component carries no dofs (fixed bodies),
     # which are never solved. link_slices maps island -> link-idx slice in link_id; dof_slices maps island -> local-dof
     # slice in dof_id (dof_id[local] -> global dof, ascending unless the CPU skyline path reorders it by contact
-    # adjacency). The per-island Hessian block is assembled/factored at
-    # those global DOF rows/cols in constraint_state.nt_H (the dofs may be non-contiguous globally; the cooperative arm
-    # gathers them into a contiguous shared tile).
+    # adjacency). The per-island Hessian block is assembled/factored at those global DOF rows/cols in
+    # constraint_state.nt_H (the dofs may be non-contiguous globally; the cooperative arm gathers them into a contiguous
+    # shared tile).
     links_parent_idx: qd.Tensor
     links_island_idx: qd.Tensor
     n_islands: qd.Tensor
@@ -318,8 +318,8 @@ class IslandState:
     # Per-island skyline envelope: dof_env_start_local[dof_slices.start[i] + ld] is the smallest island-local column
     # that can be structurally nonzero in local row ld of island i's Hessian block (from constraint supports and mass
     # coupling). The per-island assembly, Cholesky factor and triangular solve visit only [env_start, ld], so a large
-    # island (e.g. a tall stack of bodies coupled into one island) factors with its band instead of densely. Defaults
-    # to 0 (dense) when uncomputed, so any path that does not fill it stays correct.
+    # island (e.g. a tall stack of bodies coupled into one island) factors with its band instead of densely. Defaults to
+    # 0 (dense) when uncomputed, so any path that does not fill it stays correct.
     dof_env_start_local: qd.Tensor
     # Envelope transpose: largest local row whose envelope reaches column ld, bounding the column-oriented factor and
     # solve sweeps to the band. No safe uncomputed default (0 truncates): only the CPU per-island path may read it.
@@ -328,8 +328,8 @@ class IslandState:
     contact_id: qd.Tensor
     constraint_slices: IslandSlices
     constraint_id: qd.Tensor
-    # Per-constraint island label (-1 if the constraint touches no dof-island), resolved in parallel by the
-    # constraint scan so the serial per-island grouping can read it in O(1) instead of rescanning the Jacobian.
+    # Per-constraint island label (-1 if the constraint touches no dof-island), resolved in parallel by the constraint
+    # scan so the serial per-island grouping can read it in O(1) instead of rescanning the Jacobian.
     constraint_island_idx: qd.Tensor
     # Hibernation (empty unless use_hibernation). is_hibernated[i_island, i_b] marks an island whose every link is
     # asleep, set by the partition build. hibernated_next_link is the per-link daisy chain that keeps a hibernated
@@ -348,11 +348,11 @@ class IslandState:
     factor_worklist_i_b: qd.Tensor
     factor_worklist_i_island: qd.Tensor
     factor_worklist_size: qd.Tensor
-    # Scratch of the per-island fill-reducing (reverse Cuthill-McKee) DOF reordering, computed by the partition
-    # build for the CPU per-island skyline path: rcm_tree_pos maps a tree root link to its island-local tree slot,
-    # rcm_tree_degree holds contact degrees, rcm_tree_is_ordered flags already-ordered trees and rcm_tree_order is
-    # the resulting tree visit order. Only that config reads them. Do NOT fold these into other buffers of the same
-    # kernel: quadrants assumes distinct args never alias.
+    # Scratch of the per-island fill-reducing (reverse Cuthill-McKee) DOF reordering, computed by the partition build
+    # for the CPU per-island skyline path: rcm_tree_pos maps a tree root link to its island-local tree slot,
+    # rcm_tree_degree holds contact degrees, rcm_tree_is_ordered flags already-ordered trees and rcm_tree_order is the
+    # resulting tree visit order. Only that config reads them. Do NOT fold these into other buffers of the same kernel:
+    # quadrants assumes distinct args never alias.
     rcm_tree_pos: qd.Tensor
     rcm_tree_degree: qd.Tensor
     rcm_tree_is_ordered: qd.Tensor
@@ -378,9 +378,9 @@ def get_island_state(solver, collider):
     )
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
-    # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
-    # candidate count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise
-    # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
+    # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the candidate
+    # count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise constraint_id is
+    # undersized once dynamic welds are added and the per-island grouping writes out of bounds.
     n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
     return IslandState(
         links_parent_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
@@ -627,9 +627,9 @@ def get_constraint_state(constraint_solver, solver, collider):
         cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_ * nt_vec_n_slots, _B), layout=dof_vec_layout),
-        # When the register-tiled mass factor is on, reuse its scratch (rigid_info.mass_mat_tiled_scratch,
-        # allocated with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only
-        # writes it before the constraint solve repopulates it in the same step.
+        # When the register-tiled mass factor is on, reuse its scratch (rigid_info.mass_mat_tiled_scratch, allocated
+        # with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only writes it
+        # before the constraint solve repopulates it in the same step.
         nt_H=(
             solver._rigid_info.mass_mat_tiled_scratch
             if solver._rigid_config.enable_register_tiled_mass
@@ -1538,9 +1538,8 @@ class ColliderInfo:
     max_collision_pairs: qd.Tensor
     max_candidate_contacts: qd.Tensor
     max_collision_pairs_broad: qd.Tensor
-    # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints
-    # per contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts'
-    # is set.
+    # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints per
+    # contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts' is set.
     max_contacts: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
     n_valid_pairs: qd.Tensor

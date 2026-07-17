@@ -2550,8 +2550,8 @@ class RigidSolver(KinematicSolver):
         elif joints_idx is not None:
             # Conditionally batched
             assert envs_idx is None
-            # batch_shape = (envs_idx, joints_idx) if self._options.batch_joints_info else (joints_idx,)
-            # tensor = qd_to_torch(self.dyn_info.joints.sol_params, *batch_shape, transpose=True)
+            # batch_shape = (envs_idx, joints_idx) if self._options.batch_joints_info else (joints_idx,) tensor =
+            # qd_to_torch(self.dyn_info.joints.sol_params, *batch_shape, transpose=True)
             tensor = qd_to_torch(self.dyn_info.joints.sol_params, envs_idx, joints_idx, transpose=True, copy=True)
             if self.n_envs == 0 and self._options.batch_joints_info:
                 tensor = tensor[0]
