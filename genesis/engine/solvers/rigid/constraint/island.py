@@ -462,11 +462,11 @@ def func_build_islands(
 def _sort_island_contacts(
     i_b,
     start,
-    n,
     contact_idx: qd.Tensor,
     contacts_pos: qd.Tensor,
     contacts_geom_a: qd.Tensor,
     contacts_geom_b: qd.Tensor,
+    n,
 ):
     """Insertion-sort the contact-index slice contact_idx[start : start + n] by a deterministic total order.
 

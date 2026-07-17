@@ -225,7 +225,7 @@ def func_add_polytope_vertex_contacts_sdf(
                             vertex_pos = gu.qd_transform_by_trans_quat(
                                 collider_info.verts_spatial_grid.verts_pos[i_sv], ga_pos, ga_quat
                             )
-                            if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state):
+                            if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, dyn_state, expansion=0.0):
                                 is_in_band, sd_v = sdf.sdf_func_world_local_banded(
                                     vertex_pos, i_gb, gb_pos, gb_quat, margin, dyn_info, collider_info
                                 )
@@ -791,7 +791,7 @@ def func_add_polytope_vertex_contacts_sdf_shell(
             # force modulation ratchets a softly-stacked column sideways.
             for i_v in range(dyn_info.geoms.vert_start[j_ga], dyn_info.geoms.vert_end[j_ga]):
                 vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ja_pos, ja_quat)
-                if func_point_in_geom_aabb(j_gb, i_b, vertex_pos, 0.0, dyn_state):
+                if func_point_in_geom_aabb(j_gb, i_b, vertex_pos, dyn_state, expansion=0.0):
                     is_in_band, sd_v = sdf.sdf_func_world_local_banded(
                         vertex_pos, j_gb, jb_pos, jb_quat, margin, dyn_info, collider_info
                     )
@@ -1026,7 +1026,7 @@ def func_contact_vertex_sdf(
 
     for i_v in range(dyn_info.geoms.vert_start[i_ga], dyn_info.geoms.vert_end[i_ga]):
         vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
-        if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state):
+        if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, dyn_state, expansion=0.0):
             new_penetration = -sdf.sdf_func_world_local(
                 vertex_pos, i_gb, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
             )
@@ -1928,7 +1928,6 @@ def func_convex_convex_contact(
                                     ga_quat_current,
                                     gb_pos_current,
                                     gb_quat_current,
-                                    diff_pos_tolerance,
                                     diff_normal_tolerance,
                                     geoms_init_AABB,
                                     dyn_info,
@@ -1940,6 +1939,7 @@ def func_convex_convex_contact(
                                     diff_contact_input,
                                     rigid_config,
                                     collider_static_config,
+                                    diff_pos_tolerance,
                                 )
                             else:
                                 gjk.func_gjk_contact(
@@ -2285,7 +2285,6 @@ def _func_multicontact_mpr(
     contact_pos_0: qd.types.vector(3),
     normal_0: qd.types.vector(3),
     penetration_0,
-    prefer_gjk_0: bool,
     errno: qd.Tensor,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_info: array_class.DynInfo,
@@ -2298,6 +2297,7 @@ def _func_multicontact_mpr(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
+    prefer_gjk_0: bool,
 ):
     """Compute all contacts for a pair and write them contiguously via a single atomic reservation.
 
@@ -2357,8 +2357,8 @@ def _func_multicontact_mpr(
             rigid_config,
             collider_static_config,
             gjk_static_config,
-            True,
-            True,
+            use_gjk=True,
+            is_initial_detection=True,
         )
         if is_col:
             collider_state.contact_cache.normal[i_pair, i_b] = normal
@@ -2480,7 +2480,7 @@ def _func_multicontact_mpr(
                 collider_static_config,
                 gjk_static_config,
                 use_gjk_perturb,
-                False,
+                is_initial_detection=False,
             )
 
             if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
@@ -2514,8 +2514,8 @@ def _func_multicontact_mpr(
                             rigid_config,
                             collider_static_config,
                             gjk_static_config,
-                            True,
-                            False,
+                            use_gjk=True,
+                            is_initial_detection=False,
                         )
 
             if is_col:
@@ -2643,7 +2643,6 @@ def _func_narrowphase_multicontact(
                 contact_pos_0,
                 normal_0,
                 penetration_0,
-                prefer_gjk_0,
                 errno,
                 geoms_init_AABB,
                 dyn_info,
@@ -2656,6 +2655,7 @@ def _func_narrowphase_multicontact(
                 rigid_config,
                 collider_static_config,
                 gjk_static_config,
+                prefer_gjk_0,
             )
 
 
@@ -2675,8 +2675,8 @@ def _func_enqueue_for_multicontact(
     contact_pos_0: qd.types.vector(3),
     normal_0: qd.types.vector(3),
     penetration_0,
-    prefer_gjk: bool,
     collider_state: array_class.ColliderState,
+    prefer_gjk: bool,
 ):
     idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_queue_size[0], 1)
     collider_state.narrowphase_work_queues.mpr_i_b[idx] = i_b
@@ -2807,13 +2807,13 @@ def _func_narrowphase_contact0(
                         ga_quat,
                         gb_pos,
                         gb_quat,
-                        False,
-                        dyn_info,
-                        collider_info,
-                        collider_state,
-                        gjk_state,
-                        rigid_config,
-                        collider_static_config,
+                        shrink_sphere=False,
+                        dyn_info=dyn_info,
+                        collider_info=collider_info,
+                        collider_state=collider_state,
+                        gjk_state=gjk_state,
+                        rigid_config=rigid_config,
+                        collider_static_config=collider_static_config,
                     )
                     is_col = distance < collider_info.gjk.collision_eps[None]
                     if distance >= 0.5 * collider_info.gjk.FLOAT_MAX[None]:
@@ -2905,7 +2905,7 @@ def _func_narrowphase_contact0(
                     # contacts always try MPR first and fall back to GJK per contact. prefer_gjk is never set for the
                     # MJ_MPR algorithm (no GJK), so a non-multi_contact MJ_MPR pair always takes the fast path below.
                     _func_enqueue_for_multicontact(
-                        i_b, i_ga, i_gb, i_pair, contact_pos, normal, penetration, prefer_gjk, collider_state
+                        i_b, i_ga, i_gb, i_pair, contact_pos, normal, penetration, collider_state, prefer_gjk
                     )
                 else:
                     func_add_contact(
@@ -2921,7 +2921,7 @@ def _func_narrowphase_contact0(
                         collider_info,
                         dyn_state,
                         collider_state,
-                        True,
+                        use_atomic=True,
                     )
             elif not is_col:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
@@ -3297,7 +3297,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             collider_state,
                             rigid_config,
                             collider_static_config,
-                            False,
+                            seeded=False,
                         )
                         # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's
                         # faces BETWEEN A's verts, so B's verts are checked against A's SDF as well - as a seeded
@@ -3323,5 +3323,5 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 collider_state,
                                 rigid_config,
                                 collider_static_config,
-                                True,
+                                seeded=True,
                             )

@@ -14,7 +14,6 @@ def func_gjk_contact(
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
-    pos_tol,
     normal_tol,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_info: array_class.DynInfo,
@@ -26,6 +25,7 @@ def func_gjk_contact(
     diff_contact_input: array_class.DiffContactInput,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    pos_tol,
 ):
     """
     Detect multiple possible contact points between two geometries using GJK and EPA algorithms, and compute weights
@@ -409,13 +409,13 @@ def func_extended_epa(
             pos_b,
             quat_b,
             dir,
-            1.0,
-            dyn_info,
-            collider_info,
-            collider_state,
-            gjk_state,
-            rigid_config,
-            collider_static_config,
+            dir_norm=1.0,
+            dyn_info=dyn_info,
+            collider_info=collider_info,
+            collider_state=collider_state,
+            gjk_state=gjk_state,
+            rigid_config=rigid_config,
+            collider_static_config=collider_static_config,
         )
         w = gjk_state.polytope_verts.mink[i_b, wi]
 
@@ -631,13 +631,13 @@ def func_add_diff_contact_input(
         quat_a,
         pos_b,
         quat_b,
-        False,
-        dyn_info,
-        collider_info,
-        collider_state,
-        gjk_state,
-        rigid_config,
-        collider_static_config,
+        shrink_sphere=False,
+        dyn_info=dyn_info,
+        collider_info=collider_info,
+        collider_state=collider_state,
+        gjk_state=gjk_state,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
     )
 
     gjk_state.diff_contact_input.local_pos1_a[i_b, n] = gjk_state.polytope_verts.local_obj1[i_b, i_v1]

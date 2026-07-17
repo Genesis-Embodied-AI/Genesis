@@ -841,7 +841,7 @@ class Collider:
             self._solver._errno,
             self._solver.geoms_init_AABB,
             self._solver.dyn_info,
-            self._solver._rigid_info,
+            self._solver.rigid_info,
             self._collider_info,
             self._solver.dyn_state,
             self._collider_state,
@@ -866,7 +866,7 @@ class Collider:
         func_broad_phase(
             self._solver.dyn_state,
             self._solver.dyn_info,
-            self._solver._rigid_info,
+            self._solver.rigid_info,
             self._solver._rigid_config,
             self._solver.constraint_solver.constraint_state,
             self._collider_state,
@@ -879,7 +879,7 @@ class Collider:
                 self._solver._errno,
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_info,
-                self._solver._rigid_info,
+                self._solver.rigid_info,
                 self._collider_info,
                 self._solver.dyn_state,
                 self._collider_state,
@@ -896,7 +896,7 @@ class Collider:
                 self._solver._errno,
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_info,
-                self._solver._rigid_info,
+                self._solver.rigid_info,
                 self._collider_info,
                 self._solver.dyn_state,
                 self._collider_state,
@@ -912,7 +912,7 @@ class Collider:
                 self._solver._errno,
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_info,
-                self._solver._rigid_info,
+                self._solver.rigid_info,
                 self._collider_info,
                 self._solver.dyn_state,
                 self._collider_state,
@@ -924,7 +924,7 @@ class Collider:
                 self._solver._errno,
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_info,
-                self._solver._rigid_info,
+                self._solver.rigid_info,
                 self._collider_info,
                 self._solver.dyn_state,
                 self._collider_state,
@@ -937,7 +937,7 @@ class Collider:
                 self._solver._errno,
                 self._solver.geoms_init_AABB,
                 self._solver.dyn_info,
-                self._solver._rigid_info,
+                self._solver.rigid_info,
                 self._collider_info,
                 self._solver.dyn_state,
                 self._collider_state,
@@ -957,12 +957,12 @@ class Collider:
         )
         if ran_fused_dedup_coop:
             func_clamp_prune_contacts_coop(
-                self._solver._errno, self._solver._rigid_info, self._collider_info, self._collider_state
+                self._solver._errno, self._solver.rigid_info, self._collider_info, self._collider_state
             )
         else:
             func_clamp_prune_contacts(
                 self._solver._errno,
-                self._solver._rigid_info,
+                self._solver.rigid_info,
                 self._collider_info,
                 self._collider_state,
                 self._solver._rigid_config,

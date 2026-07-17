@@ -401,13 +401,14 @@ class RaycasterSensor(
                 shared_metadata.sensor_point_counts,
                 shared_metadata.sensor_return_points,
                 raw_data_T,
-                gs.EPS,
             )
             if entry.raycast_mask is None:
-                kernel_cast_rays(*args_common, solver.dyn_info, solver.dyn_state, i > 0, entry.shared_across_envs)
+                kernel_cast_rays(
+                    *args_common, solver.dyn_info, solver.dyn_state, gs.EPS, i > 0, entry.shared_across_envs
+                )
             else:
                 kernel_cast_rays_visual(
-                    *args_common, solver.dyn_info, solver.dyn_state, i > 0, entry.shared_across_envs
+                    *args_common, solver.dyn_info, solver.dyn_state, gs.EPS, i > 0, entry.shared_across_envs
                 )
 
     def _draw_debug(self, context: "RasterizerContext"):

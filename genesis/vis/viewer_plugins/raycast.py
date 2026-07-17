@@ -91,13 +91,13 @@ class Raycaster:
             self.bvh.morton_codes,
             np.ascontiguousarray(ray_origin, dtype=gs.np_float),
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
-            max_range,
             envs_idx if envs_idx is not None else self.envs_idx,
-            gs.EPS,
             self.solver.dyn_info,
-            self.solver._rigid_info,
+            self.solver.rigid_info,
             self.solver.dyn_state,
             self.result,
+            max_range,
+            gs.EPS,
         )
 
         # Reduce per-env hits to the closest one. Distance is +inf for envs that didn't hit, so argmin alone

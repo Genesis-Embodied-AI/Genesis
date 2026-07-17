@@ -388,7 +388,12 @@ class RasterizerContext:
     def set_reflection_mat(self, geom_T):
         height = geom_T[0, 2, 3]
         self.jit.reflection_mat = np.array(
-            [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, -1.0, height * 2], [0.0, 0.0, 0.0, 1.0]],
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, -1.0, height * 2],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             dtype=np.float32,
         )
 

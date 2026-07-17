@@ -578,7 +578,7 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.dyn_state.geoms,
             self.sim.coupler.rigid_solver.dyn_info.geoms,
             self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver._rigid_info,
+            self.sim.coupler.rigid_solver.rigid_info,
             self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
             self.sim.coupler.rigid_solver.collider._collider_static_config,
         )
@@ -589,7 +589,7 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.dyn_state.geoms,
             self.sim.coupler.rigid_solver.dyn_info.geoms,
             self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver._rigid_info,
+            self.sim.coupler.rigid_solver.rigid_info,
             self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
             self.sim.coupler.rigid_solver.collider._collider_static_config,
         )
@@ -601,7 +601,7 @@ class MPMSolver(Solver):
             f,
             self.sim.coupler.rigid_solver.dyn_info.geoms,
             self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver._rigid_info,
+            self.sim.coupler.rigid_solver.rigid_info,
         )
 
         # Apply particle constraints after g2p
@@ -634,7 +634,7 @@ class MPMSolver(Solver):
             f,
             self.sim.coupler.rigid_solver.dyn_info.geoms,
             self.sim.coupler.rigid_solver.dyn_state.links,
-            self.sim.coupler.rigid_solver._rigid_info,
+            self.sim.coupler.rigid_solver.rigid_info,
         )
 
     @qd.kernel

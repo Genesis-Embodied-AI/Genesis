@@ -73,7 +73,7 @@ def func_det3(v1, v2, v3):
 
 @qd.func
 def func_point_in_geom_aabb(
-    i_g: int, i_b: int, point: qd.types.vector(3), expansion: float, dyn_state: array_class.DynState
+    i_g: int, i_b: int, point: qd.types.vector(3), dyn_state: array_class.DynState, expansion: float
 ):
     aabb_min = dyn_state.geoms.aabb_min[i_g, i_b] - expansion
     aabb_max = dyn_state.geoms.aabb_max[i_g, i_b] + expansion

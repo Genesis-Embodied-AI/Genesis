@@ -420,8 +420,8 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
 
     n_dofs = entity.n_dofs
     branch = n_dofs // 2
-    block_start = qd_to_numpy(scene.rigid_solver._rigid_info.dofs_mass_block_start)
-    block_end = qd_to_numpy(scene.rigid_solver._rigid_info.dofs_mass_block_end)
+    block_start = qd_to_numpy(scene.rigid_solver.rigid_info.dofs_mass_block_start)
+    block_end = qd_to_numpy(scene.rigid_solver.rigid_info.dofs_mass_block_end)
     assert_allclose(block_start, [0] * branch + [branch] * branch, tol=0)
     assert_allclose(block_end, [branch] * branch + [n_dofs] * branch, tol=0)
 

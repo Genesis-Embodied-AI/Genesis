@@ -341,19 +341,19 @@ def test_diff_solver(monkeypatch):
     def constraint_solver_resolve():
         func_solve_init(
             rigid_solver.dyn_info,
-            rigid_solver._rigid_info,
+            rigid_solver.rigid_info,
             rigid_solver.dyn_state,
             constraint_solver.constraint_state,
             rigid_solver._rigid_config,
-            False,
+            is_decomposed=False,
         )
         func_solve_body(
-            constraint_solver._n_iterations,
             rigid_solver.dyn_info,
-            rigid_solver._rigid_info,
+            rigid_solver.rigid_info,
             rigid_solver.dyn_state,
             constraint_solver.constraint_state,
             rigid_solver._rigid_config,
+            constraint_solver._n_iterations,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
@@ -362,13 +362,13 @@ def test_diff_solver(monkeypatch):
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
     kernel_step_1(
         rigid_solver.dyn_info,
-        rigid_solver._rigid_info,
+        rigid_solver.rigid_info,
         rigid_solver.dyn_state,
         constraint_solver.constraint_state,
         rigid_solver._rigid_config,
-        True,
-        True,
-        False,
+        is_forward_pos_updated=True,
+        is_forward_vel_updated=True,
+        is_backward=False,
     )
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()
@@ -377,7 +377,7 @@ def test_diff_solver(monkeypatch):
 
     # Loss function to compute gradients using finite difference method
     def compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force):
-        rigid_solver._rigid_info.mass_mat.from_numpy(input_mass)
+        rigid_solver.rigid_info.mass_mat.from_numpy(input_mass)
         constraint_solver.constraint_state.jac.from_numpy(input_jac)
         constraint_solver.constraint_state.aref.from_numpy(input_aref)
         constraint_solver.constraint_state.efc_D.from_numpy(input_efc_D)
@@ -391,7 +391,7 @@ def test_diff_solver(monkeypatch):
         output_qacc = qd_to_torch(constraint_solver.qacc)
         return ((output_qacc - target_qacc) ** 2).mean()
 
-    init_input_mass = qd_to_numpy(rigid_solver._rigid_info.mass_mat, copy=True)
+    init_input_mass = qd_to_numpy(rigid_solver.rigid_info.mass_mat, copy=True)
     init_input_jac = qd_to_numpy(constraint_solver.constraint_state.jac, copy=True)
     init_input_aref = qd_to_numpy(constraint_solver.constraint_state.aref, copy=True)
     init_input_efc_D = qd_to_numpy(constraint_solver.constraint_state.efc_D, copy=True)

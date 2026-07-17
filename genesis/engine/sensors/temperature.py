@@ -131,7 +131,7 @@ def _apply_diffusion_and_heat_generation(
 
 
 @qd.func
-def _qd_polygon_area_from_points_3d(i_b: int, n: int, scratch: qd.types.ndarray(), eps: float) -> float:
+def _qd_polygon_area_from_points_3d(i_b: int, scratch: qd.types.ndarray(), n: int, eps: float) -> float:
     """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
@@ -207,9 +207,9 @@ def _qd_polygon_area_from_points_3d(i_b: int, n: int, scratch: qd.types.ndarray(
 def _kernel_compute_contact_areas(
     contact_area: qd.types.ndarray(),
     scratch: qd.types.ndarray(),
-    eps: float,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    eps: float,
 ):
     # contact_area shape (n_c_max, n_batches). scratch (n_batches, n_c_max, len(_ScratchIdx)).
     n_batches = contact_area.shape[1]
@@ -266,7 +266,7 @@ def _kernel_compute_contact_areas(
 
             group_area = eps
             if count >= 3:
-                group_area = _qd_polygon_area_from_points_3d(i_b, count, scratch, eps)
+                group_area = _qd_polygon_area_from_points_3d(i_b, scratch, count, eps)
             else:
                 for k in range(count):
                     d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]
@@ -300,11 +300,11 @@ def _kernel_contact_heat(
     link_conductivity: qd.types.ndarray(),
     link_rho_cp: qd.types.ndarray(),
     contact_area: qd.types.ndarray(),
-    dt: float,
-    eps: float,
     output: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dt: float,
+    eps: float,
 ):
     # contact_area shape (n_c_max, n_batches)
     n_batches = output.shape[-1]
@@ -724,9 +724,9 @@ class TemperatureGridSensor(
         _kernel_compute_contact_areas(
             shared_metadata.contact_area_buffer,
             shared_metadata.contact_area_scratch,
-            gs.EPS,
             solver.dyn_state,
             collider_state,
+            gs.EPS,
         )
         _kernel_contact_heat(
             shared_metadata.links_idx,
@@ -743,11 +743,11 @@ class TemperatureGridSensor(
             link_conductivity,
             link_rho_cp,
             shared_metadata.contact_area_buffer,
-            dt,
-            gs.EPS,
             raw_data_T,
             solver.dyn_state,
             collider_state,
+            dt,
+            gs.EPS,
         )
         raw_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection

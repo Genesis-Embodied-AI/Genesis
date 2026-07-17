@@ -245,12 +245,12 @@ def func_noslip_batch(
                             i_c,
                             i_b,
                             coef,
-                            0.0,
-                            constraint_state.Mgrad,
-                            constraint_state.jac,
-                            constraint_state.jac_dofs_idx,
-                            constraint_state.jac_n_dofs,
-                            rigid_info,
+                            coef_1=0.0,
+                            vec=constraint_state.Mgrad,
+                            jac=constraint_state.jac,
+                            jac_dofs_idx=constraint_state.jac_dofs_idx,
+                            jac_n_dofs=constraint_state.jac_n_dofs,
+                            rigid_info=rigid_info,
                         )
                         if i_phase == 0:
                             A_diag = func_dot_row(
@@ -389,7 +389,7 @@ def func_noslip_batch(
                                 constraint_state.efc_force[j_efc, i_b] = mid + y
                                 constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                         cost_change = func_cost_change(
-                            i_b, Ac, constraint_state.efc_force, j_efc, old_force, res, 2, EPS
+                            i_b, Ac, constraint_state.efc_force, old_force, res, EPS, j_efc, dim=2
                         )
 
                         improvement -= cost_change
@@ -471,12 +471,27 @@ def kernel_noslip(
     else:
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
-            func_noslip_batch(i_b, 0, rigid_info, dyn_state, collider_state, constraint_state, rigid_config)
-            func_dual_finish_batch(i_b, 0, rigid_info, dyn_state, constraint_state, rigid_config)
+            func_noslip_batch(
+                i_b,
+                i_island=0,
+                rigid_info=rigid_info,
+                dyn_state=dyn_state,
+                collider_state=collider_state,
+                constraint_state=constraint_state,
+                rigid_config=rigid_config,
+            )
+            func_dual_finish_batch(
+                i_b,
+                i_island=0,
+                rigid_info=rigid_info,
+                dyn_state=dyn_state,
+                constraint_state=constraint_state,
+                rigid_config=rigid_config,
+            )
 
 
 @qd.func
-def func_cost_change(i_b: int, Ac, force: qd.Tensor, force_start: int, old_force, res, dim: int, eps):
+def func_cost_change(i_b: int, Ac, force: qd.Tensor, old_force, res, eps, force_start: int, dim: int):
     change = gs.qd_float(0.0)
     if dim == 1:
         delta = force[force_start, i_b] - old_force[0]

@@ -1063,9 +1063,9 @@ def kernel_set_drone_rpm(
     propellers_spin: qd.types.ndarray(),
     KF: qd.float32,
     KM: qd.float32,
-    invert: qd.i32,
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    invert: qd.i32,
 ):
     """
     Set the RPM of propellers of a drone entity.
@@ -1087,8 +1087,8 @@ def kernel_set_drone_rpm(
             if invert:
                 torque = -torque
 
-            func_apply_link_external_force(force, i_l, i_b, dyn_state, 1, 1)
-            func_apply_link_external_torque(torque, i_l, i_b, dyn_state, 1, 1)
+            func_apply_link_external_force(force, i_l, i_b, dyn_state, ref=1, local=1)
+            func_apply_link_external_torque(torque, i_l, i_b, dyn_state, ref=1, local=1)
 
 
 @qd.kernel(fastcache=True)
@@ -1117,7 +1117,7 @@ def kernel_update_drone_propeller_vgeoms(
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction(geoms_idx: qd.i32, friction: qd.f32, dyn_info: array_class.DynInfo):
+def kernel_set_geom_friction(dyn_info: array_class.DynInfo, geoms_idx: qd.i32, friction: qd.f32):
     dyn_info.geoms.friction[geoms_idx] = friction
 
 
@@ -1136,10 +1136,10 @@ def kernel_set_geoms_friction(
 @qd.kernel(fastcache=True)
 def kernel_set_vverts(
     vverts: qd.types.ndarray(),
-    vvert_start: qd.i32,
     envs_idx: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    vvert_start: qd.i32,
 ):
     n_envs_in = envs_idx.shape[0]
     n_vverts_in = vverts.shape[1]

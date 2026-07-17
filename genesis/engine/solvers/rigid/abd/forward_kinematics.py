@@ -34,8 +34,10 @@ def kernel_forward_kinematics_links_geoms(
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
-        func_update_cartesian_space_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, True, False)
-        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
+        func_update_cartesian_space_batch(
+            i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms=True, is_backward=False
+        )
+        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -48,8 +50,10 @@ def kernel_masked_forward_kinematics_links_geoms(
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_update_cartesian_space_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, True, False)
-            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
+            func_update_cartesian_space_batch(
+                i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms=True, is_backward=False
+            )
+            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -62,9 +66,9 @@ def kernel_forward_kinematics(
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
-        func_forward_kinematics_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
-        func_COM_links(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
-        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
+        func_forward_kinematics_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+        func_COM_links(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -77,9 +81,9 @@ def kernel_masked_forward_kinematics(
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_forward_kinematics_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
-            func_COM_links(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
-            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
+            func_forward_kinematics_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+            func_COM_links(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -127,7 +131,7 @@ def func_COM_links(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_COM_links_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
@@ -478,7 +482,7 @@ def func_forward_kinematics_batch(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_forward_kinematics_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
@@ -496,7 +500,7 @@ def kernel_forward_kinematics_entity(
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
-        func_forward_kinematics_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, False)
+        func_forward_kinematics_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
 
 
 @qd.func
@@ -560,7 +564,7 @@ def func_update_geoms_batch(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_update_geoms_entity(
@@ -604,7 +608,9 @@ def kernel_update_geoms(
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
-        func_update_geoms_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, False)
+        func_update_geoms_batch(
+            i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward=False
+        )
 
 
 @qd.func
@@ -735,7 +741,7 @@ def func_forward_velocity_batch(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_forward_velocity_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)

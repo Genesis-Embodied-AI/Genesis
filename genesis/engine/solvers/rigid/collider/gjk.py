@@ -600,7 +600,7 @@ def func_gjk(
                 backup_gjk = False
 
         # Compute the barycentric coordinates of the closest point to the origin in the simplex
-        _lambda = func_gjk_subdistance(i_b, n + 1, collider_info, gjk_state)
+        _lambda = func_gjk_subdistance(i_b, collider_info, gjk_state, n + 1)
 
         # Remove vertices from the simplex with zero barycentric coordinates
         n = 0
@@ -623,7 +623,9 @@ def func_gjk(
             break
 
         # Get the next support vector
-        next_support_vector = func_simplex_vertex_linear_comb(i_b, 2, 0, 1, 2, 3, _lambda, n, gjk_state)
+        next_support_vector = func_simplex_vertex_linear_comb(
+            i_b, i_v=2, i_s1=0, i_s2=1, i_s3=2, i_s4=3, _lambda=_lambda, gjk_state=gjk_state, n=n
+        )
         if func_is_equal_vec(next_support_vector, support_vector, collider_info.gjk.FLOAT_MIN[None]):
             # If the next support vector is equal to the previous one, we converged to the minimum distance
             break
@@ -646,7 +648,9 @@ def func_gjk(
 
         # Compute witness points
         for i in range(2):
-            witness_point = func_simplex_vertex_linear_comb(i_b, i, 0, 1, 2, 3, _lambda, nsimplex, gjk_state)
+            witness_point = func_simplex_vertex_linear_comb(
+                i_b, i, i_s1=0, i_s2=1, i_s3=2, i_s4=3, _lambda=_lambda, gjk_state=gjk_state, n=nsimplex
+            )
             if i == 0:
                 gjk_state.witness.point_obj1[i_b, 0] = witness_point
             else:
@@ -761,13 +765,13 @@ def func_gjk_intersect(
             quat_a,
             pos_b,
             quat_b,
-            False,
-            dyn_info,
-            collider_info,
-            collider_state,
-            gjk_state,
-            rigid_config,
-            collider_static_config,
+            shrink_sphere=False,
+            dyn_info=dyn_info,
+            collider_info=collider_info,
+            collider_state=collider_state,
+            gjk_state=gjk_state,
+            rigid_config=rigid_config,
+            collider_static_config=collider_static_config,
         )
 
         # Check if the origin is strictly outside of the Minkowski difference (which means there is no collision)
@@ -814,7 +818,7 @@ def func_gjk_triangle_info(
 
 
 @qd.func
-def func_gjk_subdistance(i_b, n, collider_info: array_class.ColliderInfo, gjk_state: array_class.GJKState):
+def func_gjk_subdistance(i_b, collider_info: array_class.ColliderInfo, gjk_state: array_class.GJKState, n):
     """
     Compute the barycentric coordinates of the closest point to the origin in the n-simplex.
 
@@ -831,7 +835,7 @@ def func_gjk_subdistance(i_b, n, collider_info: array_class.ColliderInfo, gjk_st
     dmin = collider_info.gjk.FLOAT_MAX[None]
 
     if n == 4:
-        _lambda, flag3d = func_gjk_subdistance_3d(i_b, 0, 1, 2, 3, gjk_state)
+        _lambda, flag3d = func_gjk_subdistance_3d(i_b, i_s1=0, i_s2=1, i_s3=2, i_s4=3, gjk_state=gjk_state)
         flag = flag3d
 
     if (flag == RETURN_CODE.FAIL) or n == 3:
@@ -847,7 +851,9 @@ def func_gjk_subdistance(i_b, n, collider_info: array_class.ColliderInfo, gjk_st
 
             if failed_3d:
                 if flag2d == RETURN_CODE.SUCCESS:
-                    closest_point = func_simplex_vertex_linear_comb(i_b, 2, k_1, k_2, k_3, 0, _lambda2d, 3, gjk_state)
+                    closest_point = func_simplex_vertex_linear_comb(
+                        i_b, i_v=2, i_s1=k_1, i_s2=k_2, i_s3=k_3, i_s4=0, _lambda=_lambda2d, gjk_state=gjk_state, n=3
+                    )
                     d = closest_point.dot(closest_point)
                     if d < dmin:
                         dmin = d
@@ -880,7 +886,9 @@ def func_gjk_subdistance(i_b, n, collider_info: array_class.ColliderInfo, gjk_st
             _lambda1d = func_gjk_subdistance_1d(i_b, k_1, k_2, gjk_state)
 
             if failed_3d or failed_2d:
-                closest_point = func_simplex_vertex_linear_comb(i_b, 2, k_1, k_2, 0, 0, _lambda1d, 2, gjk_state)
+                closest_point = func_simplex_vertex_linear_comb(
+                    i_b, i_v=2, i_s1=k_1, i_s2=k_2, i_s3=0, i_s4=0, _lambda=_lambda1d, gjk_state=gjk_state, n=2
+                )
                 d = closest_point.dot(closest_point)
                 if d < dmin:
                     dmin = d
@@ -1083,7 +1091,7 @@ def func_project_origin_to_line(v1, v2):
 
 
 @qd.func
-def func_simplex_vertex_linear_comb(i_b, i_v, i_s1, i_s2, i_s3, i_s4, _lambda, n, gjk_state: array_class.GJKState):
+def func_simplex_vertex_linear_comb(i_b, i_v, i_s1, i_s2, i_s3, i_s4, _lambda, gjk_state: array_class.GJKState, n):
     """
     Compute the linear combination of the simplex vertices
 
@@ -1687,13 +1695,13 @@ def func_safe_gjk_support(
                 d,
                 pos,
                 quat,
-                False,
-                dyn_info,
-                collider_info,
-                collider_state,
-                gjk_state,
-                rigid_config,
-                collider_static_config,
+                shrink_sphere=False,
+                dyn_info=dyn_info,
+                collider_info=collider_info,
+                collider_state=collider_state,
+                gjk_state=gjk_state,
+                rigid_config=rigid_config,
+                collider_static_config=collider_static_config,
             )
             if j == 0:
                 obj1 = sp

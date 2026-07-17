@@ -897,7 +897,7 @@ def test_reset(show_viewer):
         scene.reset(state=init_state, envs_idx=envs_idx)
         for actual, init_ref, fallen_ref in (
             (
-                qd_to_torch(scene.rigid_solver._rigid_info.qpos, transpose=True, copy=True),
+                qd_to_torch(scene.rigid_solver.rigid_info.qpos, transpose=True, copy=True),
                 init_rigid_state.qpos,
                 fallen_rigid_state.qpos,
             ),
@@ -919,7 +919,7 @@ def test_reset(show_viewer):
     for _ in range(50):
         scene.step()
     for actual, fallen_ref in (
-        (qd_to_torch(scene.rigid_solver._rigid_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
+        (qd_to_torch(scene.rigid_solver.rigid_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
         (qd_to_torch(scene.rigid_solver.dyn_state.dofs.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
         (
             qd_to_torch(scene.rigid_solver.dyn_state.links.pos, transpose=True, copy=True),

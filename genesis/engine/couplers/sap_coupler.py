@@ -574,7 +574,7 @@ class SAPCoupler(RBC):
         self.compute_regularization(
             dofs_state=self.rigid_solver.dyn_state.dofs,
             entities_info=self.rigid_solver.dyn_info.entities,
-            rigid_info=self.rigid_solver._rigid_info,
+            rigid_info=self.rigid_solver.rigid_info,
         )
 
     def precompute(self, i_step):
@@ -766,7 +766,7 @@ class SAPCoupler(RBC):
 
             # compute contact hessian and gradient
             self.compute_constraint_contact_gradient_hessian_diag_prec()
-            self.check_sap_convergence(rigid_info=self.rigid_solver._rigid_info)
+            self.check_sap_convergence(rigid_info=self.rigid_solver.rigid_info)
             # solve for the vertex velocity
             self.pcg_solve()
 
@@ -898,7 +898,7 @@ class SAPCoupler(RBC):
         if self.fem_solver.is_active:
             self.compute_fem_unconstrained_gradient()
         if self.rigid_solver.is_active:
-            self.compute_rigid_unconstrained_gradient(rigid_info=self.rigid_solver._rigid_info)
+            self.compute_rigid_unconstrained_gradient(rigid_info=self.rigid_solver.rigid_info)
 
     @qd.kernel
     def compute_fem_unconstrained_gradient(self):
@@ -1160,7 +1160,7 @@ class SAPCoupler(RBC):
 
     def one_pcg_iter(self):
         self._kernel_one_pcg_iter(
-            entities_info=self.rigid_solver.dyn_info.entities, rigid_info=self.rigid_solver._rigid_info
+            entities_info=self.rigid_solver.dyn_info.entities, rigid_info=self.rigid_solver.rigid_info
         )
 
     @qd.kernel
@@ -1318,7 +1318,7 @@ class SAPCoupler(RBC):
             )
 
     def pcg_solve(self):
-        self.init_pcg_solve(entities_info=self.rigid_solver.dyn_info.entities, rigid_info=self.rigid_solver._rigid_info)
+        self.init_pcg_solve(entities_info=self.rigid_solver.dyn_info.entities, rigid_info=self.rigid_solver.rigid_info)
         for i in range(self._n_pcg_iterations):
             self.one_pcg_iter()
 
@@ -1704,7 +1704,7 @@ class SAPCoupler(RBC):
         https://github.com/RobotLocomotion/drake/blob/master/multibody/contact_solvers/sap/sap_solver.h#L393
         """
         self.init_exact_linesearch(
-            i_step, dofs_state=self.rigid_solver.dyn_state.dofs, rigid_info=self.rigid_solver._rigid_info
+            i_step, dofs_state=self.rigid_solver.dyn_state.dofs, rigid_info=self.rigid_solver.rigid_info
         )
         for i in range(self._n_linesearch_iterations):
             self.one_exact_linesearch_iter(i_step, dofs_state=self.rigid_solver.dyn_state.dofs)

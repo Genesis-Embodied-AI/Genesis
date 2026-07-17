@@ -631,7 +631,7 @@ def get_constraint_state(constraint_solver, solver, collider):
         # with this exact shape) as the Hessian buffer rather than allocating a second one: the factor only writes it
         # before the constraint solve repopulates it in the same step.
         nt_H=(
-            solver._rigid_info.mass_mat_tiled_scratch
+            solver.rigid_info.mass_mat_tiled_scratch
             if solver._rigid_config.enable_register_tiled_mass
             else V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_))
         ),

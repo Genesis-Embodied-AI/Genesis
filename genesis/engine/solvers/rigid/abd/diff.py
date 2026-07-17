@@ -147,7 +147,9 @@ def kernel_prepare_backward_substep(
     # If mujoco compatibility is disabled, update the cartesian space and save the results to adjoint cache. This is
     # because the cartesian space is overwritten later by other kernels if mujoco compatibility was disabled.
     if qd.static(not rigid_config.enable_mujoco_compatibility):
-        func_update_cartesian_space(dyn_info, rigid_info, dyn_state, rigid_config, False, True)
+        func_update_cartesian_space(
+            dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms=False, is_backward=True
+        )
 
         # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
         # Save results of [update_cartesian_space] to adjoint cache
@@ -267,10 +269,10 @@ def func_integrate_dq_entity(
     i_e,
     i_b,
     dq,
-    respect_joint_limit,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    respect_joint_limit,
 ):
     EPS = rigid_info.EPS[None]
 

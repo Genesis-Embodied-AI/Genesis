@@ -80,9 +80,9 @@ def kernel_compute_mass_matrix(
     rigid_config: qd.template(),
     decompose: qd.template(),
 ):
-    func_compute_mass_matrix(dyn_info, rigid_info, dyn_state, rigid_config, False, False)
+    func_compute_mass_matrix(dyn_info, rigid_info, dyn_state, rigid_config, implicit_damping=False, is_backward=False)
     if decompose:
-        func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, False, False)
+        func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, implicit_damping=False, is_backward=False)
 
 
 # @@@@@@@@@ Composer starts here
@@ -104,9 +104,9 @@ def func_forward_dynamics(
         qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
         is_backward,
     )
-    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, implicit_damping=False, is_backward=is_backward)
     func_torque_and_passive_force(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_backward)
-    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, update_cacc=False, is_backward=is_backward)
     func_update_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
     func_bias_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
     func_compute_qacc(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
@@ -120,7 +120,7 @@ def kernel_forward_dynamics(
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
-    func_forward_dynamics(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, False)
+    func_forward_dynamics(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
@@ -130,7 +130,7 @@ def kernel_update_acc(
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
-    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, True, False)
+    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, update_cacc=True, is_backward=False)
 
 
 @qd.func
@@ -169,7 +169,7 @@ def func_compute_mass_matrix(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 dyn_state.links.crb_inertial[i_l, i_b] = dyn_state.links.cinr_inertial[i_l, i_b]
@@ -190,7 +190,7 @@ def func_compute_mass_matrix(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l_root = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l_root = [i_l_root, i_b] if qd.static(rigid_config.batch_links_info) else i_l_root
                 if dyn_info.links.root_idx[I_l_root] == i_l_root:
@@ -223,7 +223,7 @@ def func_compute_mass_matrix(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
@@ -292,7 +292,9 @@ def func_compute_mass_matrix(
                 if qd.static(rigid_config.use_hibernation)
                 else qd.static(range(1))
             ):
-                if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+                if func_check_index_range(
+                    i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
+                ):
                     i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                     # Assemble each mass block rooted in this entity over its full range (see
@@ -465,7 +467,7 @@ def func_factor_mass_tiled(
                 n_strict_lower = n_block_dofs * (n_block_dofs - 1) // 2
                 i_pair = tid
                 while i_pair < n_strict_lower:
-                    i_d_, j_d_ = linear_to_lower_tri(i_pair, True)
+                    i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
                     ri_ = n_block_dofs - 1 - i_d_
                     rj_ = n_block_dofs - 1 - j_d_  # i_d_ > j_d_  =>  rj_ > ri_  (a lower G_rev entry)
                     g_num = rigid_info.mass_mat_tiled_scratch[i_b, block_start + rj_, block_start + ri_]
@@ -740,7 +742,7 @@ def func_factor_mass(
                             i_pair = tid
                             n_strict_lower_tri = n_block_dofs * (n_block_dofs - 1) // 2
                             while i_pair < n_strict_lower_tri:
-                                i_d_, j_d_ = linear_to_lower_tri(i_pair, True)
+                                i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
                                 rigid_info.mass_mat_L[block_start + i_d_, block_start + j_d_, i_b] = mass_mat[
                                     i_d_, j_d_
                                 ]
@@ -1051,7 +1053,7 @@ def func_torque_and_passive_force(
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_dofs[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_dofs[i_b], cond=rigid_config.use_hibernation):
                 i_d = rigid_info.awake_dofs[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
@@ -1066,7 +1068,7 @@ def func_torque_and_passive_force(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
@@ -1112,7 +1114,9 @@ def func_update_acc(
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(
+                i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
+            ):
                 i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):
@@ -1175,7 +1179,7 @@ def func_update_force(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 f1_ang, f1_vel = gu.inertial_mul(
@@ -1218,7 +1222,9 @@ def func_update_force(
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(
+                i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
+            ):
                 i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 for i_l_ in range(dyn_info.entities.n_links[i_e]):
@@ -1280,7 +1286,7 @@ def func_bias_force(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
@@ -1340,7 +1346,9 @@ def func_compute_qacc(
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(
+                i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
+            ):
                 i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 for i_d1_ in range(dyn_info.entities.n_dofs[i_e]):
@@ -1367,7 +1375,7 @@ def func_integrate(
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_dofs[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_dofs[i_b], cond=rigid_config.use_hibernation):
                 i_d = rigid_info.awake_dofs[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 dyn_state.dofs.vel_next[i_d, i_b] = (
@@ -1383,7 +1391,7 @@ def func_integrate(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
+            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
                 if dyn_info.links.n_dofs[I_l] > 0:
@@ -1470,9 +1478,9 @@ def kernel_forward_dynamics_without_qacc(
         qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
         is_backward,
     )
-    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, implicit_damping=False, is_backward=is_backward)
     func_torque_and_passive_force(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_backward)
-    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, update_cacc=False, is_backward=is_backward)
     func_update_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
     func_bias_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
 
@@ -1517,7 +1525,7 @@ def func_implicit_damping(
                     ):
                         rigid_info.mass_mat_mask[i_e, i_b] = True
 
-    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, True, is_backward)
+    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, implicit_damping=True, is_backward=is_backward)
     func_solve_mass(
         dyn_state.dofs.force, dyn_state.dofs.acc, dyn_state.dofs.acc_bw, dyn_info, rigid_info, rigid_config, is_backward
     )

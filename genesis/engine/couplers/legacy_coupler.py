@@ -853,7 +853,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.dyn_state.geoms,
                 self.rigid_solver.dyn_info.geoms,
                 self.rigid_solver.collider._sdf._sdf_info,
-                self.rigid_solver._rigid_info,
+                self.rigid_solver.rigid_info,
                 self.rigid_solver.collider._collider_static_config,
             )
 
@@ -866,7 +866,7 @@ class LegacyCoupler(RBC):
                 geoms_state=self.rigid_solver.dyn_state.geoms,
                 geoms_info=self.rigid_solver.dyn_info.geoms,
                 links_state=self.rigid_solver.dyn_state.links,
-                rigid_info=self.rigid_solver._rigid_info,
+                rigid_info=self.rigid_solver.rigid_info,
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
@@ -878,7 +878,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.dyn_state.geoms,
                 self.rigid_solver.dyn_info.geoms,
                 self.rigid_solver.dyn_state.links,
-                self.rigid_solver._rigid_info,
+                self.rigid_solver.rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -890,7 +890,7 @@ class LegacyCoupler(RBC):
                 geoms_info=self.rigid_solver.dyn_info.geoms,
                 links_state=self.rigid_solver.dyn_state.links,
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
-                rigid_info=self.rigid_solver._rigid_info,
+                rigid_info=self.rigid_solver.rigid_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
 
@@ -905,7 +905,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.dyn_state.geoms,
                 self.rigid_solver.dyn_info.geoms,
                 self.rigid_solver.dyn_state.links,
-                self.rigid_solver._rigid_info,
+                self.rigid_solver.rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -918,7 +918,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.dyn_state.geoms,
                 self.rigid_solver.dyn_info.geoms,
                 self.rigid_solver.dyn_state.links,
-                self.rigid_solver._rigid_info,
+                self.rigid_solver.rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -929,7 +929,7 @@ class LegacyCoupler(RBC):
                 geoms_state=self.rigid_solver.dyn_state.geoms,
                 geoms_info=self.rigid_solver.dyn_info.geoms,
                 links_state=self.rigid_solver.dyn_state.links,
-                rigid_info=self.rigid_solver._rigid_info,
+                rigid_info=self.rigid_solver.rigid_info,
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )

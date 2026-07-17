@@ -42,12 +42,12 @@ def bvh_ray_cast(
     i_b: int,
     ray_start: qd.types.vector(3),
     ray_dir: qd.types.vector(3),
-    max_range: float,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    eps: float,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    max_range: float,
+    eps: float,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
@@ -362,12 +362,12 @@ def bvh_ray_cast_visual(
     i_b,
     ray_start,
     ray_dir,
-    max_range,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    eps,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    max_range,
+    eps,
 ):
     """Cast a single ray against the visual-mesh BVH; returns (hit_face, distance, normal)."""
     n_triangles = dyn_info.vfaces.vverts_idx.shape[0]
@@ -452,13 +452,13 @@ def kernel_cast_ray(
     bvh_morton_codes: qd.template(),
     ray_start: qd.types.ndarray(ndim=1),  # (3,)
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
-    max_range: float,
     envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
-    eps: float,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     result: array_class.RaycastResult,
+    max_range: float,
+    eps: float,
 ):
     """
     Cast a single ray against each env's BVH in parallel.
@@ -483,12 +483,12 @@ def kernel_cast_ray(
             i_b,
             ray_start_world - env_offset,
             ray_direction_world,
-            max_range,
             bvh_nodes,
             bvh_morton_codes,
-            eps,
             dyn_info,
             dyn_state,
+            max_range,
+            eps,
         )
         if cur_hit_face >= 0:
             result.distance[i_b] = cur_distance
@@ -504,8 +504,6 @@ def write_ray_hit(
     i_p_sensor: int,
     i_p_offset: int,
     i_p_dist: int,
-    hit_face: int,
-    hit_distance: float,
     ray_start_world,
     ray_direction_world,
     ray_dir_local,
@@ -513,6 +511,8 @@ def write_ray_hit(
     no_hit_values: qd.types.ndarray(ndim=1),
     sensor_return_points: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
+    hit_face: int,
+    hit_distance: float,
     eps: float,
     is_merge: qd.template(),
 ):
@@ -565,9 +565,9 @@ def kernel_cast_rays(
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
     sensor_return_points: qd.types.ndarray(ndim=1),  # [n_sensors] - True to store hit points, False for distances-only
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
-    eps: float,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    eps: float,
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
@@ -613,12 +613,12 @@ def kernel_cast_rays(
             0 if shared_bvh else i_b,
             ray_start_world,
             ray_direction_world,
-            max_ranges[i_s],
             bvh_nodes,
             bvh_morton_codes,
-            eps,
             dyn_info,
             dyn_state,
+            max_ranges[i_s],
+            eps,
         )
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
@@ -633,8 +633,6 @@ def kernel_cast_rays(
             i_p_sensor,
             i_p_offset,
             i_p_dist,
-            hit_face,
-            hit_distance,
             ray_start_world,
             ray_direction_world,
             ray_dir_local,
@@ -642,6 +640,8 @@ def kernel_cast_rays(
             no_hit_values,
             sensor_return_points,
             output_hits,
+            hit_face,
+            hit_distance,
             eps,
             is_merge,
         )
@@ -664,9 +664,9 @@ def kernel_cast_rays_visual(
     sensor_point_counts: qd.types.ndarray(ndim=1),
     sensor_return_points: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
-    eps: float,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    eps: float,
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
@@ -701,12 +701,12 @@ def kernel_cast_rays_visual(
             0 if shared_bvh else i_b,
             ray_start_world,
             ray_direction_world,
-            max_ranges[i_s],
             bvh_nodes,
             bvh_morton_codes,
-            eps,
             dyn_info,
             dyn_state,
+            max_ranges[i_s],
+            eps,
         )
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
@@ -721,8 +721,6 @@ def kernel_cast_rays_visual(
             i_p_sensor,
             i_p_offset,
             i_p_dist,
-            hit_face,
-            hit_distance,
             ray_start_world,
             ray_direction_world,
             ray_dir_local,
@@ -730,6 +728,8 @@ def kernel_cast_rays_visual(
             no_hit_values,
             sensor_return_points,
             output_hits,
+            hit_face,
+            hit_distance,
             eps,
             is_merge,
         )

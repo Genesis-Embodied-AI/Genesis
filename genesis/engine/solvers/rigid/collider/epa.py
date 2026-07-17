@@ -375,10 +375,10 @@ def func_epa_insert_vertex_to_polytope(
     obj2_point,
     obj1_localpos,
     obj2_localpos,
-    obj1_id: int,
-    obj2_id: int,
     minkowski_point,
     gjk_state: array_class.GJKState,
+    obj1_id: int,
+    obj2_id: int,
 ):
     """
     Copy vertex information into the polytope.
@@ -455,10 +455,10 @@ def func_epa_init_polytope_2d(
             gjk_state.simplex_vertex.obj2[i_b, i],
             gjk_state.simplex_vertex.local_obj1[i_b, i],
             gjk_state.simplex_vertex.local_obj2[i_b, i],
-            gjk_state.simplex_vertex.id1[i_b, i],
-            gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
             gjk_state,
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
         )
 
     # Find three more vertices using [d1, d2, d3] as support vectors, and insert them into the polytope
@@ -588,10 +588,10 @@ def func_epa_init_polytope_3d(
             gjk_state.simplex_vertex.obj2[i_b, i],
             gjk_state.simplex_vertex.local_obj1[i_b, i],
             gjk_state.simplex_vertex.local_obj2[i_b, i],
-            gjk_state.simplex_vertex.id1[i_b, i],
-            gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
             gjk_state,
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
         )
 
     # Find the fourth and fifth vertices using the normal
@@ -706,10 +706,10 @@ def func_epa_init_polytope_4d(
             gjk_state.simplex_vertex.obj2[i_b, i],
             gjk_state.simplex_vertex.local_obj1[i_b, i],
             gjk_state.simplex_vertex.local_obj2[i_b, i],
-            gjk_state.simplex_vertex.id1[i_b, i],
-            gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
             gjk_state,
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
         )
 
     # If origin is on any face of the tetrahedron, replace the simplex with a 2-simplex (triangle)
@@ -805,13 +805,13 @@ def func_epa_support(
         quat_a,
         pos_b,
         quat_b,
-        False,
-        dyn_info,
-        collider_info,
-        collider_state,
-        gjk_state,
-        rigid_config,
-        collider_static_config,
+        shrink_sphere=False,
+        dyn_info=dyn_info,
+        collider_info=collider_info,
+        collider_state=collider_state,
+        gjk_state=gjk_state,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
     )
 
     # Insert the support points into the polytope
@@ -821,10 +821,10 @@ def func_epa_support(
         support_point_obj2,
         support_point_localpos1,
         support_point_localpos2,
-        support_point_id_obj1,
-        support_point_id_obj2,
         support_point_minkowski,
         gjk_state,
+        support_point_id_obj1,
+        support_point_id_obj2,
     )
 
     return v_index
@@ -974,13 +974,13 @@ def func_safe_epa(
             pos_b,
             quat_b,
             dir,
-            1.0,
-            dyn_info,
-            collider_info,
-            collider_state,
-            gjk_state,
-            rigid_config,
-            collider_static_config,
+            dir_norm=1.0,
+            dyn_info=dyn_info,
+            collider_info=collider_info,
+            collider_state=collider_state,
+            gjk_state=gjk_state,
+            rigid_config=rigid_config,
+            collider_static_config=collider_static_config,
         )
         w = gjk_state.polytope_verts.mink[i_b, wi]
 
@@ -1189,10 +1189,10 @@ def func_safe_epa_init(i_ga, i_gb, i_b, collider_info: array_class.ColliderInfo,
             gjk_state.simplex_vertex.obj2[i_b, i],
             gjk_state.simplex_vertex.local_obj1[i_b, i],
             gjk_state.simplex_vertex.local_obj2[i_b, i],
-            gjk_state.simplex_vertex.id1[i_b, i],
-            gjk_state.simplex_vertex.id2[i_b, i],
             gjk_state.simplex_vertex.mink[i_b, i],
             gjk_state,
+            gjk_state.simplex_vertex.id1[i_b, i],
+            gjk_state.simplex_vertex.id2[i_b, i],
         )
 
     for i in range(4):

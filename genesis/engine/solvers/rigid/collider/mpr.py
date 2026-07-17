@@ -27,7 +27,7 @@ def clear(mpr_state: qd.template()):
 
 
 @qd.func
-def mpr_swap(i_ga, i_gb, i_b, i, j, mpr_state: array_class.MPRState):
+def mpr_swap(i_ga, i_gb, i_b, j, mpr_state: array_class.MPRState, i):
     mpr_state.simplex_support.v1[i, i_b], mpr_state.simplex_support.v1[j, i_b] = (
         mpr_state.simplex_support.v1[j, i_b],
         mpr_state.simplex_support.v1[i, i_b],
@@ -157,13 +157,13 @@ def support_driver(
     v = qd.Vector.zero(gs.qd_float, 3)
     geom_type = dyn_info.geoms.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, False, dyn_info)
+        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
         v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(i_g, direction, pos, quat, False, dyn_info)
+        v = support_field._func_support_capsule(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
     elif geom_type == gs.GEOM_TYPE.CYLINDER:
-        v = support_field._func_support_cylinder(i_g, direction, pos, quat, False, dyn_info)
+        v = support_field._func_support_cylinder(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
     elif geom_type == gs.GEOM_TYPE.BOX:
         v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, dyn_info)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
@@ -602,7 +602,7 @@ def mpr_discover_portal(
 
                 dot = direction.dot(mpr_state.simplex_support.v[0, i_b])
                 if dot > 0:
-                    mpr_swap(i_ga, i_gb, i_b, 1, 2, mpr_state)
+                    mpr_swap(i_ga, i_gb, i_b, j=2, mpr_state=mpr_state, i=1)
                     direction = -direction
 
                 # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
