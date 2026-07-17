@@ -40,7 +40,7 @@ def main():
 
     N_STEPS = 500
     for i in range(N_STEPS):
-        panda.control_dofs_position(0.0)
+        panda.control_dofs_position([0, 0, 0, -1.57079, 0, 1.57079, -0.7853, 0.04, 0.04])
         scene.step()
 
         if i % 50 == 0:

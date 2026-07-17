@@ -264,3 +264,119 @@ class TestQIPCAlignment:
         torch.testing.assert_close(
             coupler._scene.solver._joint_theta, standalone.solver._joint_theta, atol=1e-6, rtol=0,
         )
+
+
+# ---------------------------------------------------------------------------
+# Ground contact and multi-entity tests
+# ---------------------------------------------------------------------------
+
+
+class TestGroundContact:
+    """IPC ground contact: strict no-penetration via half-plane barrier."""
+
+    def test_ground_contact(self, simple_revolute_dir):
+        """A free ABD box falls onto ground and stops above z=0 (IPC no-penetration)."""
+
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=0.01,
+                gravity=(0.0, 0.0, -9.81),
+            ),
+            coupler_options=gs.options.QIPCCouplerOptions(
+                contact_enable=True,
+                contact_d_hat=0.01,
+                init_collision_pair_capacity=1000,
+            ),
+            show_viewer=False,
+        )
+
+        scene.add_entity(gs.morphs.Plane())
+
+        drop_height = 0.5
+        urdf_path = simple_revolute_dir / "robot.urdf"
+        box = scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=str(urdf_path),
+                pos=(0, 0, drop_height),
+                fixed=False,
+            ),
+            material=gs.materials.Rigid(
+                qipc_abd_kappa=1e8,
+                qipc_kappa_pivot=1e5,
+                qipc_kappa_axis=1e5,
+            ),
+        )
+
+        scene.build()
+
+        for _ in range(100):
+            scene.step()
+
+        pos = box.get_pos()
+        z = float(pos[2]) if pos.dim() == 1 else float(pos[0, 2])
+        assert z > 0, f"IPC no-penetration violated: z={z}"
+
+    def test_multi_entity(self, simple_revolute_dir):
+        """Two entities + ground: each entity's state is independently correct."""
+
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=0.01,
+                gravity=(0.0, 0.0, -9.81),
+            ),
+            coupler_options=gs.options.QIPCCouplerOptions(
+                contact_enable=True,
+                contact_d_hat=0.01,
+                init_collision_pair_capacity=2000,
+            ),
+            show_viewer=False,
+        )
+
+        scene.add_entity(gs.morphs.Plane())
+
+        urdf_path = simple_revolute_dir / "robot.urdf"
+
+        robot_a = scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=str(urdf_path),
+                pos=(0, 0, 0.3),
+                fixed=True,
+            ),
+            material=gs.materials.Rigid(
+                qipc_abd_kappa=1e8,
+                qipc_kappa_pivot=1e5,
+                qipc_kappa_axis=1e5,
+                qipc_default_kp=500.0,
+                qipc_default_kv=50.0,
+            ),
+        )
+
+        robot_b = scene.add_entity(
+            morph=gs.morphs.URDF(
+                file=str(urdf_path),
+                pos=(1, 0, 0.3),
+                fixed=True,
+            ),
+            material=gs.materials.Rigid(
+                qipc_abd_kappa=1e8,
+                qipc_kappa_pivot=1e5,
+                qipc_kappa_axis=1e5,
+                qipc_default_kp=500.0,
+                qipc_default_kv=50.0,
+            ),
+        )
+
+        scene.build()
+
+        robot_a.control_dofs_position(0.5)
+        robot_b.control_dofs_position(-0.5)
+
+        for _ in range(50):
+            scene.step()
+
+        qa = float(robot_a.get_dofs_position()[0])
+        qb = float(robot_b.get_dofs_position()[0])
+
+        assert qa > 0.1, f"robot_a should track positive target, got qa={qa}"
+        assert qb < -0.1, f"robot_b should track negative target, got qb={qb}"
+        assert abs(qa + qb) < 0.2, f"robot_a and robot_b targets are symmetric, sum should be near zero: {qa + qb}"

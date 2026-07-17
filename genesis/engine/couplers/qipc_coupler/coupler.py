@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import quadrants as qd
@@ -13,14 +12,62 @@ import genesis.utils.geom as gu
 from genesis.repr_base import RBC
 from genesis.utils.misc import qd_to_torch
 
-from .utils import rotate_inertia_to_link_frame
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
+    from genesis.engine.entities.rigid_entity.rigid_joint import RigidJoint
+    from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.simulator import Simulator
+    from genesis.options.solvers import QIPCCouplerOptions
+
+    from qipc.scene.joint_collection import JointCollection
+    from qipc.scene.scene import Scene as QIPCScene
+
+
+# ---------------------------------------------------------------------------
+# Strong-typed data structures (no plain dict)
+# ---------------------------------------------------------------------------
+
+
+class EntityConfig(NamedTuple):
+    """Per-entity QIPC configuration derived from material fields."""
+
+    abd_kappa: float
+    kappa_pivot: float
+    kappa_axis: float
+    default_kp: float
+    default_kv: float
+    home_qpos: tuple[float, ...] | None
+
+
+class FreeBaseEntry(NamedTuple):
+    """Tracks a free-base entity for qpos writeback."""
+
+    entity: RigidEntity
+    body_offset: int
+
+
+class AbdEntityPreInit(NamedTuple):
+    """Per-entity pre-init results: geometry/joints created, body offsets unresolved."""
+
+    entity: RigidEntity
+    group_slots: dict[int, object]
+    link_to_rep: dict[int, int]
+    T_world: dict[int, np.ndarray]
+    joint_collections: list[JointCollection]
+    genesis_dof_indices: list[int]
+    is_free_base: bool
+
+
+# ---------------------------------------------------------------------------
+# Rodrigues rotation
+# ---------------------------------------------------------------------------
 
 
 def _rodrigues(axis: np.ndarray, theta: float) -> np.ndarray:
     """Rodrigues rotation: sign-preserving axis-angle to 3x3 matrix.
 
-    Unlike gu.axis_angle_to_R which derives sin from sqrt(1-cos^2) (losing sign),
-    this computes sin(theta) directly so negative angles rotate correctly.
+    Computes sin(theta) directly so negative angles rotate correctly.
     """
     axis = axis / np.linalg.norm(axis)
     c = np.cos(theta)
@@ -31,13 +78,8 @@ def _rodrigues(axis: np.ndarray, theta: float) -> np.ndarray:
     return np.eye(3, dtype=np.float64) * c + (1 - c) * np.outer(axis, axis) + s * K
 
 
-if TYPE_CHECKING:
-    from genesis.engine.simulator import Simulator
-    from genesis.options.solvers import QIPCCouplerOptions
-
-
 # ---------------------------------------------------------------------------
-# Quadrants kernels — run entirely on GPU, no host roundtrip
+# Quadrants kernels
 # ---------------------------------------------------------------------------
 
 
@@ -47,7 +89,7 @@ def _func_mat3_to_quat(
     r10: gs.qd_float, r11: gs.qd_float, r12: gs.qd_float,
     r20: gs.qd_float, r21: gs.qd_float, r22: gs.qd_float,
 ):
-    """3x3 matrix -> quaternion (w,x,y,z) via Shepperd's method. No SVD needed for high-kappa ABD."""
+    """3x3 matrix -> quaternion (w,x,y,z) via Shepperd's method."""
     trace = r00 + r11 + r22
     w = 0.0
     x = 0.0
@@ -109,18 +151,20 @@ def _kernel_qipc_writeback(
     rel_transforms: qd.types.ndarray(),
     dofs_pos: qd.types.ndarray(),
     dof_indices: qd.types.ndarray(),
+    free_base_body_indices: qd.types.ndarray(),
+    free_base_link_indices: qd.types.ndarray(),
+    free_base_q_starts: qd.types.ndarray(),
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """Write QIPC ABD body poses and joint theta back to Genesis link/dof state.
+    """Single-kernel writeback: ABD q -> links_state + dofs_state + free-base qpos.
 
-    Fixed-joint merging maps multiple Genesis links to one ABD body. Each link
-    carries a fixed relative transform (identity for the representative, a
-    constant offset for merged members). The world pose of each link is
-    T_body @ T_relative, where T_body comes from the ABD q of the merged body.
+    All state derived from ABD body transforms (first-class truth) in one launch.
     """
     n_links = link_indices.shape[0]
     n_dofs = dof_indices.shape[0]
+    n_free = free_base_body_indices.shape[0]
 
     for i in range(n_links):
         i_b = body_indices[i]
@@ -158,6 +202,20 @@ def _kernel_qipc_writeback(
         dofs_state.pos[idx, 0] = dofs_pos[i]
         dofs_state.vel[idx, 0] = 0.0
 
+    for i in range(n_free):
+        i_b = free_base_body_indices[i]
+        link_idx = free_base_link_indices[i]
+        q_start = free_base_q_starts[i]
+        # pos: read from links_state (already written above)
+        rigid_global_info.qpos[q_start, 0] = links_state.pos[link_idx, 0][0]
+        rigid_global_info.qpos[q_start + 1, 0] = links_state.pos[link_idx, 0][1]
+        rigid_global_info.qpos[q_start + 2, 0] = links_state.pos[link_idx, 0][2]
+        # quat: read from links_state (already written above)
+        rigid_global_info.qpos[q_start + 3, 0] = links_state.quat[link_idx, 0][0]
+        rigid_global_info.qpos[q_start + 4, 0] = links_state.quat[link_idx, 0][1]
+        rigid_global_info.qpos[q_start + 5, 0] = links_state.quat[link_idx, 0][2]
+        rigid_global_info.qpos[q_start + 6, 0] = links_state.quat[link_idx, 0][3]
+
 
 # ---------------------------------------------------------------------------
 # QIPCCoupler
@@ -170,11 +228,14 @@ class QIPCCoupler(RBC):
 
     Genesis provides all scene data (link meshes, mass/inertia, joint topology);
     QIPC receives structured data and runs the physics. No asset files are loaded by QIPC.
+
+    Design invariant: ABD body transforms are the first-class truth. Joint dof and
+    free-base qpos are derived products written back for observation only.
     """
 
-    def __init__(self, simulator: Simulator, options: QIPCCouplerOptions):
-        self._sim = simulator
-        self._options = options
+    def __init__(self, simulator: Simulator, options: QIPCCouplerOptions) -> None:
+        self._sim: Simulator = simulator
+        self._options: QIPCCouplerOptions = options
 
     @property
     def sim(self) -> Simulator:
@@ -184,267 +245,201 @@ class QIPCCoupler(RBC):
     def options(self) -> QIPCCouplerOptions:
         return self._options
 
-    @staticmethod
-    def _get_entity_config(entity):
-        """Read per-entity QIPC config from material, with hardcoded defaults."""
-        mat = entity.material
-        return {
-            "abd_kappa": getattr(mat, "qipc_abd_kappa", None) or 1e8,
-            "kappa_pivot": getattr(mat, "qipc_kappa_pivot", None) or 1e8,
-            "kappa_axis": getattr(mat, "qipc_kappa_axis", None) or 1e8,
-            "default_kp": getattr(mat, "qipc_default_kp", None) or 100.0,
-            "default_kv": getattr(mat, "qipc_default_kv", None) or 10.0,
-            "home_qpos": getattr(mat, "qipc_home_qpos", None),
-        }
+    # -------------------------------------------------------------------------
+    # Build
+    # -------------------------------------------------------------------------
 
-    def build(self):
-        from qipc import Scene as QIPCScene, trimesh
+    def build(self) -> None:
+        from qipc import Scene as QIPCSceneCls
+        from qipc import trimesh
         from qipc.constitution import AffineBodyConstitution
+        from qipc.geometry import ground as qipc_ground
         from qipc.scene.joint_collection import JointCollection
 
         assert self._sim.n_envs <= 1, "QIPCCoupler: n_envs > 1 not supported"
 
-        entity = self._sim.rigid_solver.entities[0]
-        self._entity = entity
-        self._entity_config = self._get_entity_config(entity)
+        # --- Classify entities: plane vs abd ---
+        all_entities: list[RigidEntity] = list(self._sim.rigid_solver.entities)
+        plane_entities: list[RigidEntity] = []
+        abd_entities: list[RigidEntity] = []
+        for entity in all_entities:
+            if self._is_plane_entity(entity):
+                plane_entities.append(entity)
+            else:
+                abd_entities.append(entity)
 
-        self._scene = QIPCScene(
+        # --- Create QIPC Scene with contact config ---
+        self._scene: QIPCScene = QIPCSceneCls(
             dt=self._sim.dt,
             gravity=tuple(self._sim._gravity),
-            **{"contact/enable": self._options.contact_enable},
+            **{
+                "contact/enable": self._options.contact_enable,
+                "contact/d_hat": self._options.contact_d_hat,
+                "contact/init_collision_pair_capacity": self._options.init_collision_pair_capacity,
+            },
         )
 
+        # --- Global default contact model (per-pair tabular deferred) ---
+        # ContactTabular already initializes default (friction_rate=0.05, resistance=1e4)
+        # which is reasonable for generic rigid contact. No override needed for now.
+
+        # --- Ground planes ---
+        for entity in plane_entities:
+            self._create_ground(entity, qipc_ground)
+
+        # --- ABD entities: phase 1 (pre-init, create geometry/joints) ---
         abd = AffineBodyConstitution()
+        all_pre_inits: list[AbdEntityPreInit] = []
+        for entity in abd_entities:
+            pre = self._build_abd_entity_pre_init(entity, abd, trimesh, JointCollection)
+            all_pre_inits.append(pre)
 
-        T_world = self._compute_initial_transforms()
-        self._T_world = T_world
+        # --- Aggregate JointCollections and dof order (pre-init) ---
+        all_jcs: list[JointCollection] = []
+        all_genesis_dof_indices: list[int] = []
+        for pre in all_pre_inits:
+            all_jcs.extend(pre.joint_collections)
+            all_genesis_dof_indices.extend(pre.genesis_dof_indices)
 
-        merge_groups, link_to_rep = self._build_merge_groups(entity)
-
-        self._link_to_rep = link_to_rep
-        self._merge_groups = merge_groups
-
-        self._link_slots = {}
-        self._group_slots = {}
-
-        for rep, members in merge_groups:
-            slot = self._create_merged_body(
-                entity, rep, members, T_world, abd, trimesh,
-            )
-            if slot is None:
-                continue
-            self._group_slots[rep] = slot
-            for m in members:
-                self._link_slots[m] = slot
-
-        # --- Joint creation ---
-        per_joint_jcs = []
-        self._genesis_dof_order = []
-
-        home_qpos = self._entity_config["home_qpos"]
-        init_qpos = home_qpos if home_qpos is not None else entity.init_qpos
-
-        for joint in entity.joints:
-            if joint.type == gs.JOINT_TYPE.FIXED:
-                continue
-
-            child_link = joint.link
-            parent_local = child_link.parent_idx - entity.link_start
-            child_local = child_link.idx_local
-
-            parent_rep = link_to_rep[parent_local]
-            child_rep = link_to_rep[child_local]
-
-            if parent_rep == child_rep:
-                continue
-
-            if parent_rep not in self._group_slots or child_rep not in self._group_slots:
-                gs.logger.warning(
-                    f"QIPCCoupler: skipping joint '{joint.name}' — "
-                    f"parent or child body not created."
-                )
-                continue
-
-            if joint.type == gs.JOINT_TYPE.REVOLUTE:
-                jtype = "revolute"
-                axis_local = joint.dofs_motion_ang[0]
-                extra_kwargs = {"kappa_pivot": self._entity_config["kappa_pivot"]}
-            elif joint.type == gs.JOINT_TYPE.PRISMATIC:
-                jtype = "prismatic"
-                axis_local = joint.dofs_motion_vel[0]
-                extra_kwargs = {"kappa_lateral": self._entity_config["kappa_pivot"]}
-            else:
-                gs.logger.warning(
-                    f"QIPCCoupler: skipping unsupported joint type "
-                    f"{joint.type} for joint '{joint.name}'."
-                )
-                continue
-
-            T_parent_rep = T_world[parent_rep]
-            T_child_rep = T_world[child_rep]
-            T_parent_link = T_world[parent_local]
-            T_child_link = T_world[child_local]
-
-            R_parent_rep_inv = T_parent_rep[:3, :3].T
-            R_child_rep_inv = T_child_rep[:3, :3].T
-
-            # Joint pivot in world frame
-            T_joint_world = T_parent_link @ self._make_link_to_child_T(child_link)
-            anchor_world = T_joint_world[:3, 3]
-
-            # anchor in each rep's local frame
-            anchor_left = R_parent_rep_inv @ (anchor_world - T_parent_rep[:3, 3])
-            anchor_right = R_child_rep_inv @ (anchor_world - T_child_rep[:3, 3])
-
-            # axis in world frame
-            R_child_in_parent = gu.quat_to_R(np.array(child_link.quat, dtype=np.float64))
-            axis_world = T_parent_link[:3, :3] @ R_child_in_parent @ np.array(axis_local, dtype=np.float64)
-            axis_world = axis_world / np.linalg.norm(axis_world)
-
-            # axis in each rep's local frame
-            axis_left = R_parent_rep_inv @ axis_world
-            axis_right = R_child_rep_inv @ axis_world
-
-            kp, kv = self._resolve_joint_gains(joint)
-
-            dof_local = joint.dofs_idx_local[0]
-            jc = self._scene.add_joint(
-                joint.name,
-                type=jtype,
-                left=self._group_slots[parent_rep],
-                right=self._group_slots[child_rep],
-                anchor_left=anchor_left.tolist(),
-                anchor_right=anchor_right.tolist(),
-                axis_left=axis_left.tolist(),
-                axis_right=axis_right.tolist(),
-                kappa_axis=self._entity_config["kappa_axis"],
-                enable_controller=True,
-                kp=kp,
-                kv=kv,
-                theta_lower=float(joint.dofs_limit[0, 0]),
-                theta_upper=float(joint.dofs_limit[0, 1]),
-                init_theta=float(init_qpos[dof_local]),
-                **extra_kwargs,
-            )
-            per_joint_jcs.append(jc)
-            self._genesis_dof_order.append(joint.dofs_idx_local[0])
-
-        self._jc = JointCollection.merge(per_joint_jcs) if per_joint_jcs else None
-
-        self._genesis_dof_order = torch.tensor(
-            self._genesis_dof_order, dtype=torch.int64, device=gs.device
+        self._jc: JointCollection | None = (
+            JointCollection.merge(all_jcs) if all_jcs else None
+        )
+        self._genesis_dof_order: torch.Tensor = torch.tensor(
+            all_genesis_dof_indices, dtype=torch.int64, device=gs.device
         )
 
+        # --- Init QIPC (assigns abd_body_offset to each geometry) ---
         self._scene.init()
 
-        # --- Build body index mapping (after init) ---
-        self._link_body_indices = {}
-        for link in entity.links:
-            rep = link_to_rep[link.idx_local]
-            if rep not in self._group_slots:
-                continue
-            slot = self._group_slots[rep]
-            body_offset = int(slot.geometry.meta["abd_body_offset"].cpu()[0])
-            self._link_body_indices[link.idx_local] = body_offset
+        # --- Phase 2 (post-init): resolve body offsets, build writeback tensors ---
+        all_link_indices: list[int] = []
+        all_body_indices: list[int] = []
+        all_rel_transforms: list[np.ndarray] = []
+        free_base_entries: list[FreeBaseEntry] = []
 
-        # --- Pre-compute GPU index tensors ---
-        active_links = [link for link in entity.links if link.idx_local in self._link_body_indices]
+        for pre in all_pre_inits:
+            link_indices, body_indices, rel_transforms, free_entry = (
+                self._resolve_post_init(pre)
+            )
+            all_link_indices.extend(link_indices)
+            all_body_indices.extend(body_indices)
+            all_rel_transforms.extend(rel_transforms)
+            if free_entry is not None:
+                free_base_entries.append(free_entry)
 
-        link_idx_list = [entity.link_start + link.idx_local for link in active_links]
-        self._link_indices_t = torch.tensor(link_idx_list, dtype=torch.int32, device=gs.device)
-        self._body_indices_t = torch.tensor(
-            [self._link_body_indices[link.idx_local] for link in active_links],
-            dtype=torch.int64, device=gs.device,
+        self._free_base_entries: list[FreeBaseEntry] = free_base_entries
+
+        # --- Build GPU tensors for writeback ---
+        self._link_indices_t: torch.Tensor = torch.tensor(
+            all_link_indices, dtype=torch.int32, device=gs.device
+        )
+        self._body_indices_t: torch.Tensor = torch.tensor(
+            all_body_indices, dtype=torch.int64, device=gs.device
         )
 
-        # Per-link relative transforms for writeback (12-DOF: [t_rel(3), R_rel(9)])
-        rel_data = np.zeros((len(active_links), 12), dtype=np.float64)
-        for i, link in enumerate(active_links):
-            rep = link_to_rep[link.idx_local]
-            if link.idx_local == rep:
-                rel_data[i, 3] = 1.0   # identity rotation
-                rel_data[i, 7] = 1.0
-                rel_data[i, 11] = 1.0
-            else:
-                T_rep = T_world[rep]
-                T_member = T_world[link.idx_local]
-                T_rel = np.linalg.inv(T_rep) @ T_member
-                rel_data[i, 0:3] = T_rel[:3, 3]
-                rel_data[i, 3:12] = T_rel[:3, :3].flatten()
-        self._rel_transforms_t = torch.tensor(rel_data, dtype=torch.float64, device=gs.device)
+        rel_data = np.zeros((len(all_rel_transforms), 12), dtype=np.float64)
+        for i, rt in enumerate(all_rel_transforms):
+            rel_data[i] = rt
+        self._rel_transforms_t: torch.Tensor = torch.tensor(
+            rel_data, dtype=torch.float64, device=gs.device
+        )
 
-        n_dofs = entity.n_dofs
-        dof_idx_list = []
-        for joint in entity.joints:
-            if joint.type == gs.JOINT_TYPE.FIXED:
-                continue
-            for d in range(joint.n_dofs):
-                dof_idx_list.append(entity.dof_start + joint.dofs_idx_local[d])
-        self._dof_indices_t = torch.tensor(dof_idx_list, dtype=torch.int32, device=gs.device)
+        n_controlled_dofs = len(all_genesis_dof_indices)
+        self._dof_indices_t: torch.Tensor = torch.tensor(
+            all_genesis_dof_indices, dtype=torch.int32, device=gs.device
+        )
+        self._wb_dofs_pos: torch.Tensor = torch.zeros(
+            n_controlled_dofs, dtype=gs.tc_float, device=gs.device
+        )
 
-        self._wb_dofs_pos = torch.zeros(n_dofs, dtype=gs.tc_float, device=gs.device)
+        # Free-base tensors for unified kernel writeback
+        fb_body_indices = [e.body_offset for e in free_base_entries]
+        fb_link_indices = [e.entity.link_start for e in free_base_entries]
+        fb_q_starts = [e.entity.q_start for e in free_base_entries]
+        self._free_base_body_indices_t: torch.Tensor = torch.tensor(
+            fb_body_indices or [0], dtype=torch.int64, device=gs.device
+        )[:len(free_base_entries)]
+        self._free_base_link_indices_t: torch.Tensor = torch.tensor(
+            fb_link_indices or [0], dtype=torch.int32, device=gs.device
+        )[:len(free_base_entries)]
+        self._free_base_q_starts_t: torch.Tensor = torch.tensor(
+            fb_q_starts or [0], dtype=torch.int32, device=gs.device
+        )[:len(free_base_entries)]
 
+        # --- Debug viewer ---
         self._debug_viewer = None
         if self._options.debug_viewer:
             self._debug_viewer = self._scene.viewer
             self._debug_viewer.up_axis = "z"
 
-        self._substep_count = 0
-        self._substeps_per_step = self._sim._substeps
-        self._skip_first_step = True
+        # --- Substep tracking ---
+        self._substep_count: int = 0
+        self._substeps_per_step: int = self._sim._substeps
+        self._is_first_step: bool = True
 
+        # --- Initial writeback ---
         self._writeback_state()
 
-    def reset(self, envs_idx=None):
+    # -------------------------------------------------------------------------
+    # Runtime
+    # -------------------------------------------------------------------------
+
+    def reset(self, envs_idx=None) -> None:
         pass
 
-    def preprocess(self, f):
+    def preprocess(self, f: int) -> None:
         """Read ctrl_pos from Genesis and forward to QIPC (absolute frame)."""
         if self._jc is None:
             return
-        ctrl_pos_view = qd_to_torch(self._sim.rigid_solver.dofs_state.ctrl_pos)
-        entity_ctrl = ctrl_pos_view[self._entity.dof_start:self._entity.dof_end, 0].to(torch.float64)
-        targets = entity_ctrl[self._genesis_dof_order]
+        ctrl_pos_view: torch.Tensor = qd_to_torch(
+            self._sim.rigid_solver.dofs_state.ctrl_pos
+        )
+        ctrl_pos_all: torch.Tensor = ctrl_pos_view[:, 0].to(torch.float64)
+        targets: torch.Tensor = ctrl_pos_all[self._genesis_dof_order]
         self._jc.control_dofs_position(targets)
 
-    def couple(self, f):
+    def couple(self, f: int) -> None:
         self._substep_count += 1
         if self._substep_count < self._substeps_per_step:
             return
         self._substep_count = 0
 
-        if self._skip_first_step:
-            self._skip_first_step = False
+        if self._is_first_step:
+            self._is_first_step = False
             return
 
         self._scene.step()
 
-        gs.logger.debug(
-            f"[QIPC] step_ms={self._scene.solver.step_ms:.2f} "
-            f"newton={self._scene.solver.newton_iters} "
-            f"pcg_max={self._scene.solver.max_pcg_iters} "
-            f"ls_max={self._scene.solver.max_ls_iters}"
-        )
-
         self._writeback_state()
+
+        gs.logger.debug(
+            f"[QIPC] sim={self._scene.solver.step_ms:.2f}ms "
+            f"newton={self._scene.solver.newton_iters} "
+            f"pcg={self._scene.solver.max_pcg_iters} "
+            f"ls={self._scene.solver.max_ls_iters}"
+        )
 
         if self._debug_viewer is not None:
             self._debug_viewer.show()
 
-    def couple_grad(self, f):
+    def couple_grad(self, f: int) -> None:
         pass
 
     # -------------------------------------------------------------------------
-    # State writeback
+    # State writeback (transform is first-class truth)
     # -------------------------------------------------------------------------
 
-    def _writeback_state(self):
-        """Write QIPC state -> Genesis buffers (absolute frame, no offset needed)."""
-        abd_q = self._scene.affine_body.q
+    def _writeback_state(self) -> None:
+        """Write QIPC state -> Genesis buffers in a single kernel launch.
+
+        All state derives from ABD body transforms (first-class truth):
+        links_state.pos/quat, dofs_state.pos, and free-base qpos.
+        """
+        abd_q: torch.Tensor = self._scene.affine_body.q
 
         if self._jc is not None:
-            theta = self._jc.get_dofs_position()
-            self._wb_dofs_pos[self._genesis_dof_order] = theta.to(gs.tc_float)
+            theta: torch.Tensor = self._jc.get_dofs_position()
+            self._wb_dofs_pos[:] = theta.to(gs.tc_float)
 
         _kernel_qipc_writeback(
             abd_q=abd_q,
@@ -453,21 +448,298 @@ class QIPCCoupler(RBC):
             rel_transforms=self._rel_transforms_t,
             dofs_pos=self._wb_dofs_pos,
             dof_indices=self._dof_indices_t,
+            free_base_body_indices=self._free_base_body_indices_t,
+            free_base_link_indices=self._free_base_link_indices_t,
+            free_base_q_starts=self._free_base_q_starts_t,
             links_state=self._sim.rigid_solver.links_state,
             dofs_state=self._sim.rigid_solver.dofs_state,
+            rigid_global_info=self._sim.rigid_solver._rigid_global_info,
         )
 
     # -------------------------------------------------------------------------
-    # Build-time helpers
+    # Build helpers: entity classification
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _build_merge_groups(entity):
+    def _is_plane_entity(entity: RigidEntity) -> bool:
+        """Check if any geom in the entity is a plane."""
+        for link in entity.links:
+            for geom in link.geoms:
+                if geom.type == gs.GEOM_TYPE.PLANE:
+                    return True
+        return False
+
+    @staticmethod
+    def _get_entity_config(entity: RigidEntity) -> EntityConfig:
+        """Read per-entity QIPC config from material fields."""
+        mat = entity.material
+        return EntityConfig(
+            abd_kappa=mat.qipc_abd_kappa or 1e8,
+            kappa_pivot=mat.qipc_kappa_pivot or 1e8,
+            kappa_axis=mat.qipc_kappa_axis or 1e8,
+            default_kp=mat.qipc_default_kp or 100.0,
+            default_kv=mat.qipc_default_kv or 10.0,
+            home_qpos=tuple(mat.qipc_home_qpos) if mat.qipc_home_qpos is not None else None,
+        )
+
+    # -------------------------------------------------------------------------
+    # Build helpers: ground
+    # -------------------------------------------------------------------------
+
+    def _create_ground(self, entity: RigidEntity, ground_factory) -> None:
+        """Convert a Genesis Plane entity to a QIPC half-plane ground."""
+        for link in entity.links:
+            for geom in link.geoms:
+                if geom.type != gs.GEOM_TYPE.PLANE:
+                    continue
+                local_normal: np.ndarray = geom.data[:3].astype(np.float64, copy=False)
+                R_geom: np.ndarray = gu.quat_to_R(np.array(geom.init_quat, dtype=np.float64))
+                normal: np.ndarray = R_geom @ local_normal
+                n_len = np.linalg.norm(normal)
+                if n_len < 1e-15:
+                    continue
+                normal = normal / n_len
+                height: float = float(np.dot(np.array(geom.init_pos, dtype=np.float64), normal))
+                geo = ground_factory(height=height, N=tuple(normal))
+                self._scene.geometries.create(f"ground_{entity.idx}", geo)
+
+    # -------------------------------------------------------------------------
+    # Build helpers: per-entity ABD construction
+    # -------------------------------------------------------------------------
+
+    def _build_abd_entity_pre_init(
+        self,
+        entity: RigidEntity,
+        abd: object,
+        trimesh_factory: object,
+        joint_collection_cls: type,
+    ) -> AbdEntityPreInit:
+        """Phase 1: create QIPC geometry/joints for one entity (before scene.init)."""
+        cfg: EntityConfig = self._get_entity_config(entity)
+
+        T_world: dict[int, np.ndarray] = self._compute_initial_transforms(entity, cfg)
+        merge_groups, link_to_rep = self._build_merge_groups(entity)
+
+        group_slots: dict[int, object] = {}
+
+        for rep, members in merge_groups:
+            slot = self._create_merged_body(
+                entity, rep, members, T_world, abd, trimesh_factory,
+                abd_kappa=cfg.abd_kappa,
+            )
+            if slot is None:
+                continue
+            group_slots[rep] = slot
+
+        # --- Classify joints by type ---
+        revolute_joints: list[RigidJoint] = []
+        prismatic_joints: list[RigidJoint] = []
+        is_free_base: bool = False
+
+        for joint in entity.joints:
+            if joint.type == gs.JOINT_TYPE.FIXED:
+                continue
+            elif joint.type == gs.JOINT_TYPE.REVOLUTE:
+                revolute_joints.append(joint)
+            elif joint.type == gs.JOINT_TYPE.PRISMATIC:
+                prismatic_joints.append(joint)
+            elif joint.type == gs.JOINT_TYPE.FREE:
+                is_free_base = True
+
+        # Also detect free-base from non-fixed root link without FREE joint
+        if not is_free_base:
+            base_link = entity.links[0]
+            if not base_link.is_fixed:
+                is_free_base = True
+
+        # --- Build joints (unified per type) ---
+        per_joint_jcs: list[JointCollection] = []
+        genesis_dof_indices: list[int] = []
+
+        init_qpos = cfg.home_qpos if cfg.home_qpos is not None else entity.init_qpos
+
+        for joint in revolute_joints:
+            jc, dof_idx = self._create_joint(
+                entity, joint, "revolute", link_to_rep, group_slots,
+                T_world, cfg, init_qpos,
+            )
+            if jc is not None:
+                per_joint_jcs.append(jc)
+                genesis_dof_indices.append(dof_idx)
+
+        for joint in prismatic_joints:
+            jc, dof_idx = self._create_joint(
+                entity, joint, "prismatic", link_to_rep, group_slots,
+                T_world, cfg, init_qpos,
+            )
+            if jc is not None:
+                per_joint_jcs.append(jc)
+                genesis_dof_indices.append(dof_idx)
+
+        return AbdEntityPreInit(
+            entity=entity,
+            group_slots=group_slots,
+            link_to_rep=link_to_rep,
+            T_world=T_world,
+            joint_collections=per_joint_jcs,
+            genesis_dof_indices=genesis_dof_indices,
+            is_free_base=is_free_base,
+        )
+
+    @staticmethod
+    def _resolve_post_init(
+        pre: AbdEntityPreInit,
+    ) -> tuple[list[int], list[int], list[np.ndarray], FreeBaseEntry | None]:
+        """Phase 2: after scene.init(), resolve abd_body_offset and build writeback arrays."""
+        entity = pre.entity
+        group_slots = pre.group_slots
+        link_to_rep = pre.link_to_rep
+        T_world = pre.T_world
+
+        # Resolve link -> body offset mapping (abd_body_offset exists after init)
+        link_body_indices: dict[int, int] = {}
+        for link in entity.links:
+            rep = link_to_rep[link.idx_local]
+            if rep not in group_slots:
+                continue
+            slot = group_slots[rep]
+            body_offset = int(slot.geometry.meta["abd_body_offset"].cpu()[0])
+            link_body_indices[link.idx_local] = body_offset
+
+        # Free-base entry
+        free_entry: FreeBaseEntry | None = None
+        if pre.is_free_base:
+            base_link = entity.links[0]
+            base_rep = link_to_rep.get(base_link.idx_local, base_link.idx_local)
+            if base_rep in group_slots:
+                slot = group_slots[base_rep]
+                body_offset = int(slot.geometry.meta["abd_body_offset"].cpu()[0])
+                free_entry = FreeBaseEntry(entity=entity, body_offset=body_offset)
+
+        # Build global-index arrays for writeback
+        active_links: list[RigidLink] = [
+            link for link in entity.links if link.idx_local in link_body_indices
+        ]
+        link_indices: list[int] = []
+        body_indices: list[int] = []
+        rel_transforms_list: list[np.ndarray] = []
+
+        for link in active_links:
+            global_link_idx = entity.link_start + link.idx_local
+            link_indices.append(global_link_idx)
+            body_indices.append(link_body_indices[link.idx_local])
+
+            rep = link_to_rep[link.idx_local]
+            if link.idx_local == rep:
+                rt = np.zeros(12, dtype=np.float64)
+                rt[3] = 1.0
+                rt[7] = 1.0
+                rt[11] = 1.0
+            else:
+                T_rep = T_world[rep]
+                T_member = T_world[link.idx_local]
+                T_rel = np.linalg.inv(T_rep) @ T_member
+                rt = np.zeros(12, dtype=np.float64)
+                rt[0:3] = T_rel[:3, 3]
+                rt[3:12] = T_rel[:3, :3].flatten()
+            rel_transforms_list.append(rt)
+
+        return link_indices, body_indices, rel_transforms_list, free_entry
+
+    def _create_joint(
+        self,
+        entity: RigidEntity,
+        joint: RigidJoint,
+        jtype: str,
+        link_to_rep: dict[int, int],
+        group_slots: dict[int, object],
+        T_world: dict[int, np.ndarray],
+        cfg: EntityConfig,
+        init_qpos: tuple[float, ...] | np.ndarray,
+    ) -> tuple[JointCollection | None, int]:
+        """Create a single QIPC joint. Returns (JointCollection, global_dof_idx) or (None, -1)."""
+        child_link: RigidLink = joint.link
+        parent_local: int = child_link.parent_idx - entity.link_start
+        child_local: int = child_link.idx_local
+
+        parent_rep: int = link_to_rep[parent_local]
+        child_rep: int = link_to_rep[child_local]
+
+        if parent_rep == child_rep:
+            return None, -1
+
+        if parent_rep not in group_slots or child_rep not in group_slots:
+            gs.logger.warning(
+                f"QIPCCoupler: skipping joint '{joint.name}' -- "
+                f"parent or child body not created."
+            )
+            return None, -1
+
+        if jtype == "revolute":
+            axis_local: np.ndarray = np.array(joint.dofs_motion_ang[0], dtype=np.float64)
+            extra_kwargs = {"kappa_pivot": cfg.kappa_pivot}
+        else:
+            axis_local = np.array(joint.dofs_motion_vel[0], dtype=np.float64)
+            extra_kwargs = {"kappa_lateral": cfg.kappa_pivot}
+
+        T_parent_rep: np.ndarray = T_world[parent_rep]
+        T_child_rep: np.ndarray = T_world[child_rep]
+        T_parent_link: np.ndarray = T_world[parent_local]
+
+        R_parent_rep_inv: np.ndarray = T_parent_rep[:3, :3].T
+        R_child_rep_inv: np.ndarray = T_child_rep[:3, :3].T
+
+        T_joint_world: np.ndarray = T_parent_link @ self._make_link_to_child_T(child_link)
+        anchor_world: np.ndarray = T_joint_world[:3, 3]
+
+        anchor_left: np.ndarray = R_parent_rep_inv @ (anchor_world - T_parent_rep[:3, 3])
+        anchor_right: np.ndarray = R_child_rep_inv @ (anchor_world - T_child_rep[:3, 3])
+
+        R_child_in_parent: np.ndarray = gu.quat_to_R(np.array(child_link.quat, dtype=np.float64))
+        axis_world: np.ndarray = T_parent_link[:3, :3] @ R_child_in_parent @ axis_local
+        axis_world = axis_world / np.linalg.norm(axis_world)
+
+        axis_left: np.ndarray = R_parent_rep_inv @ axis_world
+        axis_right: np.ndarray = R_child_rep_inv @ axis_world
+
+        kp, kv = self._resolve_joint_gains(joint, entity)
+
+        dof_local: int = joint.dofs_idx_local[0]
+        global_dof_idx: int = entity.dof_start + dof_local
+
+        jc: JointCollection = self._scene.add_joint(
+            joint.name,
+            type=jtype,
+            left=group_slots[parent_rep],
+            right=group_slots[child_rep],
+            anchor_left=anchor_left.tolist(),
+            anchor_right=anchor_right.tolist(),
+            axis_left=axis_left.tolist(),
+            axis_right=axis_right.tolist(),
+            kappa_axis=cfg.kappa_axis,
+            enable_controller=True,
+            kp=kp,
+            kv=kv,
+            theta_lower=float(joint.dofs_limit[0, 0]),
+            theta_upper=float(joint.dofs_limit[0, 1]),
+            init_theta=float(init_qpos[dof_local]),
+            **extra_kwargs,
+        )
+        return jc, global_dof_idx
+
+    # -------------------------------------------------------------------------
+    # Build helpers: merge groups, merged body, inertials, FK, joint gains
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _build_merge_groups(entity: RigidEntity) -> tuple[list[tuple[int, list[int]]], dict[int, int]]:
         """Group links connected by fixed joints.
 
         Returns (groups, link_to_rep) where groups is a list of (rep, members)
         tuples and link_to_rep maps each idx_local to its group representative.
         """
+        from collections import defaultdict
+
         fixed_adj: dict[int, list[int]] = defaultdict(list)
 
         for link in entity.links:
@@ -477,14 +749,12 @@ class QIPCCoupler(RBC):
                     fixed_adj[link.idx_local].append(parent_local)
                     fixed_adj[parent_local].append(link.idx_local)
 
-        # Also treat jointless non-root links as fixed (MJCF bodies without <joint>)
         for link in entity.links:
             if link.parent_idx >= 0 and len(link.joints) == 0:
                 parent_local = link.parent_idx - entity.link_start
                 fixed_adj[link.idx_local].append(parent_local)
                 fixed_adj[parent_local].append(link.idx_local)
 
-        # Compute link depth via BFS from root
         depth: dict[int, int] = {}
         for link in entity.links:
             if link.parent_idx < 0:
@@ -498,7 +768,6 @@ class QIPCCoupler(RBC):
                     depth[link.idx_local] = depth[current] + 1
                     bfs_queue.append(link.idx_local)
 
-        # BFS through fixed adjacency to build groups
         visited: set[int] = set()
         groups: list[tuple[int, list[int]]] = []
 
@@ -520,41 +789,49 @@ class QIPCCoupler(RBC):
             rep = min(members, key=lambda x: depth.get(x, 999))
             groups.append((rep, members))
 
-        link_to_rep = {}
+        link_to_rep: dict[int, int] = {}
         for rep, members in groups:
             for m in members:
                 link_to_rep[m] = rep
 
         return groups, link_to_rep
 
-    def _create_merged_body(self, entity, rep, members, T_world, abd, trimesh_factory):
-        """Create a single ABD body from a merge group."""
-        T_rep = T_world[rep]
-        T_rep_inv = np.linalg.inv(T_rep)
-        R_rep = T_rep[:3, :3]
-        t_rep = T_rep[:3, 3]
+    def _create_merged_body(
+        self,
+        entity: RigidEntity,
+        rep: int,
+        members: list[int],
+        T_world: dict[int, np.ndarray],
+        abd: object,
+        trimesh_factory: object,
+        *,
+        abd_kappa: float,
+    ) -> object | None:
+        """Create a single ABD body from a merge group. Returns geometry slot or None."""
+        T_rep: np.ndarray = T_world[rep]
+        T_rep_inv: np.ndarray = np.linalg.inv(T_rep)
+        R_rep: np.ndarray = T_rep[:3, :3]
+        t_rep: np.ndarray = T_rep[:3, 3]
 
-        all_verts = []
-        all_faces = []
-        vert_offset = 0
+        all_verts: list[np.ndarray] = []
+        all_faces: list[np.ndarray] = []
+        vert_offset: int = 0
 
-        link_by_idx = {link.idx_local: link for link in entity.links}
+        link_by_idx: dict[int, RigidLink] = {link.idx_local: link for link in entity.links}
 
         for m_idx in members:
             link = link_by_idx[m_idx]
-            if not hasattr(link, "geoms") or len(link.geoms) == 0:
+            if len(link.geoms) == 0:
                 continue
 
-            T_member = T_world[m_idx]
+            T_member: np.ndarray = T_world[m_idx]
 
             for geom in link.geoms:
                 v = geom.init_verts.copy().astype(np.float64)
                 R_geom = gu.quat_to_R(np.array(geom.init_quat, dtype=np.float64))
                 v = (R_geom @ v.T).T + geom.init_pos
 
-                # Transform from link-local to world, then to rep-local
-                T_geom_world = T_member
-                T_geom_in_rep = T_rep_inv @ T_geom_world
+                T_geom_in_rep = T_rep_inv @ T_member
                 v_h = np.hstack([v, np.ones((len(v), 1))])
                 v_rep = (T_geom_in_rep @ v_h.T).T[:, :3]
 
@@ -562,17 +839,15 @@ class QIPCCoupler(RBC):
                 all_faces.append(geom.init_faces.copy() + vert_offset)
                 vert_offset += len(v_rep)
 
-        total_mass, com_world, I_world = self._merge_inertials(
-            entity, members, T_world,
-        )
-        com_local = R_rep.T @ (com_world - t_rep)
-        I_local = R_rep.T @ I_world @ R_rep
+        total_mass, com_world, I_world = self._merge_inertials(entity, members, T_world)
+        com_local: np.ndarray = R_rep.T @ (com_world - t_rep)
+        I_local: np.ndarray = R_rep.T @ I_world @ R_rep
 
-        is_fixed = any(link_by_idx[m].is_fixed for m in members)
+        is_fixed: bool = any(link_by_idx[m].is_fixed for m in members)
 
         if all_verts:
-            merged_verts = np.concatenate(all_verts, axis=0)
-            merged_faces = np.concatenate(all_faces, axis=0)
+            merged_verts: np.ndarray = np.concatenate(all_verts, axis=0)
+            merged_faces: np.ndarray = np.concatenate(all_faces, axis=0)
 
             geo = trimesh_factory(merged_verts, merged_faces)
             geo.instances.resize(1)
@@ -582,7 +857,7 @@ class QIPCCoupler(RBC):
                 vol = self._compute_merged_volume(entity, members)
                 abd.apply_to(
                     geo,
-                    kappa=self._entity_config["abd_kappa"],
+                    kappa=abd_kappa,
                     mass=total_mass,
                     center_of_mass=com_local,
                     inertia=I_local,
@@ -590,12 +865,7 @@ class QIPCCoupler(RBC):
                     is_fixed=is_fixed,
                 )
             else:
-                abd.apply_to(
-                    geo,
-                    kappa=self._entity_config["abd_kappa"],
-                    mass_density=1e3,
-                    is_fixed=is_fixed,
-                )
+                abd.apply_to(geo, kappa=abd_kappa, mass_density=1e3, is_fixed=is_fixed)
 
             rep_link = link_by_idx[rep]
             slot = self._scene.geometries.create(rep_link.name, geo)
@@ -603,7 +873,7 @@ class QIPCCoupler(RBC):
         elif total_mass > 0:
             vol = total_mass / 1e3
             geo = abd.create_proxy(
-                kappa=self._entity_config["abd_kappa"],
+                kappa=abd_kappa,
                 mass=total_mass,
                 center_of_mass=com_local,
                 inertia=I_local,
@@ -620,16 +890,20 @@ class QIPCCoupler(RBC):
         return None
 
     @staticmethod
-    def _merge_inertials(entity, members, T_world):
+    def _merge_inertials(
+        entity: RigidEntity,
+        members: list[int],
+        T_world: dict[int, np.ndarray],
+    ) -> tuple[float, np.ndarray, np.ndarray]:
         """Combine inertials of multiple links using parallel axis theorem.
 
         Returns (total_mass, com_world, inertia_world_at_com).
         """
-        link_by_idx = {link.idx_local: link for link in entity.links}
+        link_by_idx: dict[int, RigidLink] = {link.idx_local: link for link in entity.links}
 
-        total_mass = 0.0
-        weighted_com = np.zeros(3, dtype=np.float64)
-        entries = []
+        total_mass: float = 0.0
+        weighted_com: np.ndarray = np.zeros(3, dtype=np.float64)
+        entries: list[tuple[float, np.ndarray, np.ndarray]] = []
 
         for m_idx in members:
             link = link_by_idx[m_idx]
@@ -637,68 +911,67 @@ class QIPCCoupler(RBC):
                 continue
 
             m = float(link.inertial_mass)
-            T_link = T_world[m_idx]
+            T_link: np.ndarray = T_world[m_idx]
 
-            inertial_pos = np.array(link.inertial_pos, dtype=np.float64)
+            inertial_pos: np.ndarray = np.array(link.inertial_pos, dtype=np.float64)
             com_link_h = np.array([*inertial_pos, 1.0], dtype=np.float64)
-            com_world = (T_link @ com_link_h)[:3]
+            com_world_pt: np.ndarray = (T_link @ com_link_h)[:3]
 
-            R_link = T_link[:3, :3]
-            R_inertial = gu.quat_to_R(np.array(link.inertial_quat, dtype=np.float64))
-            R_world = R_link @ R_inertial
-            I_principal = np.array(link.inertial_i, dtype=np.float64)
-            I_world = R_world @ I_principal @ R_world.T
+            R_link: np.ndarray = T_link[:3, :3]
+            R_inertial: np.ndarray = gu.quat_to_R(np.array(link.inertial_quat, dtype=np.float64))
+            R_world_inertial: np.ndarray = R_link @ R_inertial
+            I_principal: np.ndarray = np.array(link.inertial_i, dtype=np.float64)
+            I_world_link: np.ndarray = R_world_inertial @ I_principal @ R_world_inertial.T
 
-            entries.append((m, com_world, I_world))
+            entries.append((m, com_world_pt, I_world_link))
             total_mass += m
-            weighted_com += m * com_world
+            weighted_com += m * com_world_pt
 
         if total_mass <= 0:
             return 0.0, np.zeros(3), np.zeros((3, 3))
 
-        com = weighted_com / total_mass
+        com: np.ndarray = weighted_com / total_mass
 
-        I_combined = np.zeros((3, 3), dtype=np.float64)
+        I_combined: np.ndarray = np.zeros((3, 3), dtype=np.float64)
         for m, com_i, I_i in entries:
             d = com_i - com
             I_combined += I_i + m * (np.dot(d, d) * np.eye(3) - np.outer(d, d))
 
         return total_mass, com, I_combined
 
-    def _resolve_joint_gains(self, joint) -> tuple[float, float]:
-        """Resolve kp/kv: material-specified values override actuator gains override coupler defaults."""
-        mat = self._entity.material
-        mat_kp = getattr(mat, "qipc_default_kp", None)
-        mat_kv = getattr(mat, "qipc_default_kv", None)
+    def _resolve_joint_gains(self, joint: RigidJoint, entity: RigidEntity) -> tuple[float, float]:
+        """Resolve kp/kv: material > actuator gains > coupler defaults."""
+        mat = entity.material
+        mat_kp: float | None = mat.qipc_default_kp
+        mat_kv = mat.qipc_default_kv
 
         if mat_kp is not None:
             kp = float(mat_kp)
         else:
-            act_gain = getattr(joint, "dofs_act_gain", None)
+            act_gain = joint.dofs_act_gain
             if act_gain is not None and len(act_gain) > 0 and float(act_gain[0]) > 0:
                 kp = float(act_gain[0])
             else:
-                kp = float(self._entity_config["default_kp"])
+                kp = 100.0
 
-        if mat_kv is not None:
-            kv = float(mat_kv) if not isinstance(mat_kv, str) else 0.0
+        if mat_kv is not None and not isinstance(mat_kv, str):
+            kv = float(mat_kv)
         else:
-            act_bias = getattr(joint, "dofs_act_bias", None)
+            act_bias = joint.dofs_act_bias
             if act_bias is not None and len(act_bias) > 0 and len(act_bias[0]) >= 3 and float(-act_bias[0][2]) > 0:
                 kv = float(-act_bias[0][2])
             else:
-                default_kv = self._entity_config["default_kv"]
-                kv = float(default_kv) if not isinstance(default_kv, str) else 0.0
+                kv = 10.0
 
         return kp, kv
 
     @staticmethod
-    def _compute_merged_volume(entity, members):
+    def _compute_merged_volume(entity: RigidEntity, members: list[int]) -> float:
         """Compute total volume for a merge group."""
         from qipc.solver.affine_body import compute_mesh_volume_trimesh
 
-        link_by_idx = {link.idx_local: link for link in entity.links}
-        total_vol = 0.0
+        link_by_idx: dict[int, RigidLink] = {link.idx_local: link for link in entity.links}
+        total_vol: float = 0.0
 
         for m_idx in members:
             link = link_by_idx[m_idx]
@@ -712,34 +985,32 @@ class QIPCCoupler(RBC):
         return max(total_vol, 1e-12)
 
     @staticmethod
-    def _make_link_to_child_T(child_link):
+    def _make_link_to_child_T(child_link: RigidLink) -> np.ndarray:
         """Build the 4x4 transform from parent link frame to child link frame origin."""
         T = np.eye(4, dtype=np.float64)
         T[:3, 3] = child_link.pos
         T[:3, :3] = gu.quat_to_R(np.array(child_link.quat, dtype=np.float64))
         return T
 
-    def _compute_initial_transforms(self):
+    @staticmethod
+    def _compute_initial_transforms(entity: RigidEntity, cfg: EntityConfig) -> dict[int, np.ndarray]:
         """Compute world-frame 4x4 transforms for each link via FK at init_qpos."""
-        entity = self._entity
-        T_world = {}
+        T_world: dict[int, np.ndarray] = {}
 
         morph = entity.morph
         T_root = np.eye(4, dtype=np.float64)
-        if hasattr(morph, "pos") and morph.pos is not None:
-            T_root[:3, 3] = np.array(morph.pos, dtype=np.float64)
-        if hasattr(morph, "quat") and morph.quat is not None:
+        T_root[:3, 3] = np.array(morph.pos, dtype=np.float64)
+        if morph.quat is not None:
             T_root[:3, :3] = gu.quat_to_R(np.array(morph.quat, dtype=np.float64))
 
-        home_qpos = self._entity_config["home_qpos"] if hasattr(self, "_entity_config") else None
-        init_qpos = home_qpos if home_qpos is not None else entity.init_qpos
+        init_qpos = cfg.home_qpos if cfg.home_qpos is not None else entity.init_qpos
 
         for link in entity.links:
             if link.parent_idx < 0:
                 T_world[link.idx_local] = T_root.copy()
             else:
-                parent_local = link.parent_idx - entity.link_start
-                T_parent = T_world[parent_local]
+                parent_local: int = link.parent_idx - entity.link_start
+                T_parent: np.ndarray = T_world[parent_local]
 
                 T_child_in_parent = np.eye(4, dtype=np.float64)
                 T_child_in_parent[:3, 3] = link.pos
