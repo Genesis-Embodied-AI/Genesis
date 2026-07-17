@@ -145,9 +145,7 @@ class RasterizerContext:
 
         # pyrender scene
         self._scene = pyrender.Scene(
-            ambient_light=self.ambient_light,
-            bg_color=self.background_color,
-            n_envs=len(self.rendered_envs_idx),
+            ambient_light=self.ambient_light, bg_color=self.background_color, n_envs=len(self.rendered_envs_idx)
         )
 
         self.jit = JITRenderer(self._scene, [], [])
@@ -281,8 +279,7 @@ class RasterizerContext:
             for camera in self.cameras:
                 self.frustum_nodes[camera.uid] = self.add_node(
                     pyrender.Mesh.from_trimesh(
-                        mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)),
-                        smooth=False,
+                        mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)), smooth=False
                     )
                 )
             self.camera_frustum_shown = True
@@ -308,8 +305,8 @@ class RasterizerContext:
 
     def _link_frame_T(self, solver):
         """World-space 4x4 transforms for every (env, link) of solver, flattened in env-major, link-minor order."""
-        pos = qd_to_numpy(solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True)
-        quat = qd_to_numpy(solver.links_state.quat, self.rendered_envs_idx, transpose=True)
+        pos = qd_to_numpy(solver.dyn_state.links.pos, self.rendered_envs_idx, transpose=True, copy=True)
+        quat = qd_to_numpy(solver.dyn_state.links.quat, self.rendered_envs_idx, transpose=True)
         pos += self.scene.envs_offset[self.rendered_envs_idx, None]
         return gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
 
@@ -321,19 +318,14 @@ class RasterizerContext:
                     n_links = len(solver.links)
                     for i, link in enumerate(solver.links):
                         mesh = pyrender.Mesh.from_trimesh(
-                            mesh=self.link_frame_mesh,
-                            poses=all_T[i::n_links],
-                            env_shared=False,
-                            is_marker=True,
+                            mesh=self.link_frame_mesh, poses=all_T[i::n_links], env_shared=False, is_marker=True
                         )
                         self.link_frame_nodes[link.uid] = self.add_node(mesh)
             else:
                 all_T_parts = [self._link_frame_T(solver) for solver in self._rigid_solvers()]
                 if all_T_parts:
                     mesh = pyrender.Mesh.from_trimesh(
-                        mesh=self.link_frame_mesh,
-                        poses=np.concatenate(all_T_parts, axis=0),
-                        is_marker=True,
+                        mesh=self.link_frame_mesh, poses=np.concatenate(all_T_parts, axis=0), is_marker=True
                     )
                     self.link_frame_node = self.add_node(mesh)
             self.link_frame_shown = True
@@ -490,7 +482,7 @@ class RasterizerContext:
                             # Seed primitive.positions with the current world-space vverts: buffer updates bypass
                             # primitive.positions, which keeps feeding the scene bounds (shadow map extents), so it
                             # must hold world-space data.
-                            vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                            vverts = qd_to_numpy(solver.dyn_state.vverts.pos, self.rendered_envs_idx, transpose=True)
                             envs_offset = self.scene.envs_offset
                             custom_offset = entity._custom_vvert_start - entity._vvert_start
                             for geom in entity.vgeoms:
@@ -512,7 +504,7 @@ class RasterizerContext:
                                             mesh=mesh,
                                             smooth=geom.surface.smooth,
                                             double_sided=geom.surface.double_sided,
-                                        ),
+                                        )
                                     )
                                     env_i = self.rendered_envs_idx.index(i_b)
                                     geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
@@ -531,7 +523,7 @@ class RasterizerContext:
                                     self.create_node_seg(seg_key, node)
                             self._per_env_vverts_entity_uids.add(entity.uid)
 
-                        vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                        vverts = qd_to_numpy(solver.dyn_state.vverts.pos, self.rendered_envs_idx, transpose=True)
                         envs_offset = self.scene.envs_offset
                         custom_offset = entity._custom_vvert_start - entity._vvert_start
                         for geom in entity.vgeoms:
@@ -634,10 +626,7 @@ class RasterizerContext:
                     for link_idx, sign in ((contacts_info["link_a"][i_c], -1), (contacts_info["link_b"][i_c], 1)):
                         if self.sim.rigid_solver.links[link_idx].visualize_contact:
                             self.draw_contact_arrow(
-                                pos=contact_pos[i_c],
-                                radius=radius[i_c],
-                                force=sign * contact_force[i_c],
-                                env_idx=env_i,
+                                pos=contact_pos[i_c], radius=radius[i_c], force=sign * contact_force[i_c], env_idx=env_i
                             )
                             self.draw_debug_arrow(
                                 pos=contact_pos[i_c],
@@ -919,9 +908,7 @@ class RasterizerContext:
                         self.add_static_node(
                             fem_entity,
                             pyrender.Mesh.from_trimesh(
-                                mesh,
-                                smooth=fem_entity.surface.smooth,
-                                double_sided=fem_entity.surface.double_sided,
+                                mesh, smooth=fem_entity.surface.smooth, double_sided=fem_entity.surface.double_sided
                             ),
                             i_b=idx,
                         )
@@ -1115,12 +1102,7 @@ class RasterizerContext:
 
     def draw_debug_box(self, bounds, color=(1.0, 0.0, 0.0, 1.0), wireframe=True, wireframe_radius=0.002):
         bounds = tensor_to_array(bounds)
-        mesh = mu.create_box(
-            bounds=bounds,
-            wireframe=wireframe,
-            wireframe_radius=wireframe_radius,
-            color=color,
-        )
+        mesh = mu.create_box(bounds=bounds, wireframe=wireframe, wireframe_radius=wireframe_radius, color=color)
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_box_{gs.UID()}", is_marker=True)
         self.add_external_node(node)
         return node

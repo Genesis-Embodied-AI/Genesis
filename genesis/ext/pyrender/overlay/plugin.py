@@ -413,8 +413,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
     def on_mouse_scroll(self, x, y, dx, dy) -> EVENT_HANDLE_STATE:
         if self._available:
-            # imgui backend expects: on_mouse_scroll(x, y, mods, scroll)
-            self._impl.on_mouse_scroll(x, y, 0, dy)
+            # Pyglet's deltas already reflect the system's scrolling preference. Forward them directly because the
+            # imgui-bundle Pyglet backend negates the vertical delta, which reverses the configured direction.
+            self._io.add_mouse_wheel_event(dx, dy)
         return EVENT_HANDLED if self._is_capturing() else None
 
     def on_mouse_motion(self, x, y, dx, dy) -> EVENT_HANDLE_STATE:

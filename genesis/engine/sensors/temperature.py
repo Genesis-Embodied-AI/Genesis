@@ -131,7 +131,7 @@ def _apply_diffusion_and_heat_generation(
 
 
 @qd.func
-def _qd_polygon_area_from_points_3d(n: int, scratch: qd.types.ndarray(), i_b: int, eps: float) -> float:
+def _qd_polygon_area_from_points_3d(i_b: int, n: int, scratch: qd.types.ndarray(), eps: float) -> float:
     """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
@@ -205,10 +205,10 @@ def _qd_polygon_area_from_points_3d(n: int, scratch: qd.types.ndarray(), i_b: in
 
 @qd.kernel
 def _kernel_compute_contact_areas(
-    links_state: array_class.LinksState,
-    collider_state: array_class.ColliderState,
     contact_area: qd.types.ndarray(),
     scratch: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
     eps: float,
 ):
     # contact_area shape (n_c_max, n_batches). scratch (n_batches, n_c_max, len(_ScratchIdx)).
@@ -223,8 +223,8 @@ def _kernel_compute_contact_areas(
             scratch[i_b, i_c, _ScratchIdx.CONTACT_IDX] = gs.qd_float(i_c)
             scratch[i_b, i_c, _ScratchIdx.DEPTH] = collider_state.contact_data.penetration[i_col, i_b]
             p_world = collider_state.contact_data.pos[i_col, i_b]
-            link_pos = links_state.pos[la, i_b]
-            link_quat = links_state.quat[la, i_b]
+            link_pos = dyn_state.links.pos[la, i_b]
+            link_quat = dyn_state.links.quat[la, i_b]
             p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
             scratch[i_b, i_c, _ScratchIdx.POS_X] = p_local.x
             scratch[i_b, i_c, _ScratchIdx.POS_Y] = p_local.y
@@ -266,7 +266,7 @@ def _kernel_compute_contact_areas(
 
             group_area = eps
             if count >= 3:
-                group_area = _qd_polygon_area_from_points_3d(count, scratch, i_b, eps)
+                group_area = _qd_polygon_area_from_points_3d(i_b, count, scratch, eps)
             else:
                 for k in range(count):
                     d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]
@@ -286,25 +286,25 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
 
 @qd.kernel
 def _kernel_contact_heat(
-    links_state: array_class.LinksState,
-    collider_state: array_class.ColliderState,
     links_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    link_to_material_idx: qd.types.ndarray(),
     aabb_min: qd.types.ndarray(),
     grid_size: qd.types.ndarray(),
     voxel_size: qd.types.ndarray(),
     voxel_volume: qd.types.ndarray(),
     depth_weight: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
     link_temps: qd.types.ndarray(),
     link_volume: qd.types.ndarray(),
-    link_to_material_idx: qd.types.ndarray(),
     link_base_temperature: qd.types.ndarray(),
     link_conductivity: qd.types.ndarray(),
     link_rho_cp: qd.types.ndarray(),
     contact_area: qd.types.ndarray(),
+    output: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
     dt: float,
     eps: float,
-    output: qd.types.ndarray(),
 ):
     # contact_area shape (n_c_max, n_batches)
     n_batches = output.shape[-1]
@@ -344,8 +344,8 @@ def _kernel_contact_heat(
                 k_other = link_conductivity[mat_other]
                 k_eff = _qd_k_eff(k_sensor, k_other, eps)
                 p_world = collider_state.contact_data.pos[i_col, i_b]
-                link_pos = links_state.pos[sensor_link_idx, i_b]
-                link_quat = links_state.quat[sensor_link_idx, i_b]
+                link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+                link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
                 p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
                 u_x = (p_local.x - amin.x) / vs.x
                 u_y = (p_local.y - amin.y) / vs.y
@@ -511,12 +511,7 @@ class TemperatureGridSensor(
     SimpleSensor[TemperatureGridOptions, None, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
     def __init__(
-        self,
-        options: TemperatureGridOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
+        self, options: TemperatureGridOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
 
@@ -727,32 +722,32 @@ class TemperatureGridSensor(
         collider_state = solver.collider._collider_state
         shared_metadata.contact_area_buffer.zero_()
         _kernel_compute_contact_areas(
-            solver.links_state,
-            collider_state,
             shared_metadata.contact_area_buffer,
             shared_metadata.contact_area_scratch,
+            solver.dyn_state,
+            collider_state,
             gs.EPS,
         )
         _kernel_contact_heat(
-            solver.links_state,
-            collider_state,
             shared_metadata.links_idx,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.link_to_material_idx,
             shared_metadata.aabb_min,
             shared_metadata.grid_size,
             shared_metadata.voxel_size,
             shared_metadata.voxel_volume,
             shared_metadata.contact_depth_weight,
-            shared_metadata.sensor_cache_start,
             shared_metadata.link_temps,
             shared_metadata.link_volume,
-            shared_metadata.link_to_material_idx,
             link_base_temperature,
             link_conductivity,
             link_rho_cp,
             shared_metadata.contact_area_buffer,
+            raw_data_T,
+            solver.dyn_state,
+            collider_state,
             dt,
             gs.EPS,
-            raw_data_T,
         )
         raw_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection

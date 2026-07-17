@@ -84,9 +84,9 @@ def build_scene(show_viewer, debug, dt, gjk):
     scene.build()
 
     if debug:
-        obj_com_rel = scene.rigid_solver.geoms_info.center.to_numpy()
-        obj_pos = scene.rigid_solver.geoms_state.pos.to_numpy()[..., 0, :]
-        obj_quat = scene.rigid_solver.geoms_state.quat.to_numpy()[..., 0, :]
+        obj_com_rel = scene.rigid_solver.dyn_info.geoms.center.to_numpy()
+        obj_pos = scene.rigid_solver.dyn_state.geoms.pos.to_numpy()[..., 0, :]
+        obj_quat = scene.rigid_solver.dyn_state.geoms.quat.to_numpy()[..., 0, :]
         obj_com_world = gs.utils.geom.transform_by_trans_quat(obj_com_rel, obj_pos, obj_quat)
         scene.draw_debug_spheres(poss=obj_com_world, radius=0.002, color=(1, 1, 1, 1))
         scene.visualizer.update(force=True)

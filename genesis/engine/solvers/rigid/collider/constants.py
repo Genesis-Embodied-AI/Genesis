@@ -4,14 +4,6 @@ Constants and enums for the collider module.
 
 from enum import IntEnum
 
-# How far the origin's projection may extrapolate beyond the portal triangle, as a fraction of the triangle
-# (barycentric), before the infinite-plane penetration is deemed an unreliable extrapolation (portal INVALID
-# -> refine with GJK).
-# FIXME: This is a compile-time constant instead of an MPRInfo scalar field because one extra field read pushes
-# '_func_narrowphase_multicontact' past Metal's limit of 31 buffer bindings per kernel. Move it back to MPRInfo
-# once quadrants packs root buffers below that limit (e.g. via Metal argument buffers).
-CCD_EXTRAPOLATION_TOL = 1.0
-
 
 class RETURN_CODE(IntEnum):
     """

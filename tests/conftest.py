@@ -1,4 +1,3 @@
-import base64
 import ctypes
 import gc
 import logging
@@ -620,6 +619,21 @@ def mujoco_compatibility(request):
 
 
 @pytest.fixture
+def friction_cone(request):
+    import genesis as gs
+
+    friction_cone = None
+    for mark in request.node.iter_markers("friction_cone"):
+        if mark.args:
+            if friction_cone is not None:
+                pytest.fail("'friction_cone' can only be specified once.")
+            (friction_cone,) = mark.args
+    if friction_cone is None:
+        friction_cone = gs.friction_cone.pyramidal
+    return friction_cone
+
+
+@pytest.fixture
 def adjacent_collision(request):
     adjacent_collision = None
     for mark in request.node.iter_markers("adjacent_collision"):
@@ -812,7 +826,16 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
 
 
 @pytest.fixture
-def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, gjk_collision):
+def mj_sim(
+    xml_path,
+    gs_solver,
+    gs_integrator,
+    merge_fixed_links,
+    multi_contact,
+    adjacent_collision,
+    gjk_collision,
+    friction_cone,
+):
     from .utils import build_mujoco_sim
 
     return build_mujoco_sim(
@@ -823,6 +846,7 @@ def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact,
         multi_contact,
         adjacent_collision,
         gjk_collision,
+        friction_cone=friction_cone,
     )
 
 
@@ -836,6 +860,7 @@ def gs_sim(
     mujoco_compatibility,
     adjacent_collision,
     gjk_collision,
+    friction_cone,
     show_viewer,
     mj_sim,
 ):
@@ -852,6 +877,7 @@ def gs_sim(
         gjk_collision,
         show_viewer,
         mj_sim,
+        friction_cone=friction_cone,
     )
 
 
@@ -941,8 +967,13 @@ def png_snapshot(request, snapshot):
         from .utils import get_hf_dataset
 
         snapshot_name_ = "".join(f"[{char}]" if char in ("[", "]") else char for char in snapshot_name)
+        # The snapshots repository mirrors the tests tree ('rendering/__snapshots__/test_offscreen/...'), so the
+        # snapshot directory path relative to the tests root is also its path in the repository.
+        tests_dir = Path(__file__).parent
         get_hf_dataset(
-            pattern=f"{snapshot_dir.name}/{snapshot_name_}*", repo_name="snapshots", local_dir=snapshot_dir.parent
+            pattern=f"{snapshot_dir.relative_to(tests_dir).as_posix()}/{snapshot_name_}*",
+            repo_name="snapshots",
+            local_dir=tests_dir,
         )
 
     return snapshot_obj

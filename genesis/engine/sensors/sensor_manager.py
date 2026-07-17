@@ -162,7 +162,7 @@ class SensorManager:
             cls_max_history = 0
             cls_delay_depth = 1
             for sensor in sensors:
-                sensor._cache_idx = cache_size_per_dtype[intermediate_dtype]
+                sensor._cache_offset = cls_offset
                 cache_size_per_dtype[intermediate_dtype] += sensor._cache_size
                 cls_delay_depth = max(cls_delay_depth, sensor._delay_ts + 1)
                 hist = sensor._options.history_length
@@ -382,8 +382,7 @@ class SensorManager:
 
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
         sensor_cls = type(sensor)
-        cls_slice = self._cache_slices_by_type[sensor_cls]
-        rel_start = sensor._cache_idx - cls_slice.start
+        rel_start = sensor._cache_offset
         history_length = sensor._options.history_length
 
         if history_length > 0:
