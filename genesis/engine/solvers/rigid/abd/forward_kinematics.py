@@ -171,9 +171,9 @@ def func_COM_links_entity(
             dyn_state.links.pos[i_l, i_b],
             dyn_state.links.quat[i_l, i_b],
         )
-
-        i_r = links_info.root_idx[I_l]
-        links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
+        
+        i_r = dyn_info.links.root_idx[I_l]
+        dyn_state.links.mass_sum[i_r, i_b] = dyn_state.links.mass_sum[i_r, i_b] + mass
         dyn_state.links.root_COM_bw[i_r, i_b] = (
             dyn_state.links.root_COM_bw[i_r, i_b] + mass * dyn_state.links.i_pos_bw[i_l, i_b]
         )
