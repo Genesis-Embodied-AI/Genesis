@@ -431,7 +431,7 @@ class SAPCoupler(RBC):
         # This is not a big deal for now since only joint equality constraints are support by this coupler.
         self.equality_constraint_handler = RigidConstraintHandler(self.sim)
         self.equality_constraint_handler.build_constraints(
-            self.rigid_solver.dyn_info.equalities, self.rigid_solver.dyn_info.joints, self.rigid_solver._rigid_config
+            self.rigid_solver.dyn_info.equalities, self.rigid_solver.dyn_info.joints, self.rigid_solver.rigid_config
         )
 
     def _init_sap_fields(self):
@@ -593,7 +593,7 @@ class SAPCoupler(RBC):
 
         if self.rigid_solver.is_active:
             kernel_update_all_verts(
-                self.rigid_solver.dyn_state, self.rigid_solver.dyn_info, self.rigid_solver._rigid_config
+                self.rigid_solver.dyn_state, self.rigid_solver.dyn_info, self.rigid_solver.rigid_config
             )
 
         if self._rigid_compliant:

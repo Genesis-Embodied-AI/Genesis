@@ -81,7 +81,7 @@ class SupportField:
         )
 
         _kernel_init_support(
-            support_cell_start, support_v, support_vid, self._support_field_info, self.solver._rigid_config
+            support_cell_start, support_v, support_vid, self._support_field_info, self.solver.rigid_config
         )
 
         self._is_active = True

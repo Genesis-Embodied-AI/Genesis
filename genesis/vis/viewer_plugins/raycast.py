@@ -64,7 +64,7 @@ class Raycaster:
             return
         from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs
 
-        kernel_update_verts_and_aabbs(self.solver.dyn_state, self.aabb, self.solver.dyn_info, self.solver._rigid_config)
+        kernel_update_verts_and_aabbs(self.solver.dyn_state, self.aabb, self.solver.dyn_info, self.solver.rigid_config)
         self.bvh.build()
 
     def cast(

@@ -1193,7 +1193,14 @@ class RasterizerContext:
         self.seg_node_map.pop(seg_node, None)
 
     def seg_idxc_to_idxc_rgb(self, seg_idxc):
-        seg_idxc_rgb = np.array([(seg_idxc >> 16) & 0xFF, (seg_idxc >> 8) & 0xFF, seg_idxc & 0xFF], dtype=np.int32)
+        seg_idxc_rgb = np.array(
+            [
+                (seg_idxc >> 16) & 0xFF,
+                (seg_idxc >> 8) & 0xFF,
+                seg_idxc & 0xFF,
+            ],
+            dtype=np.int32,
+        )
         return seg_idxc_rgb
 
     def seg_idxc_rgb_arr_to_idxc_arr(self, seg_idxc_rgb_arr):

@@ -172,7 +172,7 @@ class RaycastContext(SharedSensorContext):
                 continue
             if entry.raycast_mask is None:
                 kernel_update_verts_and_aabbs(
-                    entry.solver.dyn_state, entry.aabb, entry.solver.dyn_info, entry.solver._rigid_config
+                    entry.solver.dyn_state, entry.aabb, entry.solver.dyn_info, entry.solver.rigid_config
                 )
                 entry.bvh.build()
             else:

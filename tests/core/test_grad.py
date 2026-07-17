@@ -344,7 +344,7 @@ def test_diff_solver(monkeypatch):
             constraint_solver.constraint_state,
             rigid_solver.dyn_info,
             rigid_solver.rigid_info,
-            rigid_solver._rigid_config,
+            rigid_solver.rigid_config,
             is_decomposed=False,
         )
         func_solve_body(
@@ -352,7 +352,7 @@ def test_diff_solver(monkeypatch):
             constraint_solver.constraint_state,
             rigid_solver.dyn_info,
             rigid_solver.rigid_info,
-            rigid_solver._rigid_config,
+            rigid_solver.rigid_config,
             constraint_solver._n_iterations,
         )
 
@@ -365,7 +365,7 @@ def test_diff_solver(monkeypatch):
         constraint_solver.constraint_state,
         rigid_solver.dyn_info,
         rigid_solver.rigid_info,
-        rigid_solver._rigid_config,
+        rigid_solver.rigid_config,
         is_forward_pos_updated=True,
         is_forward_vel_updated=True,
         is_backward=False,

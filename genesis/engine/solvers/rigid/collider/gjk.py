@@ -48,7 +48,7 @@ class GJK:
         # 6 * epa_max_iterations is the maximum number of faces in the polytope.
         polytope_max_faces = 6 * epa_max_iterations
 
-        if rigid_solver._rigid_config.requires_grad:
+        if rigid_solver.rigid_config.requires_grad:
             # For differentiable contact detection, we find multiple contact points for each pair.
             max_contacts_per_pair = 20
             max_contact_polygon_verts = 1
@@ -104,7 +104,7 @@ class GJK:
 
         # Initialize GJK state
         self._gjk_state = array_class.get_gjk_state(
-            rigid_solver._B, rigid_solver._rigid_config, self._gjk_info, False, rigid_solver._rigid_config.requires_grad
+            rigid_solver._B, rigid_solver.rigid_config, self._gjk_info, False, rigid_solver.rigid_config.requires_grad
         )
 
         self._is_active = False
@@ -114,7 +114,7 @@ class GJK:
             return
 
         self._gjk_state = array_class.get_gjk_state(
-            self._solver._B, self._solver._rigid_config, self._gjk_info, True, self._solver._rigid_config.requires_grad
+            self._solver._B, self._solver.rigid_config, self._gjk_info, True, self._solver.rigid_config.requires_grad
         )
         self._is_active = True
 

@@ -3188,7 +3188,7 @@ class RigidEntity(KinematicEntity):
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             custom_init_qpos,
             max_samples,
             max_solver_iters,
@@ -3257,7 +3257,7 @@ class RigidEntity(KinematicEntity):
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
         )
 
         if self._solver.n_envs == 0:
@@ -4191,14 +4191,14 @@ class RigidEntity(KinematicEntity):
         -------
         kinetic_energy : torch.Tensor, shape () or (n_envs,)
         """
-        if self._solver._rigid_config.integrator == gs.integrator.approximate_implicitfast:
+        if self._solver.rigid_config.integrator == gs.integrator.approximate_implicitfast:
             from genesis.engine.solvers.rigid.abd.forward_dynamics import kernel_compute_mass_matrix
 
             kernel_compute_mass_matrix(
                 self._solver.dyn_state,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 decompose=False,
             )
         mass_mat = self.get_mass_mat(envs_idx=envs_idx)

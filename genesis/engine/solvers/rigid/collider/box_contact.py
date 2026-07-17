@@ -813,7 +813,11 @@ def func_box_box_contact(
                         continue
 
                     tmp1 = qd.Vector(
-                        [collider_state.box_ppts2[i, 0, i_b] * 0.5, collider_state.box_ppts2[i, 1, i_b] * 0.5, 0],
+                        [
+                            collider_state.box_ppts2[i, 0, i_b] * 0.5,
+                            collider_state.box_ppts2[i, 1, i_b] * 0.5,
+                            0,
+                        ],
                         dt=gs.qd_float,
                     )
 

@@ -99,7 +99,7 @@ class ConstraintSolver:
         self.ls_iterations = rigid_solver._options.ls_iterations
         self.ls_tolerance = rigid_solver._options.ls_tolerance
         # Effective (CPU-gated) sparsity flag, resolved in the static config; the raw option may differ on GPU.
-        self.sparse_solve = rigid_solver._rigid_config.sparse_solve
+        self.sparse_solve = rigid_solver.rigid_config.sparse_solve
 
         # Note that it must be over-estimated because friction parameters and joint limits may be updated dynamically.
         # * 4 constraints per contact, bounded by the post-pruning contact budget enforced by the collider
@@ -197,7 +197,7 @@ class ConstraintSolver:
         # which the sparse Hessian assembly still indexes through (including the explicit GPU sparse path).
         if self.sparse_solve:
             func_compute_dof_perm(
-                self._solver.dyn_state, self.constraint_state, self._solver.dyn_info, self._solver._rigid_config
+                self._solver.dyn_state, self.constraint_state, self._solver.dyn_info, self._solver.rigid_config
             )
 
     def reset(self, envs_idx=None):
@@ -221,7 +221,7 @@ class ConstraintSolver:
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        constraint_solver_kernel_reset(envs_idx, self.constraint_state, self._solver._rigid_config)
+        constraint_solver_kernel_reset(envs_idx, self.constraint_state, self._solver.rigid_config)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx)
@@ -264,7 +264,7 @@ class ConstraintSolver:
             fn = constraint_solver_kernel_masked_clear
         else:
             fn = constraint_solver_kernel_clear
-        fn(envs_idx, self.constraint_state, self._solver.rigid_info, self._solver._rigid_config)
+        fn(envs_idx, self.constraint_state, self._solver.rigid_info, self._solver.rigid_config)
 
     def add_equality_constraints(self):
         self._eq_const_info_cache.clear()
@@ -275,7 +275,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
         )
 
     def add_inequality_constraints(self):
@@ -285,7 +285,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             self._collider._collider_static_config,
         )
 
@@ -298,17 +298,17 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             self._n_iterations,
         )
 
-        func_update_qacc(self._solver.dyn_state, self.constraint_state, self._solver._rigid_config, self._solver._errno)
+        func_update_qacc(self._solver.dyn_state, self.constraint_state, self._solver.rigid_config, self._solver._errno)
 
         if self._solver._options.noslip_iterations > 0:
             self.noslip()
 
         func_update_contact_force(
-            self._solver.dyn_state, self._collider._collider_state, self.constraint_state, self._solver._rigid_config
+            self._solver.dyn_state, self._collider._collider_state, self.constraint_state, self._solver.rigid_config
         )
 
     def noslip(self):
@@ -317,7 +317,7 @@ class ConstraintSolver:
             self._collider._collider_state,
             self.constraint_state,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
         )
 
     def get_equality_constraints(self, as_tensor: bool = True, to_torch: bool = True):
@@ -344,7 +344,7 @@ class ConstraintSolver:
 
         if n_eqs_max > 0:
             kernel_get_equality_constraints(
-                iout, fout, self.constraint_state, self._solver.dyn_info, self._solver._rigid_config, as_tensor
+                iout, fout, self.constraint_state, self._solver.dyn_info, self._solver.rigid_config, as_tensor
             )
 
         if as_tensor:
@@ -425,7 +425,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
         )
         if overflow:
             gs.logger.warning(
@@ -444,7 +444,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
         )
 
     def backward(self, dL_dqacc):
@@ -456,12 +456,12 @@ class ConstraintSolver:
 
         # 1. We first need to find a solution to A^T * u = g system.
         backward_constraint_solver.kernel_solve_adjoint_u(
-            self.constraint_state, self._solver.dyn_info, self._solver.rigid_info, self._solver._rigid_config
+            self.constraint_state, self._solver.dyn_info, self._solver.rigid_info, self._solver.rigid_config
         )
 
         # 2. Using the solution u, we can compute the gradients of the input variables.
         backward_constraint_solver.kernel_compute_gradients(
-            self.constraint_state, self._solver.dyn_info, self._solver._rigid_config
+            self.constraint_state, self._solver.dyn_info, self._solver.rigid_config
         )
 
 

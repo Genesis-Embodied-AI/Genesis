@@ -214,8 +214,8 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
     rigid_solver = scene.sim.rigid_solver
     assert rigid_solver._use_contact_island == (n_boxes > 1)
     if gs.backend != gs.cpu:
-        assert rigid_solver._rigid_config.enable_cooperative_constraint_kernels == (6 * n_boxes >= 16)
-        assert rigid_solver._rigid_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
+        assert rigid_solver.rigid_config.enable_cooperative_constraint_kernels == (6 * n_boxes >= 16)
+        assert rigid_solver.rigid_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
 
     # Force needed to hold the floating boxes static without slipping
     total_mass = sum(box.get_mass() for box in floating_boxes)

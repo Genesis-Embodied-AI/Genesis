@@ -696,12 +696,12 @@ class RigidSolver(KinematicSolver):
                     n_geoms=self._n_geoms,
                 )
 
-        self._rigid_config = array_class.RigidSimStaticConfig(**rigid_config)
+        self.rigid_config = array_class.RigidSimStaticConfig(**rigid_config)
 
-        if self._rigid_config.requires_grad:
-            if self._rigid_config.use_hibernation:
+        if self.rigid_config.requires_grad:
+            if self.rigid_config.use_hibernation:
                 gs.raise_exception("Hibernation is not supported yet when requires_grad is True")
-            if self._rigid_config.integrator != gs.integrator.approximate_implicitfast:
+            if self.rigid_config.integrator != gs.integrator.approximate_implicitfast:
                 gs.raise_exception(
                     "Only approximate_implicitfast integrator is supported yet when requires_grad is True."
                 )
@@ -762,7 +762,7 @@ class RigidSolver(KinematicSolver):
 
         # Compute mass matrix without any implicit damping terms
         # TODO: This kernel could be optimized to take `envs_idx` as input if performance is critical.
-        kernel_compute_mass_matrix(self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config, decompose=True)
+        kernel_compute_mass_matrix(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, decompose=True)
 
         # Define some proxies for convenience
         mass_mat_D_inv = qd_to_numpy(self.rigid_info.mass_mat_D_inv)
@@ -879,11 +879,11 @@ class RigidSolver(KinematicSolver):
         if not self._options.batch_dofs_info:
             dofs_invweight = dofs_invweight[0]
         kernel_init_invweight(
-            envs_idx, links_invweight, dofs_invweight, self.dyn_info, self.rigid_info, self._rigid_config, force_update
+            envs_idx, links_invweight, dofs_invweight, self.dyn_info, self.rigid_info, self.rigid_config, force_update
         )
 
         # Compute meaninertia from mass matrix
-        kernel_init_meaninertia(envs_idx, self.dyn_info, self.rigid_info, self._rigid_config)
+        kernel_init_meaninertia(envs_idx, self.dyn_info, self.rigid_info, self.rigid_config)
 
     def _init_mass_mat(self):
         self.mass_mat = self.rigid_info.mass_mat
@@ -1036,7 +1036,7 @@ class RigidSolver(KinematicSolver):
                     dtype=gs.np_bool,
                 ),
                 self.dyn_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
     def _init_dof_length(self):
@@ -1126,7 +1126,7 @@ class RigidSolver(KinematicSolver):
                 self.geoms_init_AABB,
                 self.dyn_state,
                 self.dyn_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
     def _init_entity_fields(self):
@@ -1144,7 +1144,7 @@ class RigidSolver(KinematicSolver):
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
     def _init_equality_fields(self):
@@ -1162,7 +1162,7 @@ class RigidSolver(KinematicSolver):
                 np.array([equality.type for equality in equalities], dtype=gs.np_int),
                 equalities_sol_params,
                 self.dyn_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
     def _init_collider(self):
@@ -1204,21 +1204,21 @@ class RigidSolver(KinematicSolver):
         from genesis.engine.couplers import SAPCoupler
 
         if self._requires_grad and f == 0:
-            kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self._rigid_config)
+            kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config)
 
         kernel_step_1(
             self.dyn_state,
             self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
-            self._rigid_config,
+            self.rigid_config,
             self._is_forward_pos_updated,
             self._is_forward_vel_updated,
             self._is_backward,
         )
 
         if isinstance(self.sim.coupler, SAPCoupler):
-            update_qvel(self.dyn_state, self.rigid_info, self._rigid_config, self._is_backward)
+            update_qvel(self.dyn_state, self.rigid_info, self.rigid_config, self._is_backward)
         else:
             self._func_constraint_force()
             kernel_step_2(
@@ -1227,7 +1227,7 @@ class RigidSolver(KinematicSolver):
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
                 self._is_backward,
                 self._errno,
             )
@@ -1235,7 +1235,7 @@ class RigidSolver(KinematicSolver):
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
             if self._requires_grad:
                 kernel_save_adjoint_cache(
-                    f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self._rigid_config
+                    f + 1, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config
                 )
 
     def get_error_envs_mask(self):
@@ -1304,7 +1304,7 @@ class RigidSolver(KinematicSolver):
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
-                    self._rigid_config,
+                    self.rigid_config,
                 )
 
         if not self._disable_constraint:
@@ -1313,23 +1313,23 @@ class RigidSolver(KinematicSolver):
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
-            self.dyn_state, self.constraint_solver.constraint_state, self.dyn_info, self.rigid_info, self._rigid_config
+            self.dyn_state, self.constraint_solver.constraint_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
     def _func_update_acc(self):
-        kernel_update_acc(self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config)
+        kernel_update_acc(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
 
     def _func_forward_kinematics_entity(self, i_e, envs_idx):
         kernel_forward_kinematics_entity(
-            i_e, envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config
+            i_e, envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
     def _func_integrate_dq_entity(self, dq, i_e, i_b, respect_joint_limit):
-        func_integrate_dq_entity(i_e, i_b, dq, self.dyn_info, self.rigid_info, self._rigid_config, respect_joint_limit)
+        func_integrate_dq_entity(i_e, i_b, dq, self.dyn_info, self.rigid_info, self.rigid_config, respect_joint_limit)
 
     def _func_update_geoms(self, envs_idx, *, force_update_fixed_geoms=False):
         kernel_update_geoms(
-            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config, force_update_fixed_geoms
+            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, force_update_fixed_geoms
         )
 
     def apply_links_external_force(
@@ -1379,11 +1379,11 @@ class RigidSolver(KinematicSolver):
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
         kernel_apply_links_external_force(
-            links_idx, envs_idx, force, self.dyn_state, self._rigid_config, ref_idx, 1 if local else 0
+            links_idx, envs_idx, force, self.dyn_state, self.rigid_config, ref_idx, 1 if local else 0
         )
 
     def apply_links_external_torque(
@@ -1434,11 +1434,11 @@ class RigidSolver(KinematicSolver):
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
         kernel_apply_links_external_torque(
-            links_idx, envs_idx, torque, self.dyn_state, self._rigid_config, ref_idx, 1 if local else 0
+            links_idx, envs_idx, torque, self.dyn_state, self.rigid_config, ref_idx, 1 if local else 0
         )
 
     def substep_pre_coupling(self, f):
@@ -1482,7 +1482,7 @@ class RigidSolver(KinematicSolver):
             self._rigid_adjoint_cache,
             self.dyn_info,
             self.rigid_info,
-            self._rigid_config,
+            self.rigid_config,
         )
         self.substep(f)
 
@@ -1490,13 +1490,13 @@ class RigidSolver(KinematicSolver):
         envs_idx = self._scene._sanitize_envs_idx(None)
         if not self._enable_mujoco_compatibility:
             kernel_forward_velocity.grad(
-                envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config, is_backward=True
+                envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
             )
             kernel_update_cartesian_space.grad(
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
                 force_update_fixed_geoms=False,
                 is_backward=True,
             )
@@ -1508,7 +1508,7 @@ class RigidSolver(KinematicSolver):
             self._rigid_adjoint_cache,
             self.dyn_info,
             self.rigid_info,
-            self._rigid_config,
+            self.rigid_config,
         )
         if not is_grad_valid:
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
@@ -1519,7 +1519,7 @@ class RigidSolver(KinematicSolver):
             self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
-            self._rigid_config,
+            self.rigid_config,
             is_backward=True,
             errno=self._errno,
         )
@@ -1533,28 +1533,28 @@ class RigidSolver(KinematicSolver):
         # We could possibly merge this small kernel later if (1) .grad function is regarded as a function instead of a
         # kernel, (2) we add another variable to store the new [acc] from [kernel_compute_qacc] and thus can avoid
         # the data access violation. However, both of these require major changes.
-        kernel_compute_qacc.grad(self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config, is_backward=True)
-        kernel_copy_acc(f, self.dyn_state, self._rigid_adjoint_cache, self._rigid_config)
+        kernel_compute_qacc.grad(self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True)
+        kernel_copy_acc(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_config)
 
         kernel_forward_dynamics_without_qacc.grad(
             self.dyn_state,
             self.constraint_solver.constraint_state,
             self.dyn_info,
             self.rigid_info,
-            self._rigid_config,
+            self.rigid_config,
             is_backward=True,
         )
 
         # If it was the very first substep, we need to backpropagate through the initial update of the cartesian space
         if self._enable_mujoco_compatibility or self._sim.cur_substep_global == 0:
             kernel_forward_velocity.grad(
-                envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config, is_backward=True
+                envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, is_backward=True
             )
             kernel_update_cartesian_space.grad(
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
                 force_update_fixed_geoms=False,
                 is_backward=True,
             )
@@ -1569,14 +1569,14 @@ class RigidSolver(KinematicSolver):
             return
 
         if isinstance(self.sim.coupler, SAPCoupler):
-            update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self._rigid_config, self._is_backward)
+            update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self.rigid_config, self._is_backward)
             kernel_step_2(
                 self.dyn_state,
                 self.collider._collider_state,
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
                 self._is_backward,
                 self._errno,
             )
@@ -1591,7 +1591,7 @@ class RigidSolver(KinematicSolver):
     # ------------------------------------------------------------------------------------
 
     def update_geoms_render_T(self):
-        kernel_update_geoms_render_T(self._geoms_render_T, self.dyn_state, self.rigid_info, self._rigid_config)
+        kernel_update_geoms_render_T(self._geoms_render_T, self.dyn_state, self.rigid_info, self.rigid_config)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- state get/set -------------------------------------
@@ -1616,7 +1616,7 @@ class RigidSolver(KinematicSolver):
                 state.friction_ratio,
                 self.dyn_state,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
             )
             self._queried_states.append(state)
         else:
@@ -1764,7 +1764,7 @@ class RigidSolver(KinematicSolver):
                 state.friction_ratio,
                 self.dyn_state,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
             )
             if self._use_hibernation:
                 kernel_reset_hibernation(
@@ -1773,7 +1773,7 @@ class RigidSolver(KinematicSolver):
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
-                    self._rigid_config,
+                    self.rigid_config,
                 )
 
         if not partial:
@@ -1783,7 +1783,7 @@ class RigidSolver(KinematicSolver):
                 fn = kernel_masked_forward_kinematics_links_geoms
             else:
                 fn = kernel_forward_kinematics_links_geoms
-            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config)
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -1826,7 +1826,7 @@ class RigidSolver(KinematicSolver):
                 self.dyn_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
                 force_update_fixed_geoms=False,
                 is_backward=False,
             )
@@ -1939,11 +1939,11 @@ class RigidSolver(KinematicSolver):
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
-                    self._rigid_config,
+                    self.rigid_config,
                 )
 
             kernel_set_links_pos(
-                links_idx, envs_idx, pos, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config
+                links_idx, envs_idx, pos, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
             )
 
         if not skip_forward:
@@ -1953,7 +1953,7 @@ class RigidSolver(KinematicSolver):
                 fn = kernel_masked_forward_kinematics_links_geoms
             else:
                 fn = kernel_forward_kinematics_links_geoms
-            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config)
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -2047,7 +2047,7 @@ class RigidSolver(KinematicSolver):
                         self.dyn_state,
                         self.dyn_info,
                         self.rigid_info,
-                        self._rigid_config,
+                        self.rigid_config,
                     )
                 # Compose the offset onto the user orientation, then set the resulting world orientation absolutely.
                 quat = gu.transform_quat_by_quat(offset_quat, quat)
@@ -2070,11 +2070,11 @@ class RigidSolver(KinematicSolver):
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
-                    self._rigid_config,
+                    self.rigid_config,
                 )
 
             kernel_set_links_quat(
-                links_idx, envs_idx, quat, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config
+                links_idx, envs_idx, quat, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
             )
 
         if not skip_forward:
@@ -2084,7 +2084,7 @@ class RigidSolver(KinematicSolver):
                 fn = kernel_masked_forward_kinematics_links_geoms
             else:
                 fn = kernel_forward_kinematics_links_geoms
-            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config)
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -2097,7 +2097,7 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0:
             mass = mass[None]
-        kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self._rigid_config)
+        kernel_set_links_mass_shift(links_idx, envs_idx, mass, self.dyn_state, self.rigid_config)
 
     def set_links_COM_shift(self, com, links_idx=None, envs_idx=None):
         com, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2105,7 +2105,7 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0:
             com = com[None]
-        kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self._rigid_config)
+        kernel_set_links_COM_shift(links_idx, envs_idx, com, self.dyn_state, self.rigid_config)
 
     def set_links_inertial_mass(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2119,7 +2119,7 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0 and self._options.batch_links_info:
             mass = mass[None]
-        kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self._rigid_config)
+        kernel_set_links_inertial_mass(links_idx, envs_idx, mass, self.dyn_info, self.rigid_config)
 
     def set_links_inertia(self, ratio, links_idx=None, envs_idx=None):
         if gs.use_zerocopy:
@@ -2150,7 +2150,7 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0 and self._options.batch_links_info:
             ratio = ratio[None]
-        kernel_adjust_link_inertia(links_idx, envs_idx, ratio, self.dyn_info, self._rigid_config)
+        kernel_adjust_link_inertia(links_idx, envs_idx, ratio, self.dyn_info, self.rigid_config)
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
@@ -2158,7 +2158,7 @@ class RigidSolver(KinematicSolver):
         )
         if self.n_envs == 0:
             friction_ratio = friction_ratio[None]
-        kernel_set_geoms_friction_ratio(geoms_idx, envs_idx, friction_ratio, self.dyn_state, self._rigid_config)
+        kernel_set_geoms_friction_ratio(geoms_idx, envs_idx, friction_ratio, self.dyn_state, self.rigid_config)
 
     @mutates(StateChange.GEOMETRY)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
@@ -2213,10 +2213,10 @@ class RigidSolver(KinematicSolver):
                     self.constraint_solver.constraint_state,
                     self.dyn_info,
                     self.rigid_info,
-                    self._rigid_config,
+                    self.rigid_config,
                 )
 
-            kernel_set_qpos(qs_idx, envs_idx, qpos, self.rigid_info, self._rigid_config)
+            kernel_set_qpos(qs_idx, envs_idx, qpos, self.rigid_info, self.rigid_config)
             kernel_set_zero(envs_idx, self._errno)
 
         if not skip_forward:
@@ -2226,7 +2226,7 @@ class RigidSolver(KinematicSolver):
                 fn = kernel_masked_forward_kinematics_links_geoms
             else:
                 fn = kernel_forward_kinematics_links_geoms
-            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config)
+            fn(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -2247,7 +2247,7 @@ class RigidSolver(KinematicSolver):
         """
         sol_params_ = broadcast_tensor(sol_params, gs.tc_float, (7,), ("",))
         sol_params_ = _sanitize_sol_params(sol_params_.clone(), self._sol_min_timeconst)
-        kernel_set_global_sol_params(sol_params_, self.dyn_info, self._rigid_config)
+        kernel_set_global_sol_params(sol_params_, self.dyn_info, self.rigid_config)
 
     def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None):
         """
@@ -2296,7 +2296,7 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0 and batched:
             sol_params_ = sol_params_[None]
 
-        kernel_set_sol_params(inputs_idx, envs_idx, sol_params_, self.dyn_info, self._rigid_config, constraint_type)
+        kernel_set_sol_params(inputs_idx, envs_idx, sol_params_, self.dyn_info, self.rigid_config, constraint_type)
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
         if gs.use_zerocopy and name in {
@@ -2348,29 +2348,29 @@ class RigidSolver(KinematicSolver):
                 tensor = tensor[None]
             tensor_list[j] = tensor
         if name == "kp":
-            kernel_set_dofs_kp(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_kp(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "kv":
-            kernel_set_dofs_kv(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_kv(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "force_range":
-            kernel_set_dofs_force_range(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_force_range(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "stiffness":
-            kernel_set_dofs_stiffness(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_stiffness(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "armature":
-            kernel_set_dofs_armature(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_armature(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
             qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
             qpos_cur = self.get_qpos(qs_idx=qs_idx, envs_idx=envs_idx)
             self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True)
             self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx)
         elif name == "damping":
-            kernel_set_dofs_damping(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_damping(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "frictionloss":
-            kernel_set_dofs_frictionloss(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_frictionloss(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "limit":
-            kernel_set_dofs_limit(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_limit(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "act_gain":
-            kernel_set_dofs_act_gain(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_act_gain(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "act_bias":
-            kernel_set_dofs_act_bias(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self._rigid_config)
+            kernel_set_dofs_act_bias(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
 
@@ -2418,7 +2418,7 @@ class RigidSolver(KinematicSolver):
         self._wake_dofs(dofs_idx, envs_idx)
 
         kernel_set_dofs_position(
-            dofs_idx, envs_idx, position, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config
+            dofs_idx, envs_idx, position, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
         if gs.use_zerocopy:
@@ -2430,7 +2430,7 @@ class RigidSolver(KinematicSolver):
             kernel_set_zero(envs_idx, self._errno)
 
         kernel_forward_kinematics_links_geoms(
-            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config
+            envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
@@ -2447,7 +2447,7 @@ class RigidSolver(KinematicSolver):
                 self.constraint_solver.constraint_state,
                 self.dyn_info,
                 self.rigid_info,
-                self._rigid_config,
+                self.rigid_config,
             )
 
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
@@ -2477,7 +2477,7 @@ class RigidSolver(KinematicSolver):
             force = force[None]
 
         self._wake_dofs(dofs_idx, envs_idx)
-        kernel_control_dofs_force(dofs_idx, envs_idx, force, self.dyn_state, self._rigid_config)
+        kernel_control_dofs_force(dofs_idx, envs_idx, force, self.dyn_state, self.rigid_config)
 
     def control_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy and not self._use_hibernation:
@@ -2499,7 +2499,7 @@ class RigidSolver(KinematicSolver):
             velocity = velocity[None]
 
         self._wake_dofs(dofs_idx, envs_idx)
-        kernel_control_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self._rigid_config)
+        kernel_control_dofs_velocity(dofs_idx, envs_idx, velocity, self.dyn_state, self.rigid_config)
 
     def control_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy and not self._use_hibernation:
@@ -2521,7 +2521,7 @@ class RigidSolver(KinematicSolver):
             position = position[None]
 
         self._wake_dofs(dofs_idx, envs_idx)
-        kernel_control_dofs_position(dofs_idx, envs_idx, position, self.dyn_state, self._rigid_config)
+        kernel_control_dofs_position(dofs_idx, envs_idx, position, self.dyn_state, self.rigid_config)
 
     def control_dofs_position_velocity(self, position, velocity, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy and not self._use_hibernation:
@@ -2547,9 +2547,7 @@ class RigidSolver(KinematicSolver):
             velocity = velocity[None]
 
         self._wake_dofs(dofs_idx, envs_idx)
-        kernel_control_dofs_position_velocity(
-            dofs_idx, envs_idx, position, velocity, self.dyn_state, self._rigid_config
-        )
+        kernel_control_dofs_position_velocity(dofs_idx, envs_idx, position, velocity, self.dyn_state, self.rigid_config)
 
     def get_sol_params(self, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None):
         """
@@ -2643,7 +2641,7 @@ class RigidSolver(KinematicSolver):
         assert _tensor is not None
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
         ref_idx = self._convert_ref_to_idx(ref)
-        kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self._rigid_config, ref_idx)
+        kernel_get_links_vel(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config, ref_idx)
         return _tensor
 
     def get_links_acc(self, links_idx=None, envs_idx=None):
@@ -2651,7 +2649,7 @@ class RigidSolver(KinematicSolver):
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        kernel_get_links_acc(links_idx, envs_idx, tensor, self.dyn_state, self._rigid_config)
+        kernel_get_links_acc(links_idx, envs_idx, tensor, self.dyn_state, self.rigid_config)
         return _tensor
 
     def get_links_acc_ang(self, links_idx=None, envs_idx=None):
@@ -2711,7 +2709,7 @@ class RigidSolver(KinematicSolver):
     def get_dofs_control_force(self, dofs_idx=None, envs_idx=None):
         _tensor, dofs_idx, envs_idx = self._sanitize_io_variables(None, dofs_idx, self.n_dofs, "dofs_idx", envs_idx)
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        kernel_get_dofs_control_force(dofs_idx, envs_idx, tensor, self.dyn_state, self.dyn_info, self._rigid_config)
+        kernel_get_dofs_control_force(dofs_idx, envs_idx, tensor, self.dyn_state, self.dyn_info, self.rigid_config)
         return _tensor
 
     def get_dofs_actuator_force(self, dofs_idx=None, envs_idx=None):
@@ -2878,9 +2876,9 @@ class RigidSolver(KinematicSolver):
         -------
         total_energy : torch.Tensor, shape () or (n_envs,)
         """
-        if self._rigid_config.integrator == gs.integrator.approximate_implicitfast:
+        if self.rigid_config.integrator == gs.integrator.approximate_implicitfast:
             kernel_compute_mass_matrix(
-                self.dyn_state, self.dyn_info, self.rigid_info, self._rigid_config, decompose=False
+                self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config, decompose=False
             )
         mass_mat = self.get_mass_mat(envs_idx=envs_idx)
         dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
@@ -2942,7 +2940,7 @@ class RigidSolver(KinematicSolver):
         friction, geoms_idx, _ = self._sanitize_io_variables(
             friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
-        kernel_set_geoms_friction(geoms_idx, friction, self.dyn_info, self._rigid_config)
+        kernel_set_geoms_friction(geoms_idx, friction, self.dyn_info, self.rigid_config)
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)
@@ -2965,7 +2963,7 @@ class RigidSolver(KinematicSolver):
                 torch.mps.synchronize()
             return
 
-        kernel_clear_external_force(self.dyn_state, self.rigid_info, self._rigid_config)
+        kernel_clear_external_force(self.dyn_state, self.rigid_info, self.rigid_config)
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):
@@ -2975,19 +2973,19 @@ class RigidSolver(KinematicSolver):
 
     def update_drone_propeller_vgeoms(self, propellers_vgeom_idxs, propellers_revs, propellers_spin):
         kernel_update_drone_propeller_vgeoms(
-            propellers_vgeom_idxs, propellers_revs, propellers_spin, self.dyn_state, self.rigid_info, self._rigid_config
+            propellers_vgeom_idxs, propellers_revs, propellers_spin, self.dyn_state, self.rigid_info, self.rigid_config
         )
 
     def set_drone_rpm(self, propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, invert):
         kernel_set_drone_rpm(
-            propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, self.dyn_state, self._rigid_config, invert
+            propellers_link_idx, propellers_rpm, propellers_spin, KF, KM, self.dyn_state, self.rigid_config, invert
         )
 
     def update_verts_for_geoms(self, geoms_idx):
         _, geoms_idx, _ = self._sanitize_io_variables(
             None, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, skip_allocation=True
         )
-        kernel_update_verts_for_geoms(geoms_idx, self.dyn_state, self.dyn_info, self._rigid_config)
+        kernel_update_verts_for_geoms(geoms_idx, self.dyn_state, self.dyn_info, self.rigid_config)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

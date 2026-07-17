@@ -50,7 +50,7 @@ class SDF:
                 self._geoms_sdf_coarse_res,
                 np.concatenate(geoms_sdf_coarse_val, dtype=gs.np_float),
                 self._sdf_info,
-                self.solver._rigid_config,
+                self.solver.rigid_config,
             )
 
         self._is_active = True

@@ -411,7 +411,7 @@ class RRT(PathPlanner):
                         dyn_state,
                         dyn_info,
                         rigid_info,
-                        self._solver._rigid_config,
+                        self._solver.rigid_config,
                         is_backward=False,
                     )
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
@@ -419,7 +419,7 @@ class RRT(PathPlanner):
                         dyn_state,
                         dyn_info,
                         rigid_info,
-                        self._solver._rigid_config,
+                        self._solver.rigid_config,
                         force_update_fixed_geoms=False,
                         is_backward=False,
                     )
@@ -758,7 +758,7 @@ class RRTConnect(PathPlanner):
                         dyn_state,
                         dyn_info,
                         rigid_info,
-                        self._solver._rigid_config,
+                        self._solver.rigid_config,
                         is_backward=False,
                     )
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
@@ -766,7 +766,7 @@ class RRTConnect(PathPlanner):
                         dyn_state,
                         dyn_info,
                         rigid_info,
-                        self._solver._rigid_config,
+                        self._solver.rigid_config,
                         force_update_fixed_geoms=False,
                         is_backward=False,
                     )

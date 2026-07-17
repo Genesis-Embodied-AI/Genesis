@@ -165,7 +165,7 @@ def get_rigid_info(solver, kinematic_only):
     # Hessian's shape so nt_H can alias it (get_constraint_state) instead of allocating a second buffer; the factor only
     # touches it before the constraint solve repopulates it in the same step. Empty otherwise.
     mass_mat_tiled_scratch_shape = ()
-    if not kinematic_only and solver._rigid_config.enable_register_tiled_mass:
+    if not kinematic_only and solver.rigid_config.enable_register_tiled_mass:
         mass_mat_tiled_scratch_shape = (_B, solver.n_dofs_, solver.n_dofs_)
 
     # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
@@ -177,7 +177,7 @@ def get_rigid_info(solver, kinematic_only):
     # coalesced under (n_dofs, n_dofs, _B) with lanes varying i_b, so flipping L would regress that path more than
     # the corresponding writer-side win on the tiled factor_mass.
     mass_mat_layout = (
-        (2, 1, 0) if not kinematic_only and solver._rigid_config.enable_cooperative_constraint_kernels else None
+        (2, 1, 0) if not kinematic_only and solver.rigid_config.enable_cooperative_constraint_kernels else None
     )
 
     # FIXME: Add a better split between kinematic and Genesis
@@ -372,9 +372,9 @@ def get_island_state(solver, collider):
     is_active = solver._use_contact_island
     rcm_active = (
         is_active
-        and solver._rigid_config.sparse_solve
-        and solver._rigid_config.enable_per_island_solve
-        and not solver._rigid_config.sparse_envelope
+        and solver.rigid_config.sparse_solve
+        and solver.rigid_config.enable_per_island_solve
+        and not solver.rigid_config.sparse_envelope
     )
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
     # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
@@ -533,14 +533,14 @@ def get_constraint_state(constraint_solver, solver, collider):
 
     # The constraint-state layout flips (con / jac / dof_vec) gate on constraint_layout_batch_first; jac additionally
     # picks its batch-first permutation from enable_cooperative_constraint_kernels. See the per-flip docs below.
-    cooperative = solver._rigid_config.enable_cooperative_constraint_kernels
-    batch_first = solver._rigid_config.constraint_layout_batch_first
+    cooperative = solver.rigid_config.enable_cooperative_constraint_kernels
+    batch_first = solver.rigid_config.constraint_layout_batch_first
     # Serialized execution visits envs in the outermost loop of every constraint kernel, so the hot per-env rows of the
     # constraint tensors must be contiguous in memory: batch-first physical layout. With the canonical batch-last layout
     # every scalar access strides by n_envs, wasting a full cache line per element, which makes the constraint solver
     # DRAM-bound once the combined per-env working sets exceed the CPU caches and batched stepping scales super-linearly
     # with n_envs.
-    serialized = solver._rigid_config.para_level < gs.PARA_LEVEL.ALL
+    serialized = solver.rigid_config.para_level < gs.PARA_LEVEL.ALL
     # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
     # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.
     # Cooperative kernels read the same flag at compile time to switch between serial and warp-cooperative reductions.
@@ -549,7 +549,7 @@ def get_constraint_state(constraint_solver, solver, collider):
     serial_layout = (1, 0) if serialized else None
     # The CPU incremental factor maintains the elliptic cone by a per-iteration rank-3 update reading the previous cone
     # residuals, so the residual cache is allocated for the CPU elliptic case.
-    is_cone_incremental = solver._rigid_config.enable_elliptic_friction and solver._rigid_config.backend == gs.cpu
+    is_cone_incremental = solver.rigid_config.enable_elliptic_friction and solver.rigid_config.backend == gs.cpu
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
@@ -564,11 +564,11 @@ def get_constraint_state(constraint_solver, solver, collider):
     # slot per fused update on the CPU per-island path (func_rank_batch_update_island), a single slot elsewhere
     # (indexing then reduces to [i_d]). Flat 2D so the buffer keeps the DOF-vec rank and layout on every backend.
     nt_vec_n_slots = (
-        solver._rigid_config.hessian_rank_update_batch
+        solver.rigid_config.hessian_rank_update_batch
         if (
             constraint_solver.sparse_solve
-            and solver._rigid_config.enable_per_island_solve
-            and not solver._rigid_config.sparse_envelope
+            and solver.rigid_config.enable_per_island_solve
+            and not solver.rigid_config.sparse_envelope
         )
         else 1
     )
@@ -632,7 +632,7 @@ def get_constraint_state(constraint_solver, solver, collider):
         # before the constraint solve repopulates it in the same step.
         nt_H=(
             solver.rigid_info.mass_mat_tiled_scratch
-            if solver._rigid_config.enable_register_tiled_mass
+            if solver.rigid_config.enable_register_tiled_mass
             else V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_))
         ),
         nt_H_env_start=V(dtype=gs.qd_int, shape=sparse_dof_shape),
@@ -680,7 +680,7 @@ def get_constraint_state(constraint_solver, solver, collider):
         early_exit_flag=V(dtype=qd.i32, shape=()),
         nt_H_cone_free_diag=V(
             dtype=gs.qd_float,
-            shape=maybe_shape((_B, solver.n_dofs_), solver._rigid_config.enable_cone_free_hessian_reuse),
+            shape=maybe_shape((_B, solver.n_dofs_), solver.rigid_config.enable_cone_free_hessian_reuse),
         ),
         # Allocated last to preserve the allocation order of the tensors above (see the warning at the top).
         island=get_island_state(solver, collider),
@@ -2022,7 +2022,7 @@ class GeomsState:
 
 def get_geoms_state(solver, is_active=True):
     shape = (solver.n_geoms_, solver._B) if is_active else ()
-    requires_grad = solver._rigid_config.requires_grad
+    requires_grad = solver.rigid_config.requires_grad
 
     return GeomsState(
         pos=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
@@ -2528,7 +2528,7 @@ class DataManager:
             vgeoms=vgeoms_state,
         )
 
-        if solver._rigid_config.requires_grad:
+        if solver.rigid_config.requires_grad:
             # Data structures required for backward pass
             self.dyn_state_adjoint_cache = get_dyn_state_adjoint_cache(solver)
 

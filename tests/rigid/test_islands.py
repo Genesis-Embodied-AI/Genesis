@@ -354,7 +354,7 @@ def test_monolith_seed_oversaturated(show_viewer, monkeypatch):
     ]
     scene.build(n_envs=2)
 
-    cfg = scene.rigid_solver._rigid_config
+    cfg = scene.rigid_solver.rigid_config
     # Guard against the test silently ceasing to exercise the gap (e.g. if the saturation heuristic changes).
     assert not cfg.enable_cooperative_constraint_kernels
     assert not cfg.enable_fused_factor_solve_init

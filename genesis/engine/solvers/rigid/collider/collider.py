@@ -148,7 +148,7 @@ class Collider:
             else:
                 ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
-        n_contacts_per_convex_pair = 20 if self._solver._rigid_config.requires_grad else 5
+        n_contacts_per_convex_pair = 20 if self._solver.rigid_config.requires_grad else 5
 
         # Nonconvex vertex-vs-SDF pairs and box-box pairs (via their specialized detector) emit many contacts per pair -
         # a full annular ring or face patch - unlike the handful a generic convex pair emits. They share a larger cap,
@@ -264,7 +264,7 @@ class Collider:
         n_possible_pairs_ = max(self._n_possible_pairs, 1)
         self._collider_state = array_class.get_collider_state(
             self._solver,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             n_possible_pairs_,
             self._solver._options.multiplier_collision_broad_phase,
             self._collider_info,
@@ -314,10 +314,10 @@ class Collider:
         back to GJK for its own contact."""
         self._multicontact_gjk_state = array_class.get_gjk_state(
             self._multicontact_n_total_threads,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             self._gjk._gjk_info,
             True,
-            self._solver._rigid_config.requires_grad,
+            self._solver.rigid_config.requires_grad,
         )
 
     def _compute_collision_pair_idx(self):
@@ -771,7 +771,7 @@ class Collider:
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        collider_kernel_reset(envs_idx, self._collider_state, self._solver._rigid_config, cache_only)
+        collider_kernel_reset(envs_idx, self._collider_state, self._solver.rigid_config, cache_only)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx, cache_only=False)
@@ -832,7 +832,7 @@ class Collider:
             fn = kernel_masked_collider_clear
         else:
             fn = kernel_collider_clear
-        fn(envs_idx, self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver._rigid_config)
+        fn(envs_idx, self._solver.dyn_state, self._collider_state, self._solver.dyn_info, self._solver.rigid_config)
 
     def _call_multicontact(self):
         narrowphase._func_narrowphase_multicontact(
@@ -844,7 +844,7 @@ class Collider:
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._collider_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             self._collider_static_config,
             self._gjk._gjk_static_config,
             self._multicontact_n_total_threads,
@@ -854,7 +854,7 @@ class Collider:
 
     def detection(self) -> None:
         rigid_solver.kernel_update_geom_aabbs(
-            self._solver.geoms_init_AABB, self._solver.dyn_state, self._solver._rigid_config
+            self._solver.geoms_init_AABB, self._solver.dyn_state, self._solver.rigid_config
         )
 
         if self._n_possible_pairs == 0:
@@ -865,7 +865,7 @@ class Collider:
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
             self._solver.constraint_solver.constraint_state,
             self._collider_state,
             self._collider_info,
@@ -882,7 +882,7 @@ class Collider:
                 self._solver.dyn_info,
                 self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._B,
                 self._contact0_n_chunks,
@@ -900,7 +900,7 @@ class Collider:
                 self._solver.dyn_info,
                 self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._gjk._gjk_static_config,
                 self._solver._errno,
@@ -913,7 +913,7 @@ class Collider:
                 self._solver.dyn_info,
                 self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._errno,
             )
@@ -926,7 +926,7 @@ class Collider:
                 self._solver.dyn_info,
                 self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._errno,
             )
@@ -938,7 +938,7 @@ class Collider:
                 self._solver.dyn_info,
                 self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._errno,
             )
@@ -948,7 +948,7 @@ class Collider:
         # SMs (the serial fused kernel wins above that threshold).
         ran_fused_dedup_coop = (
             gs.backend != gs.cpu
-            and not self._solver._rigid_config.requires_grad
+            and not self._solver.rigid_config.requires_grad
             and self._collider_static_config.has_prunable_contacts
             and (self._solver._options.contact_pruning_tolerance or 0.0) > 0.0
             and self._solver._B * 2 <= self._gpu_cores
@@ -962,7 +962,7 @@ class Collider:
                 self._collider_state,
                 self._solver.rigid_info,
                 self._collider_info,
-                self._solver._rigid_config,
+                self._solver.rigid_config,
                 self._collider_static_config,
                 self._solver._errno,
             )
@@ -1057,7 +1057,7 @@ class Collider:
 
         # Copy contact data
         if n_contacts_max > 0:
-            collider_kernel_get_contacts(iout, fout, self._collider_state, self._solver._rigid_config, as_tensor)
+            collider_kernel_get_contacts(iout, fout, self._collider_state, self._solver.rigid_config, as_tensor)
 
         # Build structured view (no copy)
         if as_tensor:
@@ -1117,7 +1117,7 @@ class Collider:
             self._collider_state.diff_contact_input,
             self._solver.dyn_info,
             self._collider_info,
-            self._solver._rigid_config,
+            self._solver.rigid_config,
         )
 
 
