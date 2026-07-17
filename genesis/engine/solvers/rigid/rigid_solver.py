@@ -821,18 +821,11 @@ class RigidSolver(KinematicSolver):
                     A = jac @ mass_mat_inv @ jac.T
                     A_diag = np.diag(A)
 
-                    tran = A_diag[:3].mean()
-                    rot = A_diag[3:].mean()
-
-                    # If one component is zero, use the other to prevent degenerate constraints.
-                    # See https://github.com/google-deepmind/mujoco/commit/1cda1e7a
-                    if tran < gs.EPS and rot > gs.EPS:
-                        tran = rot
-                    elif rot < gs.EPS and tran > gs.EPS:
-                        rot = tran
-
-                    links_invweight[i_b_, i_l, 0] = tran
-                    links_invweight[i_b_, i_l, 1] = rot
+                    # A zero component is kept as is: substituting the other component to avoid degenerate constraint
+                    # weights over-stiffens the impedance of constraints on such links (e.g. connect constraints on a
+                    # link whose frame origin cannot translate) and destabilizes them.
+                    links_invweight[i_b_, i_l, 0] = A_diag[:3].mean()
+                    links_invweight[i_b_, i_l, 1] = A_diag[3:].mean()
 
             # Compute dofs invweight
             if i_b_ == 0 or self._options.batch_dofs_info:
