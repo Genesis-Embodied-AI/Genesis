@@ -438,9 +438,9 @@ class MPMSolver(Solver):
                             if geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
                                 sdf_normal_cell = sdf.sdf_func_normal_world(
-                                    cell_pos,
                                     i_g,
                                     i_b,
+                                    cell_pos,
                                     geoms_state,
                                     geoms_info,
                                     rigid_info,

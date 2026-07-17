@@ -49,10 +49,10 @@ if TYPE_CHECKING:
 def _func_query_contact_depth_penetration(
     i_b: int,
     i_s: int,
+    sensor_geoms_idx: qd.types.ndarray(),
     probe_radius_gt: float,
     probe_radius_m: float,
     probe_pos: qd.types.vector(3),
-    sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -69,7 +69,7 @@ def _func_query_contact_depth_penetration(
         i_g = sensor_geoms_idx[i_b, i_s, i_g_]
         g_pos = dyn_state.geoms.pos[i_g, i_b]
         g_quat = dyn_state.geoms.quat[i_g, i_b]
-        sd = sdf.sdf_func_world_local(probe_pos, g_pos, g_quat, i_g, dyn_info.geoms, collider_info.sdf)
+        sd = sdf.sdf_func_world_local(i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, collider_info.sdf)
         pen_gt = probe_radius_gt - sd
         if pen_gt > max_pen_gt:
             max_pen_gt = pen_gt
@@ -174,10 +174,10 @@ def _kernel_build_sensor_geom_idx(
 def _func_query_contact_depth(
     i_b: int,
     i_s: int,
+    sensor_geoms_idx: qd.types.ndarray(),
     probe_radius_gt: float,
     probe_radius_m: float,
     probe_pos: qd.types.vector(3),
-    sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -209,14 +209,14 @@ def _func_query_contact_depth(
         if func_point_in_geom_aabb(i_g, i_b, probe_pos, aabb_expansion, dyn_state):
             g_pos = dyn_state.geoms.pos[i_g, i_b]
             g_quat = dyn_state.geoms.quat[i_g, i_b]
-            sd = sdf.sdf_func_world_local(probe_pos, g_pos, g_quat, i_g, dyn_info.geoms, collider_info.sdf)
+            sd = sdf.sdf_func_world_local(i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, collider_info.sdf)
             pen_gt = probe_radius_gt - sd
             pen_m = probe_radius_m - sd
             # Compute the SDF normal at most once across both branches.
             need_normal = (pen_gt > max_pen_gt and pen_gt > eps) or (pen_m > max_pen_m and pen_m > eps)
             if need_normal:
                 normal = sdf.sdf_func_normal_world_local(
-                    probe_pos, g_pos, g_quat, i_g, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
+                    i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
                 )
                 contact_link = dyn_info.geoms.link_idx[i_g]
                 if pen_gt > max_pen_gt and pen_gt > eps:
@@ -234,9 +234,9 @@ def _func_query_contact_depth(
 @qd.func
 def _func_kinematic_spring_damper(
     i_b: int,
+    sensor_link_idx: int,
     max_penetration: float,
     contact_link: int,
-    sensor_link_idx: int,
     normal_stiffness: float,
     normal_damping: float,
     normal_exponent: float,
@@ -286,8 +286,12 @@ def _func_kinematic_spring_damper(
 
 @qd.kernel
 def _kernel_kinematic_taxel(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    sensor_geoms_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
     probe_radii_noise: qd.types.ndarray(),
     probe_gains: qd.types.ndarray(),
@@ -296,11 +300,7 @@ def _kernel_kinematic_taxel(
     normal_exponent: qd.types.ndarray(),
     shear_scalar: qd.types.ndarray(),
     twist_scalar: qd.types.ndarray(),
-    links_idx: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
-    sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
@@ -359,10 +359,10 @@ def _kernel_kinematic_taxel(
         ) = _func_query_contact_depth(
             i_b,
             i_s,
+            sensor_geoms_idx,
             probe_radius,
             probe_radius_m,
             probe_pos,
-            sensor_geoms_idx,
             sensor_n_geoms,
             dyn_state,
             dyn_info,
@@ -374,9 +374,9 @@ def _kernel_kinematic_taxel(
 
         force_local_gt, torque_local_gt = _func_kinematic_spring_damper(
             i_b,
+            sensor_link_idx,
             max_penetration_gt,
             contact_link_gt,
-            sensor_link_idx,
             normal_stiffness[i_s],
             normal_damping[i_s],
             normal_exponent[i_s],
@@ -398,9 +398,9 @@ def _kernel_kinematic_taxel(
             max_penetration_m = max_penetration_m * probe_gains[i_b, i_p]
             force_local_m, torque_local_m = _func_kinematic_spring_damper(
                 i_b,
+                sensor_link_idx,
                 max_penetration_m,
                 contact_link_m,
-                sensor_link_idx,
                 normal_stiffness[i_s],
                 normal_damping[i_s],
                 normal_exponent[i_s],
@@ -422,15 +422,15 @@ def _kernel_kinematic_taxel(
 
 @qd.kernel
 def _kernel_contact_depth_probe(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
-    probe_radii_noise: qd.types.ndarray(),
-    probe_gains: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
     sensor_geoms_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
+    probe_gains: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
@@ -470,10 +470,10 @@ def _kernel_contact_depth_probe(
         max_penetration_gt, max_penetration_m = _func_query_contact_depth_penetration(
             i_b,
             i_s,
+            sensor_geoms_idx,
             probe_radius,
             probe_radius_m,
             probe_pos,
-            sensor_geoms_idx,
             sensor_n_geoms,
             dyn_state,
             dyn_info,
@@ -672,14 +672,14 @@ def _func_query_contact_depth_bvh(
 
 @qd.kernel(fastcache=False)
 def _kernel_contact_depth_probe_bvh(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
-    probe_radii_noise: qd.types.ndarray(),
-    probe_gains: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
+    probe_gains: qd.types.ndarray(),
     sensor_candidate_geom_mask: qd.types.ndarray(),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
@@ -736,8 +736,11 @@ def _kernel_contact_depth_probe_bvh(
 
 @qd.kernel(fastcache=False)
 def _kernel_kinematic_taxel_bvh(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
     probe_radii_noise: qd.types.ndarray(),
     probe_gains: qd.types.ndarray(),
@@ -746,9 +749,6 @@ def _kernel_kinematic_taxel_bvh(
     normal_exponent: qd.types.ndarray(),
     shear_scalar: qd.types.ndarray(),
     twist_scalar: qd.types.ndarray(),
-    links_idx: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
     sensor_candidate_geom_mask: qd.types.ndarray(),
     bvh_nodes: qd.template(),
@@ -819,9 +819,9 @@ def _kernel_kinematic_taxel_bvh(
 
         force_gt, torque_gt = _func_kinematic_spring_damper(
             i_b,
+            sensor_link_idx,
             max_penetration_gt,
             contact_link_gt,
-            sensor_link_idx,
             normal_stiffness[i_s],
             normal_damping[i_s],
             normal_exponent[i_s],
@@ -844,9 +844,9 @@ def _kernel_kinematic_taxel_bvh(
         else:
             force_m, torque_m = _func_kinematic_spring_damper(
                 i_b,
+                sensor_link_idx,
                 gained_pen_m,
                 contact_link_m,
-                sensor_link_idx,
                 normal_stiffness[i_s],
                 normal_damping[i_s],
                 normal_exponent[i_s],
@@ -935,15 +935,15 @@ class ContactDepthProbeSensor(
                 solver.collider._collider_state,
             )
             _kernel_contact_depth_probe(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
-                shared_metadata.probe_radii_noise,
-                shared_metadata.probe_gains,
                 shared_metadata.links_idx,
                 shared_metadata.sensor_cache_start,
                 shared_metadata.sensor_probe_start,
                 shared_metadata.sensor_geoms_idx,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_radii,
+                shared_metadata.probe_radii_noise,
+                shared_metadata.probe_gains,
                 shared_metadata.sensor_n_geoms,
                 current_ground_truth_data_T,
                 measured_cols_b,
@@ -970,14 +970,14 @@ class ContactDepthProbeSensor(
                 solver.collider._collider_state,
             )
             _kernel_contact_depth_probe_bvh(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
-                shared_metadata.probe_radii_noise,
-                shared_metadata.probe_gains,
                 shared_metadata.links_idx,
                 shared_metadata.sensor_cache_start,
                 shared_metadata.sensor_probe_start,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_radii,
+                shared_metadata.probe_radii_noise,
+                shared_metadata.probe_gains,
                 shared_metadata.sensor_candidate_geom_mask,
                 shared_context.collision_bvh_context.bvh.nodes,
                 shared_context.collision_bvh_context.bvh.morton_codes,
@@ -1198,8 +1198,12 @@ class KinematicTaxelSensor(
                 solver.collider._collider_state,
             )
             _kernel_kinematic_taxel(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
+                shared_metadata.links_idx,
+                shared_metadata.sensor_cache_start,
+                shared_metadata.sensor_probe_start,
+                shared_metadata.sensor_geoms_idx,
+                shared_metadata.probe_positions,
                 shared_metadata.probe_radii,
                 shared_metadata.probe_radii_noise,
                 shared_metadata.probe_gains,
@@ -1208,11 +1212,7 @@ class KinematicTaxelSensor(
                 shared_metadata.normal_exponent,
                 shared_metadata.shear_scalar,
                 shared_metadata.twist_scalar,
-                shared_metadata.links_idx,
-                shared_metadata.sensor_cache_start,
-                shared_metadata.sensor_probe_start,
                 shared_metadata.n_probes_per_sensor,
-                shared_metadata.sensor_geoms_idx,
                 shared_metadata.sensor_n_geoms,
                 current_ground_truth_data_T,
                 measured_cols_b,
@@ -1243,8 +1243,11 @@ class KinematicTaxelSensor(
                 solver.collider._collider_state,
             )
             _kernel_kinematic_taxel_bvh(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
+                shared_metadata.links_idx,
+                shared_metadata.sensor_cache_start,
+                shared_metadata.sensor_probe_start,
+                shared_metadata.probe_positions,
                 shared_metadata.probe_radii,
                 shared_metadata.probe_radii_noise,
                 shared_metadata.probe_gains,
@@ -1253,9 +1256,6 @@ class KinematicTaxelSensor(
                 shared_metadata.normal_exponent,
                 shared_metadata.shear_scalar,
                 shared_metadata.twist_scalar,
-                shared_metadata.links_idx,
-                shared_metadata.sensor_cache_start,
-                shared_metadata.sensor_probe_start,
                 shared_metadata.n_probes_per_sensor,
                 shared_metadata.sensor_candidate_geom_mask,
                 shared_context.collision_bvh_context.bvh.nodes,

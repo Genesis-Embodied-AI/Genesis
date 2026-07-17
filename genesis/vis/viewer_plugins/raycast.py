@@ -87,11 +87,11 @@ class Raycaster:
         from genesis.utils.raycast_qd import kernel_cast_ray
 
         kernel_cast_ray(
+            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
+            envs_idx if envs_idx is not None else self.envs_idx,
             self.bvh.nodes,
             self.bvh.morton_codes,
-            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
-            envs_idx if envs_idx is not None else self.envs_idx,
             self.solver.dyn_state,
             self.result,
             self.solver.dyn_info,

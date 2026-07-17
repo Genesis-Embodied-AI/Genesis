@@ -134,7 +134,7 @@ def kernel_update_acc(
 
 
 @qd.func
-def func_vel_at_point(i_b, pos_world, link_idx, links_state: array_class.LinksState):
+def func_vel_at_point(i_b, link_idx, pos_world, links_state: array_class.LinksState):
     """
     Velocity of a certain point on a rigid link.
     """

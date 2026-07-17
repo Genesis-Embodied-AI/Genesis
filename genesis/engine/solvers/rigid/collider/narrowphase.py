@@ -62,13 +62,13 @@ def func_contact_sphere_sdf(
     sphere_center = dyn_state.geoms.pos[i_ga, i_b]
     sphere_radius = dyn_info.geoms.data[i_ga][0]
 
-    center_to_b_dist = sdf.sdf_func_world(sphere_center, i_gb, i_b, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
+    center_to_b_dist = sdf.sdf_func_world(i_gb, i_b, sphere_center, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
     if center_to_b_dist < sphere_radius:
         is_col = True
         normal = sdf.sdf_func_normal_world(
-            sphere_center,
             i_gb,
             i_b,
+            sphere_center,
             dyn_state.geoms,
             dyn_info.geoms,
             rigid_info,
@@ -143,8 +143,8 @@ def func_add_polytope_vertex_contacts_sdf(
     if not can_use_sd_reject:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(center_a_world, gb_pos, gb_quat)
         pos_sdf = gu.qd_transform_by_T(pos_mesh, collider_info.sdf.geoms_info.T_mesh_to_sdf[i_gb])
-        can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(pos_sdf, i_gb, collider_info.sdf)
-    sd_center = sdf.sdf_func_world_local(center_a_world, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf)
+        can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(i_gb, pos_sdf, collider_info.sdf)
+    sd_center = sdf.sdf_func_world_local(i_gb, center_a_world, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf)
 
     # Contacts already emitted for this pair by the first scan, recovered from the buffer where the pair's contacts
     # sit contiguously on top: the repeated-contact check and the shared pair budget below cover both scans. The
@@ -227,7 +227,7 @@ def func_add_polytope_vertex_contacts_sdf(
                             )
                             if func_point_in_geom_aabb(i_gb, i_b, expansion=0.0, point=vertex_pos, dyn_state=dyn_state):
                                 is_in_band, sd_v = sdf.sdf_func_world_local_banded(
-                                    vertex_pos, gb_pos, gb_quat, i_gb, margin, dyn_info, collider_info
+                                    i_gb, vertex_pos, gb_pos, gb_quat, margin, dyn_info, collider_info
                                 )
                                 pen_v = -sd_v
                                 if is_in_band:
@@ -267,11 +267,11 @@ def func_add_polytope_vertex_contacts_sdf(
                 i_v_min = -1
                 if i_seed == 0:
                     i_v_min = sdf.sdf_func_find_closest_vert(
-                        i_b, center_b_world, i_ga, dyn_state, dyn_info, collider_info
+                        i_b, i_ga, center_b_world, dyn_state, dyn_info, collider_info
                     )
                 elif i_seed <= n_prev:
                     seed_pos = collider_state.contact_data.pos[i_contact_top - i_seed, i_b]
-                    i_v_min = sdf.sdf_func_find_closest_vert(i_b, seed_pos, i_ga, dyn_state, dyn_info, collider_info)
+                    i_v_min = sdf.sdf_func_find_closest_vert(i_b, i_ga, seed_pos, dyn_state, dyn_info, collider_info)
                 if i_v_min >= 0:
                     for k in range(n_max):
                         if k < n_seen and seen_verts[k] == i_v_min:
@@ -279,7 +279,7 @@ def func_add_polytope_vertex_contacts_sdf(
                 if i_v_min >= 0:
                     i_v_start = i_v_min
                     pos_min = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v_min], ga_pos, ga_quat)
-                    sd_min = sdf.sdf_func_world_local(pos_min, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf)
+                    sd_min = sdf.sdf_func_world_local(i_gb, pos_min, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf)
                     i_v_cur = -1
                     while i_v_cur != i_v_min:
                         i_v_cur = i_v_min
@@ -292,7 +292,7 @@ def func_add_polytope_vertex_contacts_sdf(
                                 dyn_info.verts.init_pos[i_neighbor], ga_pos, ga_quat
                             )
                             sd_neighbor = sdf.sdf_func_world_local(
-                                pos_neighbor, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf
+                                i_gb, pos_neighbor, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
                             )
                             # Strict decrease guarantees termination: values strictly descend over a finite vertex
                             # set, so no vertex can be revisited even on numerically flat plateaus.
@@ -327,7 +327,7 @@ def func_add_polytope_vertex_contacts_sdf(
                             i_v = collider_info.vert_neighbors[i_c]
                         vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
                         pen_v = -sdf.sdf_func_world_local(
-                            vertex_pos, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf
+                            i_gb, vertex_pos, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
                         )
                         if pen_v > 0.25 * margin:
                             close_idx = -1
@@ -359,7 +359,7 @@ def func_add_polytope_vertex_contacts_sdf(
         # i.e. A has partially tunneled through; using its raw grad would push A further through, so we fall back
         # to the reference direction.
         grad_center = sdf.sdf_func_grad_world_local(
-            center_a_world, gb_pos, gb_quat, i_gb, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
+            i_gb, center_a_world, gb_pos, gb_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
         )
         normal_center = gu.qd_normalize(grad_center, EPS)
         # When two comparably-sized bodies meet "across" each other (the crossed-thin-rod regime: A's center sits within
@@ -416,7 +416,7 @@ def func_add_polytope_vertex_contacts_sdf(
                     if dyn_info.geoms.is_hollow[i_gb]:
                         is_closing_regime = False
                         sd_b_center = sdf.sdf_func_world_local(
-                            center_b_world, ga_pos, ga_quat, i_ga, dyn_info.geoms, collider_info.sdf
+                            i_ga, center_b_world, ga_pos, ga_quat, dyn_info.geoms, collider_info.sdf
                         )
                         if sd_b_center < 0.0:
                             # A's material occupies B's center: B wraps around A (scanning the bolt of a nut-on-bolt
@@ -441,24 +441,24 @@ def func_add_polytope_vertex_contacts_sdf(
                         # as its depth, degrading gracefully to a conservative overlap.
                         seg_len = closing_dir.norm()
                         depth_b = sdf.sdf_func_ray_exit_distance(
+                            i_gb,
                             center_b_world,
                             closing_normal,
                             gb_pos,
                             gb_quat,
                             seg_len,
                             tolerance,
-                            i_gb,
                             dyn_info,
                             collider_info,
                         )
                         depth_a = sdf.sdf_func_ray_exit_distance(
+                            i_ga,
                             center_a_world,
                             -closing_normal,
                             ga_pos,
                             ga_quat,
                             seg_len,
                             tolerance,
-                            i_ga,
                             dyn_info,
                             collider_info,
                         )
@@ -471,10 +471,10 @@ def func_add_polytope_vertex_contacts_sdf(
                 vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
                 pen_v = top_pen[k]
                 grad_v = sdf.sdf_func_grad_world_local(
+                    i_gb,
                     vertex_pos,
                     gb_pos,
                     gb_quat,
-                    i_gb,
                     dyn_info.geoms,
                     rigid_info,
                     collider_info.sdf,
@@ -714,8 +714,8 @@ def func_add_polytope_vertex_contacts_sdf_shell(
         if not can_use_sd_reject:
             pos_mesh = gu.qd_inv_transform_by_trans_quat(ja_center_world, jb_pos, jb_quat)
             pos_sdf = gu.qd_transform_by_T(pos_mesh, collider_info.sdf.geoms_info.T_mesh_to_sdf[j_gb])
-            can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(pos_sdf, j_gb, collider_info.sdf)
-        sd_center = sdf.sdf_func_world_local(ja_center_world, jb_pos, jb_quat, j_gb, dyn_info.geoms, collider_info.sdf)
+            can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(j_gb, pos_sdf, collider_info.sdf)
+        sd_center = sdf.sdf_func_world_local(j_gb, ja_center_world, jb_pos, jb_quat, dyn_info.geoms, collider_info.sdf)
         if is_phase_active and ((not can_use_sd_reject) or sd_center <= rbound_a):
             rbound_b_sq = gs.qd_float(0.0)
             jb_center_local = dyn_info.geoms.center[j_gb]
@@ -727,7 +727,7 @@ def func_add_polytope_vertex_contacts_sdf_shell(
             jb_center_world = gu.qd_transform_by_trans_quat(jb_center_local, jb_pos, jb_quat)
 
             grad_center = sdf.sdf_func_grad_world_local_consistent(
-                ja_center_world, jb_pos, jb_quat, j_gb, dyn_info, rigid_info, collider_info
+                j_gb, ja_center_world, jb_pos, jb_quat, dyn_info, rigid_info, collider_info
             )
             normal_center = gu.qd_normalize(grad_center, EPS)
             # Regime detection and per-vertex pen/normal policy identical to the per-vertex manifold, which
@@ -751,7 +751,7 @@ def func_add_polytope_vertex_contacts_sdf_shell(
                     elif dyn_info.geoms.is_hollow[j_gb]:
                         is_closing_regime = False
                         sd_b_center = sdf.sdf_func_world_local(
-                            jb_center_world, ja_pos, ja_quat, j_ga, dyn_info.geoms, collider_info.sdf
+                            j_ga, jb_center_world, ja_pos, ja_quat, dyn_info.geoms, collider_info.sdf
                         )
                         if sd_b_center < 0.0:
                             is_enclosed_regime = True
@@ -759,24 +759,24 @@ def func_add_polytope_vertex_contacts_sdf_shell(
                         normal_center = closing_normal
                         seg_len = closing_dir.norm()
                         depth_b = sdf.sdf_func_ray_exit_distance(
+                            j_gb,
                             jb_center_world,
                             closing_normal,
                             jb_pos,
                             jb_quat,
                             seg_len,
                             tolerance,
-                            j_gb,
                             dyn_info,
                             collider_info,
                         )
                         depth_a = sdf.sdf_func_ray_exit_distance(
+                            j_ga,
                             ja_center_world,
                             -closing_normal,
                             ja_pos,
                             ja_quat,
                             seg_len,
                             tolerance,
-                            j_ga,
                             dyn_info,
                             collider_info,
                         )
@@ -793,12 +793,12 @@ def func_add_polytope_vertex_contacts_sdf_shell(
                 vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ja_pos, ja_quat)
                 if func_point_in_geom_aabb(j_gb, i_b, expansion=0.0, point=vertex_pos, dyn_state=dyn_state):
                     is_in_band, sd_v = sdf.sdf_func_world_local_banded(
-                        vertex_pos, jb_pos, jb_quat, j_gb, margin, dyn_info, collider_info
+                        j_gb, vertex_pos, jb_pos, jb_quat, margin, dyn_info, collider_info
                     )
                     pen_v = -sd_v
                     if is_in_band:
                         grad_v = sdf.sdf_func_grad_world_local_consistent(
-                            vertex_pos, jb_pos, jb_quat, j_gb, dyn_info, rigid_info, collider_info
+                            j_gb, vertex_pos, jb_pos, jb_quat, dyn_info, rigid_info, collider_info
                         )
                         grad_norm = grad_v.norm()
                         pen_emit = gs.qd_float(0.0)
@@ -1028,7 +1028,7 @@ def func_contact_vertex_sdf(
         vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
         if func_point_in_geom_aabb(i_gb, i_b, expansion=0.0, point=vertex_pos, dyn_state=dyn_state):
             new_penetration = -sdf.sdf_func_world_local(
-                vertex_pos, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf
+                i_gb, vertex_pos, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
             )
             if new_penetration > penetration:
                 is_col = True
@@ -1049,7 +1049,7 @@ def func_contact_vertex_sdf(
         center_a = gu.qd_transform_by_trans_quat(dyn_info.geoms.center[i_ga], ga_pos, ga_quat)
         normal_sample = center_a if dyn_info.geoms.is_convex[i_ga] else contact_pos
         normal = sdf.sdf_func_normal_world_local(
-            normal_sample, gb_pos, gb_quat, i_gb, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
+            i_gb, normal_sample, gb_pos, gb_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
         )
 
         # Shift contact_pos from the deepest vertex (interior side) by half the penetration along the outward normal
@@ -1118,8 +1118,8 @@ def func_contact_nonconvex_convex_sdf(
     if not can_use_sd_reject:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(center_a_world, gb_pos, gb_quat)
         pos_sdf = gu.qd_transform_by_T(pos_mesh, collider_info.sdf.geoms_info.T_mesh_to_sdf[i_gb])
-        can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(pos_sdf, i_gb, collider_info.sdf)
-    sd_center = sdf.sdf_func_world_local(center_a_world, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf)
+        can_use_sd_reject = not sdf.sdf_func_is_outside_sdf_grid(i_gb, pos_sdf, collider_info.sdf)
+    sd_center = sdf.sdf_func_world_local(i_gb, center_a_world, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf)
 
     if (not can_use_sd_reject) or sd_center <= rbound_a:
         is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
@@ -1170,10 +1170,10 @@ def func_contact_convex_convex_sdf(
     if i_va == -1:
         # start traversing on the vertex graph with a smart initial vertex
         pos_vb = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[gb_vert_start], gb_pos, gb_quat)
-        i_va = sdf.sdf_func_find_closest_vert(i_b, pos_vb, i_ga, dyn_state, dyn_info, collider_info)
+        i_va = sdf.sdf_func_find_closest_vert(i_b, i_ga, pos_vb, dyn_state, dyn_info, collider_info)
     i_v_closest = i_va
     pos_v_closest = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v_closest], ga_pos, ga_quat)
-    sd_v_closest = sdf.sdf_func_world(pos_v_closest, i_gb, i_b, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
+    sd_v_closest = sdf.sdf_func_world(i_gb, i_b, pos_v_closest, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
 
     while True:
         for i_neighbor_ in range(
@@ -1183,7 +1183,7 @@ def func_contact_convex_convex_sdf(
             i_neighbor = collider_info.vert_neighbors[i_neighbor_]
             pos_neighbor = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_neighbor], ga_pos, ga_quat)
             sd_neighbor = sdf.sdf_func_world(
-                pos_neighbor, i_gb, i_b, dyn_state.geoms, dyn_info.geoms, collider_info.sdf
+                i_gb, i_b, pos_neighbor, dyn_state.geoms, dyn_info.geoms, collider_info.sdf
             )
             if sd_neighbor < sd_v_closest - 1e-5:  # 1e-5 (0.01mm) to avoid endless loop due to numerical instability
                 i_v_closest = i_neighbor
@@ -1200,7 +1200,7 @@ def func_contact_convex_convex_sdf(
     if sd_v_closest < 0.0:
         is_col = True
         normal = sdf.sdf_func_normal_world(
-            pos_a, i_gb, i_b, dyn_state.geoms, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
+            i_gb, i_b, pos_a, dyn_state.geoms, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
         )
         penetration = -sd_v_closest
         contact_pos = pos_a
@@ -1216,18 +1216,18 @@ def func_contact_convex_convex_sdf(
             vec_01 = gu.qd_normalize(p_1 - p_0, EPS)
 
             sdf_grad_0_b = sdf.sdf_func_grad_world(
-                p_0, i_gb, i_b, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
+                i_gb, i_b, p_0, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
             )
             sdf_grad_1_b = sdf.sdf_func_grad_world(
-                p_1, i_gb, i_b, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
+                i_gb, i_b, p_1, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
             )
 
             # check if the edge on a is facing towards mesh b (I am not 100% sure about this, subject to removal)
             sdf_grad_0_a = sdf.sdf_func_grad_world(
-                p_0, i_ga, i_b, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
+                i_ga, i_b, p_0, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
             )
             sdf_grad_1_a = sdf.sdf_func_grad_world(
-                p_1, i_ga, i_b, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
+                i_ga, i_b, p_1, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
             )
             normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
             normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
@@ -1243,7 +1243,7 @@ def func_contact_convex_convex_sdf(
                     while cur_length > ga_sdf_cell_size:
                         p_mid = 0.5 * (p_0 + p_1)
                         side = sdf.sdf_func_grad_world(
-                            p_mid, i_gb, i_b, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
+                            i_gb, i_b, p_mid, dyn_state, dyn_info, rigid_info, collider_info, collider_static_config
                         ).dot(vec_01)
                         if side < 0:
                             p_0 = p_mid
@@ -1254,15 +1254,15 @@ def func_contact_convex_convex_sdf(
 
                     p = 0.5 * (p_0 + p_1)
                     new_penetration = -sdf.sdf_func_world(
-                        p, i_gb, i_b, dyn_state.geoms, dyn_info.geoms, collider_info.sdf
+                        i_gb, i_b, p, dyn_state.geoms, dyn_info.geoms, collider_info.sdf
                     )
 
                     if new_penetration > 0.0:
                         is_col = True
                         normal = sdf.sdf_func_normal_world(
-                            p,
                             i_gb,
                             i_b,
+                            p,
                             dyn_state.geoms,
                             dyn_info.geoms,
                             rigid_info,
@@ -3230,7 +3230,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         if d_b.dot(d_b) > rb_b_sq:
                             rb_b_sq = d_b.dot(d_b)
                     sd_center_ab = sdf.sdf_func_world_local(
-                        center_a_w, gb_pos, gb_quat, i_gb, dyn_info.geoms, collider_info.sdf
+                        i_gb, center_a_w, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
                     )
                     # Nested-only: A's center must lie inside B's local AABB. Adjacent shells share every
                     # other property of a nested pair, but their contact is a small lens ON the closing

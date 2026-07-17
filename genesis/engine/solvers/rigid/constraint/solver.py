@@ -419,13 +419,13 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
         overflow = kernel_add_weld_constraint(
             envs_idx,
+            link1_idx,
+            link2_idx,
             self._solver.dyn_state,
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._solver._rigid_config,
-            link1_idx,
-            link2_idx,
         )
         if overflow:
             gs.logger.warning(
@@ -439,12 +439,12 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(
             envs_idx,
+            int(link1_idx),
+            int(link2_idx),
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._solver._rigid_config,
-            int(link1_idx),
-            int(link2_idx),
         )
 
     def backward(self, dL_dqacc):
@@ -1235,9 +1235,9 @@ def _sort_contacts_per_island(
                 while i_island < constraint_state.island.n_islands[i_b]:
                     _sort_island_contacts(
                         i_b,
+                        constraint_state.island.contact_id,
                         constraint_state.island.contact_slices.n[i_island, i_b],
                         constraint_state.island.contact_slices.start[i_island, i_b],
-                        constraint_state.island.contact_id,
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
@@ -1262,9 +1262,9 @@ def _sort_contacts_per_island(
                 for i_island in range(constraint_state.island.n_islands[i_b]):
                     _sort_island_contacts(
                         i_b,
+                        constraint_state.island.contact_id,
                         constraint_state.island.contact_slices.n[i_island, i_b],
                         constraint_state.island.contact_slices.start[i_island, i_b],
-                        constraint_state.island.contact_id,
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
@@ -1302,9 +1302,9 @@ def add_inequality_constraints(
         for i_b in range(_B):
             _sort_island_contacts(
                 i_b,
+                collider_state.contact_sort_idx,
                 collider_state.n_contacts[i_b],
                 start=0,
-                contact_idx=collider_state.contact_sort_idx,
                 contacts_pos=collider_state.contact_data.pos,
                 contacts_geom_a=collider_state.contact_data.geom_a,
                 contacts_geom_b=collider_state.contact_data.geom_b,
@@ -1633,13 +1633,13 @@ def add_frictionloss_constraints(
 @qd.kernel(fastcache=True)
 def kernel_add_weld_constraint(
     envs_idx: qd.types.ndarray(),
+    link1_idx: qd.i32,
+    link2_idx: qd.i32,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    link1_idx: qd.i32,
-    link2_idx: qd.i32,
 ) -> qd.i32:
     overflow = gs.qd_bool(False)
 
@@ -1686,12 +1686,12 @@ def kernel_add_weld_constraint(
 @qd.kernel(fastcache=True)
 def kernel_delete_weld_constraint(
     envs_idx: qd.types.ndarray(),
+    link1_idx: qd.i32,
+    link2_idx: qd.i32,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    link1_idx: qd.i32,
-    link2_idx: qd.i32,
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
@@ -3377,9 +3377,9 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
 def func_apply_staged_rank_updates_island(
     i_b,
     i_island,
+    ld_start,
     n_u,
     signs,
-    ld_start,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -3481,7 +3481,7 @@ def func_rank_batch_update_island(
                 if ld_support < ld_start:
                     ld_start = ld_support
     return func_apply_staged_rank_updates_island(
-        i_b, i_island, n_u, signs, ld_start, constraint_state, rigid_info, rigid_config
+        i_b, i_island, ld_start, n_u, signs, constraint_state, rigid_info, rigid_config
     )
 
 
@@ -3562,9 +3562,9 @@ def func_cone_rank_update_island(
                     if func_apply_staged_rank_updates_island(
                         i_b,
                         i_island,
+                        ld_start,
                         n_u=6,
                         signs=signs,
-                        ld_start=ld_start,
                         constraint_state=constraint_state,
                         rigid_info=rigid_info,
                         rigid_config=rigid_config,

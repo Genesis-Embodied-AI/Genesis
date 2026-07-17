@@ -39,11 +39,11 @@ def func_apply_Minv_rows(
     i_row_0,
     i_row_1,
     i_b,
+    jac_dofs_idx: qd.Tensor,
     coef_0,
     coef_1,
     vec: qd.Tensor,
     jac: qd.Tensor,
-    jac_dofs_idx: qd.Tensor,
     jac_n_dofs: qd.Tensor,
     rigid_info: array_class.RigidInfo,
 ):
@@ -78,9 +78,9 @@ def func_apply_Minv_rows(
 def func_accumulate_row_blocks(
     i_row,
     i_b,
+    jac_dofs_idx: qd.Tensor,
     vec_src: qd.Tensor,
     vec_dst: qd.Tensor,
-    jac_dofs_idx: qd.Tensor,
     jac_n_dofs: qd.Tensor,
     rigid_info: array_class.RigidInfo,
 ):
@@ -96,7 +96,7 @@ def func_accumulate_row_blocks(
 
 
 @qd.func
-def func_dot_row(i_row, i_b, vec: qd.Tensor, jac: qd.Tensor, jac_dofs_idx: qd.Tensor, jac_n_dofs: qd.Tensor):
+def func_dot_row(i_row, i_b, jac_dofs_idx: qd.Tensor, vec: qd.Tensor, jac: qd.Tensor, jac_n_dofs: qd.Tensor):
     """Sparse dot product J[i_row] * vec over the row dof support."""
     s = gs.qd_float(0.0)
     for i_d_ in range(jac_n_dofs[i_row, i_b]):
@@ -244,11 +244,11 @@ def func_noslip_batch(
                             i_c,
                             i_c,
                             i_b,
+                            constraint_state.jac_dofs_idx,
                             coef,
                             coef_1=0.0,
                             vec=constraint_state.Mgrad,
                             jac=constraint_state.jac,
-                            jac_dofs_idx=constraint_state.jac_dofs_idx,
                             jac_n_dofs=constraint_state.jac_n_dofs,
                             rigid_info=rigid_info,
                         )
@@ -256,18 +256,18 @@ def func_noslip_batch(
                             A_diag = func_dot_row(
                                 i_c,
                                 i_b,
+                                constraint_state.jac_dofs_idx,
                                 constraint_state.Mgrad,
                                 constraint_state.jac,
-                                constraint_state.jac_dofs_idx,
                                 constraint_state.jac_n_dofs,
                             )
                             res[0] = (
                                 func_dot_row(
                                     i_c,
                                     i_b,
+                                    constraint_state.jac_dofs_idx,
                                     constraint_state.qacc,
                                     constraint_state.jac,
-                                    constraint_state.jac_dofs_idx,
                                     constraint_state.jac_n_dofs,
                                 )
                                 - constraint_state.aref[i_c, i_b]
@@ -285,9 +285,9 @@ def func_noslip_batch(
                             func_accumulate_row_blocks(
                                 i_c,
                                 i_b,
+                                constraint_state.jac_dofs_idx,
                                 constraint_state.Mgrad,
                                 constraint_state.qacc,
-                                constraint_state.jac_dofs_idx,
                                 constraint_state.jac_n_dofs,
                                 rigid_info,
                             )
@@ -315,11 +315,11 @@ def func_noslip_batch(
                             j_efc,
                             j_efc + 1,
                             i_b,
+                            constraint_state.jac_dofs_idx,
                             coef_0,
                             coef_1,
                             constraint_state.Mgrad,
                             constraint_state.jac,
-                            constraint_state.jac_dofs_idx,
                             constraint_state.jac_n_dofs,
                             rigid_info,
                         )
@@ -327,9 +327,9 @@ def func_noslip_batch(
                             func_accumulate_row_blocks(
                                 j_efc,
                                 i_b,
+                                constraint_state.jac_dofs_idx,
                                 constraint_state.Mgrad,
                                 constraint_state.qacc,
-                                constraint_state.jac_dofs_idx,
                                 constraint_state.jac_n_dofs,
                                 rigid_info,
                             )
@@ -339,9 +339,9 @@ def func_noslip_batch(
                                     s = func_dot_row(
                                         j_efc + i2,
                                         i_b,
+                                        constraint_state.jac_dofs_idx,
                                         constraint_state.Mgrad,
                                         constraint_state.jac,
-                                        constraint_state.jac_dofs_idx,
                                         constraint_state.jac_n_dofs,
                                     )
                                     if i_phase == 0:
@@ -356,9 +356,9 @@ def func_noslip_batch(
                                 func_dot_row(
                                     j_efc + i2,
                                     i_b,
+                                    constraint_state.jac_dofs_idx,
                                     constraint_state.qacc,
                                     constraint_state.jac,
-                                    constraint_state.jac_dofs_idx,
                                     constraint_state.jac_n_dofs,
                                 )
                                 - constraint_state.aref[j_efc + i2, i_b]
@@ -389,7 +389,7 @@ def func_noslip_batch(
                                 constraint_state.efc_force[j_efc, i_b] = mid + y
                                 constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                         cost_change = func_cost_change(
-                            i_b, EPS, j_efc, Ac, old_force, res, constraint_state.efc_force, dim=2
+                            i_b, j_efc, EPS, Ac, old_force, res, constraint_state.efc_force, dim=2
                         )
 
                         improvement -= cost_change
@@ -491,7 +491,7 @@ def kernel_noslip(
 
 
 @qd.func
-def func_cost_change(i_b: int, eps, force_start: int, Ac, old_force, res, force: qd.Tensor, dim: int):
+def func_cost_change(i_b: int, force_start: int, eps, Ac, old_force, res, force: qd.Tensor, dim: int):
     change = gs.qd_float(0.0)
     if dim == 1:
         delta = force[force_start, i_b] - old_force[0]

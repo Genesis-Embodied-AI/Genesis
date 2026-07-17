@@ -169,13 +169,13 @@ class TriangleMeshBVH(BVHMetadata):
 
 @qd.kernel
 def _kernel_surface_distance_probe_bvh(
-    probe_positions_local: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
-    probe_radii_noise: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
     bvh: ChunkedBVHData,
     bvh_tri_verts: qd.types.ndarray(),
     positions_gt: qd.types.ndarray(),
@@ -398,13 +398,13 @@ class SurfaceDistanceProbeSensor(
         )
         bvh = shared_metadata.bvh
         _kernel_surface_distance_probe_bvh(
-            shared_metadata.probe_positions,
-            shared_metadata.probe_radii,
-            shared_metadata.probe_radii_noise,
             shared_metadata.probe_sensor_idx,
             shared_metadata.links_idx,
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
+            shared_metadata.probe_positions,
+            shared_metadata.probe_radii,
+            shared_metadata.probe_radii_noise,
             bvh.kernel_bvh,
             bvh.tri_verts,
             shared_metadata.nearest_positions,

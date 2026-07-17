@@ -120,7 +120,7 @@ class RigidJoint(RBC):
         the anchor point is the "output" of the joint transmission, on which the child body is welded.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_anchor_pos(tensor, self._solver.dyn_state, self._idx)
+        _kernel_get_anchor_pos(self._idx, tensor, self._solver.dyn_state)
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
@@ -133,7 +133,7 @@ class RigidJoint(RBC):
         See `RigidJoint.get_anchor_pos` documentation for details about the notion on anchor point.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_anchor_axis(tensor, self._solver.dyn_state, self._idx)
+        _kernel_get_anchor_axis(self._idx, tensor, self._solver.dyn_state)
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
@@ -519,7 +519,7 @@ class RigidJoint(RBC):
 
 
 @qd.kernel
-def _kernel_get_anchor_pos(tensor: qd.types.ndarray(), dyn_state: array_class.DynState, joint_idx: qd.i32):
+def _kernel_get_anchor_pos(joint_idx: qd.i32, tensor: qd.types.ndarray(), dyn_state: array_class.DynState):
     _B = dyn_state.joints.xanchor.shape[1]
     for i_b in range(_B):
         xpos = dyn_state.joints.xanchor[joint_idx, i_b]
@@ -528,7 +528,7 @@ def _kernel_get_anchor_pos(tensor: qd.types.ndarray(), dyn_state: array_class.Dy
 
 
 @qd.kernel
-def _kernel_get_anchor_axis(tensor: qd.types.ndarray(), dyn_state: array_class.DynState, joint_idx: qd.i32):
+def _kernel_get_anchor_axis(joint_idx: qd.i32, tensor: qd.types.ndarray(), dyn_state: array_class.DynState):
     _B = dyn_state.joints.xaxis.shape[1]
     for i_b in range(_B):
         xaxis = dyn_state.joints.xaxis[joint_idx, i_b]

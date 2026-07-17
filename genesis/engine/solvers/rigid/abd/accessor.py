@@ -208,9 +208,9 @@ def kernel_get_state_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_pos(
-    pos: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    pos: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -375,9 +375,9 @@ def kernel_wake_up_entities_on_new_contact(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_pos_grad(
-    pos_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    pos_grad: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -402,9 +402,9 @@ def kernel_set_links_pos_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_quat(
-    quat: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    quat: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -427,9 +427,9 @@ def kernel_set_links_quat(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_quat_grad(
-    quat_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    quat_grad: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -454,9 +454,9 @@ def kernel_set_links_quat_grad(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_mass_shift(
-    mass: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    mass: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -467,9 +467,9 @@ def kernel_set_links_mass_shift(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_COM_shift(
-    com: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    com: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -481,9 +481,9 @@ def kernel_set_links_COM_shift(
 
 @qd.kernel(fastcache=True)
 def kernel_set_links_inertial_mass(
-    inertial_mass: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    inertial_mass: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -498,9 +498,9 @@ def kernel_set_links_inertial_mass(
 
 @qd.kernel(fastcache=True)
 def kernel_adjust_link_inertia(
-    ratio: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    ratio: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -525,9 +525,9 @@ def kernel_adjust_link_inertia(
 
 @qd.kernel(fastcache=True)
 def kernel_set_geoms_friction_ratio(
-    friction_ratio: qd.types.ndarray(),
     geoms_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    friction_ratio: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -538,9 +538,9 @@ def kernel_set_geoms_friction_ratio(
 
 @qd.kernel(fastcache=True)
 def kernel_set_qpos(
-    qpos: qd.types.ndarray(),
     qs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    qpos: qd.types.ndarray(),
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
@@ -577,9 +577,9 @@ def kernel_set_global_sol_params(
 
 @qd.kernel(fastcache=True)
 def kernel_set_sol_params(
-    sol_params: qd.types.ndarray(),
     inputs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    sol_params: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
     constraint_type: qd.template(),
@@ -608,9 +608,9 @@ def kernel_set_sol_params(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_kp(
-    kp: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    kp: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -629,9 +629,9 @@ def kernel_set_dofs_kp(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_kv(
-    kv: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    kv: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -646,9 +646,9 @@ def kernel_set_dofs_kv(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_act_gain(
-    act_gain: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    act_gain: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -663,11 +663,11 @@ def kernel_set_dofs_act_gain(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_act_bias(
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
     bias0: qd.types.ndarray(),
     bias1: qd.types.ndarray(),
     bias2: qd.types.ndarray(),
-    dofs_idx: qd.types.ndarray(),
-    envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -686,10 +686,10 @@ def kernel_set_dofs_act_bias(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_force_range(
-    lower: qd.types.ndarray(),
-    upper: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    lower: qd.types.ndarray(),
+    upper: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -706,9 +706,9 @@ def kernel_set_dofs_force_range(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_stiffness(
-    stiffness: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    stiffness: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -723,9 +723,9 @@ def kernel_set_dofs_stiffness(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_armature(
-    armature: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    armature: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -740,9 +740,9 @@ def kernel_set_dofs_armature(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_damping(
-    damping: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    damping: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -757,9 +757,9 @@ def kernel_set_dofs_damping(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_frictionloss(
-    frictionloss: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    frictionloss: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -774,10 +774,10 @@ def kernel_set_dofs_frictionloss(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_limit(
-    lower: qd.types.ndarray(),
-    upper: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    lower: qd.types.ndarray(),
+    upper: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -794,9 +794,9 @@ def kernel_set_dofs_limit(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_velocity(
-    velocity: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    velocity: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -807,9 +807,9 @@ def kernel_set_dofs_velocity(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_velocity_grad(
-    velocity_grad: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    velocity_grad: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -833,9 +833,9 @@ def kernel_set_dofs_zero_velocity(
 
 @qd.kernel(fastcache=True)
 def kernel_set_dofs_position(
-    position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    position: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -904,9 +904,9 @@ def kernel_set_dofs_position(
 
 @qd.kernel(fastcache=True)
 def kernel_control_dofs_force(
-    force: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    force: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -918,9 +918,9 @@ def kernel_control_dofs_force(
 
 @qd.kernel(fastcache=True)
 def kernel_control_dofs_velocity(
-    velocity: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    velocity: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -935,9 +935,9 @@ def kernel_control_dofs_velocity(
 
 @qd.kernel(fastcache=True)
 def kernel_control_dofs_position(
-    position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    position: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -953,10 +953,10 @@ def kernel_control_dofs_position(
 
 @qd.kernel(fastcache=True)
 def kernel_control_dofs_position_velocity(
-    position: qd.types.ndarray(),
-    velocity: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    position: qd.types.ndarray(),
+    velocity: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -972,9 +972,9 @@ def kernel_control_dofs_position_velocity(
 
 @qd.kernel(fastcache=True)
 def kernel_get_links_vel(
-    tensor: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    tensor: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     ref: qd.template(),
@@ -1001,9 +1001,9 @@ def kernel_get_links_vel(
 
 @qd.kernel(fastcache=True)
 def kernel_get_links_acc(
-    tensor: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    tensor: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
@@ -1028,9 +1028,9 @@ def kernel_get_links_acc(
 
 @qd.kernel(fastcache=True)
 def kernel_get_dofs_control_force(
-    tensor: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    tensor: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
@@ -1087,8 +1087,8 @@ def kernel_set_drone_rpm(
             if invert:
                 torque = -torque
 
-            func_apply_link_external_force(force, i_l, i_b, dyn_state, ref=1, local=1)
-            func_apply_link_external_torque(torque, i_l, i_b, dyn_state, ref=1, local=1)
+            func_apply_link_external_force(i_l, i_b, force, dyn_state, ref=1, local=1)
+            func_apply_link_external_torque(i_l, i_b, torque, dyn_state, ref=1, local=1)
 
 
 @qd.kernel(fastcache=True)
@@ -1117,14 +1117,14 @@ def kernel_update_drone_propeller_vgeoms(
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction(dyn_info: array_class.DynInfo, geoms_idx: qd.i32, friction: qd.f32):
+def kernel_set_geom_friction(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction: qd.f32):
     dyn_info.geoms.friction[geoms_idx] = friction
 
 
 @qd.kernel(fastcache=True)
 def kernel_set_geoms_friction(
-    friction: qd.types.ndarray(),
     geoms_idx: qd.types.ndarray(),
+    friction: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -1135,11 +1135,11 @@ def kernel_set_geoms_friction(
 
 @qd.kernel(fastcache=True)
 def kernel_set_vverts(
-    vverts: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    vvert_start: qd.i32,
+    vverts: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
-    vvert_start: qd.i32,
 ):
     n_envs_in = envs_idx.shape[0]
     n_vverts_in = vverts.shape[1]

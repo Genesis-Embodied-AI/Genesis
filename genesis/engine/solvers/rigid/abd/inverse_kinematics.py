@@ -16,18 +16,18 @@ import genesis.utils.array_class as array_class
 # FIXME: RigidEntity is not compatible with fast cache
 @qd.kernel(fastcache=False)
 def kernel_rigid_entity_inverse_kinematics(
-    rigid_entity: qd.template(),
     links_idx: qd.types.ndarray(),
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    rigid_entity: qd.template(),
     poss: qd.types.ndarray(),
     quats: qd.types.ndarray(),
     local_points: qd.types.ndarray(),
-    dofs_idx: qd.types.ndarray(),
     init_qpos: qd.types.ndarray(),
     pos_mask_: qd.types.ndarray(),
     rot_mask_: qd.types.ndarray(),
     link_pos_mask: qd.types.ndarray(),
     link_rot_mask: qd.types.ndarray(),
-    envs_idx: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,

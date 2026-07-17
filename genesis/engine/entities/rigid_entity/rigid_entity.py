@@ -2785,13 +2785,13 @@ class RigidEntity(KinematicEntity):
 
         if local_point is None:
             sol = self._solver
-            self._kernel_get_jacobian_zero(sol.dyn_state, sol.dyn_info, link.idx)
+            self._kernel_get_jacobian_zero(link.idx, sol.dyn_state, sol.dyn_info)
         else:
             p_local = torch.as_tensor(local_point, dtype=gs.tc_float, device=gs.device)
             if p_local.shape != (3,):
                 gs.raise_exception("Must be a vector of length 3")
             sol = self._solver
-            self._kernel_get_jacobian(p_local, sol.dyn_state, sol.dyn_info, link.idx)
+            self._kernel_get_jacobian(link.idx, p_local, sol.dyn_state, sol.dyn_info)
 
         jacobian = qd_to_torch(self._jacobian, transpose=True, copy=True)
         if self._solver.n_envs == 0:
@@ -2801,7 +2801,7 @@ class RigidEntity(KinematicEntity):
 
     @qd.func
     def _impl_get_jacobian(
-        self, i_b, p_vec, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, tgt_link_idx
+        self, i_b, tgt_link_idx, p_vec, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
     ):
         self._func_get_jacobian(
             i_b, tgt_link_idx, p_vec, qd.Vector.one(gs.qd_int, 3), qd.Vector.one(gs.qd_int, 3), dyn_state, dyn_info
@@ -2810,21 +2810,21 @@ class RigidEntity(KinematicEntity):
     @qd.kernel
     def _kernel_get_jacobian(
         self,
+        tgt_link_idx: qd.i32,
         p_local: qd.types.ndarray(),
         dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
-        tgt_link_idx: qd.i32,
     ):
         p_vec = qd.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.qd_float)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(i_b, p_vec, dyn_state, dyn_info, tgt_link_idx)
+            self._impl_get_jacobian(i_b, tgt_link_idx, p_vec, dyn_state, dyn_info)
 
     @qd.kernel
     def _kernel_get_jacobian_zero(
-        self, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, tgt_link_idx: qd.i32
+        self, tgt_link_idx: qd.i32, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
     ):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(i_b, qd.Vector.zero(gs.qd_float, 3), dyn_state, dyn_info, tgt_link_idx)
+            self._impl_get_jacobian(i_b, tgt_link_idx, qd.Vector.zero(gs.qd_float, 3), dyn_state, dyn_info)
 
     @qd.func
     def _func_get_jacobian(
@@ -3173,18 +3173,18 @@ class RigidEntity(KinematicEntity):
         links_idx = torch.tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
 
         kernel_rigid_entity_inverse_kinematics(
-            self,
             links_idx,
+            dofs_idx,
+            envs_idx,
+            self,
             poss,
             quats,
             local_points,
-            dofs_idx,
             init_qpos,
             pos_mask,
             rot_mask,
             link_pos_mask,
             link_rot_mask,
-            envs_idx,
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
@@ -3248,12 +3248,12 @@ class RigidEntity(KinematicEntity):
         links_quat = torch.empty((len(envs_idx), len(links_idx), 4), dtype=gs.tc_float, device=gs.device)
 
         self._kernel_forward_kinematics(
-            links_pos,
-            links_quat,
-            qpos,
             self._get_global_idx(qs_idx_local, self.n_qs, self._q_start),
             links_idx,
             envs_idx,
+            links_pos,
+            links_quat,
+            qpos,
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
@@ -3268,12 +3268,12 @@ class RigidEntity(KinematicEntity):
     @qd.kernel
     def _kernel_forward_kinematics(
         self,
-        links_pos: qd.types.ndarray(),
-        links_quat: qd.types.ndarray(),
-        qpos: qd.types.ndarray(),
         qs_idx: qd.types.ndarray(),
         links_idx: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
+        links_pos: qd.types.ndarray(),
+        links_quat: qd.types.ndarray(),
+        qpos: qd.types.ndarray(),
         dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
         rigid_info: array_class.RigidInfo,

@@ -211,11 +211,11 @@ def func_multi_contact(
                 if geom_type == gs.GEOM_TYPE.BOX:
                     pos = pos_a if k == 0 else pos_b
                     quat = quat_a if k == 0 else quat_b
-                    nface = func_box_face(i_g, i_b, k, pos, quat, normal_face_idx, gjk_state, dyn_info)
+                    nface = func_box_face(i_g, i_b, k, normal_face_idx, pos, quat, gjk_state, dyn_info)
                 elif geom_type == gs.GEOM_TYPE.MESH:
                     pos = pos_a if k == 0 else pos_b
                     quat = quat_a if k == 0 else quat_b
-                    nface = func_mesh_face(i_g, i_b, k, pos, quat, normal_face_idx, gjk_state, dyn_info)
+                    nface = func_mesh_face(i_g, i_b, k, normal_face_idx, pos, quat, gjk_state, dyn_info)
 
             if k == 0:
                 nface1 = nface
@@ -754,9 +754,9 @@ def func_box_face(
     i_g,
     i_b,
     i_o,
+    face_idx,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
-    face_idx,
     gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
 ):
@@ -816,9 +816,9 @@ def func_mesh_face(
     i_g,
     i_b,
     i_o,
+    face_idx,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
-    face_idx,
     gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
 ):

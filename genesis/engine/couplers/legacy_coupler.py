@@ -171,14 +171,14 @@ class LegacyCoupler(RBC):
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
-        signed_dist = sdf.sdf_func_world(pos_world, geom_idx, batch_idx, geoms_state, geoms_info, sdf_info)
+        signed_dist = sdf.sdf_func_world(geom_idx, batch_idx, pos_world, geoms_state, geoms_info, sdf_info)
 
         # bigger coup_softness implies that the coupling influence extends further away from the object.
         influence = qd.min(qd.exp(-signed_dist / max(1e-10, geoms_info.coup_softness[geom_idx])), 1)
 
         if influence > 0.1:
             normal_rigid = sdf.sdf_func_normal_world(
-                pos_world, geom_idx, batch_idx, geoms_state, geoms_info, rigid_info, sdf_info, collider_static_config
+                geom_idx, batch_idx, pos_world, geoms_state, geoms_info, rigid_info, sdf_info, collider_static_config
             )
             vel = self._func_collide_in_rigid_geom(
                 pos_world, vel, mass, normal_rigid, influence, geom_idx, batch_idx, geoms_info, links_state, rigid_info
@@ -205,9 +205,9 @@ class LegacyCoupler(RBC):
         """
         Similar to _func_collide_with_rigid_geom, but additionally handles potential side flip due to penetration.
         """
-        signed_dist = sdf.sdf_func_world(pos_world, geom_idx, batch_idx, geoms_state, geoms_info, sdf_info)
+        signed_dist = sdf.sdf_func_world(geom_idx, batch_idx, pos_world, geoms_state, geoms_info, sdf_info)
         normal_rigid = sdf.sdf_func_normal_world(
-            pos_world, geom_idx, batch_idx, geoms_state, geoms_info, rigid_info, sdf_info, collider_static_config
+            geom_idx, batch_idx, pos_world, geoms_state, geoms_info, rigid_info, sdf_info, collider_static_config
         )
 
         # bigger coup_softness implies that the coupling influence extends further away from the object.
@@ -455,9 +455,9 @@ class LegacyCoupler(RBC):
                 for i_g in range(self.rigid_solver.n_geoms):
                     if geoms_info.needs_coup[i_g]:
                         sdf_normal = sdf.sdf_func_normal_world(
-                            self.mpm_solver.particles[f, i_p, i_b].pos,
                             i_g,
                             i_b,
+                            self.mpm_solver.particles[f, i_p, i_b].pos,
                             geoms_state,
                             geoms_info,
                             rigid_info,
@@ -806,9 +806,9 @@ class LegacyCoupler(RBC):
         Resolves collision when a particle is already in collision with a rigid object.
         This function assumes known normal_rigid and influence.
         """
-        signed_dist = sdf.sdf_func_world(pos_world, geom_idx, batch_idx, geoms_state, geoms_info, sdf_info)
+        signed_dist = sdf.sdf_func_world(geom_idx, batch_idx, pos_world, geoms_state, geoms_info, sdf_info)
         contact_normal = sdf.sdf_func_normal_world(
-            pos_world, geom_idx, batch_idx, geoms_state, geoms_info, rigid_info, sdf_info, collider_static_config
+            geom_idx, batch_idx, pos_world, geoms_state, geoms_info, rigid_info, sdf_info, collider_static_config
         )
         new_pos = pos_world
         new_vel = vel

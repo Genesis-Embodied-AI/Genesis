@@ -386,6 +386,7 @@ class RaycasterSensor(
         for i, entry in enumerate(bvh_contexts):
             solver = entry.solver
             args_common = (
+                shared_metadata.points_to_sensor_idx,
                 entry.bvh.nodes,
                 entry.bvh.morton_codes,
                 links_pos,
@@ -395,7 +396,6 @@ class RaycasterSensor(
                 shared_metadata.max_ranges,
                 shared_metadata.no_hit_values,
                 shared_metadata.return_world_frame,
-                shared_metadata.points_to_sensor_idx,
                 shared_metadata.sensor_cache_offsets,
                 shared_metadata.sensor_point_offsets,
                 shared_metadata.sensor_point_counts,

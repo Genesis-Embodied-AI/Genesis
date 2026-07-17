@@ -461,9 +461,9 @@ def func_build_islands(
 @qd.func
 def _sort_island_contacts(
     i_b,
+    contact_idx: qd.Tensor,
     n,
     start,
-    contact_idx: qd.Tensor,
     contacts_pos: qd.Tensor,
     contacts_geom_a: qd.Tensor,
     contacts_geom_b: qd.Tensor,

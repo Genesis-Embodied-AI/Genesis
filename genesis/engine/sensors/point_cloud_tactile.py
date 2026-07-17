@@ -348,12 +348,12 @@ class PointCloudBVH(BVHMetadata):
 
 @qd.kernel
 def _kernel_point_cloud_proximity_taxel_bvh(
-    probe_positions_local: qd.types.ndarray(),
-    probe_local_normal: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_local_normal: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
     bvh: ChunkedBVHData,
     pc_pos_link: qd.types.ndarray(),
@@ -754,12 +754,12 @@ class ProximityTaxelSensor(
         )
         bvh = shared_metadata.pc_bvh
         _kernel_point_cloud_proximity_taxel_bvh(
-            shared_metadata.probe_positions,
-            shared_metadata.probe_local_normal,
             shared_metadata.probe_sensor_idx,
             shared_metadata.links_idx,
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
+            shared_metadata.probe_positions,
+            shared_metadata.probe_local_normal,
             shared_metadata.n_probes_per_sensor,
             bvh.kernel_bvh,
             shared_metadata.pc_pos_link,
@@ -795,9 +795,9 @@ class ProximityTaxelSensor(
 def _func_elastomer_min_sdf_over_active_geoms(
     i_b: int,
     geom_start: int,
+    geom_idx: qd.types.ndarray(),
     geom_n: int,
     point_world: qd.types.vector(3),
-    geom_idx: qd.types.ndarray(),
     geom_active_envs_mask: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -824,7 +824,7 @@ def _func_elastomer_min_sdf_over_active_geoms(
             or point_world[2] > amax[2]
         ):
             continue
-        sd = sdf.sdf_func_world(point_world, i_g, i_b, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
+        sd = sdf.sdf_func_world(i_g, i_b, point_world, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
         if sd < min_sdf:
             min_sdf = sd
     return min_sdf
@@ -1118,10 +1118,10 @@ def _func_elastomer_min_signed_dist_bvh(
 
 @qd.kernel(fastcache=False)
 def _kernel_elastomer_probe_depth_bvh(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
     track_geom_mask: qd.types.ndarray(),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
@@ -1158,13 +1158,13 @@ def _kernel_elastomer_probe_depth_bvh(
 
 @qd.kernel(fastcache=True)
 def _kernel_elastomer_probe_depth(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_track_geom_start: qd.types.ndarray(),
-    sensor_track_geom_n: qd.types.ndarray(),
     track_geom_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    sensor_track_geom_n: qd.types.ndarray(),
     track_geom_active_envs_mask: qd.types.ndarray(),
     probe_depth_buf: qd.types.ndarray(),
     dyn_state: array_class.DynState,
@@ -1194,9 +1194,9 @@ def _kernel_elastomer_probe_depth(
         min_sdf = _func_elastomer_min_sdf_over_active_geoms(
             i_b,
             sensor_track_geom_start[i_s],
+            track_geom_idx,
             sensor_track_geom_n[i_s],
             probe_world,
-            track_geom_idx,
             track_geom_active_envs_mask,
             dyn_state,
             dyn_info,
@@ -1208,13 +1208,13 @@ def _kernel_elastomer_probe_depth(
 
 @qd.kernel(fastcache=True)
 def _kernel_elastomer_dilate_accumulate(
+    probe_sensor_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
     use_grid_fft: qd.types.ndarray(),
     probe_positions_local: qd.types.ndarray(),
     probe_local_normal: qd.types.ndarray(),
-    probe_sensor_idx: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
     lambda_d: qd.types.ndarray(),
     dilate_scale: qd.types.ndarray(),
@@ -1285,10 +1285,10 @@ def _kernel_elastomer_dilate_accumulate(
 def _kernel_elastomer_surface_state_bvh(
     links_idx: qd.types.ndarray(),
     sensor_elastomer_geom_start: qd.types.ndarray(),
-    sensor_elastomer_geom_n: qd.types.ndarray(),
     elastomer_geom_idx: qd.types.ndarray(),
-    elastomer_geom_active_envs_mask: qd.types.ndarray(),
     bvh_chunk_sensor_idx: qd.types.ndarray(),
+    sensor_elastomer_geom_n: qd.types.ndarray(),
+    elastomer_geom_active_envs_mask: qd.types.ndarray(),
     bvh: ChunkedBVHData,
     bvh_stack_size: qd.template(),
     pc_pos_link: qd.types.ndarray(),
@@ -1408,9 +1408,9 @@ def _kernel_elastomer_surface_state_bvh(
                     min_sdf = _func_elastomer_min_sdf_over_active_geoms(
                         i_b,
                         sensor_elastomer_geom_start[i_s],
+                        elastomer_geom_idx,
                         sensor_elastomer_geom_n[i_s],
                         point_world,
-                        elastomer_geom_idx,
                         elastomer_geom_active_envs_mask,
                         dyn_state,
                         dyn_info,
@@ -1443,11 +1443,11 @@ def _kernel_elastomer_surface_state_bvh(
 def _kernel_elastomer_surface_state_via_global_bvh(
     links_idx: qd.types.ndarray(),
     sensor_elastomer_geom_start: qd.types.ndarray(),
-    sensor_elastomer_geom_n: qd.types.ndarray(),
     elastomer_geom_idx: qd.types.ndarray(),
+    bvh_chunk_sensor_idx: qd.types.ndarray(),
+    sensor_elastomer_geom_n: qd.types.ndarray(),
     elastomer_geom_active_envs_mask: qd.types.ndarray(),
     elastomer_candidate_geom_mask: qd.types.ndarray(),
-    bvh_chunk_sensor_idx: qd.types.ndarray(),
     bvh: ChunkedBVHData,
     pc_pos_link: qd.types.ndarray(),
     pc_active_envs_mask: qd.types.ndarray(),
@@ -1595,19 +1595,19 @@ def _kernel_elastomer_surface_state_via_global_bvh(
 
 @qd.kernel(fastcache=True)
 def _kernel_elastomer_shear_accumulate(
-    probe_positions_local: qd.types.ndarray(),
-    probe_local_normal: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
     sensor_pc_start: qd.types.ndarray(),
+    shear_active_pc_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_local_normal: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
     lambda_s: qd.types.ndarray(),
     shear_scale: qd.types.ndarray(),
     surface_pos_sensor_buf: qd.types.ndarray(),
     surface_entry_pos_sensor_buf: qd.types.ndarray(),
     surface_depth_buf: qd.types.ndarray(),
-    shear_active_pc_idx: qd.types.ndarray(),
     shear_active_pc_count: qd.types.ndarray(),
     output: qd.types.ndarray(),
     eps: float,
@@ -2166,13 +2166,13 @@ class ElastomerTaxelSensor(
 
         if (shared_metadata.contact_depth_query or "sdf") == "sdf":
             _kernel_elastomer_probe_depth(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
                 shared_metadata.links_idx,
                 shared_metadata.sensor_track_geom_start,
-                shared_metadata.sensor_track_geom_n,
                 shared_metadata.track_geom_idx,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_radii,
+                shared_metadata.sensor_track_geom_n,
                 shared_metadata.track_geom_active_envs_mask,
                 shared_metadata.probe_depth_buf,
                 solver.dyn_state,
@@ -2181,10 +2181,10 @@ class ElastomerTaxelSensor(
             )
         else:
             _kernel_elastomer_probe_depth_bvh(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
                 shared_metadata.links_idx,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_radii,
                 shared_metadata.sensor_candidate_geom_mask,
                 shared_context.collision_bvh_context.bvh.nodes,
                 shared_context.collision_bvh_context.bvh.morton_codes,
@@ -2194,13 +2194,13 @@ class ElastomerTaxelSensor(
                 _ELASTOMER_RAYCAST_QUERY_DIST,
             )
         _kernel_elastomer_dilate_accumulate(
+            shared_metadata.probe_sensor_idx,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
             shared_metadata.use_grid_fft,
             shared_metadata.probe_positions,
             shared_metadata.probe_local_normal,
-            shared_metadata.probe_sensor_idx,
             shared_metadata.probe_radii,
-            shared_metadata.sensor_cache_start,
-            shared_metadata.sensor_probe_start,
             shared_metadata.n_probes_per_sensor,
             shared_metadata.lambda_d,
             shared_metadata.dilate_scale,
@@ -2233,10 +2233,10 @@ class ElastomerTaxelSensor(
                 _kernel_elastomer_surface_state_bvh(
                     shared_metadata.links_idx,
                     shared_metadata.sensor_elastomer_geom_start,
-                    shared_metadata.sensor_elastomer_geom_n,
                     shared_metadata.elastomer_geom_idx,
-                    shared_metadata.elastomer_geom_active_envs_mask,
                     bvh.chunk_sensor_idx,
+                    shared_metadata.sensor_elastomer_geom_n,
+                    shared_metadata.elastomer_geom_active_envs_mask,
                     bvh.kernel_bvh,
                     BVH_STACK_SIZE,
                     shared_metadata.pc_pos_link,
@@ -2257,11 +2257,11 @@ class ElastomerTaxelSensor(
                 _kernel_elastomer_surface_state_via_global_bvh(
                     shared_metadata.links_idx,
                     shared_metadata.sensor_elastomer_geom_start,
-                    shared_metadata.sensor_elastomer_geom_n,
                     shared_metadata.elastomer_geom_idx,
+                    bvh.chunk_sensor_idx,
+                    shared_metadata.sensor_elastomer_geom_n,
                     shared_metadata.elastomer_geom_active_envs_mask,
                     shared_metadata.elastomer_candidate_geom_mask,
-                    bvh.chunk_sensor_idx,
                     bvh.kernel_bvh,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
@@ -2297,19 +2297,19 @@ class ElastomerTaxelSensor(
                 shared_metadata.shear_active_pc_count,
             )
             _kernel_elastomer_shear_accumulate(
-                shared_metadata.probe_positions,
-                shared_metadata.probe_local_normal,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
                 shared_metadata.sensor_cache_start,
                 shared_metadata.sensor_probe_start,
                 shared_metadata.sensor_pc_start,
+                shared_metadata.shear_active_pc_idx,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_local_normal,
+                shared_metadata.probe_radii,
                 shared_metadata.lambda_s,
                 shared_metadata.shear_scale,
                 shared_metadata.surface_pos_sensor_buf,
                 shared_metadata.surface_entry_pos_sensor_buf,
                 shared_metadata.surface_depth_buf,
-                shared_metadata.shear_active_pc_idx,
                 shared_metadata.shear_active_pc_count,
                 current_ground_truth_data_T,
                 gs.EPS,

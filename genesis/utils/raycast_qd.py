@@ -40,8 +40,8 @@ def get_triangle_vertices(i_f: int, i_b: int, dyn_state: array_class.DynState, d
 @qd.func
 def bvh_ray_cast(
     i_b: int,
-    max_range: float,
     ray_start: qd.types.vector(3),
+    max_range: float,
     ray_dir: qd.types.vector(3),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
@@ -360,8 +360,8 @@ def get_visual_triangle_vertices(i_f: int, i_b: int, dyn_state: array_class.DynS
 @qd.func
 def bvh_ray_cast_visual(
     i_b,
-    max_range,
     ray_start,
+    max_range,
     ray_dir,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
@@ -448,11 +448,11 @@ def kernel_update_visual_aabbs(
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
 @qd.kernel(fastcache=False)
 def kernel_cast_ray(
+    ray_start: qd.types.ndarray(ndim=1),  # (3,)
+    envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    ray_start: qd.types.ndarray(ndim=1),  # (3,)
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
-    envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
     dyn_state: array_class.DynState,
     result: array_class.RaycastResult,
     dyn_info: array_class.DynInfo,
@@ -481,8 +481,8 @@ def kernel_cast_ray(
         env_offset = rigid_info.envs_offset[i_b]
         cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
             i_b,
-            max_range,
             ray_start_world - env_offset,
+            max_range,
             ray_direction_world,
             bvh_nodes,
             bvh_morton_codes,
@@ -550,6 +550,7 @@ def write_ray_hit(
 
 @qd.kernel
 def kernel_cast_rays(
+    points_to_sensor_idx: qd.types.ndarray(ndim=1),  # [n_points]
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
     links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
@@ -559,7 +560,6 @@ def kernel_cast_rays(
     max_ranges: qd.types.ndarray(ndim=1),  # [n_sensors]
     no_hit_values: qd.types.ndarray(ndim=1),  # [n_sensors]
     is_world_frame: qd.types.ndarray(ndim=1),  # [n_sensors]
-    points_to_sensor_idx: qd.types.ndarray(ndim=1),  # [n_points]
     sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
@@ -611,8 +611,8 @@ def kernel_cast_rays(
         hit_face, hit_distance, _hit_normal = bvh_ray_cast(
             # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
             0 if shared_bvh else i_b,
-            max_ranges[i_s],
             ray_start_world,
+            max_ranges[i_s],
             ray_direction_world,
             bvh_nodes,
             bvh_morton_codes,
@@ -649,6 +649,7 @@ def kernel_cast_rays(
 
 @qd.kernel
 def kernel_cast_rays_visual(
+    points_to_sensor_idx: qd.types.ndarray(ndim=1),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     links_pos: qd.types.ndarray(ndim=3),
@@ -658,7 +659,6 @@ def kernel_cast_rays_visual(
     max_ranges: qd.types.ndarray(ndim=1),
     no_hit_values: qd.types.ndarray(ndim=1),
     is_world_frame: qd.types.ndarray(ndim=1),
-    points_to_sensor_idx: qd.types.ndarray(ndim=1),
     sensor_cache_offsets: qd.types.ndarray(ndim=1),
     sensor_point_offsets: qd.types.ndarray(ndim=1),
     sensor_point_counts: qd.types.ndarray(ndim=1),
@@ -699,8 +699,8 @@ def kernel_cast_rays_visual(
         hit_face, hit_distance, _hit_normal = bvh_ray_cast_visual(
             # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
             0 if shared_bvh else i_b,
-            max_ranges[i_s],
             ray_start_world,
+            max_ranges[i_s],
             ray_direction_world,
             bvh_nodes,
             bvh_morton_codes,

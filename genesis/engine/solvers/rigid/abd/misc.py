@@ -263,6 +263,11 @@ def kernel_init_link_fields(
     links_q_end: qd.types.ndarray(),
     links_dof_end: qd.types.ndarray(),
     links_joint_end: qd.types.ndarray(),
+    links_entity_idx: qd.types.ndarray(),
+    links_geom_start: qd.types.ndarray(),
+    links_geom_end: qd.types.ndarray(),
+    links_vgeom_start: qd.types.ndarray(),
+    links_vgeom_end: qd.types.ndarray(),
     links_invweight: qd.types.ndarray(),
     links_is_fixed: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
@@ -271,11 +276,6 @@ def kernel_init_link_fields(
     links_inertial_quat: qd.types.ndarray(),
     links_inertial_i: qd.types.ndarray(),
     links_inertial_mass: qd.types.ndarray(),
-    links_entity_idx: qd.types.ndarray(),
-    links_geom_start: qd.types.ndarray(),
-    links_geom_end: qd.types.ndarray(),
-    links_vgeom_start: qd.types.ndarray(),
-    links_vgeom_end: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -396,14 +396,13 @@ def kernel_update_heterogeneous_link_info(
 
 @qd.kernel(fastcache=True)
 def kernel_init_joint_fields(
-    joints_type: qd.types.ndarray(),
-    joints_sol_params: qd.types.ndarray(),
     joints_q_start: qd.types.ndarray(),
     joints_dof_start: qd.types.ndarray(),
     joints_q_end: qd.types.ndarray(),
     joints_dof_end: qd.types.ndarray(),
+    joints_type: qd.types.ndarray(),
+    joints_sol_params: qd.types.ndarray(),
     joints_pos: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -425,15 +424,14 @@ def kernel_init_joint_fields(
 
 @qd.kernel(fastcache=True)
 def kernel_init_vert_fields(
+    verts_geom_idx: qd.types.ndarray(),
+    verts_state_idx: qd.types.ndarray(),
     verts: qd.types.ndarray(),
     faces: qd.types.ndarray(),
     edges: qd.types.ndarray(),
     normals: qd.types.ndarray(),
-    verts_geom_idx: qd.types.ndarray(),
     init_center_pos: qd.types.ndarray(),
-    verts_state_idx: qd.types.ndarray(),
     is_fixed: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -472,12 +470,11 @@ def kernel_init_vert_fields(
 
 @qd.kernel(fastcache=True)
 def kernel_init_vvert_fields(
+    vverts_vgeom_idx: qd.types.ndarray(),
+    vverts_state_idx: qd.types.ndarray(),
     vverts: qd.types.ndarray(),
     vfaces: qd.types.ndarray(),
     vnormals: qd.types.ndarray(),
-    vverts_vgeom_idx: qd.types.ndarray(),
-    vverts_state_idx: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -502,13 +499,7 @@ def kernel_init_vvert_fields(
 
 @qd.kernel(fastcache=True)
 def kernel_init_geom_fields(
-    geoms_pos: qd.types.ndarray(),
-    geoms_center: qd.types.ndarray(),
-    geoms_quat: qd.types.ndarray(),
     geoms_link_idx: qd.types.ndarray(),
-    geoms_type: qd.types.ndarray(),
-    geoms_friction: qd.types.ndarray(),
-    geoms_sol_params: qd.types.ndarray(),
     geoms_vert_start: qd.types.ndarray(),
     geoms_face_start: qd.types.ndarray(),
     geoms_edge_start: qd.types.ndarray(),
@@ -517,6 +508,12 @@ def kernel_init_geom_fields(
     geoms_face_end: qd.types.ndarray(),
     geoms_edge_end: qd.types.ndarray(),
     geoms_verts_state_end: qd.types.ndarray(),
+    geoms_pos: qd.types.ndarray(),
+    geoms_center: qd.types.ndarray(),
+    geoms_quat: qd.types.ndarray(),
+    geoms_type: qd.types.ndarray(),
+    geoms_friction: qd.types.ndarray(),
+    geoms_sol_params: qd.types.ndarray(),
     geoms_data: qd.types.ndarray(),
     geoms_is_convex: qd.types.ndarray(),
     geoms_needs_coup: qd.types.ndarray(),
@@ -630,15 +627,14 @@ def kernel_init_geom_fields(
 
 @qd.kernel(fastcache=True)
 def kernel_init_vgeom_fields(
-    vgeoms_pos: qd.types.ndarray(),
-    vgeoms_quat: qd.types.ndarray(),
     vgeoms_link_idx: qd.types.ndarray(),
     vgeoms_vvert_start: qd.types.ndarray(),
     vgeoms_vface_start: qd.types.ndarray(),
     vgeoms_vvert_end: qd.types.ndarray(),
     vgeoms_vface_end: qd.types.ndarray(),
+    vgeoms_pos: qd.types.ndarray(),
+    vgeoms_quat: qd.types.ndarray(),
     vgeoms_color: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -745,9 +741,9 @@ def kernel_init_equality_fields(
 
 @qd.kernel(fastcache=True)
 def kernel_apply_links_external_force(
-    force: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    force: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     ref: qd.template(),
@@ -756,14 +752,14 @@ def kernel_apply_links_external_force(
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], dyn_state, ref, local)
+        func_apply_link_external_force(links_idx[i_l_], envs_idx[i_b_], force_i, dyn_state, ref, local)
 
 
 @qd.kernel(fastcache=True)
 def kernel_apply_links_external_torque(
-    torque: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    torque: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     ref: qd.template(),
@@ -772,11 +768,11 @@ def kernel_apply_links_external_torque(
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         torque_i = qd.Vector([torque[i_b_, i_l_, 0], torque[i_b_, i_l_, 1], torque[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_torque(torque_i, links_idx[i_l_], envs_idx[i_b_], dyn_state, ref, local)
+        func_apply_link_external_torque(links_idx[i_l_], envs_idx[i_b_], torque_i, dyn_state, ref, local)
 
 
 @qd.func
-def func_apply_coupling_force(pos, force, link_idx, env_idx, links_state: array_class.LinksState):
+def func_apply_coupling_force(link_idx, env_idx, pos, force, links_state: array_class.LinksState):
     torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
     links_state.cfrc_coupling_ang[link_idx, env_idx] -= torque
     links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
@@ -784,7 +780,7 @@ def func_apply_coupling_force(pos, force, link_idx, env_idx, links_state: array_
 
 @qd.func
 def func_apply_link_external_force(
-    force, link_idx, env_idx, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
+    link_idx, env_idx, force, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
 ):
     torque = qd.Vector.zero(gs.qd_float, 3)
     if qd.static(ref == 1):  # link's CoM
@@ -801,13 +797,13 @@ def func_apply_link_external_force(
 
 
 @qd.func
-def func_apply_external_torque(self, torque, link_idx, env_idx):
+def func_apply_external_torque(self, link_idx, env_idx, torque):
     self.dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= torque
 
 
 @qd.func
 def func_apply_link_external_torque(
-    torque, link_idx, env_idx, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
+    link_idx, env_idx, torque, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
 ):
     if qd.static(ref == 1 and local == 1):  # link's CoM
         torque = gu.qd_transform_by_quat(torque, dyn_state.links.i_quat[link_idx, env_idx])
