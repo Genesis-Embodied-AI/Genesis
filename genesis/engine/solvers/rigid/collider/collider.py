@@ -85,24 +85,22 @@ class Collider:
             and gs.backend != gs.cpu
             and not self._solver._requires_grad
         )
-        # The narrowphase sub-components must be built before the collision fields, whose collider info embeds their
-        # description structs. Activation happens after and must fill them in place (see ColliderInfo).
+        # The narrowphase sub-components are built AND activated before the collision fields, whose collider info
+        # embeds their description structs: activation may reallocate them at their final size, so it has to run
+        # before the embedding (see ColliderInfo).
         self._sdf = SDF(rigid_solver)
         self._mpr = mpr.MPR(rigid_solver)
         self._gjk = gjk.GJK(rigid_solver)
-        needs_support_field = (
-            self._collider_static_config.has_terrain or self._collider_static_config.has_non_box_plane_convex_convex
-        )
-        self._support_field = support_field.SupportField(rigid_solver, is_active=needs_support_field)
-
-        self._init_collision_fields()
+        self._support_field = support_field.SupportField(rigid_solver)
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
         if self._collider_static_config.has_non_box_plane_convex_convex:
             self._gjk.activate()
-        if needs_support_field:
+        if self._collider_static_config.has_terrain or self._collider_static_config.has_non_box_plane_convex_convex:
             self._support_field.activate()
+
+        self._init_collision_fields()
 
         if self._use_split_narrowphase:
             self._init_multicontact_gjk_state()

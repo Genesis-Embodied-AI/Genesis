@@ -1523,7 +1523,8 @@ def get_sdf_info(n_geoms, n_cells, n_coarse_cells):
 class ColliderInfo:
     # Narrowphase sub-component descriptions, owned by their respective builders (MPR, GJK, SupportField, SDF) and
     # embedded here so kernels receive the whole collider description as one argument. Each has a single instance,
-    # filled in place after construction (activation must never reassign it, or the embedded reference goes stale).
+    # activated (which may reallocate it at its final size) before this struct is built; a reassignment after the
+    # embedding would leave the reference here stale.
     mpr: MPRInfo
     gjk: GJKInfo
     support_field: SupportFieldInfo

@@ -13,16 +13,10 @@ if TYPE_CHECKING:
 
 
 class SupportField:
-    def __init__(self, rigid_solver: "RigidSolver", is_active: bool) -> None:
+    def __init__(self, rigid_solver: "RigidSolver") -> None:
         self.solver = rigid_solver
         self._support_res = 180
-        # The final size is deterministic (one direction-grid entry per geom and direction), so the buffers are
-        # allocated upfront at full size when the support field will be activated, and as scalar dummies otherwise.
-        # activate() fills them in place: the struct is embedded in the collider info, so it must never be reassigned.
-        n_geoms = self.solver.n_geoms if is_active else 0
-        n_support_cells = n_geoms * self._support_res**2
-        self._support_field_info = array_class.get_support_field_info(n_geoms, n_support_cells, self._support_res)
-        self._is_preallocated = is_active
+        self._support_field_info = array_class.get_support_field_info(0, 0, self._support_res)
         self._is_active = False
 
     def _get_direction_grid(self):
@@ -43,8 +37,6 @@ class SupportField:
     def activate(self) -> None:
         if self.is_active:
             return
-        if not self._is_preallocated:
-            gs.raise_exception("Support field buffers were not preallocated. It must be requested at construction.")
 
         v = self._get_direction_grid()
         v1 = v.reshape([-1, 3])
@@ -83,6 +75,10 @@ class SupportField:
             support_v = np.zeros((1, 3), dtype=gs.np_float)
             support_vid = np.zeros((1,), dtype=gs.np_int)
             support_cell_start = np.zeros((1,), dtype=gs.np_int)
+
+        self._support_field_info = array_class.get_support_field_info(
+            self.solver.n_geoms, n_support_cells, self._support_res
+        )
 
         _kernel_init_support(
             support_cell_start, support_v, support_vid, self._support_field_info, self.solver._rigid_config
