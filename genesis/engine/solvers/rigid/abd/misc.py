@@ -35,9 +35,9 @@ def linear_to_lower_tri(i_pair: qd.i32, strict: qd.template() = False):
 def func_wakeup_island(
     i_island,
     i_b,
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -95,9 +95,9 @@ def kernel_init_invweight(
     links_invweight: qd.types.ndarray(),
     dofs_invweight: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    force_update: qd.template(),
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    force_update: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
 
@@ -131,8 +131,8 @@ def kernel_init_invweight(
 @qd.kernel(fastcache=True)
 def kernel_init_meaninertia(
     envs_idx: qd.types.ndarray(),
-    rigid_info: array_class.RigidInfo,
     dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = rigid_info.mass_mat.shape[0]
@@ -152,7 +152,6 @@ def kernel_init_meaninertia(
 
 @qd.kernel(fastcache=True)
 def kernel_init_dof_fields(
-    # input np array
     entity_idx: qd.types.ndarray(),
     dofs_motion_ang: qd.types.ndarray(),
     dofs_motion_vel: qd.types.ndarray(),
@@ -165,10 +164,9 @@ def kernel_init_dof_fields(
     dofs_act_gain: qd.types.ndarray(),
     dofs_act_bias: qd.types.ndarray(),
     dofs_force_range: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
@@ -214,9 +212,9 @@ def kernel_init_dof_fields(
 def kernel_reset_hibernation(
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
-    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     # Wake every body in the given envs and rebuild the compact awake lists. A scene whose state is set (reset or
@@ -278,10 +276,9 @@ def kernel_init_link_fields(
     links_geom_end: qd.types.ndarray(),
     links_vgeom_start: qd.types.ndarray(),
     links_vgeom_end: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_links = links_parent_idx.shape[0]
@@ -531,10 +528,9 @@ def kernel_init_geom_fields(
     geoms_is_fixed: qd.types.ndarray(),
     geoms_is_decomp: qd.types.ndarray(),
     geoms_is_hollow: qd.types.ndarray(),
-    # Quadrants variables
+    geoms_init_AABB: array_class.GeomsInitAABB,  # TODO: move to rigid global info
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    geoms_init_AABB: array_class.GeomsInitAABB,  # TODO: move to rigid global info
     rigid_config: qd.template(),
 ):
     n_geoms = geoms_pos.shape[0]
@@ -679,10 +675,9 @@ def kernel_init_entity_fields(
     entities_geom_end: qd.types.ndarray(),
     entities_gravity_compensation: qd.types.ndarray(),
     entities_is_local_collision_mask: qd.types.ndarray(),
-    # Quadrants variables
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_entities = entities_dof_start.shape[0]
@@ -753,15 +748,15 @@ def kernel_apply_links_external_force(
     force: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    ref: qd.template(),
-    local: qd.template(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    ref: qd.template(),
+    local: qd.template(),
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local, dyn_state)
+        func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], dyn_state, ref, local)
 
 
 @qd.kernel(fastcache=True)
@@ -769,15 +764,15 @@ def kernel_apply_links_external_torque(
     torque: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    ref: qd.template(),
-    local: qd.template(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    ref: qd.template(),
+    local: qd.template(),
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         torque_i = qd.Vector([torque[i_b_, i_l_, 0], torque[i_b_, i_l_, 1], torque[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_torque(torque_i, links_idx[i_l_], envs_idx[i_b_], ref, local, dyn_state)
+        func_apply_link_external_torque(torque_i, links_idx[i_l_], envs_idx[i_b_], dyn_state, ref, local)
 
 
 @qd.func
@@ -789,7 +784,7 @@ def func_apply_coupling_force(pos, force, link_idx, env_idx, links_state: array_
 
 @qd.func
 def func_apply_link_external_force(
-    force, link_idx, env_idx, ref: qd.template(), local: qd.template(), dyn_state: array_class.DynState
+    force, link_idx, env_idx, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
 ):
     torque = qd.Vector.zero(gs.qd_float, 3)
     if qd.static(ref == 1):  # link's CoM
@@ -812,7 +807,7 @@ def func_apply_external_torque(self, torque, link_idx, env_idx):
 
 @qd.func
 def func_apply_link_external_torque(
-    torque, link_idx, env_idx, ref: qd.template(), local: qd.template(), dyn_state: array_class.DynState
+    torque, link_idx, env_idx, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
 ):
     if qd.static(ref == 1 and local == 1):  # link's CoM
         torque = gu.qd_transform_by_quat(torque, dyn_state.links.i_quat[link_idx, env_idx])
@@ -824,7 +819,7 @@ def func_apply_link_external_torque(
 
 @qd.func
 def func_clear_external_force(
-    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+    rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
 ):
     n_links = dyn_state.links.pos.shape[0]
     _B = dyn_state.links.pos.shape[1]
@@ -847,8 +842,8 @@ def func_clear_external_force(
 @qd.kernel(fastcache=True)
 def kernel_update_geoms_render_T(
     geoms_render_T: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -869,8 +864,8 @@ def kernel_update_geoms_render_T(
 def kernel_update_vgeoms_render_T(
     vgeoms_render_T: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -951,9 +946,9 @@ def func_check_index_range(idx: qd.i32, min: qd.i32, max: qd.i32, cond: qd.templ
 
 @qd.kernel(fastcache=True)
 def kernel_clear_external_force(
-    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+    rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
 ):
-    func_clear_external_force(dyn_state=dyn_state, rigid_info=rigid_info, rigid_config=rigid_config)
+    func_clear_external_force(rigid_info, dyn_state, rigid_config)
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module

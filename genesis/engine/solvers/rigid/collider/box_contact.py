@@ -103,14 +103,14 @@ def func_plane_box_contact(
     i_gb,
     i_b,
     i_pair,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    geoms_init_AABB: array_class.GeomsInitAABB,
-    rigid_config: qd.template(),
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    collider_static_config: qd.template(),
     errno: qd.Tensor,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
 ):
     ga_pos, ga_quat = dyn_state.geoms.pos[i_ga, i_b], dyn_state.geoms.quat[i_ga, i_b]
     gb_pos, gb_quat = dyn_state.geoms.pos[i_gb, i_b], dyn_state.geoms.quat[i_gb, i_b]
@@ -121,7 +121,7 @@ def func_plane_box_contact(
     plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _, _ = support_field._func_support_box(dyn_info, normal, i_gb, gb_pos, gb_quat)
+    v1, _, _ = support_field._func_support_box(i_gb, normal, gb_pos, gb_quat, dyn_info)
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:
@@ -129,23 +129,23 @@ def func_plane_box_contact(
         func_add_contact(
             i_ga,
             i_gb,
+            i_b,
+            i_pair,
             normal,
             contact_pos,
             penetration,
-            i_b,
-            i_pair,
-            dyn_state,
-            dyn_info,
-            collider_state,
-            collider_info,
             errno,
+            dyn_info,
+            collider_info,
+            dyn_state,
+            collider_state,
         )
 
         if qd.static(rigid_config.enable_multi_contact):
             n_con = 1
             contact_pos_0 = contact_pos
             tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(
-                i_ga, i_gb, dyn_info, geoms_init_AABB
+                i_ga, i_gb, geoms_init_AABB, dyn_info
             )
             for i_v in range(dyn_info.geoms.vert_start[i_gb], dyn_info.geoms.vert_end[i_gb]):
                 # Plane-box pairs are sized with the convex cap (they are not in the large-contact mask), so the
@@ -159,16 +159,16 @@ def func_plane_box_contact(
                             func_add_contact(
                                 i_ga,
                                 i_gb,
+                                i_b,
+                                i_pair,
                                 normal,
                                 contact_pos,
                                 penetration,
-                                i_b,
-                                i_pair,
-                                dyn_state,
-                                dyn_info,
-                                collider_state,
-                                collider_info,
                                 errno,
+                                dyn_info,
+                                collider_info,
+                                dyn_state,
+                                collider_state,
                             )
                             n_con = n_con + 1
 
@@ -179,13 +179,13 @@ def func_box_box_contact(
     i_gb,
     i_b,
     i_pair,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_static_config: qd.template(),
     errno: qd.Tensor,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    collider_static_config: qd.template(),
 ):
     """
     Use Mujoco's box-box contact detection algorithm for more stable collision detection.
@@ -525,16 +525,16 @@ def func_box_box_contact(
                         func_add_contact(
                             i_ga,
                             i_gb,
+                            i_b,
+                            i_pair,
                             -normal_0,
                             contact_pos,
                             -dist,
-                            i_b,
-                            i_pair,
-                            dyn_state,
-                            dyn_info,
-                            collider_state,
-                            collider_info,
                             errno,
+                            dyn_info,
+                            collider_info,
+                            dyn_state,
+                            collider_state,
                         )
                         n_added = n_added + 1
         else:
@@ -849,15 +849,15 @@ def func_box_box_contact(
                             func_add_contact(
                                 i_ga,
                                 i_gb,
+                                i_b,
+                                i_pair,
                                 -normal_0,
                                 contact_pos,
                                 -dist,
-                                i_b,
-                                i_pair,
-                                dyn_state,
-                                dyn_info,
-                                collider_state,
-                                collider_info,
                                 errno,
+                                dyn_info,
+                                collider_info,
+                                dyn_state,
+                                collider_state,
                             )
                             n_added = n_added + 1

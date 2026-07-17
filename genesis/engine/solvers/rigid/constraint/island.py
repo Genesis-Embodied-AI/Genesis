@@ -13,7 +13,7 @@ import genesis.utils.array_class as array_class
 
 
 @qd.func
-def func_find_root(constraint_state: array_class.ConstraintState, i_l, i_b):
+def func_find_root(i_l, i_b, constraint_state: array_class.ConstraintState):
     # Path-halving find (over links).
     root = i_l
     while constraint_state.island.links_parent_idx[root, i_b] != root:
@@ -25,11 +25,11 @@ def func_find_root(constraint_state: array_class.ConstraintState, i_l, i_b):
 
 
 @qd.func
-def func_union(constraint_state: array_class.ConstraintState, i_la, i_lb, i_b):
+def func_union(i_la, i_lb, i_b, constraint_state: array_class.ConstraintState):
     # Union by minimum index: the root of a component is its smallest link index, regardless of the order edges are
     # processed.
-    root_a = func_find_root(constraint_state, i_la, i_b)
-    root_b = func_find_root(constraint_state, i_lb, i_b)
+    root_a = func_find_root(i_la, i_b, constraint_state)
+    root_b = func_find_root(i_lb, i_b, constraint_state)
     if root_a < root_b:
         constraint_state.island.links_parent_idx[root_b, i_b] = root_a
     elif root_b < root_a:
@@ -37,7 +37,7 @@ def func_union(constraint_state: array_class.ConstraintState, i_la, i_lb, i_b):
 
 
 @qd.func
-def func_joint_link(dyn_info: array_class.DynInfo, i_joint, i_b, n_links, rigid_config: qd.template()):
+def func_joint_link(i_joint, i_b, n_links, dyn_info: array_class.DynInfo, rigid_config: qd.template()):
     # JointsInfo carries no link mapping, so locate the link whose dof range owns the joint's first dof. Joint
     # equalities are rare and link counts are small, so the linear scan is cheap.
     joint_idx = [i_joint, i_b] if qd.static(rigid_config.batch_joints_info) else i_joint
@@ -52,7 +52,7 @@ def func_joint_link(dyn_info: array_class.DynInfo, i_joint, i_b, n_links, rigid_
 
 
 @qd.func
-def func_equality_links(dyn_info: array_class.DynInfo, i_eq, i_b, n_links, rigid_config: qd.template()):
+def func_equality_links(i_eq, i_b, n_links, dyn_info: array_class.DynInfo, rigid_config: qd.template()):
     # Map an equality constraint to the pair of links it couples. CONNECT/WELD reference links; JOINT references joints.
     obj1 = dyn_info.equalities.eq_obj1id[i_eq, i_b]
     obj2 = dyn_info.equalities.eq_obj2id[i_eq, i_b]
@@ -60,8 +60,8 @@ def func_equality_links(dyn_info: array_class.DynInfo, i_eq, i_b, n_links, rigid
     la = -1
     lb = -1
     if eq_type == gs.EQUALITY_TYPE.JOINT:
-        la = func_joint_link(dyn_info, obj1, i_b, n_links, rigid_config)
-        lb = func_joint_link(dyn_info, obj2, i_b, n_links, rigid_config)
+        la = func_joint_link(obj1, i_b, n_links, dyn_info, rigid_config)
+        lb = func_joint_link(obj2, i_b, n_links, dyn_info, rigid_config)
     else:
         la = obj1
         lb = obj2
@@ -70,7 +70,7 @@ def func_equality_links(dyn_info: array_class.DynInfo, i_eq, i_b, n_links, rigid
 
 @qd.func
 def func_constraint_island(
-    constraint_state: array_class.ConstraintState, i_c, i_b, n_dofs, EPS, rigid_config: qd.template()
+    i_c, i_b, n_dofs, EPS, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
 ):
     # A constraint couples dofs of a single island, so its island is that of its first nonzero Jacobian dof. With the
     # sparse Jacobian representation that dof is jac_dofs_idx[i_c, 0] directly (O(1)); otherwise scan the dense Jacobian
@@ -162,8 +162,8 @@ def func_build_islands(
     i_b,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     # Partition one env's links into islands (kinematic tree + contact + equality edges) via union-find, then build the
@@ -184,7 +184,7 @@ def func_build_islands(
         link_idx = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
         i_p = dyn_info.links.parent_idx[link_idx]
         if i_p >= 0:
-            func_union(constraint_state, i_l, i_p, i_b)
+            func_union(i_l, i_p, i_b, constraint_state)
 
     # Mark each kinematic component that carries at least one dof as dynamic (links_island_idx[root] = -2, a
     # transient marker overwritten by the labeling pass below). A contact/equality couples two links only when
@@ -194,32 +194,32 @@ def func_build_islands(
     for i_l in range(n_links):
         link_idx = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
         if dyn_info.links.n_dofs[link_idx] > 0:
-            constraint_state.island.links_island_idx[func_find_root(constraint_state, i_l, i_b), i_b] = -2
+            constraint_state.island.links_island_idx[func_find_root(i_l, i_b, constraint_state), i_b] = -2
 
     # Edges from contacts (read through contact_sort_idx so pruning/sorting is honored).
     for i_c in range(collider_state.n_contacts[i_b]):
         i_col = collider_state.contact_sort_idx[i_c, i_b]
         link_a = collider_state.contact_data.link_a[i_col, i_b]
         link_b = collider_state.contact_data.link_b[i_col, i_b]
-        root_a = func_find_root(constraint_state, link_a, i_b)
-        root_b = func_find_root(constraint_state, link_b, i_b)
+        root_a = func_find_root(link_a, i_b, constraint_state)
+        root_b = func_find_root(link_b, i_b, constraint_state)
         if (
             constraint_state.island.links_island_idx[root_a, i_b] == -2
             and constraint_state.island.links_island_idx[root_b, i_b] == -2
         ):
-            func_union(constraint_state, link_a, link_b, i_b)
+            func_union(link_a, link_b, i_b, constraint_state)
 
     # Edges from equality constraints (model + dynamically registered welds).
     for i_eq in range(constraint_state.qd_n_equalities[i_b]):
-        la, lb = func_equality_links(dyn_info, i_eq, i_b, n_links, rigid_config)
+        la, lb = func_equality_links(i_eq, i_b, n_links, dyn_info, rigid_config)
         if la >= 0 and lb >= 0:
-            root_a = func_find_root(constraint_state, la, i_b)
-            root_b = func_find_root(constraint_state, lb, i_b)
+            root_a = func_find_root(la, i_b, constraint_state)
+            root_b = func_find_root(lb, i_b, constraint_state)
             if (
                 constraint_state.island.links_island_idx[root_a, i_b] == -2
                 and constraint_state.island.links_island_idx[root_b, i_b] == -2
             ):
-                func_union(constraint_state, la, lb, i_b)
+                func_union(la, lb, i_b, constraint_state)
 
     # Hibernated islands: re-union along the daisy chain so a sleeping group (which generates no live
     # contacts to union it) stays one island across steps, matching the partition the wakeup walks.
@@ -227,7 +227,7 @@ def func_build_islands(
         for i_l in range(n_links):
             i_next_l = constraint_state.island.hibernated_next_link[i_l, i_b]
             if 0 <= i_next_l < n_links and i_next_l != i_l:
-                func_union(constraint_state, i_l, i_next_l, i_b)
+                func_union(i_l, i_next_l, i_b, constraint_state)
 
     # Label each dynamic component (root marked -2 above). A component (root = min link index) is labeled the first
     # time one of its dof-links is seen, in ascending link order, so labels are deterministic and each island's
@@ -237,7 +237,7 @@ def func_build_islands(
     for i_l in range(n_links):
         link_idx = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
         if dyn_info.links.n_dofs[link_idx] > 0:
-            root = func_find_root(constraint_state, i_l, i_b)
+            root = func_find_root(i_l, i_b, constraint_state)
             if constraint_state.island.links_island_idx[root, i_b] == -2:
                 constraint_state.island.links_island_idx[root, i_b] = n_islands
                 n_islands = n_islands + 1
@@ -245,7 +245,7 @@ def func_build_islands(
 
     # Propagate the root's label to every link in its component (links in dof-less components stay -1).
     for i_l in range(n_links):
-        root = func_find_root(constraint_state, i_l, i_b)
+        root = func_find_root(i_l, i_b, constraint_state)
         constraint_state.island.links_island_idx[i_l, i_b] = constraint_state.island.links_island_idx[root, i_b]
 
     # Mark islands whose every link is asleep (read by the hibernation decision on the next step to skip

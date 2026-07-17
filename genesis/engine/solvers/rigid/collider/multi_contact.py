@@ -18,17 +18,17 @@ from .utils import func_is_equal_vec
 
 @qd.func
 def func_multi_contact(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
-    collider_info: array_class.ColliderInfo,
     i_ga,
     i_gb,
+    i_b,
+    i_f,
     pos_a: qd.types.vector(3),
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
-    i_b,
-    i_f,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     Multi-contact detection algorithm based on Sutherland-Hodgman polygon clipping algorithm. For the two geometric
@@ -91,12 +91,12 @@ def func_multi_contact(
         if geom_type == gs.GEOM_TYPE.BOX:
             quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_box_normals(
-                dyn_info, gjk_state, collider_info, i_g, quat, i_b, nface, v1i, v2i, v3i, t_dir
+                i_g, i_b, quat, nface, v1i, v2i, v3i, t_dir, dyn_info, collider_info, gjk_state
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
             quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_mesh_normals(
-                dyn_info, gjk_state, collider_info, i_g, quat, i_b, nface, v1i, v2i, v3i
+                i_g, i_b, quat, nface, v1i, v2i, v3i, dyn_info, collider_info, gjk_state
             )
 
         for i_n in range(nnorms):
@@ -110,7 +110,7 @@ def func_multi_contact(
                 nnorms2 = nnorms
 
     # Determine if any two face normals match
-    aligned_faces_idx, aligned_faces_flag = func_find_aligned_faces(gjk_state, collider_info, i_b, nnorms1, nnorms2)
+    aligned_faces_idx, aligned_faces_flag = func_find_aligned_faces(i_b, nnorms1, nnorms2, collider_info, gjk_state)
     no_multiple_contacts = False
     edgecon1, edgecon2 = False, False
 
@@ -135,13 +135,13 @@ def func_multi_contact(
                 pos = pos_a if is_edge_face else pos_b
                 quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_box_edge_normals(
-                    dyn_info, gjk_state, collider_info, i_g, pos, quat, i_b, nface, v1, v2, v1i, v2i
+                    i_g, i_b, pos, quat, nface, v1, v2, v1i, v2i, dyn_info, collider_info, gjk_state
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
                 pos = pos_a if is_edge_face else pos_b
                 quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_mesh_edge_normals(
-                    dyn_info, gjk_state, collider_info, i_g, pos, quat, i_b, nface, v1, v2, v1i, v2i
+                    i_g, i_b, pos, quat, nface, v1, v2, v1i, v2i, dyn_info, collider_info, gjk_state
                 )
 
             if is_edge_face:
@@ -163,7 +163,7 @@ def func_multi_contact(
             if not is_edge_face:
                 nedges, nfaces = nfaces, nedges
             aligned_faces_idx, aligned_edge_face_flag = func_find_aligned_edge_face(
-                gjk_state, collider_info, i_b, nedges, nfaces, is_edge_face
+                i_b, nedges, nfaces, is_edge_face, collider_info, gjk_state
             )
 
             if aligned_edge_face_flag == RETURN_CODE.FAIL:
@@ -211,11 +211,11 @@ def func_multi_contact(
                 if geom_type == gs.GEOM_TYPE.BOX:
                     pos = pos_a if k == 0 else pos_b
                     quat = quat_a if k == 0 else quat_b
-                    nface = func_box_face(dyn_info, gjk_state, i_g, pos, quat, i_b, k, normal_face_idx)
+                    nface = func_box_face(i_g, i_b, k, pos, quat, normal_face_idx, dyn_info, gjk_state)
                 elif geom_type == gs.GEOM_TYPE.MESH:
                     pos = pos_a if k == 0 else pos_b
                     quat = quat_a if k == 0 else quat_b
-                    nface = func_mesh_face(dyn_info, gjk_state, i_g, pos, quat, i_b, k, normal_face_idx)
+                    nface = func_mesh_face(i_g, i_b, k, pos, quat, normal_face_idx, dyn_info, gjk_state)
 
             if k == 0:
                 nface1 = nface
@@ -238,7 +238,7 @@ def func_multi_contact(
             normal = gjk_state.contact_faces[i_b, i].normal1
 
         # Clip polygon
-        func_clip_polygon(gjk_state, collider_info, i_b, nface1, nface2, edgecon1, edgecon2, normal, approx_dir)
+        func_clip_polygon(i_b, nface1, nface2, edgecon1, edgecon2, normal, approx_dir, collider_info, gjk_state)
 
 
 @qd.func
@@ -274,17 +274,17 @@ def func_simplex_dim(v1i, v2i, v3i, v1, v2, v3):
 
 @qd.func
 def func_potential_box_normals(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
-    collider_info: array_class.ColliderInfo,
     i_g,
-    quat: qd.types.vector(4),
     i_b,
+    quat: qd.types.vector(4),
     dim,
     v1,
     v2,
     v3,
     dir,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     For a simplex defined on a box with three vertices [v1, v2, v3], we find which face normals are potentially
@@ -388,7 +388,7 @@ def func_potential_box_normals(
     if is_degenerate_simplex:
         n_normals = (
             1
-            if func_box_normal_from_collision_normal(gjk_state, collider_info, i_g, quat, i_b, dir)
+            if func_box_normal_from_collision_normal(i_g, i_b, quat, dir, collider_info, gjk_state)
             == RETURN_CODE.SUCCESS
             else 0
         )
@@ -432,7 +432,7 @@ def func_cmp_bit(v1, v2, v3, n, shift):
 
 @qd.func
 def func_box_normal_from_collision_normal(
-    gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_g, quat: qd.types.vector(4), i_b, dir
+    i_g, i_b, quat: qd.types.vector(4), dir, collider_info: array_class.ColliderInfo, gjk_state: array_class.GJKState
 ):
     """
     Among the 6 faces of the box, find the one of which normal is closest to the [dir].
@@ -465,16 +465,16 @@ def func_box_normal_from_collision_normal(
 
 @qd.func
 def func_potential_mesh_normals(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
-    collider_info: array_class.ColliderInfo,
     i_g,
-    quat: qd.types.vector(4),
     i_b,
+    quat: qd.types.vector(4),
     dim,
     v1,
     v2,
     v3,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     For a simplex defined on a mesh with three vertices [v1, v2, v3],
@@ -542,7 +542,7 @@ def func_potential_mesh_normals(
 
 
 @qd.func
-def func_find_aligned_faces(gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_b, nv, nw):
+def func_find_aligned_faces(i_b, nv, nw, collider_info: array_class.ColliderInfo, gjk_state: array_class.GJKState):
     """
     Find if any two faces from [contact_faces] are aligned.
     """
@@ -563,18 +563,18 @@ def func_find_aligned_faces(gjk_state: array_class.GJKState, collider_info: arra
 
 @qd.func
 def func_potential_box_edge_normals(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
-    collider_info: array_class.ColliderInfo,
     i_g,
+    i_b,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
-    i_b,
     dim,
     v1,
     v2,
     v1i,
     v2i,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     For a simplex defined on a box with two vertices [v1, v2],
@@ -601,7 +601,7 @@ def func_potential_box_edge_normals(
     if dim == 2:
         # If the nearest face is an edge
         gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(collider_info, v2 - v1)
+        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(v2 - v1, collider_info)
 
         n_normals = 1
     elif dim == 1:
@@ -617,7 +617,7 @@ def func_potential_box_edge_normals(
             elif i == 2:
                 bv = gs.qd_vec3(x, y, -z)
             ev = gu.qd_transform_by_trans_quat(bv, pos, quat)
-            r = func_safe_normalize(collider_info, ev - v1)
+            r = func_safe_normalize(ev - v1, collider_info)
 
             gjk_state.contact_normals[i_b, i].endverts = ev
             gjk_state.contact_normals[i_b, i].normal = r
@@ -629,18 +629,18 @@ def func_potential_box_edge_normals(
 
 @qd.func
 def func_potential_mesh_edge_normals(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
-    collider_info: array_class.ColliderInfo,
     i_g,
+    i_b,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
-    i_b,
     dim,
     v1,
     v2,
     v1i,
     v2i,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     For a simplex defined on a mesh with two vertices [v1, v2],
@@ -660,7 +660,7 @@ def func_potential_mesh_edge_normals(
     if dim == 2:
         # If the nearest face is an edge
         gjk_state.contact_normals[i_b, 0].endverts = v2
-        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(collider_info, v2 - v1)
+        gjk_state.contact_normals[i_b, 0].normal = func_safe_normalize(v2 - v1, collider_info)
 
         n_normals = 1
 
@@ -688,7 +688,7 @@ def func_potential_mesh_edge_normals(
                 # Compute the edge normal
                 v2_pos = dyn_info.verts.init_pos[t_v2i]
                 v2_pos = gu.qd_transform_by_trans_quat(v2_pos, pos, quat)
-                t_res = func_safe_normalize(collider_info, v2_pos - v1)
+                t_res = func_safe_normalize(v2_pos - v1, collider_info)
 
                 gjk_state.contact_normals[i_b, n_normals].normal = t_res
                 gjk_state.contact_normals[i_b, n_normals].endverts = v2_pos
@@ -701,7 +701,7 @@ def func_potential_mesh_edge_normals(
 
 
 @qd.func
-def func_safe_normalize(collider_info: array_class.ColliderInfo, v):
+def func_safe_normalize(v, collider_info: array_class.ColliderInfo):
     """
     Normalize the vector [v] safely.
     """
@@ -721,7 +721,7 @@ def func_safe_normalize(collider_info: array_class.ColliderInfo, v):
 
 @qd.func
 def func_find_aligned_edge_face(
-    gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_b, nedge, nface, is_edge_face
+    i_b, nedge, nface, is_edge_face, collider_info: array_class.ColliderInfo, gjk_state: array_class.GJKState
 ):
     """
     Find if an edge and face from [contact_faces] are aligned.
@@ -751,14 +751,14 @@ def func_find_aligned_edge_face(
 
 @qd.func
 def func_box_face(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
     i_g,
-    pos: qd.types.vector(3),
-    quat: qd.types.vector(4),
     i_b,
     i_o,
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
     face_idx,
+    dyn_info: array_class.DynInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     Get the face vertices of the box geometry.
@@ -813,14 +813,14 @@ def func_box_face(
 
 @qd.func
 def func_mesh_face(
-    dyn_info: array_class.DynInfo,
-    gjk_state: array_class.GJKState,
     i_g,
-    pos: qd.types.vector(3),
-    quat: qd.types.vector(4),
     i_b,
     i_o,
+    pos: qd.types.vector(3),
+    quat: qd.types.vector(4),
     face_idx,
+    dyn_info: array_class.DynInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     Get the face vertices of the mesh.
@@ -844,8 +844,6 @@ def func_mesh_face(
 
 @qd.func
 def func_clip_polygon(
-    gjk_state: array_class.GJKState,
-    collider_info: array_class.ColliderInfo,
     i_b,
     nface1,
     nface2,
@@ -853,6 +851,8 @@ def func_clip_polygon(
     edgecon2,
     normal,
     approx_dir,
+    collider_info: array_class.ColliderInfo,
+    gjk_state: array_class.GJKState,
 ):
     """
     Clip a polygon against the another polygon using Sutherland-Hodgman algorithm.
@@ -885,7 +885,7 @@ def func_clip_polygon(
             res = (v2 - v1).cross(normal)
 
             # Reorient normal if needed
-            inside_v3 = func_halfspace(collider_info, v1, res, v3)
+            inside_v3 = func_halfspace(v1, res, v3, collider_info)
             if not inside_v3:
                 res = -res
 
@@ -924,8 +924,8 @@ def func_clip_polygon(
                 Q = gjk_state.contact_clipped_polygons[i_b, pi, (i + 1) % nclipped[pi]]
 
                 # Determine if P and Q are inside or outside the half-plane
-                inside_P = func_halfspace(collider_info, a, n, P)
-                inside_Q = func_halfspace(collider_info, a, n, Q)
+                inside_P = func_halfspace(a, n, P, collider_info)
+                inside_Q = func_halfspace(a, n, Q, collider_info)
 
                 # PQ entirely outside the clipping edge, skip
                 if not inside_P and not inside_Q:
@@ -938,7 +938,7 @@ def func_clip_polygon(
                     continue
 
                 # PQ intersects the half-plane, add the intersection point
-                t, ip = func_plane_intersect(collider_info, n, d, P, Q)
+                t, ip = func_plane_intersect(n, d, P, Q, collider_info)
                 if t >= 0 and t <= 1:
                     gjk_state.contact_clipped_polygons[i_b, ci, nclipped[ci]] = ip
                     nclipped[ci] += 1
@@ -960,7 +960,7 @@ def func_clip_polygon(
             if collider_info.gjk.max_contacts_per_pair[None] < 5 and nclipped_polygon > 4:
                 # Approximate the clipped polygon with a convex quadrilateral
                 gjk_state.n_witness[i_b] = 4
-                rect = func_approximate_polygon_with_quad(gjk_state, i_b, pi, nclipped_polygon)
+                rect = func_approximate_polygon_with_quad(i_b, pi, nclipped_polygon, gjk_state)
 
                 for i in range(4):
                     witness2 = gjk_state.contact_clipped_polygons[i_b, pi, rect[i]]
@@ -1003,7 +1003,7 @@ def func_clip_polygon(
 
 
 @qd.func
-def func_halfspace(collider_info: array_class.ColliderInfo, a, n, p):
+def func_halfspace(a, n, p, collider_info: array_class.ColliderInfo):
     """
     Check if the point [p] is inside the half-space defined by the plane with normal [n] and point [a].
     """
@@ -1011,7 +1011,7 @@ def func_halfspace(collider_info: array_class.ColliderInfo, a, n, p):
 
 
 @qd.func
-def func_plane_intersect(collider_info: array_class.ColliderInfo, pn, pd, v1, v2):
+def func_plane_intersect(pn, pd, v1, v2, collider_info: array_class.ColliderInfo):
     """
     Compute the intersection point of the line segment [v1, v2]
     with the plane defined by the normal [pn] and distance [pd].
@@ -1037,14 +1037,14 @@ def func_plane_intersect(collider_info: array_class.ColliderInfo, pn, pd, v1, v2
 
 
 @qd.func
-def func_approximate_polygon_with_quad(gjk_state: array_class.GJKState, i_b, polygon_start, nverts):
+def func_approximate_polygon_with_quad(i_b, polygon_start, nverts, gjk_state: array_class.GJKState):
     """
     Find a convex quadrilateral that approximates the given N-gon [polygon]. We find it by selecting the four
     vertices in the polygon that form the maximum area quadrilateral.
     """
     i_v = gs.qd_ivec4(0, 1, 2, 3)
     i_v0 = gs.qd_ivec4(0, 1, 2, 3)
-    m = func_quadrilateral_area(gjk_state, i_b, polygon_start, i_v[0], i_v[1], i_v[2], i_v[3])
+    m = func_quadrilateral_area(i_b, polygon_start, i_v[0], i_v[1], i_v[2], i_v[3], gjk_state)
 
     # 1: change b, 2: change c, 3: change d
     change_flag = 3
@@ -1057,7 +1057,7 @@ def func_approximate_polygon_with_quad(gjk_state: array_class.GJKState, i_b, pol
             i_v0[2] = (i_v[2] + 1) % nverts
 
         # Compute the area of the quadrilateral formed by the vertices
-        m_next = func_quadrilateral_area(gjk_state, i_b, polygon_start, i_v0[0], i_v0[1], i_v0[2], i_v0[3])
+        m_next = func_quadrilateral_area(i_b, polygon_start, i_v0[0], i_v0[1], i_v0[2], i_v0[3], gjk_state)
         if m_next <= m:
             # If the area did not increase
             if change_flag == 3:
@@ -1095,7 +1095,7 @@ def func_approximate_polygon_with_quad(gjk_state: array_class.GJKState, i_b, pol
 
 
 @qd.func
-def func_quadrilateral_area(gjk_state: array_class.GJKState, i_b, i_0, i_v0, i_v1, i_v2, i_v3):
+def func_quadrilateral_area(i_b, i_0, i_v0, i_v1, i_v2, i_v3, gjk_state: array_class.GJKState):
     """
     Compute the area of the quadrilateral formed by vertices [i_v0, i_v1, i_v2, i_v3] in the [verts] array.
     """

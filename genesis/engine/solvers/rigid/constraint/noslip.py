@@ -37,10 +37,10 @@ def func_solve_mass_block(i_d0, i_b, vec: qd.Tensor, rigid_info: array_class.Rig
 @qd.func
 def func_apply_Minv_rows(
     i_row_0,
-    coef_0,
     i_row_1,
-    coef_1,
     i_b,
+    coef_0,
+    coef_1,
     vec: qd.Tensor,
     jac: qd.Tensor,
     jac_dofs_idx: qd.Tensor,
@@ -109,8 +109,8 @@ def func_dot_row(i_row, i_b, vec: qd.Tensor, jac: qd.Tensor, jac_dofs_idx: qd.Te
 def func_refresh_qacc_batch(
     i_b,
     i_island,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -173,10 +173,10 @@ def func_refresh_qacc_batch(
 def func_noslip_batch(
     i_b,
     i_island,
-    collider_state: array_class.ColliderState,
-    dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     """Matrix-free noslip force-update sweep over one island (the whole env counts as one island when the per-island
@@ -214,7 +214,7 @@ def func_noslip_batch(
     scale = 1.0 / (rigid_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
 
     for i_iter in range(rigid_info.noslip_iterations[None]):
-        func_refresh_qacc_batch(i_b, i_island, dyn_state, rigid_info, constraint_state, rigid_config)
+        func_refresh_qacc_batch(i_b, i_island, rigid_info, dyn_state, constraint_state, rigid_config)
 
         improvement = gs.qd_float(0.0)
 
@@ -242,10 +242,10 @@ def func_noslip_batch(
                     if i_phase == 0 or delta != 0.0:
                         func_apply_Minv_rows(
                             i_c,
-                            coef,
                             i_c,
-                            0.0,
                             i_b,
+                            coef,
+                            0.0,
                             constraint_state.Mgrad,
                             constraint_state.jac,
                             constraint_state.jac_dofs_idx,
@@ -313,10 +313,10 @@ def func_noslip_batch(
                     if i_phase < 2 or delta_0 != 0.0 or delta_1 != 0.0:
                         func_apply_Minv_rows(
                             j_efc,
-                            coef_0,
                             j_efc + 1,
-                            coef_1,
                             i_b,
+                            coef_0,
+                            coef_1,
                             constraint_state.Mgrad,
                             constraint_state.jac,
                             constraint_state.jac_dofs_idx,
@@ -389,14 +389,7 @@ def func_noslip_batch(
                                 constraint_state.efc_force[j_efc, i_b] = mid + y
                                 constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                         cost_change = func_cost_change(
-                            i_b=i_b,
-                            Ac=Ac,
-                            force=constraint_state.efc_force,
-                            force_start=j_efc,
-                            old_force=old_force,
-                            res=res,
-                            dim=2,
-                            eps=EPS,
+                            i_b, Ac, constraint_state.efc_force, j_efc, old_force, res, 2, EPS
                         )
 
                         improvement -= cost_change
@@ -414,8 +407,8 @@ def func_noslip_batch(
 def func_dual_finish_batch(
     i_b,
     i_island,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -424,7 +417,7 @@ def func_dual_finish_batch(
     The refresh recomputes qfrc_constraint = J^T f and qacc = acc_smooth + M^{-1} J^T f exactly from the swept
     forces; the remaining work is copying them into the per-dof state.
     """
-    func_refresh_qacc_batch(i_b, i_island, dyn_state, rigid_info, constraint_state, rigid_config)
+    func_refresh_qacc_batch(i_b, i_island, rigid_info, dyn_state, constraint_state, rigid_config)
 
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     dof_start = gs.qd_int(0)
@@ -443,9 +436,9 @@ def func_dual_finish_batch(
 
 @qd.kernel(fastcache=True)
 def kernel_noslip(
-    collider_state: array_class.ColliderState,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -472,14 +465,14 @@ def kernel_noslip(
                     run_island = not constraint_state.island.is_hibernated[i_island, i_b]
                 if run_island:
                     func_noslip_batch(
-                        i_b, i_island, collider_state, dyn_state, constraint_state, rigid_info, rigid_config
+                        i_b, i_island, rigid_info, dyn_state, collider_state, constraint_state, rigid_config
                     )
-                    func_dual_finish_batch(i_b, i_island, dyn_state, rigid_info, constraint_state, rigid_config)
+                    func_dual_finish_batch(i_b, i_island, rigid_info, dyn_state, constraint_state, rigid_config)
     else:
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
-            func_noslip_batch(i_b, 0, collider_state, dyn_state, constraint_state, rigid_info, rigid_config)
-            func_dual_finish_batch(i_b, 0, dyn_state, rigid_info, constraint_state, rigid_config)
+            func_noslip_batch(i_b, 0, rigid_info, dyn_state, collider_state, constraint_state, rigid_config)
+            func_dual_finish_batch(i_b, 0, rigid_info, dyn_state, constraint_state, rigid_config)
 
 
 @qd.func

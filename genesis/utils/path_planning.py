@@ -184,11 +184,11 @@ class PathPlanner(ABC):
             self._kernel_check_collision(
                 ignore_geom_pairs,
                 envs_idx,
-                is_plan_with_obj=is_plan_with_obj,
-                obj_geom_start=obj_geom_start,
-                obj_geom_end=obj_geom_end,
-                out=out,
-                collider_state=self._solver.collider._collider_state,
+                is_plan_with_obj,
+                obj_geom_start,
+                obj_geom_end,
+                out,
+                self._solver.collider._collider_state,
             )
         return out
 
@@ -207,24 +207,19 @@ class PathPlanner(ABC):
             i_b = envs_idx[i_b_]
 
             collision_detected = self._func_check_collision(
-                collider_state,
-                ignore_geom_pairs,
-                i_b,
-                is_plan_with_obj=is_plan_with_obj,
-                obj_geom_start=obj_geom_start,
-                obj_geom_end=obj_geom_end,
+                i_b, ignore_geom_pairs, is_plan_with_obj, obj_geom_start, obj_geom_end, collider_state
             )
             out[i_b_] = out[i_b_] or qd.cast(collision_detected, gs.qd_bool)
 
     @qd.func
     def _func_check_collision(
         self,
-        collider_state: array_class.ColliderState,
-        ignore_geom_pairs: qd.types.ndarray(),
         i_b: qd.i32,
-        is_plan_with_obj: qd.i32 = False,
-        obj_geom_start: qd.i32 = -1,
-        obj_geom_end: qd.i32 = -1,
+        ignore_geom_pairs: qd.types.ndarray(),
+        is_plan_with_obj: qd.i32,
+        obj_geom_start: qd.i32,
+        obj_geom_end: qd.i32,
+        collider_state: array_class.ColliderState,
     ) -> qd.i32:
         is_collision_detected = qd.cast(False, gs.qd_int)
         for i_c in range(collider_state.n_contacts[i_b]):
@@ -355,9 +350,9 @@ class RRT(PathPlanner):
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
-        dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
         rigid_info: array_class.RigidInfo,
+        dyn_state: array_class.DynState,
     ):
         """
         Step 1 includes:
@@ -413,20 +408,14 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
-                        dyn_state,
                         dyn_info,
                         rigid_info,
+                        dyn_state,
                         self._solver._rigid_config,
-                        is_backward=False,
+                        False,
                     )
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
-                        i_b,
-                        dyn_info,
-                        dyn_state,
-                        rigid_info,
-                        self._solver._rigid_config,
-                        force_update_fixed_geoms=False,
-                        is_backward=False,
+                        i_b, dyn_info, rigid_info, dyn_state, self._solver._rigid_config, False, False
                     )
 
     @qd.kernel
@@ -453,7 +442,7 @@ class RRT(PathPlanner):
                 is_collision_detected = qd.cast(False, gs.qd_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
-                        collider_state, ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
+                        i_b, ignore_geom_pairs, is_plan_with_obj, obj_geom_start, obj_geom_end, collider_state
                     )
                 if is_collision_detected:
                     self._rrt_tree_size[i_b] -= 1
@@ -514,24 +503,24 @@ class RRT(PathPlanner):
         for i_n in range(self._rrt_max_nodes):
             if self._rrt_is_active.to_torch().any():
                 self._kernel_rrt_step1(
-                    q_limit_lower=self._entity.q_limit[0],
-                    q_limit_upper=self._entity.q_limit[1],
-                    envs_idx=envs_idx,
-                    dyn_state=self._solver.dyn_state,
-                    dyn_info=self._solver.dyn_info,
-                    rigid_info=self._solver._rigid_info,
+                    self._entity.q_limit[0],
+                    self._entity.q_limit[1],
+                    envs_idx,
+                    self._solver.dyn_info,
+                    self._solver._rigid_info,
+                    self._solver.dyn_state,
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
                 self._solver._kernel_detect_collision()
                 self._kernel_rrt_step2(
-                    collider_state=self._solver.collider._collider_state,
-                    ignore_geom_pairs=ignore_geom_pairs,
-                    ignore_collision=ignore_collision,
-                    envs_idx=envs_idx,
-                    is_plan_with_obj=is_plan_with_obj,
-                    obj_geom_start=obj_geom_start,
-                    obj_geom_end=obj_geom_end,
+                    ignore_geom_pairs,
+                    ignore_collision,
+                    envs_idx,
+                    is_plan_with_obj,
+                    obj_geom_start,
+                    obj_geom_end,
+                    self._solver.collider._collider_state,
                 )
             else:
                 break
@@ -686,9 +675,9 @@ class RRTConnect(PathPlanner):
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
-        dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
         rigid_info: array_class.RigidInfo,
+        dyn_state: array_class.DynState,
     ):
         """
         Step 1 includes:
@@ -760,20 +749,14 @@ class RRTConnect(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
-                        dyn_state,
                         dyn_info,
                         rigid_info,
+                        dyn_state,
                         self._solver._rigid_config,
-                        is_backward=False,
+                        False,
                     )
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
-                        i_b,
-                        dyn_info,
-                        dyn_state,
-                        rigid_info,
-                        self._solver._rigid_config,
-                        force_update_fixed_geoms=False,
-                        is_backward=False,
+                        i_b, dyn_info, rigid_info, dyn_state, self._solver._rigid_config, False, False
                     )
 
     @qd.kernel
@@ -786,8 +769,8 @@ class RRTConnect(PathPlanner):
         is_plan_with_obj: qd.i32,
         obj_geom_start: qd.i32,
         obj_geom_end: qd.i32,
-        collider_state: array_class.ColliderState,
         rigid_info: array_class.RigidInfo,
+        collider_state: array_class.ColliderState,
     ):
         """
         Step 2 includes:
@@ -802,7 +785,7 @@ class RRTConnect(PathPlanner):
                 is_collision_detected = qd.cast(False, gs.qd_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
-                        collider_state, ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
+                        i_b, ignore_geom_pairs, is_plan_with_obj, obj_geom_start, obj_geom_end, collider_state
                     )
                 if is_collision_detected:
                     self._rrt_tree_size[i_b] -= 1
@@ -878,28 +861,28 @@ class RRTConnect(PathPlanner):
         forward_pass = True
         for _ in range(self._rrt_max_nodes):
             self._kernel_rrt_connect_step1(
-                qpos=self._solver.qpos,
-                forward_pass=forward_pass,
-                q_limit_lower=self._entity.q_limit[0],
-                q_limit_upper=self._entity.q_limit[1],
-                envs_idx=envs_idx,
-                dyn_state=self._solver.dyn_state,
-                dyn_info=self._solver.dyn_info,
-                rigid_info=self._solver._rigid_info,
+                self._solver.qpos,
+                forward_pass,
+                self._entity.q_limit[0],
+                self._entity.q_limit[1],
+                envs_idx,
+                self._solver.dyn_info,
+                self._solver._rigid_info,
+                self._solver.dyn_state,
             )
             if is_plan_with_obj:
                 self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
             self._solver._kernel_detect_collision()
             self._kernel_rrt_connect_step2(
-                forward_pass=forward_pass,
-                ignore_geom_pairs=ignore_geom_pairs,
-                ignore_collision=ignore_collision,
-                envs_idx=envs_idx,
-                is_plan_with_obj=is_plan_with_obj,
-                obj_geom_start=obj_geom_start,
-                obj_geom_end=obj_geom_end,
-                collider_state=self._solver.collider._collider_state,
-                rigid_info=self._solver._rigid_info,
+                forward_pass,
+                ignore_geom_pairs,
+                ignore_collision,
+                envs_idx,
+                is_plan_with_obj,
+                obj_geom_start,
+                obj_geom_end,
+                self._solver._rigid_info,
+                self._solver.collider._collider_state,
             )
             forward_pass = not forward_pass
 

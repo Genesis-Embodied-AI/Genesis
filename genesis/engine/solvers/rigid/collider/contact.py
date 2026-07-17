@@ -158,8 +158,8 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
 @qd.kernel(fastcache=True)
 def collider_kernel_reset(
     envs_idx: qd.types.ndarray(),
-    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
+    rigid_config: qd.template(),
     cache_only: qd.template(),
 ):
     max_possible_pairs = collider_state.contact_cache.normal.shape[0]
@@ -179,10 +179,10 @@ def collider_kernel_reset(
 @qd.func
 def func_collider_clear_env(
     i_b,
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    rigid_config: qd.template(),
 ):
     if qd.static(rigid_config.use_hibernation):
         collider_state.n_contacts_hibernated[i_b] = 0
@@ -238,37 +238,37 @@ def func_collider_clear_env(
 @qd.kernel(fastcache=True)
 def kernel_collider_clear(
     envs_idx: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    rigid_config: qd.template(),
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        func_collider_clear_env(i_b, dyn_state, dyn_info, rigid_config, collider_state)
+        func_collider_clear_env(i_b, dyn_info, dyn_state, collider_state, rigid_config)
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_collider_clear(
     envs_mask: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    rigid_config: qd.template(),
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_collider_clear_env(i_b, dyn_state, dyn_info, rigid_config, collider_state)
+            func_collider_clear_env(i_b, dyn_info, dyn_state, collider_state, rigid_config)
 
 
 @qd.kernel(fastcache=True)
 def collider_kernel_get_contacts(
-    is_padded: qd.template(),
     iout: qd.types.ndarray(),
     fout: qd.types.ndarray(),
-    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
+    rigid_config: qd.template(),
+    is_padded: qd.template(),
 ):
     _B = collider_state.active_buffer.shape[1]
 
@@ -308,16 +308,16 @@ def collider_kernel_get_contacts(
 def func_add_contact(
     i_ga,
     i_gb,
+    i_b,
+    i_pair,
     normal: qd.types.vector(3),
     contact_pos: qd.types.vector(3),
     penetration,
-    i_b,
-    i_pair,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     errno: qd.Tensor,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
     use_atomic: qd.template() = False,
 ):
     i_c = 0
@@ -353,16 +353,16 @@ def func_add_contact(
 def func_set_contact(
     i_ga,
     i_gb,
-    normal: qd.types.vector(3),
-    contact_pos: qd.types.vector(3),
-    penetration,
     i_b,
     i_c,
     i_pair,
-    dyn_state: array_class.DynState,
+    normal: qd.types.vector(3),
+    contact_pos: qd.types.vector(3),
+    penetration,
     dyn_info: array_class.DynInfo,
-    collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
 ):
     """
     Set the contact data for the contact [i_c]. This is used for the backward pass, which parallelizes over the entire
@@ -392,9 +392,9 @@ def func_add_diff_contact_input(
     i_gb,
     i_b,
     i_d,
-    gjk_state: array_class.GJKState,
-    collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
 ):
     i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_candidate_contacts[None]:
@@ -416,7 +416,7 @@ def func_add_diff_contact_input(
 
 
 @qd.func
-def func_compute_geom_rbound(i_g, dyn_info: array_class.DynInfo, geoms_init_AABB: array_class.GeomsInitAABB):
+def func_compute_geom_rbound(i_g, geoms_init_AABB: array_class.GeomsInitAABB, dyn_info: array_class.DynInfo):
     """Compute the bounding sphere radius for a geom, matching MuJoCo's geom_rbound."""
     geom_type = dyn_info.geoms.type[i_g]
     rbound = gs.qd_float(0.0)
@@ -440,7 +440,7 @@ def func_compute_geom_rbound(i_g, dyn_info: array_class.DynInfo, geoms_init_AABB
 
 
 @qd.func
-def func_compute_geom_pair_scale(i_ga, i_gb, dyn_info: array_class.DynInfo, geoms_init_AABB: array_class.GeomsInitAABB):
+def func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB: array_class.GeomsInitAABB, dyn_info: array_class.DynInfo):
     # Intrinsic length scale of a geom pair: half the smaller geom's world-aligned bounding-box diagonal. The
     # original (rest-pose) AABB is used so the scale is a constant independent of the current orientation, which
     # makes sense since the size of the geometries is an intrinsic property. Multiply by a relative tolerance to
@@ -456,12 +456,12 @@ def func_compute_geom_pair_scale(i_ga, i_gb, dyn_info: array_class.DynInfo, geom
 
 @qd.func
 def func_compute_geom_pair_scale_mj(
-    i_ga, i_gb, dyn_info: array_class.DynInfo, geoms_init_AABB: array_class.GeomsInitAABB
+    i_ga, i_gb, geoms_init_AABB: array_class.GeomsInitAABB, dyn_info: array_class.DynInfo
 ):
     """Geom-pair length scale matching MuJoCo's formula: min(rbound_g1, rbound_g2). Multiply by a relative tolerance
     to recover MuJoCo's absolute tolerance."""
-    rbound_a = func_compute_geom_rbound(i_ga, dyn_info, geoms_init_AABB)
-    rbound_b = func_compute_geom_rbound(i_gb, dyn_info, geoms_init_AABB)
+    rbound_a = func_compute_geom_rbound(i_ga, geoms_init_AABB, dyn_info)
+    rbound_b = func_compute_geom_rbound(i_gb, geoms_init_AABB, dyn_info)
     return qd.min(rbound_a, rbound_b)
 
 
@@ -469,12 +469,12 @@ def func_compute_geom_pair_scale_mj(
 def func_contact_orthogonals(
     i_ga,
     i_gb,
-    normal: qd.types.vector(3),
     i_b,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
+    normal: qd.types.vector(3),
     geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -545,12 +545,12 @@ def func_rotate_frame(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts(
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
+    errno: qd.Tensor,
     rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    collider_state: array_class.ColliderState,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     """Clamp + (optional) link-pair pruning, in one per-env loop pass.
 
@@ -973,10 +973,10 @@ def func_clamp_prune_contacts(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts_coop(
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    rigid_info: array_class.RigidInfo,
     errno: qd.Tensor,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    collider_state: array_class.ColliderState,
 ):
     """GPU-only cooperative warp-per-env variant of func_clamp_prune_contacts.
 

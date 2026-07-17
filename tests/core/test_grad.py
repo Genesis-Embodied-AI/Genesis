@@ -340,20 +340,20 @@ def test_diff_solver(monkeypatch):
     # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
     def constraint_solver_resolve():
         func_solve_init(
-            dyn_info=rigid_solver.dyn_info,
-            dyn_state=rigid_solver.dyn_state,
-            constraint_state=constraint_solver.constraint_state,
-            rigid_info=rigid_solver._rigid_info,
-            rigid_config=rigid_solver._rigid_config,
-            is_decomposed=False,
+            rigid_solver.dyn_info,
+            rigid_solver._rigid_info,
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver._rigid_config,
+            False,
         )
         func_solve_body(
-            dyn_info=rigid_solver.dyn_info,
-            dyn_state=rigid_solver.dyn_state,
-            constraint_state=constraint_solver.constraint_state,
-            rigid_info=rigid_solver._rigid_info,
-            rigid_config=rigid_solver._rigid_config,
-            _n_iterations=constraint_solver._n_iterations,
+            constraint_solver._n_iterations,
+            rigid_solver.dyn_info,
+            rigid_solver._rigid_info,
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver._rigid_config,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
@@ -361,14 +361,14 @@ def test_diff_solver(monkeypatch):
     # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
     kernel_step_1(
-        dyn_state=rigid_solver.dyn_state,
-        dyn_info=rigid_solver.dyn_info,
-        rigid_info=rigid_solver._rigid_info,
-        rigid_config=rigid_solver._rigid_config,
-        constraint_state=constraint_solver.constraint_state,
-        is_forward_pos_updated=True,
-        is_forward_vel_updated=True,
-        is_backward=False,
+        rigid_solver.dyn_info,
+        rigid_solver._rigid_info,
+        rigid_solver.dyn_state,
+        constraint_solver.constraint_state,
+        rigid_solver._rigid_config,
+        True,
+        True,
+        False,
     )
     constraint_solver.add_equality_constraints()
     rigid_solver.collider.detection()

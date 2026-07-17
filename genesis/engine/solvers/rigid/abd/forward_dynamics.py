@@ -24,8 +24,8 @@ from .misc import func_wakeup_island, func_check_index_range, func_add_safe_back
 
 @qd.kernel
 def update_qacc_from_qvel_delta(
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -49,8 +49,8 @@ def update_qacc_from_qvel_delta(
 
 @qd.kernel
 def update_qvel(
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -74,135 +74,67 @@ def update_qvel(
 
 @qd.kernel(fastcache=True)
 def kernel_compute_mass_matrix(
-    # Quadrants variables
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     decompose: qd.template(),
 ):
-    func_compute_mass_matrix(
-        implicit_damping=False,
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=False,
-    )
+    func_compute_mass_matrix(dyn_info, rigid_info, dyn_state, rigid_config, False, False)
     if decompose:
-        func_factor_mass(
-            implicit_damping=False,
-            dyn_info=dyn_info,
-            dyn_state=dyn_state,
-            rigid_info=rigid_info,
-            rigid_config=rigid_config,
-            is_backward=False,
-        )
+        func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, False, False)
 
 
 # @@@@@@@@@ Composer starts here
 # decomposed kernels should happen in the block below. This block will be handled by composer and composed into a single kernel
 @qd.func
 def func_forward_dynamics(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
     func_compute_mass_matrix(
-        implicit_damping=qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
+        dyn_info,
+        rigid_info,
+        dyn_state,
+        rigid_config,
+        qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
+        is_backward,
     )
-    func_factor_mass(
-        implicit_damping=False,
-        dyn_info=dyn_info,
-        dyn_state=dyn_state,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_torque_and_passive_force(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        constraint_state=constraint_state,
-        is_backward=is_backward,
-    )
-    func_update_acc(
-        update_cacc=False,
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_update_force(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_bias_force(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_compute_qacc(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
+    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_torque_and_passive_force(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_backward)
+    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_update_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+    func_bias_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+    func_compute_qacc(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
 
 
 @qd.kernel(fastcache=True)
 def kernel_forward_dynamics(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
 ):
-    func_forward_dynamics(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        constraint_state=constraint_state,
-        is_backward=False,
-    )
+    func_forward_dynamics(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, False)
 
 
 @qd.kernel(fastcache=True)
 def kernel_update_acc(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
-    func_update_acc(
-        update_cacc=True,
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=False,
-    )
+    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, True, False)
 
 
 @qd.func
-def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksState):
+def func_vel_at_point(i_b, pos_world, link_idx, links_state: array_class.LinksState):
     """
     Velocity of a certain point on a rigid link.
     """
@@ -213,12 +145,11 @@ def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksSt
 
 @qd.func
 def func_compute_mass_matrix(
-    implicit_damping: qd.template(),
-    # Quadrants variables
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    implicit_damping: qd.template(),
     is_backward: qd.template(),
 ):
     # Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
@@ -403,11 +334,11 @@ def func_compute_mass_matrix(
 
 @qd.func
 def func_factor_mass_tiled(
-    implicit_damping: qd.template(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    implicit_damping: qd.template(),
     TileCls: qd.template(),
 ):
     """Register-streaming tiled per-entity mass factor for the >shared-cap branch (GPU forward only).
@@ -534,7 +465,7 @@ def func_factor_mass_tiled(
                 n_strict_lower = n_block_dofs * (n_block_dofs - 1) // 2
                 i_pair = tid
                 while i_pair < n_strict_lower:
-                    i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
+                    i_d_, j_d_ = linear_to_lower_tri(i_pair, True)
                     ri_ = n_block_dofs - 1 - i_d_
                     rj_ = n_block_dofs - 1 - j_d_  # i_d_ > j_d_  =>  rj_ > ri_  (a lower G_rev entry)
                     g_num = rigid_info.mass_mat_tiled_scratch[i_b, block_start + rj_, block_start + ri_]
@@ -555,11 +486,11 @@ def func_factor_mass_tiled(
 
 @qd.func
 def func_factor_mass(
-    implicit_damping: qd.template(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    implicit_damping: qd.template(),
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
@@ -573,11 +504,11 @@ def func_factor_mass(
             # Hessian). Implies enable_tiled_cholesky_mass_matrix and not mass_matrix_fits_shared; see
             # func_factor_mass_tiled. Replaces the cooperative LDL^T in the elif below.
             func_factor_mass_tiled(
-                implicit_damping,
                 dyn_info,
-                dyn_state,
                 rigid_info,
+                dyn_state,
                 rigid_config,
+                implicit_damping,
                 qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
             )
         elif qd.static(rigid_config.enable_tiled_cholesky_mass_matrix and not rigid_config.mass_matrix_fits_shared):
@@ -809,7 +740,7 @@ def func_factor_mass(
                             i_pair = tid
                             n_strict_lower_tri = n_block_dofs * (n_block_dofs - 1) // 2
                             while i_pair < n_strict_lower_tri:
-                                i_d_, j_d_ = linear_to_lower_tri(i_pair, strict=True)
+                                i_d_, j_d_ = linear_to_lower_tri(i_pair, True)
                                 rigid_info.mass_mat_L[block_start + i_d_, block_start + j_d_, i_b] = mass_mat[
                                     i_d_, j_d_
                                 ]
@@ -993,11 +924,11 @@ def func_solve_mass(
 
 @qd.func
 def func_torque_and_passive_force(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
@@ -1104,9 +1035,9 @@ def func_torque_and_passive_force(
                         func_wakeup_island(
                             constraint_state.island.links_island_idx[i_l, i_b],
                             i_b,
-                            dyn_state,
                             dyn_info,
                             rigid_info,
+                            dyn_state,
                             constraint_state,
                             rigid_config,
                         )
@@ -1162,11 +1093,11 @@ def func_torque_and_passive_force(
 
 @qd.func
 def func_update_acc(
-    update_cacc: qd.template(),
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    update_cacc: qd.template(),
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
@@ -1227,9 +1158,9 @@ def func_update_acc(
 
 @qd.func
 def func_update_force(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -1332,9 +1263,9 @@ def func_actuation(self):
 
 @qd.func
 def func_bias_force(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -1370,39 +1301,33 @@ def func_bias_force(
 
 @qd.kernel
 def kernel_compute_qacc(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
-    func_compute_qacc(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
+    func_compute_qacc(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
 
 
 @qd.func
 def func_compute_qacc(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
 
     func_solve_mass(
-        vec=dyn_state.dofs.force,
-        out=dyn_state.dofs.acc_smooth,
-        out_bw=dyn_state.dofs.acc_smooth_bw,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
+        dyn_state.dofs.force,
+        dyn_state.dofs.acc_smooth,
+        dyn_state.dofs.acc_smooth_bw,
+        dyn_info,
+        rigid_info,
+        rigid_config,
+        is_backward,
     )
 
     # Assume this is the outermost loop
@@ -1425,9 +1350,9 @@ def func_compute_qacc(
 
 @qd.func
 def func_integrate(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -1530,66 +1455,33 @@ def func_integrate(
 
 @qd.kernel
 def kernel_forward_dynamics_without_qacc(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
     func_compute_mass_matrix(
-        implicit_damping=qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
+        dyn_info,
+        rigid_info,
+        dyn_state,
+        rigid_config,
+        qd.static(rigid_config.integrator == gs.integrator.approximate_implicitfast),
+        is_backward,
     )
-    func_factor_mass(
-        implicit_damping=False,
-        dyn_info=dyn_info,
-        dyn_state=dyn_state,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_torque_and_passive_force(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        constraint_state=constraint_state,
-        is_backward=is_backward,
-    )
-    func_update_acc(
-        update_cacc=False,
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_update_force(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
-    func_bias_force(
-        dyn_state=dyn_state,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
+    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_torque_and_passive_force(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_backward)
+    func_update_acc(dyn_info, rigid_info, dyn_state, rigid_config, False, is_backward)
+    func_update_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+    func_bias_force(dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
 
 
 @qd.func
 def func_implicit_damping(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -1625,22 +1517,9 @@ def func_implicit_damping(
                     ):
                         rigid_info.mass_mat_mask[i_e, i_b] = True
 
-    func_factor_mass(
-        implicit_damping=True,
-        dyn_info=dyn_info,
-        dyn_state=dyn_state,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
-    )
+    func_factor_mass(dyn_info, rigid_info, dyn_state, rigid_config, True, is_backward)
     func_solve_mass(
-        vec=dyn_state.dofs.force,
-        out=dyn_state.dofs.acc,
-        out_bw=dyn_state.dofs.acc_bw,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=is_backward,
+        dyn_state.dofs.force, dyn_state.dofs.acc, dyn_state.dofs.acc_bw, dyn_info, rigid_info, rigid_config, is_backward
     )
 
     # Disable pre-computed factorization mask right away

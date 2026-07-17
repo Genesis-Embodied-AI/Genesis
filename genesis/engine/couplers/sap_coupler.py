@@ -586,9 +586,7 @@ class SAPCoupler(RBC):
 
         if self.rigid_solver.is_active:
             kernel_update_all_verts(
-                dyn_state=self.rigid_solver.dyn_state,
-                dyn_info=self.rigid_solver.dyn_info,
-                rigid_config=self.rigid_solver._rigid_config,
+                self.rigid_solver.dyn_info, self.rigid_solver.dyn_state, self.rigid_solver._rigid_config
             )
 
         if self._rigid_compliant:

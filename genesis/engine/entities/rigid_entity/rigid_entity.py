@@ -2785,15 +2785,13 @@ class RigidEntity(KinematicEntity):
 
         if local_point is None:
             sol = self._solver
-            self._kernel_get_jacobian_zero(tgt_link_idx=link.idx, dyn_info=sol.dyn_info, dyn_state=sol.dyn_state)
+            self._kernel_get_jacobian_zero(link.idx, sol.dyn_info, sol.dyn_state)
         else:
             p_local = torch.as_tensor(local_point, dtype=gs.tc_float, device=gs.device)
             if p_local.shape != (3,):
                 gs.raise_exception("Must be a vector of length 3")
             sol = self._solver
-            self._kernel_get_jacobian(
-                tgt_link_idx=link.idx, p_local=p_local, dyn_info=sol.dyn_info, dyn_state=sol.dyn_state
-            )
+            self._kernel_get_jacobian(link.idx, p_local, sol.dyn_info, sol.dyn_state)
 
         jacobian = qd_to_torch(self._jacobian, transpose=True, copy=True)
         if self._solver.n_envs == 0:
@@ -2803,16 +2801,10 @@ class RigidEntity(KinematicEntity):
 
     @qd.func
     def _impl_get_jacobian(
-        self, tgt_link_idx, i_b, p_vec, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState
+        self, i_b, tgt_link_idx, p_vec, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState
     ):
         self._func_get_jacobian(
-            tgt_link_idx=tgt_link_idx,
-            i_b=i_b,
-            p_local=p_vec,
-            pos_mask=qd.Vector.one(gs.qd_int, 3),
-            rot_mask=qd.Vector.one(gs.qd_int, 3),
-            dyn_info=dyn_info,
-            dyn_state=dyn_state,
+            i_b, tgt_link_idx, p_vec, qd.Vector.one(gs.qd_int, 3), qd.Vector.one(gs.qd_int, 3), dyn_info, dyn_state
         )
 
     @qd.kernel
@@ -2825,28 +2817,20 @@ class RigidEntity(KinematicEntity):
     ):
         p_vec = qd.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.qd_float)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(
-                tgt_link_idx=tgt_link_idx, i_b=i_b, p_vec=p_vec, dyn_info=dyn_info, dyn_state=dyn_state
-            )
+            self._impl_get_jacobian(i_b, tgt_link_idx, p_vec, dyn_info, dyn_state)
 
     @qd.kernel
     def _kernel_get_jacobian_zero(
         self, tgt_link_idx: qd.i32, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState
     ):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(
-                tgt_link_idx=tgt_link_idx,
-                i_b=i_b,
-                p_vec=qd.Vector.zero(gs.qd_float, 3),
-                dyn_info=dyn_info,
-                dyn_state=dyn_state,
-            )
+            self._impl_get_jacobian(i_b, tgt_link_idx, qd.Vector.zero(gs.qd_float, 3), dyn_info, dyn_state)
 
     @qd.func
     def _func_get_jacobian(
         self,
-        tgt_link_idx,
         i_b,
+        tgt_link_idx,
         p_local,
         pos_mask,
         rot_mask,
@@ -3209,9 +3193,9 @@ class RigidEntity(KinematicEntity):
             max_step_size,
             respect_joint_limit,
             envs_idx,
-            self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver._rigid_info,
+            self._solver.dyn_state,
             self._solver._rigid_config,
         )
 
@@ -3270,9 +3254,9 @@ class RigidEntity(KinematicEntity):
             self._get_global_idx(qs_idx_local, self.n_qs, self._q_start),
             links_idx,
             envs_idx,
-            self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver._rigid_info,
+            self._solver.dyn_state,
             self._solver._rigid_config,
         )
 
@@ -3290,9 +3274,9 @@ class RigidEntity(KinematicEntity):
         qs_idx: qd.types.ndarray(),
         links_idx: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
-        dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
         rigid_info: array_class.RigidInfo,
+        dyn_state: array_class.DynState,
         rigid_config: qd.template(),
     ):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -3307,7 +3291,7 @@ class RigidEntity(KinematicEntity):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-                self._idx_in_solver, envs_idx[i_b_], dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+                self._idx_in_solver, envs_idx[i_b_], dyn_info, rigid_info, dyn_state, rigid_config, False
             )
 
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
@@ -3326,7 +3310,7 @@ class RigidEntity(KinematicEntity):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-                self._idx_in_solver, envs_idx[i_b_], dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+                self._idx_in_solver, envs_idx[i_b_], dyn_info, rigid_info, dyn_state, rigid_config, False
             )
 
     # ------------------------------------------------------------------------------------
@@ -4211,11 +4195,11 @@ class RigidEntity(KinematicEntity):
             from genesis.engine.solvers.rigid.abd.forward_dynamics import kernel_compute_mass_matrix
 
             kernel_compute_mass_matrix(
-                dyn_state=self._solver.dyn_state,
-                dyn_info=self._solver.dyn_info,
-                rigid_info=self._solver._rigid_info,
-                rigid_config=self._solver._rigid_config,
-                decompose=False,
+                self._solver.dyn_info,
+                self._solver._rigid_info,
+                self._solver.dyn_state,
+                self._solver._rigid_config,
+                False,
             )
         mass_mat = self.get_mass_mat(envs_idx=envs_idx)
         dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)

@@ -19,13 +19,13 @@ from .misc import func_apply_link_external_force, func_apply_link_external_torqu
 
 @qd.kernel(fastcache=True)
 def kernel_get_kinematic_state(
+    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    i_pos_shift: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_qs = qpos.shape[1]
@@ -52,14 +52,14 @@ def kernel_get_kinematic_state(
 
 @qd.kernel(fastcache=True)
 def kernel_set_kinematic_state(
+    i_pos_shift: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    i_pos_shift: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_qs = qpos.shape[1]
@@ -86,16 +86,16 @@ def kernel_set_kinematic_state(
 
 @qd.kernel(fastcache=True)
 def kernel_get_state(
+    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
     acc: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    i_pos_shift: qd.types.ndarray(),
     mass_shift: qd.types.ndarray(),
     friction_ratio: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_qs = qpos.shape[1]
@@ -129,17 +129,17 @@ def kernel_get_state(
 
 @qd.kernel(fastcache=True)
 def kernel_set_state(
+    i_pos_shift: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     dofs_acc: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    i_pos_shift: qd.types.ndarray(),
     mass_shift: qd.types.ndarray(),
     friction_ratio: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_qs = qpos.shape[1]
@@ -181,8 +181,8 @@ def kernel_get_state_grad(
     vel_grad: qd.types.ndarray(),
     links_pos_grad: qd.types.ndarray(),
     links_quat_grad: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_qs = qpos_grad.shape[1]
@@ -212,8 +212,8 @@ def kernel_set_links_pos(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -236,8 +236,8 @@ def kernel_wake_up_entities_by_links(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -253,9 +253,9 @@ def kernel_wake_up_entities_by_links(
             func_wakeup_island(
                 constraint_state.island.links_island_idx[i_l, i_b],
                 i_b,
-                dyn_state,
                 dyn_info,
                 rigid_info,
+                dyn_state,
                 constraint_state,
                 rigid_config,
             )
@@ -266,8 +266,8 @@ def kernel_wake_up_entities_by_dofs(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -283,9 +283,9 @@ def kernel_wake_up_entities_by_dofs(
             func_wakeup_island(
                 constraint_state.island.dofs_island_idx[i_d, i_b],
                 i_b,
-                dyn_state,
                 dyn_info,
                 rigid_info,
+                dyn_state,
                 constraint_state,
                 rigid_config,
             )
@@ -296,8 +296,8 @@ def kernel_wake_up_entities_by_qs(
     qs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -315,9 +315,9 @@ def kernel_wake_up_entities_by_qs(
                     func_wakeup_island(
                         constraint_state.island.links_island_idx[i_l, i_b],
                         i_b,
-                        dyn_state,
                         dyn_info,
                         rigid_info,
+                        dyn_state,
                         constraint_state,
                         rigid_config,
                     )
@@ -325,10 +325,10 @@ def kernel_wake_up_entities_by_qs(
 
 @qd.kernel(fastcache=True)
 def kernel_wake_up_entities_on_new_contact(
-    collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
@@ -355,9 +355,9 @@ def kernel_wake_up_entities_on_new_contact(
                 func_wakeup_island(
                     constraint_state.island.links_island_idx[i_la, i_b],
                     i_b,
-                    dyn_state,
                     dyn_info,
                     rigid_info,
+                    dyn_state,
                     constraint_state,
                     rigid_config,
                 )
@@ -365,9 +365,9 @@ def kernel_wake_up_entities_on_new_contact(
                 func_wakeup_island(
                     constraint_state.island.links_island_idx[i_lb, i_b],
                     i_b,
-                    dyn_state,
                     dyn_info,
                     rigid_info,
+                    dyn_state,
                     constraint_state,
                     rigid_config,
                 )
@@ -379,8 +379,8 @@ def kernel_set_links_pos_grad(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -406,8 +406,8 @@ def kernel_set_links_quat(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -431,8 +431,8 @@ def kernel_set_links_quat_grad(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -577,12 +577,12 @@ def kernel_set_global_sol_params(
 
 @qd.kernel(fastcache=True)
 def kernel_set_sol_params(
-    constraint_type: qd.template(),
     sol_params: qd.types.ndarray(),
     inputs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
+    constraint_type: qd.template(),
 ):
     if qd.static(constraint_type == 0):  # geometries
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
@@ -836,9 +836,9 @@ def kernel_set_dofs_position(
     position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_entities = dyn_info.entities.link_start.shape[0]
@@ -975,9 +975,9 @@ def kernel_get_links_vel(
     tensor: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    ref: qd.template(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
+    ref: qd.template(),
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
@@ -1031,8 +1031,8 @@ def kernel_get_dofs_control_force(
     tensor: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     # we need to compute control force here because this won't be computed until the next actual simulation step
@@ -1087,8 +1087,8 @@ def kernel_set_drone_rpm(
             if invert:
                 torque = -torque
 
-            func_apply_link_external_force(force, i_l, i_b, 1, 1, dyn_state)
-            func_apply_link_external_torque(torque, i_l, i_b, 1, 1, dyn_state)
+            func_apply_link_external_force(force, i_l, i_b, dyn_state, 1, 1)
+            func_apply_link_external_torque(torque, i_l, i_b, dyn_state, 1, 1)
 
 
 @qd.kernel(fastcache=True)
@@ -1096,8 +1096,8 @@ def kernel_update_drone_propeller_vgeoms(
     propellers_vgeom_idxs: qd.types.ndarray(),
     propellers_revs: qd.types.ndarray(),
     propellers_spin: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     """

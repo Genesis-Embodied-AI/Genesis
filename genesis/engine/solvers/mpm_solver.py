@@ -438,14 +438,14 @@ class MPMSolver(Solver):
                             if geoms_info.needs_coup[i_g]:
                                 sdf_normal_particle = self._coupler.mpm_rigid_normal[i_p, i_g, i_b]
                                 sdf_normal_cell = sdf.sdf_func_normal_world(
-                                    geoms_state=geoms_state,
-                                    geoms_info=geoms_info,
-                                    rigid_info=rigid_info,
-                                    collider_static_config=collider_static_config,
-                                    sdf_info=sdf_info,
-                                    pos_world=cell_pos,
-                                    geom_idx=i_g,
-                                    batch_idx=i_b,
+                                    cell_pos,
+                                    i_g,
+                                    i_b,
+                                    geoms_info,
+                                    rigid_info,
+                                    sdf_info,
+                                    geoms_state,
+                                    collider_static_config,
                                 )
 
                                 if sdf_normal_particle.dot(sdf_normal_cell) < 0:  # separated by geom i_g

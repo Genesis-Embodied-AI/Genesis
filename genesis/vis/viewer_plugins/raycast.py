@@ -64,12 +64,7 @@ class Raycaster:
             return
         from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs
 
-        kernel_update_verts_and_aabbs(
-            dyn_info=self.solver.dyn_info,
-            dyn_state=self.solver.dyn_state,
-            rigid_config=self.solver._rigid_config,
-            aabb_state=self.aabb,
-        )
+        kernel_update_verts_and_aabbs(self.solver.dyn_info, self.solver.dyn_state, self.aabb, self.solver._rigid_config)
         self.bvh.build()
 
     def cast(
@@ -92,17 +87,17 @@ class Raycaster:
         from genesis.utils.raycast_qd import kernel_cast_ray
 
         kernel_cast_ray(
-            self.solver.dyn_state,
-            self.solver.dyn_info,
             self.bvh.nodes,
             self.bvh.morton_codes,
             np.ascontiguousarray(ray_origin, dtype=gs.np_float),
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
             max_range,
             envs_idx if envs_idx is not None else self.envs_idx,
-            self.solver._rigid_info,
-            self.result,
             gs.EPS,
+            self.solver.dyn_info,
+            self.solver._rigid_info,
+            self.solver.dyn_state,
+            self.result,
         )
 
         # Reduce per-env hits to the closest one. Distance is +inf for envs that didn't hit, so argmin alone

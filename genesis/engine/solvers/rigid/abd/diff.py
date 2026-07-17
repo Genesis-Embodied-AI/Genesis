@@ -24,7 +24,7 @@ from .forward_kinematics import func_update_cartesian_space
 
 @qd.func
 def func_copy_next_to_curr(
-    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template(), errno: qd.Tensor
+    errno: qd.Tensor, rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
 ):
     n_qs = rigid_info.qpos.shape[0]
     n_dofs = dyn_state.dofs.vel.shape[0]
@@ -54,8 +54,8 @@ def func_copy_next_to_curr(
 @qd.func
 def func_copy_next_to_curr_grad(
     f: qd.int32,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
     rigid_config: qd.template(),
 ):
@@ -79,19 +79,19 @@ def func_copy_next_to_curr_grad(
 @qd.kernel(fastcache=True)
 def kernel_save_adjoint_cache(
     f: qd.int32,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
     rigid_config: qd.template(),
 ):
-    func_save_adjoint_cache(f, dyn_state, rigid_info, rigid_adjoint_cache, rigid_config)
+    func_save_adjoint_cache(f, rigid_info, dyn_state, rigid_adjoint_cache, rigid_config)
 
 
 @qd.func
 def func_save_adjoint_cache(
     f: qd.int32,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
     rigid_config: qd.template(),
 ):
@@ -112,8 +112,8 @@ def func_save_adjoint_cache(
 @qd.func
 def func_load_adjoint_cache(
     f: qd.int32,
-    dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
     rigid_config: qd.template(),
 ):
@@ -134,67 +134,44 @@ def func_load_adjoint_cache(
 @qd.kernel(fastcache=True)
 def kernel_prepare_backward_substep(
     f: qd.int32,
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     dyn_state_adjoint_cache: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
     rigid_config: qd.template(),
 ):
     # Load the current state from adjoint cache
-    func_load_adjoint_cache(
-        f=f,
-        dyn_state=dyn_state,
-        rigid_info=rigid_info,
-        rigid_adjoint_cache=rigid_adjoint_cache,
-        rigid_config=rigid_config,
-    )
+    func_load_adjoint_cache(f, rigid_info, dyn_state, rigid_adjoint_cache, rigid_config)
 
     # If mujoco compatibility is disabled, update the cartesian space and save the results to adjoint cache. This is
     # because the cartesian space is overwritten later by other kernels if mujoco compatibility was disabled.
     if qd.static(not rigid_config.enable_mujoco_compatibility):
-        func_update_cartesian_space(
-            dyn_state=dyn_state,
-            dyn_info=dyn_info,
-            rigid_info=rigid_info,
-            rigid_config=rigid_config,
-            force_update_fixed_geoms=False,
-            is_backward=True,
-        )
+        func_update_cartesian_space(dyn_info, rigid_info, dyn_state, rigid_config, False, True)
 
         # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
         # Save results of [update_cartesian_space] to adjoint cache
-        func_copy_cartesian_space(
-            dyn_state=dyn_state, dyn_state_adjoint_cache=dyn_state_adjoint_cache, rigid_config=rigid_config
-        )
+        func_copy_cartesian_space(dyn_state, dyn_state_adjoint_cache, rigid_config)
 
 
 @qd.kernel(fastcache=True)
 def kernel_begin_backward_substep(
     f: qd.int32,
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     dyn_state_adjoint_cache: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
     rigid_config: qd.template(),
 ) -> qd.i32:
-    is_grad_valid = func_is_grad_valid(rigid_info=rigid_info, dyn_state=dyn_state, rigid_config=rigid_config)
+    is_grad_valid = func_is_grad_valid(rigid_info, dyn_state, rigid_config)
     if is_grad_valid:
-        func_copy_next_to_curr_grad(
-            f=f,
-            dyn_state=dyn_state,
-            rigid_info=rigid_info,
-            rigid_adjoint_cache=rigid_adjoint_cache,
-            rigid_config=rigid_config,
-        )
+        func_copy_next_to_curr_grad(f, rigid_info, dyn_state, rigid_adjoint_cache, rigid_config)
 
         if not rigid_config.enable_mujoco_compatibility:
             # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
             # Save results of [update_cartesian_space] to adjoint cache
-            func_copy_cartesian_space(
-                dyn_state=dyn_state, dyn_state_adjoint_cache=dyn_state_adjoint_cache, rigid_config=rigid_config
-            )
+            func_copy_cartesian_space(dyn_state, dyn_state_adjoint_cache, rigid_config)
 
     return is_grad_valid
 
@@ -287,9 +264,9 @@ def kernel_copy_acc(
 
 @qd.func
 def func_integrate_dq_entity(
-    dq,
     i_e,
     i_b,
+    dq,
     respect_joint_limit,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,

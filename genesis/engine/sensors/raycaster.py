@@ -172,10 +172,7 @@ class RaycastContext(SharedSensorContext):
                 continue
             if entry.raycast_mask is None:
                 kernel_update_verts_and_aabbs(
-                    dyn_info=entry.solver.dyn_info,
-                    dyn_state=entry.solver.dyn_state,
-                    rigid_config=entry.solver._rigid_config,
-                    aabb_state=entry.aabb,
+                    entry.solver.dyn_info, entry.solver.dyn_state, entry.aabb, entry.solver._rigid_config
                 )
                 entry.bvh.build()
             else:
@@ -186,10 +183,7 @@ class RaycastContext(SharedSensorContext):
                 entry.solver.update_forward_pos()
                 entry.solver.update_vgeoms()
                 kernel_update_visual_aabbs(
-                    dyn_info=entry.solver.dyn_info,
-                    dyn_state=entry.solver.dyn_state,
-                    face_mask=entry.raycast_mask,
-                    aabb_state=entry.aabb,
+                    entry.raycast_mask, entry.solver.dyn_info, entry.solver.dyn_state, entry.aabb
                 )
                 entry.bvh.build()
             entry.needs_rebuild = False
@@ -408,13 +402,13 @@ class RaycasterSensor(
                 shared_metadata.sensor_return_points,
                 raw_data_T,
                 gs.EPS,
-                i > 0,
-                entry.shared_across_envs,
             )
             if entry.raycast_mask is None:
-                kernel_cast_rays(solver.dyn_state, solver.dyn_info, *args_common)
+                kernel_cast_rays(*args_common, solver.dyn_info, solver.dyn_state, i > 0, entry.shared_across_envs)
             else:
-                kernel_cast_rays_visual(solver.dyn_info, solver.dyn_state, *args_common)
+                kernel_cast_rays_visual(
+                    *args_common, solver.dyn_info, solver.dyn_state, i > 0, entry.shared_across_envs
+                )
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

@@ -178,11 +178,11 @@ def _kernel_surface_distance_probe_bvh(
     sensor_probe_start: qd.types.ndarray(),
     bvh: ChunkedBVHData,
     bvh_tri_verts: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     positions_gt: qd.types.ndarray(),
     positions_measured: qd.types.ndarray(),
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
 ):
     """
     BVH-accelerated surface-distance query.
@@ -407,11 +407,11 @@ class SurfaceDistanceProbeSensor(
             shared_metadata.sensor_probe_start,
             bvh.kernel_bvh,
             bvh.tri_verts,
-            solver.dyn_state,
             shared_metadata.nearest_positions,
             shared_metadata.nearest_positions_measured,
             current_ground_truth_data_T,
             measured_cols_b,
+            solver.dyn_state,
         )
         if ground_truth_data_timeline is not None:
             ground_truth_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)

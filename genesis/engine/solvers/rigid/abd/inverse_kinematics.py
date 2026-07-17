@@ -36,9 +36,9 @@ def kernel_rigid_entity_inverse_kinematics(
     max_step_size: qd.f32,
     respect_joint_limit: qd.i32,
     envs_idx: qd.types.ndarray(),
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -69,7 +69,7 @@ def kernel_rigid_entity_inverse_kinematics(
             for _ in range(max_solver_iters):
                 # run FK to update link states using current q
                 gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-                    rigid_entity._idx_in_solver, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+                    rigid_entity._idx_in_solver, i_b, dyn_info, rigid_info, dyn_state, rigid_config, False
                 )
                 # compute error
                 solved = True
@@ -112,13 +112,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     i_l_ee = links_idx[i_ee]
                     local_point_i = qd.Vector([local_points[i_ee, 0], local_points[i_ee, 1], local_points[i_ee, 2]])
                     rigid_entity._func_get_jacobian(
-                        tgt_link_idx=i_l_ee,
-                        i_b=i_b,
-                        p_local=local_point_i,
-                        pos_mask=pos_mask,
-                        rot_mask=rot_mask,
-                        dyn_info=dyn_info,
-                        dyn_state=dyn_state,
+                        i_b, i_l_ee, local_point_i, pos_mask, rot_mask, dyn_info, dyn_state
                     )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                     # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
@@ -175,9 +169,9 @@ def kernel_rigid_entity_inverse_kinematics(
 
                 # update q
                 gs.engine.solvers.rigid.rigid_solver.func_integrate_dq_entity(
-                    rigid_entity._IK_delta_qpos,
                     rigid_entity._idx_in_solver,
                     i_b,
+                    rigid_entity._IK_delta_qpos,
                     respect_joint_limit,
                     dyn_info,
                     rigid_info,
@@ -187,7 +181,7 @@ def kernel_rigid_entity_inverse_kinematics(
             if not solved:
                 # re-compute final error if exited not due to solved
                 gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-                    rigid_entity._idx_in_solver, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+                    rigid_entity._idx_in_solver, i_b, dyn_info, rigid_info, dyn_state, rigid_config, False
                 )
                 solved = True
                 for i_ee in range(n_links):
@@ -292,5 +286,5 @@ def kernel_rigid_entity_inverse_kinematics(
         for i_q in range(rigid_entity.n_qs):
             rigid_info.qpos[i_q + rigid_entity._q_start, i_b] = rigid_entity._IK_qpos_orig[i_q, i_b]
         gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-            rigid_entity._idx_in_solver, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+            rigid_entity._idx_in_solver, i_b, dyn_info, rigid_info, dyn_state, rigid_config, False
         )

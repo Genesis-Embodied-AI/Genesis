@@ -6,11 +6,11 @@ import genesis.utils.array_class as array_class
 
 @qd.func
 def func_matvec_Ap(
-    dyn_info: array_class.DynInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
     i_b,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_config: qd.template(),
 ):
     """
     Compute Ap = (M + J^T * diag(D) * J) * p on the current active set, which is used for solving the adjoint u.
@@ -110,13 +110,7 @@ def kernel_solve_adjoint_u(
         for i_b in range(_B):
             # Compute Ap for the current search direction
             for it in range(rigid_config.iterations):
-                func_matvec_Ap(
-                    dyn_info=dyn_info,
-                    rigid_info=rigid_info,
-                    constraint_state=constraint_state,
-                    rigid_config=rigid_config,
-                    i_b=i_b,
-                )
+                func_matvec_Ap(i_b, dyn_info, rigid_info, constraint_state, rigid_config)
 
                 # alpha = (r,r)/(p,Hp)
                 num = gs.qd_float(0.0)

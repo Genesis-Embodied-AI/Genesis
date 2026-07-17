@@ -55,7 +55,8 @@
 
 - **New code:** Free function `@qd.kernel`, no `@qd.data_oriented`. Use `V_ANNOTATION` from `genesis.utils.array_class` for type-polymorphic parameters.
 - **FEM solver:** Follows old `@qd.data_oriented` method pattern. Any kernel added to FEM solver must stay consistent with this.
-- **No keyword arguments** when calling kernels from Python (slow). Use positional args.
+- **No keyword arguments anywhere in rigid kernel and func calls.** Every call is positional, relying on the canonical parameter order below (keyword arguments on kernel calls are also slow). One exception: a func call that passes a struct member alongside its parent struct stays keyword-only, because quadrants' positional func-argument expansion duplicates the member.
+- **Canonical parameter order, for every kernel and func:** loop indices first, then the kernel/func-specific tensors and scalars, then all info structs, then all state structs, then the static configs, and the kernel/func-specific static compilation flags (`qd.template()` booleans) at the very end. Within the info/state/config groups the component order is fixed - dyn, rigid, collider (mpr, gjk, support_field, sdf), constraint - with leaf structs at their aggregate's slot in its declared field order. Call sites pass arguments in signature order.
 - **Rigid solver** is the reference implementation for kernel and code quality standards.
 
 ## API Design

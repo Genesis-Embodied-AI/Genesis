@@ -96,7 +96,7 @@ def func_triangle_affine_coords(point, tri_v1, tri_v2, tri_v3):
 
 
 @qd.func
-def func_point_triangle_intersection(collider_info: array_class.ColliderInfo, point, tri_v1, tri_v2, tri_v3):
+def func_point_triangle_intersection(point, tri_v1, tri_v2, tri_v3, collider_info: array_class.ColliderInfo):
     """
     Check if the point is inside the triangle.
     """
@@ -155,7 +155,7 @@ def func_origin_tetra_intersection(tet_v1, tet_v2, tet_v3, tet_v4):
 
 
 @qd.func
-def func_project_origin_to_plane(collider_info: array_class.ColliderInfo, v1, v2, v3):
+def func_project_origin_to_plane(v1, v2, v3, collider_info: array_class.ColliderInfo):
     """
     Project the origin onto the plane defined by the simplex vertices.
     """

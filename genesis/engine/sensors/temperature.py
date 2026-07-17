@@ -131,7 +131,7 @@ def _apply_diffusion_and_heat_generation(
 
 
 @qd.func
-def _qd_polygon_area_from_points_3d(n: int, scratch: qd.types.ndarray(), i_b: int, eps: float) -> float:
+def _qd_polygon_area_from_points_3d(i_b: int, n: int, scratch: qd.types.ndarray(), eps: float) -> float:
     """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
@@ -205,11 +205,11 @@ def _qd_polygon_area_from_points_3d(n: int, scratch: qd.types.ndarray(), i_b: in
 
 @qd.kernel
 def _kernel_compute_contact_areas(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
     contact_area: qd.types.ndarray(),
     scratch: qd.types.ndarray(),
     eps: float,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
 ):
     # contact_area shape (n_c_max, n_batches). scratch (n_batches, n_c_max, len(_ScratchIdx)).
     n_batches = contact_area.shape[1]
@@ -266,7 +266,7 @@ def _kernel_compute_contact_areas(
 
             group_area = eps
             if count >= 3:
-                group_area = _qd_polygon_area_from_points_3d(count, scratch, i_b, eps)
+                group_area = _qd_polygon_area_from_points_3d(i_b, count, scratch, eps)
             else:
                 for k in range(count):
                     d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]
@@ -286,8 +286,6 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
 
 @qd.kernel
 def _kernel_contact_heat(
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
     links_idx: qd.types.ndarray(),
     aabb_min: qd.types.ndarray(),
     grid_size: qd.types.ndarray(),
@@ -305,6 +303,8 @@ def _kernel_contact_heat(
     dt: float,
     eps: float,
     output: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
 ):
     # contact_area shape (n_c_max, n_batches)
     n_batches = output.shape[-1]
@@ -722,15 +722,13 @@ class TemperatureGridSensor(
         collider_state = solver.collider._collider_state
         shared_metadata.contact_area_buffer.zero_()
         _kernel_compute_contact_areas(
-            solver.dyn_state,
-            collider_state,
             shared_metadata.contact_area_buffer,
             shared_metadata.contact_area_scratch,
             gs.EPS,
-        )
-        _kernel_contact_heat(
             solver.dyn_state,
             collider_state,
+        )
+        _kernel_contact_heat(
             shared_metadata.links_idx,
             shared_metadata.aabb_min,
             shared_metadata.grid_size,
@@ -748,6 +746,8 @@ class TemperatureGridSensor(
             dt,
             gs.EPS,
             raw_data_T,
+            solver.dyn_state,
+            collider_state,
         )
         raw_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection

@@ -73,7 +73,7 @@ def func_det3(v1, v2, v3):
 
 @qd.func
 def func_point_in_geom_aabb(
-    dyn_state: array_class.DynState, i_g: int, i_b: int, point: qd.types.vector(3), expansion: float = 0.0
+    i_g: int, i_b: int, point: qd.types.vector(3), expansion: float, dyn_state: array_class.DynState
 ):
     aabb_min = dyn_state.geoms.aabb_min[i_g, i_b] - expansion
     aabb_max = dyn_state.geoms.aabb_max[i_g, i_b] + expansion
@@ -81,7 +81,7 @@ def func_point_in_geom_aabb(
 
 
 @qd.func
-def func_is_geom_aabbs_overlap(dyn_state: array_class.DynState, i_ga, i_gb, i_b):
+def func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, dyn_state: array_class.DynState):
     return not (
         (dyn_state.geoms.aabb_max[i_ga, i_b] <= dyn_state.geoms.aabb_min[i_gb, i_b]).any()
         or (dyn_state.geoms.aabb_min[i_ga, i_b] >= dyn_state.geoms.aabb_max[i_gb, i_b]).any()
@@ -89,7 +89,7 @@ def func_is_geom_aabbs_overlap(dyn_state: array_class.DynState, i_ga, i_gb, i_b)
 
 
 @qd.func
-def func_is_discrete_geom(dyn_info: array_class.DynInfo, i_g):
+def func_is_discrete_geom(i_g, dyn_info: array_class.DynInfo):
     """
     Check if the given geom is a discrete geometry.
     """
@@ -98,11 +98,11 @@ def func_is_discrete_geom(dyn_info: array_class.DynInfo, i_g):
 
 
 @qd.func
-def func_is_discrete_geoms(dyn_info: array_class.DynInfo, i_ga, i_gb):
+def func_is_discrete_geoms(i_ga, i_gb, dyn_info: array_class.DynInfo):
     """
     Check if the given geoms are discrete geometries.
     """
-    return func_is_discrete_geom(dyn_info, i_ga) and func_is_discrete_geom(dyn_info, i_gb)
+    return func_is_discrete_geom(i_ga, dyn_info) and func_is_discrete_geom(i_gb, dyn_info)
 
 
 @qd.func

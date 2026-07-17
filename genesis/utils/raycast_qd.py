@@ -39,15 +39,15 @@ def get_triangle_vertices(i_f: int, i_b: int, dyn_info: array_class.DynInfo, dyn
 
 @qd.func
 def bvh_ray_cast(
+    i_b: int,
     ray_start: qd.types.vector(3),
     ray_dir: qd.types.vector(3),
     max_range: float,
-    i_b: int,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
+    eps: float,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    eps: float,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
@@ -278,10 +278,10 @@ def triangle_face_normal(v0: qd.types.vector(3), v1: qd.types.vector(3), v2: qd.
 
 @qd.func
 def update_aabbs(
-    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
-    rigid_config: qd.template(),
+    dyn_state: array_class.DynState,
     aabb_state: qd.template(),
+    rigid_config: qd.template(),
 ):
     """Update per-face collision AABBs from current vertex positions.
 
@@ -316,11 +316,11 @@ def update_aabbs(
 def kernel_update_verts_and_aabbs(
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    rigid_config: qd.template(),
     aabb_state: qd.template(),
+    rigid_config: qd.template(),
 ):
-    func_update_all_verts(dyn_state, dyn_info, rigid_config)
-    update_aabbs(dyn_state, dyn_info, rigid_config, aabb_state)
+    func_update_all_verts(dyn_info, dyn_state, rigid_config)
+    update_aabbs(dyn_info, dyn_state, aabb_state, rigid_config)
 
 
 # =========================================== Visual Mesh Raycasting ===========================================
@@ -359,15 +359,15 @@ def get_visual_triangle_vertices(i_f: int, i_b: int, dyn_info: array_class.DynIn
 
 @qd.func
 def bvh_ray_cast_visual(
+    i_b,
     ray_start,
     ray_dir,
     max_range,
-    i_b,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
+    eps,
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    eps,
 ):
     """Cast a single ray against the visual-mesh BVH; returns (hit_face, distance, normal)."""
     n_triangles = dyn_info.vfaces.vverts_idx.shape[0]
@@ -412,9 +412,9 @@ def bvh_ray_cast_visual(
 
 @qd.func
 def update_visual_aabbs(
+    face_mask: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
     """Update per-vface AABBs from the visual mesh.
@@ -437,28 +437,28 @@ def update_visual_aabbs(
 
 @qd.kernel
 def kernel_update_visual_aabbs(
+    face_mask: qd.types.ndarray(),
     dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
-    face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
-    update_visual_aabbs(dyn_info, dyn_state, face_mask, aabb_state)
+    update_visual_aabbs(face_mask, dyn_info, dyn_state, aabb_state)
 
 
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
 @qd.kernel(fastcache=False)
 def kernel_cast_ray(
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     ray_start: qd.types.ndarray(ndim=1),  # (3,)
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
     max_range: float,
     envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
-    rigid_info: array_class.RigidInfo,
-    result: array_class.RaycastResult,
     eps: float,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    dyn_state: array_class.DynState,
+    result: array_class.RaycastResult,
 ):
     """
     Cast a single ray against each env's BVH in parallel.
@@ -480,15 +480,15 @@ def kernel_cast_ray(
         i_b = envs_idx[i_b_]
         env_offset = rigid_info.envs_offset[i_b]
         cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
-            ray_start=ray_start_world - env_offset,
-            ray_dir=ray_direction_world,
-            max_range=max_range,
-            i_b=i_b,
-            bvh_nodes=bvh_nodes,
-            bvh_morton_codes=bvh_morton_codes,
-            dyn_info=dyn_info,
-            dyn_state=dyn_state,
-            eps=eps,
+            i_b,
+            ray_start_world - env_offset,
+            ray_direction_world,
+            max_range,
+            bvh_nodes,
+            bvh_morton_codes,
+            eps,
+            dyn_info,
+            dyn_state,
         )
         if cur_hit_face >= 0:
             result.distance[i_b] = cur_distance
@@ -499,16 +499,16 @@ def kernel_cast_ray(
 
 @qd.func
 def write_ray_hit(
-    hit_face: int,
-    hit_distance: float,
-    ray_start_world,
-    ray_direction_world,
-    ray_dir_local,
     i_b: int,
     i_s: int,
     i_p_sensor: int,
     i_p_offset: int,
     i_p_dist: int,
+    hit_face: int,
+    hit_distance: float,
+    ray_start_world,
+    ray_direction_world,
+    ray_dir_local,
     is_world_frame: qd.types.ndarray(ndim=1),
     no_hit_values: qd.types.ndarray(ndim=1),
     sensor_return_points: qd.types.ndarray(ndim=1),
@@ -550,8 +550,6 @@ def write_ray_hit(
 
 @qd.kernel
 def kernel_cast_rays(
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
     links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
@@ -568,6 +566,8 @@ def kernel_cast_rays(
     sensor_return_points: qd.types.ndarray(ndim=1),  # [n_sensors] - True to store hit points, False for distances-only
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: float,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
@@ -609,16 +609,16 @@ def kernel_cast_rays(
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         hit_face, hit_distance, _hit_normal = bvh_ray_cast(
-            ray_start=ray_start_world,
-            ray_dir=ray_direction_world,
-            max_range=max_ranges[i_s],
             # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
-            i_b=0 if shared_bvh else i_b,
-            bvh_nodes=bvh_nodes,
-            bvh_morton_codes=bvh_morton_codes,
-            dyn_info=dyn_info,
-            dyn_state=dyn_state,
-            eps=eps,
+            0 if shared_bvh else i_b,
+            ray_start_world,
+            ray_direction_world,
+            max_ranges[i_s],
+            bvh_nodes,
+            bvh_morton_codes,
+            eps,
+            dyn_info,
+            dyn_state,
         )
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
@@ -628,16 +628,16 @@ def kernel_cast_rays(
         if sensor_return_points[i_s]:
             i_p_dist += sensor_point_counts[i_s] * 3
         write_ray_hit(
-            hit_face,
-            hit_distance,
-            ray_start_world,
-            ray_direction_world,
-            ray_dir_local,
             i_b,
             i_s,
             i_p_sensor,
             i_p_offset,
             i_p_dist,
+            hit_face,
+            hit_distance,
+            ray_start_world,
+            ray_direction_world,
+            ray_dir_local,
             is_world_frame,
             no_hit_values,
             sensor_return_points,
@@ -649,8 +649,6 @@ def kernel_cast_rays(
 
 @qd.kernel
 def kernel_cast_rays_visual(
-    dyn_info: array_class.DynInfo,
-    dyn_state: array_class.DynState,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     links_pos: qd.types.ndarray(ndim=3),
@@ -667,6 +665,8 @@ def kernel_cast_rays_visual(
     sensor_return_points: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     is_merge: qd.template(),
     shared_bvh: qd.template(),
 ):
@@ -697,16 +697,16 @@ def kernel_cast_rays_visual(
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         hit_face, hit_distance, _hit_normal = bvh_ray_cast_visual(
-            ray_start=ray_start_world,
-            ray_dir=ray_direction_world,
-            max_range=max_ranges[i_s],
             # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
-            i_b=0 if shared_bvh else i_b,
-            bvh_nodes=bvh_nodes,
-            bvh_morton_codes=bvh_morton_codes,
-            dyn_info=dyn_info,
-            dyn_state=dyn_state,
-            eps=eps,
+            0 if shared_bvh else i_b,
+            ray_start_world,
+            ray_direction_world,
+            max_ranges[i_s],
+            bvh_nodes,
+            bvh_morton_codes,
+            eps,
+            dyn_info,
+            dyn_state,
         )
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
@@ -716,16 +716,16 @@ def kernel_cast_rays_visual(
         if sensor_return_points[i_s]:
             i_p_dist += sensor_point_counts[i_s] * 3
         write_ray_hit(
-            hit_face,
-            hit_distance,
-            ray_start_world,
-            ray_direction_world,
-            ray_dir_local,
             i_b,
             i_s,
             i_p_sensor,
             i_p_offset,
             i_p_dist,
+            hit_face,
+            hit_distance,
+            ray_start_world,
+            ray_direction_world,
+            ray_dir_local,
             is_world_frame,
             no_hit_values,
             sensor_return_points,
