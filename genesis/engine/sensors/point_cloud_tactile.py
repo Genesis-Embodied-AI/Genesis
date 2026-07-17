@@ -916,8 +916,8 @@ def _func_elastomer_direct_dilate_contribution(
         if compressibility <= 0.0:  # pure incompressible r_hat / r
             w = depth * inv
         else:  # blend, each kernel peak-normalized (see the FFT builder for the closed-form peaks)
-            # Inline math.exp(-0.5) (== _INV_SQRT_E) rather than capturing the global: the math module is an
-            # allowed fastcache capture, so this stays purity-clean; a bare _INV_SQRT_E would violate purity.
+            # math.exp(-0.5) == 1/sqrt(e) is the peak of r*exp(-lambda r^2); read it inline rather than from a
+            # module constant so the fastcache purity check stays happy (the math module is an allowed capture).
             norm_g = gs.qd_float(qd.static(math.exp(-0.5))) / qd.sqrt(gs.qd_float(2.0) * lam)
             norm_i = gs.qd_float(1.0) / (gs.qd_float(2.0) * eps)
             w = depth * (compressibility * gaussian / norm_g + (gs.qd_float(1.0) - compressibility) * inv / norm_i)
@@ -960,9 +960,6 @@ def _collect_collision_geom_idx(solver, track_link_idx: np.ndarray) -> tuple[tor
         gs.raise_exception("ElastomerTaxel tracked links must have collision geometry for SDF queries.")
     return torch.tensor(geom_idx, dtype=gs.tc_int, device=gs.device), torch.stack(active_masks, dim=0)
 
-
-# Peak of r * exp(-lambda r^2) is this / sqrt(2 lambda); peak-normalizes the local kernel in the blend.
-_INV_SQRT_E = math.exp(-0.5)
 
 # Clamp bounds for q = |k| * h in _bonded_layer_transfer, chosen where S(q) is already flat.
 _LAYER_Q_MIN: Final[float] = 1e-3
@@ -1056,7 +1053,7 @@ def _precompute_hydroshear_dilate_kernel_fft(
         ku_hat, kv_hat = gu_hat, gv_hat
     else:
         loc = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * g, vv * g), dim=0), dim=(-2, -1)))
-        norm_g = math.exp(-0.5) / math.sqrt(2.0 * lambda_d)  # peak of r*exp(-lambda_d r^2), see _INV_SQRT_E
+        norm_g = math.exp(-0.5) / math.sqrt(2.0 * lambda_d)  # 1/sqrt(e) is the peak of r*exp(-lambda_d r^2)
         c = compressibility
         ku_hat = c * loc[0] / norm_g + (1.0 - c) * gu_hat / norm_i
         kv_hat = c * loc[1] / norm_g + (1.0 - c) * gv_hat / norm_i
