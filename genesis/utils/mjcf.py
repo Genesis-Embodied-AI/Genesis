@@ -147,12 +147,32 @@ def build_model(
                 # default value...
                 group.attrib.setdefault(param_name, str(MIN_TIMECONST))
         if default_armature is not None:
-            worldbody = mjcf.find("worldbody")
-            if worldbody is not None:
-                for joint_elem in worldbody.findall(".//joint"):
-                    if joint_elem.attrib.get("type") == "free":
-                        continue
-                    joint_elem.attrib.setdefault("armature", str(default_armature))
+            # The default rotor armature only fills in joints whose armature is authored neither on the element nor
+            # anywhere in their default class chain, so the values authored in the model file are always preserved.
+            # First scan the nested default classes: a class authors armature if itself or any ancestor class sets it.
+            has_armature_by_class = {}
+            default_stack = [(elem, False) for elem in mjcf.findall("default")]
+            while default_stack:
+                default_elem, has_armature = default_stack.pop()
+                joint_elem = default_elem.find("joint")
+                has_armature |= joint_elem is not None and "armature" in joint_elem.attrib
+                has_armature_by_class[default_elem.attrib.get("class", "main")] = has_armature
+                default_stack.extend((child, has_armature) for child in default_elem.findall("default"))
+            # Then walk the kinematic tree while tracking the childclass in effect to resolve each joint's class.
+            for worldbody in mjcf.findall("worldbody"):
+                body_stack = [(elem, "main") for tag in ("body", "frame") for elem in worldbody.findall(tag)]
+                while body_stack:
+                    body_elem, childclass = body_stack.pop()
+                    childclass = body_elem.attrib.get("childclass", childclass)
+                    for joint_elem in body_elem.findall("joint"):
+                        if joint_elem.attrib.get("type") == "free":
+                            continue
+                        joint_class = joint_elem.attrib.get("class", childclass)
+                        if not has_armature_by_class.get(joint_class, False):
+                            joint_elem.attrib.setdefault("armature", str(default_armature))
+                    body_stack.extend(
+                        (elem, childclass) for tag in ("body", "frame") for elem in body_elem.findall(tag)
+                    )
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
         if is_urdf_file:

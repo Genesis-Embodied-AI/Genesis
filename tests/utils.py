@@ -678,7 +678,6 @@ def build_genesis_sim(
         file=file,
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
-        default_armature=None,
         align=False,
     )
     if xml_path.endswith(".xml"):
