@@ -155,4 +155,4 @@ cocoapy.NSOpenGLPFAMaximumPolicy = 0x00020400  # kCGLRendererGenericFloatID
 
 - Lint/format: ruff (check + format, line length 120) via pre-commit; install hooks with `pre-commit install` - they run on every commit.
 - PR titles carry a bracket tag: `[BUG FIX]`, `[FEATURE]`, `[MISC]`, `[CHANGING]` (behavior change), `[BREAKING]` (API break). Commit titles are plain single-line sentences without the tag.
-- Reference docs live in `.github/contributing/`: ARCHITECTURE, TESTING, CODING_CONVENTIONS, EXAMPLES, PULL_REQUESTS.
+- Contributors must follow `CODING_GUIDELINES.md` and the reference docs in `.github/contributing/`: ARCHITECTURE, TESTING, CODING_CONVENTIONS, EXAMPLES, PULL_REQUESTS, USD_PARSER. On conflict, ask.

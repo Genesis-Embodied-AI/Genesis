@@ -804,11 +804,13 @@ class KinematicEntity(Entity):
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
             links_j_infos[0] = [j_info]
 
-            # Shift root idx for all child links and replace root if no longer fixed wrt world
-            for i_l in range(len(l_infos)):
-                l_info = l_infos[i_l]
-                if "root_idx" in l_info and l_info["root_idx"] in (1, i_l):
-                    l_info["root_idx"] = 0
+            # The base link is now moving, which merges every kinematic tree connected to it into a single tree rooted
+            # at it. Parser-provided root indices assume a base welded to the world, so recompute them by propagating
+            # each parent's root (parents precede children); links with no parent root their own tree.
+            for i_l, l_info in enumerate(l_infos):
+                if "root_idx" in l_info:
+                    parent_idx = l_info["parent_idx"]
+                    l_info["root_idx"] = l_infos[parent_idx]["root_idx"] if parent_idx != -1 else i_l
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
@@ -1432,6 +1434,10 @@ class KinematicEntity(Entity):
         Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
         another entity.
 
+        The merged pair is simulated as one kinematic tree, whose degrees of freedom must form one contiguous range.
+        This method enforces it: instantiate attached entities consecutively, attach onto the last kinematic tree of a
+        multi-tree parent, and attach all children of an entity onto the same tree.
+
         Parameters
         ----------
         parent_entity : genesis.Entity
@@ -1460,6 +1466,34 @@ class KinematicEntity(Entity):
                 gs.raise_exception(
                     "Attaching fixed-based entity to parent link requires setting Morph option 'batch_fixed_verts=True'."
                 )
+
+        # The merged kinematic tree must keep contiguous DOFs (each mass block is processed as one interval), so every
+        # DOF-carrying link numbered between the target tree's root and this entity must already belong to that tree.
+        # Each violation cause gets its own actionable error.
+        root_link = self._solver.links[parent_link.root_idx]
+        for link in self._solver.links[root_link.idx + 1 : self.link_start]:
+            if link.n_dofs == 0 or link.root_idx == root_link.idx:
+                continue
+            foreign_root_link = self._solver.links[link.root_idx]
+            if foreign_root_link.entity is root_link.entity:
+                is_foreign_tree_merged = any(
+                    other_link.root_idx == link.root_idx and other_link.entity is not foreign_root_link.entity
+                    for other_link in self._solver.links[link.root_idx :]
+                )
+                if is_foreign_tree_merged:
+                    gs.raise_exception(
+                        "Attaching entities onto different kinematic trees of the same parent entity is not "
+                        "supported. Load the parent's trees as separate entities."
+                    )
+                gs.raise_exception(
+                    "Attaching an entity onto a kinematic tree that is not the last one declared in its file is not "
+                    "supported. Declare the attached-onto tree last, or load the file's other trees as separate "
+                    "entities."
+                )
+            gs.raise_exception(
+                "Creating entities between attached entities is not supported. Instantiate attached entities "
+                "consecutively."
+            )
 
         # Remove all root joints if necessary.
         # The requires shifting joint and dof indices of all subsequent entities.
@@ -1497,20 +1531,14 @@ class KinematicEntity(Entity):
         # Overwrite parent link
         base_link._parent_idx = parent_link.idx
 
-        for link in self.links:
-            # Break as soon as the root idx is -1, because the following links correspond to a different kinematic tree
-            if link.root_idx == -1:
-                break
-
-            # Override root idx for child links
-            assert link.root_idx == base_link.idx
-            link._root_idx = parent_link.root_idx
-
-            # Update fixed link flag
-            link._is_fixed &= parent_link.is_fixed
-
-            # Must invalidate invweight for all child links and joints
-            link._invweight = None
+        # Re-root the whole tree hanging from this entity's base link - scene-wide, because entities previously
+        # attached into this one already share its root and must follow it (chained attaches may run in any order);
+        # links of other trees declared in the same file keep their own root, as do the fixed flag and invweight.
+        for link in self._solver.links:
+            if link.root_idx == base_link.idx:
+                link._root_idx = parent_link.root_idx
+                link._is_fixed &= parent_link.is_fixed
+                link._invweight = None
 
         self._is_attached = True
 

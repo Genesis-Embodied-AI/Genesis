@@ -1346,3 +1346,43 @@ def test_nan_reset(gs_sim, mode):
         gs_sim.scene.step()
     qvel = gs_sim.rigid_solver.get_dofs_velocity()
     assert not torch.isnan(qvel).any()
+
+
+@pytest.mark.required
+def test_neutral_self_collision_masks_across_merged_entities(merged_overlapping_models, show_viewer):
+    # attach() merges the hand into the arm's kinematic tree, and self-collision masking (adjacency and neutral overlap)
+    # keys on root_idx, so it must span the merge boundary. The palm geom overlaps the non-adjacent a2 link at the
+    # neutral pose, so that cross-entity pair must be masked out.
+    arm_xml, hand_xml = merged_overlapping_models
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+            enable_adjacent_collision=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    arm = scene.add_entity(
+        gs.morphs.MJCF(
+            file=arm_xml,
+        ),
+    )
+    hand = scene.add_entity(
+        gs.morphs.MJCF(
+            file=hand_xml,
+        ),
+    )
+    hand.attach(arm, "tip")
+    scene.build()
+
+    # The merged hand shares the arm's kinematic-tree root, so cross-entity pairs are self-collision candidates.
+    geoms_root_idx = np.array([geom.link.root_idx for geom in scene.rigid_solver.geoms])
+    arm_geoms = [geom.idx for geom in arm.geoms]
+    hand_geoms = [geom.idx for geom in hand.geoms]
+    assert set(geoms_root_idx[arm_geoms].tolist()) == set(geoms_root_idx[hand_geoms].tolist())
+
+    # The palm overlaps the non-adjacent a2 link at qpos0, so the neutral-overlap check masks this cross-entity pair.
+    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
+    a2_geom = arm.get_link("a2").geoms[0].idx
+    palm_geom = hand.get_link("palm").geoms[0].idx
+    assert_equal(collision_pair_idx[a2_geom, palm_geom], -1)
+    assert_equal(collision_pair_idx[palm_geom, a2_geom], -1)

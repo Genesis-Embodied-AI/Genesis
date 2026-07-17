@@ -118,6 +118,8 @@ def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
     for l_info in l_infos:
         if l_info["parent_idx"] >= 0:  # non-base link
             l_info["parent_idx"] = ordered_links_idx.index(l_info["parent_idx"])
+        if "root_idx" in l_info:
+            l_info["root_idx"] = ordered_links_idx.index(l_info["root_idx"])
 
     new_l_infos = [l_infos[i] for i in ordered_links_idx]
     new_j_infos = [j_infos[i] for i in ordered_links_idx]

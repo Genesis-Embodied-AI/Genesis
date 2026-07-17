@@ -234,4 +234,4 @@ Genesis strongly resists the accumulation of small wrappers. Helpers accrete, ge
 - **Branch names use alphanumerics and underscores only, and describe the code content**, not the issue: `analytical_smooth_contact_pos`, not `fix-issue-2793`. The branch outlives the issue.
 - **Commit messages are a single title line.** No body, no implementation details, no co-author trailers.
 - **No AI attribution anywhere.** No "Generated with ..." footers, no AI co-author trailers, in commits, PR bodies, issues, or comments.
-- **PR descriptions are terse and go straight to the point.** State the change and the one fact that justifies it; cut every sentence a reviewer can infer. Long descriptions do not get read. Follow the PR template, keeping each section tight.
+- **PR descriptions are terse and go straight to the point.** State the change and the one fact that justifies it; cut every sentence a reviewer can infer. Long descriptions do not get read. Follow the PR template (`.github/pull_request_template.md`), keeping each section tight and removing sections that are empty.

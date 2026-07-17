@@ -959,62 +959,45 @@ def _collect_collision_geom_idx(solver, track_link_idx: np.ndarray) -> tuple[tor
     return torch.tensor(geom_idx, dtype=gs.tc_int, device=gs.device), torch.stack(active_masks, dim=0)
 
 
-# [numerical] Peak of the Gaussian first-moment kernel r * exp(-lambda r^2): value e^{-1/2} / sqrt(2 lambda)
-# at r = 1/sqrt(2 lambda). Peak-normalizes the local kernel in the compressibility blend.
+# Peak of r * exp(-lambda r^2) is this / sqrt(2 lambda); peak-normalizes the local kernel in the blend.
 _INV_SQRT_E = math.exp(-0.5)
 
-# [numerical] Clamp range for q = |k| * h, the dimensionless wavenumber fed to _bonded_layer_transfer's S(q).
-# Q_MIN is set by the float64 conditioning of that 4x4 mode solve: cond(M) ~ 4.5/q^3 (lubrication limit), so
-# q = 1e-3 gives cond ~ 4.5e9 -- the smallest q still solved to ~6 digits in double. Clamping there costs no
-# accuracy: S has already reached its 1.5/q asymptote, and real FFT grids never get this low anyway (smallest
-# nonzero q ~ 2*pi*h / domain_size). Q_MAX = 30 is where S has decayed exponentially to ~0 (terms ~ e^{-2q}
-# < 1e-26), indistinguishable from S(Q_MAX). Neither bound is a tunable -- both bracket where S is flat.
+# Clamp bounds for q = |k| * h in _bonded_layer_transfer, chosen where S(q) is already flat.
 _LAYER_Q_MIN: Final[float] = 1e-3
 _LAYER_Q_MAX: Final[float] = 30.0
 
 
 @torch.jit.script
 def _bonded_layer_transfer(q: torch.Tensor, q_min: float = _LAYER_Q_MIN, q_max: float = _LAYER_Q_MAX) -> torch.Tensor:
-    """In-plane transfer ``S(q)``, ``q = |k| * h``, of an incompressible elastic layer bonded to a rigid base
-    (``u = w = 0`` at ``z = -h``) with a shear-free top surface where the normal displacement is prescribed:
-    ``u_hat(top) = -i * k_hat * S(q) * H_hat``.
+    """In-plane transfer ``S(q)`` of an incompressible elastic layer of thickness ``h`` bonded to a rigid base,
+    with a shear-free top surface of prescribed normal displacement. For dimensionless wavenumber ``q = |k| * h``,
+    the tangential surface displacement spectrum is ``-i * k_hat * S(q) * H_hat`` from the height spectrum ``H_hat``.
 
-    Solved exactly per mode -- a 4x4 system in the ``[a, b*h, c, d*h]`` coefficients of ``w(z) = (a + b z) e^{kz} + (c +
-    d z) e^{-kz}`` -- which is the linear elasticity an FEM of a flat bonded slab converges to. Asymptotics: ``S ~
-    1.5/q`` for ``q -> 0`` (thin-layer squeeze flow, the free-space ``1/r``) and ``S -> 0`` for ``q -> inf``
-    (incompressible half-space: no in-plane surface motion), peaking around ``q ~ 1``.
+    ``S(q) = 2 q^2 / (sinh(2q) - 2q)`` is the exact per-mode solution: it grows as ``1.5/q`` for small ``q``
+    (thin-layer squeeze flow, the free-space ``1/r``), peaks near ``q ~ 1``, and decays to ``0`` for large ``q``
+    (incompressible half-space limit). ``q`` is clamped to where ``S`` is already flat.
     """
-    # float64 is required here, not stylistic: the 4x4 mode system is ill-conditioned at small q
-    # (cond ~ 4.5/q^3, up to ~4.5e9 at q_min) -- far past float32's ~1e7 usable range. S(q) is O(1) so the
-    # caller safely downcasts the result.
-    q = q.to(torch.float64).clamp(min=q_min, max=q_max)
-    e2 = torch.exp(-2.0 * q)
-    one = torch.ones_like(q)
-    zero = torch.zeros_like(q)
-    # Rows: w(0)=1; zero top shear (w''(0) = -k^2 w(0)); w(-h)=0; u(-h)=0 (i.e. w'(-h)=0). Rows 3-4 are scaled by
-    # e^{-q} so entries stay O(1) at large q.
-    M = torch.stack(
-        (
-            torch.stack((one, zero, one, zero), dim=-1),
-            torch.stack((q, one, q, -one), dim=-1),
-            torch.stack((e2, -e2, one, -one), dim=-1),
-            torch.stack((q * e2, (1.0 - q) * e2, -q, one + q), dim=-1),
-        ),
-        dim=-2,
-    )
-    rhs = torch.stack((one, zero, zero, zero), dim=-1).unsqueeze(-1)
-    x = torch.linalg.solve(M, rhs).squeeze(-1)
-    # x = [a, b*h, c, d*h], the mode coefficients of w(z). S(q) is the in-plane transfer u_hat(top) read off
-    # this solved profile, which reduces to (a - c) + (b*h + d*h) / q.
-    return (x[..., 0] - x[..., 2]) + (x[..., 1] + x[..., 3]) / q
+    q = q.clamp(min=q_min, max=q_max)
+    two_q = 2.0 * q
+    two_q_sq = two_q * two_q
+    # sinh(2q) - 2q cancels for small q: sum its Taylor series (2q)^(2n+1)/(2n+1)! by recurrence, direct otherwise.
+    term = two_q * two_q_sq / 6.0  # first term, (2q)^3 / 3!
+    series = term
+    for n in range(2, 6):  # n_terms = 5, float32-accurate at the direct-form crossover
+        term = term * two_q_sq / ((2 * n) * (2 * n + 1))
+        series = series + term
+    denom = torch.where(two_q < 1.0, series, torch.sinh(two_q) - two_q)
+    return 2.0 * q * q / denom
 
 
+@torch.jit.script
 def _precompute_hydroshear_dilate_kernel_fft(
     lambda_d: float,
     grid_spacing: tuple[float, float],
     fft_n: tuple[int, int],
     device: torch.device,
     dtype: torch.dtype,
+    eps: float,
     compressibility: float = 1.0,
     dilation_reg: float = 0.0,
     elastomer_thickness: float = 0.0,
@@ -1044,12 +1027,12 @@ def _precompute_hydroshear_dilate_kernel_fft(
         return torch.fft.rfft2(torch.fft.ifftshift(k, dim=(-2, -1)))
 
     if elastomer_thickness > 0.0:
-        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=torch.float64, device=device)
-        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=torch.float64, device=device)
+        kv1 = 2.0 * math.pi * torch.fft.fftfreq(fft_n[0], d=grid_spacing[1], dtype=dtype, device=device)
+        ku1 = 2.0 * math.pi * torch.fft.rfftfreq(fft_n[1], d=grid_spacing[0], dtype=dtype, device=device)
         kvv, kuu = torch.meshgrid(kv1, ku1, indexing="ij")
         kmag = torch.sqrt(kvv * kvv + kuu * kuu)
         s_tf = torch.where(kmag > 0.0, _bonded_layer_transfer(kmag * elastomer_thickness), torch.zeros_like(kmag))
-        kmag_safe = kmag.clamp(min=gs.EPS)
+        kmag_safe = kmag.clamp(min=eps)
         gu_hat = (-1j) * (kuu / kmag_safe) * s_tf
         gv_hat = (-1j) * (kvv / kmag_safe) * s_tf
         # Peak of the real-space kernel magnitude, for the blend normalization below.
@@ -1060,18 +1043,18 @@ def _precompute_hydroshear_dilate_kernel_fft(
         gu_hat = gu_hat.to(cdtype)
         gv_hat = gv_hat.to(cdtype)
     else:
-        eps = dilation_reg if dilation_reg > 0.0 else 0.5 * (grid_spacing[0] + grid_spacing[1])
-        inv = 1.0 / (r2 + eps * eps)
+        eps_reg = dilation_reg if dilation_reg > 0.0 else 0.5 * (grid_spacing[0] + grid_spacing[1])
+        inv = 1.0 / (r2 + eps_reg * eps_reg)
         sp = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * inv, vv * inv), dim=0), dim=(-2, -1)))
         gu_hat, gv_hat = sp[0], sp[1]
-        norm_i = 1.0 / (2.0 * eps)  # peak of r/(r^2+eps^2) at r=eps
+        norm_i = 1.0 / (2.0 * eps_reg)  # peak of r/(r^2+eps^2) at r=eps_reg
 
     kn_hat = torch.fft.rfft2(torch.fft.ifftshift(g, dim=(-2, -1)))
     if compressibility <= 0.0:
         ku_hat, kv_hat = gu_hat, gv_hat
     else:
         loc = torch.fft.rfft2(torch.fft.ifftshift(torch.stack((uu * g, vv * g), dim=0), dim=(-2, -1)))
-        norm_g = _INV_SQRT_E / math.sqrt(2.0 * lambda_d)  # peak of r*exp(-lambda_d r^2), see _INV_SQRT_E
+        norm_g = math.exp(-0.5) / math.sqrt(2.0 * lambda_d)  # peak of r*exp(-lambda_d r^2), see _INV_SQRT_E
         c = compressibility
         ku_hat = c * loc[0] / norm_g + (1.0 - c) * gu_hat / norm_i
         kv_hat = c * loc[1] / norm_g + (1.0 - c) * gv_hat / norm_i
@@ -1086,6 +1069,7 @@ def _dilate_kernel_builder(meta_entry: GridFFTMeta, fft_n: tuple[int, int]) -> t
         fft_n,
         gs.device,
         gs.tc_float,
+        gs.EPS,
         meta_entry.compressibility,
         meta_entry.dilation_reg,
         meta_entry.elastomer_thickness,
@@ -1795,6 +1779,7 @@ def _build_shear_active_pc_index(
             active_pc_idx[bs, pc_start + write_pos[bs, js]] = (pc_start + js).to(idx_dtype)
 
 
+@torch.jit.script
 def _elastomer_taxel_grid_fft_dilate(
     grid_fft_meta: list[GridFFTMeta],
     grid_fft_kernels_stacked: torch.Tensor,
@@ -1820,7 +1805,7 @@ def _elastomer_taxel_grid_fft_dilate(
     view/copy and per-sensor tangent decomposition). Grid axes are ``(ny, nx)`` row-major throughout (matching
     the probe flat index ``iy * nx + ix``), so no transpose is needed on either the fill or write-back side.
     """
-    if not grid_fft_meta:
+    if len(grid_fft_meta) == 0:
         return
     n_batches = probe_depth_buf.shape[0]
     fft_ny, fft_nx = grid_fft_buffer.shape[-2], grid_fft_buffer.shape[-1]
@@ -1836,7 +1821,8 @@ def _elastomer_taxel_grid_fft_dilate(
     H_fft = torch.fft.rfft2(grid_fft_buffer)
     # The normal channel follows depth ** normal_exponent, so it convolves the per-grid powered depth field;
     # the tangential (u, v) channels stay linear in depth and convolve the raw field H.
-    exps = normal_exponent[[meta.sensor_idx for meta in grid_fft_meta]].reshape(1, -1, 1, 1)
+    sensors_idx = torch.tensor([meta.sensor_idx for meta in grid_fft_meta], device=normal_exponent.device)
+    exps = normal_exponent[sensors_idx].reshape(1, -1, 1, 1)
     Hp_fft = torch.fft.rfft2(grid_fft_buffer.pow(exps))
     Ku_all = grid_fft_kernels_stacked[:, 0]  # (n_grid, fft_ny, fft_nx // 2 + 1) complex
     Kv_all = grid_fft_kernels_stacked[:, 1]

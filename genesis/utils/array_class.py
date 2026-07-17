@@ -113,12 +113,20 @@ class RigidGlobalInfo:
     mass_mat_D_inv: qd.Tensor
     mass_mat_tiled_scratch: qd.Tensor
     mass_mat_mask: qd.Tensor
-    # Per-DOF bounds of the contiguous, independently-factorable mass-matrix block the DOF belongs to (a kinematic
-    # tree, or merged trees whose DOF intervals interleave). The mass matrix is block-diagonal across these blocks, so
-    # the assemble/factor/solve restrict to [block_start, block_end) instead of the full entity DOF range - making a
-    # multi-tree entity (e.g. an MJCF file with many free bodies) cost the same as the equivalent separate entities.
+    # Per-DOF bounds of the mass block the DOF belongs to: the DOFs of its branch rooted where the fixed structure
+    # ends (deeper branches stay mass-coupled to their chain and belong to the enclosing block), merged across
+    # entities and kept contiguous by attach(). The assemble/factor/solve restrict to these bounds.
     dofs_mass_block_start: qd.Tensor
     dofs_mass_block_end: qd.Tensor
+    # One-past-the-last link of the kinematic tree rooted at each root link (root_idx == itself); unused for non-root
+    # links. The span may contain interleaved links of 0-DOF entities created between attached ones, so consumers gate
+    # each link on the tree's root. Underivable from the DOF bounds above: trailing fixed links carry no DOF.
+    links_tree_end: qd.Tensor
+    # DOF range spanned by the mass blocks rooted in each entity: a leading run merged into an earlier-rooted block is
+    # excluded, and the last rooted block may extend into a merged child (empty range for a fully-merged child). Lets
+    # the per-entity assemble/factor/solve iterate their blocks as one flat, autodiff-compatible loop over DOFs.
+    entities_mass_block_dof_start: qd.Tensor
+    entities_mass_block_dof_end: qd.Tensor
     meaninertia: qd.Tensor
     mass_parent_mask: qd.Tensor
     gravity: qd.Tensor
@@ -199,6 +207,9 @@ def get_rigid_global_info(solver, kinematic_only):
             mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
             dofs_mass_block_start=V(dtype=gs.qd_int, shape=()),
             dofs_mass_block_end=V(dtype=gs.qd_int, shape=()),
+            links_tree_end=V(dtype=gs.qd_int, shape=()),
+            entities_mass_block_dof_start=V(dtype=gs.qd_int, shape=()),
+            entities_mass_block_dof_end=V(dtype=gs.qd_int, shape=()),
             mass_parent_mask=V(dtype=gs.qd_float, shape=()),
             substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
@@ -237,6 +248,9 @@ def get_rigid_global_info(solver, kinematic_only):
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
         dofs_mass_block_start=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
         dofs_mass_block_end=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
+        links_tree_end=V(dtype=gs.qd_int, shape=(solver.n_links_,)),
+        entities_mass_block_dof_start=V(dtype=gs.qd_int, shape=(solver.n_entities_,)),
+        entities_mass_block_dof_end=V(dtype=gs.qd_int, shape=(solver.n_entities_,)),
         mass_parent_mask=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver.n_dofs_)),
         substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._substep_dt),
         iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.iterations),
@@ -2388,7 +2402,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # flattened index decompositions) key on this flag, while algorithm selection (warp-cooperative vs serial
     # reductions) keys on enable_cooperative_constraint_kernels alone.
     constraint_layout_batch_first: bool = False
-    tiled_n_dofs_per_entity: int = -1
+    tiled_n_dofs_per_block: int = -1
     tiled_n_dofs: int = -1
     tiled_n_island_dofs: int = -1  # shared-tile cap for the cooperative per-island solve (fits GPU shared memory)
     # Number of persistent T-lane blocks the cooperative per-island factor+solve launches. The grid is static (for

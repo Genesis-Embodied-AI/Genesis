@@ -8,6 +8,7 @@ from genesis.utils.misc import qd_to_torch, tensor_to_array
 
 from ..utils import (
     assert_allclose,
+    assert_equal,
     check_mujoco_data_consistency,
     check_mujoco_model_consistency,
     get_hf_dataset,
@@ -302,6 +303,11 @@ def test_drone_advanced(show_viewer):
         )
         drones.append(drone)
     scene.build()
+
+    for drone in drones:
+        assert drone.base_link.parent_idx == -1
+        assert_equal([link.root_idx for link in drone.links], drone.base_link.idx)
+        assert all(drone.link_start <= link.parent_idx < link.idx for link in drone.links[1:])
 
     for drone in drones:
         chain_dofs = range(6, drone.n_dofs)
