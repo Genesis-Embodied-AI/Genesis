@@ -916,7 +916,7 @@ def _func_elastomer_direct_dilate_contribution(
         if compressibility <= 0.0:  # pure incompressible r_hat / r
             w = depth * inv
         else:  # blend, each kernel peak-normalized (see the FFT builder for the closed-form peaks)
-            norm_g = gs.qd_float(qd.static(math.exp(-0.5))) / qd.sqrt(gs.qd_float(2.0) * lam)
+            norm_g = gs.qd_float(qd.static(_INV_SQRT_E)) / qd.sqrt(gs.qd_float(2.0) * lam)
             norm_i = gs.qd_float(1.0) / (gs.qd_float(2.0) * eps)
             w = depth * (compressibility * gaussian / norm_g + (gs.qd_float(1.0) - compressibility) * inv / norm_i)
     return (planar_diff * w + normal_bulge) * scale
@@ -1353,7 +1353,6 @@ def _kernel_elastomer_surface_state_bvh(
     elastomer_geom_active_envs_mask: qd.types.ndarray(),
     bvh_chunk_sensor_idx: qd.types.ndarray(),
     bvh: ChunkedBVHData,
-    bvh_stack_size: qd.template(),
     pc_pos_link: qd.types.ndarray(),
     pc_active_envs_mask: qd.types.ndarray(),
     sdf_enter: qd.types.ndarray(),
@@ -1442,7 +1441,7 @@ def _kernel_elastomer_surface_state_bvh(
         sensor_pos = links_state.pos[sensor_link_idx, i_b]
         sensor_quat = links_state.quat[sensor_link_idx, i_b]
 
-        stack = qd.Vector.zero(gs.qd_int, qd.static(bvh_stack_size))
+        stack = qd.Vector.zero(gs.qd_int, qd.static(BVH_STACK_SIZE))
         stack[0] = bvh.chunk_node_start[i_c]
         stack_idx = 1
 
@@ -1497,7 +1496,7 @@ def _kernel_elastomer_surface_state_bvh(
                 right = bvh.node_right[n]
                 # Median split bounds depth at log2(N / leaf_size) << BVH_STACK_SIZE; the guard mirrors the
                 # global rigid-BVH kernel so a future build strategy can't silently overflow the stack.
-                if stack_idx < qd.static(bvh_stack_size - 2):
+                if stack_idx < qd.static(BVH_STACK_SIZE - 2):
                     stack[stack_idx] = left
                     stack[stack_idx + 1] = right
                     stack_idx += 2
@@ -2326,7 +2325,6 @@ class ElastomerTaxelSensor(
                     shared_metadata.elastomer_geom_active_envs_mask,
                     bvh.chunk_sensor_idx,
                     bvh.kernel_bvh,
-                    BVH_STACK_SIZE,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
                     shared_metadata.shear_anchor_sd_enter,

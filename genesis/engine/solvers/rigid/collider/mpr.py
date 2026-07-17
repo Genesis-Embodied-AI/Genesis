@@ -370,6 +370,14 @@ def mpr_find_penetration(
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
 ):
+    # How far the origin's projection may extrapolate beyond the portal triangle, as a fraction of the triangle
+    # (barycentric), before the infinite-plane penetration is deemed an unreliable extrapolation (portal INVALID
+    # -> refine with GJK).
+    # FIXME: This is a compile-time constant instead of an MPRInfo scalar field because one extra field read pushes
+    # '_func_narrowphase_multicontact' past Metal's limit of 31 buffer bindings per kernel. Move it back to MPRInfo
+    # once quadrants packs root buffers below that limit (e.g. via Metal argument buffers).
+    CCD_EXTRAPOLATION_TOL = qd.static(1.0)
+
     iterations = 0
 
     is_col = False
@@ -448,10 +456,7 @@ def mpr_find_penetration(
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # unconverged (hit the iteration cap)
             elif min_b >= 0.0:
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.VALID  # origin projects inside -> exact depth (Thm 4.2)
-            elif (
-                bsum > mpr_info.CCD_EPS[None] * babs
-                and (-min_b) <= qd.static(collider_static_config.ccd_extrapolation_tol) * bsum
-            ):
+            elif bsum > mpr_info.CCD_EPS[None] * babs and (-min_b) <= CCD_EXTRAPOLATION_TOL * bsum:
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.DEGENERATED  # small overshoot -> lower bound (Thm 4.3)
             else:
                 mpr_state.portal_status[i_b] = PORTAL_STATUS.INVALID  # extrapolates too far / degenerate -> unreliable

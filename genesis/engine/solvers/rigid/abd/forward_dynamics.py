@@ -284,6 +284,11 @@ def func_compute_mass_matrix(
     static_rigid_sim_config: qd.template(),
     is_backward: qd.template(),
 ):
+    # Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
+    # enable_cooperative_constraint_kernels=True (and not use_hibernation). One warp per (entity, env); lanes stride
+    # i_d_ within the entity dof block to coalesce the flipped mass_mat writes.
+    _MASS_MAT_BLOCK = qd.static(32)
+
     BW = qd.static(is_backward)
 
     # crb initialize
@@ -385,13 +390,12 @@ def func_compute_mass_matrix(
         # two-pass path computed and then overwrote, and removing the separate mirror pass. Under the flipped
         # mass_mat layout (i_d stride-1) the primary write coalesces; the inline mirror write is strided but
         # replaces the previous mirror-pass read-write at similar cost.
-        _T = qd.static(static_rigid_sim_config.mass_mat_block)
         n_entities = entities_info.n_links.shape[0]
         _B_assemble = links_state.pos.shape[1]
-        qd.loop_config(name="mass_mat_assemble", block_dim=_T)
-        for i_flat in range(n_entities * _B_assemble * _T):
-            tid = i_flat % _T
-            i_eb = i_flat // _T
+        qd.loop_config(name="mass_mat_assemble", block_dim=_MASS_MAT_BLOCK)
+        for i_flat in range(n_entities * _B_assemble * _MASS_MAT_BLOCK):
+            tid = i_flat % _MASS_MAT_BLOCK
+            i_eb = i_flat // _MASS_MAT_BLOCK
             i_e = i_eb % n_entities
             i_b = i_eb // n_entities
 
@@ -420,7 +424,7 @@ def func_compute_mass_matrix(
                     rigid_global_info.mass_mat[i_d, j_d, i_b] = val
                     if i_d_ != j_d_:
                         rigid_global_info.mass_mat[j_d, i_d, i_b] = val
-                i_pair += _T
+                i_pair += _MASS_MAT_BLOCK
     else:
         qd.loop_config(
             name="mass_mat_assemble", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
