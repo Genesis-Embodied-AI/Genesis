@@ -1,3 +1,4 @@
+import os
 import sys
 
 import numpy as np
@@ -132,6 +133,15 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
 def test_deformable_uv_textures(renderer_type, renderer, show_viewer, png_snapshot, backend):
+    # FIXME: On the macOS CI runners the GPU is a virtualized "Apple Paravirtual device". This test drives that
+    # virtualized Metal driver into a persistent, VM-wide broken state: afterwards newComputePipelineStateWithFunction
+    # returns "Compilation failed (code=2)" for *every* kernel - even a trivial copy kernel - which is unrecoverable
+    # within the VM (survives MTLCompilerService restart and process exit) and cascades to every later test in the job.
+    # Quadrants 1.1.3b1 enables native Metal f32 atomic_add (avoids the CAS-path MRE), but this full FEM+PBD
+    # workload (n_pcg_iterations=40) still wedges on macos-15 CI - keep the skip until that is fixed.
+    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("QD_ENABLE_METAL", "1") != "0":
+        pytest.skip("FEM implicit (PCG) solve wedges the virtualized Apple Metal GPU on macOS CI runners.")
+
     # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
     # without denoiser.
     png_snapshot.extension._std_err_threshold = 3.0
