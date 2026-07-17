@@ -206,7 +206,7 @@ def _func_query_contact_depth(
     n_g = sensor_n_geoms[i_b, i_s]
     for i_g_ in range(n_g):
         i_g = sensor_geoms_idx[i_b, i_s, i_g_]
-        if func_point_in_geom_aabb(i_g, i_b, aabb_expansion, probe_pos, dyn_state):
+        if func_point_in_geom_aabb(i_g, i_b, probe_pos, aabb_expansion, dyn_state):
             g_pos = dyn_state.geoms.pos[i_g, i_b]
             g_quat = dyn_state.geoms.quat[i_g, i_b]
             sd = sdf.sdf_func_world_local(i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, collider_info.sdf)

@@ -1264,15 +1264,15 @@ def _kernel_elastomer_dilate_accumulate(
             if src_depth <= gs.qd_float(0.0):
                 continue
             contribution = _func_elastomer_direct_dilate_contribution(
-                n_exp,
-                comp,
-                eps,
                 func_vec3_at(j_p, probe_positions_local),
                 target_local,
                 target_normal,
                 src_depth,
                 lam,
                 scale,
+                n_exp,
+                comp,
+                eps,
             )
             for k in qd.static(range(3)):
                 acc[k] = acc[k] + contribution[k]
