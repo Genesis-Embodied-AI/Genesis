@@ -660,6 +660,19 @@ def gjk_collision(request):
 
 
 @pytest.fixture
+def torsional_friction(request):
+    torsional_friction = None
+    for mark in request.node.iter_markers("torsional_friction"):
+        if mark.args:
+            if torsional_friction is not None:
+                pytest.fail("'torsional_friction' can only be specified once.")
+            (torsional_friction,) = mark.args
+    if torsional_friction is None:
+        torsional_friction = False
+    return torsional_friction
+
+
+@pytest.fixture
 def merge_fixed_links(request):
     merge_fixed_links = None
     for mark in request.node.iter_markers("merge_fixed_links"):
@@ -861,6 +874,7 @@ def gs_sim(
     adjacent_collision,
     gjk_collision,
     friction_cone,
+    torsional_friction,
     show_viewer,
     mj_sim,
 ):
@@ -877,6 +891,7 @@ def gs_sim(
         gjk_collision,
         show_viewer,
         mj_sim,
+        torsional_friction=torsional_friction,
         friction_cone=friction_cone,
     )
 

@@ -43,6 +43,7 @@ class RigidGeom(RBC):
         mesh: "Mesh",
         type: gs.GEOM_TYPE,
         friction: float,
+        friction_torsional: float,
         sol_params,
         init_pos,
         init_quat,
@@ -62,6 +63,7 @@ class RigidGeom(RBC):
         self._idx = idx
         self._type: gs.GEOM_TYPE = type
         self._friction: float = friction
+        self._friction_torsional: float = friction_torsional
         self._sol_params = sol_params
         self._needs_coup: bool = needs_coup
         self._contype = int(contype)
@@ -352,6 +354,17 @@ class RigidGeom(RBC):
         if self._solver.is_built:
             self._solver.set_geom_friction(friction, self._idx)
 
+    def set_friction_torsional(self, friction_torsional):
+        """
+        Set the torsional friction coefficient of this geometry (see 'gs.materials.Rigid').
+        """
+        if friction_torsional < 0:
+            gs.raise_exception("`friction_torsional` must be non-negative.")
+        self._friction_torsional = friction_torsional
+
+        if self._solver.is_built:
+            self._solver.set_geom_friction_torsional(friction_torsional, self._idx)
+
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -449,6 +462,13 @@ class RigidGeom(RBC):
         Get the friction coefficient of the geom.
         """
         return self._friction
+
+    @property
+    def friction_torsional(self):
+        """
+        Get the torsional friction coefficient of the geom (see 'gs.materials.Rigid').
+        """
+        return self._friction_torsional
 
     @property
     def data(self):

@@ -159,6 +159,7 @@ from .abd.accessor import (
     kernel_set_drone_rpm,
     kernel_update_drone_propeller_vgeoms,
     kernel_set_geom_friction,
+    kernel_set_geom_friction_torsional,
     kernel_set_geoms_friction,
     kernel_adjust_link_inertia,
 )
@@ -535,6 +536,7 @@ class RigidSolver(KinematicSolver):
             batch_joints_info=self._options.batch_joints_info,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_elliptic_friction=self._options.friction_cone == gs.friction_cone.elliptic,
+            enable_torsional_friction=self._options.enable_torsional_friction,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
@@ -1104,6 +1106,7 @@ class RigidSolver(KinematicSolver):
                 np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 np.array([geom.type for geom in geoms], dtype=gs.np_int),
                 np.array([geom.friction for geom in geoms], dtype=gs.np_float),
+                np.array([geom.friction_torsional for geom in geoms], dtype=gs.np_float),
                 geoms_sol_params,
                 np.array([geom.data for geom in geoms], dtype=gs.np_float),
                 np.array([geom.is_convex for geom in geoms], dtype=gs.np_bool),
@@ -2928,6 +2931,9 @@ class RigidSolver(KinematicSolver):
 
     def set_geom_friction(self, friction, geoms_idx):
         kernel_set_geom_friction(geoms_idx, self.dyn_info, friction)
+
+    def set_geom_friction_torsional(self, friction_torsional, geoms_idx):
+        kernel_set_geom_friction_torsional(geoms_idx, self.dyn_info, friction_torsional)
 
     def set_geoms_friction(self, friction, geoms_idx=None):
         friction, geoms_idx, _ = self._sanitize_io_variables(

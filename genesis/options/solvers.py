@@ -420,7 +420,8 @@ class RigidOptions(Options):
         Maximum number of collision pairs. Defaults to 100.
     max_contacts : int, optional
         Maximum number of simultaneous contact points per environment that the constraint solver can handle, which
-        determines the size of the contact constraint buffers (4 constraints per contact point). Defaults to None.
+        determines the size of the contact constraint buffers (3 to 6 constraint rows per contact point depending on
+        'friction_cone' and 'enable_torsional_friction'). Defaults to None.
 
         This limit applies to the final contact points after pruning, not to the candidate contact points that
         collision detection can emit (see 'max_collision_pairs'). Exceeding it at runtime halts the simulation with
@@ -464,6 +465,12 @@ class RigidOptions(Options):
         (default) is robust and easy to solve; 'gs.friction_cone.elliptic' is the exact isotropic cone, harder to solve
         but paired with a high 'impratio' it holds resting stacks without slow tangential creep. See 'gs.friction_cone'
         for the description of each model. Unsupported with the noslip solver or differentiable simulation.
+    enable_torsional_friction : bool, optional
+        Whether contacts also resist relative spin about their normal, with strength set per geometry by the material
+        option 'friction_torsional' (see 'gs.materials.Rigid'). Enable it when spin resistance matters - a grasped
+        object twisting in a gripper, a top spinning in place - which a point contact otherwise never slows down since
+        it transmits no spin torque. Every contact carries extra constraint rows to do so, slowing down the constraint
+        solve even where spin is irrelevant. Defaults to False.
     impratio : float, optional
         Ratio of tangential (friction) to normal constraint impedance at contacts. Raising it above 1 stiffens
         friction so resting stacks and piles hold their pose under sustained shear, at the cost of a slower solve that
@@ -541,6 +548,7 @@ class RigidOptions(Options):
     noslip_iterations: NonNegativeInt = 0
     noslip_tolerance: PositiveFloat = 1e-6
     friction_cone: gs.friction_cone = gs.friction_cone.pyramidal
+    enable_torsional_friction: StrictBool = False
     impratio: PositiveFloat | None = None
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None

@@ -712,6 +712,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         "group": mj_geom.group[0],
         "data": geom_data,
         "friction": mj_geom.friction[0],
+        "friction_torsional": mj_geom.friction[1],
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
     if is_col:

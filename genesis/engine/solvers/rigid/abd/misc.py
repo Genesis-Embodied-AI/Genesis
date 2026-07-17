@@ -513,6 +513,7 @@ def kernel_init_geom_fields(
     geoms_quat: qd.types.ndarray(),
     geoms_type: qd.types.ndarray(),
     geoms_friction: qd.types.ndarray(),
+    geoms_friction_torsional: qd.types.ndarray(),
     geoms_sol_params: qd.types.ndarray(),
     geoms_data: qd.types.ndarray(),
     geoms_is_convex: qd.types.ndarray(),
@@ -564,6 +565,7 @@ def kernel_init_geom_fields(
         dyn_info.geoms.link_idx[i_g] = geoms_link_idx[i_g]
         dyn_info.geoms.type[i_g] = geoms_type[i_g]
         dyn_info.geoms.friction[i_g] = geoms_friction[i_g]
+        dyn_info.geoms.friction_torsional[i_g] = geoms_friction_torsional[i_g]
 
         dyn_info.geoms.is_convex[i_g] = geoms_is_convex[i_g]
         dyn_info.geoms.is_hollow[i_g] = geoms_is_hollow[i_g]

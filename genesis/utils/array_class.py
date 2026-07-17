@@ -425,8 +425,9 @@ class ConstraintState:
     jac_n_dofs: qd.Tensor
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
-    # Number of elliptic-cone contact rows (3 per contact), laid out contiguously at the start of the collision
-    # segment. Zero for the pyramidal cone. The cone rows occupy [ne + n_frictionloss, ne + n_frictionloss + n_cone).
+    # Number of elliptic-cone contact rows (rows_per_contact per contact), laid out contiguously at the start of the
+    # collision segment. Zero for the pyramidal cone. The cone rows occupy
+    # [ne + n_frictionloss, ne + n_frictionloss + n_cone).
     n_constraints_cone: qd.Tensor
     improved: qd.Tensor
     Jaref: qd.Tensor
@@ -440,7 +441,8 @@ class ConstraintState:
     cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
     # Frictionloss rows store their friction loss; elliptic-cone head (normal) rows reuse the field to carry the
-    # contact friction coefficient read by the cone solver (their tangent rows hold 0).
+    # contact sliding friction coefficient read by the cone solver, and with torsional friction the spin row carries
+    # the torsional coefficient the same way (the tangent rows hold 0).
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
     active: qd.Tensor
@@ -696,6 +698,7 @@ class ContactData:
     normal: qd.Tensor
     pos: qd.Tensor
     friction: qd.Tensor
+    friction_torsional: qd.Tensor
     sol_params: qd.Tensor
     force: qd.Tensor
     link_a: qd.Tensor
@@ -714,6 +717,7 @@ def get_contact_data(solver, max_candidate_contacts, requires_grad):
         pos=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         penetration=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         friction=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        friction_torsional=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
         sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
         force=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
@@ -1950,6 +1954,7 @@ class GeomsInfo:
     link_idx: qd.Tensor
     type: qd.Tensor
     friction: qd.Tensor
+    friction_torsional: qd.Tensor
     sol_params: qd.Tensor
     vert_num: qd.Tensor
     vert_start: qd.Tensor
@@ -1985,6 +1990,7 @@ def get_geoms_info(solver, is_active=True):
         link_idx=V(dtype=gs.qd_int, shape=shape),
         type=V(dtype=gs.qd_int, shape=shape),
         friction=V(dtype=gs.qd_float, shape=shape),
+        friction_torsional=V(dtype=gs.qd_float, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         vert_num=V(dtype=gs.qd_int, shape=shape),
         vert_start=V(dtype=gs.qd_int, shape=shape),
@@ -2404,6 +2410,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # Whether the cone-free assembled Hessian is persisted in nt_H's mirror slots (diagonal in nt_H_cone_free_diag);
     # see the nt_H declaration for the packed-storage mechanics and the rigid solver's resolution for the gating.
     enable_cone_free_hessian_reuse: bool = False
+    # Whether contacts carry torsional friction rows resisting relative spin about the contact normal: one extra
+    # opposing pyramid pair per contact with the pyramidal cone, one extra cone row with the elliptic cone.
+    enable_torsional_friction: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
     hibernation_min_steps: int = 10
@@ -2463,6 +2472,14 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
+
+    @property
+    def rows_per_contact(self) -> int:
+        """Constraint rows per contact: 2 opposing pyramid edges per friction axis with the pyramidal cone, or the
+        normal row plus one row per friction axis with the elliptic cone; torsional friction adds the spin axis."""
+        if self.enable_elliptic_friction:
+            return 4 if self.enable_torsional_friction else 3
+        return 6 if self.enable_torsional_friction else 4
 
 
 # =========================================== DataManager ===========================================

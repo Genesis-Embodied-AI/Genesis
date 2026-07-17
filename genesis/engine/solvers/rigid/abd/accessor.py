@@ -1122,6 +1122,11 @@ def kernel_set_geom_friction(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, f
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_geom_friction_torsional(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_torsional: qd.f32):
+    dyn_info.geoms.friction_torsional[geoms_idx] = friction_torsional
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_geoms_friction(
     geoms_idx: qd.types.ndarray(),
     friction: qd.types.ndarray(),

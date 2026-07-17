@@ -351,6 +351,107 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
 
 
 @pytest.mark.required
+@pytest.mark.torsional_friction(True)
+@pytest.mark.parametrize("model_name", ["sphere_plane_spin"])
+@pytest.mark.parametrize(
+    "gs_solver, gs_integrator",
+    [
+        (gs.constraint_solver.Newton, gs.integrator.Euler),
+        pytest.param(
+            gs.constraint_solver.Newton,
+            gs.integrator.Euler,
+            marks=pytest.mark.friction_cone(gs.friction_cone.elliptic),
+            id="Newton-Euler-elliptic",
+        ),
+    ],
+)
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_torsional_friction_mujoco_consistency(gs_sim, mj_sim, tol):
+    # Sliding while spinning couples the tangential and spin axes of the friction cone, so both the pyramidal
+    # torsional pair and the elliptic cone's coupled middle zone are exercised through slip, stick, and rest. The
+    # sphere starts slightly penetrated so the contact exists unambiguously from the first step.
+    qpos = np.array([0.0, 0.0, 0.0999, 1.0, 0.0, 0.0, 0.0])
+    qvel = np.array([0.5, 0.0, 0.0, 0.0, 0.0, 3.0])
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=60, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("friction_cone", [gs.friction_cone.pyramidal, gs.friction_cone.elliptic])
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
+    # A sphere spinning about the vertical axis on a plane has a single contact whose only braking torque is
+    # torsional friction: I * dw/dt = -friction_torsional * m * g with I = 2/5 m r^2, so the saturated spin-down
+    # rate is friction_torsional * g / (0.4 r^2), independent of the mass. The elliptic cone at the default
+    # impratio tracks the exact Coulomb bound once fully slipping, including for coefficients far below the
+    # tangential ones; the pyramidal cone's regularized friction decays below that bound, so it asserts the
+    # coefficient ordering of the rates. Coefficients pair by maximum, so the plane's zero coefficient leaves each
+    # sphere decaying at its own rate, and a zero-coefficient sphere never slows down and keeps the normal contact
+    # response of a torsional-free scene (weight-only reported contact force).
+    GRAVITY = 9.81
+    DT = 0.01
+    RADIUS = 0.1
+    W0 = 3.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=friction_cone,
+            enable_torsional_friction=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction_torsional=0.0,
+        ),
+    )
+    spheres_friction_torsional = (0.0, 0.0001, 0.002, 0.005)
+    spheres = []
+    for i_s, friction_torsional in enumerate(spheres_friction_torsional):
+        spheres.append(
+            scene.add_entity(
+                gs.morphs.Sphere(
+                    radius=RADIUS,
+                    pos=(0.5 * i_s, 0.0, RADIUS),
+                ),
+                material=gs.materials.Rigid(
+                    friction_torsional=friction_torsional,
+                ),
+            )
+        )
+    scene.build(n_envs=n_envs)
+
+    for _ in range(10):
+        scene.step()
+    for sphere in spheres:
+        sphere.set_dofs_velocity([0.0, 0.0, 0.0, 0.0, 0.0, W0])
+    # Let the contact reference dynamics settle into the fully slipping regime before measuring the rate.
+    for _ in range(5):
+        scene.step()
+    w_start = [sphere.get_dofs_velocity()[..., 5] for sphere in spheres]
+    for _ in range(10):
+        scene.step()
+    spin_downs = []
+    for sphere, friction_torsional, w_0 in zip(spheres, spheres_friction_torsional, w_start):
+        spin_down = w_0 - sphere.get_dofs_velocity()[..., 5]
+        spin_downs.append(spin_down)
+        if friction_cone == gs.friction_cone.elliptic or friction_torsional == 0.0:
+            spin_down_rate = friction_torsional * GRAVITY / (0.4 * RADIUS**2)
+            assert_allclose(spin_down, spin_down_rate * 10 * DT, rtol=0.05, atol=1e-3)
+    for spin_down_slow, spin_down_fast in zip(spin_downs[1:], spin_downs[2:]):
+        assert (spin_down_slow < spin_down_fast).all()
+    assert_allclose(
+        torch.linalg.norm(spheres[0].get_links_net_contact_force(), dim=-1).sum(dim=-1),
+        spheres[0].get_mass() * GRAVITY,
+        rtol=0.01,
+    )
+
+
+@pytest.mark.required
 def test_elliptic_cone_push_isotropy(show_viewer):
     N_ENVS = 8
     FRICTION = 0.5
