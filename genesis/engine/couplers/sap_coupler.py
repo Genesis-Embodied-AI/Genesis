@@ -36,7 +36,14 @@ MARCHING_TETS_EDGE_TABLE = (
     (-1, -1, -1, -1),
 )
 
-TET_EDGES = ((0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3))
+TET_EDGES = (
+    (0, 1),
+    (1, 2),
+    (2, 0),
+    (0, 3),
+    (1, 3),
+    (2, 3),
+)
 
 # Cosine threshold for whether two vectors are considered to be in the same direction. Set to zero for strictly positive.
 COS_ANGLE_THRESHOLD = math.cos(math.pi * 5.0 / 8.0)
