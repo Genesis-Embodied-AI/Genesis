@@ -52,8 +52,8 @@ def kernel_get_kinematic_state(
 
 @qd.kernel(fastcache=True)
 def kernel_set_kinematic_state(
-    i_pos_shift: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     links_pos: qd.types.ndarray(),
@@ -129,8 +129,8 @@ def kernel_get_state(
 
 @qd.kernel(fastcache=True)
 def kernel_set_state(
-    i_pos_shift: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    i_pos_shift: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     dofs_acc: qd.types.ndarray(),
@@ -1135,8 +1135,8 @@ def kernel_set_geoms_friction(
 
 @qd.kernel(fastcache=True)
 def kernel_set_vverts(
-    envs_idx: qd.types.ndarray(),
     vvert_start: qd.i32,
+    envs_idx: qd.types.ndarray(),
     vverts: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),

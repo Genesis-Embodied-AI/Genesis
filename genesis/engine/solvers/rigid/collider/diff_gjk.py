@@ -10,11 +10,11 @@ def func_gjk_contact(
     i_ga,
     i_gb,
     i_b,
-    pos_tol,
     ga_pos: qd.types.vector(3),
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
+    pos_tol,
     normal_tol,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_state: array_class.DynState,
@@ -610,7 +610,7 @@ def func_add_diff_contact_input(
     is_face_degenerate = normal_norm < collider_info.gjk.diff_contact_min_normal_norm[None]
 
     # (b) Check if the origin is very close to the face (which means very small penetration depth).
-    proj_o = func_project_origin_to_plane(mink1, mink2, normal, mink3)
+    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
     origin_dist = proj_o.norm()
     is_origin_close_to_face = origin_dist < collider_info.gjk.diff_contact_min_penetration[None]
 
@@ -626,11 +626,11 @@ def func_add_diff_contact_input(
         i_ga,
         i_gb,
         i_b,
+        normal,
         pos_a,
         quat_a,
         pos_b,
         quat_b,
-        normal,
         shrink_sphere=False,
         collider_state=collider_state,
         gjk_state=gjk_state,
@@ -777,12 +777,12 @@ def func_differentiable_contact(
 
     # Project the origin onto the affine plane of the face: This operation is guaranteed to be numerically stable, as
     # the normal length is guaranteed to be larger than the minimum normal norm in [gjk_info].
-    proj_o = func_project_origin_to_plane(mink1, mink2, normal, mink3)
+    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
 
     # Compute the affine coordinates of the origin's projection on the face: This operation is also guaranteed to be
     # numerically stable, as the normal length is guaranteed to be larger than the minimum normal norm in
     # [gjk_info].
-    _lambda = func_triangle_affine_coords(mink1, mink2, normal, proj_o, mink3)
+    _lambda = func_triangle_affine_coords(mink1, mink2, mink3, normal, proj_o)
 
     # Point on geom 1
     w1 = pos1a * _lambda[0] + pos1b * _lambda[1] + pos1c * _lambda[2]
@@ -842,7 +842,7 @@ def func_plane_normal(v1, v2, v3):
 
 
 @qd.func
-def func_project_origin_to_plane(v1, v2, normal, v3):
+def func_project_origin_to_plane(v1, v2, v3, normal):
     """
     Project the origin onto the plane defined by a point on the plane and its normal.
 
@@ -857,7 +857,7 @@ def func_project_origin_to_plane(v1, v2, normal, v3):
 
 
 @qd.func
-def func_triangle_affine_coords(v1, v2, normal, point, v3):
+def func_triangle_affine_coords(v1, v2, v3, normal, point):
     """
     Compute the affine coordinates of the point with respect to the triangle.
 

@@ -389,7 +389,7 @@ def func_noslip_batch(
                                 constraint_state.efc_force[j_efc, i_b] = mid + y
                                 constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                         cost_change = func_cost_change(
-                            i_b, j_efc, EPS, Ac, old_force, res, constraint_state.efc_force, dim=2
+                            i_b, j_efc, Ac, old_force, res, EPS, constraint_state.efc_force, dim=2
                         )
 
                         improvement -= cost_change
@@ -491,7 +491,7 @@ def kernel_noslip(
 
 
 @qd.func
-def func_cost_change(i_b: int, force_start: int, eps, Ac, old_force, res, force: qd.Tensor, dim: int):
+def func_cost_change(i_b: int, force_start: int, Ac, old_force, res, eps, force: qd.Tensor, dim: int):
     change = gs.qd_float(0.0)
     if dim == 1:
         delta = force[force_start, i_b] - old_force[0]

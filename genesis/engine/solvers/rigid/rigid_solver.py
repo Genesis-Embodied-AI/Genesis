@@ -1753,8 +1753,8 @@ class RigidSolver(KinematicSolver):
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             kernel_set_zero(envs_idx, self._errno)
             kernel_set_state(
-                state.i_pos_shift,
                 envs_idx,
+                state.i_pos_shift,
                 state.qpos,
                 state.dofs_vel,
                 state.dofs_acc,

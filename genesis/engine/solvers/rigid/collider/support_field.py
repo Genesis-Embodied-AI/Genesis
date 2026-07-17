@@ -119,7 +119,7 @@ def _kernel_init_support(
 
 @qd.func
 def _func_support_world(
-    i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d, collider_info: array_class.ColliderInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), collider_info: array_class.ColliderInfo
 ):
     """
     support position for a world direction
@@ -178,7 +178,7 @@ def _func_support_mesh(i_g, d_mesh, collider_info: array_class.ColliderInfo):
 
 @qd.func
 def _func_support_sphere(
-    i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d, shrink, dyn_info: array_class.DynInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, dyn_info: array_class.DynInfo
 ):
     sphere_center = pos
     sphere_radius = dyn_info.geoms.data[i_g][0]
@@ -198,7 +198,7 @@ def _func_support_sphere(
 
 
 @qd.func
-def _func_support_ellipsoid(i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d, dyn_info: array_class.DynInfo):
+def _func_support_ellipsoid(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), dyn_info: array_class.DynInfo):
     a = dyn_info.geoms.data[i_g][0]
     b = dyn_info.geoms.data[i_g][1]
     c = dyn_info.geoms.data[i_g][2]
@@ -218,7 +218,7 @@ def _func_support_ellipsoid(i_g, pos: qd.types.vector(3), quat: qd.types.vector(
 
 @qd.func
 def _func_support_capsule(
-    i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d, shrink, dyn_info: array_class.DynInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, dyn_info: array_class.DynInfo
 ):
     """
     Support function for capsule geometry.
@@ -246,7 +246,7 @@ def _func_support_capsule(
 
 @qd.func
 def _func_support_cylinder(
-    i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d, shrink, dyn_info: array_class.DynInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, dyn_info: array_class.DynInfo
 ):
     """
     Support function for cylinder geometry.
@@ -286,7 +286,7 @@ def _func_support_prism(i_b, d, collider_state: array_class.ColliderState):
 
 
 @qd.func
-def _func_support_box(i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d, dyn_info: array_class.DynInfo):
+def _func_support_box(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), dyn_info: array_class.DynInfo):
     d_box = gu.qd_inv_transform_by_quat(d, quat)
 
     v_ = qd.Vector(
@@ -304,7 +304,7 @@ def _func_support_box(i_g, pos: qd.types.vector(3), quat: qd.types.vector(4), d,
 
 
 @qd.func
-def _func_count_supports_world(i_g, quat: qd.types.vector(4), d, collider_info: array_class.ColliderInfo):
+def _func_count_supports_world(i_g, d, quat: qd.types.vector(4), collider_info: array_class.ColliderInfo):
     """
     Count the number of valid support points for the given world direction.
     Only needs quat since counting doesn't depend on position.
@@ -382,7 +382,7 @@ def _func_count_supports_mesh(i_g, d_mesh, collider_info: array_class.ColliderIn
 
 
 @qd.func
-def _func_count_supports_box(quat: qd.types.vector(4), d):
+def _func_count_supports_box(d, quat: qd.types.vector(4)):
     """
     Count the number of valid support points for a box in the given direction.
 

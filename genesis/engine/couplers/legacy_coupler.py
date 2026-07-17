@@ -281,7 +281,7 @@ class LegacyCoupler(RBC):
             delta_mv = mass * (vel - vel_old)
             force = -delta_mv / rigid_info.substep_dt[None]
             self.rigid_solver._func_apply_coupling_force(
-                pos_world, force, geoms_info.link_idx[geom_idx], i_b, links_state
+                geoms_info.link_idx[geom_idx], i_b, pos_world, force, links_state
             )
 
         return vel
@@ -840,7 +840,7 @@ class LegacyCoupler(RBC):
             force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
 
             self.rigid_solver._func_apply_coupling_force(
-                pos_world, force, geoms_info.link_idx[geom_idx], batch_idx, links_state
+                geoms_info.link_idx[geom_idx], batch_idx, pos_world, force, links_state
             )
 
         return new_pos, new_vel, contact_normal

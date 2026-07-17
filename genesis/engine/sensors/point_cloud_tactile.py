@@ -796,8 +796,8 @@ def _func_elastomer_min_sdf_over_active_geoms(
     i_b: int,
     geom_start: int,
     geom_idx: qd.types.ndarray(),
-    geom_n: int,
     point_world: qd.types.vector(3),
+    geom_n: int,
     geom_active_envs_mask: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
@@ -840,9 +840,9 @@ def _func_elastomer_update_surface_anchor(
     i_b: int,
     i_o: int,
     sdf_value: float,
+    point_sensor: qd.types.vector(3),
     sdf_enter: float,
     sdf_exit: float,
-    point_sensor: qd.types.vector(3),
     surface_entry_pos_sensor_buf: qd.types.ndarray(),
     surface_initialized_buf: qd.types.ndarray(),
 ):
@@ -858,15 +858,15 @@ def _func_elastomer_update_surface_anchor(
 
 @qd.func
 def _func_elastomer_direct_dilate_contribution(
+    source_pos: qd.types.vector(3),
+    target_pos: qd.types.vector(3),
+    target_normal: qd.types.vector(3),
     depth: float,
     lam: float,
     scale: float,
     normal_exponent: float,
     compressibility: float,
     eps: float,
-    source_pos: qd.types.vector(3),
-    target_pos: qd.types.vector(3),
-    target_normal: qd.types.vector(3),
 ) -> qd.types.vector(3):
     """
     Single tracked-point dilation contribution: tangential spreading is linear in penetration depth, while the
@@ -896,13 +896,13 @@ def _func_elastomer_direct_dilate_contribution(
 
 @qd.func
 def _func_elastomer_direct_shear_contribution(
-    depth: float,
-    lam: float,
-    scale: float,
     point_sensor: qd.types.vector(3),
     entry_sensor: qd.types.vector(3),
     probe_pos: qd.types.vector(3),
     probe_normal: qd.types.vector(3),
+    depth: float,
+    lam: float,
+    scale: float,
     eps: float,
 ) -> qd.types.vector(3):
     shear_disp = point_sensor - entry_sensor
@@ -1195,8 +1195,8 @@ def _kernel_elastomer_probe_depth(
             i_b,
             sensor_track_geom_start[i_s],
             track_geom_idx,
-            sensor_track_geom_n[i_s],
             probe_world,
+            sensor_track_geom_n[i_s],
             track_geom_active_envs_mask,
             dyn_state,
             dyn_info,
@@ -1264,15 +1264,15 @@ def _kernel_elastomer_dilate_accumulate(
             if src_depth <= gs.qd_float(0.0):
                 continue
             contribution = _func_elastomer_direct_dilate_contribution(
+                n_exp,
+                comp,
+                eps,
                 func_vec3_at(j_p, probe_positions_local),
                 target_local,
                 target_normal,
                 src_depth,
                 lam,
                 scale,
-                n_exp,
-                comp,
-                eps,
             )
             for k in qd.static(range(3)):
                 acc[k] = acc[k] + contribution[k]
@@ -1409,8 +1409,8 @@ def _kernel_elastomer_surface_state_bvh(
                         i_b,
                         sensor_elastomer_geom_start[i_s],
                         elastomer_geom_idx,
-                        sensor_elastomer_geom_n[i_s],
                         point_world,
+                        sensor_elastomer_geom_n[i_s],
                         elastomer_geom_active_envs_mask,
                         dyn_state,
                         dyn_info,
@@ -1423,9 +1423,9 @@ def _kernel_elastomer_surface_state_bvh(
                         i_b,
                         i_o,
                         min_sdf,
+                        point_sensor,
                         sdf_enter[i_s],
                         sdf_exit[i_s],
-                        point_sensor,
                         surface_entry_pos_sensor_buf,
                         surface_initialized_buf,
                     )
@@ -1577,9 +1577,9 @@ def _kernel_elastomer_surface_state_via_global_bvh(
                         i_b,
                         i_o,
                         min_sdf,
+                        point_sensor,
                         sdf_enter[i_s],
                         sdf_exit[i_s],
-                        point_sensor,
                         surface_entry_pos_sensor_buf,
                         surface_initialized_buf,
                     )
@@ -1663,7 +1663,7 @@ def _kernel_elastomer_shear_accumulate(
                 dt=gs.qd_float,
             )
             contribution = _func_elastomer_direct_shear_contribution(
-                depth, lam, scale, point_sensor, entry, probe_local, probe_normal, eps
+                point_sensor, entry, probe_local, probe_normal, depth, lam, scale, eps
             )
             for k in qd.static(range(3)):
                 acc[k] = acc[k] + contribution[k]

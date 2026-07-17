@@ -14,13 +14,13 @@ import genesis.utils.geom as gu
 
 @qd.func
 def func_refine_smooth_contact_pos(
+    geom_type,
+    geom_data,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
     normal: qd.types.vector(3),
-    ccd_contact_pos: qd.types.vector(3),
-    geom_type,
-    geom_data,
     penetration,
+    ccd_contact_pos: qd.types.vector(3),
 ):
     """
     Reconstruct the contact position analytically from the smooth side of the contact.
@@ -92,12 +92,12 @@ def func_apply_smooth_refinement(
     i_ga,
     i_gb,
     normal: qd.types.vector(3),
+    penetration,
     contact_pos: qd.types.vector(3),
     ga_pos: qd.types.vector(3),
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
-    penetration,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -123,7 +123,7 @@ def func_apply_smooth_refinement(
             or type_a == gs.GEOM_TYPE.CYLINDER
         ):
             contact_pos = func_refine_smooth_contact_pos(
-                ga_pos, ga_quat, normal, contact_pos, type_a, dyn_info.geoms.data[i_ga], penetration
+                type_a, dyn_info.geoms.data[i_ga], ga_pos, ga_quat, normal, penetration, contact_pos
             )
         elif (
             type_b == gs.GEOM_TYPE.SPHERE
@@ -132,7 +132,7 @@ def func_apply_smooth_refinement(
             or type_b == gs.GEOM_TYPE.CYLINDER
         ):
             contact_pos = func_refine_smooth_contact_pos(
-                gb_pos, gb_quat, -normal, contact_pos, type_b, dyn_info.geoms.data[i_gb], penetration
+                type_b, dyn_info.geoms.data[i_gb], gb_pos, gb_quat, -normal, penetration, contact_pos
             )
     return contact_pos
 

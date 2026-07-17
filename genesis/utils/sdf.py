@@ -229,10 +229,10 @@ def sdf_func_ray_exit_distance(
     geom_idx,
     origin: qd.types.vector(3),
     direction: qd.types.vector(3),
-    geom_pos: qd.types.vector(3),
-    geom_quat: qd.types.vector(4),
     max_dist,
     tolerance,
+    geom_pos: qd.types.vector(3),
+    geom_quat: qd.types.vector(4),
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
 ):
@@ -558,8 +558,8 @@ def sdf_func_grad_world_local(
 
 @qd.func
 def sdf_func_find_closest_vert(
-    i_b,
     geom_idx,
+    i_b,
     pos_world,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,

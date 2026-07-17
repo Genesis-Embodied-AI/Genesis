@@ -2801,10 +2801,10 @@ class RigidEntity(KinematicEntity):
 
     @qd.func
     def _impl_get_jacobian(
-        self, i_b, tgt_link_idx, p_vec, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
+        self, tgt_link_idx, i_b, p_vec, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
     ):
         self._func_get_jacobian(
-            i_b, tgt_link_idx, p_vec, qd.Vector.one(gs.qd_int, 3), qd.Vector.one(gs.qd_int, 3), dyn_state, dyn_info
+            tgt_link_idx, i_b, p_vec, qd.Vector.one(gs.qd_int, 3), qd.Vector.one(gs.qd_int, 3), dyn_state, dyn_info
         )
 
     @qd.kernel
@@ -2817,20 +2817,20 @@ class RigidEntity(KinematicEntity):
     ):
         p_vec = qd.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.qd_float)
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(i_b, tgt_link_idx, p_vec, dyn_state, dyn_info)
+            self._impl_get_jacobian(tgt_link_idx, i_b, p_vec, dyn_state, dyn_info)
 
     @qd.kernel
     def _kernel_get_jacobian_zero(
         self, tgt_link_idx: qd.i32, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
     ):
         for i_b in range(self._solver._B):
-            self._impl_get_jacobian(i_b, tgt_link_idx, qd.Vector.zero(gs.qd_float, 3), dyn_state, dyn_info)
+            self._impl_get_jacobian(tgt_link_idx, i_b, qd.Vector.zero(gs.qd_float, 3), dyn_state, dyn_info)
 
     @qd.func
     def _func_get_jacobian(
         self,
-        i_b,
         tgt_link_idx,
+        i_b,
         p_local,
         pos_mask,
         rot_mask,

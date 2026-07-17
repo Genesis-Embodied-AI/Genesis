@@ -124,7 +124,7 @@ def mpr_portal_encapsules_origin(
 
 
 @qd.func
-def mpr_portal_can_encapsule_origin(direction, v, collider_info: array_class.ColliderInfo):
+def mpr_portal_can_encapsule_origin(v, direction, collider_info: array_class.ColliderInfo):
     # Pure sign test (see mpr_portal_encapsules_origin).
     dot = v.dot(direction)
     return dot > 0.0
@@ -132,7 +132,7 @@ def mpr_portal_can_encapsule_origin(direction, v, collider_info: array_class.Col
 
 @qd.func
 def mpr_portal_reach_tolerance(
-    i_ga, i_gb, i_b, direction, v, mpr_state: array_class.MPRState, collider_info: array_class.ColliderInfo
+    i_ga, i_gb, i_b, v, direction, mpr_state: array_class.MPRState, collider_info: array_class.ColliderInfo
 ):
     dv1 = mpr_state.simplex_support.v[1, i_b].dot(direction)
     dv2 = mpr_state.simplex_support.v[2, i_b].dot(direction)
@@ -157,22 +157,22 @@ def support_driver(
     v = qd.Vector.zero(gs.qd_float, 3)
     geom_type = dyn_info.geoms.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(i_g, pos, quat, direction, shrink=False, dyn_info=dyn_info)
+        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(i_g, pos, quat, direction, dyn_info)
+        v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(i_g, pos, quat, direction, shrink=False, dyn_info=dyn_info)
+        v = support_field._func_support_capsule(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
     elif geom_type == gs.GEOM_TYPE.CYLINDER:
-        v = support_field._func_support_cylinder(i_g, pos, quat, direction, shrink=False, dyn_info=dyn_info)
+        v = support_field._func_support_cylinder(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(i_g, pos, quat, direction, dyn_info)
+        v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, dyn_info)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if qd.static(collider_static_config.has_terrain):
             # Terrain support doesn't depend on geometry pos/quat - uses collider_state.prism
             # Terrain is global and not perturbed, so we use the global state directly
             v, _ = support_field._func_support_prism(i_b, direction, collider_state)
     else:
-        v, v_, vid = support_field._func_support_world(i_g, pos, quat, direction, collider_info)
+        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, collider_info)
 
     return v
 
@@ -261,13 +261,13 @@ def mpr_refine_portal(
             collider_static_config,
         )
 
-        if not mpr_portal_can_encapsule_origin(direction, v, collider_info) or mpr_portal_reach_tolerance(
-            i_ga, i_gb, i_b, direction, v, mpr_state, collider_info
+        if not mpr_portal_can_encapsule_origin(v, direction, collider_info) or mpr_portal_reach_tolerance(
+            i_ga, i_gb, i_b, v, direction, mpr_state, collider_info
         ):
             ret = -1
             break
 
-        mpr_expand_portal(i_ga, i_gb, i_b, v1, v2, v, mpr_state)
+        mpr_expand_portal(i_ga, i_gb, i_b, v, v1, v2, mpr_state)
     return ret
 
 
@@ -384,7 +384,7 @@ def mpr_find_penetration(
             collider_info,
             collider_static_config,
         )
-        reached = mpr_portal_reach_tolerance(i_ga, i_gb, i_b, direction, v, mpr_state, collider_info)
+        reached = mpr_portal_reach_tolerance(i_ga, i_gb, i_b, v, direction, mpr_state, collider_info)
         if reached or iterations > collider_info.mpr.CCD_ITERATIONS[None]:
             # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
             # to the origin that lies inside the portal.
@@ -448,14 +448,14 @@ def mpr_find_penetration(
             pos = mpr_find_pos(i_ga, i_gb, i_b, mpr_state, collider_info, rigid_config)
             break
 
-        mpr_expand_portal(i_ga, i_gb, i_b, v1, v2, v, mpr_state)
+        mpr_expand_portal(i_ga, i_gb, i_b, v, v1, v2, mpr_state)
         iterations += 1
 
     return is_col, normal, penetration, pos
 
 
 @qd.func
-def mpr_expand_portal(i_ga, i_gb, i_b, v1, v2, v, mpr_state: array_class.MPRState):
+def mpr_expand_portal(i_ga, i_gb, i_b, v, v1, v2, mpr_state: array_class.MPRState):
     v4v0 = v.cross(mpr_state.simplex_support.v[0, i_b])
     dot = mpr_state.simplex_support.v[1, i_b].dot(v4v0)
 
@@ -478,12 +478,12 @@ def mpr_discover_portal(
     i_ga,
     i_gb,
     i_b,
+    center_a,
+    center_b,
     pos_a: qd.types.vector(3),
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
-    center_a,
-    center_b,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -756,12 +756,12 @@ def func_mpr_contact_from_centers(
     i_ga,
     i_gb,
     i_b,
+    center_a,
+    center_b,
     pos_a: qd.types.vector(3),
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
-    center_a,
-    center_b,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -773,12 +773,12 @@ def func_mpr_contact_from_centers(
         i_ga,
         i_gb,
         i_b,
+        center_a,
+        center_b,
         pos_a,
         quat_a,
         pos_b,
         quat_b,
-        center_a,
-        center_b,
         collider_state,
         mpr_state,
         dyn_info,
@@ -838,11 +838,11 @@ def func_mpr_contact(
     i_ga,
     i_gb,
     i_b,
+    normal_ws,
     pos_a: qd.types.vector(3),
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
-    normal_ws,
     geoms_init_AABB: array_class.GeomsInitAABB,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -870,12 +870,12 @@ def func_mpr_contact(
         i_ga,
         i_gb,
         i_b,
+        center_a,
+        center_b,
         pos_a,
         quat_a,
         pos_b,
         quat_b,
-        center_a,
-        center_b,
         collider_state,
         mpr_state,
         dyn_info,

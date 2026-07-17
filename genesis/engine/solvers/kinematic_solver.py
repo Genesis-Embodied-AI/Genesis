@@ -687,8 +687,8 @@ class KinematicSolver(Solver):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         kernel_set_kinematic_state(
-            state.i_pos_shift,
             envs_idx,
+            state.i_pos_shift,
             state.qpos,
             state.dofs_vel,
             state.links_pos,
@@ -1164,7 +1164,7 @@ class KinematicSolver(Solver):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         target_shape = (envs_idx.shape[0], custom_vvert_end - custom_vvert_start, 3)
         vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz")).contiguous()
-        kernel_set_vverts(envs_idx, custom_vvert_start, vverts, self.dyn_state, self._rigid_config)
+        kernel_set_vverts(custom_vvert_start, envs_idx, vverts, self.dyn_state, self._rigid_config)
 
     def get_vverts(self, custom_vvert_start, custom_vvert_end, envs_idx=None):
         """Return a copy of the vverts_state.pos slice for the given custom-vvert range.

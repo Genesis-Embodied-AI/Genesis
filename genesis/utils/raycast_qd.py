@@ -39,10 +39,10 @@ def get_triangle_vertices(i_f: int, i_b: int, dyn_state: array_class.DynState, d
 
 @qd.func
 def bvh_ray_cast(
-    i_b: int,
     ray_start: qd.types.vector(3),
-    max_range: float,
+    i_b: int,
     ray_dir: qd.types.vector(3),
+    max_range: float,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     dyn_state: array_class.DynState,
@@ -359,10 +359,10 @@ def get_visual_triangle_vertices(i_f: int, i_b: int, dyn_state: array_class.DynS
 
 @qd.func
 def bvh_ray_cast_visual(
-    i_b,
     ray_start,
-    max_range,
+    i_b,
     ray_dir,
+    max_range,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     dyn_state: array_class.DynState,
@@ -480,10 +480,10 @@ def kernel_cast_ray(
         i_b = envs_idx[i_b_]
         env_offset = rigid_info.envs_offset[i_b]
         cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
-            i_b,
             ray_start_world - env_offset,
-            max_range,
+            i_b,
             ray_direction_world,
+            max_range,
             bvh_nodes,
             bvh_morton_codes,
             dyn_state,
@@ -609,11 +609,11 @@ def kernel_cast_rays(
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         hit_face, hit_distance, _hit_normal = bvh_ray_cast(
+            ray_start_world,
             # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
             0 if shared_bvh else i_b,
-            ray_start_world,
-            max_ranges[i_s],
             ray_direction_world,
+            max_ranges[i_s],
             bvh_nodes,
             bvh_morton_codes,
             dyn_state,
@@ -697,11 +697,11 @@ def kernel_cast_rays_visual(
         ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         hit_face, hit_distance, _hit_normal = bvh_ray_cast_visual(
+            ray_start_world,
             # Reading batch 0 (valid only when shared_bvh) lets every env share one BVH copy.
             0 if shared_bvh else i_b,
-            ray_start_world,
-            max_ranges[i_s],
             ray_direction_world,
+            max_ranges[i_s],
             bvh_nodes,
             bvh_morton_codes,
             dyn_state,

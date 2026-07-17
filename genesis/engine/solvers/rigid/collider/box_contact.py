@@ -103,8 +103,8 @@ def func_plane_box_contact(
     i_gb,
     i_b,
     i_pair,
-    errno: qd.Tensor,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
@@ -121,7 +121,7 @@ def func_plane_box_contact(
     plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _, _ = support_field._func_support_box(i_gb, gb_pos, gb_quat, normal, dyn_info)
+    v1, _, _ = support_field._func_support_box(i_gb, normal, gb_pos, gb_quat, dyn_info)
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:

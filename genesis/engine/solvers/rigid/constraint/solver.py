@@ -418,9 +418,9 @@ class ConstraintSolver:
 
         self._eq_const_info_cache.clear()
         overflow = kernel_add_weld_constraint(
-            envs_idx,
             link1_idx,
             link2_idx,
+            envs_idx,
             self._solver.dyn_state,
             self.constraint_state,
             self._solver.dyn_info,
@@ -438,9 +438,9 @@ class ConstraintSolver:
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(
-            envs_idx,
             int(link1_idx),
             int(link2_idx),
+            envs_idx,
             self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
@@ -1236,8 +1236,8 @@ def _sort_contacts_per_island(
                     _sort_island_contacts(
                         i_b,
                         constraint_state.island.contact_id,
-                        constraint_state.island.contact_slices.n[i_island, i_b],
                         constraint_state.island.contact_slices.start[i_island, i_b],
+                        constraint_state.island.contact_slices.n[i_island, i_b],
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
@@ -1263,8 +1263,8 @@ def _sort_contacts_per_island(
                     _sort_island_contacts(
                         i_b,
                         constraint_state.island.contact_id,
-                        constraint_state.island.contact_slices.n[i_island, i_b],
                         constraint_state.island.contact_slices.start[i_island, i_b],
+                        constraint_state.island.contact_slices.n[i_island, i_b],
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
@@ -1303,8 +1303,8 @@ def add_inequality_constraints(
             _sort_island_contacts(
                 i_b,
                 collider_state.contact_sort_idx,
-                collider_state.n_contacts[i_b],
                 start=0,
+                n=collider_state.n_contacts[i_b],
                 contacts_pos=collider_state.contact_data.pos,
                 contacts_geom_a=collider_state.contact_data.geom_a,
                 contacts_geom_b=collider_state.contact_data.geom_b,
@@ -1632,9 +1632,9 @@ def add_frictionloss_constraints(
 
 @qd.kernel(fastcache=True)
 def kernel_add_weld_constraint(
-    envs_idx: qd.types.ndarray(),
     link1_idx: qd.i32,
     link2_idx: qd.i32,
+    envs_idx: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
@@ -1685,9 +1685,9 @@ def kernel_add_weld_constraint(
 
 @qd.kernel(fastcache=True)
 def kernel_delete_weld_constraint(
-    envs_idx: qd.types.ndarray(),
     link1_idx: qd.i32,
     link2_idx: qd.i32,
+    envs_idx: qd.types.ndarray(),
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -3536,10 +3536,10 @@ def func_cone_rank_update_island(
 
                 if cur_zone == 2 or prev_zone == 2:
                     cl00, cl10, cl20, cl11, cl21, cl22 = _func_cone_block_chol(
-                        friction, cur0, cur1, cur2, d0, con_mu, cur_zone, cN, cT, EPS
+                        cur0, cur1, cur2, d0, con_mu, friction, cur_zone, cN, cT, EPS
                     )
                     pl00, pl10, pl20, pl11, pl21, pl22 = _func_cone_block_chol(
-                        friction, prev0, prev1, prev2, d0, con_mu, prev_zone, pN, pT, EPS
+                        prev0, prev1, prev2, d0, con_mu, friction, prev_zone, pN, pT, EPS
                     )
                     ld_start = n
                     jac_n = constraint_state.jac_n_dofs[i_c, i_b]
@@ -3620,10 +3620,10 @@ def func_cone_rank_update_whole_env(
 
                 if cur_zone == 2 or prev_zone == 2:
                     cl00, cl10, cl20, cl11, cl21, cl22 = _func_cone_block_chol(
-                        friction, cur0, cur1, cur2, d0, con_mu, cur_zone, cN, cT, EPS
+                        cur0, cur1, cur2, d0, con_mu, friction, cur_zone, cN, cT, EPS
                     )
                     pl00, pl10, pl20, pl11, pl21, pl22 = _func_cone_block_chol(
-                        friction, prev0, prev1, prev2, d0, con_mu, prev_zone, pN, pT, EPS
+                        prev0, prev1, prev2, d0, con_mu, friction, prev_zone, pN, pT, EPS
                     )
                     # Per-term coefficients over (J_0, J_1, J_2): downdate the previous block first (terms 0..2, sign
                     # 2 * (term // 3) - 1 = -1) so the intermediate factor is the well-conditioned cone-free system,
@@ -4911,7 +4911,7 @@ def _func_cone_block_product(h00, h01, h02, h11, h12, h22, a0, a1, a2, b0, b1, b
 
 
 @qd.func
-def _func_cone_block_chol(friction, jar0, jar1, jar2, D0, con_mu, zone, N, T, EPS):
+def _func_cone_block_chol(jar0, jar1, jar2, D0, con_mu, friction, zone, N, T, EPS):
     """Lower-triangular Cholesky factor (l00, l10, l20, l11, l21, l22) of one contact's middle-zone cone Hessian H_c.
 
     All six entries are zero outside the middle zone. Diagonals are floored at EPS so a near-degenerate block cannot

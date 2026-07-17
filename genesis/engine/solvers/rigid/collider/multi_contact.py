@@ -65,7 +65,7 @@ def func_multi_contact(
         if i == 1:
             v1i, v2i, v3i, v1, v2, v3 = v21i, v22i, v23i, v21, v22, v23
 
-        nface, v1i, v2i, v3i, v1, v2, v3 = func_simplex_dim(v1, v2, v1i, v2i, v3i, v3)
+        nface, v1i, v2i, v3i, v1, v2, v3 = func_simplex_dim(v1i, v2i, v3i, v1, v2, v3)
         if i == 0:
             nface1, v11i, v12i, v13i, v11, v12, v13 = nface, v1i, v2i, v3i, v1, v2, v3
         else:
@@ -91,12 +91,12 @@ def func_multi_contact(
         if geom_type == gs.GEOM_TYPE.BOX:
             quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_box_normals(
-                i_g, i_b, nface, quat, v1i, v2i, v3i, t_dir, gjk_state, dyn_info, collider_info
+                i_g, i_b, quat, nface, v1i, v2i, v3i, t_dir, gjk_state, dyn_info, collider_info
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
             quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_mesh_normals(
-                i_g, i_b, nface, quat, v1i, v2i, v3i, gjk_state, dyn_info, collider_info
+                i_g, i_b, quat, nface, v1i, v2i, v3i, gjk_state, dyn_info, collider_info
             )
 
         for i_n in range(nnorms):
@@ -135,13 +135,13 @@ def func_multi_contact(
                 pos = pos_a if is_edge_face else pos_b
                 quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_box_edge_normals(
-                    i_g, i_b, nface, pos, quat, v1, v2, v1i, v2i, gjk_state, dyn_info, collider_info
+                    i_g, i_b, pos, quat, nface, v1, v2, v1i, v2i, gjk_state, dyn_info, collider_info
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
                 pos = pos_a if is_edge_face else pos_b
                 quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_mesh_edge_normals(
-                    i_g, i_b, nface, pos, quat, v1, v2, v1i, v2i, gjk_state, dyn_info, collider_info
+                    i_g, i_b, pos, quat, nface, v1, v2, v1i, v2i, gjk_state, dyn_info, collider_info
                 )
 
             if is_edge_face:
@@ -238,11 +238,11 @@ def func_multi_contact(
             normal = gjk_state.contact_faces[i_b, i].normal1
 
         # Clip polygon
-        func_clip_polygon(i_b, normal, nface1, nface2, edgecon1, edgecon2, approx_dir, gjk_state, collider_info)
+        func_clip_polygon(i_b, nface1, nface2, edgecon1, edgecon2, normal, approx_dir, gjk_state, collider_info)
 
 
 @qd.func
-def func_simplex_dim(v1, v2, v1i, v2i, v3i, v3):
+def func_simplex_dim(v1i, v2i, v3i, v1, v2, v3):
     """
     Determine the dimension of the given simplex (1-3).
 
@@ -276,8 +276,8 @@ def func_simplex_dim(v1, v2, v1i, v2i, v3i, v3):
 def func_potential_box_normals(
     i_g,
     i_b,
-    dim,
     quat: qd.types.vector(4),
+    dim,
     v1,
     v2,
     v3,
@@ -318,7 +318,7 @@ def func_potential_box_normals(
         # 1 when every vertex has positive xyz coordinate,
         # -1 when every vertex has negative xyz coordinate,
         # 0 when vertices are mixed
-        xyz[i] = func_cmp_bit(dim, v1, v2, v3, i)
+        xyz[i] = func_cmp_bit(v1, v2, v3, dim, i)
 
     for i in range(1 if dim == 3 else 3):
         # Determine the normal vector in the local space
@@ -397,7 +397,7 @@ def func_potential_box_normals(
 
 
 @qd.func
-def func_cmp_bit(n, v1, v2, v3, shift):
+def func_cmp_bit(v1, v2, v3, n, shift):
     """
     Compare one bit of v1 and v2 that sits at position `shift` (shift = 0 for the LSB, 1 for the next bit, ...).
 
@@ -467,8 +467,8 @@ def func_box_normal_from_collision_normal(
 def func_potential_mesh_normals(
     i_g,
     i_b,
-    dim,
     quat: qd.types.vector(4),
+    dim,
     v1,
     v2,
     v3,
@@ -565,9 +565,9 @@ def func_find_aligned_faces(i_b, nv, nw, gjk_state: array_class.GJKState, collid
 def func_potential_box_edge_normals(
     i_g,
     i_b,
-    dim,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
+    dim,
     v1,
     v2,
     v1i,
@@ -631,9 +631,9 @@ def func_potential_box_edge_normals(
 def func_potential_mesh_edge_normals(
     i_g,
     i_b,
-    dim,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
+    dim,
     v1,
     v2,
     v1i,
@@ -845,11 +845,11 @@ def func_mesh_face(
 @qd.func
 def func_clip_polygon(
     i_b,
-    normal,
     nface1,
     nface2,
     edgecon1,
     edgecon2,
+    normal,
     approx_dir,
     gjk_state: array_class.GJKState,
     collider_info: array_class.ColliderInfo,
@@ -885,7 +885,7 @@ def func_clip_polygon(
             res = (v2 - v1).cross(normal)
 
             # Reorient normal if needed
-            inside_v3 = func_halfspace(res, v1, v3, collider_info)
+            inside_v3 = func_halfspace(v1, res, v3, collider_info)
             if not inside_v3:
                 res = -res
 
@@ -924,8 +924,8 @@ def func_clip_polygon(
                 Q = gjk_state.contact_clipped_polygons[i_b, pi, (i + 1) % nclipped[pi]]
 
                 # Determine if P and Q are inside or outside the half-plane
-                inside_P = func_halfspace(n, a, P, collider_info)
-                inside_Q = func_halfspace(n, a, Q, collider_info)
+                inside_P = func_halfspace(a, n, P, collider_info)
+                inside_Q = func_halfspace(a, n, Q, collider_info)
 
                 # PQ entirely outside the clipping edge, skip
                 if not inside_P and not inside_Q:
@@ -938,7 +938,7 @@ def func_clip_polygon(
                     continue
 
                 # PQ intersects the half-plane, add the intersection point
-                t, ip = func_plane_intersect(P, Q, n, d, collider_info)
+                t, ip = func_plane_intersect(n, d, P, Q, collider_info)
                 if t >= 0 and t <= 1:
                     gjk_state.contact_clipped_polygons[i_b, ci, nclipped[ci]] = ip
                     nclipped[ci] += 1
@@ -990,7 +990,7 @@ def func_clip_polygon(
                     # Find if there were any duplicate contacts similar to [polygon_vert]
                     for j in range(n_witness):
                         prev_witness = gjk_state.witness[i_b, j].point_obj2
-                        skip = func_is_equal_vec(collider_info.gjk.FLOAT_MIN[None], polygon_vert, prev_witness)
+                        skip = func_is_equal_vec(polygon_vert, prev_witness, collider_info.gjk.FLOAT_MIN[None])
                         if skip:
                             break
 
@@ -1003,7 +1003,7 @@ def func_clip_polygon(
 
 
 @qd.func
-def func_halfspace(n, a, p, collider_info: array_class.ColliderInfo):
+def func_halfspace(a, n, p, collider_info: array_class.ColliderInfo):
     """
     Check if the point [p] is inside the half-space defined by the plane with normal [n] and point [a].
     """
@@ -1011,7 +1011,7 @@ def func_halfspace(n, a, p, collider_info: array_class.ColliderInfo):
 
 
 @qd.func
-def func_plane_intersect(v1, v2, pn, pd, collider_info: array_class.ColliderInfo):
+def func_plane_intersect(pn, pd, v1, v2, collider_info: array_class.ColliderInfo):
     """
     Compute the intersection point of the line segment [v1, v2]
     with the plane defined by the normal [pn] and distance [pd].

@@ -112,7 +112,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     i_l_ee = links_idx[i_ee]
                     local_point_i = qd.Vector([local_points[i_ee, 0], local_points[i_ee, 1], local_points[i_ee, 2]])
                     rigid_entity._func_get_jacobian(
-                        i_b, i_l_ee, local_point_i, pos_mask, rot_mask, dyn_state, dyn_info
+                        i_l_ee, i_b, local_point_i, pos_mask, rot_mask, dyn_state, dyn_info
                     )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                     # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)

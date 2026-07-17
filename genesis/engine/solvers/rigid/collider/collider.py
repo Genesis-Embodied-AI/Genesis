@@ -838,8 +838,8 @@ class Collider:
 
     def _call_multicontact(self):
         narrowphase._func_narrowphase_multicontact(
-            self._solver._errno,
             self._solver.geoms_init_AABB,
+            self._solver._errno,
             self._solver.dyn_state,
             self._collider_state,
             self._multicontact_mpr_state,
@@ -876,8 +876,8 @@ class Collider:
         if self._use_split_narrowphase:
             narrowphase._func_reset_narrowphase_work_queues(self._collider_state)
             narrowphase._func_narrowphase_contact0(
-                self._solver._errno,
                 self._solver.geoms_init_AABB,
+                self._solver._errno,
                 self._solver.dyn_state,
                 self._collider_state,
                 self._contact0_mpr_state,
@@ -893,8 +893,8 @@ class Collider:
             self._call_multicontact()
         elif self._collider_static_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(
-                self._solver._errno,
                 self._solver.geoms_init_AABB,
+                self._solver._errno,
                 self._solver.dyn_state,
                 self._collider_state,
                 self._mpr._mpr_state,
@@ -909,8 +909,8 @@ class Collider:
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
-                self._solver._errno,
                 self._solver.geoms_init_AABB,
+                self._solver._errno,
                 self._solver.dyn_state,
                 self._collider_state,
                 self._solver.dyn_info,
@@ -921,8 +921,8 @@ class Collider:
             )
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
-                self._solver._errno,
                 self._solver.geoms_init_AABB,
+                self._solver._errno,
                 self._solver.dyn_state,
                 self._collider_state,
                 self._mpr._mpr_state,
@@ -934,8 +934,8 @@ class Collider:
             )
         if self._collider_static_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
-                self._solver._errno,
                 self._solver.geoms_init_AABB,
+                self._solver._errno,
                 self._solver.dyn_state,
                 self._collider_state,
                 self._solver.dyn_info,
