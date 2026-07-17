@@ -23,7 +23,7 @@ from ..conftest import SKIP_NO_OMNIVERSE_KIT
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from ..utils import assert_allclose, get_hf_dataset
+from ..utils import assert_allclose, assert_equal, get_hf_dataset
 from .conftest import (
     USD_COLOR_TOL,
     build_mesh_scene,
@@ -93,6 +93,15 @@ def test_parse_nodegraph(usd_file):
     assert isinstance(texture1, gs.textures.ColorTexture)
     assert_allclose(texture0.color, (0.8, 0.2, 0.2), rtol=USD_COLOR_TOL)
     assert_allclose(texture1.color, (0.2, 0.6, 0.9), rtol=USD_COLOR_TOL)
+
+
+@pytest.mark.required
+def test_usdz_packaged_texture_resolution(usdz_packaged_texture_usd):
+    scene_file, texture_image = usdz_packaged_texture_usd
+    usd_scene = build_usd_scene(scene_file, scale=1.0, vis_mode="visual", fixed=True)
+    texture = usd_scene.entities[0].vgeoms[0].vmesh.surface.diffuse_texture
+    assert isinstance(texture, gs.textures.ImageTexture)
+    assert_equal(texture.image_array, texture_image)
 
 
 @pytest.mark.slow  # ~400s
