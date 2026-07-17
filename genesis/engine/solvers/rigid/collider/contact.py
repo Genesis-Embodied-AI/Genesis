@@ -14,13 +14,13 @@ import genesis.utils.geom as gu
 
 @qd.func
 def func_refine_smooth_contact_pos(
-    geom_type,
-    geom_data,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
     normal: qd.types.vector(3),
-    penetration,
     ccd_contact_pos: qd.types.vector(3),
+    geom_type,
+    geom_data,
+    penetration,
 ):
     """
     Reconstruct the contact position analytically from the smooth side of the contact.
@@ -92,12 +92,12 @@ def func_apply_smooth_refinement(
     i_ga,
     i_gb,
     normal: qd.types.vector(3),
-    penetration,
     contact_pos: qd.types.vector(3),
     ga_pos: qd.types.vector(3),
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
+    penetration,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -123,7 +123,7 @@ def func_apply_smooth_refinement(
             or type_a == gs.GEOM_TYPE.CYLINDER
         ):
             contact_pos = func_refine_smooth_contact_pos(
-                type_a, dyn_info.geoms.data[i_ga], ga_pos, ga_quat, normal, penetration, contact_pos
+                ga_pos, ga_quat, normal, contact_pos, type_a, dyn_info.geoms.data[i_ga], penetration
             )
         elif (
             type_b == gs.GEOM_TYPE.SPHERE
@@ -132,7 +132,7 @@ def func_apply_smooth_refinement(
             or type_b == gs.GEOM_TYPE.CYLINDER
         ):
             contact_pos = func_refine_smooth_contact_pos(
-                type_b, dyn_info.geoms.data[i_gb], gb_pos, gb_quat, -normal, penetration, contact_pos
+                gb_pos, gb_quat, -normal, contact_pos, type_b, dyn_info.geoms.data[i_gb], penetration
             )
     return contact_pos
 
@@ -179,9 +179,9 @@ def collider_kernel_reset(
 @qd.func
 def func_collider_clear_env(
     i_b,
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     if qd.static(rigid_config.use_hibernation):
@@ -238,28 +238,28 @@ def func_collider_clear_env(
 @qd.kernel(fastcache=True)
 def kernel_collider_clear(
     envs_idx: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        func_collider_clear_env(i_b, dyn_info, dyn_state, collider_state, rigid_config)
+        func_collider_clear_env(i_b, dyn_state, collider_state, dyn_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_collider_clear(
     envs_mask: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_collider_clear_env(i_b, dyn_info, dyn_state, collider_state, rigid_config)
+            func_collider_clear_env(i_b, dyn_state, collider_state, dyn_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
@@ -314,10 +314,10 @@ def func_add_contact(
     contact_pos: qd.types.vector(3),
     penetration,
     errno: qd.Tensor,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
     use_atomic: qd.template() = False,
 ):
     i_c = 0
@@ -359,10 +359,10 @@ def func_set_contact(
     normal: qd.types.vector(3),
     contact_pos: qd.types.vector(3),
     penetration,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     Set the contact data for the contact [i_c]. This is used for the backward pass, which parallelizes over the entire
@@ -392,9 +392,9 @@ def func_add_diff_contact_input(
     i_gb,
     i_b,
     i_d,
-    collider_info: array_class.ColliderInfo,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    collider_info: array_class.ColliderInfo,
 ):
     i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_candidate_contacts[None]:
@@ -472,9 +472,9 @@ def func_contact_orthogonals(
     i_b,
     normal: qd.types.vector(3),
     geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -546,9 +546,9 @@ def func_rotate_frame(
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts(
     errno: qd.Tensor,
+    collider_state: array_class.ColliderState,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
-    collider_state: array_class.ColliderState,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -974,9 +974,9 @@ def func_clamp_prune_contacts(
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts_coop(
     errno: qd.Tensor,
+    collider_state: array_class.ColliderState,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
-    collider_state: array_class.ColliderState,
 ):
     """GPU-only cooperative warp-per-env variant of func_clamp_prune_contacts.
 

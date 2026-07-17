@@ -20,9 +20,9 @@ def support_mesh(
     direction,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
+    gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
-    gjk_state: array_class.GJKState,
 ):
     """
     Find the support point on a mesh in the given direction.
@@ -68,10 +68,10 @@ def support_driver(
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
     shrink_sphere,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -84,23 +84,23 @@ def support_driver(
 
     geom_type = dyn_info.geoms.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, shrink_sphere, dyn_info)
+        v, v_, vid = support_field._func_support_sphere(i_g, pos, quat, direction, shrink_sphere, dyn_info)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, dyn_info)
+        v = support_field._func_support_ellipsoid(i_g, pos, quat, direction, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(i_g, direction, pos, quat, shrink_sphere, dyn_info)
+        v = support_field._func_support_capsule(i_g, pos, quat, direction, shrink_sphere, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CYLINDER:
-        v = support_field._func_support_cylinder(i_g, direction, pos, quat, shrink_sphere, dyn_info)
+        v = support_field._func_support_cylinder(i_g, pos, quat, direction, shrink_sphere, dyn_info)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, dyn_info)
+        v, v_, vid = support_field._func_support_box(i_g, pos, quat, direction, dyn_info)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if qd.static(collider_static_config.has_terrain):
             v, vid = support_field._func_support_prism(i_b, direction, collider_state)
     elif geom_type == gs.GEOM_TYPE.MESH and rigid_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
-        v, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, dyn_info, collider_info, gjk_state)
+        v, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, gjk_state, dyn_info, collider_info)
     else:
-        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, collider_info)
+        v, v_, vid = support_field._func_support_world(i_g, pos, quat, direction, collider_info)
     return v, v_, vid
 
 
@@ -109,16 +109,16 @@ def func_support(
     i_ga,
     i_gb,
     i_b,
-    dir,
     pos_a: qd.types.vector(3),
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    dir,
     shrink_sphere,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -151,10 +151,10 @@ def func_support(
             pos,
             quat,
             shrink_sphere,
-            dyn_info,
-            collider_info,
             collider_state,
             gjk_state,
+            dyn_info,
+            collider_info,
             rigid_config,
             collider_static_config,
         )

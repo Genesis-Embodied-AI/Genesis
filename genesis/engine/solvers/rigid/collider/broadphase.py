@@ -18,11 +18,11 @@ def func_check_collision_valid(
     i_ga,
     i_gb,
     i_b,
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     is_valid = collider_info.collision_pair_idx[i_ga, i_gb] != -1
@@ -54,9 +54,9 @@ def func_check_collision_valid(
 
 @qd.func
 def func_collision_clear(
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     _B = collider_state.n_contacts.shape[0]
@@ -123,12 +123,12 @@ def func_collision_clear(
 @qd.kernel(fastcache=True)
 def _func_broad_phase_sap(
     errno: qd.Tensor,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
 ):
     """
@@ -141,7 +141,7 @@ def _func_broad_phase_sap(
     n_links = dyn_info.links.geom_start.shape[0]
 
     # Clear collider state
-    func_collision_clear(dyn_info, dyn_state, collider_state, rigid_config)
+    func_collision_clear(dyn_state, collider_state, dyn_info, rigid_config)
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
@@ -243,11 +243,11 @@ def _func_broad_phase_sap(
                             i_ga,
                             i_gb,
                             i_b,
+                            dyn_state,
+                            constraint_state,
                             dyn_info,
                             rigid_info,
                             collider_info,
-                            dyn_state,
-                            constraint_state,
                             rigid_config,
                         ):
                             continue
@@ -299,11 +299,11 @@ def _func_broad_phase_sap(
                                 i_ga,
                                 i_gb,
                                 i_b,
+                                dyn_state,
+                                constraint_state,
                                 dyn_info,
                                 rigid_info,
                                 collider_info,
-                                dyn_state,
-                                constraint_state,
                                 rigid_config,
                             ):
                                 continue
@@ -332,11 +332,11 @@ def _func_broad_phase_sap(
                                     i_ga,
                                     i_gb,
                                     i_b,
+                                    dyn_state,
+                                    constraint_state,
                                     dyn_info,
                                     rigid_info,
                                     collider_info,
-                                    dyn_state,
-                                    constraint_state,
                                     rigid_config,
                                 ):
                                     continue
@@ -388,12 +388,12 @@ def _func_broad_phase_sap(
 @qd.kernel(fastcache=True)
 def _func_broad_phase_all_vs_all(
     errno: qd.Tensor,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
 ):
     """
@@ -403,7 +403,7 @@ def _func_broad_phase_all_vs_all(
     Passing pairs are appended to the output buffer via atomic add.
     """
 
-    func_collision_clear(dyn_info, dyn_state, collider_state, rigid_config)
+    func_collision_clear(dyn_state, collider_state, dyn_info, rigid_config)
 
     _B = collider_state.n_contacts.shape[0]
     qd.loop_config(name="init_broad_pairs", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -418,7 +418,7 @@ def _func_broad_phase_all_vs_all(
         i_gb = pair[1]
 
         if not func_check_collision_valid(
-            i_ga, i_gb, i_b, dyn_info, rigid_info, collider_info, dyn_state, constraint_state, rigid_config
+            i_ga, i_gb, i_b, dyn_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
         ):
             continue
 
@@ -443,9 +443,9 @@ def func_broad_phase(
     """Dispatch to the appropriate broad-phase kernel based on config."""
     if rigid_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
         _func_broad_phase_all_vs_all(
-            errno, dyn_info, rigid_info, collider_info, dyn_state, collider_state, constraint_state, rigid_config
+            errno, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
         )
     else:
         _func_broad_phase_sap(
-            errno, dyn_info, rigid_info, collider_info, dyn_state, collider_state, constraint_state, rigid_config
+            errno, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
         )

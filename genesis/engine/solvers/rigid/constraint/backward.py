@@ -7,9 +7,9 @@ import genesis.utils.array_class as array_class
 @qd.func
 def func_matvec_Ap(
     i_b,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     """
@@ -54,9 +54,9 @@ def func_matvec_Ap(
 
 @qd.kernel
 def kernel_solve_adjoint_u(
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     r"""
@@ -110,7 +110,7 @@ def kernel_solve_adjoint_u(
         for i_b in range(_B):
             # Compute Ap for the current search direction
             for it in range(rigid_config.iterations):
-                func_matvec_Ap(i_b, dyn_info, rigid_info, constraint_state, rigid_config)
+                func_matvec_Ap(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
 
                 # alpha = (r,r)/(p,Hp)
                 num = gs.qd_float(0.0)
@@ -145,7 +145,7 @@ def kernel_solve_adjoint_u(
 
 @qd.kernel
 def kernel_compute_gradients(
-    dyn_info: array_class.DynInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    constraint_state: array_class.ConstraintState, dyn_info: array_class.DynInfo, rigid_config: qd.template()
 ):
     r"""
     Compute gradients of the loss with respect to the input variables to this solver. Note that we use the intermediate

@@ -131,7 +131,7 @@ def _apply_diffusion_and_heat_generation(
 
 
 @qd.func
-def _qd_polygon_area_from_points_3d(i_b: int, scratch: qd.types.ndarray(), n: int, eps: float) -> float:
+def _qd_polygon_area_from_points_3d(i_b: int, n: int, scratch: qd.types.ndarray(), eps: float) -> float:
     """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
@@ -266,7 +266,7 @@ def _kernel_compute_contact_areas(
 
             group_area = eps
             if count >= 3:
-                group_area = _qd_polygon_area_from_points_3d(i_b, scratch, count, eps)
+                group_area = _qd_polygon_area_from_points_3d(i_b, count, scratch, eps)
             else:
                 for k in range(count):
                     d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]

@@ -197,7 +197,7 @@ class ConstraintSolver:
         # which the sparse Hessian assembly still indexes through (including the explicit GPU sparse path).
         if self.sparse_solve:
             func_compute_dof_perm(
-                self._solver.dyn_info, self._solver.dyn_state, self.constraint_state, self._solver._rigid_config
+                self._solver.dyn_state, self.constraint_state, self._solver.dyn_info, self._solver._rigid_config
             )
 
     def reset(self, envs_idx=None):
@@ -270,21 +270,21 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
 
         add_equality_constraints(
-            self._solver.dyn_info,
-            self._solver.rigid_info,
             self._solver.dyn_state,
             self._collider._collider_state,
             self.constraint_state,
+            self._solver.dyn_info,
+            self._solver.rigid_info,
             self._solver._rigid_config,
         )
 
     def add_inequality_constraints(self):
         add_inequality_constraints(
-            self._solver.dyn_info,
-            self._solver.rigid_info,
             self._solver.dyn_state,
             self._collider._collider_state,
             self.constraint_state,
+            self._solver.dyn_info,
+            self._solver.rigid_info,
             self._solver._rigid_config,
             self._collider._collider_static_config,
         )
@@ -294,10 +294,10 @@ class ConstraintSolver:
         # not here: only the entrypoint statically knows its arm, which determines whether the init factor/gradient is
         # done (monolith) or skipped (decomposed re-factors in-loop).
         func_solve_body(
-            self._solver.dyn_info,
-            self._solver.rigid_info,
             self._solver.dyn_state,
             self.constraint_state,
+            self._solver.dyn_info,
+            self._solver.rigid_info,
             self._solver._rigid_config,
             self._n_iterations,
         )
@@ -313,10 +313,10 @@ class ConstraintSolver:
 
     def noslip(self):
         constraint_noslip.kernel_noslip(
-            self._solver.rigid_info,
             self._solver.dyn_state,
             self._collider._collider_state,
             self.constraint_state,
+            self._solver.rigid_info,
             self._solver._rigid_config,
         )
 
@@ -344,7 +344,7 @@ class ConstraintSolver:
 
         if n_eqs_max > 0:
             kernel_get_equality_constraints(
-                iout, fout, self._solver.dyn_info, self.constraint_state, self._solver._rigid_config, as_tensor
+                iout, fout, self.constraint_state, self._solver.dyn_info, self._solver._rigid_config, as_tensor
             )
 
         if as_tensor:
@@ -419,10 +419,10 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
         overflow = kernel_add_weld_constraint(
             envs_idx,
-            self._solver.dyn_info,
-            self._solver.rigid_info,
             self._solver.dyn_state,
             self.constraint_state,
+            self._solver.dyn_info,
+            self._solver.rigid_info,
             self._solver._rigid_config,
             link1_idx,
             link2_idx,
@@ -439,9 +439,9 @@ class ConstraintSolver:
         self._eq_const_info_cache.clear()
         kernel_delete_weld_constraint(
             envs_idx,
+            self.constraint_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
-            self.constraint_state,
             self._solver._rigid_config,
             int(link1_idx),
             int(link2_idx),
@@ -456,12 +456,12 @@ class ConstraintSolver:
 
         # 1. We first need to find a solution to A^T * u = g system.
         backward_constraint_solver.kernel_solve_adjoint_u(
-            self._solver.dyn_info, self._solver.rigid_info, self.constraint_state, self._solver._rigid_config
+            self.constraint_state, self._solver.dyn_info, self._solver.rigid_info, self._solver._rigid_config
         )
 
         # 2. Using the solution u, we can compute the gradients of the input variables.
         backward_constraint_solver.kernel_compute_gradients(
-            self._solver.dyn_info, self.constraint_state, self._solver._rigid_config
+            self.constraint_state, self._solver.dyn_info, self._solver._rigid_config
         )
 
 
@@ -474,8 +474,8 @@ class ConstraintSolver:
 def kernel_get_equality_constraints(
     iout: qd.types.ndarray(),
     fout: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
     is_padded: qd.template(),
 ):
@@ -548,8 +548,8 @@ def func_clear_constraint_at_env(
     i_b,
     n_dofs,
     len_constraints,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     constraint_state.n_constraints[i_b] = 0
@@ -566,8 +566,8 @@ def func_clear_constraint_at_env(
 @qd.kernel(fastcache=True)
 def constraint_solver_kernel_clear(
     envs_idx: qd.types.ndarray(),
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = constraint_state.qacc_ws.shape[0]
@@ -576,14 +576,14 @@ def constraint_solver_kernel_clear(
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        func_clear_constraint_at_env(i_b, n_dofs, len_constraints, rigid_info, constraint_state, rigid_config)
+        func_clear_constraint_at_env(i_b, n_dofs, len_constraints, constraint_state, rigid_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
 def constraint_solver_kernel_masked_clear(
     envs_mask: qd.types.ndarray(),
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = constraint_state.qacc_ws.shape[0]
@@ -591,7 +591,7 @@ def constraint_solver_kernel_masked_clear(
 
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_clear_constraint_at_env(i_b, n_dofs, len_constraints, rigid_info, constraint_state, rigid_config)
+            func_clear_constraint_at_env(i_b, n_dofs, len_constraints, constraint_state, rigid_info, rigid_config)
 
 
 # ========================================= Register Pre-Defined Constraints ==========================================
@@ -602,11 +602,11 @@ def _add_friction_constraint(
     i_b,
     i_col_,
     i_friction,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Add one collision row to the constraint Jacobian and write its matching diag/aref/efc_D scalars.
@@ -732,11 +732,11 @@ def _add_friction_constraint(
 
 @qd.func
 def _add_collision_constraints_per_friction(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Build all collision-contact constraints with one GPU thread per friction-basis constraint.
@@ -757,17 +757,17 @@ def _add_collision_constraints_per_friction(
         i_friction = slot % rows_per_contact
         if i_col_ < collider_state.n_contacts[i_b]:
             _add_friction_constraint(
-                i_b, i_col_, i_friction, dyn_info, rigid_info, dyn_state, collider_state, constraint_state, rigid_config
+                i_b, i_col_, i_friction, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
             )
 
 
 @qd.func
 def _add_collision_constraints_per_contact(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Build all collision-contact constraints with one GPU thread per contact."""
@@ -933,22 +933,22 @@ def _add_collision_constraints_per_contact(
 
 @qd.func
 def add_collision_constraints(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     _B = dyn_state.dofs.ctrl_mode.shape[1]
 
     if qd.static(rigid_config.enable_cooperative_constraint_kernels):
         _add_collision_constraints_per_friction(
-            dyn_info, rigid_info, dyn_state, collider_state, constraint_state, rigid_config
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
         )
     else:
         _add_collision_constraints_per_contact(
-            dyn_info, rigid_info, dyn_state, collider_state, constraint_state, rigid_config
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
         )
 
     rows_per_contact = qd.static(3 if rigid_config.enable_elliptic_friction else 4)
@@ -967,10 +967,10 @@ def add_collision_constraints(
 def func_equality_connect(
     i_b,
     i_e,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -1079,10 +1079,10 @@ def func_equality_connect(
 def func_equality_joint(
     i_b,
     i_e,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -1166,11 +1166,11 @@ def func_equality_joint(
 
 @qd.kernel(fastcache=True)
 def add_equality_constraints(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     _B = dyn_state.dofs.ctrl_mode.shape[1]
@@ -1182,20 +1182,20 @@ def add_equality_constraints(
 
         for i_e in range(constraint_state.qd_n_equalities[i_b]):
             if dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.CONNECT:
-                func_equality_connect(i_b, i_e, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+                func_equality_connect(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
             elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.WELD:
-                func_equality_weld(i_b, i_e, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+                func_equality_weld(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             elif dyn_info.equalities.eq_type[i_e, i_b] == gs.EQUALITY_TYPE.JOINT:
-                func_equality_joint(i_b, i_e, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+                func_equality_joint(i_b, i_e, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
 def _sort_contacts_per_island(
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -1221,7 +1221,7 @@ def _sort_contacts_per_island(
             tid = i_flat % _K
             i_b = i_flat // _K
             if tid == 0:
-                func_build_islands(i_b, dyn_info, dyn_state, collider_state, constraint_state, rigid_config)
+                func_build_islands(i_b, dyn_state, collider_state, constraint_state, dyn_info, rigid_config)
                 # Append this env's islands to the work-list the cooperative factor+solve grid-strides over. Reserve a
                 # contiguous block of slots with one atomic so the appends across envs do not interleave per island.
                 n_islands = constraint_state.island.n_islands[i_b]
@@ -1235,12 +1235,12 @@ def _sort_contacts_per_island(
                 while i_island < constraint_state.island.n_islands[i_b]:
                     _sort_island_contacts(
                         i_b,
+                        constraint_state.island.contact_slices.n[i_island, i_b],
                         constraint_state.island.contact_slices.start[i_island, i_b],
                         constraint_state.island.contact_id,
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
-                        constraint_state.island.contact_slices.n[i_island, i_b],
                     )
                     i_island = i_island + _K
                 qd.simt.block.sync()
@@ -1257,17 +1257,17 @@ def _sort_contacts_per_island(
         # contact order is identical regardless of backend.
         qd.loop_config(name="build_and_sort_islands", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
         for i_b in range(_B):
-            func_build_islands(i_b, dyn_info, dyn_state, collider_state, constraint_state, rigid_config)
+            func_build_islands(i_b, dyn_state, collider_state, constraint_state, dyn_info, rigid_config)
             if qd.static(collider_static_config.spatial_sort_supported):
                 for i_island in range(constraint_state.island.n_islands[i_b]):
                     _sort_island_contacts(
                         i_b,
+                        constraint_state.island.contact_slices.n[i_island, i_b],
                         constraint_state.island.contact_slices.start[i_island, i_b],
                         constraint_state.island.contact_id,
                         collider_state.contact_data.pos,
                         collider_state.contact_data.geom_a,
                         collider_state.contact_data.geom_b,
-                        constraint_state.island.contact_slices.n[i_island, i_b],
                     )
             total = func_island_contacts_total(i_b, constraint_state)
             for i_c in range(total):
@@ -1277,11 +1277,11 @@ def _sort_contacts_per_island(
 
 @qd.kernel(fastcache=True)
 def add_inequality_constraints(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -1294,7 +1294,7 @@ def add_inequality_constraints(
     # exactly. The off path still builds nothing - the collider's compacted contact_sort_idx is sorted in place.
     if qd.static(rigid_config.enable_per_island_solve):
         _sort_contacts_per_island(
-            dyn_info, dyn_state, collider_state, constraint_state, rigid_config, collider_static_config
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_config, collider_static_config
         )
     elif qd.static(collider_static_config.spatial_sort_supported):
         _B = constraint_state.jac.shape[2]
@@ -1302,29 +1302,29 @@ def add_inequality_constraints(
         for i_b in range(_B):
             _sort_island_contacts(
                 i_b,
+                collider_state.n_contacts[i_b],
                 start=0,
                 contact_idx=collider_state.contact_sort_idx,
                 contacts_pos=collider_state.contact_data.pos,
                 contacts_geom_a=collider_state.contact_data.geom_a,
                 contacts_geom_b=collider_state.contact_data.geom_b,
-                n=collider_state.n_contacts[i_b],
             )
 
-    add_frictionloss_constraints(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+    add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
     if qd.static(rigid_config.enable_collision):
-        add_collision_constraints(dyn_info, rigid_info, dyn_state, collider_state, constraint_state, rigid_config)
+        add_collision_constraints(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config)
     if qd.static(rigid_config.enable_joint_limit):
-        add_joint_limit_constraints(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+        add_joint_limit_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
 def func_equality_weld(
     i_b,
     i_e,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -1517,10 +1517,10 @@ def func_equality_weld(
 
 @qd.func
 def add_joint_limit_constraints(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -1575,10 +1575,10 @@ def add_joint_limit_constraints(
 
 @qd.func
 def add_frictionloss_constraints(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -1633,10 +1633,10 @@ def add_frictionloss_constraints(
 @qd.kernel(fastcache=True)
 def kernel_add_weld_constraint(
     envs_idx: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     link1_idx: qd.i32,
     link2_idx: qd.i32,
@@ -1686,9 +1686,9 @@ def kernel_add_weld_constraint(
 @qd.kernel(fastcache=True)
 def kernel_delete_weld_constraint(
     envs_idx: qd.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
     link1_idx: qd.i32,
     link2_idx: qd.i32,
@@ -1718,9 +1718,9 @@ def kernel_delete_weld_constraint(
 
 @qd.kernel
 def func_compute_dof_perm(
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     """Compute a fill-reducing DOF permutation by sorting DOFs on their body's COM (gravity axis first).
@@ -1769,7 +1769,7 @@ def func_compute_dof_perm(
 
 @qd.func
 def func_compute_sparsity_pattern(
-    i_b, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
 ):
     """Compute the skyline envelope start of each Hessian row analytically, without inspecting the assembled matrix.
 
@@ -1818,7 +1818,7 @@ def func_compute_sparsity_pattern(
 
 @qd.func
 def func_compute_island_envelope(
-    i_b, i_island, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState
+    i_b, i_island, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
 ):
     """Compute one island's skyline envelope: the smallest island-local column that can be structurally nonzero in
     each local row of its Hessian block H = M + J.T @ D @ J. The two coupling sources are known a priori:
@@ -2060,8 +2060,8 @@ def func_copy_cone_free_hessian_whole_env(i_b, constraint_state: array_class.Con
 def func_update_cone_free_hessian_flip(
     i_b,
     i_c,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Accumulate a flipped constraint's signed J^T D J rank-1 block into the packed cone-free Hessian.
@@ -2117,9 +2117,9 @@ def func_update_cone_free_hessian_flip(
 def func_hessian_direct_batch(
     i_b,
     i_island,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     """Compute the Hessian H = M + J.T @ D @ J of one work-unit. Only the lower triangle is written (H is
@@ -2282,9 +2282,9 @@ def func_island_assemble_factor_solve_tiled(
     tid,
     L_sh,
     v_sh,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
     do_assemble: qd.template(),
     TileCls: qd.template(),
@@ -2528,17 +2528,17 @@ def func_island_assemble_factor_solve_tiled(
         # Non-contiguous island (gathered DOFs are not a single ascending run): scalar per-island solve on lane 0,
         # which writes both L (func_cholesky_factor_direct_batch) and Mgrad (func_cholesky_solve_batch) to global.
         if tid == 0:
-            func_hessian_direct_batch(i_b, i_island, dyn_info, rigid_info, constraint_state, rigid_config)
-            func_cholesky_factor_direct_batch(i_b, i_island, rigid_info, constraint_state, rigid_config)
+            func_hessian_direct_batch(i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config)
+            func_cholesky_factor_direct_batch(i_b, i_island, constraint_state, rigid_info, rigid_config)
             func_cholesky_solve_batch(i_b, i_island, constraint_state, rigid_config)
         qd.simt.block.sync()
 
 
 @qd.func
 def func_island_tiled_factor_solve_all(
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
     TileCls: qd.template(),
     do_assemble: qd.template() = False,
@@ -2587,9 +2587,9 @@ def func_island_tiled_factor_solve_all(
                         tid,
                         L_sh,
                         v_sh,
+                        constraint_state,
                         dyn_info,
                         rigid_info,
-                        constraint_state,
                         rigid_config,
                         do_assemble,
                         TileCls,
@@ -2602,8 +2602,8 @@ def func_island_tiled_factor_solve_all(
 
 @qd.func
 def func_hessian_direct_tiled(
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     check_full_hessian: qd.template() = False,
 ):
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for all environment at once.
@@ -2749,8 +2749,8 @@ def func_hessian_direct_tiled(
 def func_cholesky_factor_direct_batch(
     i_b,
     i_island,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Compute the Cholesky factorization L of one work-unit's Hessian H = L @ L.T in place.
@@ -2835,8 +2835,8 @@ def func_cholesky_factor_direct_batch(
 
 @qd.func
 def _cholesky_factor_direct_tiled_impl(
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     TileCls: qd.template(),
 ):
@@ -2928,8 +2928,8 @@ def _cholesky_factor_direct_tiled_impl(
 
 @qd.func
 def _cholesky_and_solve_fused_tiled_impl(
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     TileCls: qd.template(),
     write_L_to_nt_H: qd.template() = False,
@@ -3077,12 +3077,12 @@ def _cholesky_and_solve_fused_tiled_impl(
 
 @qd.func
 def func_cholesky_factor_direct_tiled(
-    rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     """Tile-size dispatcher; see _cholesky_factor_direct_tiled_impl for the algorithm and dispatch rule."""
     _cholesky_factor_direct_tiled_impl(
-        rigid_info,
         constraint_state,
+        rigid_info,
         rigid_config,
         qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
     )
@@ -3090,15 +3090,15 @@ def func_cholesky_factor_direct_tiled(
 
 @qd.func
 def func_cholesky_and_solve_fused_tiled(
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     write_L_to_nt_H: qd.template() = False,
 ):
     """Tile-size dispatcher; see _cholesky_and_solve_fused_tiled_impl for the algorithm and dispatch rule."""
     _cholesky_and_solve_fused_tiled_impl(
-        rigid_info,
         constraint_state,
+        rigid_info,
         rigid_config,
         qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
         write_L_to_nt_H,
@@ -3108,9 +3108,9 @@ def func_cholesky_and_solve_fused_tiled(
 @qd.func
 def func_hessian_and_cholesky_factor_direct_batch(
     i_b,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
     compute_envelope: qd.template() = False,
 ):
@@ -3123,28 +3123,28 @@ def func_hessian_and_cholesky_factor_direct_batch(
                 if constraint_state.island.is_hibernated[i_island, i_b]:
                     continue
             if qd.static(compute_envelope):
-                func_compute_island_envelope(i_b, i_island, rigid_info, constraint_state)
-            func_hessian_direct_batch(i_b, i_island, dyn_info, rigid_info, constraint_state, rigid_config)
-            func_cholesky_factor_direct_batch(i_b, i_island, rigid_info, constraint_state, rigid_config)
+                func_compute_island_envelope(i_b, i_island, constraint_state, rigid_info)
+            func_hessian_direct_batch(i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config)
+            func_cholesky_factor_direct_batch(i_b, i_island, constraint_state, rigid_info, rigid_config)
     else:
         func_hessian_direct_batch(
             i_b,
             i_island=0,
+            constraint_state=constraint_state,
             dyn_info=dyn_info,
             rigid_info=rigid_info,
-            constraint_state=constraint_state,
             rigid_config=rigid_config,
         )
         func_cholesky_factor_direct_batch(
-            i_b, i_island=0, rigid_info=rigid_info, constraint_state=constraint_state, rigid_config=rigid_config
+            i_b, i_island=0, constraint_state=constraint_state, rigid_info=rigid_info, rigid_config=rigid_config
         )
 
 
 @qd.func
 def func_hessian_and_cholesky_factor_direct(
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
     compute_envelope: qd.template() = False,
 ):
@@ -3177,19 +3177,19 @@ def func_hessian_and_cholesky_factor_direct(
                     if constraint_state.island.is_hibernated[i_island, i_b]:
                         continue
                 if qd.static(compute_envelope):
-                    func_compute_island_envelope(i_b, i_island, rigid_info, constraint_state)
-                func_hessian_direct_batch(i_b, i_island, dyn_info, rigid_info, constraint_state, rigid_config)
-                func_cholesky_factor_direct_batch(i_b, i_island, rigid_info, constraint_state, rigid_config)
+                    func_compute_island_envelope(i_b, i_island, constraint_state, rigid_info)
+                func_hessian_direct_batch(i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config)
+                func_cholesky_factor_direct_batch(i_b, i_island, constraint_state, rigid_info, rigid_config)
     elif qd.static(rigid_config.backend == gs.cpu):
         # CPU
         qd.loop_config(
             name="hess_cholesky_factor_direct", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
         )
         for i_b in range(_B):
-            func_hessian_and_cholesky_factor_direct_batch(i_b, dyn_info, rigid_info, constraint_state, rigid_config)
+            func_hessian_and_cholesky_factor_direct_batch(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
     else:
         # GPU
-        func_hessian_direct_tiled(rigid_info, constraint_state)
+        func_hessian_direct_tiled(constraint_state, rigid_info)
 
         # The tiled kernel assembles M + J^T D J only. Add the coupled elliptic-cone block as an additive post-pass
         # before factoring: the block is positive semi-definite (PSD) so the factor kernels are unchanged, and the tiled
@@ -3210,12 +3210,12 @@ def func_hessian_and_cholesky_factor_direct(
             # is folded into the fused kernel (called from func_update_gradient_tiled below), so the standalone factor
             # is skipped to avoid doing it twice.
             if qd.static(not rigid_config.enable_fused_factor_solve_init):
-                func_cholesky_factor_direct_tiled(rigid_info, constraint_state, rigid_config)
+                func_cholesky_factor_direct_tiled(constraint_state, rigid_info, rigid_config)
         else:
             qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
                 func_cholesky_factor_direct_batch(
-                    i_b, i_island=0, rigid_info=rigid_info, constraint_state=constraint_state, rigid_config=rigid_config
+                    i_b, i_island=0, constraint_state=constraint_state, rigid_info=rigid_info, rigid_config=rigid_config
                 )
 
 
@@ -3236,7 +3236,7 @@ def func_build_changed_constraint_list(i_b, constraint_state: array_class.Constr
 
 @qd.func
 def func_apply_rank1_dense_whole_env(
-    i_b, sign, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState
+    i_b, sign, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
 ) -> bool:
     """Apply one rank-1 update (sign +1) or downdate (sign -1) to the whole-env dense factor L in nt_H.
 
@@ -3274,7 +3274,7 @@ def func_apply_rank1_dense_whole_env(
 
 @qd.func
 def func_apply_rank1_sparse_whole_env(
-    i_b, sign, p_min, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState
+    i_b, sign, p_min, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
 ) -> bool:
     """Apply one rank-1 update (sign +1) or downdate (sign -1) to the whole-env skyline factor L in nt_H.
 
@@ -3313,7 +3313,7 @@ def func_apply_rank1_sparse_whole_env(
 
 @qd.func
 def func_hessian_and_cholesky_factor_incremental_dense_batch(
-    i_b, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
 ) -> bool:
     n_dofs = constraint_state.nt_H.shape[1]
 
@@ -3326,7 +3326,7 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
         for i_d in range(n_dofs):
             constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-        if func_apply_rank1_dense_whole_env(i_b, sign, rigid_info, constraint_state):
+        if func_apply_rank1_dense_whole_env(i_b, sign, constraint_state, rigid_info):
             is_degenerated = True
 
     return is_degenerated
@@ -3334,7 +3334,7 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
 
 @qd.func
 def func_hessian_and_cholesky_factor_incremental_sparse_batch(
-    i_b, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo
 ) -> bool:
     """Maintain the whole-env skyline factor L (in nt_H, permuted layout) by a rank-1 update/downdate per changed
     constraint, instead of reassembling and re-factoring H from scratch.
@@ -3366,7 +3366,7 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
             if p < p_min:
                 p_min = p
 
-        if func_apply_rank1_sparse_whole_env(i_b, sign, p_min, rigid_info, constraint_state):
+        if func_apply_rank1_sparse_whole_env(i_b, sign, p_min, constraint_state, rigid_info):
             is_degenerated = True
             break
 
@@ -3380,8 +3380,8 @@ def func_apply_staged_rank_updates_island(
     n_u,
     signs,
     ld_start,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ) -> bool:
     """Apply n_u staged rank-1 updates/downdates to the island's Cholesky block of L, in place in nt_H, fused into a
@@ -3454,8 +3454,8 @@ def func_rank_batch_update_island(
     i_island,
     batch_ic,
     n_u,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ) -> bool:
     """Stage n_u flipped constraints as per-constraint rank-1 J^T D J updates and apply them to the island's L.
@@ -3481,7 +3481,7 @@ def func_rank_batch_update_island(
                 if ld_support < ld_start:
                     ld_start = ld_support
     return func_apply_staged_rank_updates_island(
-        i_b, i_island, n_u, signs, ld_start, rigid_info, constraint_state, rigid_config
+        i_b, i_island, n_u, signs, ld_start, constraint_state, rigid_info, rigid_config
     )
 
 
@@ -3489,8 +3489,8 @@ def func_rank_batch_update_island(
 def func_cone_rank_update_island(
     i_b,
     i_island,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ) -> bool:
     """Maintain this island's coupled elliptic-cone contribution in the Cholesky factor L incrementally.
@@ -3536,10 +3536,10 @@ def func_cone_rank_update_island(
 
                 if cur_zone == 2 or prev_zone == 2:
                     cl00, cl10, cl20, cl11, cl21, cl22 = _func_cone_block_chol(
-                        cur0, cur1, cur2, d0, con_mu, cur_zone, cN, cT, EPS, friction
+                        friction, cur0, cur1, cur2, d0, con_mu, cur_zone, cN, cT, EPS
                     )
                     pl00, pl10, pl20, pl11, pl21, pl22 = _func_cone_block_chol(
-                        prev0, prev1, prev2, d0, con_mu, prev_zone, pN, pT, EPS, friction
+                        friction, prev0, prev1, prev2, d0, con_mu, prev_zone, pN, pT, EPS
                     )
                     ld_start = n
                     jac_n = constraint_state.jac_n_dofs[i_c, i_b]
@@ -3565,8 +3565,8 @@ def func_cone_rank_update_island(
                         n_u=6,
                         signs=signs,
                         ld_start=ld_start,
-                        rigid_info=rigid_info,
                         constraint_state=constraint_state,
+                        rigid_info=rigid_info,
                         rigid_config=rigid_config,
                     ):
                         is_degenerated = True
@@ -3579,7 +3579,7 @@ def func_cone_rank_update_island(
 
 @qd.func
 def func_cone_rank_update_whole_env(
-    i_b, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ) -> bool:
     """Maintain the whole-env coupled elliptic-cone contribution in the Cholesky factor L incrementally.
 
@@ -3620,10 +3620,10 @@ def func_cone_rank_update_whole_env(
 
                 if cur_zone == 2 or prev_zone == 2:
                     cl00, cl10, cl20, cl11, cl21, cl22 = _func_cone_block_chol(
-                        cur0, cur1, cur2, d0, con_mu, cur_zone, cN, cT, EPS, friction
+                        friction, cur0, cur1, cur2, d0, con_mu, cur_zone, cN, cT, EPS
                     )
                     pl00, pl10, pl20, pl11, pl21, pl22 = _func_cone_block_chol(
-                        prev0, prev1, prev2, d0, con_mu, prev_zone, pN, pT, EPS, friction
+                        friction, prev0, prev1, prev2, d0, con_mu, prev_zone, pN, pT, EPS
                     )
                     # Per-term coefficients over (J_0, J_1, J_2): downdate the previous block first (terms 0..2, sign
                     # 2 * (term // 3) - 1 = -1) so the intermediate factor is the well-conditioned cone-free system,
@@ -3648,7 +3648,7 @@ def func_cone_rank_update_whole_env(
                                     )
                                     if p < p_min:
                                         p_min = p
-                                if func_apply_rank1_sparse_whole_env(i_b, sign, p_min, rigid_info, constraint_state):
+                                if func_apply_rank1_sparse_whole_env(i_b, sign, p_min, constraint_state, rigid_info):
                                     is_degenerated = True
                             else:
                                 for p in range(n_dofs):
@@ -3660,7 +3660,7 @@ def func_cone_rank_update_whole_env(
                                         + c1[term] * constraint_state.jac[j1, i_d, i_b]
                                         + c2[term] * constraint_state.jac[j2, i_d, i_b]
                                     )
-                                if func_apply_rank1_dense_whole_env(i_b, sign, rigid_info, constraint_state):
+                                if func_apply_rank1_dense_whole_env(i_b, sign, constraint_state, rigid_info):
                                     is_degenerated = True
 
                 constraint_state.cone_prev_jaref[i_cone_row, i_b] = cur0
@@ -3673,9 +3673,9 @@ def func_cone_rank_update_whole_env(
 def func_factor_island_incremental_or_direct(
     i_b,
     i_island,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
     """Maintain one island's Cholesky factor for the current active set, choosing per island between an incremental
@@ -3711,7 +3711,7 @@ def func_factor_island_incremental_or_direct(
                 # runs below: the incremental path leaves it the only cone-free image of the flip, and the rebuild
                 # path restores it into nt_H right after.
                 if qd.static(rigid_config.enable_cone_free_hessian_reuse):
-                    func_update_cone_free_hessian_flip(i_b, i_c, rigid_info, constraint_state, rigid_config)
+                    func_update_cone_free_hessian_flip(i_b, i_c, constraint_state, rigid_info, rigid_config)
             if i_c >= nef and i_c < ncone and (i_c - nef) % 3 == 0:
                 if _func_cone_head_is_middle(i_c, i_b, nef, constraint_state):
                     cone_passes = cone_passes + 1
@@ -3753,21 +3753,21 @@ def func_factor_island_incremental_or_direct(
                     n_u = n_u + 1
                     if n_u == rigid_config.hessian_rank_update_batch:
                         if func_rank_batch_update_island(
-                            i_b, i_island, batch_ic, n_u, rigid_info, constraint_state, rigid_config
+                            i_b, i_island, batch_ic, n_u, constraint_state, rigid_info, rigid_config
                         ):
                             need_rebuild = True
                             break
                         n_u = 0
             if not need_rebuild and n_u > 0:
                 if func_rank_batch_update_island(
-                    i_b, i_island, batch_ic, n_u, rigid_info, constraint_state, rigid_config
+                    i_b, i_island, batch_ic, n_u, constraint_state, rigid_info, rigid_config
                 ):
                     need_rebuild = True
             # The active-set batch above maintains the per-row J^T D J of active rows; the coupled middle-zone cone
             # block (its rows inactive) is disjoint from that and is maintained here by its rank-3 downdate/update.
             if qd.static(rigid_config.enable_elliptic_friction):
                 if not need_rebuild:
-                    if func_cone_rank_update_island(i_b, i_island, rigid_info, constraint_state, rigid_config):
+                    if func_cone_rank_update_island(i_b, i_island, constraint_state, rigid_info, rigid_config):
                         need_rebuild = True
         if need_rebuild:
             # The persisted cone-free Hessian already reflects the current active set (flip scatters above), so the
@@ -3777,16 +3777,16 @@ def func_factor_island_incremental_or_direct(
                 func_copy_cone_free_hessian_island(i_b, i_island, constraint_state, save=False)
                 func_add_cone_hessian_block_island(i_b, i_island, constraint_state, rigid_config)
             else:
-                func_hessian_direct_batch(i_b, i_island, dyn_info, rigid_info, constraint_state, rigid_config)
-            func_cholesky_factor_direct_batch(i_b, i_island, rigid_info, constraint_state, rigid_config)
+                func_hessian_direct_batch(i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config)
+            func_cholesky_factor_direct_batch(i_b, i_island, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
 def func_hessian_and_cholesky_factor_incremental_batch(
     i_b,
+    constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ) -> bool:
     # Per-island full rebuild only when there are MULTIPLE islands (the incremental rank-1 update assumes a single
@@ -3805,15 +3805,15 @@ def func_hessian_and_cholesky_factor_incremental_batch(
         do_full_rebuild = True
     is_degenerated = False
     if do_full_rebuild:
-        func_hessian_and_cholesky_factor_direct_batch(i_b, dyn_info, rigid_info, constraint_state, rigid_config)
+        func_hessian_and_cholesky_factor_direct_batch(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
     else:
         func_build_changed_constraint_list(i_b, constraint_state)
         if qd.static(rigid_config.sparse_solve):
             is_degenerated = func_hessian_and_cholesky_factor_incremental_sparse_batch(
-                i_b, rigid_info, constraint_state
+                i_b, constraint_state, rigid_info
             )
         else:
-            is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(i_b, rigid_info, constraint_state)
+            is_degenerated = func_hessian_and_cholesky_factor_incremental_dense_batch(i_b, constraint_state, rigid_info)
         # The active-set update above maintains the per-row J^T D J of the flipped rows; the coupled middle-zone cone
         # block varies with the residual each iteration, so it rides the same factor via its rank-3 update here. Only
         # the CPU backend reaches this incremental path for elliptic (a GPU scalar factor rebuilt above); the static
@@ -3821,7 +3821,7 @@ def func_hessian_and_cholesky_factor_incremental_batch(
         # the GPU compilation of this runtime branch.
         if qd.static(rigid_config.enable_elliptic_friction and rigid_config.backend == gs.cpu):
             if not is_degenerated:
-                if func_cone_rank_update_whole_env(i_b, rigid_info, constraint_state, rigid_config):
+                if func_cone_rank_update_whole_env(i_b, constraint_state, rigid_info, rigid_config):
                     is_degenerated = True
     return is_degenerated
 
@@ -4026,10 +4026,10 @@ def func_cholesky_solve_tiled(constraint_state: array_class.ConstraintState, rig
 @qd.func
 def func_ls_init_and_eval_p0(
     i_b,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Fused linesearch initialization and first evaluation point (alpha=0) for a single environment.
@@ -4275,8 +4275,8 @@ def _func_linesearch_eval_quadratic_at_alpha(
     tid,
     alpha,
     t,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     coop: qd.template(),
 ):
     """Given the reduced quadratic-coefficient triple ``t`` (a ``qd.Vector(3)`` packed as ``[const, linear, quad]``),
@@ -4301,8 +4301,8 @@ def _func_linesearch_eval_at_alpha(
     i_b,
     tid,
     alpha,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     coop: qd.template(),
 ):
@@ -4319,12 +4319,12 @@ def _func_linesearch_eval_at_alpha(
         t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alphas, constraint_state, rigid_config, n_alphas=1
         )
-        return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, rigid_info, constraint_state, coop=True)
+        return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, constraint_state, rigid_info, coop=True)
     else:
         t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alphas, constraint_state, rigid_config, n_alphas=1
         )
-        return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, rigid_info, constraint_state, coop=False)
+        return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, constraint_state, rigid_info, coop=False)
 
 
 @qd.func
@@ -4452,8 +4452,8 @@ def _func_linesearch_eval_quadratic_at_3_alphas(
     t0,
     t1,
     t2,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     coop: qd.template(),
 ):
     """Given three reduced quadratic-coefficient triples (one per candidate alpha; ``t0``, ``t1``, ``t2`` are each a
@@ -4496,8 +4496,8 @@ def _func_linesearch_eval_at_3_alphas(
     i_b,
     tid,
     alphas,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     coop: qd.template(),
 ):
@@ -4515,14 +4515,14 @@ def _func_linesearch_eval_at_3_alphas(
             i_b, tid, alphas, constraint_state, rigid_config, n_alphas=3
         )
         return _func_linesearch_eval_quadratic_at_3_alphas(
-            i_b, tid, alphas, t0, t1, t2, rigid_info, constraint_state, coop=True
+            i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_info, coop=True
         )
     else:
         t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alphas, constraint_state, rigid_config, n_alphas=3
         )
         return _func_linesearch_eval_quadratic_at_3_alphas(
-            i_b, tid, alphas, t0, t1, t2, rigid_info, constraint_state, coop=False
+            i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_info, coop=False
         )
 
 
@@ -4554,13 +4554,13 @@ def update_bracket_no_eval_local(p_alpha, p_cost, p_grad, p_hess, alphas, costs,
 @qd.func
 def func_linesearch_and_apply_alpha(
     i_b,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    alpha = func_linesearch_batch(i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+    alpha = func_linesearch_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
     n_dofs = constraint_state.qacc.shape[0]
     if qd.abs(alpha) < rigid_info.EPS[None]:
         constraint_state.improved[i_b] = False
@@ -4589,8 +4589,8 @@ def func_linesearch_refine(
     p1_deriv_1,
     p0_cost,
     gtol,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     coop: qd.template(),
 ):
@@ -4630,7 +4630,7 @@ def func_linesearch_refine(
         p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
         p2update = 1
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_linesearch_eval_at_alpha(
-            i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, rigid_info, constraint_state, rigid_config, coop
+            i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_info, rigid_config, coop
         )
         ls_it_local = ls_it_local + 1
         if qd.abs(p1_deriv_0) < gtol:
@@ -4653,7 +4653,7 @@ def func_linesearch_refine(
             while ls_it_local < ls_iter_limit:
                 alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
                 costs, grads, hess = _func_linesearch_eval_at_3_alphas(
-                    i_b, tid, alphas, rigid_info, constraint_state, rigid_config, coop
+                    i_b, tid, alphas, constraint_state, rigid_info, rigid_config, coop
                 )
                 ls_it_local = ls_it_local + 3
                 p1_next = alpha_0
@@ -4704,10 +4704,10 @@ def func_linesearch_refine(
 @qd.func
 def func_linesearch_batch(
     i_b,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = constraint_state.search.shape[0]
@@ -4732,14 +4732,14 @@ def func_linesearch_batch(
     else:
         # Phase 1: Init + p0 + p1
         p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_init_and_eval_p0(
-            i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config
+            i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config
         )
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_linesearch_eval_at_alpha(
             i_b,
             tid=0,
             alpha=p0_alpha - p0_deriv_0 / p0_deriv_1,
-            rigid_info=rigid_info,
             constraint_state=constraint_state,
+            rigid_info=rigid_info,
             rigid_config=rigid_config,
             coop=False,
         )
@@ -4763,8 +4763,8 @@ def func_linesearch_batch(
                 p1_deriv_1=p1_deriv_1,
                 p0_cost=p0_cost,
                 gtol=gtol,
-                rigid_info=rigid_info,
                 constraint_state=constraint_state,
+                rigid_info=rigid_info,
                 rigid_config=rigid_config,
                 coop=False,
             )
@@ -4911,7 +4911,7 @@ def _func_cone_block_product(h00, h01, h02, h11, h12, h22, a0, a1, a2, b0, b1, b
 
 
 @qd.func
-def _func_cone_block_chol(jar0, jar1, jar2, D0, con_mu, zone, N, T, EPS, friction):
+def _func_cone_block_chol(friction, jar0, jar1, jar2, D0, con_mu, zone, N, T, EPS):
     """Lower-triangular Cholesky factor (l00, l10, l20, l11, l21, l22) of one contact's middle-zone cone Hessian H_c.
 
     All six entries are zero outside the middle zone. Diagonals are floored at EPS so a near-degenerate block cannot
@@ -5352,10 +5352,10 @@ def func_update_constraint(
 @qd.func
 def func_update_gradient_batch(
     i_b,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = constraint_state.grad.shape[0]
@@ -5393,10 +5393,10 @@ def func_update_gradient_batch(
 
 @qd.func
 def func_update_gradient_no_solve(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Compute the gradient only (no Cholesky solve), used with a fused factor+solve that consumes grad directly.
@@ -5420,10 +5420,10 @@ def func_update_gradient_no_solve(
 
 @qd.func
 def func_update_gradient_tiled(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     _B = constraint_state.jac.shape[2]
@@ -5461,17 +5461,17 @@ def func_update_gradient_tiled(
         # and solve. ``write_L_to_nt_H=True`` also writes L back to ``nt_H``, which the monolith body's first iter
         # needs for its incremental rank-1 Cholesky update.
         if qd.static(rigid_config.enable_fused_factor_solve_init):
-            func_cholesky_and_solve_fused_tiled(rigid_info, constraint_state, rigid_config, write_L_to_nt_H=True)
+            func_cholesky_and_solve_fused_tiled(constraint_state, rigid_info, rigid_config, write_L_to_nt_H=True)
         else:
             func_cholesky_solve_tiled(constraint_state, rigid_config)
 
 
 @qd.func
 def func_update_gradient(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """
@@ -5498,16 +5498,16 @@ def func_update_gradient(
         # func_cholesky_solve_batch. A single whole-env island keeps the tiled solve, like islands off.
         qd.loop_config(name="update_gradient", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
-            func_update_gradient_batch(i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+            func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
     else:
         # GPU
         qd.loop_config(name="update_gradient")
-        func_update_gradient_tiled(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+        func_update_gradient_tiled(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
 def func_terminate_or_update_descent_batch(
-    i_b, rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    i_b, constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     n_dofs = constraint_state.jac.shape[1]
 
@@ -5635,10 +5635,10 @@ def initialize_Ma(
 
 @qd.kernel(fastcache=True)
 def func_solve_init(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     is_decomposed: qd.template(),
 ):
@@ -5677,7 +5677,7 @@ def func_solve_init(
     if qd.static(rigid_config.sparse_envelope):
         qd.loop_config(name="solve_init_sparsity_pattern", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
-            func_compute_sparsity_pattern(i_b, rigid_info, constraint_state)
+            func_compute_sparsity_pattern(i_b, constraint_state, rigid_info)
 
     if qd.static(rigid_config.enable_mujoco_compatibility):
         # Compute cost for warmstart state (i.e. acceleration at previous timestep)
@@ -5762,7 +5762,7 @@ def func_solve_init(
         # env counts where the env dimension alone saturates the GPU. func_hessian_direct_tiled assembles the full H;
         # func_update_gradient_tiled builds grad and runs the fused factor+solve, writing L back to nt_H for the
         # monolith body's incremental iterations (write_L_to_nt_H inside, gated on enable_fused_factor_solve_init).
-        func_hessian_direct_tiled(rigid_info, constraint_state)
+        func_hessian_direct_tiled(constraint_state, rigid_info)
         # The tiled kernel assembles M + J^T D J only; bake the coupled elliptic-cone block before the fused factor
         # reads nt_H, so the seed search direction carries the middle-zone cone curvature.
         if qd.static(rigid_config.enable_elliptic_friction):
@@ -5770,7 +5770,7 @@ def func_solve_init(
             for i_b in range(_B):
                 if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                     func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
-        func_update_gradient_tiled(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+        func_update_gradient_tiled(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
     elif qd.static(
         rigid_config.solver_type == gs.constraint_solver.Newton
         and rigid_config.enable_per_island_solve
@@ -5789,11 +5789,11 @@ def func_solve_init(
         # solves grad -> Mgrad directly, subsuming the separate gradient solve. The monolith reads L back from nt_H in
         # its incremental iterations so it persists L (write_L=True); the decomposed graph re-factors each iteration so
         # it keeps nt_H holding the raw Hessian (write_L=False).
-        func_update_gradient_no_solve(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+        func_update_gradient_no_solve(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         func_island_tiled_factor_solve_all(
+            constraint_state,
             dyn_info,
             rigid_info,
-            constraint_state,
             rigid_config,
             qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
             do_assemble=True,
@@ -5822,7 +5822,7 @@ def func_solve_init(
             # would leave Mgrad stale.
             # compute_envelope=True computes each island's structural skyline envelope once, reused per iteration.
             func_hessian_and_cholesky_factor_direct(
-                dyn_info, rigid_info, constraint_state, rigid_config, compute_envelope=True
+                constraint_state, dyn_info, rigid_info, rigid_config, compute_envelope=True
             )
 
         if qd.static(
@@ -5839,7 +5839,7 @@ def func_solve_init(
             # decomposition monolith (enable_per_island_solve) with the cooperative kernels disabled, which self-inits
             # the gradient per-env in its own body; with them enabled the body does not self-init, so the seed must run
             # here.
-            func_update_gradient(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+            func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
     qd.loop_config(name="assign_search", serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_d, i_b in qd.ndrange(
@@ -5852,14 +5852,14 @@ def func_solve_init(
 def func_solve_iter(
     i_b,
     it,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = constraint_state.qacc.shape[0]
-    alpha = func_linesearch_batch(i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+    alpha = func_linesearch_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
     if qd.abs(alpha) < rigid_info.EPS[None]:
         constraint_state.improved[i_b] = False
@@ -5906,7 +5906,7 @@ def func_solve_iter(
                         if constraint_state.island.is_hibernated[i_island, i_b]:
                             continue
                     func_factor_island_incremental_or_direct(
-                        i_b, i_island, dyn_info, rigid_info, constraint_state, rigid_config
+                        i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config
                     )
             elif qd.static(rigid_config.sparse_solve):
                 func_build_changed_constraint_list(i_b, constraint_state)
@@ -5917,7 +5917,7 @@ def func_solve_iter(
                 if qd.static(rigid_config.enable_cone_free_hessian_reuse):
                     for idx in range(constraint_state.incr_n_changed[i_b]):
                         func_update_cone_free_hessian_flip(
-                            i_b, constraint_state.incr_changed_idx[idx, i_b], rigid_info, constraint_state, rigid_config
+                            i_b, constraint_state.incr_changed_idx[idx, i_b], constraint_state, rigid_info, rigid_config
                         )
                 # Count middle-zone cone contacts: each rides six rank-1 sweeps (one per staged factor column of
                 # its downdated + updated blocks) on the incremental factor every iteration regardless of active-set
@@ -5950,7 +5950,7 @@ def func_solve_iter(
                         sum_span_sq = sum_span_sq + row_span * row_span
                     if gs.qd_float(n_changed + 6 * cone_passes) * sum_span <= sum_span_sq:
                         need_rebuild = func_hessian_and_cholesky_factor_incremental_sparse_batch(
-                            i_b, rigid_info, constraint_state
+                            i_b, constraint_state, rigid_info
                         )
                 # The coupled middle-zone cone block varies with the residual, so whenever some cone sits in the
                 # middle zone on either side (cone_passes > 0) and the active-set update stayed incremental, it rides
@@ -5960,7 +5960,7 @@ def func_solve_iter(
                 if qd.static(rigid_config.enable_elliptic_friction):
                     if qd.static(rigid_config.backend == gs.cpu):
                         if not need_rebuild and cone_passes > 0:
-                            if func_cone_rank_update_whole_env(i_b, rigid_info, constraint_state, rigid_config):
+                            if func_cone_rank_update_whole_env(i_b, constraint_state, rigid_info, rigid_config):
                                 need_rebuild = True
                     else:
                         need_rebuild = True
@@ -5974,26 +5974,26 @@ def func_solve_iter(
                         func_cholesky_factor_direct_batch(
                             i_b,
                             i_island=0,
-                            rigid_info=rigid_info,
                             constraint_state=constraint_state,
+                            rigid_info=rigid_info,
                             rigid_config=rigid_config,
                         )
                     else:
                         func_hessian_and_cholesky_factor_direct_batch(
-                            i_b, dyn_info, rigid_info, constraint_state, rigid_config
+                            i_b, constraint_state, dyn_info, rigid_info, rigid_config
                         )
             else:
                 is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
-                    i_b, dyn_info, rigid_info, constraint_state, rigid_config
+                    i_b, constraint_state, dyn_info, rigid_info, rigid_config
                 )
                 if is_degenerated:
                     func_hessian_and_cholesky_factor_direct_batch(
-                        i_b, dyn_info, rigid_info, constraint_state, rigid_config
+                        i_b, constraint_state, dyn_info, rigid_info, rigid_config
                     )
 
-        func_update_gradient_batch(i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+        func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
-        func_terminate_or_update_descent_batch(i_b, rigid_info, constraint_state, rigid_config)
+        func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
 
 
 def _get_static_config(*args, **kwargs):
@@ -6009,10 +6009,10 @@ def _get_static_config(*args, **kwargs):
     repeat_after_seconds=5,
 )
 def func_solve_body(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     _n_iterations: int,
 ) -> None: ...
@@ -6020,10 +6020,10 @@ def func_solve_body(
 
 @qd.kernel(fastcache=True)
 def _kernel_solve_monolith(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     _n_iterations: int,
 ):
@@ -6052,13 +6052,13 @@ def _kernel_solve_monolith(
                 # enable_per_island_solve, so a single whole-env island takes func_solve_init's fast seed instead, like
                 # islands off. With the cooperative kernels on, func_solve_init already seeded the factor (L in nt_H).
                 func_hessian_and_cholesky_factor_direct_batch(
-                    i_b, dyn_info, rigid_info, constraint_state, rigid_config, compute_envelope=True
+                    i_b, constraint_state, dyn_info, rigid_info, rigid_config, compute_envelope=True
                 )
-                func_update_gradient_batch(i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+                func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
                 for i_d in range(n_dofs):
                     constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
             for it in range(rigid_info.iterations[None]):
-                func_solve_iter(i_b, it, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+                func_solve_iter(i_b, it, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
                 if not constraint_state.improved[i_b]:
                     break
         else:
@@ -6072,14 +6072,14 @@ def _kernel_solve_monolith(
         (rigid_config := _get_static_config(*args, **kwargs)).prefer_decomposed_solver != 1
     )
 )
-def func_solve_body_monolith(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, _n_iterations):
+def func_solve_body_monolith(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, _n_iterations):
     # This entrypoint statically IS the monolith arm, so it owns its init: it forwards is_decomposed=False to
     # func_solve_init (which groups the constraints by island, factors, and seeds the gradient the packed-env body
     # consumes), then runs the solve kernel. Keeping the init inside the entrypoint (rather than in resolve, before the
     # dispatch) is what lets each arm declare its own init behavior - the dispatcher may run a different arm on the next
     # step during autotuning.
-    func_solve_init(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_decomposed=False)
-    _kernel_solve_monolith(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, _n_iterations)
+    func_solve_init(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, is_decomposed=False)
+    _kernel_solve_monolith(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, _n_iterations)
 
 
 # =====================================================================================================================

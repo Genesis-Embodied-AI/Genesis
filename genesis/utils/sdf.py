@@ -111,9 +111,9 @@ def sdf_func_world(
     pos_world,
     geom_idx,
     batch_idx,
+    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     sdf_info: array_class.SDFInfo,
-    geoms_state: array_class.GeomsState,
 ):
     """
     sdf value from world coordinate
@@ -122,15 +122,15 @@ def sdf_func_world(
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 
-    return sdf_func_world_local(pos_world, geom_idx, g_pos, g_quat, geoms_info, sdf_info)
+    return sdf_func_world_local(pos_world, g_pos, g_quat, geom_idx, geoms_info, sdf_info)
 
 
 @qd.func
 def sdf_func_world_local(
     pos_world: qd.types.vector(3),
-    geom_idx,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geom_idx,
     geoms_info: array_class.GeomsInfo,
     sdf_info: array_class.SDFInfo,
 ):
@@ -178,9 +178,9 @@ def sdf_func_coarse_sd_lower_bound(pos_sdf, geom_idx, collider_info: array_class
 @qd.func
 def sdf_func_world_local_banded(
     pos_world: qd.types.vector(3),
-    geom_idx,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geom_idx,
     band,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
@@ -228,11 +228,11 @@ def sdf_func_world_local_banded(
 def sdf_func_ray_exit_distance(
     origin: qd.types.vector(3),
     direction: qd.types.vector(3),
+    geom_pos: qd.types.vector(3),
+    geom_quat: qd.types.vector(4),
     max_dist,
     tolerance,
     geom_idx,
-    geom_pos: qd.types.vector(3),
-    geom_quat: qd.types.vector(4),
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
 ):
@@ -241,7 +241,7 @@ def sdf_func_ray_exit_distance(
     """
     dist = max_dist
     sd_end = sdf_func_world_local(
-        origin + max_dist * direction, geom_idx, geom_pos, geom_quat, dyn_info.geoms, collider_info.sdf
+        origin + max_dist * direction, geom_pos, geom_quat, geom_idx, dyn_info.geoms, collider_info.sdf
     )
     if sd_end > 0.0:
         t_lo = gs.qd_float(0.0)
@@ -249,7 +249,7 @@ def sdf_func_ray_exit_distance(
         while t_hi - t_lo > tolerance:
             t_mid = 0.5 * (t_lo + t_hi)
             sd_mid = sdf_func_world_local(
-                origin + t_mid * direction, geom_idx, geom_pos, geom_quat, dyn_info.geoms, collider_info.sdf
+                origin + t_mid * direction, geom_pos, geom_quat, geom_idx, dyn_info.geoms, collider_info.sdf
             )
             if sd_mid < 0.0:
                 t_lo = t_mid
@@ -330,17 +330,17 @@ def sdf_func_grad_world(
     pos_world,
     geom_idx,
     batch_idx,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
     collider_static_config: qd.template(),
 ):
     g_pos = dyn_state.geoms.pos[geom_idx, batch_idx]
     g_quat = dyn_state.geoms.quat[geom_idx, batch_idx]
 
     return sdf_func_grad_world_local(
-        pos_world, geom_idx, g_pos, g_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
+        pos_world, g_pos, g_quat, geom_idx, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
     )
 
 
@@ -429,9 +429,9 @@ def sdf_func_true_grad(
 @qd.func
 def sdf_func_grad_world_local_consistent(
     pos_world: qd.types.vector(3),
-    geom_idx,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geom_idx,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -481,26 +481,26 @@ def sdf_func_normal_world(
     pos_world,
     geom_idx,
     batch_idx,
+    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     rigid_info: array_class.RigidInfo,
     sdf_info: array_class.SDFInfo,
-    geoms_state: array_class.GeomsState,
     collider_static_config: qd.template(),
 ):
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 
     return sdf_func_normal_world_local(
-        pos_world, geom_idx, g_pos, g_quat, geoms_info, rigid_info, sdf_info, collider_static_config
+        pos_world, g_pos, g_quat, geom_idx, geoms_info, rigid_info, sdf_info, collider_static_config
     )
 
 
 @qd.func
 def sdf_func_normal_world_local(
     pos_world: qd.types.vector(3),
-    geom_idx,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geom_idx,
     geoms_info: array_class.GeomsInfo,
     rigid_info: array_class.RigidInfo,
     sdf_info: array_class.SDFInfo,
@@ -512,7 +512,7 @@ def sdf_func_normal_world_local(
     """
     return gu.qd_normalize(
         sdf_func_grad_world_local(
-            pos_world, geom_idx, geom_pos, geom_quat, geoms_info, rigid_info, sdf_info, collider_static_config
+            pos_world, geom_pos, geom_quat, geom_idx, geoms_info, rigid_info, sdf_info, collider_static_config
         ),
         rigid_info.EPS[None],
     )
@@ -521,9 +521,9 @@ def sdf_func_normal_world_local(
 @qd.func
 def sdf_func_grad_world_local(
     pos_world: qd.types.vector(3),
-    geom_idx,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geom_idx,
     geoms_info: array_class.GeomsInfo,
     rigid_info: array_class.RigidInfo,
     sdf_info: array_class.SDFInfo,
@@ -561,9 +561,9 @@ def sdf_func_find_closest_vert(
     i_b,
     pos_world,
     geom_idx,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
 ):
     """
     Returns vert of geom that's closest to pos_world

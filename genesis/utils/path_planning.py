@@ -350,9 +350,9 @@ class RRT(PathPlanner):
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
+        dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
         rigid_info: array_class.RigidInfo,
-        dyn_state: array_class.DynState,
     ):
         """
         Step 1 includes:
@@ -408,17 +408,17 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
+                        dyn_state,
                         dyn_info,
                         rigid_info,
-                        dyn_state,
                         self._solver._rigid_config,
                         is_backward=False,
                     )
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
+                        dyn_state,
                         dyn_info,
                         rigid_info,
-                        dyn_state,
                         self._solver._rigid_config,
                         force_update_fixed_geoms=False,
                         is_backward=False,
@@ -512,9 +512,9 @@ class RRT(PathPlanner):
                     self._entity.q_limit[0],
                     self._entity.q_limit[1],
                     envs_idx,
+                    self._solver.dyn_state,
                     self._solver.dyn_info,
                     self._solver.rigid_info,
-                    self._solver.dyn_state,
                 )
                 if is_plan_with_obj:
                     self.update_object(ee_link_idx, obj_link_idx, _pos, _quat, envs_idx)
@@ -680,9 +680,9 @@ class RRTConnect(PathPlanner):
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
+        dyn_state: array_class.DynState,
         dyn_info: array_class.DynInfo,
         rigid_info: array_class.RigidInfo,
-        dyn_state: array_class.DynState,
         forward_pass: qd.i32,
     ):
         """
@@ -755,17 +755,17 @@ class RRTConnect(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                         self._entity._idx_in_solver,
                         i_b,
+                        dyn_state,
                         dyn_info,
                         rigid_info,
-                        dyn_state,
                         self._solver._rigid_config,
                         is_backward=False,
                     )
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
+                        dyn_state,
                         dyn_info,
                         rigid_info,
-                        dyn_state,
                         self._solver._rigid_config,
                         force_update_fixed_geoms=False,
                         is_backward=False,
@@ -776,8 +776,8 @@ class RRTConnect(PathPlanner):
         self,
         ignore_geom_pairs: qd.types.ndarray(),
         envs_idx: qd.types.ndarray(),
-        rigid_info: array_class.RigidInfo,
         collider_state: array_class.ColliderState,
+        rigid_info: array_class.RigidInfo,
         forward_pass: qd.i32,
         ignore_collision: qd.i32,
         is_plan_with_obj: qd.i32,
@@ -877,9 +877,9 @@ class RRTConnect(PathPlanner):
                 self._entity.q_limit[0],
                 self._entity.q_limit[1],
                 envs_idx,
+                self._solver.dyn_state,
                 self._solver.dyn_info,
                 self._solver.rigid_info,
-                self._solver.dyn_state,
                 forward_pass,
             )
             if is_plan_with_obj:
@@ -888,8 +888,8 @@ class RRTConnect(PathPlanner):
             self._kernel_rrt_connect_step2(
                 ignore_geom_pairs,
                 envs_idx,
-                self._solver.rigid_info,
                 self._solver.collider._collider_state,
+                self._solver.rigid_info,
                 forward_pass,
                 ignore_collision,
                 is_plan_with_obj,

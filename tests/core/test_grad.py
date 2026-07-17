@@ -340,18 +340,18 @@ def test_diff_solver(monkeypatch):
     # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
     def constraint_solver_resolve():
         func_solve_init(
-            rigid_solver.dyn_info,
-            rigid_solver.rigid_info,
             rigid_solver.dyn_state,
             constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
             rigid_solver._rigid_config,
             is_decomposed=False,
         )
         func_solve_body(
-            rigid_solver.dyn_info,
-            rigid_solver.rigid_info,
             rigid_solver.dyn_state,
             constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
             rigid_solver._rigid_config,
             constraint_solver._n_iterations,
         )
@@ -361,10 +361,10 @@ def test_diff_solver(monkeypatch):
     # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
     kernel_step_1(
-        rigid_solver.dyn_info,
-        rigid_solver.rigid_info,
         rigid_solver.dyn_state,
         constraint_solver.constraint_state,
+        rigid_solver.dyn_info,
+        rigid_solver.rigid_info,
         rigid_solver._rigid_config,
         is_forward_pos_updated=True,
         is_forward_vel_updated=True,

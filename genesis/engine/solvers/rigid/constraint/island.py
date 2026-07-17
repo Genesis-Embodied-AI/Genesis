@@ -138,9 +138,9 @@ def func_group_constraints_by_island(i_b, constraint_state: array_class.Constrai
 def func_contact_tree_slots(
     i_b,
     i_col,
-    dyn_info: array_class.DynInfo,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     """Island-local tree slots (rcm_tree_pos) of a contact's two endpoints, -1 for a fixed / dof-less side."""
@@ -160,10 +160,10 @@ def func_contact_tree_slots(
 @qd.func
 def func_build_islands(
     i_b,
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     # Partition one env's links into islands (kinematic tree + contact + equality edges) via union-find, then build the
@@ -384,7 +384,7 @@ def func_build_islands(
             for i_c_ in range(n_isl_cons):
                 i_col = constraint_state.island.contact_id[con_base + i_c_, i_b]
                 i_ta, i_tb = func_contact_tree_slots(
-                    i_b, i_col, dyn_info, collider_state, constraint_state, rigid_config
+                    i_b, i_col, collider_state, constraint_state, dyn_info, rigid_config
                 )
                 if i_ta >= 0 and i_tb >= 0 and i_ta != i_tb:
                     constraint_state.island.rcm_tree_degree[link_base + i_ta, i_b] = (
@@ -415,7 +415,7 @@ def func_build_islands(
                     for i_c_ in range(n_isl_cons):
                         i_col = constraint_state.island.contact_id[con_base + i_c_, i_b]
                         i_ta, i_tb = func_contact_tree_slots(
-                            i_b, i_col, dyn_info, collider_state, constraint_state, rigid_config
+                            i_b, i_col, collider_state, constraint_state, dyn_info, rigid_config
                         )
                         i_t_next = -1
                         if i_ta == i_t_head and i_tb >= 0:
@@ -461,12 +461,12 @@ def func_build_islands(
 @qd.func
 def _sort_island_contacts(
     i_b,
+    n,
     start,
     contact_idx: qd.Tensor,
     contacts_pos: qd.Tensor,
     contacts_geom_a: qd.Tensor,
     contacts_geom_b: qd.Tensor,
-    n,
 ):
     """Insertion-sort the contact-index slice contact_idx[start : start + n] by a deterministic total order.
 

@@ -10,22 +10,22 @@ def func_gjk_contact(
     i_ga,
     i_gb,
     i_b,
+    pos_tol,
     ga_pos: qd.types.vector(3),
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
     normal_tol,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
     diff_contact_input: array_class.DiffContactInput,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
-    pos_tol,
 ):
     """
     Detect multiple possible contact points between two geometries using GJK and EPA algorithms, and compute weights
@@ -113,11 +113,11 @@ def func_gjk_contact(
             ga_quat_local,
             gb_pos_local,
             gb_quat_local,
+            collider_state,
+            gjk_state,
             dyn_info,
             rigid_info,
             collider_info,
-            collider_state,
-            gjk_state,
             rigid_config,
             collider_static_config,
         )
@@ -130,7 +130,7 @@ def func_gjk_contact(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            epa.func_safe_epa_init(i_ga, i_gb, i_b, collider_info, gjk_state)
+            epa.func_safe_epa_init(i_ga, i_gb, i_b, gjk_state, collider_info)
 
             if i == 0:
                 # In default configuration, we use the extended EPA algorithm to find multiple contact points.
@@ -145,11 +145,11 @@ def func_gjk_contact(
                         gb_pos_local,
                         gb_quat_local,
                         max_epa_iter,
+                        collider_state,
+                        gjk_state,
                         dyn_info,
                         rigid_info,
                         collider_info,
-                        collider_state,
-                        gjk_state,
                         rigid_config,
                         collider_static_config,
                     )
@@ -185,10 +185,10 @@ def func_gjk_contact(
                         ga_quat_local,
                         gb_pos_local,
                         gb_quat_local,
-                        dyn_info,
-                        collider_info,
                         collider_state,
                         gjk_state,
+                        dyn_info,
+                        collider_info,
                         rigid_config,
                         collider_static_config,
                     )
@@ -202,7 +202,7 @@ def func_gjk_contact(
                         default_penetration = penetration
 
                         axis_0, axis_1 = func_contact_orthogonals(
-                            i_ga, i_gb, i_b, normal / penetration, geoms_init_AABB, dyn_info, rigid_info, dyn_state
+                            i_ga, i_gb, i_b, normal / penetration, geoms_init_AABB, dyn_state, dyn_info, rigid_info
                         )
 
                         found_default_epa = True
@@ -227,11 +227,11 @@ def func_gjk_contact(
                     ga_quat_local,
                     gb_pos_local,
                     gb_quat_local,
+                    collider_state,
+                    gjk_state,
                     dyn_info,
                     rigid_info,
                     collider_info,
-                    collider_state,
-                    gjk_state,
                     rigid_config,
                     collider_static_config,
                 )
@@ -248,10 +248,10 @@ def func_gjk_contact(
                     ga_quat,
                     gb_pos,
                     gb_quat,
-                    dyn_info,
-                    collider_info,
                     collider_state,
                     gjk_state,
+                    dyn_info,
+                    collider_info,
                     rigid_config,
                     collider_static_config,
                 )
@@ -272,7 +272,7 @@ def func_gjk_contact(
         if i_c > 0:
             ref_penetration = default_penetration
         contact_pos, contact_normal, penetration, weight = func_differentiable_contact(
-            i_ga, i_gb, i_b, i_c, ref_penetration, collider_info, dyn_state, diff_contact_input
+            i_ga, i_gb, i_b, i_c, ref_penetration, dyn_state, diff_contact_input, collider_info
         )
         if i_c == 0:
             default_penetration = penetration
@@ -351,11 +351,11 @@ def func_extended_epa(
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
     max_iter,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
-    collider_state: array_class.ColliderState,
-    gjk_state: array_class.GJKState,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -410,10 +410,10 @@ def func_extended_epa(
             quat_b,
             dir,
             dir_norm=1.0,
-            dyn_info=dyn_info,
-            collider_info=collider_info,
             collider_state=collider_state,
             gjk_state=gjk_state,
+            dyn_info=dyn_info,
+            collider_info=collider_info,
             rigid_config=rigid_config,
             collider_static_config=collider_static_config,
         )
@@ -446,7 +446,7 @@ def func_extended_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = epa.func_epa_horizon(i_b, nearest_i_f, collider_info, gjk_state)
+        horizon_flag = epa.func_epa_horizon(i_b, nearest_i_f, gjk_state, collider_info)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -497,8 +497,8 @@ def func_extended_epa(
                 adj_i_f_2,  # Previous face id
                 adj_i_f_1,
                 adj_i_f_0,  # Next face id
-                collider_info,
                 gjk_state,
+                collider_info,
             )
             if attach_flag != GJK.RETURN_CODE.SUCCESS:
                 # Unrecoverable numerical issue
@@ -531,7 +531,7 @@ def func_extended_epa(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = epa.func_safe_epa_witness(i_ga, i_gb, i_b, nearest_i_f, collider_info, gjk_state)
+        flag = epa.func_safe_epa_witness(i_ga, i_gb, i_b, nearest_i_f, gjk_state, collider_info)
         if flag == GJK.RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -qd.sqrt(dist2)
@@ -558,10 +558,10 @@ def func_add_diff_contact_input(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -610,7 +610,7 @@ def func_add_diff_contact_input(
     is_face_degenerate = normal_norm < collider_info.gjk.diff_contact_min_normal_norm[None]
 
     # (b) Check if the origin is very close to the face (which means very small penetration depth).
-    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
+    proj_o = func_project_origin_to_plane(mink1, mink2, normal, mink3)
     origin_dist = proj_o.norm()
     is_origin_close_to_face = origin_dist < collider_info.gjk.diff_contact_min_penetration[None]
 
@@ -626,16 +626,16 @@ def func_add_diff_contact_input(
         i_ga,
         i_gb,
         i_b,
-        normal,
         pos_a,
         quat_a,
         pos_b,
         quat_b,
+        normal,
         shrink_sphere=False,
-        dyn_info=dyn_info,
-        collider_info=collider_info,
         collider_state=collider_state,
         gjk_state=gjk_state,
+        dyn_info=dyn_info,
+        collider_info=collider_info,
         rigid_config=rigid_config,
         collider_static_config=collider_static_config,
     )
@@ -659,9 +659,9 @@ def func_contact_orthogonals(
     i_b,
     normal: qd.types.vector(3),
     geoms_init_AABB: array_class.GeomsInitAABB,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
 ):
     EPS = rigid_info.EPS[None]
 
@@ -722,9 +722,9 @@ def func_differentiable_contact(
     i_b,
     i_c,
     ref_penetration,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     diff_contact_input: array_class.DiffContactInput,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     Compute the contact normal, penetration, and point for contact [i_c] from the corresponding [diff_contact_input]
@@ -777,12 +777,12 @@ def func_differentiable_contact(
 
     # Project the origin onto the affine plane of the face: This operation is guaranteed to be numerically stable, as
     # the normal length is guaranteed to be larger than the minimum normal norm in [gjk_info].
-    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
+    proj_o = func_project_origin_to_plane(mink1, mink2, normal, mink3)
 
     # Compute the affine coordinates of the origin's projection on the face: This operation is also guaranteed to be
     # numerically stable, as the normal length is guaranteed to be larger than the minimum normal norm in
     # [gjk_info].
-    _lambda = func_triangle_affine_coords(mink1, mink2, mink3, normal, proj_o)
+    _lambda = func_triangle_affine_coords(mink1, mink2, normal, proj_o, mink3)
 
     # Point on geom 1
     w1 = pos1a * _lambda[0] + pos1b * _lambda[1] + pos1c * _lambda[2]
@@ -842,7 +842,7 @@ def func_plane_normal(v1, v2, v3):
 
 
 @qd.func
-def func_project_origin_to_plane(v1, v2, v3, normal):
+def func_project_origin_to_plane(v1, v2, normal, v3):
     """
     Project the origin onto the plane defined by a point on the plane and its normal.
 
@@ -857,7 +857,7 @@ def func_project_origin_to_plane(v1, v2, v3, normal):
 
 
 @qd.func
-def func_triangle_affine_coords(v1, v2, v3, normal, point):
+def func_triangle_affine_coords(v1, v2, normal, point, v3):
     """
     Compute the affine coordinates of the point with respect to the triangle.
 

@@ -73,10 +73,10 @@ def _ls_eval_cost_grad(i_b, alpha, constraint_state: array_class.ConstraintState
 
 @qd.func
 def _func_decomp_linesearch_p0(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Decomposed constraint solver P0 kernel: fused mv + jv + snorm + quad_gauss + eq_sum + p0_cost.
@@ -333,8 +333,8 @@ def _func_decomp_linesearch_refine_coop(
     alpha_newton,
     p0_cost,
     gtol,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Warp-cooperative variant of ``_func_decomp_linesearch_refine``: all 32 lanes drive the unified
@@ -345,15 +345,15 @@ def _func_decomp_linesearch_refine_coop(
         if tid == 0:
             constraint_state.ls_alpha[i_b] = 0.0
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-            i_b, tid, alpha_newton, rigid_info, constraint_state, rigid_config, coop=True
+            i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=True
         )
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
                 i_b,
                 tid,
                 alpha=0.0,
-                rigid_info=rigid_info,
                 constraint_state=constraint_state,
+                rigid_info=rigid_info,
                 rigid_config=rigid_config,
                 coop=True,
             )
@@ -369,8 +369,8 @@ def _func_decomp_linesearch_refine_coop(
                 p1_deriv_1,
                 p0_cost,
                 gtol,
-                rigid_info,
                 constraint_state,
+                rigid_info,
                 rigid_config,
                 coop=True,
             )
@@ -387,8 +387,8 @@ def _func_decomp_linesearch_refine_serial(
     alpha_newton,
     p0_cost,
     gtol,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """1-thread-per-env variant of ``_func_decomp_linesearch_refine``: bit-identical to the pre-coop baseline.
@@ -397,15 +397,15 @@ def _func_decomp_linesearch_refine_serial(
     if alpha_newton > 0.0 and tid == 0:
         constraint_state.ls_alpha[i_b] = 0.0
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-            i_b, tid, alpha_newton, rigid_info, constraint_state, rigid_config, coop=False
+            i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=False
         )
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
                 i_b,
                 tid,
                 alpha=0.0,
-                rigid_info=rigid_info,
                 constraint_state=constraint_state,
+                rigid_info=rigid_info,
                 rigid_config=rigid_config,
                 coop=False,
             )
@@ -421,8 +421,8 @@ def _func_decomp_linesearch_refine_serial(
                 p1_deriv_1,
                 p0_cost,
                 gtol,
-                rigid_info,
                 constraint_state,
+                rigid_info,
                 rigid_config,
                 coop=False,
             )
@@ -439,8 +439,8 @@ def _func_decomp_linesearch_refine(
     alpha_newton,
     p0_cost,
     gtol,
-    rigid_info: array_class.RigidInfo,
     constraint_state: array_class.ConstraintState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_refine_and_apply``. Dispatches at
@@ -453,17 +453,17 @@ def _func_decomp_linesearch_refine(
     auto-promote a struct member access to a compile-time value, so we cannot share a single call site here."""
     if qd.static(rigid_config.enable_cooperative_constraint_kernels):
         _func_decomp_linesearch_refine_coop(
-            i_b, tid, alpha_newton, p0_cost, gtol, rigid_info, constraint_state, rigid_config
+            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_info, rigid_config
         )
     else:
         _func_decomp_linesearch_refine_serial(
-            i_b, tid, alpha_newton, p0_cost, gtol, rigid_info, constraint_state, rigid_config
+            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_info, rigid_config
         )
 
 
 @qd.func
 def _func_decomp_linesearch_refine_and_apply(
-    rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     """Decomposed solver eval kernel: linesearch refinement from Newton step + cooperative apply.
 
@@ -497,7 +497,7 @@ def _func_decomp_linesearch_refine_and_apply(
             alpha_newton = constraint_state.ls_alpha_newton[i_b]
 
             _func_decomp_linesearch_refine(
-                i_b, tid, alpha_newton, p0_cost, gtol, rigid_info, constraint_state, rigid_config
+                i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_info, rigid_config
             )
             qd.simt.block.sync()
         else:
@@ -827,7 +827,7 @@ def _func_build_changed_and_decide_hessian_mode(
 
 
 @qd.func
-def _func_patch_hessian_delta(rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState):
+def _func_patch_hessian_delta(constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
     """Incrementally update H with delta contributions from changed constraints.
 
     Adds or subtracts each changed constraint's J^T D J contribution depending on whether it became active or inactive.
@@ -877,9 +877,9 @@ def _func_patch_hessian_delta(rigid_info: array_class.RigidInfo, constraint_stat
 
 
 @qd.func
-def _func_newton_only_nt_hessian(rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState):
+def _func_newton_only_nt_hessian(constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo):
     """Full tiled Hessian rebuild for envs with use_full_hessian == 1 (skips others)."""
-    solver.func_hessian_direct_tiled(rigid_info, constraint_state, check_full_hessian=True)
+    solver.func_hessian_direct_tiled(constraint_state, rigid_info, check_full_hessian=True)
 
 
 @qd.func
@@ -903,14 +903,14 @@ def _func_wrap_cone_hessian(
 
 @qd.func
 def _func_newton_only_nt_hessian_and_cholesky(
-    rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     """Full Hessian rebuild + Cholesky for ALL improved envs (non-fused path).
 
     Matches origin/main behavior: H is rebuilt from scratch every iteration, then Cholesky overwrites nt_H with L
     in-place.  H patching is not used because the subsequent Cholesky would destroy H anyway.
     """
-    solver.func_hessian_direct_tiled(rigid_info, constraint_state)
+    solver.func_hessian_direct_tiled(constraint_state, rigid_info)
     # func_hessian_direct_tiled assembles M + J^T D J only; add the coupled elliptic-cone 3x3 block as an additive
     # post-pass before the factor reads nt_H, matching the monolith tiled path (this path rebuilds every improved env).
     if qd.static(rigid_config.enable_elliptic_friction):
@@ -920,7 +920,7 @@ def _func_newton_only_nt_hessian_and_cholesky(
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
     if qd.static(rigid_config.enable_tiled_cholesky_hessian):
-        solver.func_cholesky_factor_direct_tiled(rigid_info, constraint_state, rigid_config)
+        solver.func_cholesky_factor_direct_tiled(constraint_state, rigid_info, rigid_config)
     else:
         _B = constraint_state.jac.shape[2]
         qd.loop_config(
@@ -930,16 +930,16 @@ def _func_newton_only_nt_hessian_and_cholesky(
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 # Decomposed arm is non-island: i_island = 0 is the full-env work-unit (island branch is dead).
                 solver.func_cholesky_factor_direct_batch(
-                    i_b, i_island=0, rigid_info=rigid_info, constraint_state=constraint_state, rigid_config=rigid_config
+                    i_b, i_island=0, constraint_state=constraint_state, rigid_info=rigid_info, rigid_config=rigid_config
                 )
 
 
 @qd.func
 def _func_update_gradient(
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     """Step 5: Update gradient"""
@@ -947,19 +947,19 @@ def _func_update_gradient(
     qd.loop_config(name="update_gradient", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_update_gradient_batch(i_b, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+            solver.func_update_gradient_batch(i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.func
 def _func_update_search_direction(
-    rigid_info: array_class.RigidInfo, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
+    constraint_state: array_class.ConstraintState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
     qd.loop_config(name="update_search_direction", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_terminate_or_update_descent_batch(i_b, rigid_info, constraint_state, rigid_config)
+            solver.func_terminate_or_update_descent_batch(i_b, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -990,17 +990,17 @@ def _func_check_early_exit(
 @qd.kernel(graph=True, fastcache=True)
 def _kernel_solve_graph(
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     while qd.graph_do_while(graph_counter):
         # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost
-        _func_decomp_linesearch_p0(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+        _func_decomp_linesearch_p0(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         # Fused: refinement + apply alpha
-        _func_decomp_linesearch_refine_and_apply(rigid_info, constraint_state, rigid_config)
+        _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_info, rigid_config)
         if qd.static(rigid_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, rigid_config)
         _func_update_constraint_forces(constraint_state, rigid_config)
@@ -1011,9 +1011,9 @@ def _kernel_solve_graph(
             # then a tiled factor + solve reading the maintained nt_H. Each changed constraint's J^T D J lands inside
             # its island's diagonal block (no constraint couples DOFs across islands), so the patch is island-correct.
             _func_build_changed_and_decide_hessian_mode(constraint_state, rigid_config)
-            _func_newton_only_nt_hessian(rigid_info, constraint_state)
-            _func_patch_hessian_delta(rigid_info, constraint_state)
-            solver.func_update_gradient_no_solve(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+            _func_newton_only_nt_hessian(constraint_state, rigid_info)
+            _func_patch_hessian_delta(constraint_state, rigid_info)
+            solver.func_update_gradient_no_solve(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             if qd.static(rigid_config.enable_per_island_solve):
                 # Hibernation needs the per-island grid to skip asleep islands, so factor + solve each awake island in
                 # its own tile over the (env, island) grid. The per-island tile stages nt_H non-destructively, so the
@@ -1021,9 +1021,9 @@ def _kernel_solve_graph(
                 # the incremental patch keeps maintaining the cone-free Hessian.
                 _func_wrap_cone_hessian(constraint_state, rigid_config, scale=1.0)
                 solver.func_island_tiled_factor_solve_all(
+                    constraint_state,
                     dyn_info,
                     rigid_info,
-                    constraint_state,
                     rigid_config,
                     qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
                 )
@@ -1037,7 +1037,7 @@ def _kernel_solve_graph(
                 # For the elliptic cone, add its coupled block to the maintained nt_H, factor+solve, then remove it, so
                 # the incremental patch keeps working on the cone-free Hessian (no per-iteration rebuild).
                 _func_wrap_cone_hessian(constraint_state, rigid_config, scale=1.0)
-                solver.func_cholesky_and_solve_fused_tiled(rigid_info, constraint_state, rigid_config)
+                solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_info, rigid_config)
                 _func_wrap_cone_hessian(constraint_state, rigid_config, scale=-1.0)
         elif qd.static(
             rigid_config.solver_type == gs.constraint_solver.Newton
@@ -1054,11 +1054,11 @@ def _kernel_solve_graph(
             # touched. This keeps the cost at sum-of-per-island-blocks instead of the whole-env O(n_dofs^3) factor the
             # non-fused path below would do - the regime of many small islands whose total dof count exceeds the shared
             # cap. An island larger than the per-island tile falls back to the scalar per-island solve inside the factor.
-            solver.func_update_gradient_no_solve(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+            solver.func_update_gradient_no_solve(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
             solver.func_island_tiled_factor_solve_all(
+                constraint_state,
                 dyn_info,
                 rigid_info,
-                constraint_state,
                 rigid_config,
                 qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
                 do_assemble=True,
@@ -1068,11 +1068,11 @@ def _kernel_solve_graph(
             # with L, so H patching is not possible). Reached when the whole-env Hessian does not fit shared and either
             # islands are OFF (a single whole-env factor, matching the non-island baseline) or the cooperative kernels
             # are disabled (tiny n_dofs or huge env count), where the whole-env factor is cheap or the monolith wins.
-            _func_newton_only_nt_hessian_and_cholesky(rigid_info, constraint_state, rigid_config)
-            _func_update_gradient(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+            _func_newton_only_nt_hessian_and_cholesky(constraint_state, rigid_info, rigid_config)
+            _func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         else:
-            _func_update_gradient(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
-        _func_update_search_direction(rigid_info, constraint_state, rigid_config)
+            _func_update_gradient(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
+        _func_update_search_direction(constraint_state, rigid_info, rigid_config)
         _func_check_early_exit(graph_counter, constraint_state)
 
 
@@ -1082,7 +1082,7 @@ def _kernel_solve_graph(
         and rigid_config.prefer_decomposed_solver != 0
     )
 )
-def func_solve_decomposed(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, _n_iterations):
+def func_solve_decomposed(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, _n_iterations):
     """
     GPU graph accelerated solver loop with parallel grid-search linesearch and GPU-side iteration via graph_do_while.
 
@@ -1100,8 +1100,8 @@ def func_solve_decomposed(dyn_info, rigid_info, dyn_state, constraint_state, rig
     # func_solve_init, which builds the island partition but then skips the init Hessian factor + gradient. The graph
     # rebuilds the Hessian on its first iteration regardless (iter_count <= 1 -> use_full_hessian), so the init factor
     # would be pure waste, and skipping it makes the decomposed arm behave identically for islands ON and OFF.
-    solver.func_solve_init(dyn_info, rigid_info, dyn_state, constraint_state, rigid_config, is_decomposed=True)
+    solver.func_solve_init(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config, is_decomposed=True)
     if _n_iterations <= 0:
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
-    _kernel_solve_graph(constraint_state.graph_counter, dyn_info, rigid_info, dyn_state, constraint_state, rigid_config)
+    _kernel_solve_graph(constraint_state.graph_counter, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)

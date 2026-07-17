@@ -24,7 +24,7 @@ from .forward_kinematics import func_update_cartesian_space
 
 @qd.func
 def func_copy_next_to_curr(
-    errno: qd.Tensor, rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
+    errno: qd.Tensor, dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     n_qs = rigid_info.qpos.shape[0]
     n_dofs = dyn_state.dofs.vel.shape[0]
@@ -54,9 +54,9 @@ def func_copy_next_to_curr(
 @qd.func
 def func_copy_next_to_curr_grad(
     f: qd.int32,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = dyn_state.dofs.vel.shape[0]
@@ -79,20 +79,20 @@ def func_copy_next_to_curr_grad(
 @qd.kernel(fastcache=True)
 def kernel_save_adjoint_cache(
     f: qd.int32,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    func_save_adjoint_cache(f, rigid_info, dyn_state, rigid_adjoint_cache, rigid_config)
+    func_save_adjoint_cache(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
 
 
 @qd.func
 def func_save_adjoint_cache(
     f: qd.int32,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = dyn_state.dofs.vel.shape[0]
@@ -112,9 +112,9 @@ def func_save_adjoint_cache(
 @qd.func
 def func_load_adjoint_cache(
     f: qd.int32,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     n_dofs = dyn_state.dofs.vel.shape[0]
@@ -134,21 +134,21 @@ def func_load_adjoint_cache(
 @qd.kernel(fastcache=True)
 def kernel_prepare_backward_substep(
     f: qd.int32,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     dyn_state_adjoint_cache: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     # Load the current state from adjoint cache
-    func_load_adjoint_cache(f, rigid_info, dyn_state, rigid_adjoint_cache, rigid_config)
+    func_load_adjoint_cache(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
 
     # If mujoco compatibility is disabled, update the cartesian space and save the results to adjoint cache. This is
     # because the cartesian space is overwritten later by other kernels if mujoco compatibility was disabled.
     if qd.static(not rigid_config.enable_mujoco_compatibility):
         func_update_cartesian_space(
-            dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms=False, is_backward=True
+            dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=False, is_backward=True
         )
 
         # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
@@ -159,16 +159,16 @@ def kernel_prepare_backward_substep(
 @qd.kernel(fastcache=True)
 def kernel_begin_backward_substep(
     f: qd.int32,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     dyn_state_adjoint_cache: array_class.DynState,
     rigid_adjoint_cache: array_class.RigidAdjointCache,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ) -> qd.i32:
-    is_grad_valid = func_is_grad_valid(rigid_info, dyn_state, rigid_config)
+    is_grad_valid = func_is_grad_valid(dyn_state, rigid_info, rigid_config)
     if is_grad_valid:
-        func_copy_next_to_curr_grad(f, rigid_info, dyn_state, rigid_adjoint_cache, rigid_config)
+        func_copy_next_to_curr_grad(f, dyn_state, rigid_adjoint_cache, rigid_info, rigid_config)
 
         if not rigid_config.enable_mujoco_compatibility:
             # FIXME: Parameter pruning for ndarray is buggy for now and requires match variable and arg names.
@@ -179,7 +179,7 @@ def kernel_begin_backward_substep(
 
 
 @qd.func
-def func_is_grad_valid(rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()):
+def func_is_grad_valid(dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()):
     is_valid = True
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for I in qd.grouped(qd.ndrange(*rigid_info.qpos.shape)):

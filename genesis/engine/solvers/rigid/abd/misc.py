@@ -35,10 +35,10 @@ def linear_to_lower_tri(i_pair: qd.i32, strict: qd.template() = False):
 def func_wakeup_island(
     i_island,
     i_b,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     # Wake a hibernated component-island as a unit: every link in the island (and its DOFs and geoms) is revived and
@@ -164,9 +164,9 @@ def kernel_init_dof_fields(
     dofs_act_gain: qd.types.ndarray(),
     dofs_act_bias: qd.types.ndarray(),
     dofs_force_range: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_dofs = dyn_state.dofs.ctrl_mode.shape[0]
@@ -211,10 +211,10 @@ def kernel_init_dof_fields(
 @qd.kernel(fastcache=True)
 def kernel_reset_hibernation(
     envs_idx: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     # Wake every body in the given envs and rebuild the compact awake lists. A scene whose state is set (reset or
@@ -276,9 +276,9 @@ def kernel_init_link_fields(
     links_geom_end: qd.types.ndarray(),
     links_vgeom_start: qd.types.ndarray(),
     links_vgeom_end: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_links = links_parent_idx.shape[0]
@@ -529,8 +529,8 @@ def kernel_init_geom_fields(
     geoms_is_decomp: qd.types.ndarray(),
     geoms_is_hollow: qd.types.ndarray(),
     geoms_init_AABB: array_class.GeomsInitAABB,  # TODO: move to rigid global info
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     n_geoms = geoms_pos.shape[0]
@@ -675,9 +675,9 @@ def kernel_init_entity_fields(
     entities_geom_end: qd.types.ndarray(),
     entities_gravity_compensation: qd.types.ndarray(),
     entities_is_local_collision_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_entities = entities_dof_start.shape[0]
@@ -819,7 +819,7 @@ def func_apply_link_external_torque(
 
 @qd.func
 def func_clear_external_force(
-    rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
+    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
     n_links = dyn_state.links.pos.shape[0]
     _B = dyn_state.links.pos.shape[1]
@@ -842,8 +842,8 @@ def func_clear_external_force(
 @qd.kernel(fastcache=True)
 def kernel_update_geoms_render_T(
     geoms_render_T: qd.types.ndarray(),
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -863,9 +863,9 @@ def kernel_update_geoms_render_T(
 @qd.kernel(fastcache=True)
 def kernel_update_vgeoms_render_T(
     vgeoms_render_T: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
@@ -902,14 +902,14 @@ def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: qd.Tensor):
 
 
 @qd.func
-def func_atomic_add_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_atomic_add_if(I, value, field: qd.Tensor, cond: qd.template()):
     if qd.static(cond):
         qd.atomic_add(field[I], value)
     return value
 
 
 @qd.func
-def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
+def func_add_safe_backward(I, value, field: qd.Tensor, cond: qd.template()):
     # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to
     # write, use atomic add directly. For reference, see official Quadrants documentation:
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
@@ -920,19 +920,19 @@ def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
 
 
 @qd.func
-def func_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_read_field_if(I, value, field: qd.Tensor, cond: qd.template()):
     return field[I] if qd.static(cond) else value
 
 
 @qd.func
-def func_write_field_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_write_field_if(I, value, field: qd.Tensor, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return value
 
 
 @qd.func
-def func_write_and_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_write_and_read_field_if(I, value, field: qd.Tensor, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return field[I] if qd.static(cond) else value
@@ -946,9 +946,9 @@ def func_check_index_range(idx: qd.i32, min: qd.i32, max: qd.i32, cond: qd.templ
 
 @qd.kernel(fastcache=True)
 def kernel_clear_external_force(
-    rigid_info: array_class.RigidInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
+    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
 ):
-    func_clear_external_force(rigid_info, dyn_state, rigid_config)
+    func_clear_external_force(dyn_state, rigid_info, rigid_config)
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module

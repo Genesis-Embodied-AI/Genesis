@@ -64,7 +64,7 @@ class Raycaster:
             return
         from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs
 
-        kernel_update_verts_and_aabbs(self.solver.dyn_info, self.solver.dyn_state, self.aabb, self.solver._rigid_config)
+        kernel_update_verts_and_aabbs(self.solver.dyn_state, self.aabb, self.solver.dyn_info, self.solver._rigid_config)
         self.bvh.build()
 
     def cast(
@@ -92,10 +92,10 @@ class Raycaster:
             np.ascontiguousarray(ray_origin, dtype=gs.np_float),
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
             envs_idx if envs_idx is not None else self.envs_idx,
-            self.solver.dyn_info,
-            self.solver.rigid_info,
             self.solver.dyn_state,
             self.result,
+            self.solver.dyn_info,
+            self.solver.rigid_info,
             max_range,
             gs.EPS,
         )

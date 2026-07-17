@@ -105,10 +105,10 @@ def func_plane_box_contact(
     i_pair,
     errno: qd.Tensor,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    dyn_info: array_class.DynInfo,
-    collider_info: array_class.ColliderInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -121,7 +121,7 @@ def func_plane_box_contact(
     plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _, _ = support_field._func_support_box(i_gb, normal, gb_pos, gb_quat, dyn_info)
+    v1, _, _ = support_field._func_support_box(i_gb, gb_pos, gb_quat, normal, dyn_info)
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:
@@ -135,10 +135,10 @@ def func_plane_box_contact(
             contact_pos,
             penetration,
             errno,
-            dyn_info,
-            collider_info,
             dyn_state,
             collider_state,
+            dyn_info,
+            collider_info,
         )
 
         if qd.static(rigid_config.enable_multi_contact):
@@ -165,10 +165,10 @@ def func_plane_box_contact(
                                 contact_pos,
                                 penetration,
                                 errno,
-                                dyn_info,
-                                collider_info,
                                 dyn_state,
                                 collider_state,
+                                dyn_info,
+                                collider_info,
                             )
                             n_con = n_con + 1
 
@@ -180,11 +180,11 @@ def func_box_box_contact(
     i_b,
     i_pair,
     errno: qd.Tensor,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
     collider_static_config: qd.template(),
 ):
     """
@@ -531,10 +531,10 @@ def func_box_box_contact(
                             contact_pos,
                             -dist,
                             errno,
-                            dyn_info,
-                            collider_info,
                             dyn_state,
                             collider_state,
+                            dyn_info,
+                            collider_info,
                         )
                         n_added = n_added + 1
         else:
@@ -855,9 +855,9 @@ def func_box_box_contact(
                                 contact_pos,
                                 -dist,
                                 errno,
-                                dyn_info,
-                                collider_info,
                                 dyn_state,
                                 collider_state,
+                                dyn_info,
+                                collider_info,
                             )
                             n_added = n_added + 1

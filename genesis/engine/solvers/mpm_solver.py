@@ -441,10 +441,10 @@ class MPMSolver(Solver):
                                     cell_pos,
                                     i_g,
                                     i_b,
+                                    geoms_state,
                                     geoms_info,
                                     rigid_info,
                                     sdf_info,
-                                    geoms_state,
                                     collider_static_config,
                                 )
 

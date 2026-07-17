@@ -390,10 +390,10 @@ def _kernel_point_cloud_proximity_taxel_bvh(
         s_ang = dyn_state.links.cd_ang[sensor_link_idx, i_b]
         s_com = dyn_state.links.root_COM[sensor_link_idx, i_b]
 
-        probe_local = func_vec3_at(probe_positions_local, i_p)
+        probe_local = func_vec3_at(i_p, probe_positions_local)
         probe_world = s_pos + gu.qd_transform_by_quat(probe_local, s_quat)
 
-        a_loc = func_vec3_at(probe_local_normal, i_p)
+        a_loc = func_vec3_at(i_p, probe_local_normal)
         a_w = gu.qd_transform_by_quat(a_loc, s_quat)
         a_norm = qd.sqrt(a_w.dot(a_w)) + eps
         for j in qd.static(range(3)):
@@ -440,8 +440,8 @@ def _kernel_point_cloud_proximity_taxel_bvh(
             while stack_idx > 0:
                 stack_idx -= 1
                 n = stack[stack_idx]
-                bmin = func_vec3_at(bvh.node_min, n)
-                bmax = func_vec3_at(bvh.node_max, n)
+                bmin = func_vec3_at(n, bvh.node_min)
+                bmax = func_vec3_at(n, bvh.node_max)
                 if not func_sphere_intersects_aabb(probe_link, R_query_sq, bmin, bmax):
                     continue
                 left = bvh.node_left[n]
@@ -452,7 +452,7 @@ def _kernel_point_cloud_proximity_taxel_bvh(
                         i_o = bvh.leaf_elem_idx[pstart + j]
                         if not pc_active_envs_mask[i_o, i_b]:
                             continue
-                        pos_l = func_vec3_at(pc_pos_link, i_o)
+                        pos_l = func_vec3_at(i_o, pc_pos_link)
                         d_link = pos_l - probe_link
                         dsq = d_link.dot(d_link)
                         dist = qd.sqrt(dsq)
@@ -794,14 +794,14 @@ class ProximityTaxelSensor(
 @qd.func
 def _func_elastomer_min_sdf_over_active_geoms(
     i_b: int,
+    geom_start: int,
+    geom_n: int,
     point_world: qd.types.vector(3),
     geom_idx: qd.types.ndarray(),
     geom_active_envs_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
-    geom_start: int,
-    geom_n: int,
 ) -> float:
     min_sdf = float(1.0e6)
     geom_end = geom_start + geom_n
@@ -824,7 +824,7 @@ def _func_elastomer_min_sdf_over_active_geoms(
             or point_world[2] > amax[2]
         ):
             continue
-        sd = sdf.sdf_func_world(point_world, i_g, i_b, dyn_info.geoms, collider_info.sdf, dyn_state.geoms)
+        sd = sdf.sdf_func_world(point_world, i_g, i_b, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
         if sd < min_sdf:
             min_sdf = sd
     return min_sdf
@@ -839,12 +839,12 @@ def _func_elastomer_tangent(vec: qd.types.vector(3), normal: qd.types.vector(3))
 def _func_elastomer_update_surface_anchor(
     i_b: int,
     i_o: int,
-    point_sensor: qd.types.vector(3),
-    surface_entry_pos_sensor_buf: qd.types.ndarray(),
-    surface_initialized_buf: qd.types.ndarray(),
     sdf_value: float,
     sdf_enter: float,
     sdf_exit: float,
+    point_sensor: qd.types.vector(3),
+    surface_entry_pos_sensor_buf: qd.types.ndarray(),
+    surface_initialized_buf: qd.types.ndarray(),
 ):
     if sdf_value > sdf_exit:
         surface_initialized_buf[i_b, i_o] = False
@@ -858,15 +858,15 @@ def _func_elastomer_update_surface_anchor(
 
 @qd.func
 def _func_elastomer_direct_dilate_contribution(
-    source_pos: qd.types.vector(3),
-    target_pos: qd.types.vector(3),
-    target_normal: qd.types.vector(3),
     depth: float,
     lam: float,
     scale: float,
     normal_exponent: float,
     compressibility: float,
     eps: float,
+    source_pos: qd.types.vector(3),
+    target_pos: qd.types.vector(3),
+    target_normal: qd.types.vector(3),
 ) -> qd.types.vector(3):
     """
     Single tracked-point dilation contribution: tangential spreading is linear in penetration depth, while the
@@ -896,13 +896,13 @@ def _func_elastomer_direct_dilate_contribution(
 
 @qd.func
 def _func_elastomer_direct_shear_contribution(
+    depth: float,
+    lam: float,
+    scale: float,
     point_sensor: qd.types.vector(3),
     entry_sensor: qd.types.vector(3),
     probe_pos: qd.types.vector(3),
     probe_normal: qd.types.vector(3),
-    depth: float,
-    lam: float,
-    scale: float,
     eps: float,
 ) -> qd.types.vector(3):
     shear_disp = point_sensor - entry_sensor
@@ -1053,8 +1053,8 @@ def _func_elastomer_min_signed_dist_bvh(
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     track_geom_mask: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     max_query_dist: float,
 ) -> float:
     """
@@ -1092,7 +1092,7 @@ def _func_elastomer_min_signed_dist_bvh(
             if not track_geom_mask[i_b, i_s, i_g]:
                 continue
 
-            tri = get_triangle_vertices(i_f, i_b, dyn_info, dyn_state)
+            tri = get_triangle_vertices(i_f, i_b, dyn_state, dyn_info)
             v0 = tri[:, 0]
             v1 = tri[:, 1]
             v2 = tri[:, 2]
@@ -1126,8 +1126,8 @@ def _kernel_elastomer_probe_depth_bvh(
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     probe_depth_buf: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     max_query_dist: float,
 ):
     """
@@ -1147,11 +1147,11 @@ def _kernel_elastomer_probe_depth_bvh(
         sensor_link_idx = links_idx[i_s]
         link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
         link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
-        probe_local = func_vec3_at(probe_positions_local, i_p)
+        probe_local = func_vec3_at(i_p, probe_positions_local)
         probe_world = link_pos + gu.qd_transform_by_quat(probe_local, link_quat)
 
         signed = _func_elastomer_min_signed_dist_bvh(
-            i_b, i_s, probe_world, bvh_nodes, bvh_morton_codes, track_geom_mask, dyn_info, dyn_state, max_query_dist
+            i_b, i_s, probe_world, bvh_nodes, bvh_morton_codes, track_geom_mask, dyn_state, dyn_info, max_query_dist
         )
         probe_depth_buf[i_b, i_p] = qd.max(gs.qd_float(0.0), -signed)
 
@@ -1167,9 +1167,9 @@ def _kernel_elastomer_probe_depth(
     track_geom_idx: qd.types.ndarray(),
     track_geom_active_envs_mask: qd.types.ndarray(),
     probe_depth_buf: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
 ):
     """Per-probe contact depth from track-geom SDF, parallel over (env, probe).
 
@@ -1188,19 +1188,19 @@ def _kernel_elastomer_probe_depth(
         sensor_link_idx = links_idx[i_s]
         link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
         link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
-        probe_local = func_vec3_at(probe_positions_local, i_p)
+        probe_local = func_vec3_at(i_p, probe_positions_local)
         probe_world = link_pos + gu.qd_transform_by_quat(probe_local, link_quat)
 
         min_sdf = _func_elastomer_min_sdf_over_active_geoms(
             i_b,
+            sensor_track_geom_start[i_s],
+            sensor_track_geom_n[i_s],
             probe_world,
             track_geom_idx,
             track_geom_active_envs_mask,
+            dyn_state,
             dyn_info,
             collider_info,
-            dyn_state,
-            sensor_track_geom_start[i_s],
-            sensor_track_geom_n[i_s],
         )
 
         probe_depth_buf[i_b, i_p] = qd.max(gs.qd_float(0.0), -min_sdf)
@@ -1254,8 +1254,8 @@ def _kernel_elastomer_dilate_accumulate(
                 output[cache_start + _i_p * 3 + k, i_b] = gs.qd_float(0.0)
             continue
 
-        target_local = func_vec3_at(probe_positions_local, i_p)
-        target_normal = func_vec3_at(probe_local_normal, i_p)
+        target_local = func_vec3_at(i_p, probe_positions_local)
+        target_normal = func_vec3_at(i_p, probe_local_normal)
 
         acc = qd.Vector.zero(gs.qd_float, 3)
         for j in range(n_probes):
@@ -1264,7 +1264,7 @@ def _kernel_elastomer_dilate_accumulate(
             if src_depth <= gs.qd_float(0.0):
                 continue
             contribution = _func_elastomer_direct_dilate_contribution(
-                func_vec3_at(probe_positions_local, j_p),
+                func_vec3_at(j_p, probe_positions_local),
                 target_local,
                 target_normal,
                 src_depth,
@@ -1300,9 +1300,9 @@ def _kernel_elastomer_surface_state_bvh(
     surface_depth_buf: qd.types.ndarray(),
     surface_initialized_buf: qd.types.ndarray(),
     surface_candidate_buf: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
-    dyn_state: array_class.DynState,
     aabb_margin: float,
 ):
     """Per-(env, chunk): compute the chunk-local query AABB in registers, BVH-traverse, and write
@@ -1385,8 +1385,8 @@ def _kernel_elastomer_surface_state_bvh(
         while stack_idx > 0:
             stack_idx -= 1
             n = stack[stack_idx]
-            bmin = func_vec3_at(bvh.node_min, n)
-            bmax = func_vec3_at(bvh.node_max, n)
+            bmin = func_vec3_at(n, bvh.node_min)
+            bmax = func_vec3_at(n, bvh.node_max)
             if not func_aabb_intersects_aabb(bmin, bmax, qmin, qmax):
                 continue
             left = bvh.node_left[n]
@@ -1399,7 +1399,7 @@ def _kernel_elastomer_surface_state_bvh(
                         continue
                     surface_candidate_buf[i_b, i_o] = True
 
-                    point_link = func_vec3_at(pc_pos_link, i_o)
+                    point_link = func_vec3_at(i_o, pc_pos_link)
                     point_world = track_pos + gu.qd_transform_by_quat(point_link, track_quat)
                     point_sensor = gu.qd_inv_transform_by_trans_quat(point_world, sensor_pos, sensor_quat)
                     for k in qd.static(range(3)):
@@ -1407,14 +1407,14 @@ def _kernel_elastomer_surface_state_bvh(
 
                     min_sdf = _func_elastomer_min_sdf_over_active_geoms(
                         i_b,
+                        sensor_elastomer_geom_start[i_s],
+                        sensor_elastomer_geom_n[i_s],
                         point_world,
                         elastomer_geom_idx,
                         elastomer_geom_active_envs_mask,
+                        dyn_state,
                         dyn_info,
                         collider_info,
-                        dyn_state,
-                        sensor_elastomer_geom_start[i_s],
-                        sensor_elastomer_geom_n[i_s],
                     )
 
                     surface_depth_buf[i_b, i_o] = qd.max(gs.qd_float(0.0), -min_sdf)
@@ -1422,12 +1422,12 @@ def _kernel_elastomer_surface_state_bvh(
                     _func_elastomer_update_surface_anchor(
                         i_b,
                         i_o,
-                        point_sensor,
-                        surface_entry_pos_sensor_buf,
-                        surface_initialized_buf,
                         min_sdf,
                         sdf_enter[i_s],
                         sdf_exit[i_s],
+                        point_sensor,
+                        surface_entry_pos_sensor_buf,
+                        surface_initialized_buf,
                     )
             else:
                 right = bvh.node_right[n]
@@ -1460,8 +1460,8 @@ def _kernel_elastomer_surface_state_via_global_bvh(
     surface_depth_buf: qd.types.ndarray(),
     surface_initialized_buf: qd.types.ndarray(),
     surface_candidate_buf: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     aabb_margin: float,
     max_query_dist: float,
 ):
@@ -1539,8 +1539,8 @@ def _kernel_elastomer_surface_state_via_global_bvh(
         while stack_idx > 0:
             stack_idx -= 1
             n = stack[stack_idx]
-            bmin = func_vec3_at(bvh.node_min, n)
-            bmax = func_vec3_at(bvh.node_max, n)
+            bmin = func_vec3_at(n, bvh.node_min)
+            bmax = func_vec3_at(n, bvh.node_max)
             if not func_aabb_intersects_aabb(bmin, bmax, qmin, qmax):
                 continue
             left = bvh.node_left[n]
@@ -1553,7 +1553,7 @@ def _kernel_elastomer_surface_state_via_global_bvh(
                         continue
                     surface_candidate_buf[i_b, i_o] = True
 
-                    point_link = func_vec3_at(pc_pos_link, i_o)
+                    point_link = func_vec3_at(i_o, pc_pos_link)
                     point_world = track_pos + gu.qd_transform_by_quat(point_link, track_quat)
                     point_sensor = gu.qd_inv_transform_by_trans_quat(point_world, sensor_pos, sensor_quat)
                     for k in qd.static(range(3)):
@@ -1566,8 +1566,8 @@ def _kernel_elastomer_surface_state_via_global_bvh(
                         global_bvh_nodes,
                         global_bvh_morton_codes,
                         elastomer_candidate_geom_mask,
-                        dyn_info,
                         dyn_state,
+                        dyn_info,
                         max_query_dist,
                     )
 
@@ -1576,12 +1576,12 @@ def _kernel_elastomer_surface_state_via_global_bvh(
                     _func_elastomer_update_surface_anchor(
                         i_b,
                         i_o,
-                        point_sensor,
-                        surface_entry_pos_sensor_buf,
-                        surface_initialized_buf,
                         min_sdf,
                         sdf_enter[i_s],
                         sdf_exit[i_s],
+                        point_sensor,
+                        surface_entry_pos_sensor_buf,
+                        surface_initialized_buf,
                     )
             else:
                 right = bvh.node_right[n]
@@ -1637,8 +1637,8 @@ def _kernel_elastomer_shear_accumulate(
         pc_start = sensor_pc_start[i_s]
         n_active = shear_active_pc_count[i_b, i_s]
 
-        probe_local = func_vec3_at(probe_positions_local, i_p)
-        probe_normal = func_vec3_at(probe_local_normal, i_p)
+        probe_local = func_vec3_at(i_p, probe_positions_local)
+        probe_normal = func_vec3_at(i_p, probe_local_normal)
 
         acc = qd.Vector.zero(gs.qd_float, 3)
         for j in range(n_active):
@@ -1663,7 +1663,7 @@ def _kernel_elastomer_shear_accumulate(
                 dt=gs.qd_float,
             )
             contribution = _func_elastomer_direct_shear_contribution(
-                point_sensor, entry, probe_local, probe_normal, depth, lam, scale, eps
+                depth, lam, scale, point_sensor, entry, probe_local, probe_normal, eps
             )
             for k in qd.static(range(3)):
                 acc[k] = acc[k] + contribution[k]
@@ -2175,9 +2175,9 @@ class ElastomerTaxelSensor(
                 shared_metadata.track_geom_idx,
                 shared_metadata.track_geom_active_envs_mask,
                 shared_metadata.probe_depth_buf,
+                solver.dyn_state,
                 solver.dyn_info,
                 solver.collider._collider_info,
-                solver.dyn_state,
             )
         else:
             _kernel_elastomer_probe_depth_bvh(
@@ -2189,8 +2189,8 @@ class ElastomerTaxelSensor(
                 shared_context.collision_bvh_context.bvh.nodes,
                 shared_context.collision_bvh_context.bvh.morton_codes,
                 shared_metadata.probe_depth_buf,
-                solver.dyn_info,
                 solver.dyn_state,
+                solver.dyn_info,
                 _ELASTOMER_RAYCAST_QUERY_DIST,
             )
         _kernel_elastomer_dilate_accumulate(
@@ -2248,9 +2248,9 @@ class ElastomerTaxelSensor(
                     shared_metadata.surface_depth_buf,
                     shared_metadata.surface_initialized_buf,
                     shared_metadata.surface_candidate_buf,
+                    solver.dyn_state,
                     solver.dyn_info,
                     solver.collider._collider_info,
-                    solver.dyn_state,
                     _ELASTOMER_QUERY_AABB_MARGIN,
                 )
             else:
@@ -2274,8 +2274,8 @@ class ElastomerTaxelSensor(
                     shared_metadata.surface_depth_buf,
                     shared_metadata.surface_initialized_buf,
                     shared_metadata.surface_candidate_buf,
-                    solver.dyn_info,
                     solver.dyn_state,
+                    solver.dyn_info,
                     _ELASTOMER_QUERY_AABB_MARGIN,
                     _ELASTOMER_RAYCAST_QUERY_DIST,
                 )

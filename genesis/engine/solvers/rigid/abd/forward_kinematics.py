@@ -27,99 +27,99 @@ from .misc import (
 @qd.kernel(fastcache=True)
 def kernel_forward_kinematics_links_geoms(
     envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_update_cartesian_space_batch(
-            i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms=True, is_backward=False
+            i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=True, is_backward=False
         )
-        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+        func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics_links_geoms(
     envs_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
             func_update_cartesian_space_batch(
-                i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms=True, is_backward=False
+                i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms=True, is_backward=False
             )
-            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+            func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
 def kernel_forward_kinematics(
     envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
-        func_forward_kinematics_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
-        func_COM_links(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
-        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+        func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+        func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics(
     envs_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_forward_kinematics_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
-            func_COM_links(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
-            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+            func_forward_kinematics_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+            func_COM_links(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
+            func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.kernel(fastcache=True)
 def kernel_forward_velocity(
     envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
-        func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+        func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_forward_velocity(
     envs_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+            func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.func
 def func_COM_links(
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -134,16 +134,16 @@ def func_COM_links(
         if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
-            func_COM_links_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+            func_COM_links_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.func
 def func_COM_links_entity(
     i_e,
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -324,9 +324,9 @@ def func_COM_links_entity(
 def func_forward_kinematics_entity(
     i_e,
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -347,16 +347,16 @@ def func_forward_kinematics_entity(
         I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
         I_l0 = (i_l, 0, i_b)
 
-        pos = W(dyn_state.links.pos_bw, I_l0, dyn_info.links.pos[I_l], BW)
-        quat = W(dyn_state.links.quat_bw, I_l0, dyn_info.links.quat[I_l], BW)
+        pos = W(I_l0, dyn_info.links.pos[I_l], dyn_state.links.pos_bw, BW)
+        quat = W(I_l0, dyn_info.links.quat[I_l], dyn_state.links.quat_bw, BW)
         if dyn_info.links.parent_idx[I_l] != -1:
             parent_pos = dyn_state.links.pos[dyn_info.links.parent_idx[I_l], i_b]
             parent_quat = dyn_state.links.quat[dyn_info.links.parent_idx[I_l], i_b]
             pos_ = parent_pos + gu.qd_transform_by_quat(dyn_info.links.pos[I_l], parent_quat)
             quat_ = gu.qd_transform_quat_by_quat(dyn_info.links.quat[I_l], parent_quat)
 
-            pos = W(dyn_state.links.pos_bw, I_l0, pos_, BW)
-            quat = W(dyn_state.links.quat_bw, I_l0, quat_, BW)
+            pos = W(I_l0, pos_, dyn_state.links.pos_bw, BW)
+            quat = W(I_l0, quat_, dyn_state.links.quat_bw, BW)
 
         n_joints = dyn_info.links.joint_end[I_l] - dyn_info.links.joint_start[I_l]
 
@@ -391,8 +391,8 @@ def func_forward_kinematics_entity(
                 elif joint_type == gs.JOINT_TYPE.PRISMATIC:
                     axis = dyn_info.dofs.motion_vel[I_d]
 
-                pos_ = R(dyn_state.links.pos_bw, curr_I, pos, BW)
-                quat_ = R(dyn_state.links.quat_bw, curr_I, quat, BW)
+                pos_ = R(curr_I, pos, dyn_state.links.pos_bw, BW)
+                quat_ = R(curr_I, quat, dyn_state.links.quat_bw, BW)
 
                 dyn_state.joints.xanchor[i_j, i_b] = gu.qd_transform_by_quat(dyn_info.joints.pos[I_j], quat_) + pos_
                 dyn_state.joints.xaxis[i_j, i_b] = gu.qd_transform_by_quat(axis, quat_)
@@ -416,8 +416,8 @@ def func_forward_kinematics_entity(
                     dt=gs.qd_float,
                 )
                 quat_ = quat_ / quat_.norm()
-                pos = WR(dyn_state.links.pos_bw, next_I, pos_, BW)
-                quat = WR(dyn_state.links.quat_bw, next_I, quat_, BW)
+                pos = WR(next_I, pos_, dyn_state.links.pos_bw, BW)
+                quat = WR(next_I, quat_, dyn_state.links.quat_bw, BW)
 
                 xyz = gu.qd_quat_to_xyz(quat, rigid_info.EPS[None])
                 for j in qd.static(range(3)):
@@ -438,39 +438,39 @@ def func_forward_kinematics_entity(
                 xyz = gu.qd_quat_to_xyz(qloc, rigid_info.EPS[None])
                 for j in qd.static(range(3)):
                     dyn_state.dofs.pos[dof_start + j, i_b] = xyz[j]
-                quat_ = gu.qd_transform_quat_by_quat(qloc, R(dyn_state.links.quat_bw, curr_I, quat, BW))
-                quat = WR(dyn_state.links.quat_bw, next_I, quat_, BW)
+                quat_ = gu.qd_transform_quat_by_quat(qloc, R(curr_I, quat, dyn_state.links.quat_bw, BW))
+                quat = WR(next_I, quat_, dyn_state.links.quat_bw, BW)
                 pos_ = dyn_state.joints.xanchor[i_j, i_b] - gu.qd_transform_by_quat(dyn_info.joints.pos[I_j], quat)
-                pos = W(dyn_state.links.pos_bw, next_I, pos_, BW)
+                pos = W(next_I, pos_, dyn_state.links.pos_bw, BW)
             elif joint_type == gs.JOINT_TYPE.REVOLUTE:
                 axis = dyn_info.dofs.motion_ang[I_d]
                 dyn_state.dofs.pos[dof_start, i_b] = rigid_info.qpos[q_start, i_b] - rigid_info.qpos0[q_start, i_b]
                 qloc = gu.qd_rotvec_to_quat(axis * dyn_state.dofs.pos[dof_start, i_b], rigid_info.EPS[None])
-                quat_ = gu.qd_transform_quat_by_quat(qloc, R(dyn_state.links.quat_bw, curr_I, quat, BW))
-                quat = WR(dyn_state.links.quat_bw, next_I, quat_, BW)
+                quat_ = gu.qd_transform_quat_by_quat(qloc, R(curr_I, quat, dyn_state.links.quat_bw, BW))
+                quat = WR(next_I, quat_, dyn_state.links.quat_bw, BW)
                 pos_ = dyn_state.joints.xanchor[i_j, i_b] - gu.qd_transform_by_quat(dyn_info.joints.pos[I_j], quat)
-                pos = W(dyn_state.links.pos_bw, next_I, pos_, BW)
+                pos = W(next_I, pos_, dyn_state.links.pos_bw, BW)
             else:  # joint_type == gs.JOINT_TYPE.PRISMATIC:
                 dyn_state.dofs.pos[dof_start, i_b] = rigid_info.qpos[q_start, i_b] - rigid_info.qpos0[q_start, i_b]
                 pos_ = (
-                    R(dyn_state.links.pos_bw, curr_I, pos, BW)
+                    R(curr_I, pos, dyn_state.links.pos_bw, BW)
                     + dyn_state.joints.xaxis[i_j, i_b] * dyn_state.dofs.pos[dof_start, i_b]
                 )
-                pos = W(dyn_state.links.pos_bw, next_I, pos_, BW)
+                pos = W(next_I, pos_, dyn_state.links.pos_bw, BW)
 
         # Skip link pose update for fixed root links to let users manually overwrite them
         I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
         if not (dyn_info.links.parent_idx[I_l] == -1 and dyn_info.links.is_fixed[I_l]):
-            dyn_state.links.pos[i_l, i_b] = R(dyn_state.links.pos_bw, I_jf, pos, BW)
-            dyn_state.links.quat[i_l, i_b] = R(dyn_state.links.quat_bw, I_jf, quat, BW)
+            dyn_state.links.pos[i_l, i_b] = R(I_jf, pos, dyn_state.links.pos_bw, BW)
+            dyn_state.links.quat[i_l, i_b] = R(I_jf, quat, dyn_state.links.quat_bw, BW)
 
 
 @qd.func
 def func_forward_kinematics_batch(
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -485,31 +485,31 @@ def func_forward_kinematics_batch(
         if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
-            func_forward_kinematics_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+            func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.kernel(fastcache=True)
 def kernel_forward_kinematics_entity(
     i_e: qd.int32,
     envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
-        func_forward_kinematics_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward=False)
+        func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False)
 
 
 @qd.func
 def func_update_geoms_entity(
     i_e,
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
@@ -546,9 +546,9 @@ def func_update_geoms_entity(
 @qd.func
 def func_update_geoms_batch(
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
@@ -568,15 +568,15 @@ def func_update_geoms_batch(
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_update_geoms_entity(
-                i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward
+                i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
             )
 
 
 @qd.func
 def func_update_geoms(
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
@@ -586,22 +586,22 @@ def func_update_geoms(
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(dyn_state.links.pos.shape[1]):
             func_update_geoms_batch(
-                i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward
+                i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
             )
     else:
         qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_e, i_b in qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.links.pos.shape[1]):
             func_update_geoms_entity(
-                i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward
+                i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
             )
 
 
 @qd.kernel(fastcache=True)
 def kernel_update_geoms(
     envs_idx: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
 ):
@@ -609,7 +609,7 @@ def kernel_update_geoms(
         i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
         func_update_geoms_batch(
-            i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward=False
+            i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward=False
         )
 
 
@@ -617,9 +617,9 @@ def kernel_update_geoms(
 def func_forward_velocity_entity(
     i_e,
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -641,15 +641,15 @@ def func_forward_velocity_entity(
         n_joints = dyn_info.links.joint_end[I_l] - dyn_info.links.joint_start[I_l]
 
         I_j0 = (i_l, 0, i_b)
-        cvel_vel = W(dyn_state.links.cd_vel_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
-        cvel_ang = W(dyn_state.links.cd_ang_bw, I_j0, qd.Vector.zero(gs.qd_float, 3), BW)
+        cvel_vel = W(I_j0, qd.Vector.zero(gs.qd_float, 3), dyn_state.links.cd_vel_bw, BW)
+        cvel_ang = W(I_j0, qd.Vector.zero(gs.qd_float, 3), dyn_state.links.cd_ang_bw, BW)
 
         if dyn_info.links.parent_idx[I_l] != -1:
             cvel_vel = W(
-                dyn_state.links.cd_vel_bw, I_j0, dyn_state.links.cd_vel[dyn_info.links.parent_idx[I_l], i_b], BW
+                I_j0, dyn_state.links.cd_vel[dyn_info.links.parent_idx[I_l], i_b], dyn_state.links.cd_vel_bw, BW
             )
             cvel_ang = W(
-                dyn_state.links.cd_ang_bw, I_j0, dyn_state.links.cd_ang[dyn_info.links.parent_idx[I_l], i_b], BW
+                I_j0, dyn_state.links.cd_ang[dyn_info.links.parent_idx[I_l], i_b], dyn_state.links.cd_ang_bw, BW
             )
 
         for i_j_ in range(n_joints):
@@ -667,8 +667,8 @@ def func_forward_velocity_entity(
                     _vel = dyn_state.dofs.cdof_vel[dof_start + i_3, i_b] * dyn_state.dofs.vel[dof_start + i_3, i_b]
                     _ang = dyn_state.dofs.cdof_ang[dof_start + i_3, i_b] * dyn_state.dofs.vel[dof_start + i_3, i_b]
 
-                    cvel_vel = cvel_vel + A(dyn_state.links.cd_vel_bw, curr_I, _vel, BW)
-                    cvel_ang = cvel_ang + A(dyn_state.links.cd_ang_bw, curr_I, _ang, BW)
+                    cvel_vel = cvel_vel + A(curr_I, _vel, dyn_state.links.cd_vel_bw, BW)
+                    cvel_ang = cvel_ang + A(curr_I, _ang, dyn_state.links.cd_ang_bw, BW)
 
                 for i_3 in qd.static(range(3)):
                     (dyn_state.dofs.cdofd_ang[dof_start + i_3, i_b], dyn_state.dofs.cdofd_vel[dof_start + i_3, i_b]) = (
@@ -680,8 +680,8 @@ def func_forward_velocity_entity(
                         dyn_state.dofs.cdofd_ang[dof_start + i_3 + 3, i_b],
                         dyn_state.dofs.cdofd_vel[dof_start + i_3 + 3, i_b],
                     ) = gu.motion_cross_motion(
-                        R(dyn_state.links.cd_ang_bw, curr_I, cvel_ang, BW),
-                        R(dyn_state.links.cd_vel_bw, curr_I, cvel_vel, BW),
+                        R(curr_I, cvel_ang, dyn_state.links.cd_ang_bw, BW),
+                        R(curr_I, cvel_vel, dyn_state.links.cd_vel_bw, BW),
                         dyn_state.dofs.cdof_ang[dof_start + i_3 + 3, i_b],
                         dyn_state.dofs.cdof_vel[dof_start + i_3 + 3, i_b],
                     )
@@ -697,14 +697,14 @@ def func_forward_velocity_entity(
                     _ang = (
                         dyn_state.dofs.cdof_ang[dof_start + i_3 + 3, i_b] * dyn_state.dofs.vel[dof_start + i_3 + 3, i_b]
                     )
-                    cvel_vel = cvel_vel + A(dyn_state.links.cd_vel_bw, next_I, _vel, BW)
-                    cvel_ang = cvel_ang + A(dyn_state.links.cd_ang_bw, next_I, _ang, BW)
+                    cvel_vel = cvel_vel + A(next_I, _vel, dyn_state.links.cd_vel_bw, BW)
+                    cvel_ang = cvel_ang + A(next_I, _ang, dyn_state.links.cd_ang_bw, BW)
 
             else:
                 for i_d in range(dof_start, dyn_info.joints.dof_end[I_j]):
                     dyn_state.dofs.cdofd_ang[i_d, i_b], dyn_state.dofs.cdofd_vel[i_d, i_b] = gu.motion_cross_motion(
-                        R(dyn_state.links.cd_ang_bw, curr_I, cvel_ang, BW),
-                        R(dyn_state.links.cd_vel_bw, curr_I, cvel_vel, BW),
+                        R(curr_I, cvel_ang, dyn_state.links.cd_ang_bw, BW),
+                        R(curr_I, cvel_vel, dyn_state.links.cd_vel_bw, BW),
                         dyn_state.dofs.cdof_ang[i_d, i_b],
                         dyn_state.dofs.cdof_vel[i_d, i_b],
                     )
@@ -716,20 +716,20 @@ def func_forward_velocity_entity(
                 for i_d in range(dof_start, dyn_info.joints.dof_end[I_j]):
                     _vel = dyn_state.dofs.cdof_vel[i_d, i_b] * dyn_state.dofs.vel[i_d, i_b]
                     _ang = dyn_state.dofs.cdof_ang[i_d, i_b] * dyn_state.dofs.vel[i_d, i_b]
-                    cvel_vel = cvel_vel + A(dyn_state.links.cd_vel_bw, next_I, _vel, BW)
-                    cvel_ang = cvel_ang + A(dyn_state.links.cd_ang_bw, next_I, _ang, BW)
+                    cvel_vel = cvel_vel + A(next_I, _vel, dyn_state.links.cd_vel_bw, BW)
+                    cvel_ang = cvel_ang + A(next_I, _ang, dyn_state.links.cd_ang_bw, BW)
 
         I_jf = (i_l, 0 if qd.static(not BW) else n_joints, i_b)
-        dyn_state.links.cd_vel[i_l, i_b] = R(dyn_state.links.cd_vel_bw, I_jf, cvel_vel, BW)
-        dyn_state.links.cd_ang[i_l, i_b] = R(dyn_state.links.cd_ang_bw, I_jf, cvel_ang, BW)
+        dyn_state.links.cd_vel[i_l, i_b] = R(I_jf, cvel_vel, dyn_state.links.cd_vel_bw, BW)
+        dyn_state.links.cd_ang[i_l, i_b] = R(I_jf, cvel_ang, dyn_state.links.cd_ang_bw, BW)
 
 
 @qd.func
 def func_forward_velocity_batch(
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -744,14 +744,14 @@ def func_forward_velocity_batch(
         if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
-            func_forward_velocity_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+            func_forward_velocity_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.func
 def func_forward_velocity(
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     is_backward: qd.template(),
 ):
@@ -759,20 +759,20 @@ def func_forward_velocity(
     if qd.static(rigid_config.use_hibernation):
         qd.loop_config(name="forward_velocity_batch", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(dyn_state.links.pos.shape[1]):
-            func_forward_velocity_batch(i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+            func_forward_velocity_batch(i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     else:
         qd.loop_config(
             name="forward_velocity_entity", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
         )
         for i_e, i_b in qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.links.pos.shape[1]):
-            func_forward_velocity_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+            func_forward_velocity_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
 
 @qd.kernel(fastcache=True)
 def kernel_update_verts_for_geoms(
     geoms_idx: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     n_geoms = geoms_idx.shape[0]
@@ -781,12 +781,12 @@ def kernel_update_verts_for_geoms(
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g_, i_b in qd.ndrange(n_geoms, _B):
         i_g = geoms_idx[i_g_]
-        func_update_verts_for_geom(i_g, i_b, dyn_info, dyn_state)
+        func_update_verts_for_geom(i_g, i_b, dyn_state, dyn_info)
 
 
 @qd.func
 def func_update_verts_for_geom(
-    i_g: qd.i32, i_b: qd.i32, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState
+    i_g: qd.i32, i_b: qd.i32, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
 ):
     _B = dyn_state.geoms.verts_updated.shape[1]
 
@@ -810,19 +810,19 @@ def func_update_verts_for_geom(
 
 
 @qd.func
-def func_update_all_verts(dyn_info: array_class.DynInfo, dyn_state: array_class.DynState, rigid_config: qd.template()):
+def func_update_all_verts(dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, rigid_config: qd.template()):
     n_geoms, _B = dyn_state.geoms.pos.shape
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g, i_b in qd.ndrange(n_geoms, _B):
-        func_update_verts_for_geom(i_g, i_b, dyn_info, dyn_state)
+        func_update_verts_for_geom(i_g, i_b, dyn_state, dyn_info)
 
 
 @qd.kernel(fastcache=True)
 def kernel_update_all_verts(
-    dyn_info: array_class.DynInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
+    dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, rigid_config: qd.template()
 ):
-    func_update_all_verts(dyn_info, dyn_state, rigid_config)
+    func_update_all_verts(dyn_state, dyn_info, rigid_config)
 
 
 @qd.kernel
@@ -849,7 +849,7 @@ def kernel_update_geom_aabbs(
 
 
 @qd.kernel(fastcache=True)
-def kernel_update_vgeoms(dyn_info: array_class.DynInfo, dyn_state: array_class.DynState, rigid_config: qd.template()):
+def kernel_update_vgeoms(dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, rigid_config: qd.template()):
     """
     Vgeoms are only for visualization purposes. Updates vgeom world transforms from link state.
     """
@@ -870,8 +870,8 @@ def kernel_update_vgeoms(dyn_info: array_class.DynInfo, dyn_state: array_class.D
 @qd.kernel(fastcache=True)
 def kernel_update_vverts_for_vgeoms(
     vgeoms_idx: qd.types.ndarray(),
-    dyn_info: array_class.DynInfo,
     dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
     """
@@ -898,11 +898,11 @@ def kernel_update_vverts_for_vgeoms(
 @qd.func
 def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
     errno: qd.Tensor,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
     _B = dyn_state.links.is_hibernated.shape[1]
@@ -963,7 +963,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
                         link_ref = link_ref_start + i_link_ref_offset_
                         link_idx = constraint_state.island.link_id[link_ref, i_b]
 
-                        func_hibernate_link_and_zero_dof_velocities(link_idx, i_b, dyn_info, dyn_state, rigid_config)
+                        func_hibernate_link_and_zero_dof_velocities(link_idx, i_b, dyn_state, dyn_info, rigid_config)
 
                         # store links of the hibernated island by daisy chaining them
                         constraint_state.island.hibernated_next_link[prev_link_idx, i_b] = link_idx
@@ -972,9 +972,9 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
 
 @qd.func
 def func_aggregate_awake_entities(
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
 ):
     n_entities = dyn_state.entities.is_hibernated.shape[0]
@@ -1033,7 +1033,7 @@ def func_aggregate_awake_entities(
 
 @qd.func
 def func_hibernate_link_and_zero_dof_velocities(
-    i_l: int, i_b: int, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState, rigid_config: qd.template()
+    i_l: int, i_b: int, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo, rigid_config: qd.template()
 ):
     """Mark a link, its DOFs, and its geoms as hibernated, and zero out the DOF velocities and accelerations."""
     dyn_state.links.is_hibernated[i_l, i_b] = True
@@ -1052,26 +1052,26 @@ def func_hibernate_link_and_zero_dof_velocities(
 def func_update_cartesian_space_entity(
     i_e,
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
 ):
-    func_forward_kinematics_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
-    func_COM_links_entity(i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, is_backward)
+    func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
+    func_COM_links_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_update_geoms_entity(
-        i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward
+        i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
     )
 
 
 @qd.func
 def func_update_cartesian_space_batch(
     i_b,
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
@@ -1089,15 +1089,15 @@ def func_update_cartesian_space_batch(
         i_e = rigid_info.awake_entities[i_0, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
         func_update_cartesian_space_entity(
-            i_e, i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward
+            i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
         )
 
 
 @qd.func
 def func_update_cartesian_space(
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
@@ -1109,7 +1109,7 @@ def func_update_cartesian_space(
         qd.loop_config(name="update_carteisan_space_batch", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(dyn_state.links.pos.shape[1]):
             func_update_cartesian_space_batch(
-                i_b, dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward
+                i_b, dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward
             )
     else:
         # FIXME: Implement parallelization at tree-level (based on root_idx) instead of entity-level
@@ -1127,9 +1127,9 @@ def func_update_cartesian_space(
                         func_update_cartesian_space_entity(
                             j_e,
                             i_b,
+                            dyn_state,
                             dyn_info,
                             rigid_info,
-                            dyn_state,
                             rigid_config,
                             force_update_fixed_geoms,
                             is_backward,
@@ -1138,11 +1138,11 @@ def func_update_cartesian_space(
 
 @qd.kernel(fastcache=True)
 def kernel_update_cartesian_space(
+    dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     force_update_fixed_geoms: qd.template(),
     is_backward: qd.template(),
 ):
-    func_update_cartesian_space(dyn_info, rigid_info, dyn_state, rigid_config, force_update_fixed_geoms, is_backward)
+    func_update_cartesian_space(dyn_state, dyn_info, rigid_info, rigid_config, force_update_fixed_geoms, is_backward)

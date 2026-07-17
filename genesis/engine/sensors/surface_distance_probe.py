@@ -202,7 +202,7 @@ def _kernel_surface_distance_probe_bvh(
         link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
         link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
 
-        probe_local = func_vec3_at(probe_positions_local, i_p)
+        probe_local = func_vec3_at(i_p, probe_positions_local)
         probe_world = link_pos + gu.qd_transform_by_quat(probe_local, link_quat)
 
         max_r_gt = probe_radii[i_p]
@@ -234,8 +234,8 @@ def _kernel_surface_distance_probe_bvh(
             while stack_idx > 0:
                 stack_idx -= 1
                 n = stack[stack_idx]
-                bmin = func_vec3_at(bvh.node_min, n)
-                bmax = func_vec3_at(bvh.node_max, n)
+                bmin = func_vec3_at(n, bvh.node_min)
+                bmax = func_vec3_at(n, bvh.node_max)
                 # Cull when min distance from probe to AABB exceeds the conservative current best.
                 cull_radius_sq = qd.max(best_dist_sq_gt, best_dist_sq_m)
                 if not func_sphere_intersects_aabb(probe_link, cull_radius_sq, bmin, bmax):
