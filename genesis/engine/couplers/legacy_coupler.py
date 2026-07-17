@@ -28,11 +28,7 @@ class LegacyCoupler(RBC):
     # --------------------------------- Initialization -----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def __init__(
-        self,
-        simulator: "Simulator",
-        options: "LegacyCouplerOptions",
-    ) -> None:
+    def __init__(self, simulator: "Simulator", options: "LegacyCouplerOptions") -> None:
         self.sim = simulator
         self.options = options
 
@@ -85,10 +81,7 @@ class LegacyCoupler(RBC):
                 3, dtype=gs.qd_float, shape=(self.pbd_solver.n_particles, self.pbd_solver._B, self.rigid_solver.n_geoms)
             )
 
-            struct_particle_attach_info = qd.types.struct(
-                link_idx=gs.qd_int,
-                local_pos=gs.qd_vec3,
-            )
+            struct_particle_attach_info = qd.types.struct(link_idx=gs.qd_int, local_pos=gs.qd_vec3)
 
             self.particle_attach_info = struct_particle_attach_info.field(
                 shape=(self.pbd_solver._n_particles, self.pbd_solver._B), layout=qd.Layout.SOA
@@ -142,7 +135,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
@@ -157,7 +150,7 @@ class LegacyCoupler(RBC):
                     geoms_state=geoms_state,
                     geoms_info=geoms_info,
                     links_state=links_state,
-                    rigid_global_info=rigid_global_info,
+                    rigid_info=rigid_info,
                     sdf_info=sdf_info,
                     collider_static_config=collider_static_config,
                 )
@@ -174,7 +167,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
@@ -194,7 +187,7 @@ class LegacyCoupler(RBC):
             normal_rigid = sdf.sdf_func_normal_world(
                 geoms_state=geoms_state,
                 geoms_info=geoms_info,
-                rigid_global_info=rigid_global_info,
+                rigid_info=rigid_info,
                 collider_static_config=collider_static_config,
                 sdf_info=sdf_info,
                 pos_world=pos_world,
@@ -202,16 +195,7 @@ class LegacyCoupler(RBC):
                 batch_idx=batch_idx,
             )
             vel = self._func_collide_in_rigid_geom(
-                pos_world,
-                vel,
-                mass,
-                normal_rigid,
-                influence,
-                geom_idx,
-                batch_idx,
-                geoms_info,
-                links_state,
-                rigid_global_info,
+                pos_world, vel, mass, normal_rigid, influence, geom_idx, batch_idx, geoms_info, links_state, rigid_info
             )
 
         return vel
@@ -228,7 +212,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
@@ -246,7 +230,7 @@ class LegacyCoupler(RBC):
         normal_rigid = sdf.sdf_func_normal_world(
             geoms_state=geoms_state,
             geoms_info=geoms_info,
-            rigid_global_info=rigid_global_info,
+            rigid_info=rigid_info,
             collider_static_config=collider_static_config,
             sdf_info=sdf_info,
             pos_world=pos_world,
@@ -262,16 +246,7 @@ class LegacyCoupler(RBC):
         #     normal_rigid = normal_prev
         if influence > 0.1:
             vel = self._func_collide_in_rigid_geom(
-                pos_world,
-                vel,
-                mass,
-                normal_rigid,
-                influence,
-                geom_idx,
-                batch_idx,
-                geoms_info,
-                links_state,
-                rigid_global_info,
+                pos_world, vel, mass, normal_rigid, influence, geom_idx, batch_idx, geoms_info, links_state, rigid_info
             )
 
         # attraction force
@@ -292,17 +267,14 @@ class LegacyCoupler(RBC):
         i_b,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
     ):
         """
         Resolves collision when a particle is already in collision with a rigid object.
         This function assumes known normal_rigid and influence.
         """
         vel_rigid = self.rigid_solver._func_vel_at_point(
-            pos_world=pos_world,
-            link_idx=geoms_info.link_idx[geom_idx],
-            i_b=i_b,
-            links_state=links_state,
+            pos_world=pos_world, link_idx=geoms_info.link_idx[geom_idx], i_b=i_b, links_state=links_state
         )
 
         # v w.r.t rigid
@@ -335,13 +307,9 @@ class LegacyCoupler(RBC):
             #################### particle -> rigid ####################
             # Compute delta momentum and apply to rigid body.
             delta_mv = mass * (vel - vel_old)
-            force = -delta_mv / rigid_global_info.substep_dt[None]
+            force = -delta_mv / rigid_info.substep_dt[None]
             self.rigid_solver._func_apply_coupling_force(
-                pos_world,
-                force,
-                geoms_info.link_idx[geom_idx],
-                i_b,
-                links_state,
+                pos_world, force, geoms_info.link_idx[geom_idx], i_b, links_state
             )
 
         return vel
@@ -361,7 +329,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
@@ -397,7 +365,7 @@ class LegacyCoupler(RBC):
                         geoms_state=geoms_state,
                         geoms_info=geoms_info,
                         links_state=links_state,
-                        rigid_global_info=rigid_global_info,
+                        rigid_info=rigid_info,
                         sdf_info=sdf_info,
                         collider_static_config=collider_static_config,
                     )
@@ -507,7 +475,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         sdf_info: array_class.SDFInfo,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         collider_static_config: qd.template(),
     ):
         for i_p, i_b in qd.ndrange(self.mpm_solver.n_particles, self.mpm_solver._B):
@@ -517,7 +485,7 @@ class LegacyCoupler(RBC):
                         sdf_normal = sdf.sdf_func_normal_world(
                             geoms_state=geoms_state,
                             geoms_info=geoms_info,
-                            rigid_global_info=rigid_global_info,
+                            rigid_info=rigid_info,
                             collider_static_config=collider_static_config,
                             sdf_info=sdf_info,
                             pos_world=self.mpm_solver.particles[f, i_p, i_b].pos,
@@ -530,7 +498,7 @@ class LegacyCoupler(RBC):
 
     def fem_rigid_link_constraints(self):
         if self.fem_solver._constraints_initialized and self.rigid_solver.is_active:
-            self.fem_solver._kernel_update_linked_vertex_constraints(self.rigid_solver.links_state)
+            self.fem_solver._kernel_update_linked_vertex_constraints(self.rigid_solver.dyn_state.links)
 
     @qd.kernel
     def fem_surface_force(
@@ -539,7 +507,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
@@ -572,7 +540,7 @@ class LegacyCoupler(RBC):
                             geoms_state,
                             geoms_info,
                             links_state,
-                            rigid_global_info,
+                            rigid_info,
                             sdf_info,
                             collider_static_config,
                         )
@@ -706,7 +674,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
     ):
@@ -727,7 +695,7 @@ class LegacyCoupler(RBC):
                             geoms_state,
                             geoms_info,
                             links_state,
-                            rigid_global_info,
+                            rigid_info,
                             sdf_info,
                             collider_static_config,
                         )
@@ -739,7 +707,7 @@ class LegacyCoupler(RBC):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         sdf_info: array_class.SDFInfo,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         collider_static_config: qd.template(),
     ):
         for i_p, i_b in qd.ndrange(self.pbd_solver._n_particles, self.sph_solver._B):
@@ -763,17 +731,13 @@ class LegacyCoupler(RBC):
                             geoms_info,
                             links_state,
                             sdf_info,
-                            rigid_global_info,
+                            rigid_info,
                             collider_static_config,
                         )
 
     @qd.kernel
     def kernel_attach_pbd_to_rigid_link(
-        self,
-        particles_idx: qd.types.ndarray(),
-        envs_idx: qd.types.ndarray(),
-        link_idx: qd.i32,
-        links_state: LinksState,
+        self, particles_idx: qd.types.ndarray(), envs_idx: qd.types.ndarray(), link_idx: qd.i32, links_state: LinksState
     ) -> None:
         """
         Sets listed particles in listed environments to be animated by the link.
@@ -799,9 +763,7 @@ class LegacyCoupler(RBC):
 
     @qd.kernel
     def kernel_pbd_rigid_clear_animate_particles_by_link(
-        self,
-        particles_idx: qd.types.ndarray(),
-        envs_idx: qd.types.ndarray(),
+        self, particles_idx: qd.types.ndarray(), envs_idx: qd.types.ndarray()
     ) -> None:
         """Detach listed particles from links, and simulate them freely."""
         pdb = self.pbd_solver
@@ -865,7 +827,7 @@ class LegacyCoupler(RBC):
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
         sdf_info: array_class.SDFInfo,
-        rigid_global_info: array_class.RigidGlobalInfo,
+        rigid_info: array_class.RigidInfo,
         collider_static_config: qd.template(),
     ):
         """
@@ -883,7 +845,7 @@ class LegacyCoupler(RBC):
         contact_normal = sdf.sdf_func_normal_world(
             geoms_state=geoms_state,
             geoms_info=geoms_info,
-            rigid_global_info=rigid_global_info,
+            rigid_info=rigid_info,
             collider_static_config=collider_static_config,
             sdf_info=sdf_info,
             pos_world=pos_world,
@@ -920,11 +882,7 @@ class LegacyCoupler(RBC):
             force = (-delta_mv / self.rigid_solver._substep_dt) * (1 - energy_loss)
 
             self.rigid_solver._func_apply_coupling_force(
-                pos_world,
-                force,
-                geoms_info.link_idx[geom_idx],
-                batch_idx,
-                links_state,
+                pos_world, force, geoms_info.link_idx[geom_idx], batch_idx, links_state
             )
 
         return new_pos, new_vel, contact_normal
@@ -934,10 +892,10 @@ class LegacyCoupler(RBC):
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             self.mpm_surface_to_particle(
                 f,
-                self.rigid_solver.geoms_state,
-                self.rigid_solver.geoms_info,
+                self.rigid_solver.dyn_state.geoms,
+                self.rigid_solver.dyn_info.geoms,
                 self.rigid_solver.collider._sdf._sdf_info,
-                self.rigid_solver._rigid_global_info,
+                self.rigid_solver._rigid_info,
                 self.rigid_solver.collider._collider_static_config,
             )
 
@@ -947,10 +905,10 @@ class LegacyCoupler(RBC):
             self.mpm_grid_op(
                 f,
                 self.sim.cur_t,
-                geoms_state=self.rigid_solver.geoms_state,
-                geoms_info=self.rigid_solver.geoms_info,
-                links_state=self.rigid_solver.links_state,
-                rigid_global_info=self.rigid_solver._rigid_global_info,
+                geoms_state=self.rigid_solver.dyn_state.geoms,
+                geoms_info=self.rigid_solver.dyn_info.geoms,
+                links_state=self.rigid_solver.dyn_state.links,
+                rigid_info=self.rigid_solver._rigid_info,
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
@@ -959,10 +917,10 @@ class LegacyCoupler(RBC):
         if self._rigid_sph:
             self.sph_rigid(
                 f,
-                self.rigid_solver.geoms_state,
-                self.rigid_solver.geoms_info,
-                self.rigid_solver.links_state,
-                self.rigid_solver._rigid_global_info,
+                self.rigid_solver.dyn_state.geoms,
+                self.rigid_solver.dyn_info.geoms,
+                self.rigid_solver.dyn_state.links,
+                self.rigid_solver._rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -970,26 +928,26 @@ class LegacyCoupler(RBC):
         # PBD <-> Rigid
         if self._rigid_pbd:
             self.kernel_pbd_rigid_collide(
-                geoms_state=self.rigid_solver.geoms_state,
-                geoms_info=self.rigid_solver.geoms_info,
-                links_state=self.rigid_solver.links_state,
+                geoms_state=self.rigid_solver.dyn_state.geoms,
+                geoms_info=self.rigid_solver.dyn_info.geoms,
+                links_state=self.rigid_solver.dyn_state.links,
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
-                rigid_global_info=self.rigid_solver._rigid_global_info,
+                rigid_info=self.rigid_solver._rigid_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
 
             # 1-way: animate particles by links
             full_step_inv_dt = 1.0 / self.pbd_solver._dt
             clamped_inv_dt = min(full_step_inv_dt, CLAMPED_INV_DT)
-            self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.links_state)
+            self.kernel_pbd_rigid_solve_animate_particles_by_link(clamped_inv_dt, self.rigid_solver.dyn_state.links)
 
         if self.fem_solver.is_active:
             self.fem_surface_force(
                 f,
-                self.rigid_solver.geoms_state,
-                self.rigid_solver.geoms_info,
-                self.rigid_solver.links_state,
-                self.rigid_solver._rigid_global_info,
+                self.rigid_solver.dyn_state.geoms,
+                self.rigid_solver.dyn_info.geoms,
+                self.rigid_solver.dyn_state.links,
+                self.rigid_solver._rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -999,10 +957,10 @@ class LegacyCoupler(RBC):
         if self.fem_solver.is_active:
             self.fem_surface_force.grad(
                 f,
-                self.rigid_solver.geoms_state,
-                self.rigid_solver.geoms_info,
-                self.rigid_solver.links_state,
-                self.rigid_solver._rigid_global_info,
+                self.rigid_solver.dyn_state.geoms,
+                self.rigid_solver.dyn_info.geoms,
+                self.rigid_solver.dyn_state.links,
+                self.rigid_solver._rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -1010,10 +968,10 @@ class LegacyCoupler(RBC):
             self.mpm_grid_op.grad(
                 f,
                 self.sim.cur_t,
-                geoms_state=self.rigid_solver.geoms_state,
-                geoms_info=self.rigid_solver.geoms_info,
-                links_state=self.rigid_solver.links_state,
-                rigid_global_info=self.rigid_solver._rigid_global_info,
+                geoms_state=self.rigid_solver.dyn_state.geoms,
+                geoms_info=self.rigid_solver.dyn_info.geoms,
+                links_state=self.rigid_solver.dyn_state.links,
+                rigid_info=self.rigid_solver._rigid_info,
                 sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )

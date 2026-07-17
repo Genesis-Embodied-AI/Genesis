@@ -246,8 +246,10 @@ def test_apply_external_forces(xml_path, show_viewer):
         scene.step()
 
     rigid_solver.apply_links_external_torque(torque=(0, 1, 0), links_idx=[duck_link_idx], ref="link_com", local=True)
-    assert_allclose(rigid_solver.links_state.cfrc_applied_vel[duck_link_idx, 0], 0, tol=gs.EPS)
-    assert_allclose(rigid_solver.links_state.cfrc_applied_ang[duck_link_idx, 0], -duck_init_link_R[:, 1], tol=gs.EPS)
+    assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[duck_link_idx, 0], 0, tol=gs.EPS)
+    assert_allclose(
+        rigid_solver.dyn_state.links.cfrc_applied_ang[duck_link_idx, 0], -duck_init_link_R[:, 1], tol=gs.EPS
+    )
 
     with np.testing.assert_raises(ValueError):
         rigid_solver.apply_links_external_force(force=(0, 0, 0), links_idx=[duck_link_idx], ref="root_com", local=True)
@@ -418,8 +420,8 @@ def test_mass_block_partition(xml_path, show_viewer, tol):
 
     n_dofs = entity.n_dofs
     branch = n_dofs // 2
-    block_start = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_start)
-    block_end = qd_to_numpy(scene.rigid_solver._rigid_global_info.dofs_mass_block_end)
+    block_start = qd_to_numpy(scene.rigid_solver._rigid_info.dofs_mass_block_start)
+    block_end = qd_to_numpy(scene.rigid_solver._rigid_info.dofs_mass_block_end)
     assert_allclose(block_start, [0] * branch + [branch] * branch, tol=0)
     assert_allclose(block_end, [branch] * branch + [n_dofs] * branch, tol=0)
 
@@ -580,11 +582,11 @@ def test_cholesky_tiling(monkeypatch, tol):
             nonlocal enable_tiled_cholesky
 
             rigid_solver_build_orig(self)
-            self._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
-            self._static_rigid_sim_config.enable_tiled_cholesky_hessian = enable_tiled_cholesky
+            self._rigid_config.enable_tiled_cholesky_mass_matrix = enable_tiled_cholesky
+            self._rigid_config.enable_tiled_cholesky_hessian = enable_tiled_cholesky
             if enable_tiled_cholesky:
-                self._static_rigid_sim_config.tiled_n_dofs_per_entity = 32
-                self._static_rigid_sim_config.tiled_n_dofs = 32
+                self._rigid_config.tiled_n_dofs_per_entity = 32
+                self._rigid_config.tiled_n_dofs = 32
 
         monkeypatch.setattr("genesis.engine.solvers.RigidSolver.build", rigid_solver_build)
 
@@ -604,8 +606,8 @@ def test_cholesky_tiling(monkeypatch, tol):
             ),
         )
         scene.build(n_envs=2)
-        assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix == enable_tiled_cholesky
-        assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
+        assert scene.rigid_solver._rigid_config.enable_tiled_cholesky_mass_matrix == enable_tiled_cholesky
+        assert scene.rigid_solver._rigid_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
 
         scene.step()
         assert not scene.rigid_solver.get_error_envs_mask().any()
@@ -658,7 +660,7 @@ def test_cholesky_tiling_large_shared_memory(show_viewer):
     scene.build(n_envs=2)
 
     assert scene.rigid_solver.n_dofs == 102
-    assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian
+    assert scene.rigid_solver._rigid_config.enable_tiled_cholesky_hessian
 
     scene.step()
     assert not scene.rigid_solver.get_error_envs_mask().any()

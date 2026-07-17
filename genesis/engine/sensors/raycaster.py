@@ -96,7 +96,7 @@ class RaycastContext(SharedSensorContext):
 
         A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
         """
-        n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
+        n_vfaces = solver.dyn_info.vfaces.vgeom_idx.shape[0]
         if n_vfaces == 0:
             return np.zeros(0, dtype=np.int8)
         vgeom_enabled = np.zeros(solver.n_vgeoms, dtype=np.bool_)
@@ -105,7 +105,7 @@ class RaycastContext(SharedSensorContext):
                 continue
             for vgeom in entity.vgeoms:
                 vgeom_enabled[vgeom.idx] = True
-        vface_vgeom_idx = qd_to_numpy(solver.vfaces_info.vgeom_idx)
+        vface_vgeom_idx = qd_to_numpy(solver.dyn_info.vfaces.vgeom_idx)
         return vgeom_enabled[vface_vgeom_idx].astype(np.int8)
 
     def activate(self):
@@ -128,11 +128,11 @@ class RaycastContext(SharedSensorContext):
             # Applies to both the collision and the visual BVH.
             maybe_static = all(link.is_fixed for link in solver.links)
             if isinstance(solver, RigidSolver):
-                n_faces = solver.faces_info.geom_idx.shape[0]
+                n_faces = solver.dyn_info.faces.geom_idx.shape[0]
                 aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
                 bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
                 self._bvh_contexts.append(BVHContext(solver, bvh, aabb, None, maybe_static))
-            n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
+            n_vfaces = solver.dyn_info.vfaces.vgeom_idx.shape[0]
             if n_vfaces > 0:
                 mask = self._compute_visual_raycast_mask(solver)
                 if mask.any():
@@ -172,14 +172,9 @@ class RaycastContext(SharedSensorContext):
                 continue
             if entry.raycast_mask is None:
                 kernel_update_verts_and_aabbs(
-                    geoms_info=entry.solver.geoms_info,
-                    geoms_state=entry.solver.geoms_state,
-                    verts_info=entry.solver.verts_info,
-                    faces_info=entry.solver.faces_info,
-                    free_verts_state=entry.solver.free_verts_state,
-                    fixed_verts_state=entry.solver.fixed_verts_state,
-                    links_info=entry.solver.links_info,
-                    static_rigid_sim_config=entry.solver._static_rigid_sim_config,
+                    dyn_info=entry.solver.dyn_info,
+                    dyn_state=entry.solver.dyn_state,
+                    rigid_config=entry.solver._rigid_config,
                     aabb_state=entry.aabb,
                 )
                 entry.bvh.build()
@@ -191,10 +186,8 @@ class RaycastContext(SharedSensorContext):
                 entry.solver.update_forward_pos()
                 entry.solver.update_vgeoms()
                 kernel_update_visual_aabbs(
-                    vverts_info=entry.solver.vverts_info,
-                    vverts_state=entry.solver.vverts_state,
-                    vfaces_info=entry.solver.vfaces_info,
-                    vgeoms_state=entry.solver.vgeoms_state,
+                    dyn_info=entry.solver.dyn_info,
+                    dyn_state=entry.solver.dyn_state,
                     face_mask=entry.raycast_mask,
                     aabb_state=entry.aabb,
                 )
@@ -265,17 +258,9 @@ class RaycasterReturnType(NamedTuple):
 
 
 class RaycasterSensor(
-    KinematicSensorMixin,
-    SimpleSensor[RaycasterOptions, RaycastContext, RaycasterSharedMetadata, RaycasterReturnType],
+    KinematicSensorMixin, SimpleSensor[RaycasterOptions, RaycastContext, RaycasterSharedMetadata, RaycasterReturnType]
 ):
-    def __init__(
-        self,
-        options: RaycasterOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
-    ):
+    def __init__(self, options: RaycasterOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
@@ -427,17 +412,9 @@ class RaycasterSensor(
                 entry.shared_across_envs,
             )
             if entry.raycast_mask is None:
-                kernel_cast_rays(
-                    solver.fixed_verts_state,
-                    solver.free_verts_state,
-                    solver.verts_info,
-                    solver.faces_info,
-                    *args_common,
-                )
+                kernel_cast_rays(solver.dyn_state, solver.dyn_info, *args_common)
             else:
-                kernel_cast_rays_visual(
-                    solver.vverts_info, solver.vverts_state, solver.vfaces_info, solver.vgeoms_state, *args_common
-                )
+                kernel_cast_rays_visual(solver.dyn_info, solver.dyn_state, *args_common)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

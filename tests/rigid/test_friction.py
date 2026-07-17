@@ -23,7 +23,7 @@ def test_frictionloss(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=2000, tol=tol)
 
     # Check that final velocity is almost zero
-    gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()
+    gs_qvel = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()
     assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
@@ -42,7 +42,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     assert_allclose(frictionloss, np.array([0.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
-    velocity_zero = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    velocity_zero = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
     robot.set_dofs_velocity(initial_velocity)
     robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
@@ -50,7 +50,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     assert_allclose(frictionloss, np.array([1.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
-    velocity_high = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    velocity_high = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
     np.testing.assert_array_less(velocity_high[0], velocity_zero[0])
     np.testing.assert_array_less(velocity_high[1], velocity_zero[1])
@@ -61,7 +61,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     assert_allclose(frictionloss, np.array([0.5]), atol=tol)
     for _ in range(10):
         gs_sim.step()
-    velocity_medium = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    velocity_medium = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
     np.testing.assert_array_less(velocity_high[0], velocity_medium[0])
     np.testing.assert_array_less(velocity_medium[0], velocity_zero[0])
@@ -214,8 +214,8 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
     rigid_solver = scene.sim.rigid_solver
     assert rigid_solver._use_contact_island == (n_boxes > 1)
     if gs.backend != gs.cpu:
-        assert rigid_solver._static_rigid_sim_config.enable_cooperative_constraint_kernels == (6 * n_boxes >= 16)
-        assert rigid_solver._static_rigid_sim_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
+        assert rigid_solver._rigid_config.enable_cooperative_constraint_kernels == (6 * n_boxes >= 16)
+        assert rigid_solver._rigid_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
 
     # Force needed to hold the floating boxes static without slipping
     total_mass = sum(box.get_mass() for box in floating_boxes)

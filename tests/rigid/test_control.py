@@ -35,14 +35,14 @@ def test_general_actuator(gs_sim, mj_sim, tol):
     entity.control_dofs_force(0.0, dofs_idx_local=[0])
     entity.control_dofs_velocity(0.0, dofs_idx_local=[1])
     entity.control_dofs_position(0.0, dofs_idx_local=[2])
-    ctrl_mode = gs_sim.rigid_solver.dofs_state.ctrl_mode.to_numpy()[:, 0]
+    ctrl_mode = gs_sim.rigid_solver.dyn_state.dofs.ctrl_mode.to_numpy()[:, 0]
     assert ctrl_mode[entity.dof_start + 0] == gs.CTRL_MODE.FORCE
     assert ctrl_mode[entity.dof_start + 1] == gs.CTRL_MODE.VELOCITY
     assert ctrl_mode[entity.dof_start + 2] == gs.CTRL_MODE.POSITION
 
     # control_dofs_position overrides all to POSITION
     entity.control_dofs_position([0.0, 0.0, 0.0])
-    ctrl_mode = gs_sim.rigid_solver.dofs_state.ctrl_mode.to_numpy()[:, 0]
+    ctrl_mode = gs_sim.rigid_solver.dyn_state.dofs.ctrl_mode.to_numpy()[:, 0]
     assert (ctrl_mode[entity.dof_start : entity.dof_start + 3] == gs.CTRL_MODE.POSITION).all()
 
     # Disable constraints, keep actuation enabled
@@ -63,7 +63,7 @@ def test_general_actuator(gs_sim, mj_sim, tol):
 
     # Pre-step so that Genesis computes qf_applied (needed for data consistency checks)
     mj_sim.data.qpos[:] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-    mj_sim.data.qvel[:] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    mj_sim.data.qvel[:] = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
     mujoco.mj_step(mj_sim.model, mj_sim.data)
     gs_sim.scene.step()
 
@@ -71,7 +71,7 @@ def test_general_actuator(gs_sim, mj_sim, tol):
         check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol, ignore_constraints=True)
 
         mj_sim.data.qpos[:] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-        mj_sim.data.qvel[:] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        mj_sim.data.qvel[:] = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
         mujoco.mj_step(mj_sim.model, mj_sim.data)
         gs_sim.scene.step()
 
@@ -158,11 +158,11 @@ def test_position_control(show_viewer):
     # Note that the low-level internal API is used because invweights must NOT be updated, otherwise
     # the test cannot pass. This is unecessary and not recommended for practical applications.
     # robot.set_dofs_armature(robot.get_dofs_armature(envs_idx=1) + MOTORS_KD * scene.sim._substep_dt, envs_idx=1)
-    dofs_armature = scene.rigid_solver.dofs_info.armature.to_numpy()
+    dofs_armature = scene.rigid_solver.dyn_info.dofs.armature.to_numpy()
     dofs_armature[:, 1] += tensor_to_array(MOTORS_KD * scene.sim._substep_dt)
-    scene.rigid_solver.dofs_info.armature.from_numpy(dofs_armature)
+    scene.rigid_solver.dyn_info.dofs.armature.from_numpy(dofs_armature)
 
-    force_range = qd_to_torch(scene.rigid_solver.dofs_info.force_range)
+    force_range = qd_to_torch(scene.rigid_solver.dyn_info.dofs.force_range)
     for i in range(200):
         dofs_pos = robot.get_qpos(envs_idx=1)
         dofs_vel = robot.get_dofs_velocity(envs_idx=1)
@@ -170,7 +170,7 @@ def test_position_control(show_viewer):
         dofs_torque.clamp_(force_range[:, 1, 0], force_range[:, 1, 1])
         robot.control_dofs_force(dofs_torque, envs_idx=1)
         scene.step()
-        qf_applied = scene.rigid_solver.dofs_state.qf_applied.to_numpy().T
+        qf_applied = scene.rigid_solver.dyn_state.dofs.qf_applied.to_numpy().T
         # dofs_torque = robot.get_dofs_control_force()
         assert_allclose(qf_applied[1], dofs_torque, tol=1e-6)
         assert_allclose(qf_applied[0], qf_applied[1], tol=1e-6)
@@ -182,7 +182,7 @@ def test_position_control(show_viewer):
     robot.set_dofs_kv(MOTORS_KD, envs_idx=1)
     force_range[:, 1, 0] = float("-inf")
     force_range[:, 1, 1] = float("+inf")
-    scene.rigid_solver.dofs_info.force_range.from_numpy(tensor_to_array(force_range))
+    scene.rigid_solver.dyn_info.dofs.force_range.from_numpy(tensor_to_array(force_range))
     for i in range(1000):
         t = scene.t * scene.dt
         pos_target = A * np.sin(2 * np.pi * f * t)

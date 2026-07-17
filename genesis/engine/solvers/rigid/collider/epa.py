@@ -20,9 +20,7 @@ from .gjk_utils import (
     func_origin_tetra_intersection,
     func_project_origin_to_plane,
 )
-from .utils import (
-    func_is_discrete_geoms,
-)
+from .utils import func_is_discrete_geoms
 
 # Import func_support from gjk_support to avoid circular dependency
 from .gjk_support import func_support
@@ -30,14 +28,12 @@ from .gjk_support import func_support
 
 @qd.func
 def func_epa(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
+    collider_info: array_class.ColliderInfo,
     i_ga,
     i_gb,
     pos_a: qd.types.vector(3),
@@ -53,26 +49,26 @@ def func_epa(
     MuJoCo's original implementation:
     https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L1331
     """
-    upper = gjk_info.FLOAT_MAX[None]
-    upper2 = gjk_info.FLOAT_MAX_SQ[None]
+    upper = collider_info.gjk.FLOAT_MAX[None]
+    upper2 = collider_info.gjk.FLOAT_MAX_SQ[None]
     lower = 0.0
-    tolerance = gjk_info.tolerance[None]
+    tolerance = collider_info.gjk.tolerance[None]
 
     # Index of the nearest face
     nearest_i_f = -1
     prev_nearest_i_f = -1
 
-    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb)
+    discrete = func_is_discrete_geoms(dyn_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = gjk_info.FLOAT_MIN[None]
+        tolerance = collider_info.gjk.FLOAT_MIN[None]
 
-    k_max = gjk_info.epa_max_iterations[None]
+    k_max = collider_info.gjk.epa_max_iterations[None]
     for k in range(k_max):
         prev_nearest_i_f = nearest_i_f
 
         # Find the polytope face with the smallest distance to the origin
-        lower2 = gjk_info.FLOAT_MAX_SQ[None]
+        lower2 = collider_info.gjk.FLOAT_MAX_SQ[None]
 
         for i in range(gjk_state.polytope.nfaces_map[i_b]):
             i_f = gjk_state.polytope_faces_map[i_b, i]
@@ -87,7 +83,7 @@ def func_epa(
             nearest_i_f = prev_nearest_i_f
             break
 
-        if lower2 <= gjk_info.FLOAT_MIN_SQ[None]:
+        if lower2 <= collider_info.gjk.FLOAT_MIN_SQ[None]:
             # Invalid lower bound (0), stop the algorithm (origin is on the affine hull of face)
             break
 
@@ -95,14 +91,12 @@ def func_epa(
         lower = qd.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
+            dyn_info,
+            rigid_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_info,
-            support_field_info,
+            collider_info,
             i_ga,
             i_gb,
             pos_a,
@@ -142,7 +136,7 @@ def func_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
+        horizon_flag = func_epa_horizon(gjk_state, collider_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -157,7 +151,7 @@ def func_epa(
         # Check if the memory space is enough for attaching new faces
         nfaces = gjk_state.polytope.nfaces[i_b]
         nedges = gjk_state.polytope.horizon_nedges[i_b]
-        if nfaces + nedges >= gjk_info.polytope_max_faces[None]:
+        if nfaces + nedges >= collider_info.gjk.polytope_max_faces[None]:
             # If the polytope is full, we cannot insert new faces
             break
 
@@ -185,7 +179,7 @@ def func_epa(
 
             dist2 = func_attach_face_to_polytope(
                 gjk_state,
-                gjk_info,
+                collider_info,
                 i_b,
                 wi,
                 horizon_v2,
@@ -228,13 +222,7 @@ def func_epa(
 
 
 @qd.func
-def func_epa_witness(
-    gjk_state: array_class.GJKState,
-    i_ga,
-    i_gb,
-    i_b,
-    i_f,
-):
+def func_epa_witness(gjk_state: array_class.GJKState, i_ga, i_gb, i_b, i_f):
     """
     Compute the witness points from the geometries for the face i_f of the polytope.
     """
@@ -247,12 +235,7 @@ def func_epa_witness(
     face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
     face_normal = gjk_state.polytope_faces.normal[i_b, i_f]
 
-    _lambda = func_triangle_affine_coords(
-        face_normal,
-        face_v1,
-        face_v2,
-        face_v3,
-    )
+    _lambda = func_triangle_affine_coords(face_normal, face_v1, face_v2, face_v3)
 
     # Point on geom 1
     v1 = gjk_state.polytope_verts.obj1[i_b, face_iv1]
@@ -271,12 +254,7 @@ def func_epa_witness(
 
 
 @qd.func
-def func_epa_horizon(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    nearest_i_f,
-):
+def func_epa_horizon(gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_b, nearest_i_f):
     """
     Compute the horizon, which represents the area of the polytope that is visible from the vertex w, and thus
     should be deleted for the expansion of the polytope.
@@ -306,7 +284,7 @@ def func_epa_horizon(
         # Check visibility of the face. Two requirements for the face to be visible:
         # 1. The face normal should point towards the vertex w
         # 2. The vertex w should be on the other side of the face to the origin
-        is_visible = gjk_state.polytope_faces.normal[i_b, i_f].dot(w - v) > gjk_info.FLOAT_MIN[None]
+        is_visible = gjk_state.polytope_faces.normal[i_b, i_f].dot(w - v) > collider_info.gjk.FLOAT_MIN[None]
 
         # The first face is always considered visible.
         if is_visible or is_first:
@@ -341,12 +319,7 @@ def func_epa_horizon(
 
 
 @qd.func
-def func_add_edge_to_horizon(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_f,
-    i_e,
-):
+def func_add_edge_to_horizon(gjk_state: array_class.GJKState, i_b, i_f, i_e):
     """
     Add an edge to the horizon data structure.
     """
@@ -359,12 +332,7 @@ def func_add_edge_to_horizon(
 
 
 @qd.func
-def func_get_edge_idx(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_f,
-    i_v,
-):
+def func_get_edge_idx(gjk_state: array_class.GJKState, i_b, i_f, i_v):
     """
     Get the edge index from the face, starting from the vertex i_v.
 
@@ -381,11 +349,7 @@ def func_get_edge_idx(
 
 
 @qd.func
-def func_delete_face_from_polytope(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_f,
-):
+def func_delete_face_from_polytope(gjk_state: array_class.GJKState, i_b, i_f):
     """
     Delete the face from the polytope.
     """
@@ -433,15 +397,13 @@ def func_epa_insert_vertex_to_polytope(
 
 @qd.func
 def func_epa_init_polytope_2d(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
+    collider_info: array_class.ColliderInfo,
     i_ga,
     i_gb,
     pos_a: qd.types.vector(3),
@@ -476,7 +438,7 @@ def func_epa_init_polytope_2d(
 
     # Cross product with the found axis, then rotate it by 120 degrees around the axis [diff] to get three more
     # points spaced 120 degrees apart
-    rotmat = gu.qd_rotvec_to_R(diff * qd.math.radians(120.0), rigid_global_info.EPS[None])
+    rotmat = gu.qd_rotvec_to_R(diff * qd.math.radians(120.0), rigid_info.EPS[None])
     e = gs.qd_vec3(0.0, 0.0, 0.0)
     e[min_i] = 1.0
 
@@ -508,14 +470,12 @@ def func_epa_init_polytope_2d(
             di = d3
         di_norm = di.norm()
         vi[i + 2] = func_epa_support(
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
+            dyn_info,
+            rigid_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_info,
-            support_field_info,
+            collider_info,
             i_ga,
             i_gb,
             pos_a,
@@ -559,8 +519,8 @@ def func_epa_init_polytope_2d(
             i_a1, i_a2, i_a3 = 4, 2, 3
 
         if (
-            func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
-            < gjk_info.FLOAT_MIN_SQ[None]
+            func_attach_face_to_polytope(gjk_state, collider_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
+            < collider_info.gjk.FLOAT_MIN_SQ[None]
         ):
             func_replace_simplex_3(gjk_state, i_b, i_v1, i_v2, i_v3)
             flag = EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
@@ -583,14 +543,12 @@ def func_epa_init_polytope_2d(
 
 @qd.func
 def func_epa_init_polytope_3d(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
+    collider_info: array_class.ColliderInfo,
     i_ga,
     i_gb,
     pos_a: qd.types.vector(3),
@@ -617,7 +575,7 @@ def func_epa_init_polytope_3d(
     # Get normal; if it is zero, we cannot proceed
     n = (v2 - v1).cross(v3 - v1)
     n_norm = n.norm()
-    if n_norm < gjk_info.FLOAT_MIN[None]:
+    if n_norm < collider_info.gjk.FLOAT_MIN[None]:
         flag = EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
     n_neg = -n
 
@@ -642,14 +600,12 @@ def func_epa_init_polytope_3d(
     for i in range(2):
         dir = n if i == 0 else n_neg
         vi[i + 3] = func_epa_support(
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
+            dyn_info,
+            rigid_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_info,
-            support_field_info,
+            collider_info,
             i_ga,
             i_gb,
             pos_a,
@@ -667,7 +623,7 @@ def func_epa_init_polytope_3d(
     # If so, we do not proceed anymore.
     for i in range(2):
         v = v4 if i == 0 else v5
-        if func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
+        if func_point_triangle_intersection(collider_info, v, v1, v2, v3):
             flag = EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
             break
 
@@ -684,7 +640,7 @@ def func_epa_init_polytope_3d(
         # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but
         # there is penetration depth.
         if (
-            gjk_state.simplex.dist[i_b] > 10 * gjk_info.FLOAT_MIN[None]
+            gjk_state.simplex.dist[i_b] > 10 * collider_info.gjk.FLOAT_MIN[None]
             and (not tets_has_origin[0])
             and (not tets_has_origin[1])
         ):
@@ -712,8 +668,8 @@ def func_epa_init_polytope_3d(
                     i_v1, i_v2, i_v3 = vi[4], vi[2], vi[1]
                     i_a1, i_a2, i_a3 = 4, 2, 3
 
-                dist2 = func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
-                if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
+                dist2 = func_attach_face_to_polytope(gjk_state, collider_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
+                if dist2 < collider_info.gjk.FLOAT_MIN_SQ[None]:
                     flag = EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
                     break
 
@@ -729,11 +685,7 @@ def func_epa_init_polytope_3d(
 
 @qd.func
 def func_epa_init_polytope_4d(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_ga,
-    i_gb,
-    i_b,
+    gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_ga, i_gb, i_b
 ):
     """
     Create the polytope for EPA from a 3-simplex (tetrahedron).
@@ -776,9 +728,9 @@ def func_epa_init_polytope_4d(
             v1, v2, v3 = vi[3], vi[2], vi[1]
             a1, a2, a3 = 2, 0, 1
 
-        dist2 = func_attach_face_to_polytope(gjk_state, gjk_info, i_b, v1, v2, v3, a1, a2, a3)
+        dist2 = func_attach_face_to_polytope(gjk_state, collider_info, i_b, v1, v2, v3, a1, a2, a3)
 
-        if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
+        if dist2 < collider_info.gjk.FLOAT_MIN_SQ[None]:
             func_replace_simplex_3(gjk_state, i_b, v1, v2, v3)
             flag = EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3
             break
@@ -808,14 +760,12 @@ def func_epa_init_polytope_4d(
 
 @qd.func
 def func_epa_support(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
+    collider_info: array_class.ColliderInfo,
     i_ga,
     i_gb,
     pos_a: qd.types.vector(3),
@@ -835,7 +785,7 @@ def func_epa_support(
         Vector from [ga] (obj1) to [gb] (obj2).
     """
     d = gs.qd_vec3(1, 0, 0)
-    if dir_norm > gjk_info.FLOAT_MIN[None]:
+    if dir_norm > collider_info.gjk.FLOAT_MIN[None]:
         d = dir / dir_norm
 
     (
@@ -847,14 +797,12 @@ def func_epa_support(
         support_point_id_obj2,
         support_point_minkowski,
     ) = func_support(
-        geoms_info,
-        verts_info,
-        static_rigid_sim_config,
+        dyn_info,
+        rigid_config,
         collider_state,
         collider_static_config,
         gjk_state,
-        gjk_info,
-        support_field_info,
+        collider_info,
         i_ga,
         i_gb,
         i_b,
@@ -884,15 +832,7 @@ def func_epa_support(
 
 @qd.func
 def func_attach_face_to_polytope(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    i_v1,
-    i_v2,
-    i_v3,
-    i_a1,
-    i_a2,
-    i_a3,
+    gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3
 ):
     """
     Attach a face to the polytope.
@@ -917,7 +857,7 @@ def func_attach_face_to_polytope(
 
     # Compute the squared distance of the face to the origin
     gjk_state.polytope_faces.normal[i_b, n], ret = func_project_origin_to_plane(
-        gjk_info,
+        collider_info,
         gjk_state.polytope_verts.mink[i_b, i_v3],
         gjk_state.polytope_verts.mink[i_b, i_v2],
         gjk_state.polytope_verts.mink[i_b, i_v1],
@@ -932,13 +872,7 @@ def func_attach_face_to_polytope(
 
 
 @qd.func
-def func_replace_simplex_3(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_v1,
-    i_v2,
-    i_v3,
-):
+def func_replace_simplex_3(gjk_state: array_class.GJKState, i_b, i_v1, i_v2, i_v3):
     """
     Replace the simplex with a 2-simplex (triangle) from polytope vertices.
 
@@ -968,15 +902,13 @@ def func_replace_simplex_3(
 
 @qd.func
 def func_safe_epa(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
+    collider_info: array_class.ColliderInfo,
     i_ga,
     i_gb,
     pos_a: qd.types.vector(3),
@@ -995,27 +927,27 @@ def func_safe_epa(
     3) In determining the normal direction of a polytope face, we use origin and the polytope vertices altogether
     to get a more stable normal direction, rather than just the origin.
     """
-    upper = gjk_info.FLOAT_MAX[None]
-    upper2 = gjk_info.FLOAT_MAX_SQ[None]
+    upper = collider_info.gjk.FLOAT_MAX[None]
+    upper2 = collider_info.gjk.FLOAT_MAX_SQ[None]
     lower = gs.qd_float(0.0)
-    tolerance = gjk_info.tolerance[None]
-    EPS = rigid_global_info.EPS[None]
+    tolerance = collider_info.gjk.tolerance[None]
+    EPS = rigid_info.EPS[None]
 
     # Index of the nearest face
     nearest_i_f = gs.qd_int(-1)
     prev_nearest_i_f = gs.qd_int(-1)
 
-    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb)
+    discrete = func_is_discrete_geoms(dyn_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = rigid_global_info.EPS[None]
+        tolerance = rigid_info.EPS[None]
 
-    k_max = gjk_info.epa_max_iterations[None]
+    k_max = collider_info.gjk.epa_max_iterations[None]
     for k in range(k_max):
         prev_nearest_i_f = nearest_i_f
 
         # Find the polytope face with the smallest distance to the origin
-        lower2 = gjk_info.FLOAT_MAX_SQ[None]
+        lower2 = collider_info.gjk.FLOAT_MAX_SQ[None]
 
         for i in range(gjk_state.polytope.nfaces_map[i_b]):
             i_f = gjk_state.polytope_faces_map[i_b, i]
@@ -1034,14 +966,12 @@ def func_safe_epa(
         lower = qd.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
+            dyn_info,
+            rigid_config,
             collider_state,
             collider_static_config,
             gjk_state,
-            gjk_info,
-            support_field_info,
+            collider_info,
             i_ga,
             i_gb,
             pos_a,
@@ -1082,7 +1012,7 @@ def func_safe_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
+        horizon_flag = func_epa_horizon(gjk_state, collider_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -1097,7 +1027,7 @@ def func_safe_epa(
         # Check if the memory space is enough for attaching new faces
         nfaces = gjk_state.polytope.nfaces[i_b]
         nedges = gjk_state.polytope.horizon_nedges[i_b]
-        if nfaces + nedges >= gjk_info.polytope_max_faces[None]:
+        if nfaces + nedges >= collider_info.gjk.polytope_max_faces[None]:
             # If the polytope is full, we cannot insert new faces
             break
 
@@ -1127,7 +1057,7 @@ def func_safe_epa(
 
             attach_flag = func_safe_attach_face_to_polytope(
                 gjk_state,
-                gjk_info,
+                collider_info,
                 i_b,
                 wi,
                 horizon_v2,
@@ -1163,7 +1093,7 @@ def func_safe_epa(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
+        flag = func_safe_epa_witness(gjk_state, collider_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -qd.sqrt(dist2)
@@ -1182,12 +1112,7 @@ def func_safe_epa(
 
 @qd.func
 def func_safe_epa_witness(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    i_f,
+    gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_ga, i_gb, i_b, i_f
 ):
     """
     Compute the witness points from the geometries for the face i_f of the polytope.
@@ -1203,7 +1128,7 @@ def func_safe_epa_witness(
     face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
 
     # Project origin onto the face plane to get the barycentric coordinates
-    proj_o, _ = func_project_origin_to_plane(gjk_info, face_v1, face_v2, face_v3)
+    proj_o, _ = func_project_origin_to_plane(collider_info, face_v1, face_v2, face_v3)
     _lambda = func_triangle_affine_coords(proj_o, face_v1, face_v2, face_v3)
 
     # Check validity of affine coordinates through reprojection
@@ -1216,15 +1141,15 @@ def func_safe_epa_witness(
 
     # Take into account the face magnitude, as the error is relative to the face size.
     max_edge_len_inv = qd.rsqrt(
-        max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), gjk_info.FLOAT_MIN_SQ[None])
+        max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), collider_info.gjk.FLOAT_MIN_SQ[None])
     )
     rel_reprojection_error = reprojection_error * max_edge_len_inv
     # For smooth geometries (e.g. spheres), polytope faces become extremely small near convergence,
     # which amplifies the relative reprojection error even when the absolute error is negligible.
     # To avoid false rejections, we check both relative and absolute reprojection errors.
     if (
-        rel_reprojection_error > gjk_info.polytope_max_rel_reprojection_error[None]
-        and reprojection_error > gjk_info.polytope_max_abs_reprojection_error[None]
+        rel_reprojection_error > collider_info.gjk.polytope_max_rel_reprojection_error[None]
+        and reprojection_error > collider_info.gjk.polytope_max_abs_reprojection_error[None]
     ):
         flag = RETURN_CODE.FAIL
 
@@ -1248,13 +1173,7 @@ def func_safe_epa_witness(
 
 
 @qd.func
-def func_safe_epa_init(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
+def func_safe_epa_init(gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_ga, i_gb, i_b):
     """
     Create the polytope for safe EPA from a 3-simplex (tetrahedron).
 
@@ -1291,7 +1210,7 @@ def func_safe_epa_init(
             v1, v2, v3 = vi[3], vi[2], vi[1]
             a1, a2, a3 = 2, 0, 1
 
-        func_safe_attach_face_to_polytope(gjk_state, gjk_info, i_b, v1, v2, v3, a1, a2, a3)
+        func_safe_attach_face_to_polytope(gjk_state, collider_info, i_b, v1, v2, v3, a1, a2, a3)
 
     # Initialize face map
     for i in qd.static(range(4)):
@@ -1302,15 +1221,7 @@ def func_safe_epa_init(
 
 @qd.func
 def func_safe_attach_face_to_polytope(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    i_v1,
-    i_v2,
-    i_v3,
-    i_a1,
-    i_a2,
-    i_a3,
+    gjk_state: array_class.GJKState, collider_info: array_class.ColliderInfo, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3
 ):
     """
     Attach a face to the polytope.
@@ -1332,7 +1243,7 @@ def func_safe_attach_face_to_polytope(
 
     # Compute the normal of the plane
     normal, flag = func_plane_normal(
-        gjk_info,
+        collider_info,
         gjk_state.polytope_verts.mink[i_b, i_v3],
         gjk_state.polytope_verts.mink[i_b, i_v2],
         gjk_state.polytope_verts.mink[i_b, i_v1],
@@ -1367,7 +1278,7 @@ def func_safe_attach_face_to_polytope(
         # between the face normal and the vertices of the polytope face. This is safer than selecting one of the
         # vertices, because the face normal could be unstable, which ends up in significantly different dot product
         # values for different vertices.
-        min_dist2 = gjk_info.FLOAT_MAX[None]
+        min_dist2 = collider_info.gjk.FLOAT_MAX[None]
         for i in qd.static(range(3)):
             i_v = i_v1
             if i == 1:
@@ -1386,12 +1297,7 @@ def func_safe_attach_face_to_polytope(
 
 
 @qd.func
-def func_plane_normal(
-    gjk_info: array_class.GJKInfo,
-    v1,
-    v2,
-    v3,
-):
+def func_plane_normal(collider_info: array_class.ColliderInfo, v1, v2, v3):
     """
     Compute the reliable normal of the plane defined by three points.
     """
@@ -1419,7 +1325,7 @@ def func_plane_normal(
                 # Zero normal, cannot project.
                 flag = RETURN_CODE.FAIL
                 finished = True
-            elif nn > gjk_info.FLOAT_MIN[None]:
+            elif nn > collider_info.gjk.FLOAT_MIN[None]:
                 normal = n.normalized()
                 flag = RETURN_CODE.SUCCESS
                 finished = True

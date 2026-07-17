@@ -17,14 +17,7 @@ from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
 
 
 @qd.func
-def get_triangle_vertices(
-    i_f: int,
-    i_b: int,
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-):
+def get_triangle_vertices(i_f: int, i_b: int, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState):
     """
     Get the three vertices of a triangle in world space.
 
@@ -35,12 +28,12 @@ def get_triangle_vertices(
     """
     tri_vertices = qd.Matrix.zero(gs.qd_float, 3, 3)
     for i in qd.static(range(3)):
-        i_v = faces_info.verts_idx[i_f][i]
-        i_fv = verts_info.verts_state_idx[i_v]
-        if verts_info.is_fixed[i_v]:
-            tri_vertices[:, i] = fixed_verts_state.pos[i_fv]
+        i_v = dyn_info.faces.verts_idx[i_f][i]
+        i_fv = dyn_info.verts.verts_state_idx[i_v]
+        if dyn_info.verts.is_fixed[i_v]:
+            tri_vertices[:, i] = dyn_state.fixed_verts.pos[i_fv]
         else:
-            tri_vertices[:, i] = free_verts_state.pos[i_fv, i_b]
+            tri_vertices[:, i] = dyn_state.free_verts.pos[i_fv, i_b]
     return tri_vertices
 
 
@@ -52,10 +45,8 @@ def bvh_ray_cast(
     i_b: int,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     eps: float,
 ):
     """
@@ -70,7 +61,7 @@ def bvh_ray_cast(
     hit_normal : qd.math.vec3
         normal vector at hit point (zero vector if no hit)
     """
-    n_triangles = faces_info.verts_idx.shape[0]
+    n_triangles = dyn_info.faces.verts_idx.shape[0]
 
     hit_face = -1
     closest_distance = gs.qd_float(max_range)
@@ -97,9 +88,7 @@ def bvh_ray_cast(
                 i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
 
                 # Get triangle vertices
-                tri_vertices = get_triangle_vertices(
-                    i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state
-                )
+                tri_vertices = get_triangle_vertices(i_f, i_b, dyn_info, dyn_state)
                 v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
                 # Perform ray-triangle intersection
@@ -229,10 +218,7 @@ def ray_aabb_intersection(
 
 @qd.func
 def closest_point_on_triangle(
-    point: qd.types.vector(3),
-    v0: qd.types.vector(3),
-    v1: qd.types.vector(3),
-    v2: qd.types.vector(3),
+    point: qd.types.vector(3), v0: qd.types.vector(3), v1: qd.types.vector(3), v2: qd.types.vector(3)
 ) -> qd.types.vector(3):
     """
     Closest point on a triangle to a query point.
@@ -285,24 +271,16 @@ def closest_point_on_triangle(
 
 
 @qd.func
-def triangle_face_normal(
-    v0: qd.types.vector(3),
-    v1: qd.types.vector(3),
-    v2: qd.types.vector(3),
-) -> qd.types.vector(3):
+def triangle_face_normal(v0: qd.types.vector(3), v1: qd.types.vector(3), v2: qd.types.vector(3)) -> qd.types.vector(3):
     """Outward unit normal of the triangle (v0, v1, v2) under right-hand winding."""
     return (v1 - v0).cross(v2 - v0).normalized()
 
 
 @qd.func
 def update_aabbs(
-    free_verts_state: array_class.VertsState,
-    fixed_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    geoms_info: array_class.GeomsInfo,
-    links_info: array_class.LinksInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
     aabb_state: qd.template(),
 ):
     """Update per-face collision AABBs from current vertex positions.
@@ -313,65 +291,43 @@ def update_aabbs(
     one vertex buffer but activate different per-env geom ranges, it makes each env cast against only its own variant
     instead of the union of every variant.
     """
-    for i_b, i_f in qd.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
+    for i_b, i_f in qd.ndrange(dyn_state.free_verts.pos.shape[1], dyn_info.faces.verts_idx.shape[0]):
         aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
 
-        i_g = faces_info.geom_idx[i_f]
-        i_l = geoms_info.link_idx[i_g]
-        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
-        if links_info.geom_start[I_l] <= i_g and i_g < links_info.geom_end[I_l]:
+        i_g = dyn_info.faces.geom_idx[i_f]
+        i_l = dyn_info.geoms.link_idx[i_g]
+        I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+        if dyn_info.links.geom_start[I_l] <= i_g and i_g < dyn_info.links.geom_end[I_l]:
             for i in qd.static(range(3)):
-                i_v = faces_info.verts_idx[i_f][i]
-                i_fv = verts_info.verts_state_idx[i_v]
-                if verts_info.is_fixed[i_v]:
-                    pos_v = fixed_verts_state.pos[i_fv]
+                i_v = dyn_info.faces.verts_idx[i_f][i]
+                i_fv = dyn_info.verts.verts_state_idx[i_v]
+                if dyn_info.verts.is_fixed[i_v]:
+                    pos_v = dyn_state.fixed_verts.pos[i_fv]
                     aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                     aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
                 else:
-                    pos_v = free_verts_state.pos[i_fv, i_b]
+                    pos_v = dyn_state.free_verts.pos[i_fv, i_b]
                     aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                     aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
 
 
 @qd.kernel
 def kernel_update_verts_and_aabbs(
-    geoms_info: array_class.GeomsInfo,
-    geoms_state: array_class.GeomsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    free_verts_state: array_class.VertsState,
-    fixed_verts_state: array_class.VertsState,
-    links_info: array_class.LinksInfo,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
     aabb_state: qd.template(),
 ):
-    func_update_all_verts(
-        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
-    )
-    update_aabbs(
-        free_verts_state,
-        fixed_verts_state,
-        verts_info,
-        faces_info,
-        geoms_info,
-        links_info,
-        static_rigid_sim_config,
-        aabb_state,
-    )
+    func_update_all_verts(dyn_state, dyn_info, rigid_config)
+    update_aabbs(dyn_state, dyn_info, rigid_config, aabb_state)
 
 
 # =========================================== Visual Mesh Raycasting ===========================================
 
 
 @qd.func
-def get_visual_vvert_pos(
-    i_vv: int,
-    i_b: int,
-    vverts_info: array_class.VVertsInfo,
-    vverts_state: array_class.VVertsState,
-    vgeoms_state: array_class.VGeomsState,
-):
+def get_visual_vvert_pos(i_vv: int, i_b: int, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState):
     """
     Return the world-space position of a visual vertex, branching between the custom buffer and FK on the fly.
 
@@ -380,31 +336,24 @@ def get_visual_vvert_pos(
     init_pos with the owning vgeom's current pose.
     """
     pos = qd.math.vec3(0.0, 0.0, 0.0)
-    i_state = vverts_info.vverts_state_idx[i_vv]
+    i_state = dyn_info.vverts.vverts_state_idx[i_vv]
     if i_state >= 0:
-        pos = vverts_state.pos[i_state, i_b]
+        pos = dyn_state.vverts.pos[i_state, i_b]
     else:
-        i_vg = vverts_info.vgeom_idx[i_vv]
+        i_vg = dyn_info.vverts.vgeom_idx[i_vv]
         pos = gu.qd_transform_by_trans_quat(
-            vverts_info.init_pos[i_vv], vgeoms_state.pos[i_vg, i_b], vgeoms_state.quat[i_vg, i_b]
+            dyn_info.vverts.init_pos[i_vv], dyn_state.vgeoms.pos[i_vg, i_b], dyn_state.vgeoms.quat[i_vg, i_b]
         )
     return pos
 
 
 @qd.func
-def get_visual_triangle_vertices(
-    i_f: int,
-    i_b: int,
-    vverts_info: array_class.VVertsInfo,
-    vverts_state: array_class.VVertsState,
-    vfaces_info: array_class.VFacesInfo,
-    vgeoms_state: array_class.VGeomsState,
-):
+def get_visual_triangle_vertices(i_f: int, i_b: int, dyn_info: array_class.DynInfo, dyn_state: array_class.DynState):
     """Get the three vertices of a triangle from the visual mesh in world space."""
     tri_vertices = qd.Matrix.zero(gs.qd_float, 3, 3)
     for i in qd.static(range(3)):
-        i_vv = vfaces_info.vverts_idx[i_f][i]
-        tri_vertices[:, i] = get_visual_vvert_pos(i_vv, i_b, vverts_info, vverts_state, vgeoms_state)
+        i_vv = dyn_info.vfaces.vverts_idx[i_f][i]
+        tri_vertices[:, i] = get_visual_vvert_pos(i_vv, i_b, dyn_info, dyn_state)
     return tri_vertices
 
 
@@ -416,14 +365,12 @@ def bvh_ray_cast_visual(
     i_b,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    vverts_info: array_class.VVertsInfo,
-    vverts_state: array_class.VVertsState,
-    vfaces_info: array_class.VFacesInfo,
-    vgeoms_state: array_class.VGeomsState,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     eps,
 ):
     """Cast a single ray against the visual-mesh BVH; returns (hit_face, distance, normal)."""
-    n_triangles = vfaces_info.vverts_idx.shape[0]
+    n_triangles = dyn_info.vfaces.vverts_idx.shape[0]
 
     hit_face = -1
     closest_distance = gs.qd_float(max_range)
@@ -445,9 +392,7 @@ def bvh_ray_cast_visual(
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
                 i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
 
-                tri_vertices = get_visual_triangle_vertices(
-                    i_f, i_b, vverts_info, vverts_state, vfaces_info, vgeoms_state
-                )
+                tri_vertices = get_visual_triangle_vertices(i_f, i_b, dyn_info, dyn_state)
                 v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
                 hit_result = ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2, eps)
@@ -467,10 +412,8 @@ def bvh_ray_cast_visual(
 
 @qd.func
 def update_visual_aabbs(
-    vverts_info: array_class.VVertsInfo,
-    vverts_state: array_class.VVertsState,
-    vfaces_info: array_class.VFacesInfo,
-    vgeoms_state: array_class.VGeomsState,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
@@ -479,45 +422,41 @@ def update_visual_aabbs(
     face_mask gates inclusion: 0 keeps the AABB inverted (unhittable) so vfaces from entities not opted into
     raycasting are skipped by ray queries.
     """
-    _B = vgeoms_state.pos.shape[1]
-    n_vfaces = vfaces_info.vverts_idx.shape[0]
+    _B = dyn_state.vgeoms.pos.shape[1]
+    n_vfaces = dyn_info.vfaces.vverts_idx.shape[0]
     for i_b, i_f in qd.ndrange(_B, n_vfaces):
         aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
         if face_mask[i_f] != 0:
             for i in qd.static(range(3)):
-                i_vv = vfaces_info.vverts_idx[i_f][i]
-                pos_v = get_visual_vvert_pos(i_vv, i_b, vverts_info, vverts_state, vgeoms_state)
+                i_vv = dyn_info.vfaces.vverts_idx[i_f][i]
+                pos_v = get_visual_vvert_pos(i_vv, i_b, dyn_info, dyn_state)
                 aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
                 aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
 
 
 @qd.kernel
 def kernel_update_visual_aabbs(
-    vverts_info: array_class.VVertsInfo,
-    vverts_state: array_class.VVertsState,
-    vfaces_info: array_class.VFacesInfo,
-    vgeoms_state: array_class.VGeomsState,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
-    update_visual_aabbs(vverts_info, vverts_state, vfaces_info, vgeoms_state, face_mask, aabb_state)
+    update_visual_aabbs(dyn_info, dyn_state, face_mask, aabb_state)
 
 
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
 @qd.kernel(fastcache=False)
 def kernel_cast_ray(
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     ray_start: qd.types.ndarray(ndim=1),  # (3,)
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
     max_range: float,
     envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
-    rigid_global_info: array_class.RigidGlobalInfo,
+    rigid_info: array_class.RigidInfo,
     result: array_class.RaycastResult,
     eps: float,
 ):
@@ -539,7 +478,7 @@ def kernel_cast_ray(
 
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        env_offset = rigid_global_info.envs_offset[i_b]
+        env_offset = rigid_info.envs_offset[i_b]
         cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
             ray_start=ray_start_world - env_offset,
             ray_dir=ray_direction_world,
@@ -547,15 +486,13 @@ def kernel_cast_ray(
             i_b=i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
-            faces_info=faces_info,
-            verts_info=verts_info,
-            fixed_verts_state=fixed_verts_state,
-            free_verts_state=free_verts_state,
+            dyn_info=dyn_info,
+            dyn_state=dyn_state,
             eps=eps,
         )
         if cur_hit_face >= 0:
             result.distance[i_b] = cur_distance
-            result.geom_idx[i_b] = faces_info.geom_idx[cur_hit_face]
+            result.geom_idx[i_b] = dyn_info.faces.geom_idx[cur_hit_face]
             result.normal[i_b] = cur_hit_normal
             result.hit_point[i_b] = ray_start_world + cur_distance * ray_direction_world
 
@@ -613,10 +550,8 @@ def write_ray_hit(
 
 @qd.kernel
 def kernel_cast_rays(
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
     links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
@@ -681,10 +616,8 @@ def kernel_cast_rays(
             i_b=0 if shared_bvh else i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
-            faces_info=faces_info,
-            verts_info=verts_info,
-            fixed_verts_state=fixed_verts_state,
-            free_verts_state=free_verts_state,
+            dyn_info=dyn_info,
+            dyn_state=dyn_state,
             eps=eps,
         )
 
@@ -716,10 +649,8 @@ def kernel_cast_rays(
 
 @qd.kernel
 def kernel_cast_rays_visual(
-    vverts_info: array_class.VVertsInfo,
-    vverts_state: array_class.VVertsState,
-    vfaces_info: array_class.VFacesInfo,
-    vgeoms_state: array_class.VGeomsState,
+    dyn_info: array_class.DynInfo,
+    dyn_state: array_class.DynState,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     links_pos: qd.types.ndarray(ndim=3),
@@ -773,10 +704,8 @@ def kernel_cast_rays_visual(
             i_b=0 if shared_bvh else i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
-            vverts_info=vverts_info,
-            vverts_state=vverts_state,
-            vfaces_info=vfaces_info,
-            vgeoms_state=vgeoms_state,
+            dyn_info=dyn_info,
+            dyn_state=dyn_state,
             eps=eps,
         )
 

@@ -55,7 +55,7 @@ def test_collision(show_viewer):
     for i in range(500):
         scene.step()
         if i > 450:
-            qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+            qvel = scene.sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
             assert_allclose(qvel, 0, atol=0.05)
 
 
@@ -762,7 +762,7 @@ def test_convexify(euler, show_viewer, gjk_collision):
     gs_sim = scene.sim
 
     # Make sure that all the geometries in the scene are convex
-    assert gs_sim.rigid_solver.geoms_info.is_convex.to_numpy().all()
+    assert gs_sim.rigid_solver.dyn_info.geoms.is_convex.to_numpy().all()
     assert not gs_sim.rigid_solver.collider._collider_static_config.has_nonconvex_nonterrain
 
     # There should be only one geometry for the apple as it can be convexify without decomposition,

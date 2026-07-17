@@ -1074,9 +1074,9 @@ def test_filter_neutral_self_collisions(show_viewer):
     )
     sphere.attach(robot, "hand")
     scene.build()
-    eq_type = scene.rigid_solver.equalities_info.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
-    eq_obj1id = scene.rigid_solver.equalities_info.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
-    eq_obj2id = scene.rigid_solver.equalities_info.eq_obj2id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_type = scene.rigid_solver.dyn_info.equalities.eq_type.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj1id = scene.rigid_solver.dyn_info.equalities.eq_obj1id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
+    eq_obj2id = scene.rigid_solver.dyn_info.equalities.eq_obj2id.to_numpy()[: scene.rigid_solver.n_equalities, 0]
 
     scene.rigid_solver.collider.detection()
     contacts_data = scene.rigid_solver.collider.get_contacts()

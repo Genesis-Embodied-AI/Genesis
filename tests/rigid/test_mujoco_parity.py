@@ -201,5 +201,5 @@ def test_stickman(gs_sim, mj_sim, tol):
 
     qpos = gs_robot.get_dofs_position()
     assert torch.linalg.norm(qpos[:2]) < 1.3
-    body_z = gs_sim.rigid_solver.links_state.pos.to_numpy()[:-1, 0, 2]
+    body_z = gs_sim.rigid_solver.dyn_state.links.pos.to_numpy()[:-1, 0, 2]
     np.testing.assert_array_less(0, body_z + gs.EPS)

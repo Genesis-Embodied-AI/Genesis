@@ -205,7 +205,7 @@ def _qd_polygon_area_from_points_3d(n: int, scratch: qd.types.ndarray(), i_b: in
 
 @qd.kernel
 def _kernel_compute_contact_areas(
-    links_state: array_class.LinksState,
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     contact_area: qd.types.ndarray(),
     scratch: qd.types.ndarray(),
@@ -223,8 +223,8 @@ def _kernel_compute_contact_areas(
             scratch[i_b, i_c, _ScratchIdx.CONTACT_IDX] = gs.qd_float(i_c)
             scratch[i_b, i_c, _ScratchIdx.DEPTH] = collider_state.contact_data.penetration[i_col, i_b]
             p_world = collider_state.contact_data.pos[i_col, i_b]
-            link_pos = links_state.pos[la, i_b]
-            link_quat = links_state.quat[la, i_b]
+            link_pos = dyn_state.links.pos[la, i_b]
+            link_quat = dyn_state.links.quat[la, i_b]
             p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
             scratch[i_b, i_c, _ScratchIdx.POS_X] = p_local.x
             scratch[i_b, i_c, _ScratchIdx.POS_Y] = p_local.y
@@ -286,7 +286,7 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
 
 @qd.kernel
 def _kernel_contact_heat(
-    links_state: array_class.LinksState,
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     links_idx: qd.types.ndarray(),
     aabb_min: qd.types.ndarray(),
@@ -344,8 +344,8 @@ def _kernel_contact_heat(
                 k_other = link_conductivity[mat_other]
                 k_eff = _qd_k_eff(k_sensor, k_other, eps)
                 p_world = collider_state.contact_data.pos[i_col, i_b]
-                link_pos = links_state.pos[sensor_link_idx, i_b]
-                link_quat = links_state.quat[sensor_link_idx, i_b]
+                link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+                link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
                 p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
                 u_x = (p_local.x - amin.x) / vs.x
                 u_y = (p_local.y - amin.y) / vs.y
@@ -511,12 +511,7 @@ class TemperatureGridSensor(
     SimpleSensor[TemperatureGridOptions, None, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
     def __init__(
-        self,
-        options: TemperatureGridOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
+        self, options: TemperatureGridOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
 
@@ -727,14 +722,14 @@ class TemperatureGridSensor(
         collider_state = solver.collider._collider_state
         shared_metadata.contact_area_buffer.zero_()
         _kernel_compute_contact_areas(
-            solver.links_state,
+            solver.dyn_state,
             collider_state,
             shared_metadata.contact_area_buffer,
             shared_metadata.contact_area_scratch,
             gs.EPS,
         )
         _kernel_contact_heat(
-            solver.links_state,
+            solver.dyn_state,
             collider_state,
             shared_metadata.links_idx,
             shared_metadata.aabb_min,
