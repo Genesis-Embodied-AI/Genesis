@@ -450,15 +450,17 @@ class ConstraintState:
     qacc_ws: qd.Tensor
     qacc_prev: qd.Tensor
     cost_ws: qd.Tensor
-    gauss: qd.Tensor
     cost: qd.Tensor
-    prev_cost: qd.Tensor
     gtol: qd.Tensor
     mv: qd.Tensor
     jv: qd.Tensor
+    # The linesearch evaluates costs in shifted form, cost(alpha) - cost(0), so the achieved improvement stays
+    # resolvable in float32 near convergence (subtracting two large absolute costs rounds the delta to zero).
+    # quad_gauss and eq_sum hold only the [linear, quadratic] coefficients: the constant cancels analytically in the
+    # shift. ls_improvement carries -cost(alpha_accepted), i.e. the improvement, to the solver termination check.
     quad_gauss: qd.Tensor
     ls_alpha: qd.Tensor
-    ls_p0_cost: qd.Tensor
+    ls_improvement: qd.Tensor
     ls_alpha_newton: qd.Tensor
     ls_gtol: qd.Tensor
     eq_sum: qd.Tensor
@@ -468,7 +470,6 @@ class ConstraintState:
     cg_prev_grad: qd.Tensor
     cg_prev_Mgrad: qd.Tensor
     cg_beta: qd.Tensor
-    cg_pg_dot_pMg: qd.Tensor
     # Optional Newton fields
     # Hessian matrix of the optimization problem as a dense 2D tensor.
     # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
@@ -595,20 +596,17 @@ def get_constraint_state(constraint_solver, solver, collider):
         is_warmstart=V(dtype=gs.qd_bool, shape=(_B,)),
         improved=V(dtype=gs.qd_bool, shape=(_B,)),
         cost_ws=V(dtype=gs.qd_float, shape=(_B,)),
-        gauss=V(dtype=gs.qd_float, shape=(_B,)),
         cost=V(dtype=gs.qd_float, shape=(_B,)),
-        prev_cost=V(dtype=gs.qd_float, shape=(_B,)),
         gtol=V(dtype=gs.qd_float, shape=(_B,)),
         ls_it=V(dtype=gs.qd_int, shape=(_B,)),
         ls_result=V(dtype=gs.qd_int, shape=(_B,)),
         cg_beta=V(dtype=gs.qd_float, shape=(_B,)),
-        cg_pg_dot_pMg=V(dtype=gs.qd_float, shape=(_B,)),
-        quad_gauss=V(dtype=gs.qd_float, shape=(3, _B)),
+        quad_gauss=V(dtype=gs.qd_float, shape=(2, _B)),
         ls_alpha=V(dtype=gs.qd_float, shape=(_B,)),
-        ls_p0_cost=V(dtype=gs.qd_float, shape=(_B,)),
+        ls_improvement=V(dtype=gs.qd_float, shape=(_B,)),
         ls_alpha_newton=V(dtype=gs.qd_float, shape=(_B,)),
         ls_gtol=V(dtype=gs.qd_float, shape=(_B,)),
-        eq_sum=V(dtype=gs.qd_float, shape=(3, _B)),
+        eq_sum=V(dtype=gs.qd_float, shape=(2, _B)),
         Ma=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),

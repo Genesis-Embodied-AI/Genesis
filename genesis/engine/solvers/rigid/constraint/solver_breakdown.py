@@ -15,63 +15,6 @@ LS_ALPHA_MAX = 1e4
 
 
 @qd.func
-def _ls_eval_cost_grad(i_b, alpha, constraint_state: array_class.ConstraintState):
-    """Compute cost and analytical gradient at alpha (thread-0 only).
-
-    Follows the same quadratic-coefficient approach as _func_linesearch_eval_at_alpha in solver.py. Reuses quad_gauss
-    and eq_sum precomputed by the p0 kernel. Returns (cost, grad).
-    """
-    ne = constraint_state.n_constraints_equality[i_b]
-    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-    n_con = constraint_state.n_constraints[i_b]
-
-    # Start from precomputed DOF + equality coefficients
-    qt_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
-    qt_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
-    qt_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
-
-    # Friction constraints: accumulate activation-dependent quad coefficients
-    for i_c in range(ne, nef):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
-        f_val = constraint_state.efc_frictionloss[i_c, i_b]
-        r_val = constraint_state.diag[i_c, i_b]
-        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
-        qf_1 = D * (jv_c * Jaref_c)
-        qf_2 = D * (0.5 * jv_c * jv_c)
-        x = Jaref_c + alpha * jv_c
-        rf = r_val * f_val
-        linear_neg = x <= -rf
-        linear_pos = x >= rf
-        if linear_neg or linear_pos:
-            qf_0 = linear_neg * f_val * (-0.5 * rf - Jaref_c) + linear_pos * f_val * (-0.5 * rf + Jaref_c)
-            qf_1 = linear_neg * (-f_val * jv_c) + linear_pos * (f_val * jv_c)
-            qf_2 = 0.0
-        qt_0 = qt_0 + qf_0
-        qt_1 = qt_1 + qf_1
-        qt_2 = qt_2 + qf_2
-
-    # Contact constraints: active when x < 0
-    for i_c in range(nef, n_con):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
-        x = Jaref_c + alpha * jv_c
-        active = x < 0
-        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
-        qf_1 = D * (jv_c * Jaref_c)
-        qf_2 = D * (0.5 * jv_c * jv_c)
-        qt_0 = qt_0 + qf_0 * active
-        qt_1 = qt_1 + qf_1 * active
-        qt_2 = qt_2 + qf_2 * active
-
-    cost = alpha * alpha * qt_2 + alpha * qt_1 + qt_0
-    grad = 2.0 * alpha * qt_2 + qt_1
-    return cost, grad
-
-
-@qd.func
 def _func_decomp_linesearch_p0(
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
@@ -79,7 +22,7 @@ def _func_decomp_linesearch_p0(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Decomposed constraint solver P0 kernel: fused mv + jv + snorm + quad_gauss + eq_sum + p0_cost.
+    """Decomposed constraint solver P0 kernel: fused mv + jv + snorm + quad_gauss + eq_sum.
 
     Decomposed solver algorithm overview
     -------------------------------------
@@ -90,14 +33,14 @@ def _func_decomp_linesearch_p0(
         Phase 0a: Compute mv = M @ search (cooperative over DOFs, 32 threads).
         Phase 0b: Compute jv = J @ search (cooperative over constraints, 32 threads).
         Phase 1: Fused snorm + quad_gauss parallel reduction over n_dofs.
-        Phase 2: Parallel reduction over n_constraints for eq_sum and p0_cost. Also computes alpha_newton.
+        Phase 2: Parallel reduction over n_constraints for eq_sum. Also computes alpha_newton.
 
     Eval kernel (_kernel_parallel_linesearch_eval):
         a) Serial refinement (thread 0): re-evaluate the Newton step via func_linesearch_refine.
         b) Apply: Update qacc, Ma, Jaref with the chosen alpha (cooperative over DOFs).
 
-    Post-linesearch: Separate kernels for constraint force update, cost update, gradient update, Hessian update (Newton
-    only), and search direction update. These reuse the batch-level functions from solver.py.
+    Post-linesearch: Separate kernels for constraint force update, gradient update, Hessian update (Newton only), and
+    search direction update. These reuse the batch-level functions from solver.py.
     """
     # Block size for shared-memory reductions.
     _T = qd.static(32)
@@ -109,11 +52,10 @@ def _func_decomp_linesearch_p0(
         tid = i_flat % _T
         i_b = i_flat // _T
 
-        # 6 shared arrays for parallel reductions (reused across phases)
+        # 5 shared arrays for parallel reductions (reused across phases)
         sh_snorm_sq = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_qg_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_qg_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
-        sh_p0_cost = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_constraint_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_constraint_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
 
@@ -186,14 +128,12 @@ def _func_decomp_linesearch_p0(
                 # Converged — only thread 0 writes
                 if tid == 0:
                     constraint_state.ls_alpha[i_b] = 0.0
-                    constraint_state.ls_p0_cost[i_b] = 0.0
                     constraint_state.improved[i_b] = False
             else:
                 # Thread 0 writes quad_gauss to global memory
                 if tid == 0:
-                    constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
-                    constraint_state.quad_gauss[1, i_b] = sh_qg_grad[0]
-                    constraint_state.quad_gauss[2, i_b] = sh_qg_hess[0]
+                    constraint_state.quad_gauss[0, i_b] = sh_qg_grad[0]
+                    constraint_state.quad_gauss[1, i_b] = sh_qg_hess[0]
 
                 # === Phase 2: Constraint cost, parallel over n_constraints ===
                 ne = constraint_state.n_constraints_equality[i_b]
@@ -203,19 +143,18 @@ def _func_decomp_linesearch_p0(
                     ncone = ncone + constraint_state.n_constraints_cone[i_b]
                 n_con = constraint_state.n_constraints[i_b]
 
-                local_eq_cost = gs.qd_float(0.0)
                 local_eq_grad = gs.qd_float(0.0)
                 local_eq_hess = gs.qd_float(0.0)
-                local_p0_cost = gs.qd_float(0.0)
                 local_constraint_grad = gs.qd_float(0.0)
                 local_constraint_hess = gs.qd_float(0.0)
 
                 i_c = tid
                 while i_c < n_con:
                     if qd.static(rigid_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
-                        # Elliptic cone: the head thread carries the exact coupled cost/grad/hess of the whole triple
+                        # Elliptic cone: the head thread carries the exact coupled grad/hess of the whole triple
                         # (evaluated at alpha=0 through the shared per-alpha routine, matching the serial linesearch);
-                        # the two tangent threads are no-ops so the triple is counted once.
+                        # the two tangent threads are no-ops so the triple is counted once. The cone cost itself
+                        # cancels in the shifted convention (see quad_gauss in array_class.py).
                         if (i_c - nef) % 3 == 0:
                             d0, d1v, d2v, friction, con_mu, jar0, jar1, jar2 = solver._func_cone_head_load(
                                 i_c, i_b, constraint_state
@@ -223,26 +162,22 @@ def _func_decomp_linesearch_p0(
                             jv0 = constraint_state.jv[i_c, i_b]
                             jv1 = constraint_state.jv[i_c + 1, i_b]
                             jv2 = constraint_state.jv[i_c + 2, i_b]
-                            c_cost, c_grad, c_hess = solver._func_cone_cost_along_alpha(
+                            _c_cost, c_grad, c_hess = solver._func_cone_cost_along_alpha(
                                 jar0, jar1, jar2, jv0, jv1, jv2, 0.0, d0, d1v, d2v, con_mu, friction
                             )
-                            local_p0_cost += c_cost
                             local_constraint_grad += c_grad
                             local_constraint_hess += 0.5 * c_hess
                     else:
                         Jaref_c = constraint_state.Jaref[i_c, i_b]
                         jv_c = constraint_state.jv[i_c, i_b]
                         D = constraint_state.efc_D[i_c, i_b]
-                        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
                         qf_1 = D * (jv_c * Jaref_c)
                         qf_2 = D * (0.5 * jv_c * jv_c)
 
                         if i_c < ne:
                             # Equality: always active
-                            local_eq_cost += qf_0
                             local_eq_grad += qf_1
                             local_eq_hess += qf_2
-                            local_p0_cost += qf_0
                             local_constraint_grad += qf_1
                             local_constraint_hess += qf_2
                         elif i_c < nef:
@@ -253,57 +188,49 @@ def _func_decomp_linesearch_p0(
                             linear_neg = Jaref_c <= -rf
                             linear_pos = Jaref_c >= rf
                             if linear_neg or linear_pos:
-                                qf_0 = linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
                                 qf_1 = linear_neg * (-f * jv_c) + linear_pos * (f * jv_c)
                                 qf_2 = 0.0
-                            local_p0_cost += qf_0
                             local_constraint_grad += qf_1
                             local_constraint_hess += qf_2
                         else:
                             # Contact / joint-limit: active if Jaref < 0
                             active = Jaref_c < 0
-                            local_p0_cost += qf_0 * active
                             local_constraint_grad += qf_1 * active
                             local_constraint_hess += qf_2 * active
 
                     i_c += _T
 
                 # Reuse shared arrays for Phase 2 reduction
-                sh_snorm_sq[tid] = local_eq_cost
                 sh_qg_grad[tid] = local_eq_grad
                 sh_qg_hess[tid] = local_eq_hess
-                sh_p0_cost[tid] = local_p0_cost
                 sh_constraint_grad[tid] = local_constraint_grad
                 sh_constraint_hess[tid] = local_constraint_hess
 
                 qd.simt.block.sync()
 
-                # Tree reduction for 6 accumulators
+                # Tree reduction for 4 accumulators
                 stride = _T // 2
                 while stride > 0:
                     if tid < stride:
-                        sh_snorm_sq[tid] += sh_snorm_sq[tid + stride]
                         sh_qg_grad[tid] += sh_qg_grad[tid + stride]
                         sh_qg_hess[tid] += sh_qg_hess[tid + stride]
-                        sh_p0_cost[tid] += sh_p0_cost[tid + stride]
                         sh_constraint_grad[tid] += sh_constraint_grad[tid + stride]
                         sh_constraint_hess[tid] += sh_constraint_hess[tid + stride]
                     qd.simt.block.sync()
                     stride //= 2
 
                 if tid == 0:
-                    constraint_state.eq_sum[0, i_b] = sh_snorm_sq[0]
-                    constraint_state.eq_sum[1, i_b] = sh_qg_grad[0]
-                    constraint_state.eq_sum[2, i_b] = sh_qg_hess[0]
+                    constraint_state.eq_sum[0, i_b] = sh_qg_grad[0]
+                    constraint_state.eq_sum[1, i_b] = sh_qg_hess[0]
                     constraint_state.ls_it[i_b] = 1
-                    constraint_state.ls_p0_cost[i_b] = constraint_state.gauss[i_b] + sh_p0_cost[0]
-                    # Initialize best alpha, search range, and best-cost tracker for parallel linesearch
+                    # Initialize best alpha and improvement for parallel linesearch
                     constraint_state.ls_alpha[i_b] = 0.0  # default: no step
+                    constraint_state.ls_improvement[i_b] = 0.0
 
                     # Newton step estimate from the full DOF + constraint gradient/hessian
-                    total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_constraint_hess[0])
+                    total_hess = 2.0 * (constraint_state.quad_gauss[1, i_b] + sh_constraint_hess[0])
                     if total_hess > 0.0:
-                        total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
+                        total_grad = constraint_state.quad_gauss[0, i_b] + sh_constraint_grad[0]
                         constraint_state.ls_alpha_newton[i_b] = qd.abs(total_grad / total_hess)
                     else:
                         constraint_state.ls_alpha_newton[i_b] = 0.0
@@ -320,7 +247,6 @@ def _func_decomp_linesearch_refine_coop(
     i_b,
     tid,
     alpha_newton,
-    p0_cost,
     gtol,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
@@ -328,7 +254,8 @@ def _func_decomp_linesearch_refine_coop(
 ):
     """Warp-cooperative variant of ``_func_decomp_linesearch_refine``: all 32 lanes drive the unified
     ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
-    template arg). Writes to ``ls_alpha`` are tid==0-guarded since the result is per-env, not per-lane."""
+    template arg). Writes to ``ls_alpha`` / ``ls_improvement`` are tid==0-guarded since the result is per-env, not
+    per-lane."""
     # Gated: skip when the Newton step is zero (degenerate hessian).
     if alpha_newton > 0.0:
         if tid == 0:
@@ -336,21 +263,22 @@ def _func_decomp_linesearch_refine_coop(
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
             i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=True
         )
-        if p0_cost < p1_cost:
+        # Costs are shifted deltas from alpha=0 (see quad_gauss in array_class.py): positive means no improvement
+        if p1_cost > 0.0:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
                 i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=True
             )
-        if p1_cost < p0_cost and tid == 0:
+        if p1_cost < 0.0 and tid == 0:
             constraint_state.ls_alpha[i_b] = p1_alpha
+            constraint_state.ls_improvement[i_b] = -p1_cost
         if qd.abs(p1_deriv_0) > gtol:
-            res_alpha, ls_result = solver.func_linesearch_refine(
+            res_alpha, res_cost, ls_result = solver.func_linesearch_refine(
                 i_b,
                 tid,
                 p1_alpha,
                 p1_cost,
                 p1_deriv_0,
                 p1_deriv_1,
-                p0_cost,
                 gtol,
                 constraint_state,
                 rigid_info,
@@ -361,6 +289,7 @@ def _func_decomp_linesearch_refine_coop(
             # p1_alpha already written above.
             if qd.abs(res_alpha) > rigid_info.EPS[None] and ls_result != 7 and tid == 0:
                 constraint_state.ls_alpha[i_b] = res_alpha
+                constraint_state.ls_improvement[i_b] = -res_cost
 
 
 @qd.func
@@ -368,7 +297,6 @@ def _func_decomp_linesearch_refine_serial(
     i_b,
     tid,
     alpha_newton,
-    p0_cost,
     gtol,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
@@ -382,21 +310,22 @@ def _func_decomp_linesearch_refine_serial(
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
             i_b, tid, alpha_newton, constraint_state, rigid_info, rigid_config, coop=False
         )
-        if p0_cost < p1_cost:
+        # Costs are shifted deltas from alpha=0 (see quad_gauss in array_class.py): positive means no improvement
+        if p1_cost > 0.0:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
                 i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=False
             )
-        if p1_cost < p0_cost:
+        if p1_cost < 0.0:
             constraint_state.ls_alpha[i_b] = p1_alpha
+            constraint_state.ls_improvement[i_b] = -p1_cost
         if qd.abs(p1_deriv_0) > gtol:
-            res_alpha, ls_result = solver.func_linesearch_refine(
+            res_alpha, res_cost, ls_result = solver.func_linesearch_refine(
                 i_b,
                 tid,
                 p1_alpha,
                 p1_cost,
                 p1_deriv_0,
                 p1_deriv_1,
-                p0_cost,
                 gtol,
                 constraint_state,
                 rigid_info,
@@ -407,6 +336,7 @@ def _func_decomp_linesearch_refine_serial(
             # p1_alpha already written above.
             if qd.abs(res_alpha) > rigid_info.EPS[None] and ls_result != 7:
                 constraint_state.ls_alpha[i_b] = res_alpha
+                constraint_state.ls_improvement[i_b] = -res_cost
 
 
 @qd.func
@@ -414,7 +344,6 @@ def _func_decomp_linesearch_refine(
     i_b,
     tid,
     alpha_newton,
-    p0_cost,
     gtol,
     constraint_state: array_class.ConstraintState,
     rigid_info: array_class.RigidInfo,
@@ -429,13 +358,9 @@ def _func_decomp_linesearch_refine(
     ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine``: Quadrants' ``qd.template()`` machinery does not
     auto-promote a struct member access to a compile-time value, so we cannot share a single call site here."""
     if qd.static(rigid_config.enable_cooperative_constraint_kernels):
-        _func_decomp_linesearch_refine_coop(
-            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_info, rigid_config
-        )
+        _func_decomp_linesearch_refine_coop(i_b, tid, alpha_newton, gtol, constraint_state, rigid_info, rigid_config)
     else:
-        _func_decomp_linesearch_refine_serial(
-            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_info, rigid_config
-        )
+        _func_decomp_linesearch_refine_serial(i_b, tid, alpha_newton, gtol, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -469,13 +394,10 @@ def _func_decomp_linesearch_refine_and_apply(
         active = constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]
 
         if active:
-            p0_cost = constraint_state.ls_p0_cost[i_b]
             gtol = constraint_state.ls_gtol[i_b]
             alpha_newton = constraint_state.ls_alpha_newton[i_b]
 
-            _func_decomp_linesearch_refine(
-                i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_info, rigid_config
-            )
+            _func_decomp_linesearch_refine(i_b, tid, alpha_newton, gtol, constraint_state, rigid_info, rigid_config)
             qd.simt.block.sync()
         else:
             if tid == 0:
@@ -532,8 +454,8 @@ def _func_update_constraint_forces_body(
 
     if qd.static(rigid_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
         # Elliptic cone (one-thread-per-row): only the head thread resolves the coupled triple and writes all three
-        # rows; the two tangent threads are no-ops (race-free). The coupled middle-zone cost is discarded here;
-        # _func_update_constraint_cost_coop / _serial recompute it.
+        # rows; the two tangent threads are no-ops (race-free). The coupled middle-zone cost is discarded here; the
+        # linesearch evaluates the cone cost delta directly.
         if (i_c - nef) % 3 == 0:
             solver.func_cone_update_rows(i_c, i_b, constraint_state)
     else:
@@ -625,148 +547,6 @@ def _func_update_qfrc_constraint_per_dof(constraint_state: array_class.Constrain
                 for i_c in range(n_con):
                     qfrc += constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc
-
-
-@qd.func
-def _func_update_constraint_cost_coop(
-    dyn_state: array_class.DynState, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
-):
-    """Warp-per-env cooperative variant of ``_func_update_constraint_cost``: 32 lanes stride through dofs and
-    constraints, with the final per-env scalar produced by ``subgroup.reduce_all_add_tiled``. Per-lane reads of
-    Jaref/efc_D/active are coalesced under the [_B, len_constraints_] physical layout (i.e. when those
-    layout-flippable constraint-state tensors were allocated with ``layout=(1, 0)``)."""
-    _B = constraint_state.grad.shape[1]
-    _K = qd.static(32)
-
-    qd.loop_config(name="update_constraint_cost", block_dim=_K)
-    for i_flat in range(_B * _K):
-        tid = i_flat % _K
-        i_b = i_flat // _K
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            n_dofs = constraint_state.qfrc_constraint.shape[0]
-            ne = constraint_state.n_constraints_equality[i_b]
-            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-            ncone = nef
-            if qd.static(rigid_config.enable_elliptic_friction):
-                ncone = ncone + constraint_state.n_constraints_cone[i_b]
-            n_con = constraint_state.n_constraints[i_b]
-
-            if tid == 0:
-                constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
-
-            cost_i = gs.qd_float(0.0)
-            gauss_i = gs.qd_float(0.0)
-
-            # Gauss cost from dofs (lane-strided)
-            i_d = tid
-            while i_d < n_dofs:
-                v = (
-                    0.5
-                    * (constraint_state.Ma[i_d, i_b] - dyn_state.dofs.force[i_d, i_b])
-                    * (constraint_state.qacc[i_d, i_b] - dyn_state.dofs.acc_smooth[i_d, i_b])
-                )
-                gauss_i += v
-                cost_i += v
-                i_d = i_d + _K
-
-            # Constraint cost: quadratic + friction linear (lane-strided over constraints)
-            i_c = tid
-            while i_c < n_con:
-                Jaref_c = constraint_state.Jaref[i_c, i_b]
-                cost_i += 0.5 * (
-                    Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-                )
-                if ne <= i_c and i_c < nef:
-                    f = constraint_state.efc_frictionloss[i_c, i_b]
-                    r = constraint_state.diag[i_c, i_b]
-                    rf = r * f
-                    linear_neg = Jaref_c <= -rf
-                    linear_pos = Jaref_c >= rf
-                    cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
-                if qd.static(rigid_config.enable_elliptic_friction) and (
-                    nef <= i_c and i_c < ncone and (i_c - nef) % 3 == 0
-                ):
-                    cost_i += solver.func_cone_middle_cost(i_c, i_b, constraint_state)
-                i_c = i_c + _K
-
-            cost_i = qd.simt.subgroup.reduce_all_add_tiled(cost_i, 5)
-            gauss_i = qd.simt.subgroup.reduce_all_add_tiled(gauss_i, 5)
-
-            if tid == 0:
-                constraint_state.gauss[i_b] = gauss_i
-                constraint_state.cost[i_b] = cost_i
-
-
-@qd.func
-def _func_update_constraint_cost_serial(
-    dyn_state: array_class.DynState, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
-):
-    """1-thread-per-env variant of ``_func_update_constraint_cost``. Bit-identical to the pre-coop baseline: one thread
-    runs the full reduction over dofs + constraints in straight ``for`` loops."""
-    _B = constraint_state.grad.shape[1]
-
-    qd.loop_config(name="update_constraint_cost", block_dim=32)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            n_dofs = constraint_state.qfrc_constraint.shape[0]
-            ne = constraint_state.n_constraints_equality[i_b]
-            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-            ncone = nef
-            if qd.static(rigid_config.enable_elliptic_friction):
-                ncone = ncone + constraint_state.n_constraints_cone[i_b]
-            n_con = constraint_state.n_constraints[i_b]
-
-            constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
-
-            cost_i = gs.qd_float(0.0)
-            gauss_i = gs.qd_float(0.0)
-
-            # Gauss cost from dofs
-            for i_d in range(n_dofs):
-                v = (
-                    0.5
-                    * (constraint_state.Ma[i_d, i_b] - dyn_state.dofs.force[i_d, i_b])
-                    * (constraint_state.qacc[i_d, i_b] - dyn_state.dofs.acc_smooth[i_d, i_b])
-                )
-                gauss_i += v
-                cost_i += v
-
-            # Constraint cost: quadratic + friction linear
-            for i_c in range(n_con):
-                cost_i += 0.5 * (
-                    constraint_state.Jaref[i_c, i_b] ** 2
-                    * constraint_state.efc_D[i_c, i_b]
-                    * constraint_state.active[i_c, i_b]
-                )
-                if ne <= i_c and i_c < nef:
-                    f = constraint_state.efc_frictionloss[i_c, i_b]
-                    r = constraint_state.diag[i_c, i_b]
-                    rf = r * f
-                    linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-                    linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-                    cost_i += linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
-                        -0.5 * rf + constraint_state.Jaref[i_c, i_b]
-                    )
-                if qd.static(rigid_config.enable_elliptic_friction) and (
-                    nef <= i_c and i_c < ncone and (i_c - nef) % 3 == 0
-                ):
-                    cost_i += solver.func_cone_middle_cost(i_c, i_b, constraint_state)
-
-            constraint_state.gauss[i_b] = gauss_i
-            constraint_state.cost[i_b] = cost_i
-
-
-@qd.func
-def _func_update_constraint_cost(
-    dyn_state: array_class.DynState, constraint_state: array_class.ConstraintState, rigid_config: qd.template()
-):
-    """Compute gauss and cost (reductions over dofs and constraints). Dispatches at compile time on
-    ``enable_cooperative_constraint_kernels`` to ``_func_update_constraint_cost_coop`` (warp-per-env) or
-    ``_func_update_constraint_cost_serial`` (1-thread-per-env, bit-identical baseline)."""
-    if qd.static(rigid_config.enable_cooperative_constraint_kernels):
-        _func_update_constraint_cost_coop(dyn_state, constraint_state, rigid_config)
-    else:
-        _func_update_constraint_cost_serial(dyn_state, constraint_state, rigid_config)
 
 
 # Number of full Hessian+Cholesky rebuilds at the start of the solver loop (after the init's iter-0 full rebuild).
@@ -972,7 +752,7 @@ def _kernel_solve_graph(
     rigid_config: qd.template(),
 ):
     while qd.graph_do_while(graph_counter):
-        # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost
+        # Fused: mv + jv + snorm + quad_gauss + eq_sum
         _func_decomp_linesearch_p0(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
         # Fused: refinement + apply alpha
         _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_info, rigid_config)
@@ -980,7 +760,6 @@ def _kernel_solve_graph(
             _func_cg_only_save_prev_grad(constraint_state, rigid_config)
         _func_update_constraint_forces(constraint_state, rigid_config)
         _func_update_qfrc_constraint_per_dof(constraint_state, rigid_config)
-        _func_update_constraint_cost(dyn_state, constraint_state, rigid_config)
         if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton and rigid_config.hessian_fits_shared):
             # Incremental Hessian assembly - full rebuild when the active set changed a lot, delta patch otherwise -
             # then a tiled factor + solve reading the maintained nt_H. Each changed constraint's J^T D J lands inside
