@@ -93,7 +93,9 @@ dev = [
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
     # * Mujoco 3.5.0 fixed computation of link invweight when degenerated.
-    "mujoco>=3.5.0,<3.7.0",
+    # * Mujoco 3.10.0 aligned the primal solvers with Genesis (Hager-Zhang CG update, shifted linesearch costs);
+    #   the step-by-step solver consistency tests only hold when both engines run the same algorithm.
+    "mujoco>=3.10.0,<3.11.0",
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",

@@ -697,7 +697,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 def test_convexify(euler, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
     OBJ_OFFSET_Y = 0.15
-    N_SETTLE = 1000
+    N_SETTLE = 1200
 
     # The test check that the volume difference is under a given threshold and that convex decomposition is only used
     # whenever it is necessary. Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.

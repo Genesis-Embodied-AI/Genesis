@@ -607,14 +607,18 @@ def build_mujoco_sim(
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
+    # Genesis integrates standalone free bodies without MuJoCo's midpoint rule under implicitfast; invdiscrete opts
+    # MuJoCo out of midpoint integration (its only effect on forward dynamics) so both engines run the same
+    # discrete-time update.
+    model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_INVDISCRETE
     if native_ccd:
         model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
     else:
         model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_NATIVECCD
     if multi_contact:
-        model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+        model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_MULTICCD)
     else:
-        model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_MULTICCD
     if adjacent_collision:
         model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_FILTERPARENT
     else:
@@ -919,7 +923,7 @@ def check_mujoco_data_consistency(
 
     gs_mass_mat = gs_sim.rigid_solver.mass_mat.to_numpy()[:, :, 0]
     mj_mass_mat = np.zeros((mj_sim.model.nv, mj_sim.model.nv))
-    mujoco.mj_fullM(mj_sim.model, mj_mass_mat, mj_sim.data.qM)
+    mujoco.mj_fullM(mj_sim.model, mj_sim.data, mj_mass_mat)
     assert_allclose(gs_mass_mat[gs_dofs_idx][:, gs_dofs_idx], mj_mass_mat[mj_dofs_idx][:, mj_dofs_idx], tol=tol)
 
     gs_meaninertia = gs_sim.rigid_solver.meaninertia.to_numpy()[0]
@@ -1016,9 +1020,7 @@ def check_mujoco_data_consistency(
             )
             mj_gradient = mj_sim.data.solver.gradient[mj_iter]
             assert_allclose(gs_gradient, mj_gradient, tol=tol)
-            gs_improvement = gs_scale * (
-                gs_sim.rigid_solver.constraint_solver.prev_cost[0] - gs_sim.rigid_solver.constraint_solver.cost[0]
-            )
+            gs_improvement = gs_scale * gs_sim.rigid_solver.constraint_solver.ls_improvement[0]
             mj_improvement = mj_sim.data.solver.improvement[mj_iter]
 
             # Note that 'constraint_solver.active' refers to whether the quadratic part of a constraint is active,
