@@ -159,8 +159,11 @@ def build_model(
                 has_armature_by_class[default_elem.attrib.get("class", "main")] = has_armature
                 default_stack.extend((child, has_armature) for child in default_elem.findall("default"))
             # Then walk the kinematic tree while tracking the childclass in effect to resolve each joint's class.
+            # Bodies may be nested under grouping meta-elements (frame, replicate) at any depth.
             for worldbody in mjcf.findall("worldbody"):
-                body_stack = [(elem, "main") for tag in ("body", "frame") for elem in worldbody.findall(tag)]
+                body_stack = [
+                    (elem, "main") for tag in ("body", "frame", "replicate") for elem in worldbody.findall(tag)
+                ]
                 while body_stack:
                     body_elem, childclass = body_stack.pop()
                     childclass = body_elem.attrib.get("childclass", childclass)
@@ -171,7 +174,7 @@ def build_model(
                         if not has_armature_by_class.get(joint_class, False):
                             joint_elem.attrib.setdefault("armature", str(default_armature))
                     body_stack.extend(
-                        (elem, childclass) for tag in ("body", "frame") for elem in body_elem.findall(tag)
+                        (elem, childclass) for tag in ("body", "frame", "replicate") for elem in body_elem.findall(tag)
                     )
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
