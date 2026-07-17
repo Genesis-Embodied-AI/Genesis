@@ -122,7 +122,6 @@ def func_collision_clear(
 
 @qd.kernel(fastcache=True)
 def _func_broad_phase_sap(
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -130,6 +129,7 @@ def _func_broad_phase_sap(
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """
     Sweep and Prune (SAP) for broad-phase collision detection.
@@ -387,7 +387,6 @@ def _func_broad_phase_sap(
 
 @qd.kernel(fastcache=True)
 def _func_broad_phase_all_vs_all(
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -395,6 +394,7 @@ def _func_broad_phase_all_vs_all(
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """
     All-vs-all broad-phase collision detection.
@@ -443,9 +443,9 @@ def func_broad_phase(
     """Dispatch to the appropriate broad-phase kernel based on config."""
     if rigid_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
         _func_broad_phase_all_vs_all(
-            errno, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config, errno
         )
     else:
         _func_broad_phase_sap(
-            errno, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, collider_info, rigid_config, errno
         )

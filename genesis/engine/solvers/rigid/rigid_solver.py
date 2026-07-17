@@ -1222,7 +1222,6 @@ class RigidSolver(KinematicSolver):
         else:
             self._func_constraint_force()
             kernel_step_2(
-                self._errno,
                 self.dyn_state,
                 self.collider._collider_state,
                 self.constraint_solver.constraint_state,
@@ -1230,6 +1229,7 @@ class RigidSolver(KinematicSolver):
                 self.rigid_info,
                 self._rigid_config,
                 self._is_backward,
+                self._errno,
             )
             self._is_forward_pos_updated = not self._enable_mujoco_compatibility
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
@@ -1514,7 +1514,6 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception(f"Nan grad in qpos or dofs_vel found at step {self._sim.cur_step_global}")
 
         kernel_step_2.grad(
-            self._errno,
             self.dyn_state,
             self.collider._collider_state,
             self.constraint_solver.constraint_state,
@@ -1522,6 +1521,7 @@ class RigidSolver(KinematicSolver):
             self.rigid_info,
             self._rigid_config,
             is_backward=True,
+            errno=self._errno,
         )
 
         # We cannot use [kernel_forward_dynamics.grad] because we read [dofs_state.acc] and overwrite it in the kernel,
@@ -1571,7 +1571,6 @@ class RigidSolver(KinematicSolver):
         if isinstance(self.sim.coupler, SAPCoupler):
             update_qacc_from_qvel_delta(self.dyn_state, self.rigid_info, self._rigid_config, self._is_backward)
             kernel_step_2(
-                self._errno,
                 self.dyn_state,
                 self.collider._collider_state,
                 self.constraint_solver.constraint_state,
@@ -1579,6 +1578,7 @@ class RigidSolver(KinematicSolver):
                 self.rigid_info,
                 self._rigid_config,
                 self._is_backward,
+                self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
             # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
@@ -3076,7 +3076,6 @@ def kernel_step_1(
 
 @qd.kernel(fastcache=True)
 def kernel_step_2(
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -3084,6 +3083,7 @@ def kernel_step_2(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
     is_backward: qd.template(),
+    errno: qd.Tensor,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -3099,12 +3099,12 @@ def kernel_step_2(
 
     if qd.static(rigid_config.use_hibernation):
         func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
-            errno, dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config
+            dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, errno
         )
         func_aggregate_awake_entities(dyn_state, dyn_info, rigid_info, rigid_config)
 
     if qd.static(not is_backward):
-        func_copy_next_to_curr(errno, dyn_state, rigid_info, rigid_config)
+        func_copy_next_to_curr(dyn_state, rigid_info, rigid_config, errno)
 
         if qd.static(not rigid_config.enable_mujoco_compatibility):
             func_update_cartesian_space(

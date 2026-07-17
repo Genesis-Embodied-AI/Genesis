@@ -24,7 +24,7 @@ from .forward_kinematics import func_update_cartesian_space
 
 @qd.func
 def func_copy_next_to_curr(
-    errno: qd.Tensor, dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template()
+    dyn_state: array_class.DynState, rigid_info: array_class.RigidInfo, rigid_config: qd.template(), errno: qd.Tensor
 ):
     n_qs = rigid_info.qpos.shape[0]
     n_dofs = dyn_state.dofs.vel.shape[0]

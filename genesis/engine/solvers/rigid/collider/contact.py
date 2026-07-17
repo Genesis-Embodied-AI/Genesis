@@ -313,12 +313,12 @@ def func_add_contact(
     normal: qd.types.vector(3),
     contact_pos: qd.types.vector(3),
     penetration,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
-    use_atomic: qd.template() = False,
+    use_atomic: qd.template(),
+    errno: qd.Tensor,
 ):
     i_c = 0
     if qd.static(use_atomic):
@@ -545,12 +545,12 @@ def func_rotate_frame(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts(
-    errno: qd.Tensor,
     collider_state: array_class.ColliderState,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """Clamp + (optional) link-pair pruning, in one per-env loop pass.
 
@@ -973,10 +973,10 @@ def func_clamp_prune_contacts(
 
 @qd.kernel(fastcache=True)
 def func_clamp_prune_contacts_coop(
-    errno: qd.Tensor,
     collider_state: array_class.ColliderState,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
+    errno: qd.Tensor,
 ):
     """GPU-only cooperative warp-per-env variant of func_clamp_prune_contacts.
 

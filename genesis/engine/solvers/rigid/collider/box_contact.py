@@ -104,13 +104,13 @@ def func_plane_box_contact(
     i_b,
     i_pair,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     ga_pos, ga_quat = dyn_state.geoms.pos[i_ga, i_b], dyn_state.geoms.quat[i_ga, i_b]
     gb_pos, gb_quat = dyn_state.geoms.pos[i_gb, i_b], dyn_state.geoms.quat[i_gb, i_b]
@@ -134,11 +134,12 @@ def func_plane_box_contact(
             normal,
             contact_pos,
             penetration,
-            errno,
             dyn_state,
             collider_state,
             dyn_info,
             collider_info,
+            use_atomic=False,
+            errno=errno,
         )
 
         if qd.static(rigid_config.enable_multi_contact):
@@ -164,11 +165,12 @@ def func_plane_box_contact(
                                 normal,
                                 contact_pos,
                                 penetration,
-                                errno,
                                 dyn_state,
                                 collider_state,
                                 dyn_info,
                                 collider_info,
+                                use_atomic=False,
+                                errno=errno,
                             )
                             n_con = n_con + 1
 
@@ -179,13 +181,13 @@ def func_box_box_contact(
     i_gb,
     i_b,
     i_pair,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """
     Use Mujoco's box-box contact detection algorithm for more stable collision detection.
@@ -530,11 +532,12 @@ def func_box_box_contact(
                             -normal_0,
                             contact_pos,
                             -dist,
-                            errno,
                             dyn_state,
                             collider_state,
                             dyn_info,
                             collider_info,
+                            use_atomic=False,
+                            errno=errno,
                         )
                         n_added = n_added + 1
         else:
@@ -854,10 +857,11 @@ def func_box_box_contact(
                                 -normal_0,
                                 contact_pos,
                                 -dist,
-                                errno,
                                 dyn_state,
                                 collider_state,
                                 dyn_info,
                                 collider_info,
+                                use_atomic=False,
+                                errno=errno,
                             )
                             n_added = n_added + 1

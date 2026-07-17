@@ -897,13 +897,13 @@ def kernel_update_vverts_for_vgeoms(
 
 @qd.func
 def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    errno: qd.Tensor,
 ):
     _B = dyn_state.links.is_hibernated.shape[1]
 

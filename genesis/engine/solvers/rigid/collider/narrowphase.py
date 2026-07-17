@@ -93,7 +93,6 @@ def func_add_polytope_vertex_contacts_sdf(
     gb_quat: qd.types.vector(4),
     tolerance,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
@@ -102,6 +101,7 @@ def func_add_polytope_vertex_contacts_sdf(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     seeded: qd.template(),
+    errno: qd.Tensor,
 ):
     # Emit up to n_max contacts at the deepest spatially-diverse vertices of A penetrating (or near-touching) B's
     # surface. Pass 1 scans every vertex of A, evaluates B's grid SDF at each, and keeps the n_max deepest in a small
@@ -569,11 +569,12 @@ def func_add_polytope_vertex_contacts_sdf(
                             normal_v,
                             contact_pos_v,
                             pen_emit,
-                            errno,
                             dyn_state,
                             collider_state,
                             dyn_info,
                             collider_info,
+                            use_atomic=False,
+                            errno=errno,
                         )
                         n_added = n_added + 1
                     else:
@@ -616,7 +617,6 @@ def func_add_polytope_vertex_contacts_sdf_shell(
     gb_quat: qd.types.vector(4),
     tolerance,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
@@ -624,6 +624,7 @@ def func_add_polytope_vertex_contacts_sdf_shell(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """
     Sector-aggregated manifold for nested-shell pairs (both bodies hollow, see the dispatcher gate).
@@ -996,11 +997,12 @@ def func_add_polytope_vertex_contacts_sdf_shell(
                 normal_c,
                 contact_pos,
                 emit_pen,
-                errno,
                 dyn_state,
                 collider_state,
                 dyn_info,
                 collider_info,
+                use_atomic=False,
+                errno=errno,
             )
 
 
@@ -1285,7 +1287,6 @@ def func_contact_mpr_terrain(
     i_gb,
     i_b,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -1294,6 +1295,7 @@ def func_contact_mpr_terrain(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     ga_pos, ga_quat = dyn_state.geoms.pos[i_ga, i_b], dyn_state.geoms.quat[i_ga, i_b]
     gb_pos, gb_quat = dyn_state.geoms.pos[i_gb, i_b], dyn_state.geoms.quat[i_gb, i_b]
@@ -1499,11 +1501,12 @@ def func_contact_mpr_terrain(
                                                 normal,
                                                 contact_pos,
                                                 penetration,
-                                                errno,
                                                 dyn_state,
                                                 collider_state,
                                                 dyn_info,
                                                 collider_info,
+                                                use_atomic=False,
+                                                errno=errno,
                                             )
                                             n_con = n_con + 1
                                             if i_detection == 0 and not is_col_0:
@@ -1688,7 +1691,6 @@ def func_convex_convex_contact(
     i_gb,
     i_b,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -1700,6 +1702,7 @@ def func_convex_convex_contact(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     if not (dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.PLANE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.BOX):
         EPS = rigid_info.EPS[None]
@@ -1979,11 +1982,12 @@ def func_convex_convex_contact(
                                             gjk_state.normal[i_b, i_c],
                                             gjk_state.contact_pos[i_b, i_c],
                                             gjk_state.diff_penetration[i_b, i_c],
-                                            errno,
                                             dyn_state,
                                             collider_state,
                                             dyn_info,
                                             collider_info,
+                                            use_atomic=False,
+                                            errno=errno,
                                         )
                                     break
                                 else:
@@ -2016,11 +2020,12 @@ def func_convex_convex_contact(
                                                     normal,
                                                     contact_pos,
                                                     penetration,
-                                                    errno,
                                                     dyn_state,
                                                     collider_state,
                                                     dyn_info,
                                                     collider_info,
+                                                    use_atomic=False,
+                                                    errno=errno,
                                                 )
 
                                         break
@@ -2056,11 +2061,12 @@ def func_convex_convex_contact(
                         normal_0,
                         contact_pos_0,
                         penetration_0,
-                        errno,
                         dyn_state,
                         collider_state,
                         dyn_info,
                         collider_info,
+                        use_atomic=False,
+                        errno=errno,
                     )
                     if multi_contact:
                         # Perturb geom_a around two orthogonal axes to find multiple contacts
@@ -2142,11 +2148,12 @@ def func_convex_convex_contact(
                             normal,
                             contact_pos,
                             penetration,
-                            errno,
                             dyn_state,
                             collider_state,
                             dyn_info,
                             collider_info,
+                            use_atomic=False,
+                            errno=errno,
                         )
                         n_con = n_con + 1
 
@@ -2287,7 +2294,6 @@ def _func_multicontact_mpr(
     penetration_0,
     prefer_gjk_0: bool,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -2298,6 +2304,7 @@ def _func_multicontact_mpr(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """Compute all contacts for a pair and write them contiguously via a single atomic reservation.
 
@@ -2606,7 +2613,6 @@ def _func_multicontact_mpr(
 @qd.kernel(fastcache=True)
 def _func_narrowphase_multicontact(
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -2619,6 +2625,7 @@ def _func_narrowphase_multicontact(
     gjk_static_config: qd.template(),
     n_total_threads: qd.template(),
     max_items_per_thread: qd.template(),
+    errno: qd.Tensor,
 ):
     for i_tid in range(n_total_threads):
         for _iter in range(max_items_per_thread):
@@ -2645,7 +2652,6 @@ def _func_narrowphase_multicontact(
                 penetration_0,
                 prefer_gjk_0,
                 geoms_init_AABB,
-                errno,
                 dyn_state,
                 collider_state,
                 mpr_state,
@@ -2656,6 +2662,7 @@ def _func_narrowphase_multicontact(
                 rigid_config,
                 collider_static_config,
                 gjk_static_config,
+                errno,
             )
 
 
@@ -2692,7 +2699,6 @@ def _func_enqueue_for_multicontact(
 @qd.kernel(fastcache=True)
 def _func_narrowphase_contact0(
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -2704,6 +2710,7 @@ def _func_narrowphase_contact0(
     collider_static_config: qd.template(),
     n_envs: qd.template(),
     n_chunks: qd.template(),
+    errno: qd.Tensor,
 ):
     _grid_size = n_envs * n_chunks
     max_broad_pairs = collider_state.broad_collision_pairs.shape[0]
@@ -2916,12 +2923,12 @@ def _func_narrowphase_contact0(
                         normal,
                         contact_pos,
                         penetration,
-                        errno,
                         dyn_state,
                         collider_state,
                         dyn_info,
                         collider_info,
                         use_atomic=True,
+                        errno=errno,
                     )
             elif not is_col:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
@@ -2931,7 +2938,6 @@ def _func_narrowphase_contact0(
 @qd.kernel(fastcache=True)
 def func_narrow_phase_convex_vs_convex(
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -2943,6 +2949,7 @@ def func_narrow_phase_convex_vs_convex(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     _B = collider_state.active_buffer.shape[1]
 
@@ -2973,7 +2980,6 @@ def func_narrow_phase_convex_vs_convex(
                         i_gb,
                         i_b,
                         geoms_init_AABB,
-                        errno,
                         dyn_state,
                         collider_state,
                         mpr_state,
@@ -2985,6 +2991,7 @@ def func_narrow_phase_convex_vs_convex(
                         rigid_config,
                         collider_static_config,
                         gjk_static_config,
+                        errno,
                     )
 
 
@@ -3061,7 +3068,6 @@ def func_narrow_phase_diff_convex_vs_convex(
 @qd.kernel(fastcache=True)
 def func_narrow_phase_convex_specializations(
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
@@ -3069,6 +3075,7 @@ def func_narrow_phase_convex_specializations(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     _B = collider_state.active_buffer.shape[1]
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
@@ -3087,13 +3094,13 @@ def func_narrow_phase_convex_specializations(
                     i_b,
                     i_pair,
                     geoms_init_AABB,
-                    errno,
                     dyn_state,
                     collider_state,
                     dyn_info,
                     collider_info,
                     rigid_config,
                     collider_static_config,
+                    errno,
                 )
 
             if qd.static(rigid_config.box_box_detection):
@@ -3103,20 +3110,19 @@ def func_narrow_phase_convex_specializations(
                         i_gb,
                         i_b,
                         i_pair,
-                        errno,
                         dyn_state,
                         collider_state,
                         dyn_info,
                         rigid_info,
                         collider_info,
                         collider_static_config,
+                        errno,
                     )
 
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_any_vs_terrain(
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -3125,6 +3131,7 @@ def func_narrow_phase_any_vs_terrain(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -3149,7 +3156,6 @@ def func_narrow_phase_any_vs_terrain(
                         i_gb,
                         i_b,
                         geoms_init_AABB,
-                        errno,
                         dyn_state,
                         collider_state,
                         mpr_state,
@@ -3158,13 +3164,13 @@ def func_narrow_phase_any_vs_terrain(
                         collider_info,
                         rigid_config,
                         collider_static_config,
+                        errno,
                     )
 
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_nonconvex_vs_nonterrain(
     geoms_init_AABB: array_class.GeomsInitAABB,
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
@@ -3172,6 +3178,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
     collider_info: array_class.ColliderInfo,
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
+    errno: qd.Tensor,
 ):
     EPS = rigid_info.EPS[None]
 
@@ -3268,7 +3275,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_quat,
                             tolerance,
                             geoms_init_AABB,
-                            errno,
                             dyn_state,
                             collider_state,
                             dyn_info,
@@ -3276,6 +3282,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             collider_info,
                             rigid_config,
                             collider_static_config,
+                            errno,
                         )
                     else:
                         func_add_polytope_vertex_contacts_sdf(
@@ -3289,7 +3296,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_quat,
                             tolerance,
                             geoms_init_AABB,
-                            errno,
                             dyn_state,
                             collider_state,
                             dyn_info,
@@ -3298,6 +3304,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             rigid_config,
                             collider_static_config,
                             seeded=False,
+                            errno=errno,
                         )
                         # Swapped-role verification: A's vertex scan cannot see a feature of B crossing one of A's
                         # faces BETWEEN A's verts, so B's verts are checked against A's SDF as well - as a seeded
@@ -3315,7 +3322,6 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 ga_quat,
                                 tolerance,
                                 geoms_init_AABB,
-                                errno,
                                 dyn_state,
                                 collider_state,
                                 dyn_info,
@@ -3324,4 +3330,5 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 rigid_config,
                                 collider_static_config,
                                 seeded=True,
+                                errno=errno,
                             )

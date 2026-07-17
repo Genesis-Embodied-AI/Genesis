@@ -302,7 +302,7 @@ class ConstraintSolver:
             self._n_iterations,
         )
 
-        func_update_qacc(self._solver._errno, self._solver.dyn_state, self.constraint_state, self._solver._rigid_config)
+        func_update_qacc(self._solver.dyn_state, self.constraint_state, self._solver._rigid_config, self._solver._errno)
 
         if self._solver._options.noslip_iterations > 0:
             self.noslip()
@@ -6139,10 +6139,10 @@ def func_update_contact_force(
 
 @qd.kernel(fastcache=True)
 def func_update_qacc(
-    errno: qd.Tensor,
     dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
+    errno: qd.Tensor,
 ):
     n_dofs = dyn_state.dofs.acc.shape[0]
     _B = dyn_state.dofs.acc.shape[1]
