@@ -1303,11 +1303,11 @@ def add_inequality_constraints(
             _sort_island_contacts(
                 i_b,
                 collider_state.contact_sort_idx,
-                start=0,
-                n=collider_state.n_contacts[i_b],
-                contacts_pos=collider_state.contact_data.pos,
-                contacts_geom_a=collider_state.contact_data.geom_a,
-                contacts_geom_b=collider_state.contact_data.geom_b,
+                0,
+                collider_state.n_contacts[i_b],
+                collider_state.contact_data.pos,
+                collider_state.contact_data.geom_a,
+                collider_state.contact_data.geom_b,
             )
 
     add_frictionloss_constraints(dyn_state, constraint_state, dyn_info, rigid_info, rigid_config)
@@ -3127,17 +3127,8 @@ def func_hessian_and_cholesky_factor_direct_batch(
             func_hessian_direct_batch(i_b, i_island, constraint_state, dyn_info, rigid_info, rigid_config)
             func_cholesky_factor_direct_batch(i_b, i_island, constraint_state, rigid_info, rigid_config)
     else:
-        func_hessian_direct_batch(
-            i_b,
-            i_island=0,
-            constraint_state=constraint_state,
-            dyn_info=dyn_info,
-            rigid_info=rigid_info,
-            rigid_config=rigid_config,
-        )
-        func_cholesky_factor_direct_batch(
-            i_b, i_island=0, constraint_state=constraint_state, rigid_info=rigid_info, rigid_config=rigid_config
-        )
+        func_hessian_direct_batch(i_b, 0, constraint_state, dyn_info, rigid_info, rigid_config)
+        func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -3214,9 +3205,7 @@ def func_hessian_and_cholesky_factor_direct(
         else:
             qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
             for i_b in range(_B):
-                func_cholesky_factor_direct_batch(
-                    i_b, i_island=0, constraint_state=constraint_state, rigid_info=rigid_info, rigid_config=rigid_config
-                )
+                func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -3560,14 +3549,7 @@ def func_cone_rank_update_island(
                             ld_start = ld_support
 
                     if func_apply_staged_rank_updates_island(
-                        i_b,
-                        i_island,
-                        ld_start,
-                        n_u=6,
-                        signs=signs,
-                        constraint_state=constraint_state,
-                        rigid_info=rigid_info,
-                        rigid_config=rigid_config,
+                        i_b, i_island, ld_start, 6, signs, constraint_state, rigid_info, rigid_config
                     ):
                         is_degenerated = True
 
@@ -4146,7 +4128,7 @@ def func_ls_init_and_eval_p0(
             jv1 = constraint_state.jv[i_head + 1, i_b]
             jv2 = constraint_state.jv[i_head + 2, i_b]
             cost_c, grad_c, hess_c = _func_cone_cost_along_alpha(
-                jar0, jar1, jar2, jv0, jv1, jv2, alpha=0.0, d0=d0, d1=d1, d2=d2, con_mu=con_mu, mu=friction
+                jar0, jar1, jar2, jv0, jv1, jv2, 0.0, d0, d1, d2, con_mu, friction
             )
             quad_total_0 = quad_total_0 + cost_c
             quad_total_1 = quad_total_1 + grad_c
@@ -4317,12 +4299,12 @@ def _func_linesearch_eval_at_alpha(
     alphas = qd.Vector([alpha, alpha, alpha])
     if qd.static(coop):
         t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
-            i_b, tid, alphas, constraint_state, rigid_config, n_alphas=1
+            i_b, tid, alphas, constraint_state, rigid_config, 1
         )
         return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, constraint_state, rigid_info, coop=True)
     else:
         t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
-            i_b, alphas, constraint_state, rigid_config, n_alphas=1
+            i_b, alphas, constraint_state, rigid_config, 1
         )
         return _func_linesearch_eval_quadratic_at_alpha(i_b, tid, alpha, t0, constraint_state, rigid_info, coop=False)
 
@@ -4512,14 +4494,14 @@ def _func_linesearch_eval_at_3_alphas(
     rationale for the per-branch return."""
     if qd.static(coop):
         t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
-            i_b, tid, alphas, constraint_state, rigid_config, n_alphas=3
+            i_b, tid, alphas, constraint_state, rigid_config, 3
         )
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_info, coop=True
         )
     else:
         t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
-            i_b, alphas, constraint_state, rigid_config, n_alphas=3
+            i_b, alphas, constraint_state, rigid_config, 3
         )
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_info, coop=False
@@ -4735,13 +4717,7 @@ def func_linesearch_batch(
             i_b, dyn_state, constraint_state, dyn_info, rigid_info, rigid_config
         )
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_linesearch_eval_at_alpha(
-            i_b,
-            tid=0,
-            alpha=p0_alpha - p0_deriv_0 / p0_deriv_1,
-            constraint_state=constraint_state,
-            rigid_info=rigid_info,
-            rigid_config=rigid_config,
-            coop=False,
+            i_b, 0, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_info, rigid_config, coop=False
         )
 
         if p0_cost < p1_cost:
@@ -4756,16 +4732,16 @@ def func_linesearch_batch(
         else:
             res_alpha, ls_result = func_linesearch_refine(
                 i_b,
-                tid=0,
-                p1_alpha=p1_alpha,
-                p1_cost=p1_cost,
-                p1_deriv_0=p1_deriv_0,
-                p1_deriv_1=p1_deriv_1,
-                p0_cost=p0_cost,
-                gtol=gtol,
-                constraint_state=constraint_state,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
+                0,
+                p1_alpha,
+                p1_cost,
+                p1_deriv_0,
+                p1_deriv_1,
+                p0_cost,
+                gtol,
+                constraint_state,
+                rigid_info,
+                rigid_config,
                 coop=False,
             )
             constraint_state.ls_result[i_b] = ls_result
@@ -5388,7 +5364,7 @@ def func_update_gradient_batch(
         else:
             # Whole-env solve (matching the whole-env factor): the block-diagonal L's per-island blocks are solved
             # together as one dense system; i_island is unused.
-            func_cholesky_solve_batch(i_b, i_island=0, constraint_state=constraint_state, rigid_config=rigid_config)
+            func_cholesky_solve_batch(i_b, 0, constraint_state, rigid_config)
 
 
 @qd.func
@@ -5971,13 +5947,7 @@ def func_solve_iter(
                     if qd.static(rigid_config.enable_cone_free_hessian_reuse):
                         func_copy_cone_free_hessian_whole_env(i_b, constraint_state, save=False)
                         func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
-                        func_cholesky_factor_direct_batch(
-                            i_b,
-                            i_island=0,
-                            constraint_state=constraint_state,
-                            rigid_info=rigid_info,
-                            rigid_config=rigid_config,
-                        )
+                        func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
                     else:
                         func_hessian_and_cholesky_factor_direct_batch(
                             i_b, constraint_state, dyn_info, rigid_info, rigid_config

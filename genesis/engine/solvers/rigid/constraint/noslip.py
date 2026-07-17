@@ -246,11 +246,11 @@ def func_noslip_batch(
                             i_b,
                             constraint_state.jac_dofs_idx,
                             coef,
-                            coef_1=0.0,
-                            vec=constraint_state.Mgrad,
-                            jac=constraint_state.jac,
-                            jac_n_dofs=constraint_state.jac_n_dofs,
-                            rigid_info=rigid_info,
+                            0.0,
+                            constraint_state.Mgrad,
+                            constraint_state.jac,
+                            constraint_state.jac_n_dofs,
+                            rigid_info,
                         )
                         if i_phase == 0:
                             A_diag = func_dot_row(
@@ -389,7 +389,7 @@ def func_noslip_batch(
                                 constraint_state.efc_force[j_efc, i_b] = mid + y
                                 constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                         cost_change = func_cost_change(
-                            i_b, j_efc, Ac, old_force, res, EPS, constraint_state.efc_force, dim=2
+                            i_b, j_efc, Ac, old_force, res, EPS, constraint_state.efc_force, 2
                         )
 
                         improvement -= cost_change
@@ -471,23 +471,8 @@ def kernel_noslip(
     else:
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
-            func_noslip_batch(
-                i_b,
-                i_island=0,
-                dyn_state=dyn_state,
-                collider_state=collider_state,
-                constraint_state=constraint_state,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
-            )
-            func_dual_finish_batch(
-                i_b,
-                i_island=0,
-                dyn_state=dyn_state,
-                constraint_state=constraint_state,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
-            )
+            func_noslip_batch(i_b, 0, dyn_state, collider_state, constraint_state, rigid_info, rigid_config)
+            func_dual_finish_batch(i_b, 0, dyn_state, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func

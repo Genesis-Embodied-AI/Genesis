@@ -131,7 +131,7 @@ def func_COM_links(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_COM_links_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
@@ -482,7 +482,7 @@ def func_forward_kinematics_batch(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_forward_kinematics_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
@@ -564,7 +564,7 @@ def func_update_geoms_batch(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_update_geoms_entity(
@@ -741,7 +741,7 @@ def func_forward_velocity_batch(
         if qd.static(rigid_config.use_hibernation)
         else range(dyn_info.entities.n_links.shape[0])
     ):
-        if func_check_index_range(i_e_, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation):
+        if func_check_index_range(i_e_, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
             i_e = rigid_info.awake_entities[i_e_, i_b] if qd.static(rigid_config.use_hibernation) else i_e_
 
             func_forward_velocity_entity(i_e, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward)

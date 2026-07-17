@@ -409,13 +409,13 @@ def func_extended_epa(
             pos_b,
             quat_b,
             dir,
-            dir_norm=1.0,
-            collider_state=collider_state,
-            gjk_state=gjk_state,
-            dyn_info=dyn_info,
-            collider_info=collider_info,
-            rigid_config=rigid_config,
-            collider_static_config=collider_static_config,
+            1.0,
+            collider_state,
+            gjk_state,
+            dyn_info,
+            collider_info,
+            rigid_config,
+            collider_static_config,
         )
         w = gjk_state.polytope_verts.mink[i_b, wi]
 

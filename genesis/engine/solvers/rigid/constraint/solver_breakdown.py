@@ -224,18 +224,7 @@ def _func_decomp_linesearch_p0(
                             jv1 = constraint_state.jv[i_c + 1, i_b]
                             jv2 = constraint_state.jv[i_c + 2, i_b]
                             c_cost, c_grad, c_hess = solver._func_cone_cost_along_alpha(
-                                jar0,
-                                jar1,
-                                jar2,
-                                jv0,
-                                jv1,
-                                jv2,
-                                alpha=0.0,
-                                d0=d0,
-                                d1=d1v,
-                                d2=d2v,
-                                con_mu=con_mu,
-                                mu=friction,
+                                jar0, jar1, jar2, jv0, jv1, jv2, 0.0, d0, d1v, d2v, con_mu, friction
                             )
                             local_p0_cost += c_cost
                             local_constraint_grad += c_grad
@@ -349,13 +338,7 @@ def _func_decomp_linesearch_refine_coop(
         )
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-                i_b,
-                tid,
-                alpha=0.0,
-                constraint_state=constraint_state,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
-                coop=True,
+                i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=True
             )
         if p1_cost < p0_cost and tid == 0:
             constraint_state.ls_alpha[i_b] = p1_alpha
@@ -401,13 +384,7 @@ def _func_decomp_linesearch_refine_serial(
         )
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-                i_b,
-                tid,
-                alpha=0.0,
-                constraint_state=constraint_state,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
-                coop=False,
+                i_b, tid, 0.0, constraint_state, rigid_info, rigid_config, coop=False
             )
         if p1_cost < p0_cost:
             constraint_state.ls_alpha[i_b] = p1_alpha
@@ -929,9 +906,7 @@ def _func_newton_only_nt_hessian_and_cholesky(
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 # Decomposed arm is non-island: i_island = 0 is the full-env work-unit (island branch is dead).
-                solver.func_cholesky_factor_direct_batch(
-                    i_b, i_island=0, constraint_state=constraint_state, rigid_info=rigid_info, rigid_config=rigid_config
-                )
+                solver.func_cholesky_factor_direct_batch(i_b, 0, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
@@ -1019,7 +994,7 @@ def _kernel_solve_graph(
                 # its own tile over the (env, island) grid. The per-island tile stages nt_H non-destructively, so the
                 # elliptic cone rides the same add/factor+solve/remove bracket as the whole-env fused path below and
                 # the incremental patch keeps maintaining the cone-free Hessian.
-                _func_wrap_cone_hessian(constraint_state, rigid_config, scale=1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, 1.0)
                 solver.func_island_tiled_factor_solve_all(
                     constraint_state,
                     dyn_info,
@@ -1027,7 +1002,7 @@ def _kernel_solve_graph(
                     rigid_config,
                     qd.simt.Tile32x32 if qd.static(rigid_config.cholesky_tile_size == 32) else qd.simt.Tile16x16,
                 )
-                _func_wrap_cone_hessian(constraint_state, rigid_config, scale=-1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, -1.0)
             else:
                 # Islands OFF, or islands ON without hibernation: the whole-env Hessian is block-diagonal by island, so
                 # its Cholesky is itself block-diagonal - the whole-env fused factor+solve (L in shared memory) yields
@@ -1036,9 +1011,9 @@ def _kernel_solve_graph(
                 # grid only pays off when the whole-env Hessian does not fit shared (the cooperative branch below).
                 # For the elliptic cone, add its coupled block to the maintained nt_H, factor+solve, then remove it, so
                 # the incremental patch keeps working on the cone-free Hessian (no per-iteration rebuild).
-                _func_wrap_cone_hessian(constraint_state, rigid_config, scale=1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, 1.0)
                 solver.func_cholesky_and_solve_fused_tiled(constraint_state, rigid_info, rigid_config)
-                _func_wrap_cone_hessian(constraint_state, rigid_config, scale=-1.0)
+                _func_wrap_cone_hessian(constraint_state, rigid_config, -1.0)
         elif qd.static(
             rigid_config.solver_type == gs.constraint_solver.Newton
             and rigid_config.enable_per_island_solve

@@ -623,9 +623,7 @@ def func_gjk(
             break
 
         # Get the next support vector
-        next_support_vector = func_simplex_vertex_linear_comb(
-            i_b, i_v=2, i_s1=0, i_s2=1, i_s3=2, i_s4=3, _lambda=_lambda, n=n, gjk_state=gjk_state
-        )
+        next_support_vector = func_simplex_vertex_linear_comb(i_b, 2, 0, 1, 2, 3, _lambda, n, gjk_state)
         if func_is_equal_vec(next_support_vector, support_vector, collider_info.gjk.FLOAT_MIN[None]):
             # If the next support vector is equal to the previous one, we converged to the minimum distance
             break
@@ -648,9 +646,7 @@ def func_gjk(
 
         # Compute witness points
         for i in range(2):
-            witness_point = func_simplex_vertex_linear_comb(
-                i_b, i, i_s1=0, i_s2=1, i_s3=2, i_s4=3, _lambda=_lambda, n=nsimplex, gjk_state=gjk_state
-            )
+            witness_point = func_simplex_vertex_linear_comb(i_b, i, 0, 1, 2, 3, _lambda, nsimplex, gjk_state)
             if i == 0:
                 gjk_state.witness.point_obj1[i_b, 0] = witness_point
             else:
@@ -835,7 +831,7 @@ def func_gjk_subdistance(i_b, n, gjk_state: array_class.GJKState, collider_info:
     dmin = collider_info.gjk.FLOAT_MAX[None]
 
     if n == 4:
-        _lambda, flag3d = func_gjk_subdistance_3d(i_b, i_s1=0, i_s2=1, i_s3=2, i_s4=3, gjk_state=gjk_state)
+        _lambda, flag3d = func_gjk_subdistance_3d(i_b, 0, 1, 2, 3, gjk_state)
         flag = flag3d
 
     if (flag == RETURN_CODE.FAIL) or n == 3:
@@ -851,9 +847,7 @@ def func_gjk_subdistance(i_b, n, gjk_state: array_class.GJKState, collider_info:
 
             if failed_3d:
                 if flag2d == RETURN_CODE.SUCCESS:
-                    closest_point = func_simplex_vertex_linear_comb(
-                        i_b, i_v=2, i_s1=k_1, i_s2=k_2, i_s3=k_3, i_s4=0, _lambda=_lambda2d, n=3, gjk_state=gjk_state
-                    )
+                    closest_point = func_simplex_vertex_linear_comb(i_b, 2, k_1, k_2, k_3, 0, _lambda2d, 3, gjk_state)
                     d = closest_point.dot(closest_point)
                     if d < dmin:
                         dmin = d
@@ -886,9 +880,7 @@ def func_gjk_subdistance(i_b, n, gjk_state: array_class.GJKState, collider_info:
             _lambda1d = func_gjk_subdistance_1d(i_b, k_1, k_2, gjk_state)
 
             if failed_3d or failed_2d:
-                closest_point = func_simplex_vertex_linear_comb(
-                    i_b, i_v=2, i_s1=k_1, i_s2=k_2, i_s3=0, i_s4=0, _lambda=_lambda1d, n=2, gjk_state=gjk_state
-                )
+                closest_point = func_simplex_vertex_linear_comb(i_b, 2, k_1, k_2, 0, 0, _lambda1d, 2, gjk_state)
                 d = closest_point.dot(closest_point)
                 if d < dmin:
                     dmin = d

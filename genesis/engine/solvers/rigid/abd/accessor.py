@@ -1087,8 +1087,8 @@ def kernel_set_drone_rpm(
             if invert:
                 torque = -torque
 
-            func_apply_link_external_force(i_l, i_b, force, dyn_state, ref=1, local=1)
-            func_apply_link_external_torque(i_l, i_b, torque, dyn_state, ref=1, local=1)
+            func_apply_link_external_force(i_l, i_b, force, dyn_state, 1, 1)
+            func_apply_link_external_torque(i_l, i_b, torque, dyn_state, 1, 1)
 
 
 @qd.kernel(fastcache=True)

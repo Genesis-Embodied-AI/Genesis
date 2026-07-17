@@ -225,7 +225,7 @@ def func_add_polytope_vertex_contacts_sdf(
                             vertex_pos = gu.qd_transform_by_trans_quat(
                                 collider_info.verts_spatial_grid.verts_pos[i_sv], ga_pos, ga_quat
                             )
-                            if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, expansion=0.0, dyn_state=dyn_state):
+                            if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state):
                                 is_in_band, sd_v = sdf.sdf_func_world_local_banded(
                                     i_gb, vertex_pos, gb_pos, gb_quat, margin, dyn_info, collider_info
                                 )
@@ -792,7 +792,7 @@ def func_add_polytope_vertex_contacts_sdf_shell(
             # force modulation ratchets a softly-stacked column sideways.
             for i_v in range(dyn_info.geoms.vert_start[j_ga], dyn_info.geoms.vert_end[j_ga]):
                 vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ja_pos, ja_quat)
-                if func_point_in_geom_aabb(j_gb, i_b, vertex_pos, expansion=0.0, dyn_state=dyn_state):
+                if func_point_in_geom_aabb(j_gb, i_b, vertex_pos, 0.0, dyn_state):
                     is_in_band, sd_v = sdf.sdf_func_world_local_banded(
                         j_gb, vertex_pos, jb_pos, jb_quat, margin, dyn_info, collider_info
                     )
@@ -1028,7 +1028,7 @@ def func_contact_vertex_sdf(
 
     for i_v in range(dyn_info.geoms.vert_start[i_ga], dyn_info.geoms.vert_end[i_ga]):
         vertex_pos = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], ga_pos, ga_quat)
-        if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, expansion=0.0, dyn_state=dyn_state):
+        if func_point_in_geom_aabb(i_gb, i_b, vertex_pos, 0.0, dyn_state):
             new_penetration = -sdf.sdf_func_world_local(
                 i_gb, vertex_pos, gb_pos, gb_quat, dyn_info.geoms, collider_info.sdf
             )

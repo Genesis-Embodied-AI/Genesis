@@ -602,7 +602,7 @@ def mpr_discover_portal(
 
                 dot = direction.dot(mpr_state.simplex_support.v[0, i_b])
                 if dot > 0:
-                    mpr_swap(i_ga, i_gb, i_b, j=2, mpr_state=mpr_state, i=1)
+                    mpr_swap(i_ga, i_gb, i_b, 2, mpr_state, 1)
                     direction = -direction
 
                 # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller

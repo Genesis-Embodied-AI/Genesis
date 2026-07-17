@@ -169,7 +169,7 @@ def func_compute_mass_matrix(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 dyn_state.links.crb_inertial[i_l, i_b] = dyn_state.links.cinr_inertial[i_l, i_b]
@@ -190,7 +190,7 @@ def func_compute_mass_matrix(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l_root = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l_root = [i_l_root, i_b] if qd.static(rigid_config.batch_links_info) else i_l_root
                 if dyn_info.links.root_idx[I_l_root] == i_l_root:
@@ -223,7 +223,7 @@ def func_compute_mass_matrix(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
@@ -292,9 +292,7 @@ def func_compute_mass_matrix(
                 if qd.static(rigid_config.use_hibernation)
                 else qd.static(range(1))
             ):
-                if func_check_index_range(
-                    i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
-                ):
+                if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
                     i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                     # Assemble each mass block rooted in this entity over its full range (see
@@ -1053,7 +1051,7 @@ def func_torque_and_passive_force(
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_dofs[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_dofs[i_b], rigid_config.use_hibernation):
                 i_d = rigid_info.awake_dofs[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
@@ -1068,7 +1066,7 @@ def func_torque_and_passive_force(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
@@ -1114,9 +1112,7 @@ def func_update_acc(
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(
-                i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
-            ):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
                 i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):
@@ -1179,7 +1175,7 @@ def func_update_force(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 f1_ang, f1_vel = gu.inertial_mul(
@@ -1222,9 +1218,7 @@ def func_update_force(
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(
-                i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
-            ):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
                 i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 for i_l_ in range(dyn_info.entities.n_links[i_e]):
@@ -1286,7 +1280,7 @@ def func_bias_force(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
@@ -1346,9 +1340,7 @@ def func_compute_qacc(
         for i_1 in (
             range(rigid_info.n_awake_entities[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(
-                i_1, min=0, max=rigid_info.n_awake_entities[i_b], cond=rigid_config.use_hibernation
-            ):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_entities[i_b], rigid_config.use_hibernation):
                 i_e = rigid_info.awake_entities[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 for i_d1_ in range(dyn_info.entities.n_dofs[i_e]):
@@ -1375,7 +1367,7 @@ def func_integrate(
         for i_1 in (
             range(rigid_info.n_awake_dofs[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_dofs[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_dofs[i_b], rigid_config.use_hibernation):
                 i_d = rigid_info.awake_dofs[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
 
                 dyn_state.dofs.vel_next[i_d, i_b] = (
@@ -1391,7 +1383,7 @@ def func_integrate(
         for i_1 in (
             range(rigid_info.n_awake_links[i_b]) if qd.static(rigid_config.use_hibernation) else qd.static(range(1))
         ):
-            if func_check_index_range(i_1, min=0, max=rigid_info.n_awake_links[i_b], cond=rigid_config.use_hibernation):
+            if func_check_index_range(i_1, 0, rigid_info.n_awake_links[i_b], rigid_config.use_hibernation):
                 i_l = rigid_info.awake_links[i_1, i_b] if qd.static(rigid_config.use_hibernation) else i_0
                 I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
                 if dyn_info.links.n_dofs[I_l] > 0:
