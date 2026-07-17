@@ -3087,7 +3087,7 @@ def kernel_step_2(
 
     if qd.static(rigid_config.use_hibernation):
         func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
-            errno, dyn_info, rigid_info, rigid_info, dyn_state, collider_state, constraint_state, rigid_config
+            errno, dyn_info, rigid_info, dyn_state, collider_state, constraint_state, rigid_config
         )
         func_aggregate_awake_entities(dyn_info, rigid_info, dyn_state, rigid_config)
 

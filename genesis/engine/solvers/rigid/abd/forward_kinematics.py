@@ -894,7 +894,6 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     errno: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
-    unused__rigid_info: array_class.RigidInfo,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
