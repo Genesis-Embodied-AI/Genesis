@@ -1290,7 +1290,6 @@ def _kernel_elastomer_surface_state_bvh(
     sensor_elastomer_geom_n: qd.types.ndarray(),
     elastomer_geom_active_envs_mask: qd.types.ndarray(),
     bvh: ChunkedBVHData,
-    bvh_stack_size: qd.template(),
     pc_pos_link: qd.types.ndarray(),
     pc_active_envs_mask: qd.types.ndarray(),
     sdf_enter: qd.types.ndarray(),
@@ -1304,6 +1303,7 @@ def _kernel_elastomer_surface_state_bvh(
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
     aabb_margin: float,
+    bvh_stack_size: qd.template(),
 ):
     """Per-(env, chunk): compute the chunk-local query AABB in registers, BVH-traverse, and write
     per-candidate surface state.
@@ -2238,7 +2238,6 @@ class ElastomerTaxelSensor(
                     shared_metadata.sensor_elastomer_geom_n,
                     shared_metadata.elastomer_geom_active_envs_mask,
                     bvh.kernel_bvh,
-                    BVH_STACK_SIZE,
                     shared_metadata.pc_pos_link,
                     shared_metadata.pc_active_envs_mask,
                     shared_metadata.shear_anchor_sd_enter,
@@ -2252,6 +2251,7 @@ class ElastomerTaxelSensor(
                     solver.dyn_info,
                     solver.collider._collider_info,
                     _ELASTOMER_QUERY_AABB_MARGIN,
+                    BVH_STACK_SIZE,
                 )
             else:
                 _kernel_elastomer_surface_state_via_global_bvh(
