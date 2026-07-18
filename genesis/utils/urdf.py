@@ -118,6 +118,8 @@ def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
     for l_info in l_infos:
         if l_info["parent_idx"] >= 0:  # non-base link
             l_info["parent_idx"] = ordered_links_idx.index(l_info["parent_idx"])
+        if "root_idx" in l_info:
+            l_info["root_idx"] = ordered_links_idx.index(l_info["root_idx"])
 
     new_l_infos = [l_infos[i] for i in ordered_links_idx]
     new_j_infos = [j_infos[i] for i in ordered_links_idx]
@@ -130,9 +132,15 @@ def order_links_depth_first(l_infos, j_infos, links_g_infos=None):
 
 def parse_urdf(morph, surface):
     if isinstance(morph.file, (str, Path)):
-        path = os.path.join(get_assets_dir(), morph.file)
-        parent_dir = os.path.dirname(path)
-        robot = urdfpy.URDF.load(path)
+        # Inline XML content parses directly; a file path does not and falls back to reading from disk.
+        try:
+            node = ET.fromstring(morph.file)
+            parent_dir = os.getcwd()
+            robot = urdfpy.URDF._from_xml(node, node, parent_dir)
+        except (ET.ParseError, TypeError):
+            path = os.path.join(get_assets_dir(), morph.file)
+            parent_dir = os.path.dirname(path)
+            robot = urdfpy.URDF.load(path)
     else:
         parent_dir = os.getcwd()
         robot = morph.file

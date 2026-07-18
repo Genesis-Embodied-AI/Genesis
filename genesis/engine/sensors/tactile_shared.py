@@ -69,11 +69,7 @@ def get_mesh_geom_chunks(link, prefer_visual: bool) -> list[tuple[object, np.nda
 
 
 def build_static_chunk_bvh(
-    centroids: np.ndarray,
-    aabb_mins: np.ndarray,
-    aabb_maxs: np.ndarray,
-    global_rows: np.ndarray,
-    leaf_size: int,
+    centroids: np.ndarray, aabb_mins: np.ndarray, aabb_maxs: np.ndarray, global_rows: np.ndarray, leaf_size: int
 ) -> tuple[np.ndarray, ...]:
     """
     Median-split AABB BVH over a static set of elements (points, triangles, etc.) in link-local frame.
@@ -154,7 +150,7 @@ def build_static_chunk_bvh(
 
 
 @qd.func
-def func_vec3_at(values: qd.types.ndarray(), i: int) -> qd.types.vector(3):
+def func_vec3_at(i: int, values: qd.types.ndarray()) -> qd.types.vector(3):
     return qd.Vector([values[i, 0], values[i, 1], values[i, 2]], dt=float)
 
 
@@ -621,10 +617,7 @@ class ViscoelasticHysteresisMixin(Generic[ViscoelasticHysteresisSharedMetadataT]
 
     @classmethod
     def reset(
-        cls,
-        shared_metadata: ViscoelasticHysteresisSharedMetadataT,
-        shared_ground_truth_cache: torch.Tensor,
-        envs_idx,
+        cls, shared_metadata: ViscoelasticHysteresisSharedMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx
     ):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         if shared_metadata.viscoelastic_xi.numel() > 0:

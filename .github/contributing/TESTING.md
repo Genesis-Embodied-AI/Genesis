@@ -12,14 +12,34 @@ uv sync
 uv pip install torch --index-url https://download.pytorch.org/whl/cu126  # NVIDIA
 ```
 
+## Test Suite Layout
+
+Tests are organized per component, with one file per capability inside each folder:
+
+- `tests/core/` - engine framework: backends, quadrants integration, math/geometry utilities, BVH, differentiability
+- `tests/rigid/` - rigid solver: dynamics, kinematics, collision, constraints, friction, terrain, asset loading, ...
+- `tests/deformable/` - mesh-based deformable solvers (FEM, muscle actuation)
+- `tests/particles/` - particle and fluid solvers (MPM, SPH, PBD, SF)
+- `tests/ipc/` - IPC solver stack (rigid and deformable coupling, collision delegation, link filtering)
+- `tests/coupling/` - classical inter-solver couplers (SAP, hybrid scenes)
+- `tests/sensors/` - sensor framework and individual sensor types
+- `tests/rendering/` - renderers, interactive viewer, ImGui overlay
+- `tests/parsers/` - asset parsing (meshes, materials, USD)
+- `tests/integration/` - end-to-end integration scenarios
+- `tests/benchmarks/` - performance benchmarks (run with `-m benchmarks`, excluded from regular runs)
+- `tests/test_examples.py` - runner exposing the `examples/` scripts as tests (`-m examples`)
+
+Shared model fixtures of a component live in its folder-level `conftest.py`; suite-wide fixtures and helpers live in `tests/conftest.py` and `tests/utils.py`.
+
 ## Running Tests
 
 ```bash
 # Run all tests (parallel, excludes benchmarks and examples)
 uv run pytest tests/
 
-# Run specific test file
-uv run pytest tests/test_rigid_physics.py
+# Run one component folder or a specific capability file
+uv run pytest tests/rigid/
+uv run pytest tests/rigid/test_collision.py
 
 # Run with GPU backend
 uv run pytest tests/ --backend=gpu

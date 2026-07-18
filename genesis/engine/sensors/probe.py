@@ -49,16 +49,18 @@ class ProbeSensorMetadataMixin:
     probe_gains: torch.Tensor = make_tensor_field((0, 0))
     probe_gain_resample_low: torch.Tensor = make_tensor_field((0,))
     probe_gain_resample_high: torch.Tensor = make_tensor_field((0,))
-    probe_has_gain_resample: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
+    # The mask tensors below live on the torch side only, as conditions for torch.where, which requires torch.bool;
+    # gs.tc_bool maps to torch.int32 on Apple Metal for quadrants interop.
+    probe_has_gain_resample: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: torch.bool)
     any_gain_resample: bool = False
 
-    dead_taxel_mask: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    dead_taxel_mask: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: torch.bool)
     dead_taxel_values: torch.Tensor = make_tensor_field((0, 0))
     dead_taxel_probability: torch.Tensor = make_tensor_field((0,))
     dead_taxel_value_low: torch.Tensor = make_tensor_field((0,))
     dead_taxel_value_high: torch.Tensor = make_tensor_field((0,))
     any_dead_taxel: bool = False
-    dead_mask_per_col: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    dead_mask_per_col: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: torch.bool)
     dead_values_per_col: torch.Tensor = make_tensor_field((0, 0))
     dead_dirty: bool = True
     cache_col_probe_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: torch.long)
@@ -191,7 +193,7 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
         )
         self._shared_metadata.probe_has_gain_resample = concat_with_tensor(
             self._shared_metadata.probe_has_gain_resample,
-            torch.full((self._n_probes,), has_resample, dtype=gs.tc_bool, device=gs.device),
+            torch.full((self._n_probes,), has_resample, dtype=torch.bool, device=gs.device),
             expand=(self._n_probes,),
         )
 
@@ -217,7 +219,7 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
         if dead_prob > 0.0:
             self._shared_metadata.any_dead_taxel = True
         self._shared_metadata.dead_taxel_mask = torch.zeros(
-            (B, self._shared_metadata.total_n_probes), dtype=gs.tc_bool, device=gs.device
+            (B, self._shared_metadata.total_n_probes), dtype=torch.bool, device=gs.device
         )
         self._shared_metadata.dead_taxel_values = torch.zeros(
             (B, self._shared_metadata.total_n_probes), dtype=gs.tc_float, device=gs.device

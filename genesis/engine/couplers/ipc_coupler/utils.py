@@ -4,6 +4,8 @@ Utility functions for IPC coupler.
 Stateless helper functions extracted from IPCCoupler for clarity.
 """
 
+from typing import TYPE_CHECKING
+
 import numba as nb
 import numpy as np
 
@@ -11,6 +13,28 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from uipc.core import Scene
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import RigidEntity
+    from genesis.engine.materials.rigid import CoupType
+
+
+def has_articulation_dofs(entity: "RigidEntity") -> bool:
+    """True if the entity has dynamic DOFs for IPC articulation coupling.
+
+    Primitive morphs always keep a FIXED base joint (n_joints == 1, n_dofs == 0).
+    Use n_dofs, not n_joints, so fixed Planes/Boxes are not treated as articulated.
+    """
+    return entity.n_dofs > 0
+
+
+def default_coup_type(entity: "RigidEntity") -> "CoupType":
+    """Auto-select coup_type when material.coup_type is None. See has_articulation_dofs."""
+    if has_articulation_dofs(entity):
+        if entity.base_link.is_fixed:
+            return "external_articulation"
+        return "two_way_soft_constraint"
+    return "ipc_only"
 
 
 def find_target_link_for_fixed_merge(link):

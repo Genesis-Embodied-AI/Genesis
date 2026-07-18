@@ -495,6 +495,16 @@ class Scene(RBC):
                 # watertightening (already-watertight inputs); watertighten does its own feature-preserving QEM.
                 if morph_variant.decimate is None:
                     morph_variant.decimate = morph_variant.convexify
+                # Genesis fills in a default rotor armature for joints whose armature is not specified in the model
+                # file, while MuJoCo's own default may differ. Under MuJoCo compatibility, the default is dropped
+                # unless set manually, deferring to MuJoCo. USD keeps the Genesis default since MuJoCo is not
+                # involved in its parsing.
+                if (
+                    isinstance(morph_variant, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone))
+                    and "default_armature" not in morph_variant.model_fields_set
+                    and self._sim.rigid_solver._enable_mujoco_compatibility
+                ):
+                    morph_variant.default_armature = None
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 

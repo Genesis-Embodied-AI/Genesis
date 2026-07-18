@@ -72,9 +72,8 @@ def _batched_solve3x3(A: np.ndarray, b: np.ndarray, fallback: np.ndarray) -> np.
     """Solve a batch of symmetric 3x3 systems with per-row fallback on singular blocks.
 
     Do not replace `np.linalg.solve` here with a numba cofactor loop: the per-row float rounding order differs from
-    numpy's LU decomp, and the `test_nonconvex_nonwatertight_collision` sim assertion is sensitive to that. The
-    `b[..., None]` / `[..., 0]` dance is needed because `np.linalg.solve` treats a 2D RHS as a matrix `(M, K)`, not
-    a stack of column vectors.
+    numpy's LU decomp, and non-convex collision simulations are sensitive to that. The `b[..., None]` / `[..., 0]`
+    dance is needed because `np.linalg.solve` treats a 2D RHS as a matrix `(M, K)`, not a stack of column vectors.
     """
     det = np.linalg.det(A)
     ok = np.abs(det) > 1e-12

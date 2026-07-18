@@ -14,11 +14,7 @@ from genesis.options.sensors import ContactDepthProbe as ContactDepthProbeOption
 from genesis.options.sensors import ContactProbe as ContactProbeOptions
 from genesis.options.sensors import KinematicTaxel as KinematicTaxelOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
-from genesis.utils.raycast_qd import (
-    closest_point_on_triangle,
-    get_triangle_vertices,
-    triangle_face_normal,
-)
+from genesis.utils.raycast_qd import closest_point_on_triangle, get_triangle_vertices, triangle_face_normal
 
 from .raycaster import RaycastContext
 
@@ -53,14 +49,14 @@ if TYPE_CHECKING:
 def _func_query_contact_depth_penetration(
     i_b: int,
     i_s: int,
+    sensor_geoms_idx: qd.types.ndarray(),
     probe_pos: qd.types.vector(3),
     probe_radius_gt: float,
     probe_radius_m: float,
-    geoms_info: array_class.GeomsInfo,
-    geoms_state: array_class.GeomsState,
-    sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
-    sdf_info: array_class.SDFInfo,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     Max probe penetration from SDF over the sensor link's unique opposing geoms, dual-radius.
@@ -71,9 +67,9 @@ def _func_query_contact_depth_penetration(
     n_g = sensor_n_geoms[i_b, i_s]
     for i_g_ in range(n_g):
         i_g = sensor_geoms_idx[i_b, i_s, i_g_]
-        g_pos = geoms_state.pos[i_g, i_b]
-        g_quat = geoms_state.quat[i_g, i_b]
-        sd = sdf.sdf_func_world_local(geoms_info, sdf_info, probe_pos, i_g, g_pos, g_quat)
+        g_pos = dyn_state.geoms.pos[i_g, i_b]
+        g_quat = dyn_state.geoms.quat[i_g, i_b]
+        sd = sdf.sdf_func_world_local(i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, collider_info.sdf)
         pen_gt = probe_radius_gt - sd
         if pen_gt > max_pen_gt:
             max_pen_gt = pen_gt
@@ -100,9 +96,9 @@ _MAX_GEOMS_PER_SENSOR = 64
 @qd.kernel
 def _kernel_build_sensor_contact_idx(
     sensor_link_idx: qd.types.ndarray(),
-    collider_state: array_class.ColliderState,
     sensor_contacts_idx: qd.types.ndarray(),
     sensor_n_contacts: qd.types.ndarray(),
+    collider_state: array_class.ColliderState,
 ):
     """
     Per-(env, sensor) compact contact index for the KinematicTaxel pre-pass.
@@ -132,9 +128,9 @@ def _kernel_build_sensor_contact_idx(
 @qd.kernel
 def _kernel_build_sensor_geom_idx(
     sensor_link_idx: qd.types.ndarray(),
-    collider_state: array_class.ColliderState,
     sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
+    collider_state: array_class.ColliderState,
 ):
     """
     Per-(env, sensor) compact, deduplicated list of opposing contacting geoms for the SDF query path.
@@ -178,16 +174,16 @@ def _kernel_build_sensor_geom_idx(
 def _func_query_contact_depth(
     i_b: int,
     i_s: int,
+    sensor_geoms_idx: qd.types.ndarray(),
     probe_pos: qd.types.vector(3),
     probe_radius_gt: float,
     probe_radius_m: float,
-    geoms_info: array_class.GeomsInfo,
-    geoms_state: array_class.GeomsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: qd.template(),
-    sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
-    sdf_info: array_class.SDFInfo,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    collider_static_config: qd.template(),
     eps: float,
 ):
     """
@@ -210,19 +206,19 @@ def _func_query_contact_depth(
     n_g = sensor_n_geoms[i_b, i_s]
     for i_g_ in range(n_g):
         i_g = sensor_geoms_idx[i_b, i_s, i_g_]
-        if func_point_in_geom_aabb(geoms_state, i_g, i_b, probe_pos, aabb_expansion):
-            g_pos = geoms_state.pos[i_g, i_b]
-            g_quat = geoms_state.quat[i_g, i_b]
-            sd = sdf.sdf_func_world_local(geoms_info, sdf_info, probe_pos, i_g, g_pos, g_quat)
+        if func_point_in_geom_aabb(i_g, i_b, probe_pos, aabb_expansion, dyn_state):
+            g_pos = dyn_state.geoms.pos[i_g, i_b]
+            g_quat = dyn_state.geoms.quat[i_g, i_b]
+            sd = sdf.sdf_func_world_local(i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, collider_info.sdf)
             pen_gt = probe_radius_gt - sd
             pen_m = probe_radius_m - sd
             # Compute the SDF normal at most once across both branches.
             need_normal = (pen_gt > max_pen_gt and pen_gt > eps) or (pen_m > max_pen_m and pen_m > eps)
             if need_normal:
                 normal = sdf.sdf_func_normal_world_local(
-                    geoms_info, rigid_global_info, collider_static_config, sdf_info, probe_pos, i_g, g_pos, g_quat
+                    i_g, probe_pos, g_pos, g_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
                 )
-                contact_link = geoms_info.link_idx[i_g]
+                contact_link = dyn_info.geoms.link_idx[i_g]
                 if pen_gt > max_pen_gt and pen_gt > eps:
                     max_pen_gt = pen_gt
                     contact_link_gt = contact_link
@@ -238,10 +234,10 @@ def _func_query_contact_depth(
 @qd.func
 def _func_kinematic_spring_damper(
     i_b: int,
+    sensor_link_idx: int,
     max_penetration: float,
     contact_link: int,
     contact_normal: qd.types.vector(3),
-    sensor_link_idx: int,
     probe_pos: qd.types.vector(3),
     probe_pos_local: qd.types.vector(3),
     link_quat: qd.types.vector(4),
@@ -250,7 +246,7 @@ def _func_kinematic_spring_damper(
     normal_exponent: float,
     shear_scalar: float,
     twist_scalar: float,
-    links_state: array_class.LinksState,
+    dyn_state: array_class.DynState,
 ):
     """
     Kinematic spring-damper force / torque in the sensor link frame from a single probe's contact query.
@@ -266,12 +262,12 @@ def _func_kinematic_spring_damper(
         force_local = contact_normal_local * (normal_stiffness * s)
 
         if contact_link >= 0:
-            contact_vel = links_state.cd_vel[contact_link, i_b] + links_state.cd_ang[contact_link, i_b].cross(
-                probe_pos - links_state.root_COM[contact_link, i_b]
+            contact_vel = dyn_state.links.cd_vel[contact_link, i_b] + dyn_state.links.cd_ang[contact_link, i_b].cross(
+                probe_pos - dyn_state.links.root_COM[contact_link, i_b]
             )
-            sensor_vel = links_state.cd_vel[sensor_link_idx, i_b] + links_state.cd_ang[sensor_link_idx, i_b].cross(
-                probe_pos - links_state.root_COM[sensor_link_idx, i_b]
-            )
+            sensor_vel = dyn_state.links.cd_vel[sensor_link_idx, i_b] + dyn_state.links.cd_ang[
+                sensor_link_idx, i_b
+            ].cross(probe_pos - dyn_state.links.root_COM[sensor_link_idx, i_b])
             rel_vel_world = contact_vel - sensor_vel
             rel_vel_local = gu.qd_inv_transform_by_quat(rel_vel_world, link_quat)
 
@@ -279,7 +275,7 @@ def _func_kinematic_spring_damper(
             v_t_local = rel_vel_local - contact_normal_local * vn_dot
             force_local += contact_normal_local * (normal_damping * s * vn_dot) - shear_scalar * v_t_local
 
-            rel_ang_world = links_state.cd_ang[contact_link, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
+            rel_ang_world = dyn_state.links.cd_ang[contact_link, i_b] - dyn_state.links.cd_ang[sensor_link_idx, i_b]
             omega_n = rel_ang_world.dot(contact_normal)
             torque_local = probe_pos_local.cross(force_local) - contact_normal_local * (twist_scalar * omega_n)
         else:
@@ -290,8 +286,12 @@ def _func_kinematic_spring_damper(
 
 @qd.kernel
 def _kernel_kinematic_taxel(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    sensor_geoms_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
     probe_radii_noise: qd.types.ndarray(),
     probe_gains: qd.types.ndarray(),
@@ -300,22 +300,17 @@ def _kernel_kinematic_taxel(
     normal_exponent: qd.types.ndarray(),
     shear_scalar: qd.types.ndarray(),
     twist_scalar: qd.types.ndarray(),
-    links_idx: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
-    sensor_geoms_idx: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
-    collider_static_config: qd.template(),
-    links_state: array_class.LinksState,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    sdf_info: array_class.SDFInfo,
-    eps: float,
-    measured_equals_gt: int,
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    collider_static_config: qd.template(),
+    eps: float,
+    measured_equals_gt: int,
 ):
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output_gt.shape[-1]
@@ -342,8 +337,8 @@ def _kernel_kinematic_taxel(
         )
 
         sensor_link_idx = links_idx[i_s]
-        link_pos = links_state.pos[sensor_link_idx, i_b]
-        link_quat = links_state.quat[sensor_link_idx, i_b]
+        link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+        link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
 
@@ -364,25 +359,25 @@ def _kernel_kinematic_taxel(
         ) = _func_query_contact_depth(
             i_b,
             i_s,
+            sensor_geoms_idx,
             probe_pos,
             probe_radius,
             probe_radius_m,
-            geoms_info,
-            geoms_state,
-            rigid_global_info,
-            collider_static_config,
-            sensor_geoms_idx,
             sensor_n_geoms,
-            sdf_info,
+            dyn_state,
+            dyn_info,
+            rigid_info,
+            collider_info,
+            collider_static_config,
             eps,
         )
 
         force_local_gt, torque_local_gt = _func_kinematic_spring_damper(
             i_b,
+            sensor_link_idx,
             max_penetration_gt,
             contact_link_gt,
             contact_normal_gt,
-            sensor_link_idx,
             probe_pos,
             probe_pos_local,
             link_quat,
@@ -391,7 +386,7 @@ def _kernel_kinematic_taxel(
             normal_exponent[i_s],
             shear_scalar[i_s],
             twist_scalar[i_s],
-            links_state,
+            dyn_state,
         )
 
         force_local_m = force_local_gt
@@ -403,10 +398,10 @@ def _kernel_kinematic_taxel(
             max_penetration_m = max_penetration_m * probe_gains[i_b, i_p]
             force_local_m, torque_local_m = _func_kinematic_spring_damper(
                 i_b,
+                sensor_link_idx,
                 max_penetration_m,
                 contact_link_m,
                 contact_normal_m,
-                sensor_link_idx,
                 probe_pos,
                 probe_pos_local,
                 link_quat,
@@ -415,7 +410,7 @@ def _kernel_kinematic_taxel(
                 normal_exponent[i_s],
                 shear_scalar[i_s],
                 twist_scalar[i_s],
-                links_state,
+                dyn_state,
             )
 
         for j in qd.static(range(3)):
@@ -427,22 +422,21 @@ def _kernel_kinematic_taxel(
 
 @qd.kernel
 def _kernel_contact_depth_probe(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
-    probe_radii_noise: qd.types.ndarray(),
-    probe_gains: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
     sensor_geoms_idx: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
+    probe_gains: qd.types.ndarray(),
     sensor_n_geoms: qd.types.ndarray(),
-    links_state: array_class.LinksState,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    sdf_info: array_class.SDFInfo,
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output_gt.shape[-1]
@@ -462,8 +456,8 @@ def _kernel_contact_depth_probe(
         )
 
         sensor_link_idx = links_idx[i_s]
-        link_pos = links_state.pos[sensor_link_idx, i_b]
-        link_quat = links_state.quat[sensor_link_idx, i_b]
+        link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+        link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
 
@@ -476,14 +470,14 @@ def _kernel_contact_depth_probe(
         max_penetration_gt, max_penetration_m = _func_query_contact_depth_penetration(
             i_b,
             i_s,
+            sensor_geoms_idx,
             probe_pos,
             probe_radius,
             probe_radius_m,
-            geoms_info,
-            geoms_state,
-            sensor_geoms_idx,
             sensor_n_geoms,
-            sdf_info,
+            dyn_state,
+            dyn_info,
+            collider_info,
         )
         max_penetration_m = max_penetration_m * probe_gains[i_b, i_p]  # gain on measured branch only
         cache_idx = sensor_cache_start[i_s] + i_p - sensor_probe_start[i_s]
@@ -499,8 +493,8 @@ def _kernel_build_sensor_candidate_geom_mask(
     sensor_link_idx: qd.types.ndarray(),
     sensor_contacts_idx: qd.types.ndarray(),
     sensor_n_contacts: qd.types.ndarray(),
-    collider_state: array_class.ColliderState,
     sensor_candidate_geom_mask: qd.types.ndarray(),
+    collider_state: array_class.ColliderState,
 ):
     """
     Scatter the per-(env, sensor) candidate-geom bitmask from the prefiltered contact list.
@@ -536,11 +530,9 @@ def _func_query_contact_depth_penetration_bvh(
     probe_radius_m: float,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
     sensor_candidate_geom_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
 ):
     """
     BVH-based dual-radius probe penetration.
@@ -551,7 +543,7 @@ def _func_query_contact_depth_penetration_bvh(
     the probe penetrates, rather than folding back at ``R`` like an unsigned closest-point distance. Mirrors
     ``_func_query_contact_depth_penetration``'s return.
     """
-    n_triangles = faces_info.verts_idx.shape[0]
+    n_triangles = dyn_info.faces.verts_idx.shape[0]
     radius_query = qd.max(probe_radius_gt, probe_radius_m)
     best_dist_sq = radius_query * radius_query
     best_signed = radius_query
@@ -571,11 +563,11 @@ def _func_query_contact_depth_penetration_bvh(
         if node.left == -1:
             sorted_leaf_idx = node_idx - (n_triangles - 1)
             i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
-            i_g = faces_info.geom_idx[i_f]
+            i_g = dyn_info.faces.geom_idx[i_f]
             if not sensor_candidate_geom_mask[i_b, i_s, i_g]:
                 continue
 
-            tri = get_triangle_vertices(i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state)
+            tri = get_triangle_vertices(i_f, i_b, dyn_state, dyn_info)
             v0 = tri[:, 0]
             v1 = tri[:, 1]
             v2 = tri[:, 2]
@@ -609,12 +601,9 @@ def _func_query_contact_depth_bvh(
     probe_radius_m: float,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    geoms_info: array_class.GeomsInfo,
     sensor_candidate_geom_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
 ):
     """
     BVH-based dual-radius probe query with contact normal and link, mirroring ``_func_query_contact_depth``'s return.
@@ -623,7 +612,7 @@ def _func_query_contact_depth_bvh(
     is inside the surface), yielding ``pen = R - sd`` to match the SDF path. The returned contact normal is the
     nearest triangle's outward face normal, which the spring-damper model uses as the surface normal.
     """
-    n_triangles = faces_info.verts_idx.shape[0]
+    n_triangles = dyn_info.faces.verts_idx.shape[0]
     radius_query = qd.max(probe_radius_gt, probe_radius_m)
     best_dist_sq = radius_query * radius_query
     best_signed = radius_query
@@ -645,11 +634,11 @@ def _func_query_contact_depth_bvh(
         if node.left == -1:
             sorted_leaf_idx = node_idx - (n_triangles - 1)
             i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
-            i_g = faces_info.geom_idx[i_f]
+            i_g = dyn_info.faces.geom_idx[i_f]
             if not sensor_candidate_geom_mask[i_b, i_s, i_g]:
                 continue
 
-            tri = get_triangle_vertices(i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state)
+            tri = get_triangle_vertices(i_f, i_b, dyn_state, dyn_info)
             v0 = tri[:, 0]
             v1 = tri[:, 1]
             v2 = tri[:, 2]
@@ -663,7 +652,7 @@ def _func_query_contact_depth_bvh(
                 sign_v = qd.select(diff.dot(fn) >= gs.qd_float(0.0), gs.qd_float(1.0), gs.qd_float(-1.0))
                 best_signed = d * sign_v
                 best_dist_sq = d_sq
-                contact_link = geoms_info.link_idx[i_g]
+                contact_link = dyn_info.geoms.link_idx[i_g]
                 contact_normal = fn
         else:
             if stack_idx < qd.static(_BVH_STACK_SIZE - 2):
@@ -683,24 +672,21 @@ def _func_query_contact_depth_bvh(
 
 @qd.kernel(fastcache=False)
 def _kernel_contact_depth_probe_bvh(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radii: qd.types.ndarray(),
-    probe_radii_noise: qd.types.ndarray(),
-    probe_gains: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
+    probe_gains: qd.types.ndarray(),
     sensor_candidate_geom_mask: qd.types.ndarray(),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    links_state: array_class.LinksState,
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
 ):
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output_gt.shape[-1]
@@ -719,8 +705,8 @@ def _kernel_contact_depth_probe_bvh(
         )
 
         sensor_link_idx = links_idx[i_s]
-        link_pos = links_state.pos[sensor_link_idx, i_b]
-        link_quat = links_state.quat[sensor_link_idx, i_b]
+        link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+        link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
 
@@ -738,11 +724,9 @@ def _kernel_contact_depth_probe_bvh(
             probe_radius_m,
             bvh_nodes,
             bvh_morton_codes,
-            faces_info,
-            verts_info,
-            fixed_verts_state,
-            free_verts_state,
             sensor_candidate_geom_mask,
+            dyn_state,
+            dyn_info,
         )
         max_penetration_m = max_penetration_m * probe_gains[i_b, i_p]
         cache_idx = sensor_cache_start[i_s] + i_p - sensor_probe_start[i_s]
@@ -752,8 +736,11 @@ def _kernel_contact_depth_probe_bvh(
 
 @qd.kernel(fastcache=False)
 def _kernel_kinematic_taxel_bvh(
-    probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    probe_positions_local: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
     probe_radii_noise: qd.types.ndarray(),
     probe_gains: qd.types.ndarray(),
@@ -762,22 +749,15 @@ def _kernel_kinematic_taxel_bvh(
     normal_exponent: qd.types.ndarray(),
     shear_scalar: qd.types.ndarray(),
     twist_scalar: qd.types.ndarray(),
-    links_idx: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
     sensor_candidate_geom_mask: qd.types.ndarray(),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    links_state: array_class.LinksState,
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    geoms_info: array_class.GeomsInfo,
-    measured_equals_gt: int,
     output_gt: qd.types.ndarray(),
     output_measured: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    measured_equals_gt: int,
 ):
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output_gt.shape[-1]
@@ -803,8 +783,8 @@ def _kernel_kinematic_taxel_bvh(
         )
 
         sensor_link_idx = links_idx[i_s]
-        link_pos = links_state.pos[sensor_link_idx, i_b]
-        link_quat = links_state.quat[sensor_link_idx, i_b]
+        link_pos = dyn_state.links.pos[sensor_link_idx, i_b]
+        link_quat = dyn_state.links.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
 
@@ -830,22 +810,19 @@ def _kernel_kinematic_taxel_bvh(
             probe_radius_m,
             bvh_nodes,
             bvh_morton_codes,
-            faces_info,
-            verts_info,
-            fixed_verts_state,
-            free_verts_state,
-            geoms_info,
             sensor_candidate_geom_mask,
+            dyn_state,
+            dyn_info,
         )
 
         gained_pen_m = max_penetration_m * probe_gains[i_b, i_p]
 
         force_gt, torque_gt = _func_kinematic_spring_damper(
             i_b,
+            sensor_link_idx,
             max_penetration_gt,
             contact_link_gt,
             contact_normal_gt,
-            sensor_link_idx,
             probe_pos,
             probe_pos_local,
             link_quat,
@@ -854,7 +831,7 @@ def _kernel_kinematic_taxel_bvh(
             normal_exponent[i_s],
             shear_scalar[i_s],
             twist_scalar[i_s],
-            links_state,
+            dyn_state,
         )
         for j in qd.static(range(3)):
             output_gt[force_start + j, i_b] = force_gt[j]
@@ -867,10 +844,10 @@ def _kernel_kinematic_taxel_bvh(
         else:
             force_m, torque_m = _func_kinematic_spring_damper(
                 i_b,
+                sensor_link_idx,
                 gained_pen_m,
                 contact_link_m,
                 contact_normal_m,
-                sensor_link_idx,
                 probe_pos,
                 probe_pos_local,
                 link_quat,
@@ -879,7 +856,7 @@ def _kernel_kinematic_taxel_bvh(
                 normal_exponent[i_s],
                 shear_scalar[i_s],
                 twist_scalar[i_s],
-                links_state,
+                dyn_state,
             )
             for j in qd.static(range(3)):
                 output_measured[force_start + j, i_b] = force_m[j]
@@ -953,34 +930,33 @@ class ContactDepthProbeSensor(
         if (shared_metadata.contact_depth_query or "sdf") == "sdf":
             _kernel_build_sensor_geom_idx(
                 shared_metadata.links_idx,
-                solver.collider._collider_state,
                 shared_metadata.sensor_geoms_idx,
                 shared_metadata.sensor_n_geoms,
+                solver.collider._collider_state,
             )
             _kernel_contact_depth_probe(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
-                shared_metadata.probe_radii_noise,
-                shared_metadata.probe_gains,
                 shared_metadata.links_idx,
                 shared_metadata.sensor_cache_start,
                 shared_metadata.sensor_probe_start,
                 shared_metadata.sensor_geoms_idx,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_radii,
+                shared_metadata.probe_radii_noise,
+                shared_metadata.probe_gains,
                 shared_metadata.sensor_n_geoms,
-                solver.links_state,
-                solver.geoms_state,
-                solver.geoms_info,
-                solver.collider._sdf._sdf_info,
                 current_ground_truth_data_T,
                 measured_cols_b,
+                solver.dyn_state,
+                solver.dyn_info,
+                solver.collider._collider_info,
             )
         else:
             _kernel_build_sensor_contact_idx(
                 shared_metadata.links_idx,
-                solver.collider._collider_state,
                 shared_metadata.sensor_contacts_idx,
                 shared_metadata.sensor_n_contacts,
+                solver.collider._collider_state,
             )
             B, n_sensors = shared_metadata.sensor_n_contacts.shape
             mask_shape = (B, n_sensors, solver.n_geoms)
@@ -990,28 +966,25 @@ class ContactDepthProbeSensor(
                 shared_metadata.links_idx,
                 shared_metadata.sensor_contacts_idx,
                 shared_metadata.sensor_n_contacts,
-                solver.collider._collider_state,
                 shared_metadata.sensor_candidate_geom_mask,
+                solver.collider._collider_state,
             )
             _kernel_contact_depth_probe_bvh(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
-                shared_metadata.probe_radii,
-                shared_metadata.probe_radii_noise,
-                shared_metadata.probe_gains,
                 shared_metadata.links_idx,
                 shared_metadata.sensor_cache_start,
                 shared_metadata.sensor_probe_start,
+                shared_metadata.probe_positions,
+                shared_metadata.probe_radii,
+                shared_metadata.probe_radii_noise,
+                shared_metadata.probe_gains,
                 shared_metadata.sensor_candidate_geom_mask,
                 shared_context.collision_bvh_context.bvh.nodes,
                 shared_context.collision_bvh_context.bvh.morton_codes,
-                solver.links_state,
-                solver.faces_info,
-                solver.verts_info,
-                solver.fixed_verts_state,
-                solver.free_verts_state,
                 current_ground_truth_data_T,
                 measured_cols_b,
+                solver.dyn_state,
+                solver.dyn_info,
             )
         if ground_truth_data_timeline is not None:
             ground_truth_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
@@ -1150,12 +1123,7 @@ class KinematicTaxelSensor(
     _taxel_channel_groups: int = 2
 
     def __init__(
-        self,
-        options: KinematicTaxelOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
+        self, options: KinematicTaxelOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
         # Resolve the grid frame for spatial crosstalk (flat pos/normals are already populated by the base mixins).
@@ -1225,13 +1193,17 @@ class KinematicTaxelSensor(
         if (shared_metadata.contact_depth_query or "sdf") == "sdf":
             _kernel_build_sensor_geom_idx(
                 shared_metadata.links_idx,
-                solver.collider._collider_state,
                 shared_metadata.sensor_geoms_idx,
                 shared_metadata.sensor_n_geoms,
+                solver.collider._collider_state,
             )
             _kernel_kinematic_taxel(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
+                shared_metadata.links_idx,
+                shared_metadata.sensor_cache_start,
+                shared_metadata.sensor_probe_start,
+                shared_metadata.sensor_geoms_idx,
+                shared_metadata.probe_positions,
                 shared_metadata.probe_radii,
                 shared_metadata.probe_radii_noise,
                 shared_metadata.probe_gains,
@@ -1240,29 +1212,24 @@ class KinematicTaxelSensor(
                 shared_metadata.normal_exponent,
                 shared_metadata.shear_scalar,
                 shared_metadata.twist_scalar,
-                shared_metadata.links_idx,
-                shared_metadata.sensor_cache_start,
-                shared_metadata.sensor_probe_start,
                 shared_metadata.n_probes_per_sensor,
-                shared_metadata.sensor_geoms_idx,
                 shared_metadata.sensor_n_geoms,
-                solver.collider._collider_static_config,
-                solver.links_state,
-                solver.geoms_state,
-                solver.geoms_info,
-                solver._rigid_global_info,
-                solver.collider._sdf._sdf_info,
-                gs.EPS,
-                measured_equals_gt,
                 current_ground_truth_data_T,
                 measured_cols_b,
+                solver.dyn_state,
+                solver.dyn_info,
+                solver.rigid_info,
+                solver.collider._collider_info,
+                solver.collider._collider_static_config,
+                gs.EPS,
+                measured_equals_gt,
             )
         else:
             _kernel_build_sensor_contact_idx(
                 shared_metadata.links_idx,
-                solver.collider._collider_state,
                 shared_metadata.sensor_contacts_idx,
                 shared_metadata.sensor_n_contacts,
+                solver.collider._collider_state,
             )
             B, n_sensors = shared_metadata.sensor_n_contacts.shape
             mask_shape = (B, n_sensors, solver.n_geoms)
@@ -1272,12 +1239,15 @@ class KinematicTaxelSensor(
                 shared_metadata.links_idx,
                 shared_metadata.sensor_contacts_idx,
                 shared_metadata.sensor_n_contacts,
-                solver.collider._collider_state,
                 shared_metadata.sensor_candidate_geom_mask,
+                solver.collider._collider_state,
             )
             _kernel_kinematic_taxel_bvh(
-                shared_metadata.probe_positions,
                 shared_metadata.probe_sensor_idx,
+                shared_metadata.links_idx,
+                shared_metadata.sensor_cache_start,
+                shared_metadata.sensor_probe_start,
+                shared_metadata.probe_positions,
                 shared_metadata.probe_radii,
                 shared_metadata.probe_radii_noise,
                 shared_metadata.probe_gains,
@@ -1286,22 +1256,15 @@ class KinematicTaxelSensor(
                 shared_metadata.normal_exponent,
                 shared_metadata.shear_scalar,
                 shared_metadata.twist_scalar,
-                shared_metadata.links_idx,
-                shared_metadata.sensor_cache_start,
-                shared_metadata.sensor_probe_start,
                 shared_metadata.n_probes_per_sensor,
                 shared_metadata.sensor_candidate_geom_mask,
                 shared_context.collision_bvh_context.bvh.nodes,
                 shared_context.collision_bvh_context.bvh.morton_codes,
-                solver.links_state,
-                solver.faces_info,
-                solver.verts_info,
-                solver.fixed_verts_state,
-                solver.free_verts_state,
-                solver.geoms_info,
-                measured_equals_gt,
                 current_ground_truth_data_T,
                 measured_cols_b,
+                solver.dyn_state,
+                solver.dyn_info,
+                measured_equals_gt,
             )
         if ground_truth_data_timeline is not None:
             ground_truth_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)

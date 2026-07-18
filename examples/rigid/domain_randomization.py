@@ -51,10 +51,10 @@ def main():
     # set mass of a single link
     link = robot.get_link("RR_thigh")
     rigid = scene.sim.rigid_solver
-    ori_mass = rigid.links_info.inertial_mass.to_numpy()
+    ori_mass = rigid.dyn_info.links.inertial_mass.to_numpy()
     print("original mass", link.get_mass(), ori_mass)
     link.set_mass(1)
-    new_mass = rigid.links_info.inertial_mass.to_numpy()
+    new_mass = rigid.dyn_info.links.inertial_mass.to_numpy()
     print("diff mass", new_mass - ori_mass)
 
     robot.set_mass_shift(

@@ -6,11 +6,11 @@ import genesis.utils.array_class as array_class
 
 @qd.func
 def func_matvec_Ap(
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
     i_b,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """
     Compute Ap = (M + J^T * diag(D) * J) * p on the current active set, which is used for solving the adjoint u.
@@ -22,18 +22,18 @@ def func_matvec_Ap(
         constraint_state.bw_Ap[i_d, i_b] = 0.0
 
     # Mp: Block multiplication
-    n_entities = entities_info.n_links.shape[0]
+    n_entities = dyn_info.entities.n_links.shape[0]
     for i_e in range(n_entities):
-        for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+        for i_d1 in range(dyn_info.entities.dof_start[i_e], dyn_info.entities.dof_end[i_e]):
             acc = gs.qd_float(0.0)
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                acc += rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.bw_p[i_d2, i_b]
+            for i_d2 in range(dyn_info.entities.dof_start[i_e], dyn_info.entities.dof_end[i_e]):
+                acc += rigid_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.bw_p[i_d2, i_b]
             constraint_state.bw_Ap[i_d1, i_b] += acc
 
     # tmp = J v
     for i_c in range(constraint_state.n_constraints[i_b]):
         jv = gs.qd_float(0.0)
-        if qd.static(static_rigid_sim_config.sparse_solve):
+        if qd.static(rigid_config.sparse_solve):
             for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                 jv += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_p[i_d, i_b]
@@ -43,7 +43,7 @@ def func_matvec_Ap(
         # only active constraints contribute
         jv *= constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         # out += J^T (D * J v)
-        if qd.static(static_rigid_sim_config.sparse_solve):
+        if qd.static(rigid_config.sparse_solve):
             for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                 constraint_state.bw_Ap[i_d, i_b] += constraint_state.jac[i_c, i_d, i_b] * jv
@@ -54,10 +54,10 @@ def func_matvec_Ap(
 
 @qd.kernel
 def kernel_solve_adjoint_u(
-    entities_info: array_class.EntitiesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     r"""
     Solve for the adjoint vector [u] from Au = g, where A = dF/dqacc (primal Hessian on the active set) and g = dL/dqacc.
@@ -76,7 +76,7 @@ def kernel_solve_adjoint_u(
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         constraint_state.bw_u[i_d, i_b] = 0.0
 
-    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+    if qd.static(rigid_config.solver_type == gs.constraint_solver.Newton):
         # Since we already have the Cholesky decomposition of A (= L * L^T), we can use it to solve A * u = g.
         for i_b in range(_B):
             # z = L^{-1} g  (forward substitution)
@@ -109,14 +109,8 @@ def kernel_solve_adjoint_u(
         # 3. Solve A * u = g, parallelized over batch dimension
         for i_b in range(_B):
             # Compute Ap for the current search direction
-            for it in range(static_rigid_sim_config.iterations):
-                func_matvec_Ap(
-                    entities_info=entities_info,
-                    rigid_global_info=rigid_global_info,
-                    constraint_state=constraint_state,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                    i_b=i_b,
-                )
+            for it in range(rigid_config.iterations):
+                func_matvec_Ap(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
 
                 # alpha = (r,r)/(p,Hp)
                 num = gs.qd_float(0.0)
@@ -124,7 +118,7 @@ def kernel_solve_adjoint_u(
                 for i_d in range(n_dofs):
                     num += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
                     den += constraint_state.bw_p[i_d, i_b] * constraint_state.bw_Ap[i_d, i_b]
-                alpha = num / qd.max(den, rigid_global_info.EPS[None])
+                alpha = num / qd.max(den, rigid_info.EPS[None])
 
                 # u += alpha p ; r -= alpha Hp
                 for i_d in range(n_dofs):
@@ -133,14 +127,14 @@ def kernel_solve_adjoint_u(
 
                 # check tol (optional: per-batch)
                 # TODO: Might need lower tolerance?
-                if num < rigid_global_info.EPS[None]:
+                if num < rigid_info.EPS[None]:
                     break
 
                 # beta = (r_new,r_new)/(r_old,r_old)
                 num_new = gs.qd_float(0.0)
                 for i_d in range(n_dofs):
                     num_new += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
-                beta = num_new / qd.max(num, rigid_global_info.EPS[None])
+                beta = num_new / qd.max(num, rigid_info.EPS[None])
 
                 # p = r + beta p
                 for i_d in range(n_dofs):
@@ -151,9 +145,7 @@ def kernel_solve_adjoint_u(
 
 @qd.kernel
 def kernel_compute_gradients(
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
+    constraint_state: array_class.ConstraintState, dyn_info: array_class.DynInfo, rigid_config: qd.template()
 ):
     r"""
     Compute gradients of the loss with respect to the input variables to this solver. Note that we use the intermediate
@@ -189,7 +181,7 @@ def kernel_compute_gradients(
         # Ju
         for i_c in range(constraint_state.n_constraints[i_b]):
             s = gs.qd_float(0.0)
-            if qd.static(static_rigid_sim_config.sparse_solve):
+            if qd.static(rigid_config.sparse_solve):
                 for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                     s += constraint_state.jac[i_c, i_d, i_b] * constraint_state.bw_u[i_d, i_b]
@@ -202,7 +194,7 @@ def kernel_compute_gradients(
         # y = D \odot w
         for i_c in range(constraint_state.n_constraints[i_b]):
             t = gs.qd_float(0.0)
-            if qd.static(static_rigid_sim_config.sparse_solve):
+            if qd.static(rigid_config.sparse_solve):
                 for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                     t += constraint_state.jac[i_c, i_d, i_b] * constraint_state.qacc[i_d, i_b]
@@ -236,7 +228,7 @@ def kernel_compute_gradients(
                 DJu_i = constraint_state.efc_D[i_c, i_b] * constraint_state.bw_Ju[i_c, i_b]
                 y_i = constraint_state.bw_y[i_c, i_b]
 
-                if qd.static(static_rigid_sim_config.sparse_solve):
+                if qd.static(rigid_config.sparse_solve):
                     for k in range(constraint_state.jac_n_dofs[i_c, i_b]):
                         i_d = constraint_state.jac_dofs_idx[i_c, k, i_b]
                         constraint_state.dL_djac[i_c, i_d, i_b] += -(
@@ -249,10 +241,10 @@ def kernel_compute_gradients(
                         )
 
         # M: -u * qacc^T
-        n_entities = entities_info.n_links.shape[0]
+        n_entities = dyn_info.entities.n_links.shape[0]
         for i_e in range(n_entities):
-            s = entities_info.dof_start[i_e]
-            e = entities_info.dof_end[i_e]
+            s = dyn_info.entities.dof_start[i_e]
+            e = dyn_info.entities.dof_end[i_e]
             for i in range(s, e):
                 for j in range(s, e):
                     val0 = -constraint_state.bw_u[i, i_b] * constraint_state.qacc[j, i_b]
