@@ -59,39 +59,21 @@ def test_mjcf_parsing_with_include():
 
 
 @pytest.mark.required
-def test_mjcf_include_default_mesh_without_file(tmp_path):
-    # MuJoCo allows <default><mesh maxhullvert="..."/></default> with no file= attribute. Include
-    # preprocessing must not KeyError when rewriting mesh paths (issue #3016).
-    robot_xml = tmp_path / "robot.xml"
-    scene_xml = tmp_path / "scene.xml"
-    robot_xml.write_text(
-        """
-        <mujoco model="robot">
-          <default>
-            <mesh maxhullvert="64"/>
-            <geom type="box" size="0.1 0.1 0.1"/>
-          </default>
-          <worldbody>
-            <body name="base" pos="0 0 0.5">
-              <freejoint/>
-              <geom/>
-            </body>
-          </worldbody>
-        </mujoco>
-        """
-    )
-    scene_xml.write_text(
-        """
-        <mujoco model="scene">
-          <include file="robot.xml"/>
-        </mujoco>
-        """
-    )
+def test_mjcf_include_rewrites_asset_mesh_and_skips_default_mesh(mjcf_include_default_and_asset_mesh):
+    scene_path, extents = mjcf_include_default_and_asset_mesh
 
-    scene = gs.Scene(show_viewer=False)
-    entity = scene.add_entity(gs.morphs.MJCF(file=str(scene_xml)))
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=scene_path,
+        )
+    )
     scene.build()
-    assert len(entity.geoms) >= 1
+
+    (geom,) = entity.geoms
+    assert geom.type == gs.GEOM_TYPE.MESH
+    aabb = geom.get_AABB()
+    assert_allclose(aabb[1] - aabb[0], extents, tol=gs.EPS)
 
 
 @pytest.mark.required

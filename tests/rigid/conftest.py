@@ -175,6 +175,32 @@ def decompose_fusion_groups(asset_tmp_path):
 
 
 @pytest.fixture(scope="session")
+def mjcf_include_default_and_asset_mesh(asset_tmp_path):
+    """Scene MJCF that <include>s a subdirectory model mixing a file-less <default> mesh class with a real <asset>
+    mesh, so the include preprocessing must rewrite only the asset mesh path (relative to the included file). Returns
+    the scene file path and the authored box extents."""
+    extents = (0.2, 0.4, 0.6)
+    include_dir = asset_tmp_path / "mjcf_include"
+    include_dir.mkdir(exist_ok=True)
+    trimesh.creation.box(extents=extents).export(include_dir / "box.obj")
+
+    robot = ET.Element("mujoco", model="robot")
+    default = ET.SubElement(robot, "default")
+    ET.SubElement(default, "mesh", maxhullvert="64")
+    asset = ET.SubElement(robot, "asset")
+    ET.SubElement(asset, "mesh", name="box", file="box.obj")
+    worldbody = ET.SubElement(robot, "worldbody")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="box")
+    ET.ElementTree(robot).write(include_dir / "robot.xml", encoding="utf-8", xml_declaration=True)
+
+    scene_mjcf = ET.Element("mujoco", model="scene")
+    ET.SubElement(scene_mjcf, "include", file="mjcf_include/robot.xml")
+    scene_path = str(asset_tmp_path / "mjcf_include_scene.xml")
+    ET.ElementTree(scene_mjcf).write(scene_path, encoding="utf-8", xml_declaration=True)
+    return scene_path, extents
+
+
+@pytest.fixture(scope="session")
 def two_aligned_hinges():
     mjcf = ET.Element("mujoco", model="two_aligned_hinges")
     ET.SubElement(mjcf, "option", timestep="0.05")
