@@ -607,10 +607,13 @@ def build_mujoco_sim(
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_EULERDAMP)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_REFSAFE)
     model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_GRAVITY)
-    # Genesis integrates standalone free bodies without MuJoCo's midpoint rule under implicitfast; invdiscrete opts
-    # MuJoCo out of midpoint integration (its only effect on forward dynamics) so both engines run the same
-    # discrete-time update.
-    model.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_INVDISCRETE
+    # Keep midpoint integration of standalone free bodies enabled on the MuJoCo side: Genesis implements it under
+    # the implicitfast integrator, and the consistency tests are its test coverage.
+    model.opt.enableflags &= ~np.uint32(mujoco.mjtEnableBit.mjENBL_INVDISCRETE)
+    # MuJoCo's mesh processing leaves sub-epsilon center-of-mass residuals in body_ipos while Genesis re-centers
+    # meshes exactly. Midpoint integration branches on an exact ipos == 0 test, so the residuals would silently
+    # route the two engines through different update rules; canonicalize the dust to zero.
+    model.body_ipos[np.abs(model.body_ipos) < 1e-12] = 0.0
     if native_ccd:
         model.opt.disableflags &= ~np.uint32(mujoco.mjtDisableBit.mjDSBL_NATIVECCD)
     else:
@@ -626,6 +629,52 @@ def build_mujoco_sim(
     data = mujoco.MjData(model)
 
     return MjSim(model, data)
+
+
+def get_mujoco_midpoint_dofs_mask(mj_sim):
+    """Boolean mask over MuJoCo DOFs whose qacc / qvel are overwritten by midpoint integration this step.
+
+    Mirrors MuJoCo's eligibility test: implicitfast without invdiscrete, zero medium density/viscosity, and per
+    joint a standalone unconstrained free body. Rotational DOFs are always overwritten for eligible bodies; linear
+    DOFs only when the center of mass is off the joint origin.
+    """
+    model, data = mj_sim.model, mj_sim.data
+    mask = np.zeros(model.nv, dtype=np.bool_)
+    if (
+        model.opt.integrator != mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+        or model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_INVDISCRETE
+        or model.opt.density != 0.0
+        or model.opt.viscosity != 0.0
+    ):
+        return mask
+    for i_j in range(model.njnt):
+        if model.jnt_type[i_j] != mujoco.mjtJoint.mjJNT_FREE:
+            continue
+        i_b = model.jnt_bodyid[i_j]
+        if model.body_parentid[i_b] != 0 or model.body_subtreemass[i_b] != model.body_mass[i_b]:
+            continue
+        is_constrained = False
+        for i_c in range(data.ncon):
+            geom_a, geom_b = data.contact.geom[i_c]
+            if (geom_a >= 0 and model.geom_bodyid[geom_a] == i_b) or (geom_b >= 0 and model.geom_bodyid[geom_b] == i_b):
+                is_constrained = True
+        for i_e in range(model.neq):
+            if not data.eq_active[i_e] or model.eq_type[i_e] not in (
+                mujoco.mjtEq.mjEQ_CONNECT,
+                mujoco.mjtEq.mjEQ_WELD,
+            ):
+                continue
+            obj1, obj2 = model.eq_obj1id[i_e], model.eq_obj2id[i_e]
+            if model.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_SITE:
+                obj1, obj2 = model.site_bodyid[obj1], model.site_bodyid[obj2]
+            if obj1 == i_b or obj2 == i_b:
+                is_constrained = True
+        if is_constrained:
+            continue
+        adr = model.jnt_dofadr[i_j]
+        start = 3 if (model.body_ipos[i_b] == 0.0).all() else 0
+        mask[adr + start : adr + 6] = True
+    return mask
 
 
 def build_genesis_sim(
@@ -709,6 +758,10 @@ def build_genesis_sim(
         link.invweight[:] = -1
     for joint in scene.rigid_solver.joints:
         joint.dofs_invweight[:] = -1
+
+    # Canonicalize mesh center-of-mass dust to zero: see the matching body_ipos normalization in build_mujoco_sim.
+    for link in scene.rigid_solver.links:
+        link.inertial_pos[np.abs(link.inertial_pos) < 1e-12] = 0.0
 
     scene.build()
 
@@ -1063,7 +1116,12 @@ def check_mujoco_data_consistency(
     else:
         gs_qacc_pre = gs_qacc_smooth
     mj_qacc_pre = mj_sim.data.qacc
-    assert_allclose(gs_qacc_pre[gs_dofs_idx], mj_qacc_pre[mj_dofs_idx], tol=tol)
+    # Midpoint-integrated DOFs hold the realized acceleration (qvel_new - qvel_old) / h in both engines, which
+    # Genesis mirrors in dofs.acc; the smooth+constraint acceleration is only observable on the remaining DOFs.
+    midpoint_mask = get_mujoco_midpoint_dofs_mask(mj_sim)[mj_dofs_idx]
+    gs_qacc_post = gs_sim.rigid_solver.dyn_state.dofs.acc.to_numpy()[:, 0]
+    assert_allclose(gs_qacc_pre[gs_dofs_idx][~midpoint_mask], mj_qacc_pre[mj_dofs_idx][~midpoint_mask], tol=tol)
+    assert_allclose(gs_qacc_post[gs_dofs_idx][midpoint_mask], mj_qacc_pre[mj_dofs_idx][midpoint_mask], tol=tol)
 
     gs_qvel = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
     mj_qvel = mj_sim.data.qvel
