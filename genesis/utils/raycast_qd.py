@@ -445,8 +445,13 @@ def get_visual_vvert_pos(i_vv: int, i_b: int, dyn_state: array_class.DynState, d
         pos = dyn_state.vverts.pos[i_state, i_b]
     else:
         i_vg = dyn_info.vverts.vgeom_idx[i_vv]
+        # Fallback verts have no state slot to hold the scaled position, so apply the vgeom's per-environment scale
+        # here to match the scaled render transform (see kernel_update_vgeoms_render_T); the scale is 1.0 unless
+        # entity.set_scale was used.
         pos = gu.qd_transform_by_trans_quat(
-            dyn_info.vverts.init_pos[i_vv], dyn_state.vgeoms.pos[i_vg, i_b], dyn_state.vgeoms.quat[i_vg, i_b]
+            dyn_state.vgeoms.scale[i_vg, i_b] * dyn_info.vverts.init_pos[i_vv],
+            dyn_state.vgeoms.pos[i_vg, i_b],
+            dyn_state.vgeoms.quat[i_vg, i_b],
         )
     return pos
 

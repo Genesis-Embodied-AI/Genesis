@@ -115,14 +115,18 @@ def _kernel_init_support(
 
 @qd.func
 def _func_support_world(
-    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), collider_info: array_class.ColliderInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), scale, collider_info: array_class.ColliderInfo
 ):
     """
     support position for a world direction
+
+    A uniform scale s about the mesh origin keeps the argmax vertex (positive scaling preserves the direction),
+    so the support is just scaled: support_{s.mesh}(d) = s * support_mesh(d). Exact identity when scale == 1.
     """
 
     d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
-    v_, vid = _func_support_mesh(i_g, d_mesh, collider_info)
+    v0, vid = _func_support_mesh(i_g, d_mesh, collider_info)
+    v_ = scale * v0
     v = gu.qd_transform_by_trans_quat(v_, pos, quat)
     return v, v_, vid
 
@@ -174,10 +178,10 @@ def _func_support_mesh(i_g, d_mesh, collider_info: array_class.ColliderInfo):
 
 @qd.func
 def _func_support_sphere(
-    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, dyn_info: array_class.DynInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, scale, dyn_info: array_class.DynInfo
 ):
     sphere_center = pos
-    sphere_radius = dyn_info.geoms.data[i_g][0]
+    sphere_radius = dyn_info.geoms.data[i_g][0] * scale
 
     # Shrink the sphere to a point
     v = sphere_center
@@ -194,10 +198,12 @@ def _func_support_sphere(
 
 
 @qd.func
-def _func_support_ellipsoid(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), dyn_info: array_class.DynInfo):
-    a = dyn_info.geoms.data[i_g][0]
-    b = dyn_info.geoms.data[i_g][1]
-    c = dyn_info.geoms.data[i_g][2]
+def _func_support_ellipsoid(
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), scale, dyn_info: array_class.DynInfo
+):
+    a = dyn_info.geoms.data[i_g][0] * scale
+    b = dyn_info.geoms.data[i_g][1] * scale
+    c = dyn_info.geoms.data[i_g][2] * scale
 
     # Transform direction to ellipsoid local frame
     d_local = gu.qd_inv_transform_by_quat(d, quat)
@@ -214,19 +220,18 @@ def _func_support_ellipsoid(i_g, d, pos: qd.types.vector(3), quat: qd.types.vect
 
 @qd.func
 def _func_support_capsule(
-    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, dyn_info: array_class.DynInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, scale, dyn_info: array_class.DynInfo
 ):
     """
     Support function for capsule geometry.
 
-    Thread-safety note: Fully migrated to use explicit pos/quat parameters.
-    The i_g parameter is only used for read-only metadata access (radius, halflength)
-    from geoms_info, which is thread-safe. Does not access geoms_state.
+    A uniform scale s scales both the radius and the segment half-length, keeping the capsule circular. Reads only
+    read-only metadata (radius, half-length) from dyn_info.
     """
     res = gs.qd_vec3(0, 0, 0)
     capsule_center = pos
-    capsule_radius = dyn_info.geoms.data[i_g][0]
-    capsule_halflength = 0.5 * dyn_info.geoms.data[i_g][1]
+    capsule_radius = dyn_info.geoms.data[i_g][0] * scale
+    capsule_halflength = 0.5 * dyn_info.geoms.data[i_g][1] * scale
 
     if shrink:
         local_dir = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
@@ -242,17 +247,18 @@ def _func_support_capsule(
 
 @qd.func
 def _func_support_cylinder(
-    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, dyn_info: array_class.DynInfo
+    i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), shrink, scale, dyn_info: array_class.DynInfo
 ):
     """
     Support function for cylinder geometry.
 
     Like the capsule, but with flat caps: the support point is on the rim of the cap selected by the sign of d along
     the axis, displaced radially by the radius along d projected onto the cap plane (a sphere/hemisphere cap would
-    instead displace along d itself). When d is axial the radial part vanishes and the support is the cap centre.
+    instead displace along d itself). When d is axial the radial part vanishes and the support is the cap centre. A
+    uniform scale s scales both the radius and the axis half-length, keeping the cross-section circular.
     """
-    radius = dyn_info.geoms.data[i_g][0]
-    halflength = 0.5 * dyn_info.geoms.data[i_g][1]
+    radius = dyn_info.geoms.data[i_g][0] * scale
+    halflength = 0.5 * dyn_info.geoms.data[i_g][1] * scale
     axis = gu.qd_transform_by_quat(qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float), quat)
     endpoint_side = -1.0 if d.dot(axis) < 0.0 else 1.0
     res = pos + halflength * endpoint_side * axis
@@ -282,14 +288,14 @@ def _func_support_prism(i_b, d, collider_state: array_class.ColliderState):
 
 
 @qd.func
-def _func_support_box(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), dyn_info: array_class.DynInfo):
+def _func_support_box(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4), scale, dyn_info: array_class.DynInfo):
     d_box = gu.qd_inv_transform_by_quat(d, quat)
 
     v_ = qd.Vector(
         [
-            (-1.0 if d_box[0] < 0.0 else 1.0) * dyn_info.geoms.data[i_g][0] * 0.5,
-            (-1.0 if d_box[1] < 0.0 else 1.0) * dyn_info.geoms.data[i_g][1] * 0.5,
-            (-1.0 if d_box[2] < 0.0 else 1.0) * dyn_info.geoms.data[i_g][2] * 0.5,
+            (-1.0 if d_box[0] < 0.0 else 1.0) * dyn_info.geoms.data[i_g][0] * 0.5 * scale,
+            (-1.0 if d_box[1] < 0.0 else 1.0) * dyn_info.geoms.data[i_g][1] * 0.5 * scale,
+            (-1.0 if d_box[2] < 0.0 else 1.0) * dyn_info.geoms.data[i_g][2] * 0.5 * scale,
         ],
         dt=gs.qd_float,
     )

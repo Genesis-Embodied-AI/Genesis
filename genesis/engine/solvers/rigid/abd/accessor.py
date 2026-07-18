@@ -524,6 +524,46 @@ def kernel_adjust_link_inertia(
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_links_inertial(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    inertial_mass: qd.types.ndarray(),
+    inertial_pos: qd.types.ndarray(),
+    inertial_quat: qd.types.ndarray(),
+    inertial_i: qd.types.ndarray(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    """Write per-environment link inertial (mass, center of mass, orientation, tensor). Requires batch_links_info."""
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        i_l, i_b = links_idx[i_l_], envs_idx[i_b_]
+        dyn_info.links.inertial_mass[i_l, i_b] = inertial_mass[i_b_, i_l_]
+        for j in qd.static(range(3)):
+            dyn_info.links.inertial_pos[i_l, i_b][j] = inertial_pos[i_b_, i_l_, j]
+        for j in qd.static(range(4)):
+            dyn_info.links.inertial_quat[i_l, i_b][j] = inertial_quat[i_b_, i_l_, j]
+        for j1, j2 in qd.static(qd.ndrange(3, 3)):
+            dyn_info.links.inertial_i[i_l, i_b][j1, j2] = inertial_i[i_b_, i_l_, j1, j2]
+
+
+@qd.kernel(fastcache=True)
+def kernel_set_links_local_pos(
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    links_pos: qd.types.ndarray(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    """Write per-environment link local position (static offset relative to parent). Requires batch_links_info."""
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+        i_l, i_b = links_idx[i_l_], envs_idx[i_b_]
+        for j in qd.static(range(3)):
+            dyn_info.links.pos[i_l, i_b][j] = links_pos[i_b_, i_l_, j]
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_geoms_friction_ratio(
     geoms_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -534,6 +574,35 @@ def kernel_set_geoms_friction_ratio(
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_g_, i_b_ in qd.ndrange(geoms_idx.shape[0], envs_idx.shape[0]):
         dyn_state.geoms.friction_ratio[geoms_idx[i_g_], envs_idx[i_b_]] = friction_ratio[i_b_, i_g_]
+
+
+@qd.kernel(fastcache=True)
+def kernel_set_geoms_scale(
+    geoms_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    scale: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_g_, i_b_ in qd.ndrange(geoms_idx.shape[0], envs_idx.shape[0]):
+        i_g, i_b = geoms_idx[i_g_], envs_idx[i_b_]
+        dyn_state.geoms.scale[i_g, i_b] = scale[i_b_, i_g_]
+        # Cached world verts are refreshed lazily from the new scale on the next forward-kinematics pass.
+        dyn_state.geoms.verts_updated[i_g, i_b] = False
+
+
+@qd.kernel(fastcache=True)
+def kernel_set_vgeoms_scale(
+    vgeoms_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    scale: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_vg_, i_b_ in qd.ndrange(vgeoms_idx.shape[0], envs_idx.shape[0]):
+        dyn_state.vgeoms.scale[vgeoms_idx[i_vg_], envs_idx[i_b_]] = scale[i_b_, i_vg_]
 
 
 @qd.kernel(fastcache=True)

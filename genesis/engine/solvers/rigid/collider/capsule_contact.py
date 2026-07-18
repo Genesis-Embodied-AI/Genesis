@@ -8,7 +8,16 @@ import genesis.utils.array_class as array_class
 
 @qd.func
 def func_capsule_capsule_contact(
-    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info: array_class.DynInfo, rigid_info: array_class.RigidInfo
+    i_ga,
+    i_gb,
+    ga_pos,
+    ga_quat,
+    gb_pos,
+    gb_quat,
+    scale_a,
+    scale_b,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
 ):
     """
     Analytical capsule-capsule collision detection.
@@ -29,14 +38,14 @@ def func_capsule_capsule_contact(
     # Get capsule A parameters
     pos_a = ga_pos
     quat_a = ga_quat
-    radius_a = dyn_info.geoms.data[i_ga][0]
-    halflength_a = 0.5 * dyn_info.geoms.data[i_ga][1]
+    radius_a = dyn_info.geoms.data[i_ga][0] * scale_a
+    halflength_a = 0.5 * dyn_info.geoms.data[i_ga][1] * scale_a
 
     # Get capsule B parameters
     pos_b = gb_pos
     quat_b = gb_quat
-    radius_b = dyn_info.geoms.data[i_gb][0]
-    halflength_b = 0.5 * dyn_info.geoms.data[i_gb][1]
+    radius_b = dyn_info.geoms.data[i_gb][0] * scale_b
+    halflength_b = 0.5 * dyn_info.geoms.data[i_gb][1] * scale_b
 
     # Capsules are aligned along local Z-axis by convention
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
@@ -93,7 +102,16 @@ def func_capsule_capsule_contact(
 
 @qd.func
 def func_sphere_capsule_contact(
-    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info: array_class.DynInfo, rigid_info: array_class.RigidInfo
+    i_ga,
+    i_gb,
+    ga_pos,
+    ga_quat,
+    gb_pos,
+    gb_quat,
+    scale_a,
+    scale_b,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
 ):
     """
     Analytical sphere-capsule collision detection.
@@ -114,9 +132,9 @@ def func_sphere_capsule_contact(
     sphere_center = ga_pos
     capsule_center = gb_pos
     capsule_quat = gb_quat
-    sphere_radius = dyn_info.geoms.data[i_ga][0]
-    capsule_radius = dyn_info.geoms.data[i_gb][0]
-    capsule_halflength = 0.5 * dyn_info.geoms.data[i_gb][1]
+    sphere_radius = dyn_info.geoms.data[i_ga][0] * scale_a
+    capsule_radius = dyn_info.geoms.data[i_gb][0] * scale_b
+    capsule_halflength = 0.5 * dyn_info.geoms.data[i_gb][1] * scale_b
 
     # Capsule is aligned along local Z-axis
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)

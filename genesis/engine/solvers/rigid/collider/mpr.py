@@ -149,6 +149,7 @@ def support_driver(
     direction,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
+    scale,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
@@ -157,22 +158,22 @@ def support_driver(
     v = qd.Vector.zero(gs.qd_float, 3)
     geom_type = dyn_info.geoms.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
+        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, False, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, dyn_info)
+        v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
+        v = support_field._func_support_capsule(i_g, direction, pos, quat, False, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CYLINDER:
-        v = support_field._func_support_cylinder(i_g, direction, pos, quat, shrink=False, dyn_info=dyn_info)
+        v = support_field._func_support_cylinder(i_g, direction, pos, quat, False, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, dyn_info)
+        v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if qd.static(collider_static_config.has_terrain):
             # Terrain support doesn't depend on geometry pos/quat - uses collider_state.prism
             # Terrain is global and not perturbed, so we use the global state directly
             v, _ = support_field._func_support_prism(i_b, direction, collider_state)
     else:
-        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, collider_info)
+        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, scale, collider_info)
 
     return v
 
@@ -187,16 +188,18 @@ def compute_support(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     collider_state: array_class.ColliderState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
     collider_static_config: qd.template(),
 ):
     v1 = support_driver(
-        i_ga, i_b, direction, pos_a, quat_a, collider_state, dyn_info, collider_info, collider_static_config
+        i_ga, i_b, direction, pos_a, quat_a, scale_a, collider_state, dyn_info, collider_info, collider_static_config
     )
     v2 = support_driver(
-        i_gb, i_b, -direction, pos_b, quat_b, collider_state, dyn_info, collider_info, collider_static_config
+        i_gb, i_b, -direction, pos_b, quat_b, scale_b, collider_state, dyn_info, collider_info, collider_static_config
     )
 
     v = v1 - v2
@@ -232,6 +235,8 @@ def mpr_refine_portal(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -255,6 +260,8 @@ def mpr_refine_portal(
             quat_a,
             pos_b,
             quat_b,
+            scale_a,
+            scale_b,
             collider_state,
             dyn_info,
             collider_info,
@@ -346,6 +353,8 @@ def mpr_find_penetration(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -379,6 +388,8 @@ def mpr_find_penetration(
             quat_a,
             pos_b,
             quat_b,
+            scale_a,
+            scale_b,
             collider_state,
             dyn_info,
             collider_info,
@@ -484,6 +495,8 @@ def mpr_discover_portal(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -513,6 +526,8 @@ def mpr_discover_portal(
                 quat_a,
                 pos_b,
                 quat_b,
+                scale_a,
+                scale_b,
                 collider_state,
                 dyn_info,
                 collider_info,
@@ -535,6 +550,8 @@ def mpr_discover_portal(
         quat_a,
         pos_b,
         quat_b,
+        scale_a,
+        scale_b,
         collider_state,
         dyn_info,
         collider_info,
@@ -581,6 +598,8 @@ def mpr_discover_portal(
                 quat_a,
                 pos_b,
                 quat_b,
+                scale_a,
+                scale_b,
                 collider_state,
                 dyn_info,
                 collider_info,
@@ -619,6 +638,8 @@ def mpr_discover_portal(
                         quat_a,
                         pos_b,
                         quat_b,
+                        scale_a,
+                        scale_b,
                         collider_state,
                         dyn_info,
                         collider_info,
@@ -675,6 +696,8 @@ def guess_geoms_center(
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
     normal_ws,
+    scale_a,
+    scale_b,
     geoms_init_AABB: array_class.GeomsInitAABB,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -710,16 +733,16 @@ def guess_geoms_center(
     EPS = rigid_info.EPS[None]
 
     # Transform geometry centers to world space using thread-local pos/quat
-    center_a = gu.qd_transform_by_trans_quat(dyn_info.geoms.center[i_ga], pos_a, quat_a)
-    center_b = gu.qd_transform_by_trans_quat(dyn_info.geoms.center[i_gb], pos_b, quat_b)
+    center_a = gu.qd_transform_by_trans_quat(scale_a * dyn_info.geoms.center[i_ga], pos_a, quat_a)
+    center_b = gu.qd_transform_by_trans_quat(scale_b * dyn_info.geoms.center[i_gb], pos_b, quat_b)
 
     # Completely different center logics if a normal guess is provided
     if qd.static(not rigid_config.enable_mujoco_compatibility):
         if (qd.abs(normal_ws) > collider_info.mpr.CCD_EPS[None]).any():
             # Must start from the center of each bounding box
-            center_a_local = 0.5 * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
+            center_a_local = 0.5 * scale_a * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
             center_a = gu.qd_transform_by_trans_quat(center_a_local, pos_a, quat_a)
-            center_b_local = 0.5 * (geoms_init_AABB[i_gb, 7] + geoms_init_AABB[i_gb, 0])
+            center_b_local = 0.5 * scale_b * (geoms_init_AABB[i_gb, 7] + geoms_init_AABB[i_gb, 0])
             center_b = gu.qd_transform_by_trans_quat(center_b_local, pos_b, quat_b)
             delta = center_a - center_b
 
@@ -738,8 +761,8 @@ def guess_geoms_center(
                     dir_offset = offset / offset_norm
                     dir_offset_local_a = gu.qd_inv_transform_by_quat(dir_offset, quat_a)
                     dir_offset_local_b = gu.qd_inv_transform_by_quat(dir_offset, quat_b)
-                    box_size_a = geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]
-                    box_size_b = geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]
+                    box_size_a = scale_a * (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0])
+                    box_size_b = scale_b * (geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0])
                     length_a = box_size_a.dot(qd.abs(dir_offset_local_a))
                     length_b = box_size_b.dot(qd.abs(dir_offset_local_b))
 
@@ -762,6 +785,8 @@ def func_mpr_contact_from_centers(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
     dyn_info: array_class.DynInfo,
@@ -779,6 +804,8 @@ def func_mpr_contact_from_centers(
         quat_a,
         pos_b,
         quat_b,
+        scale_a,
+        scale_b,
         collider_state,
         mpr_state,
         dyn_info,
@@ -808,6 +835,8 @@ def func_mpr_contact_from_centers(
             quat_a,
             pos_b,
             quat_b,
+            scale_a,
+            scale_b,
             collider_state,
             mpr_state,
             dyn_info,
@@ -823,6 +852,8 @@ def func_mpr_contact_from_centers(
                 quat_a,
                 pos_b,
                 quat_b,
+                scale_a,
+                scale_b,
                 collider_state,
                 mpr_state,
                 dyn_info,
@@ -843,6 +874,8 @@ def func_mpr_contact(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     geoms_init_AABB: array_class.GeomsInitAABB,
     collider_state: array_class.ColliderState,
     mpr_state: array_class.MPRState,
@@ -860,6 +893,8 @@ def func_mpr_contact(
         pos_b,
         quat_b,
         normal_ws,
+        scale_a,
+        scale_b,
         geoms_init_AABB,
         dyn_info,
         rigid_info,
@@ -876,6 +911,8 @@ def func_mpr_contact(
         quat_a,
         pos_b,
         quat_b,
+        scale_a,
+        scale_b,
         collider_state,
         mpr_state,
         dyn_info,

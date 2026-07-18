@@ -477,6 +477,12 @@ class RigidOptions(Options):
         cylinder settling on a slope - motions a point contact otherwise never slows down. The extra rolling
         resistance slows down the constraint solve on every contact, more so than torsional friction (two extra axes),
         and requires 'enable_torsional_friction'. Defaults to False.
+    enable_geom_scaling : bool, optional
+        Whether each environment can run its entities at their own uniform size, set at runtime with
+        'entity.set_scale' (e.g. size domain randomization). Enable it only when environments need different sizes: it
+        carries a per-environment scale through collision detection and re-derives each link's mass and inertia per
+        environment, so both stepping and memory cost more than the shared-geometry default. Requires
+        'batch_links_info=True'. Defaults to False.
     impratio : float, optional
         Ratio of tangential (friction) to normal constraint impedance at contacts. Raising it above 1 stiffens
         friction so resting stacks and piles hold their pose under sustained shear, at the cost of a slower solve that
@@ -544,6 +550,8 @@ class RigidOptions(Options):
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
+
+    enable_geom_scaling: StrictBool = False
 
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton

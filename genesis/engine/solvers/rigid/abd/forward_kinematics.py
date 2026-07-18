@@ -538,9 +538,15 @@ def func_update_geoms_entity(
                 continue
         if func_check_index_range(i_g, dyn_info.entities.geom_start[i_e], dyn_info.entities.geom_end[i_e], BW):
             if force_update_fixed_geoms or not dyn_info.geoms.is_fixed[i_g]:
+                # A per-env geom scale grows the geom about its own frame; its offset within the link must scale
+                # by the same factor so the whole link (offset geoms included) scales uniformly about the link
+                # origin, rather than each geom swelling in place at its unscaled offset.
+                geom_offset = dyn_info.geoms.pos[i_g]
+                if qd.static(rigid_config.enable_geom_scaling):
+                    geom_offset = dyn_state.geoms.scale[i_g, i_b] * geom_offset
                 (dyn_state.geoms.pos[i_g, i_b], dyn_state.geoms.quat[i_g, i_b]) = (
                     gu.qd_transform_pos_quat_by_trans_quat(
-                        dyn_info.geoms.pos[i_g],
+                        geom_offset,
                         dyn_info.geoms.quat[i_g],
                         dyn_state.links.pos[dyn_info.geoms.link_idx[i_g], i_b],
                         dyn_state.links.quat[dyn_info.geoms.link_idx[i_g], i_b],
@@ -787,18 +793,24 @@ def kernel_update_verts_for_geoms(
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g_, i_b in qd.ndrange(n_geoms, _B):
         i_g = geoms_idx[i_g_]
-        func_update_verts_for_geom(i_g, i_b, dyn_state, dyn_info)
+        func_update_verts_for_geom(i_g, i_b, dyn_state, dyn_info, rigid_config)
 
 
 @qd.func
 def func_update_verts_for_geom(
-    i_g: qd.i32, i_b: qd.i32, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
+    i_g: qd.i32,
+    i_b: qd.i32,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
 ):
     _B = dyn_state.geoms.verts_updated.shape[1]
 
     if not dyn_state.geoms.verts_updated[i_g, i_b]:
         i_v_start = dyn_info.geoms.vert_start[i_g]
         if dyn_info.verts.is_fixed[i_v_start]:
+            # Fixed-vert geoms live in a shared (no batch axis) buffer, so they cannot carry a per-env scale;
+            # set_scale rejects them, so init_pos is always at unit scale here.
             for i_v in range(i_v_start, dyn_info.geoms.vert_end[i_g]):
                 verts_state_idx = dyn_info.verts.verts_state_idx[i_v]
                 dyn_state.fixed_verts.pos[verts_state_idx] = gu.qd_transform_by_trans_quat(
@@ -809,8 +821,11 @@ def func_update_verts_for_geom(
         else:
             for i_v in range(i_v_start, dyn_info.geoms.vert_end[i_g]):
                 verts_state_idx = dyn_info.verts.verts_state_idx[i_v]
+                init_pos = dyn_info.verts.init_pos[i_v]
+                if qd.static(rigid_config.enable_geom_scaling):
+                    init_pos = dyn_state.geoms.scale[i_g, i_b] * init_pos
                 dyn_state.free_verts.pos[verts_state_idx, i_b] = gu.qd_transform_by_trans_quat(
-                    dyn_info.verts.init_pos[i_v], dyn_state.geoms.pos[i_g, i_b], dyn_state.geoms.quat[i_g, i_b]
+                    init_pos, dyn_state.geoms.pos[i_g, i_b], dyn_state.geoms.quat[i_g, i_b]
                 )
             dyn_state.geoms.verts_updated[i_g, i_b] = True
 
@@ -821,7 +836,7 @@ def func_update_all_verts(dyn_state: array_class.DynState, dyn_info: array_class
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g, i_b in qd.ndrange(n_geoms, _B):
-        func_update_verts_for_geom(i_g, i_b, dyn_state, dyn_info)
+        func_update_verts_for_geom(i_g, i_b, dyn_state, dyn_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
@@ -846,7 +861,10 @@ def kernel_update_geom_aabbs(
         lower = gu.qd_vec3(qd.math.inf)
         upper = gu.qd_vec3(-qd.math.inf)
         for i_corner in qd.static(range(8)):
-            corner_pos = gu.qd_transform_by_trans_quat(geoms_init_AABB[i_g, i_corner], g_pos, g_quat)
+            corner = geoms_init_AABB[i_g, i_corner]
+            if qd.static(rigid_config.enable_geom_scaling):
+                corner = dyn_state.geoms.scale[i_g, i_b] * corner
+            corner_pos = gu.qd_transform_by_trans_quat(corner, g_pos, g_quat)
             lower = qd.min(lower, corner_pos)
             upper = qd.max(upper, corner_pos)
 
@@ -865,8 +883,13 @@ def kernel_update_vgeoms(dyn_state: array_class.DynState, dyn_info: array_class.
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_g, i_b in qd.ndrange(n_vgeoms, _B):
         i_l = dyn_info.vgeoms.link_idx[i_g]
+        # Scale the visual geom's link-frame offset with its per-env scale so it tracks the scaled collision
+        # geometry (which scales its own offset in forward kinematics); keeps rendering aligned with physics.
+        vgeom_offset = dyn_info.vgeoms.pos[i_g]
+        if qd.static(rigid_config.enable_geom_scaling):
+            vgeom_offset = dyn_state.vgeoms.scale[i_g, i_b] * vgeom_offset
         dyn_state.vgeoms.pos[i_g, i_b], dyn_state.vgeoms.quat[i_g, i_b] = gu.qd_transform_pos_quat_by_trans_quat(
-            dyn_info.vgeoms.pos[i_g],
+            vgeom_offset,
             dyn_info.vgeoms.quat[i_g],
             dyn_state.links.pos[i_l, i_b],
             dyn_state.links.quat[i_l, i_b],
@@ -896,8 +919,11 @@ def kernel_update_vverts_for_vgeoms(
         for i_vv in range(v_start, v_end):
             i_state = dyn_info.vverts.vverts_state_idx[i_vv]
             if i_state >= 0:
+                init_pos = dyn_info.vverts.init_pos[i_vv]
+                if qd.static(rigid_config.enable_geom_scaling):
+                    init_pos = dyn_state.vgeoms.scale[i_vg, i_b] * init_pos
                 dyn_state.vverts.pos[i_state, i_b] = gu.qd_transform_by_trans_quat(
-                    dyn_info.vverts.init_pos[i_vv], dyn_state.vgeoms.pos[i_vg, i_b], dyn_state.vgeoms.quat[i_vg, i_b]
+                    init_pos, dyn_state.vgeoms.pos[i_vg, i_b], dyn_state.vgeoms.quat[i_vg, i_b]
                 )
 
 

@@ -61,6 +61,8 @@ def func_contact_sphere_sdf(
 
     sphere_center = dyn_state.geoms.pos[i_ga, i_b]
     sphere_radius = dyn_info.geoms.data[i_ga][0]
+    if qd.static(collider_static_config.enable_geom_scaling):
+        sphere_radius = sphere_radius * dyn_state.geoms.scale[i_ga, i_b]
 
     center_to_b_dist = sdf.sdf_func_world(i_gb, i_b, sphere_center, dyn_state.geoms, dyn_info.geoms, collider_info.sdf)
     if center_to_b_dist < sphere_radius:
@@ -1299,6 +1301,13 @@ def func_contact_mpr_terrain(
 ):
     ga_pos, ga_quat = dyn_state.geoms.pos[i_ga, i_b], dyn_state.geoms.quat[i_ga, i_b]
     gb_pos, gb_quat = dyn_state.geoms.pos[i_gb, i_b], dyn_state.geoms.quat[i_gb, i_b]
+
+    scale_a = gs.qd_float(1.0)
+    scale_b = gs.qd_float(1.0)
+    if qd.static(collider_static_config.enable_geom_scaling):
+        scale_a = dyn_state.geoms.scale[i_ga, i_b]
+        scale_b = dyn_state.geoms.scale[i_gb, i_b]
+
     margin = gs.qd_float(0.0)
     EPS = rigid_info.EPS[None]
 
@@ -1331,6 +1340,7 @@ def func_contact_mpr_terrain(
                 direction,
                 ga_pos_terrain_frame,
                 ga_quat_terrain_frame,
+                scale_a,
                 collider_state,
                 dyn_info,
                 collider_info,
@@ -1422,6 +1432,8 @@ def func_contact_mpr_terrain(
                                         ga_quat_tf,
                                         gb_pos_terrain_frame,
                                         gb_quat_terrain_frame,
+                                        scale_a,
+                                        scale_b,
                                         collider_state,
                                         mpr_state,
                                         dyn_info,
@@ -1707,6 +1719,12 @@ def func_convex_convex_contact(
     if not (dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.PLANE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.BOX):
         EPS = rigid_info.EPS[None]
 
+        scale_a = gs.qd_float(1.0)
+        scale_b = gs.qd_float(1.0)
+        if qd.static(collider_static_config.enable_geom_scaling):
+            scale_a = dyn_state.geoms.scale[i_ga, i_b]
+            scale_b = dyn_state.geoms.scale[i_gb, i_b]
+
         # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
         # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
         # criteria to get rid of redundant contact points seems to be a better option.
@@ -1803,6 +1821,8 @@ def func_convex_convex_contact(
                         ga_quat_current,
                         gb_pos_current,
                         gb_quat_current,
+                        scale_a,
+                        scale_b,
                         dyn_info,
                         rigid_info,
                     )
@@ -1817,6 +1837,8 @@ def func_convex_convex_contact(
                         ga_quat_current,
                         gb_pos_current,
                         gb_quat_current,
+                        scale_a,
+                        scale_b,
                         dyn_info,
                         rigid_info,
                     )
@@ -1828,6 +1850,8 @@ def func_convex_convex_contact(
                         ga_quat_current,
                         gb_pos_current,
                         gb_quat_current,
+                        scale_a,
+                        scale_b,
                         dyn_info,
                         rigid_info,
                     )
@@ -1845,6 +1869,7 @@ def func_convex_convex_contact(
                         normal,
                         gb_pos_current,
                         gb_quat_current,
+                        scale_b,
                         collider_state,
                         dyn_info,
                         collider_info,
@@ -1885,6 +1910,8 @@ def func_convex_convex_contact(
                                     ga_quat_current,
                                     gb_pos_current,
                                     gb_quat_current,
+                                    scale_a,
+                                    scale_b,
                                     geoms_init_AABB,
                                     collider_state,
                                     mpr_state,
@@ -1953,7 +1980,8 @@ def func_convex_convex_contact(
                                     ga_quat_current,
                                     gb_pos_current,
                                     gb_quat_current,
-                                    dyn_state,
+                                    scale_a,
+                                    scale_b,
                                     collider_state,
                                     gjk_state,
                                     dyn_info,
@@ -2192,17 +2220,23 @@ def _func_multicontact_run_detection(
     used_gjk = False
     tolerance = collider_info.mc_tolerance[None] * func_compute_geom_pair_scale(i_ga, i_gb, geoms_init_AABB, dyn_info)
 
+    scale_a = gs.qd_float(1.0)
+    scale_b = gs.qd_float(1.0)
+    if qd.static(collider_static_config.enable_geom_scaling):
+        scale_a = dyn_state.geoms.scale[i_ga, i_b]
+        scale_b = dyn_state.geoms.scale[i_gb, i_b]
+
     if dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.CAPSULE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_info
+            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, scale_a, scale_b, dyn_info, rigid_info
         )
     elif dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.SPHERE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_info
+            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, scale_a, scale_b, dyn_info, rigid_info
         )
     elif dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.SPHERE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.BOX:
         is_col, normal, contact_pos, penetration = func_sphere_box_contact(
-            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_info
+            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, scale_a, scale_b, dyn_info, rigid_info
         )
     elif dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.PLANE:
         plane_dir = qd.Vector(
@@ -2211,7 +2245,16 @@ def _func_multicontact_run_detection(
         plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
         normal = -plane_dir.normalized()
         v1 = mpr.support_driver(
-            i_gb, i_b, normal, gb_pos, gb_quat, collider_state, dyn_info, collider_info, collider_static_config
+            i_gb,
+            i_b,
+            normal,
+            gb_pos,
+            gb_quat,
+            scale_b,
+            collider_state,
+            dyn_info,
+            collider_info,
+            collider_static_config,
         )
         penetration = normal.dot(v1 - ga_pos)
         contact_pos = v1 - 0.5 * penetration * normal
@@ -2240,6 +2283,8 @@ def _func_multicontact_run_detection(
                             ga_quat,
                             gb_pos,
                             gb_quat,
+                            scale_a,
+                            scale_b,
                             geoms_init_AABB,
                             collider_state,
                             mpr_state,
@@ -2262,7 +2307,8 @@ def _func_multicontact_run_detection(
                         ga_quat,
                         gb_pos,
                         gb_quat,
-                        dyn_state,
+                        scale_a,
+                        scale_b,
                         collider_state,
                         gjk_state,
                         dyn_info,
@@ -2733,6 +2779,12 @@ def _func_narrowphase_contact0(
             if dyn_info.geoms.type[i_ga] > dyn_info.geoms.type[i_gb]:
                 i_ga, i_gb = i_gb, i_ga
 
+            scale_a = gs.qd_float(1.0)
+            scale_b = gs.qd_float(1.0)
+            if qd.static(collider_static_config.enable_geom_scaling):
+                scale_a = dyn_state.geoms.scale[i_ga, i_b]
+                scale_b = dyn_state.geoms.scale[i_gb, i_b]
+
             if not (
                 dyn_info.geoms.is_convex[i_ga]
                 and dyn_info.geoms.is_convex[i_gb]
@@ -2778,15 +2830,42 @@ def _func_narrowphase_contact0(
 
             if dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.CAPSULE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                 is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_info
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    scale_a,
+                    scale_b,
+                    dyn_info,
+                    rigid_info,
                 )
             elif dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.SPHERE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                 is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_info
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    scale_a,
+                    scale_b,
+                    dyn_info,
+                    rigid_info,
                 )
             elif dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.SPHERE and dyn_info.geoms.type[i_gb] == gs.GEOM_TYPE.BOX:
                 is_col, normal, contact_pos, penetration = func_sphere_box_contact(
-                    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_info
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    scale_a,
+                    scale_b,
+                    dyn_info,
+                    rigid_info,
                 )
             elif dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.PLANE:
                 plane_dir = qd.Vector(
@@ -2796,7 +2875,16 @@ def _func_narrowphase_contact0(
                 plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
                 normal = -plane_dir.normalized()
                 v1 = mpr.support_driver(
-                    i_gb, i_b, normal, gb_pos, gb_quat, collider_state, dyn_info, collider_info, collider_static_config
+                    i_gb,
+                    i_b,
+                    normal,
+                    gb_pos,
+                    gb_quat,
+                    scale_b,
+                    collider_state,
+                    dyn_info,
+                    collider_info,
+                    collider_static_config,
                 )
                 penetration = normal.dot(v1 - ga_pos)
                 contact_pos = v1 - 0.5 * penetration * normal
@@ -2814,6 +2902,8 @@ def _func_narrowphase_contact0(
                         ga_quat,
                         gb_pos,
                         gb_quat,
+                        scale_a,
+                        scale_b,
                         shrink_sphere=False,
                         collider_state=collider_state,
                         gjk_state=gjk_state,
@@ -2854,6 +2944,8 @@ def _func_narrowphase_contact0(
                                 ga_quat,
                                 gb_pos,
                                 gb_quat,
+                                scale_a,
+                                scale_b,
                                 geoms_init_AABB,
                                 collider_state,
                                 mpr_state,

@@ -67,6 +67,7 @@ def support_driver(
     direction,
     pos: qd.types.vector(3),
     quat: qd.types.vector(4),
+    scale,
     shrink_sphere,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
@@ -84,23 +85,24 @@ def support_driver(
 
     geom_type = dyn_info.geoms.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, shrink_sphere, dyn_info)
+        v, v_, vid = support_field._func_support_sphere(i_g, direction, pos, quat, shrink_sphere, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, dyn_info)
+        v = support_field._func_support_ellipsoid(i_g, direction, pos, quat, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(i_g, direction, pos, quat, shrink_sphere, dyn_info)
+        v = support_field._func_support_capsule(i_g, direction, pos, quat, shrink_sphere, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.CYLINDER:
-        v = support_field._func_support_cylinder(i_g, direction, pos, quat, shrink_sphere, dyn_info)
+        v = support_field._func_support_cylinder(i_g, direction, pos, quat, shrink_sphere, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, dyn_info)
+        v, v_, vid = support_field._func_support_box(i_g, direction, pos, quat, scale, dyn_info)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if qd.static(collider_static_config.has_terrain):
             v, vid = support_field._func_support_prism(i_b, direction, collider_state)
     elif geom_type == gs.GEOM_TYPE.MESH and rigid_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
         v, vid = support_mesh(i_g, i_b, i_o, direction, pos, quat, gjk_state, dyn_info, collider_info)
+        v = pos + scale * (v - pos)
     else:
-        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, collider_info)
+        v, v_, vid = support_field._func_support_world(i_g, direction, pos, quat, scale, collider_info)
     return v, v_, vid
 
 
@@ -114,6 +116,8 @@ def func_support(
     quat_a: qd.types.vector(4),
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
+    scale_a,
+    scale_b,
     shrink_sphere,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
@@ -142,6 +146,7 @@ def func_support(
         i_g = i_ga if i == 0 else i_gb
         pos = pos_a if i == 0 else pos_b
         quat = quat_a if i == 0 else quat_b
+        scale = scale_a if i == 0 else scale_b
 
         sp, sp_, si = support_driver(
             i_g,
@@ -150,6 +155,7 @@ def func_support(
             d,
             pos,
             quat,
+            scale,
             shrink_sphere,
             collider_state,
             gjk_state,

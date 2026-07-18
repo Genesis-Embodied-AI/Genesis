@@ -105,6 +105,12 @@ def func_gjk_contact(
                 gb_pos_local, gb_quat_local, default_contact_pos, gu.qd_inv_quat(qrot)
             )
 
+        scale_a = gs.qd_float(1.0)
+        scale_b = gs.qd_float(1.0)
+        if qd.static(collider_static_config.enable_geom_scaling):
+            scale_a = dyn_state.geoms.scale[i_ga, i_b]
+            scale_b = dyn_state.geoms.scale[i_gb, i_b]
+
         gjk_flag = GJK.func_safe_gjk(
             i_ga,
             i_gb,
@@ -113,6 +119,8 @@ def func_gjk_contact(
             ga_quat_local,
             gb_pos_local,
             gb_quat_local,
+            scale_a,
+            scale_b,
             collider_state,
             gjk_state,
             dyn_info,
@@ -146,6 +154,7 @@ def func_gjk_contact(
                         gb_quat_local,
                         max_epa_iter,
                         collider_state,
+                        dyn_state,
                         gjk_state,
                         dyn_info,
                         rigid_info,
@@ -186,6 +195,7 @@ def func_gjk_contact(
                         gb_pos_local,
                         gb_quat_local,
                         collider_state,
+                        dyn_state,
                         gjk_state,
                         dyn_info,
                         collider_info,
@@ -228,6 +238,7 @@ def func_gjk_contact(
                     gb_pos_local,
                     gb_quat_local,
                     collider_state,
+                    dyn_state,
                     gjk_state,
                     dyn_info,
                     rigid_info,
@@ -249,6 +260,7 @@ def func_gjk_contact(
                     gb_pos,
                     gb_quat,
                     collider_state,
+                    dyn_state,
                     gjk_state,
                     dyn_info,
                     collider_info,
@@ -352,6 +364,7 @@ def func_extended_epa(
     quat_b: qd.types.vector(4),
     max_iter,
     collider_state: array_class.ColliderState,
+    dyn_state: array_class.DynState,
     gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -400,6 +413,11 @@ def func_extended_epa(
         # Find a new support point w from the nearest face's normal
         lower = qd.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
+        scale_a = gs.qd_float(1.0)
+        scale_b = gs.qd_float(1.0)
+        if qd.static(collider_static_config.enable_geom_scaling):
+            scale_a = dyn_state.geoms.scale[i_ga, i_b]
+            scale_b = dyn_state.geoms.scale[i_gb, i_b]
         wi = epa.func_epa_support(
             i_ga,
             i_gb,
@@ -408,6 +426,8 @@ def func_extended_epa(
             quat_a,
             pos_b,
             quat_b,
+            scale_a,
+            scale_b,
             dir,
             1.0,
             collider_state,
@@ -559,6 +579,7 @@ def func_add_diff_contact_input(
     pos_b: qd.types.vector(3),
     quat_b: qd.types.vector(4),
     collider_state: array_class.ColliderState,
+    dyn_state: array_class.DynState,
     gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     collider_info: array_class.ColliderInfo,
@@ -622,6 +643,11 @@ def func_add_diff_contact_input(
         normal = -normal
 
     ### Compute the support point along the face normal.
+    scale_a = gs.qd_float(1.0)
+    scale_b = gs.qd_float(1.0)
+    if qd.static(collider_static_config.enable_geom_scaling):
+        scale_a = dyn_state.geoms.scale[i_ga, i_b]
+        scale_b = dyn_state.geoms.scale[i_gb, i_b]
     obj1, obj2, localpos1, localpos2, id1, id2, mink = GJK.func_support(
         i_ga,
         i_gb,
@@ -631,6 +657,8 @@ def func_add_diff_contact_input(
         quat_a,
         pos_b,
         quat_b,
+        scale_a,
+        scale_b,
         shrink_sphere=False,
         collider_state=collider_state,
         gjk_state=gjk_state,

@@ -548,6 +548,7 @@ class KinematicSolver(Solver):
                 np.array([vgeom.init_pos for vgeom in vgeoms], dtype=gs.np_float),
                 np.array([vgeom.init_quat for vgeom in vgeoms], dtype=gs.np_float),
                 np.array([vgeom._color for vgeom in vgeoms], dtype=gs.np_float),
+                self.dyn_state,
                 self.dyn_info,
                 self.rigid_config,
             )

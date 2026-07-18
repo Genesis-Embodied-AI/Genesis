@@ -19,7 +19,16 @@ from .contact import func_add_contact, func_compute_geom_pair_scale, rotaxis, ro
 
 @qd.func
 def func_sphere_box_contact(
-    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info: array_class.DynInfo, rigid_info: array_class.RigidInfo
+    i_ga,
+    i_gb,
+    ga_pos,
+    ga_quat,
+    gb_pos,
+    gb_quat,
+    scale_a,
+    scale_b,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
 ):
     """
     Analytical sphere-box collision detection.
@@ -39,8 +48,8 @@ def func_sphere_box_contact(
     sphere_center = ga_pos
     box_center = gb_pos
     box_quat = gb_quat
-    sphere_radius = dyn_info.geoms.data[i_ga][0]
-    box_half_size = qd.Vector(
+    sphere_radius = dyn_info.geoms.data[i_ga][0] * scale_a
+    box_half_size = scale_b * qd.Vector(
         [0.5 * dyn_info.geoms.data[i_gb][0], 0.5 * dyn_info.geoms.data[i_gb][1], 0.5 * dyn_info.geoms.data[i_gb][2]],
         dt=gs.qd_float,
     )
@@ -115,13 +124,18 @@ def func_plane_box_contact(
     ga_pos, ga_quat = dyn_state.geoms.pos[i_ga, i_b], dyn_state.geoms.quat[i_ga, i_b]
     gb_pos, gb_quat = dyn_state.geoms.pos[i_gb, i_b], dyn_state.geoms.quat[i_gb, i_b]
 
+    # The plane (i_ga) is unbounded and not scaled; only the box (i_gb) carries a per-env scale.
+    scale_gb = gs.qd_float(1.0)
+    if qd.static(collider_static_config.enable_geom_scaling):
+        scale_gb = dyn_state.geoms.scale[i_gb, i_b]
+
     plane_dir = qd.Vector(
         [dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2]], dt=gs.qd_float
     )
     plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _, _ = support_field._func_support_box(i_gb, normal, gb_pos, gb_quat, dyn_info)
+    v1, _, _ = support_field._func_support_box(i_gb, normal, gb_pos, gb_quat, scale_gb, dyn_info)
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:
@@ -152,7 +166,7 @@ def func_plane_box_contact(
                 # Plane-box pairs are sized with the convex cap (they are not in the large-contact mask), so the
                 # emission must stay within it to avoid overflowing a buffer allocated as a convex pair.
                 if n_con < qd.static(collider_static_config.n_contacts_per_convex_pair):
-                    pos_corner = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], gb_pos, gb_quat)
+                    pos_corner = gu.qd_transform_by_trans_quat(scale_gb * dyn_info.verts.init_pos[i_v], gb_pos, gb_quat)
                     penetration = normal.dot(pos_corner - ga_pos)
                     if penetration > 0.0:
                         contact_pos = pos_corner - 0.5 * penetration * normal
@@ -215,14 +229,22 @@ def func_box_box_contact(
     ga_quat = dyn_state.geoms.quat[i_ga, i_b]
     gb_quat = dyn_state.geoms.quat[i_gb, i_b]
 
+    scale_ga = gs.qd_float(1.0)
+    scale_gb = gs.qd_float(1.0)
+    if qd.static(collider_static_config.enable_geom_scaling):
+        scale_ga = dyn_state.geoms.scale[i_ga, i_b]
+        scale_gb = dyn_state.geoms.scale[i_gb, i_b]
+
     size1 = (
-        qd.Vector(
+        scale_ga
+        * qd.Vector(
             [dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2]], dt=gs.qd_float
         )
         / 2
     )
     size2 = (
-        qd.Vector(
+        scale_gb
+        * qd.Vector(
             [dyn_info.geoms.data[i_gb][0], dyn_info.geoms.data[i_gb][1], dyn_info.geoms.data[i_gb][2]], dt=gs.qd_float
         )
         / 2

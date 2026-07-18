@@ -985,6 +985,9 @@ class ColliderStaticConfig(metaclass=AutoInitMeta):
     n_contacts_per_nonconvex_pair: int
     # ccd algorithm
     ccd_algorithm: int
+    # Per-env geom scale active (mirrors enable_geom_scaling in RigidSimStaticConfig); gates the scale reads in
+    # the collision support/box paths so default scenes compile scale-free.
+    enable_geom_scaling: bool = False
 
 
 # =========================================== MPR ===========================================
@@ -2031,6 +2034,9 @@ class GeomsState:
     max_buffer_idx: qd.Tensor
     is_hibernated: qd.Tensor
     friction_ratio: qd.Tensor
+    # Per-environment uniform geom scale about the geom frame origin, default 1.0. Read at geometry-consumption
+    # sites (verts/AABB, collision, inertial) only when rigid_config.enable_geom_scaling is set; see set_geoms_scale.
+    scale: qd.Tensor
 
 
 def get_geoms_state(solver, is_active=True):
@@ -2047,6 +2053,7 @@ def get_geoms_state(solver, is_active=True):
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         is_hibernated=V(dtype=gs.qd_int, shape=shape),
         friction_ratio=V(dtype=gs.qd_float, shape=shape),
+        scale=V(dtype=gs.qd_float, shape=shape),
     )
 
 
@@ -2222,12 +2229,17 @@ def get_vgeoms_info(solver):
 class VGeomsState:
     pos: qd.Tensor
     quat: qd.Tensor
+    scale: qd.Tensor
 
 
 def get_vgeoms_state(solver, is_active=True):
     shape = (solver.n_vgeoms_, solver._B) if is_active else ()
 
-    return VGeomsState(pos=V(dtype=gs.qd_vec3, shape=shape), quat=V(dtype=gs.qd_vec4, shape=shape))
+    return VGeomsState(
+        pos=V(dtype=gs.qd_vec3, shape=shape),
+        quat=V(dtype=gs.qd_vec4, shape=shape),
+        scale=V(dtype=gs.qd_float, shape=shape),
+    )
 
 
 # =========================================== EqualitiesInfo ===========================================
@@ -2421,6 +2433,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # extra opposing pyramid pairs per contact with the pyramidal cone, two extra cone rows with the elliptic cone.
     # Requires enable_torsional_friction (the rolling rows sit after the spin row in the contact row layout).
     enable_rolling_friction: bool = False
+    # Whether per-environment geom scale (entity.set_scale) is active. Gates the scale reads in the verts/AABB,
+    # collision, and inertial paths so scenes that don't opt in compile identical, scale-free kernels.
+    enable_geom_scaling: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
     hibernation_min_steps: int = 10

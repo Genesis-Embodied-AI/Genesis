@@ -224,6 +224,7 @@ class Collider:
             n_contacts_per_convex_pair=n_contacts_per_convex_pair,
             n_contacts_per_nonconvex_pair=n_contacts_per_nonconvex_pair,
             ccd_algorithm=ccd_algorithm,
+            enable_geom_scaling=self._solver._options.enable_geom_scaling,
         )
 
     def _init_collision_fields(self) -> None:

@@ -4527,6 +4527,35 @@ class RigidEntity(KinematicEntity):
         for link in self._links:
             link.set_friction_rolling(friction_rolling)
 
+    @gs.assert_built
+    def set_scale(self, scale, envs_idx=None):
+        """
+        Set a per-environment uniform geometry scale for this entity at runtime.
+
+        Scales the entity's collision geometry, AABBs, visual geometry and per-link inertial for the selected
+        environments while preserving the joint configuration, e.g. for size domain randomization. Requires the
+        scene built with ``RigidOptions(enable_geom_scaling=True)``.
+
+        Parameters
+        ----------
+        scale : float | array_like
+            The uniform scale factor. A scalar is shared by every selected environment; a length-``n_envs`` array
+            sets one factor per environment. Must be strictly positive.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments are scaled. Defaults to None.
+        """
+        self._solver.set_entity_scale(self, scale, envs_idx)
+
+    @gs.assert_built
+    def get_scale(self, envs_idx=None):
+        """
+        Return this entity's per-environment uniform geometry scale.
+
+        Returns a scalar for a non-batched scene (``n_envs == 0``), otherwise a ``(n_envs,)`` array.
+        """
+        scale = qd_to_numpy(self._solver.dyn_state.geoms.scale, envs_idx, self._geom_start, transpose=True)[..., 0]
+        return scale[0] if self._solver.n_envs == 0 else scale
+
     # ------------------------------------------------------------------------------------
     # --------------------------------- mass / inertia -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -4591,25 +4620,22 @@ class RigidEntity(KinematicEntity):
             link.set_mass(link.get_mass() * ratio)
 
     @gs.assert_built
-    def get_mass(self):
+    def get_mass(self, envs_idx=None):
         """
         Get the total mass of the entity in kg.
 
-        For heterogeneous entities, returns an array of masses for each environment.
-        For non-heterogeneous entities, returns a scalar mass.
+        When the entity's mass can differ across environments -- per-env geom scaling (``set_scale``) or a
+        heterogeneous entity -- the mass is per-environment: a scalar for a non-batched scene (``n_envs == 0``),
+        otherwise a tensor of shape ``(n_envs,)`` (or ``(len(envs_idx),)``). Otherwise every environment shares the
+        single build-time mass and a scalar is returned.
 
         Returns
         -------
-        mass : float | np.ndarray
-            The total mass of the entity in kg. For heterogeneous entities, returns
-            an array of shape (n_envs,) with per-environment masses.
+        mass : float | torch.Tensor
         """
-        if self._enable_heterogeneous:
-            links_idx = slice(self.link_start, self.link_end)
-            links_mass = qd_to_numpy(self._solver.dyn_info.links.inertial_mass, None, links_idx, transpose=True)
-            return links_mass.sum(axis=1)
-
-        # Original behavior: sum link masses to scalar
+        if self._solver._options.enable_geom_scaling or self._enable_heterogeneous:
+            total = self.get_links_inertial_mass(envs_idx=envs_idx).sum(dim=-1)
+            return float(total) if self._solver.n_envs == 0 else total
         mass = 0.0
         for link in self.links:
             mass += link.get_mass()
