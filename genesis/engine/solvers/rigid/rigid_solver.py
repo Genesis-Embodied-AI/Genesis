@@ -3086,7 +3086,7 @@ def kernel_step_2(
     if qd.static(rigid_config.integrator != gs.integrator.approximate_implicitfast):
         func_implicit_damping(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
-    func_integrate(dyn_state, collider_state, constraint_state, dyn_info, rigid_info, rigid_config, is_backward)
+    func_integrate(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
 
     if qd.static(rigid_config.use_hibernation):
         func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(

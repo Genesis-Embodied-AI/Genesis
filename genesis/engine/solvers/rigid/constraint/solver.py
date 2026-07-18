@@ -632,6 +632,12 @@ def _add_friction_constraint(
     link_a_maybe_batch = [link_a, i_b] if qd.static(rigid_config.batch_links_info) else link_a
     link_b_maybe_batch = [link_b, i_b] if qd.static(rigid_config.batch_links_info) else link_b
 
+    # One mark per contact: the driver launches one thread per friction row
+    if i_friction == 0:
+        dyn_state.links.is_constrained[link_a, i_b] = True
+        if link_b > -1:
+            dyn_state.links.is_constrained[link_b, i_b] = True
+
     d1, d2 = gu.qd_orthogonals(contact_data_normal)
 
     invweight = dyn_info.links.invweight[link_a_maybe_batch][0]
@@ -797,6 +803,10 @@ def _add_collision_constraints_per_contact(
             link_b = contact_data_link_b
             link_a_maybe_batch = [link_a, i_b] if qd.static(rigid_config.batch_links_info) else link_a
             link_b_maybe_batch = [link_b, i_b] if qd.static(rigid_config.batch_links_info) else link_b
+
+            dyn_state.links.is_constrained[link_a, i_b] = True
+            if link_b > -1:
+                dyn_state.links.is_constrained[link_b, i_b] = True
 
             # A contact needs a constraint only when at least one endpoint is an awake dynamic body; if both are
             # hibernated or fixed, no awake dof is acted upon and the contact carries no constraint. A sleeper struck
@@ -1047,6 +1057,10 @@ def func_equality_connect(
     jdotv2, _cddb2_ang = func_equality_jdotv(i_b, link2_idx, global_anchor2, dyn_state, dyn_info, rigid_config)
     jdotv = jdotv1 - jdotv2
 
+    dyn_state.links.is_constrained[link1_idx, i_b] = True
+    if link2_idx > -1:
+        dyn_state.links.is_constrained[link2_idx, i_b] = True
+
     for i_3 in range(3):
         n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
         qd.atomic_add(constraint_state.n_constraints_equality[i_b], 1)
@@ -1214,6 +1228,14 @@ def add_equality_constraints(
     rigid_config: qd.template(),
 ):
     _B = dyn_state.dofs.ctrl_mode.shape[1]
+
+    n_links = dyn_state.links.pos.shape[0]
+
+    # Reset the per-link constraint involvement (see is_constrained in array_class.py); the equality funcs below and
+    # the collision assembly mark it back.
+    qd.loop_config(name="clear_links_constrained", serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_l, i_b in qd.ndrange(n_links, _B):
+        dyn_state.links.is_constrained[i_l, i_b] = False
 
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
@@ -1438,6 +1460,9 @@ def func_equality_weld(
     jdotv1, cddb1_ang = func_equality_jdotv(i_b, link1_idx, global_anchor1, dyn_state, dyn_info, rigid_config)
     jdotv2, cddb2_ang = func_equality_jdotv(i_b, link2_idx, global_anchor2, dyn_state, dyn_info, rigid_config)
     jdotv = jdotv1 - jdotv2
+
+    dyn_state.links.is_constrained[link1_idx, i_b] = True
+    dyn_state.links.is_constrained[link2_idx, i_b] = True
 
     # --- Position part (first 3 constraints) ---
     same_root = (

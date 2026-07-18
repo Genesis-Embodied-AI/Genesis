@@ -1756,6 +1756,10 @@ class LinksState:
     j_ang: qd.Tensor
     cd_ang: qd.Tensor
     cd_vel: qd.Tensor
+    # Whether any contact or connect/weld equality row involves the link this step. Written by the constraint
+    # assembly (the deterministic post-sort view of the contacts), consumed by the midpoint-integration eligibility;
+    # the raw collider contact buffer is only valid through the contact_sort_idx indirection.
+    is_constrained: qd.Tensor
     cd_ang_bw: qd.Tensor
     cd_vel_bw: qd.Tensor
     mass_sum: qd.Tensor
@@ -1809,6 +1813,7 @@ def get_links_state(solver):
         j_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cd_ang=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cd_vel=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
+        is_constrained=V(dtype=gs.qd_bool, shape=shape),
         cd_ang_bw=V(dtype=gs.qd_vec3, shape=shape_bw, needs_grad=requires_grad),
         cd_vel_bw=V(dtype=gs.qd_vec3, shape=shape_bw, needs_grad=requires_grad),
         mass_sum=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
