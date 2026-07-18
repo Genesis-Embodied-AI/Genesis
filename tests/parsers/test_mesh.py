@@ -1,9 +1,8 @@
 import io
 import os
+import xml.etree.ElementTree as ET
 from contextlib import nullcontext
 
-import xml.etree.ElementTree as ET
-import mujoco
 import numpy as np
 import pygltflib
 import pytest
@@ -722,29 +721,7 @@ def test_mjcf_parse_mesh_normals(normals_mjcf):
 
 
 @pytest.fixture
-def textured_mjcf(tmp_path):
-    explicit_mesh_path = tmp_path / "tetra.obj"
-    explicit_mesh_path.write_text(
-        "\n".join(
-            (
-                "v -1 -1 -1",
-                "v 1 -1 -1",
-                "v 0 1 -1",
-                "v 0 0 1",
-                "vt 0.1 0.2",
-                "vt 0.8 0.2",
-                "vt 0.4 0.9",
-                "vt 0.6 0.7",
-                "f 1/1 3/3 2/2",
-                "f 1/1 2/2 4/4",
-                "f 2/2 3/3 4/4",
-                "f 3/3 1/1 4/4",
-            )
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
+def textured_mjcf():
     mjcf = ET.Element("mujoco", model="texture_mapping")
     default = ET.SubElement(mjcf, "default")
     ET.SubElement(default, "geom", contype="0", conaffinity="0")
@@ -752,200 +729,123 @@ def textured_mjcf(tmp_path):
     asset = ET.SubElement(mjcf, "asset")
     ET.SubElement(asset, "texture", name="checker", type="2d", builtin="checker", width="8", height="8")
     ET.SubElement(asset, "material", name="repeated", texture="checker", texrepeat="2 2.5")
-    ET.SubElement(
-        asset,
-        "material",
-        name="uniform",
-        texture="checker",
-        texrepeat="2 2.5",
-        texuniform="true",
-    )
+    ET.SubElement(asset, "material", name="uniform", texture="checker", texrepeat="2 2.5", texuniform="true")
+
+    MESH_VERTICES = "-1 -2 -3  1 -2 -3  1 2 -3  -1 2 -3  -1 -2 3  1 -2 3  1 2 3  -1 2 3"
+    MESH_FACES = "0 2 1  0 3 2  4 5 6  4 6 7  0 1 5  0 5 4  3 7 6  3 6 2  0 4 7  0 7 3  1 2 6  1 6 5"
+    ET.SubElement(asset, "mesh", name="plain_mesh", vertex=MESH_VERTICES, face=MESH_FACES)
+    ET.SubElement(asset, "mesh", name="plain_mesh_scaled", scale="3 3 3", vertex=MESH_VERTICES, face=MESH_FACES)
     ET.SubElement(
         asset,
         "mesh",
-        name="plain_mesh",
+        name="explicit_mesh",
         vertex="-1 -1 -1  1 -1 -1  0 1 -1  0 0 1",
+        texcoord="0.125 0.25  0.75 0.25  0.5 0.875  0.625 0.75",
         face="0 2 1  0 1 3  1 2 3  2 0 3",
     )
-    ET.SubElement(
-        asset,
-        "mesh",
-        name="fitted_mesh",
-        vertex="-2 -3 -1  2 -3 -1  -2 3 -1  -2 -3 1",
-        face="0 2 1  0 1 3  0 3 2  1 2 3",
-    )
-    ET.SubElement(asset, "mesh", name="explicit_mesh", file=str(explicit_mesh_path))
 
     worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", name="plane_repeated", type="plane", size="3 5 0.1", material="repeated")
+    ET.SubElement(worldbody, "geom", name="plane_uniform", type="plane", size="3 5 0.1", material="uniform")
+    ET.SubElement(worldbody, "geom", name="plane_infinite", type="plane", size="0 0 0.1", material="uniform")
+    ET.SubElement(worldbody, "geom", name="sphere_repeated", type="sphere", size="2", material="repeated")
+    ET.SubElement(worldbody, "geom", name="ellipsoid_uniform", type="ellipsoid", size="2 3 4", material="uniform")
+    ET.SubElement(worldbody, "geom", name="capsule_repeated", type="capsule", size="2 3", material="repeated")
+    ET.SubElement(worldbody, "geom", name="cylinder_repeated", type="cylinder", size="2 3", material="repeated")
+    ET.SubElement(worldbody, "geom", name="box_uniform", type="box", size="2 3 4", material="uniform")
+    ET.SubElement(worldbody, "geom", name="mesh_generated", type="mesh", mesh="plain_mesh", material="repeated")
     ET.SubElement(
         worldbody,
         "geom",
-        name="plane_repeated",
-        type="plane",
-        size="3 5 0.1",
+        name="mesh_generated_scaled",
+        type="mesh",
+        mesh="plain_mesh_scaled",
         material="repeated",
     )
+    ET.SubElement(worldbody, "geom", name="box_fitted_repeated", type="box", mesh="plain_mesh", material="repeated")
     ET.SubElement(
         worldbody,
         "geom",
-        name="plane_uniform",
-        type="plane",
-        size="3 5 0.1",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="plane_infinite",
-        type="plane",
-        size="0 0 0.1",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="sphere_uniform",
-        type="sphere",
-        size="2",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="ellipsoid_uniform",
-        type="ellipsoid",
-        size="2 3 4",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="capsule_uniform",
-        type="capsule",
-        size="2 3",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="cylinder_uniform",
-        type="cylinder",
-        size="2 3",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="box_uniform",
+        name="box_fitted_repeated_scaled",
         type="box",
-        size="2 3 4",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="mesh_generated",
-        type="mesh",
-        mesh="plain_mesh",
+        mesh="plain_mesh_scaled",
         material="repeated",
     )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="box_fitted",
-        type="box",
-        mesh="fitted_mesh",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="mesh_explicit_a",
-        type="mesh",
-        mesh="explicit_mesh",
-        material="uniform",
-    )
-    ET.SubElement(
-        worldbody,
-        "geom",
-        name="mesh_explicit_b",
-        type="mesh",
-        mesh="explicit_mesh",
-        material="uniform",
-    )
+    ET.SubElement(worldbody, "geom", name="box_fitted", type="box", mesh="plain_mesh", material="uniform")
+    ET.SubElement(worldbody, "geom", name="mesh_explicit_a", type="mesh", mesh="explicit_mesh", material="uniform")
+    ET.SubElement(worldbody, "geom", name="mesh_explicit_b", type="mesh", mesh="explicit_mesh", material="uniform")
 
     return ET.tostring(mjcf, encoding="unicode")
 
 
 def test_mjcf_2d_texture_mapping(textured_mjcf):
     SCALE = 2.0
-    EXPECTED_NAMES = {
-        "plane_repeated",
+    OBJECT_RELATIVE_GEOMS = (
+        ("plane_repeated", (3.0, 5.0)),
+        ("sphere_repeated", (2.0, 2.0)),
+        ("capsule_repeated", (2.0, 2.0)),
+        ("cylinder_repeated", (2.0, 2.0)),
+        ("mesh_generated", (1.0, 2.0)),
+        ("mesh_generated_scaled", (3.0, 6.0)),
+    )
+    FITTED_GEOMS = (
+        ("box_fitted_repeated", (1.0, 2.0)),
+        ("box_fitted_repeated_scaled", (3.0, 6.0)),
+    )
+    SPATIAL_GEOM_NAMES = (
         "plane_uniform",
         "plane_infinite",
-        "sphere_uniform",
         "ellipsoid_uniform",
-        "capsule_uniform",
-        "cylinder_uniform",
         "box_uniform",
-        "mesh_generated",
-        "box_fitted",
-        "mesh_explicit_a",
-        "mesh_explicit_b",
-    }
+    )
+    EXPECTED_EXPLICIT_UVS = ((0.125, 0.25), (0.5, 0.875), (0.625, 0.75), (0.75, 0.25))
 
     scene = gs.Scene()
     entity = scene.add_entity(
-        gs.morphs.MJCF(
+        morph=gs.morphs.MJCF(
             file=textured_mjcf,
             scale=SCALE,
         ),
     )
     scene.build()
 
-    model = mujoco.MjModel.from_xml_string(textured_mjcf)
-    vgeom_names = {vgeom.metadata["name"] for vgeom in entity.vgeoms}
-    assert vgeom_names == EXPECTED_NAMES
+    vgeoms = {vgeom.metadata["name"]: vgeom for vgeom in entity.vgeoms}
 
-    explicit_mesh = model.mesh("explicit_mesh")
-    texcoord_start = explicit_mesh.texcoordadr[0]
-    texcoord_end = texcoord_start + model.mesh_texcoordnum[explicit_mesh.id]
-    explicit_uvs = model.mesh_texcoord[texcoord_start:texcoord_end]
+    object_relative_uvs = []
+    expected_object_relative_uvs = []
+    for name, render_size in OBJECT_RELATIVE_GEOMS:
+        vgeom = vgeoms[name]
+        object_xy = vgeom.init_vverts[:, :2] / np.multiply(SCALE, render_size)
+        object_relative_uvs.append(vgeom.uvs)
+        expected_object_relative_uvs.append(np.column_stack((object_xy[:, 0] - 0.5, -1.25 * object_xy[:, 1] - 0.5)))
+    assert_allclose(np.concatenate(object_relative_uvs), np.concatenate(expected_object_relative_uvs), tol=gs.EPS)
 
-    for vgeom in entity.vgeoms:
-        geom = model.geom(vgeom.metadata["name"])
-        if vgeom.metadata["name"].startswith("mesh_explicit"):
-            assert_allclose(
-                np.unique(vgeom.uvs, axis=0),
-                np.unique(explicit_uvs, axis=0),
-                tol=1e-6,
-            )
-            continue
+    fitted_uvs = []
+    expected_fitted_uvs = []
+    for name, render_size in FITTED_GEOMS:
+        vgeom = vgeoms[name]
+        object_xy = vgeom.init_vverts[:, :2] / np.multiply(SCALE, render_size)
+        repeat = np.divide((2.0, 2.5), render_size)
+        fitted_uvs.append(vgeom.uvs)
+        expected_fitted_uvs.append(
+            np.column_stack((0.5 * repeat[0] * object_xy[:, 0] - 0.5, -0.5 * repeat[1] * object_xy[:, 1] - 0.5))
+        )
+    assert_allclose(np.concatenate(fitted_uvs), np.concatenate(expected_fitted_uvs), tol=gs.EPS)
 
-        render_size = geom.size[:2].copy()
-        if geom.type[0] in (
-            mujoco.mjtGeom.mjGEOM_SPHERE,
-            mujoco.mjtGeom.mjGEOM_CAPSULE,
-            mujoco.mjtGeom.mjGEOM_CYLINDER,
-        ):
-            render_size[1] = render_size[0]
-        is_size_finite = render_size > 0
+    spatial_xy = np.concatenate([vgeoms[name].init_vverts[:, :2] for name in SPATIAL_GEOM_NAMES], axis=0)
+    spatial_uvs = np.concatenate([vgeoms[name].uvs for name in SPATIAL_GEOM_NAMES], axis=0)
+    expected_spatial_uvs = np.column_stack((spatial_xy[:, 0] - 0.5, -1.25 * spatial_xy[:, 1] - 0.5))
+    assert_allclose(spatial_uvs, expected_spatial_uvs, tol=gs.EPS)
 
-        object_xy = vgeom.init_vverts[:, :2] / SCALE
-        if geom.type[0] != mujoco.mjtGeom.mjGEOM_MESH:
-            np.divide(object_xy, render_size, out=object_xy, where=is_size_finite)
+    fitted_uniform = vgeoms["box_fitted"]
+    fitted_uniform_xy = fitted_uniform.init_vverts[:, :2] / np.multiply(SCALE, (1.0, 2.0))
+    expected_fitted_uniform_uvs = np.column_stack(
+        (SCALE * fitted_uniform_xy[:, 0] - 0.5, -1.25 * SCALE * fitted_uniform_xy[:, 1] - 0.5)
+    )
+    assert_allclose(fitted_uniform.uvs, expected_fitted_uniform_uvs, tol=gs.EPS)
 
-        material = model.mat(geom.matid[0])
-        repeat = material.texrepeat.copy()
-        if geom.dataid[0] >= 0:
-            np.divide(repeat, render_size, out=repeat, where=is_size_finite)
-        if material.texuniform[0]:
-            repeat *= np.where(is_size_finite, render_size, 1.0) * SCALE
-
-        expected_uvs = np.empty_like(object_xy)
-        expected_uvs[:, 0] = 0.5 * repeat[0] * object_xy[:, 0] - 0.5
-        expected_uvs[:, 1] = -0.5 * repeat[1] * object_xy[:, 1] - 0.5
-        assert_allclose(vgeom.uvs, expected_uvs, tol=1e-6)
+    explicit_uvs = [np.unique(vgeoms["mesh_explicit_a"].uvs, axis=0), np.unique(vgeoms["mesh_explicit_b"].uvs, axis=0)]
+    assert_allclose(explicit_uvs, EXPECTED_EXPLICIT_UVS, tol=gs.EPS)
 
 
 # ==================== Surface Reconstruction Tests ====================

@@ -628,8 +628,8 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         index_faces = [faces.ravel(), norm_faces.ravel()]
         if tex_vert_start != -1:  # -1 means no texcoord
             tex_faces = mj.mesh_facetexcoord[face_start:face_end]
-            uv = mj.mesh_texcoord[tex_vert_start:tex_vert_end].copy()
-            uv[:, 1] = 1 - uv[:, 1]
+            # This slice is a view of MuJoCo-owned data; transformations create new arrays
+            uv = mj.mesh_texcoord[tex_vert_start:tex_vert_end]
             has_explicit_texcoords = True
             index_faces.append(tex_faces.ravel())
         else:
@@ -642,6 +642,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         normals = normals[uniq[:, 1]]
         if uv is not None:
             uv = uv[uniq[:, 2]]
+            uv = np.stack((uv[:, 0], 1.0 - uv[:, 1]), axis=-1)
         faces = inv.reshape(-1, 3).astype(np.int64)
 
         mesh_params = dict(vertices=vertices, faces=faces, vertex_normals=normals)
@@ -667,12 +668,12 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
 
             object_xy = mesh_params["vertices"][:, :2].copy()
             if mj_geom.type[0] != mujoco.mjtGeom.mjGEOM_MESH:
-                # Finite primitives use unit coordinates, while infinite plane dimensions use spatial coordinates
+                # Normalize finite primitive axes; true meshes and infinite plane axes remain spatial
                 np.divide(object_xy, render_size, out=object_xy, where=is_size_finite)
 
             repeat = mj_mat.texrepeat.copy()
             if mj_geom.dataid[0] >= 0:
-                # Geoms fitted to mesh assets are already scaled by the MuJoCo compiler
+                # MuJoCo divides by geom size for every retained mesh dataid, including mesh-fitted primitives
                 np.divide(repeat, render_size, out=repeat, where=is_size_finite)
             if mj_mat.texuniform[0]:
                 # Spatial repetition includes the scale applied by the Genesis morph
@@ -688,7 +689,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             # Trimesh measures the vertical texture coordinate from the top edge
             uv[:, 1] = 1.0 - uv[:, 1]
         elif uv is not None and not is_2d_texture:
-            uv *= mj_mat.texrepeat
+            uv = uv * mj_mat.texrepeat
     tmesh = trimesh.Trimesh(
         **mesh_params,
         visual=TextureVisuals(uv=uv, material=tmesh_mat),
