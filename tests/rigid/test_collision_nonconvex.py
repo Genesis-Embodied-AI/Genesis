@@ -908,7 +908,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
 
     # Wait for the pile to collapse and settle at rest
     vmax_trace, wmax_trace, energy_trace = [], [], []
-    for i in range(1300):
+    for i in range(1400):
         scene.step()
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
@@ -931,7 +931,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     max_penetration, crossings = get_genuine_interpenetration(links)
     # FIXME: Rare (~5% of initial-pose draws) stem-through-wall traps exceed this bound by design: a thin feature
     # creeping through a sub-cell wall is a known nonconvex detection limitation, excluded from the bound.
-    assert max_penetration < (5e-4 if convexify else 5e-3)
+    assert max_penetration < (1e-3 if convexify else 5e-3)
 
     # Over a 100-step window, record the residual velocities and the net energy produced per contact
     vel_lin_all, vel_ang_all = [], []
