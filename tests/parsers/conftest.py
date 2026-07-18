@@ -590,6 +590,64 @@ def normals_mjcf(tmp_path):
     return file_path, str(ico_path)
 
 
+@pytest.fixture
+def textured_mjcf():
+    mjcf = ET.Element("mujoco", model="texture_mapping")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="0", conaffinity="0")
+
+    asset = ET.SubElement(mjcf, "asset")
+    ET.SubElement(asset, "texture", name="checker", type="2d", builtin="checker", width="8", height="8")
+    ET.SubElement(asset, "material", name="repeated", texture="checker", texrepeat="2 2.5")
+    ET.SubElement(asset, "material", name="uniform", texture="checker", texrepeat="2 2.5", texuniform="true")
+
+    MESH_VERTICES = "-1 -2 -3  1 -2 -3  1 2 -3  -1 2 -3  -1 -2 3  1 -2 3  1 2 3  -1 2 3"
+    MESH_FACES = "0 2 1  0 3 2  4 5 6  4 6 7  0 1 5  0 5 4  3 7 6  3 6 2  0 4 7  0 7 3  1 2 6  1 6 5"
+    ET.SubElement(asset, "mesh", name="plain_mesh", vertex=MESH_VERTICES, face=MESH_FACES)
+    ET.SubElement(asset, "mesh", name="plain_mesh_scaled", scale="3 3 3", vertex=MESH_VERTICES, face=MESH_FACES)
+    ET.SubElement(
+        asset,
+        "mesh",
+        name="explicit_mesh",
+        vertex="-1 -1 -1  1 -1 -1  0 1 -1  0 0 1",
+        texcoord="0.125 0.25  0.75 0.25  0.5 0.875  0.625 0.75",
+        face="0 2 1  0 1 3  1 2 3  2 0 3",
+    )
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", name="plane_repeated", type="plane", size="3 5 0.1", material="repeated")
+    ET.SubElement(worldbody, "geom", name="plane_uniform", type="plane", size="3 5 0.1", material="uniform")
+    ET.SubElement(worldbody, "geom", name="plane_infinite", type="plane", size="0 0 0.1", material="uniform")
+    ET.SubElement(worldbody, "geom", name="sphere_repeated", type="sphere", size="2", material="repeated")
+    ET.SubElement(worldbody, "geom", name="ellipsoid_uniform", type="ellipsoid", size="2 3 4", material="uniform")
+    ET.SubElement(worldbody, "geom", name="capsule_repeated", type="capsule", size="2 3", material="repeated")
+    ET.SubElement(worldbody, "geom", name="cylinder_repeated", type="cylinder", size="2 3", material="repeated")
+    ET.SubElement(worldbody, "geom", name="box_uniform", type="box", size="2 3 4", material="uniform")
+    ET.SubElement(worldbody, "geom", name="mesh_generated", type="mesh", mesh="plain_mesh", material="repeated")
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="mesh_generated_scaled",
+        type="mesh",
+        mesh="plain_mesh_scaled",
+        material="repeated",
+    )
+    ET.SubElement(worldbody, "geom", name="box_fitted_repeated", type="box", mesh="plain_mesh", material="repeated")
+    ET.SubElement(
+        worldbody,
+        "geom",
+        name="box_fitted_repeated_scaled",
+        type="box",
+        mesh="plain_mesh_scaled",
+        material="repeated",
+    )
+    ET.SubElement(worldbody, "geom", name="box_fitted", type="box", mesh="plain_mesh", material="uniform")
+    ET.SubElement(worldbody, "geom", name="mesh_explicit_a", type="mesh", mesh="explicit_mesh", material="uniform")
+    ET.SubElement(worldbody, "geom", name="mesh_explicit_b", type="mesh", mesh="explicit_mesh", material="uniform")
+
+    return ET.tostring(mjcf, encoding="unicode")
+
+
 @pytest.fixture(scope="session")
 def all_primitives_mjcf():
     """Generate an MJCF model with various geometric primitives on a plane."""

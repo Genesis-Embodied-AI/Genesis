@@ -642,7 +642,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         normals = normals[uniq[:, 1]]
         if uv is not None:
             uv = uv[uniq[:, 2]]
-            uv = np.stack((uv[:, 0], 1.0 - uv[:, 1]), axis=-1)
+            uv[:, 1] = 1.0 - uv[:, 1]
         faces = inv.reshape(-1, 3).astype(np.int64)
 
         mesh_params = dict(vertices=vertices, faces=faces, vertex_normals=normals)
