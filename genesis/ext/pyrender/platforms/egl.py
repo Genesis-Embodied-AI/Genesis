@@ -281,14 +281,27 @@ class EGLPlatform(Platform):
         from OpenGL.EGL import eglDestroyContext, eglGetCurrentContext
 
         if self._egl_display is not None:
-            # The EGL current context is per-thread and shared across renderers. Only release it if it is ours;
-            # otherwise another renderer (possibly mid-render) is current and tearing down this context must not
-            # strand it with no current context.
-            if self._egl_context is not None and eglGetCurrentContext() == self._egl_context:
-                self.make_uncurrent()
             if self._egl_context is not None:
+                # All offscreen renderers on a device share one EGLDisplay, and the EGL current context is
+                # per-thread. Calling eglDestroyContext while a *foreign* renderer's context is current on the
+                # shared display corrupts the driver's shared per-display state (observed as a host-heap
+                # use-after-free during GC-triggered teardown, when a renderer is deleted while another is
+                # mid-render). Destroy our context with a well-defined current binding instead: remember any
+                # foreign current context, make ours current, release it (NO_CONTEXT) so it is current to no
+                # thread, destroy it, then restore the foreign context. This neither strands nor clobbers
+                # another renderer's context.
+                current_context = eglGetCurrentContext()
+                restore_context = (
+                    self.save_current_context()
+                    if current_context and current_context != self._egl_context
+                    else None
+                )
+                self.make_current()
+                self.make_uncurrent()
                 eglDestroyContext(self._egl_display, self._egl_context)
                 self._egl_context = None
+                if restore_context is not None:
+                    restore_context()
             # NOTE: intentionally not calling eglTerminate here. The NVIDIA EGL
             # driver does not support terminate/re-initialize cycles on the same
             # device (returns EGL_BAD_ACCESS), which breaks multi-scene workflows.
