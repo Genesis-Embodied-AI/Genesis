@@ -468,9 +468,9 @@ class RigidOptions(Options):
     enable_torsional_friction : bool, optional
         Whether contacts also resist relative spin about their normal, with strength set per geometry by the material
         option 'friction_torsional' (see 'gs.materials.Rigid'). Enable it when spin resistance matters - a grasped
-        object twisting in a gripper, a top spinning in place - which a point contact otherwise never slows down since
-        it transmits no spin torque. Every contact carries extra constraint rows to do so, slowing down the constraint
-        solve even where spin is irrelevant. Defaults to False.
+        object twisting in a gripper, a top spinning in place - motions a point contact transmits no torque against,
+        so they persist indefinitely otherwise. The extra spin resistance slows down the constraint solve on every
+        contact, including those where spin is irrelevant. Defaults to False.
     impratio : float, optional
         Ratio of tangential (friction) to normal constraint impedance at contacts. Raising it above 1 stiffens
         friction so resting stacks and piles hold their pose under sustained shear, at the cost of a slower solve that

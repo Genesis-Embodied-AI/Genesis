@@ -891,8 +891,8 @@ def gs_sim(
         gjk_collision,
         show_viewer,
         mj_sim,
-        torsional_friction=torsional_friction,
         friction_cone=friction_cone,
+        torsional_friction=torsional_friction,
     )
 
 

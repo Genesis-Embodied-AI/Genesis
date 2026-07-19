@@ -690,7 +690,7 @@ def build_genesis_sim(
     mj_sim,
     *,
     friction_cone,
-    torsional_friction=False,
+    torsional_friction,
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -1085,7 +1085,7 @@ def check_mujoco_data_consistency(
             # Mujoco's stat, which engages a cone as a whole; counting every row of a cone that carries any force
             # translates Genesis's convention into Mujoco's.
             gs_counted = gs_sim.rigid_solver.constraint_solver.active.to_numpy()[:gs_n_constraints, 0].copy()
-            gs_n_cone = gs_sim.rigid_solver.constraint_solver.constraint_state.n_constraints_cone.to_numpy()[0]
+            gs_n_cone = gs_sim.rigid_solver.constraint_solver.n_constraints_cone.to_numpy()[0]
             if gs_n_cone:
                 gs_nef = (
                     gs_sim.rigid_solver.constraint_solver.n_constraints_equality.to_numpy()[0]

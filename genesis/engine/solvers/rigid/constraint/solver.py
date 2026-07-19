@@ -148,6 +148,7 @@ class ConstraintSolver:
         self.n_constraints = cs.n_constraints
         self.n_constraints_equality = cs.n_constraints_equality
         self.n_constraints_frictionloss = cs.n_constraints_frictionloss
+        self.n_constraints_cone = cs.n_constraints_cone
         self.improved = cs.improved
         self.Jaref = cs.Jaref
         self.Ma = cs.Ma
@@ -3431,8 +3432,8 @@ def func_apply_rank1_sparse_whole_env(
     The working vector is pre-staged at permuted positions in nt_vec (L is stored in permuted layout); the sweep runs
     ascending columns from p_min within the skyline envelope (nt_H_env_start) and self-clears nt_vec as each column is
     consumed. Returns True on a non-positive downdate pivot. Shared by the active-set flip update (working vector
-    jac * sqrt(D)) and the coupled cone update (block factor staged one column at a time), so both
-    maintain the skyline factor through one code path.
+    jac * sqrt(D)) and the coupled cone update (block factor staged one column at a time), so both maintain the
+    skyline factor through one code path.
     """
     EPS = rigid_info.EPS[None]
     n_dofs = constraint_state.nt_H.shape[1]
@@ -3539,13 +3540,13 @@ def func_apply_staged_rank_updates_island(
 
     The caller stages each update's working vector into nt_vec (slot-minor [i_d * hessian_rank_update_batch + i_u])
     and its sign (+1 update, -1 downdate) into signs, with ld_start the smallest island-local support row across the
-    staged vectors. This sweep is agnostic to the source: batched per-constraint J^T D J rows (one rank-1 each) or
-    a contact's coupled second-order-cone block (staged as its block factor's columns). A rank-1 rotation at
-    column ld only reads state produced by earlier updates at that column and by its own rotations at earlier
-    columns, so interleaving the n_u updates per column is bit-identical to running them sequentially while
-    visiting each L column once. The sweep
-    is bounded per column by the skyline height (dof_env_col_end). Returns whether any downdate went indefinite, in
-    which case the caller refactors the island directly (discarding the partially updated L).
+    staged vectors. This sweep is agnostic to the source: batched per-constraint J^T D J rows (one rank-1 each) or a
+    contact's coupled second-order-cone block (staged as its block factor's columns). A rank-1 rotation at column ld
+    only reads state produced by earlier updates at that column and by its own rotations at earlier columns, so
+    interleaving the n_u updates per column is bit-identical to running them sequentially while visiting each L
+    column once. The sweep is bounded per column by the skyline height (dof_env_col_end). Returns whether any
+    downdate went indefinite, in which case the caller refactors the island directly (discarding the partially
+    updated L).
     """
     EPS = rigid_info.EPS[None]
     dof_base = constraint_state.island.dof_slices.start[i_island, i_b]
@@ -3831,10 +3832,9 @@ def func_factor_island_incremental_or_direct(
     One rank-1 update sweeps the island's skyline envelope at O(sum_span) (sum_span = total row span = envelope
     nonzeros), so n_changed of them cost O(n_changed * sum_span); a direct refactor factors it at O(sum_span_sq)
     (sum_span_sq = sum of squared row spans). The elliptic cone adds one fused multi-rank sweep per middle-zone
-    contact to the incremental side, which the rebuild bakes into the Hessian instead. Both costs are read
-    straight off the envelope, so the decision compares them directly, with no scene-tuned constant. The choice
-    must be per island, not on the env-wide flip count: the rebuild path refactors every island, so a global
-    decision would
+    contact to the incremental side, which the rebuild bakes into the Hessian instead. Both costs are read straight
+    off the envelope, so the decision compares them directly, with no scene-tuned constant. The choice must be per
+    island, not on the env-wide flip count: the rebuild path refactors every island, so a global decision would
     needlessly refactor quiescent islands whenever flips are spread thin across many of them (e.g. several separated
     piles each toggling a single contact).
     """
@@ -6189,10 +6189,10 @@ def func_solve_iter(
                 # Count middle-zone cone contacts: each rides 2 rank-1 sweeps per cone row (one per staged factor
                 # column of its downdated + updated blocks) on the incremental factor every iteration regardless of
                 # active-set flips, so it must weigh into the crossover below (and n_changed alone is often 0 while
-                # the cone still moves). The count reads cone_prev_jaref, which only the CPU
-                # backend allocates; a GPU build of this branch (explicit sparse_solve on GPU) rebuilds with the cone
-                # baked in each iteration instead, and the static backend gate keeps the cone helpers out of the GPU
-                # compilation. cone_passes stays 0 for the pyramidal cone.
+                # the cone still moves). The count reads cone_prev_jaref, which only the CPU backend allocates; a GPU
+                # build of this branch (explicit sparse_solve on GPU) rebuilds with the cone baked in each iteration
+                # instead, and the static backend gate keeps the cone helpers out of the GPU compilation. cone_passes
+                # stays 0 for the pyramidal cone.
                 cone_passes = 0
                 if qd.static(rigid_config.enable_elliptic_friction and rigid_config.backend == gs.cpu):
                     n_rows = qd.static(rigid_config.rows_per_contact)
@@ -6226,8 +6226,8 @@ def func_solve_iter(
                         )
                 # The coupled middle-zone cone block varies with the residual, so whenever some cone sits in the
                 # middle zone on either side (cone_passes > 0) and the active-set update stayed incremental, it rides
-                # the same skyline factor via its downdate/update. With cone_passes == 0 no block is baked in
-                # the factor and none is due, so the update is skipped; a skipped cone's stale cone_prev_jaref stays
+                # the same skyline factor via its downdate/update. With cone_passes == 0 no block is baked in the
+                # factor and none is due, so the update is skipped; a skipped cone's stale cone_prev_jaref stays
                 # classified non-middle until its update runs again on current residuals.
                 if qd.static(rigid_config.enable_elliptic_friction):
                     if qd.static(rigid_config.backend == gs.cpu):
@@ -6400,7 +6400,7 @@ def func_update_contact_force(
                     for i_dir in qd.static(range(4, rows_per_contact)):
                         force = (
                             force
-                            + (-contact_data_normal)
+                            - contact_data_normal
                             * constraint_state.efc_force[i_c * rows_per_contact + i_dir + const_start, i_b]
                         )
 
