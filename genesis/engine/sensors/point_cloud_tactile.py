@@ -1047,6 +1047,7 @@ def _dilate_kernel_builder(meta_entry: GridFFTMeta, fft_n: tuple[int, int]) -> t
 
 @qd.func
 def _func_elastomer_min_signed_dist_bvh(
+    i_t: int,
     i_b: int,
     i_s: int,
     probe_world: qd.types.vector(3),
@@ -1060,6 +1061,9 @@ def _func_elastomer_min_signed_dist_bvh(
     """
     BVH-based signed distance from ``probe_world`` to the nearest triangle of any geom flagged for this sensor in
     ``track_geom_mask`` (shape ``(B, n_sensors, n_geoms)``).
+
+    ``i_t`` selects the BVH tree slot and ``i_b`` the env backing the leaf triangles and the geom mask; see
+    bvh_ray_cast in raycast_qd.py for the split.
 
     Sign is positive when the probe is outside the surface (closest-triangle face-normal points away from probe),
     negative when inside. Mirrors the return contract of ``_func_elastomer_min_sdf_over_active_geoms`` so callers
@@ -1080,14 +1084,14 @@ def _func_elastomer_min_signed_dist_bvh(
     while stack_idx > 0:
         stack_idx -= 1
         node_idx = node_stack[stack_idx]
-        node = bvh_nodes[i_b, node_idx]
+        node = bvh_nodes[i_t, node_idx]
 
         if not func_sphere_intersects_aabb(probe_world, best_dist_sq, node.bound.min, node.bound.max):
             continue
 
         if node.left == -1:
             sorted_leaf_idx = node_idx - (n_triangles - 1)
-            i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
+            i_f = qd.cast(bvh_morton_codes[i_t, sorted_leaf_idx][1], gs.qd_int)
             i_g = dyn_info.faces.geom_idx[i_f]
             if not track_geom_mask[i_b, i_s, i_g]:
                 continue
@@ -1120,6 +1124,7 @@ def _func_elastomer_min_signed_dist_bvh(
 def _kernel_elastomer_probe_depth_bvh(
     probe_sensor_idx: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
+    env_bvh_idx: qd.types.ndarray(),
     probe_positions_local: qd.types.ndarray(),
     probe_radii: qd.types.ndarray(),
     track_geom_mask: qd.types.ndarray(),
@@ -1151,7 +1156,16 @@ def _kernel_elastomer_probe_depth_bvh(
         probe_world = link_pos + gu.qd_transform_by_quat(probe_local, link_quat)
 
         signed = _func_elastomer_min_signed_dist_bvh(
-            i_b, i_s, probe_world, bvh_nodes, bvh_morton_codes, track_geom_mask, dyn_state, dyn_info, max_query_dist
+            env_bvh_idx[i_b],
+            i_b,
+            i_s,
+            probe_world,
+            bvh_nodes,
+            bvh_morton_codes,
+            track_geom_mask,
+            dyn_state,
+            dyn_info,
+            max_query_dist,
         )
         probe_depth_buf[i_b, i_p] = qd.max(gs.qd_float(0.0), -signed)
 
@@ -1442,6 +1456,7 @@ def _kernel_elastomer_surface_state_bvh(
 @qd.kernel(fastcache=False)
 def _kernel_elastomer_surface_state_via_global_bvh(
     links_idx: qd.types.ndarray(),
+    env_bvh_idx: qd.types.ndarray(),
     sensor_elastomer_geom_start: qd.types.ndarray(),
     elastomer_geom_idx: qd.types.ndarray(),
     bvh_chunk_sensor_idx: qd.types.ndarray(),
@@ -1560,6 +1575,7 @@ def _kernel_elastomer_surface_state_via_global_bvh(
                         surface_pos_sensor_buf[i_b, i_o, k] = point_sensor[k]
 
                     min_sdf = _func_elastomer_min_signed_dist_bvh(
+                        env_bvh_idx[i_b],
                         i_b,
                         i_s,
                         point_world,
@@ -2183,6 +2199,7 @@ class ElastomerTaxelSensor(
             _kernel_elastomer_probe_depth_bvh(
                 shared_metadata.probe_sensor_idx,
                 shared_metadata.links_idx,
+                shared_context.collision_bvh_context.env_bvh_idx,
                 shared_metadata.probe_positions,
                 shared_metadata.probe_radii,
                 shared_metadata.sensor_candidate_geom_mask,
@@ -2256,6 +2273,7 @@ class ElastomerTaxelSensor(
             else:
                 _kernel_elastomer_surface_state_via_global_bvh(
                     shared_metadata.links_idx,
+                    shared_context.collision_bvh_context.env_bvh_idx,
                     shared_metadata.sensor_elastomer_geom_start,
                     shared_metadata.elastomer_geom_idx,
                     bvh.chunk_sensor_idx,
