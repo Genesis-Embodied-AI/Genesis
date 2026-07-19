@@ -10,10 +10,6 @@ from OpenGL.GL import *
 import genesis as gs
 
 from .constants import RenderFlags
-from .shader_program import ShaderProgram
-
-
-MODULE_DIR = os.path.dirname(__file__)
 
 
 class OffscreenRenderer(object):
@@ -205,28 +201,8 @@ class OffscreenRenderer(object):
             retval = ()
 
         if normal:
-
-            class CustomShaderCache:
-                def __init__(self):
-                    self.programs = {}
-
-                def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
-                    is_double_sided = bool((defines or {}).get("DOUBLE_SIDED"))
-                    if is_double_sided not in self.programs:
-                        self.programs[is_double_sided] = ShaderProgram(
-                            os.path.join(MODULE_DIR, "shaders/mesh_normal.vert"),
-                            os.path.join(MODULE_DIR, "shaders/mesh_normal.frag"),
-                            geometry_shader=(
-                                os.path.join(MODULE_DIR, "shaders/mesh_normal_double_sided.geom")
-                                if is_double_sided
-                                else None
-                            ),
-                            defines=defines,
-                        )
-                    return self.programs[is_double_sided]
-
             old_cache = renderer._program_cache
-            renderer._program_cache = CustomShaderCache()
+            renderer._program_cache = renderer._normal_program_cache
 
             flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
             if env_separate_rigid:
