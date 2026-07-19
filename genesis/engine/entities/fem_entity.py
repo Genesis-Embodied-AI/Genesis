@@ -70,8 +70,6 @@ class FEMEntity(Entity):
         self._el_start = el_start  # offset for element index
         self._s_start = s_start  # offset for surface triangles
         self._step_global_added = None
-        self._render_meshes = []
-        self._sim_vert_maps = None
         self.sample()
 
         # Check if this is cloth (elements are already triangles)
@@ -359,7 +357,8 @@ class FEMEntity(Entity):
             Array of vertex positions with shape (n_vertices, 3).
 
         elems : np.ndarray
-            Array of tetrahedral elements with shape (n_elements, 4), indexing into verts.
+            Array of elements indexing into verts: tetrahedra with shape (n_elements, 4), or surface triangles with
+            shape (n_elements, 3) for Cloth material.
 
         Raises
         ------
@@ -391,99 +390,33 @@ class FEMEntity(Entity):
 
     def sample(self):
         """
-        Sample mesh and elements based on the entity's morph type.
+        Build the entity's render meshes and simulation mesh from its morph.
 
-        For Cloth material, loads surface mesh directly without tetrahedralization.
-        For regular FEM materials, tetrahedralizes the mesh.
-
-        Raises
-        ------
-        Exception
-            If the morph type is unsupported.
+        The morph surface is kept as one render mesh per sub-mesh, each with its own surface and UVs, while the
+        simulation operates on a single welded copy of its vertices: surface triangles are the elements for Cloth
+        material, and the mesh is tetrahedralized otherwise. 'sim_vert_maps' ties render vertices to simulation
+        vertices for rendering: welding and tetrahedralization both keep the input vertices first and in order,
+        so these maps remain valid indices into the simulated vertices.
         """
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
-        is_cloth = isinstance(self.material, ClothMaterial)
+        self._render_meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
+        surface_verts, surface_faces, self._sim_vert_maps = mu.merge_submeshes(
+            [mesh.verts for mesh in self._render_meshes], [mesh.faces for mesh in self._render_meshes]
+        )
 
-        # Apply ``morph.pos`` BEFORE tetrahedralization. Upstream's primitive paths
-        # (``sphere_to_elements`` / ``box_to_elements``) translated mesh verts before
-        # calling tetgen; tetgen's Steiner-point refinement is sensitive to absolute
-        # coords, so running it on centered geometry then translating after produces
-        # a different mesh than upstream did (verified: 960 vs 968 verts for a sphere
-        # at pos=(0.4, -0.1, 0.1)). The mesh-count delta cascades through 40 implicit
-        # FEM steps and pushes the macOS ``linear_corotated`` rest-state assertion
-        # over its 0.025 tolerance.
-        p = np.array(self._morph.pos)
-
-        if is_cloth:
-            meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
-            self._render_meshes = list(meshes)
-
-            mesh_verts = [mesh.verts for mesh in meshes]
-            mesh_faces = [mesh.faces for mesh in meshes]
-            verts, faces = self._merge_elements(mesh_verts, mesh_faces)
-            verts = verts + p
-            self.instantiate(verts, faces)
-
+        if isinstance(self.material, ClothMaterial):
+            # Cloth needs no tetrahedralization: the welded surface triangles are the simulation elements.
+            verts, elems = surface_verts, surface_faces
         else:
-            meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
-            self._render_meshes = list(meshes)
-
-            mesh_verts = [mesh.verts for mesh in meshes]
-            mesh_faces = [mesh.faces for mesh in meshes]
-            surface_verts, surface_faces = self._merge_elements(mesh_verts, mesh_faces)
-            surface_verts = surface_verts + p
+            # Tetrahedralize before applying the morph position: tetgen's Steiner-point refinement depends on the
+            # absolute coordinates, so translating afterward keeps the tetrahedralization, and its on-disk cache,
+            # shared across all placements of the same geometry.
             surface_trimesh = trimesh.Trimesh(vertices=surface_verts, faces=surface_faces, process=False)
-            verts, elems = eu.mesh_to_elements(mesh=surface_trimesh, tet_cfg=self.tet_cfg)
-            # ``split_all_surface_tets`` (for hydroelastic contact) was upstream applied
-            # only to file-loaded Mesh morphs, not to Sphere/Box/Cylinder primitives.
-            if isinstance(self._morph, gs.options.morphs.Mesh):
-                verts, elems = eu.split_all_surface_tets(verts, elems)
-            self.instantiate(verts, elems)
+            verts, elems = eu.mesh_to_elements(surface_trimesh, tet_cfg=self.tet_cfg)
+            verts, elems = eu.split_all_surface_tets(verts, elems)
 
-    def _merge_elements(self, mesh_verts_list, mesh_elems_list):
-        """Merge multiple sub-meshes' vertices and elements, deduplicating shared vertices.
-
-        Concatenates all vertices, deduplicates by position, remaps element
-        indices, and builds ``_sim_vert_maps`` mapping each sub-mesh's local
-        vertex indices to the deduplicated sim vertex array.
-
-        Returns (combined_verts, combined_elems).
-        """
-        all_verts_list = []
-        all_elems_list = []
-        sub_mesh_ranges = []
-        offset = 0
-        for verts, elems in zip(mesh_verts_list, mesh_elems_list):
-            v = np.asarray(verts, dtype=np.float64)
-            e = np.asarray(elems, dtype=np.int32)
-            all_verts_list.append(v)
-            all_elems_list.append(e + offset)
-            sub_mesh_ranges.append((offset, len(v)))
-            offset += len(v)
-        all_verts = np.vstack(all_verts_list)
-        all_elems = np.vstack(all_elems_list)
-
-        # Deduplicate by quantizing positions
-        quantized = np.round(all_verts * 1e8).astype(np.int64)
-        _, unique_idx, remap = np.unique(quantized, axis=0, return_index=True, return_inverse=True)
-        sorted_order = np.argsort(unique_idx)
-        rank = np.empty_like(sorted_order)
-        rank[sorted_order] = np.arange(len(sorted_order))
-        global_remap = rank[remap]
-
-        # Preserve float64 — tetgen output is sensitive to vertex coord precision, and
-        # downcasting to gs.np_float (typically float32) here can change tetgen's mesh
-        # topology vs the upstream path that fed it float64 directly.
-        verts = all_verts[np.sort(unique_idx)]
-        elems = global_remap[all_elems].astype(gs.np_int)
-
-        # Build per-sub-mesh sim_vert_maps
-        self._sim_vert_maps = []
-        for sub_offset, sub_n_verts in sub_mesh_ranges:
-            self._sim_vert_maps.append(global_remap[sub_offset : sub_offset + sub_n_verts].astype(gs.np_int))
-
-        return verts, elems
+        self.instantiate(verts + self._morph.pos, elems)
 
     def _add_to_solver(self, in_backward=False):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
@@ -500,8 +433,8 @@ class FEMEntity(Entity):
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
 
         if is_cloth:
-            gs.logger.info(f"Entity {self.uid} is cloth - adding to FEM solver for position tracking only")
-            self._solver._kernel_add_elements_render(
+            # Cloth physics is managed by the IPC coupler; the FEM solver only tracks vertex positions.
+            self._solver._kernel_add_vertices(
                 f=self._sim.cur_substep_local,
                 v_start=self._v_start,
                 verts=verts_numpy,
@@ -1097,17 +1030,17 @@ class FEMEntity(Entity):
 
     @property
     def render_meshes(self):
-        """Per-sub-mesh render meshes, decoupled from the sim mesh topology."""
+        """Render meshes, one per morph sub-mesh, each carrying its own surface and UVs."""
         return self._render_meshes
 
     @property
     def sim_vert_maps(self):
-        """Per-sub-mesh maps from render-vertex index to sim-vertex index."""
+        """For each render mesh, the map from its vertex indices to the entity's simulated vertex indices."""
         return self._sim_vert_maps
 
     @property
     def n_elements(self):
-        """Number of elements (triangles for cloth, tets for volumetric)."""
+        """Number of simulation elements: surface triangles for Cloth material, tetrahedra otherwise."""
         return len(self.elems)
 
     @property

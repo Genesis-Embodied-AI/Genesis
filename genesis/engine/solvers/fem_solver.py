@@ -1090,6 +1090,7 @@ class FEMSolver(Solver):
         return state
 
     def get_state_render(self, f):
+        """Refresh and return the environment-offset vertex positions field, with shape (n_vertices, B)."""
         self._kernel_get_state_render(f)
         return self.surface_render_v.vertices
 
@@ -1187,18 +1188,18 @@ class FEMSolver(Solver):
             self.surface[i_global].active = True
 
     @qd.kernel
-    def _kernel_add_elements_render(
+    def _kernel_add_vertices(
         self,
         f: qd.i32,
         v_start: qd.i32,
         verts: qd.types.ndarray(),
     ):
         """
-        Add element vertices to the solver for position tracking only.
-        Physics is managed by IPC; surface triangles for rendering live on the FEMEntity's
-        render_meshes rather than in solver fields.
+        Add vertices to the solver for position tracking only, without any simulation element.
+
+        Used for Cloth material entities, whose physics is managed by the IPC coupler: the mass is a placeholder
+        the solver never integrates with.
         """
-        # Add vertices for rendering
         n_verts_local = verts.shape[0]
         for i_v, i_b in qd.ndrange(n_verts_local, self._B):
             i_global = i_v + v_start
@@ -1206,10 +1207,9 @@ class FEMSolver(Solver):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = qd.Vector.zero(gs.qd_float, 3)
 
-        # Initialize vertex info (mass will be managed by IPC, set to dummy value)
         for i_v in range(n_verts_local):
             i_global = i_v + v_start
-            self.elements_v_info[i_global].mass = 1.0  # Dummy value
+            self.elements_v_info[i_global].mass = 1.0
             self.elements_v_info[i_global].mass_over_dt2 = 0.0
             self.elements_v_info[i_global].friction_mu = 0.0
 

@@ -1328,6 +1328,47 @@ def make_tetgen_switches(cfg):
     return "".join(flags)
 
 
+def merge_submeshes(verts_list, faces_list):
+    """Concatenate sub-meshes into a single mesh, welding vertices that share a position.
+
+    Welding covers both duplicated vertices within a sub-mesh (e.g. texture-seam splits) and vertices shared across
+    sub-meshes, so that downstream consumers (e.g. tetrahedralization) see one connected surface.
+
+    Parameters
+    ----------
+    verts_list : list of np.ndarray
+        Per-sub-mesh vertex arrays with shape (n_verts, 3).
+    faces_list : list of np.ndarray
+        Per-sub-mesh face arrays with shape (n_faces, 3), indexing into the matching vertex array.
+
+    Returns
+    -------
+    verts : np.ndarray
+        Welded vertices, ordered by first occurrence in the concatenated input.
+    faces : np.ndarray
+        Concatenated faces, re-indexed against the welded vertices.
+    verts_maps : list of np.ndarray
+        For each sub-mesh, the map from its local vertex indices to indices into the welded vertices.
+    """
+    sub_offsets = (0, *np.cumsum([len(verts) for verts in verts_list]))
+    all_verts = np.concatenate(verts_list, axis=0)
+    all_faces = np.concatenate([faces + offset for faces, offset in zip(faces_list, sub_offsets)], axis=0)
+
+    # Weld by quantized position: co-located vertices are authored with identical coordinates, so a tight absolute
+    # quantum absorbs sub-nanometer parsing noise while keeping genuinely distinct vertices separate.
+    quantized = np.round(all_verts * 1e8).astype(np.int64)
+    _, unique_idx, remap = np.unique(quantized, axis=0, return_index=True, return_inverse=True)
+    # np.unique orders groups by quantized key; rank the first-occurrence indices to restore input order instead.
+    rank = np.empty(len(unique_idx), dtype=unique_idx.dtype)
+    rank[np.argsort(unique_idx)] = np.arange(len(unique_idx))
+    remap = rank[remap]
+
+    verts = all_verts[np.sort(unique_idx)]
+    faces = remap[all_faces]
+    verts_maps = [remap[start:end] for start, end in zip(sub_offsets, sub_offsets[1:])]
+    return verts, faces, verts_maps
+
+
 def tetrahedralize_mesh(mesh, tet_cfg):
     tet = tetgen.TetGen(mesh.vertices.astype(np.float64, copy=False), mesh.faces.astype(np.int32, copy=False))
 
