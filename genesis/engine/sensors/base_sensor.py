@@ -286,7 +286,8 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
         else:
             self._return_shapes = intrinsic_shapes
 
-        self._cache_idx: int = -1  # initialized by SensorManager during build
+        # Element offset within the per-class cache; initialized by SensorManager during build
+        self._cache_offset: int = -1
 
     # =============================== methods to implement ===============================
 
@@ -533,15 +534,15 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
     def _sanitize_envs_idx(self, envs_idx) -> torch.Tensor:
         return self._manager._sim._scene._sanitize_envs_idx(envs_idx)
 
-    def _set_metadata_field(self, value, field, field_size, envs_idx=None):
+    def _set_metadata_field(self, value, field, field_start, field_size, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         if field.ndim == 2:
-            # flat field structure
-            idx = self._idx * field_size
-            index_slice = slice(idx, idx + field_size)
+            # Flat field structure: per-sensor spans may differ in size (e.g. cache-sized imperfection fields), so the
+            # caller provides this sensor's start rather than a uniform stride.
+            index_slice = slice(field_start, field_start + field_size)
         else:
             # per sensor field structure
-            index_slice = self._idx
+            index_slice = field_start
 
         field[:, index_slice] = broadcast_tensor(value, field.dtype, (len(envs_idx), field_size), ("envs_idx", ""))
 
@@ -626,11 +627,11 @@ class _LinkAttachedSensorMixin:
 
     @gs.assert_built
     def set_pos_offset(self, pos_offset, envs_idx=None):
-        self._set_metadata_field(pos_offset, self._shared_metadata.offsets_pos, 3, envs_idx)
+        self._set_metadata_field(pos_offset, self._shared_metadata.offsets_pos, self._idx, 3, envs_idx)
 
     @gs.assert_built
     def set_quat_offset(self, quat_offset, envs_idx=None):
-        self._set_metadata_field(quat_offset, self._shared_metadata.offsets_quat, 4, envs_idx)
+        self._set_metadata_field(quat_offset, self._shared_metadata.offsets_quat, self._idx, 4, envs_idx)
 
 
 class RigidSensorMixin(_LinkAttachedSensorMixin, Generic[RigidSensorMetadataMixinT]):
@@ -708,22 +709,26 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
 
     @gs.assert_built
     def set_resolution(self, resolution, envs_idx=None):
-        self._set_metadata_field(resolution, self._shared_metadata.resolution, self._cache_size, envs_idx)
+        self._set_metadata_field(
+            resolution, self._shared_metadata.resolution, self._cache_offset, self._cache_size, envs_idx
+        )
         self._shared_metadata.has_any_resolution = bool((self._shared_metadata.resolution > gs.EPS).any().item())
 
     @gs.assert_built
     def set_bias(self, bias, envs_idx=None):
-        self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_size, envs_idx)
+        self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_offset, self._cache_size, envs_idx)
         self._shared_metadata.has_any_bias = bool((self._shared_metadata.bias != 0).any().item())
 
     @gs.assert_built
     def set_random_walk(self, random_walk, envs_idx=None):
-        self._set_metadata_field(random_walk, self._shared_metadata.random_walk, self._cache_size, envs_idx)
+        self._set_metadata_field(
+            random_walk, self._shared_metadata.random_walk, self._cache_offset, self._cache_size, envs_idx
+        )
         self._shared_metadata.has_any_random_walk = bool((self._shared_metadata.random_walk > gs.EPS).any().item())
 
     @gs.assert_built
     def set_noise(self, noise, envs_idx=None):
-        self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_size, envs_idx)
+        self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_offset, self._cache_size, envs_idx)
         self._shared_metadata.has_any_noise = bool((self._shared_metadata.noise > gs.EPS).any().item())
 
     @gs.assert_built
@@ -736,7 +741,7 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorContextT, SharedSensorMetadataT,
                 f"Sensor jitter must not exceed the simulation step dt={self._dt}; got "
                 f"jitter={tuple(jitter_np.ravel())}."
             )
-        self._set_metadata_field(jitter_np / self._dt, self._shared_metadata.jitter_ts, 1, envs_idx)
+        self._set_metadata_field(jitter_np / self._dt, self._shared_metadata.jitter_ts, self._idx, 1, envs_idx)
         # Recompute the slow-path flag from the freshly-written class metadata. One GPU->CPU sync at setter call time;
         # setters are not hot path. The check covers partial envs_idx writes and other sensors.
         self._shared_metadata.has_any_jitter = bool((self._shared_metadata.jitter_ts > gs.EPS).any().item())

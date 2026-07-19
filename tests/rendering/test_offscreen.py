@@ -1,0 +1,1386 @@
+import itertools
+import sys
+
+import numpy as np
+import pytest
+import torch
+
+import genesis as gs
+import genesis.utils.geom as gu
+from genesis.options.sensors import RasterizerCameraOptions
+from genesis.utils import set_random_seed
+from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
+from genesis.utils.misc import tensor_to_array
+
+from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
+from ..utils import assert_allclose, assert_equal, assert_pixel_match, rgb_array_to_png_bytes
+from .conftest import RENDERER_TYPE
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [
+        RENDERER_TYPE.RASTERIZER,
+        RENDERER_TYPE.RAYTRACER,
+        RENDERER_TYPE.BATCHRENDER_RASTERIZER,
+        RENDERER_TYPE.BATCHRENDER_RAYTRACER,
+    ],
+)
+def test_render_api(show_viewer, renderer_type, renderer):
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, 0.0, 0.0),
+            radius=1.0,
+            fixed=True,
+        ),
+    )
+    camera = scene.add_camera(
+        pos=(0.0, 0.0, 10.0),
+        lookat=(0.0, 0.0, 0.0),
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    rgb_arrs, depth_arrs, seg_arrs, normal_arrs = [], [], [], []
+    for rgb, depth, seg, normal in itertools.product((True, False), repeat=4):
+        rgb_arr, depth_arr, seg_arr, normal_arr = camera.render(rgb=rgb, depth=depth, segmentation=seg, normal=normal)
+        if rgb:
+            rgb_arrs.append(tensor_to_array(rgb_arr).astype(np.float32))
+        if depth:
+            if renderer_type == RENDERER_TYPE.BATCHRENDER_RAYTRACER:
+                depth_arr[~torch.isfinite(depth_arr)] = 0
+            depth_arrs.append(tensor_to_array(depth_arr).astype(np.float32))
+        if seg:
+            seg_arrs.append(tensor_to_array(seg_arr).astype(np.float32))
+        if normal:
+            normal_arrs.append(tensor_to_array(normal_arr).astype(np.float32))
+
+    try:
+        assert_allclose(np.diff(rgb_arrs, axis=0), 0.0, tol=gs.EPS)
+        assert_allclose(np.diff(seg_arrs, axis=0), 0.0, tol=gs.EPS)
+        assert_allclose(np.diff(normal_arrs, axis=0), 0.0, tol=gs.EPS)
+
+        # Depth is not matching at machine-precision because of MSAA being disabled for depth-only
+        msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
+        assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer.is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+@pytest.mark.parametrize("n_envs", [0, 4])
+def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
+    # Small discrepancies between different hardware due the different physics integration
+    png_snapshot.extension._std_err_threshold = 1.2
+
+    CAM_RES = (256, 256)
+    DIFF_TOL = 0.01
+    NUM_STEPS = 5
+
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.04,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        vis_options=gs.options.VisOptions(
+            env_separate_rigid=False,
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
+        renderer=renderer,
+        show_viewer=False,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            merge_fixed_links=False,
+        ),
+        material=gs.materials.Rigid(rho=200.0),
+    )
+    cam_debug = scene.add_camera(
+        res=(640, 480),
+        pos=(1.5, 0.5, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=45,
+        debug=True,
+        GUI=show_viewer,
+    )
+    cameras = []
+    for i in range(max(1 if IS_BATCHRENDER else n_envs, 1)):
+        env_idx = None if i < 1 else i
+        cam_0 = scene.add_camera(
+            res=CAM_RES,
+            pos=(1.5, 0.5, 1.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=45,
+            near=0.05,
+            far=100.0,
+            env_idx=env_idx,
+            GUI=show_viewer,
+        )
+        cam_1 = scene.add_camera(
+            res=CAM_RES,
+            pos=(0.8, -0.5, 0.8),
+            lookat=(0.0, 0.0, 0.5),
+            fov=45,
+            near=0.05,
+            far=100.0,
+            env_idx=env_idx,
+            GUI=show_viewer,
+        )
+        cam_2 = scene.add_camera(
+            res=CAM_RES,
+            fov=45,
+            env_idx=env_idx,
+            near=0.05,
+            far=100.0,
+            GUI=show_viewer,
+        )
+        cameras += (cam_0, cam_1, cam_2)
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+    scene.build(n_envs=n_envs, env_spacing=(4.0, 4.0))
+
+    # Attach cameras
+    for i in range(0, len(cameras), 3):
+        cameras[i + 1].follow_entity(robot)
+        pose_rel = gu.trans_R_to_T(np.array([0.1, 0.0, 0.2]), np.eye(3))
+        cameras[i + 2].attach(robot.get_link("Head_upper"), pose_rel)
+
+    # Create image exporter
+    exporter = FrameImageExporter(tmp_path)
+
+    # Initialize the simulation
+    set_random_seed(1)
+    for i in range(max(n_envs, 1)):
+        qpos = torch.zeros(robot.n_dofs, device=gs.device)
+        qpos[:2] = torch.as_tensor(np.random.rand(2), dtype=gs.tc_float, device=gs.device) - 0.5
+        qpos[2] = 1.0
+        qpos[3:6] = 0.5 * (torch.as_tensor(np.random.rand(3), dtype=gs.tc_float, device=gs.device) - 0.5)
+        qpos[6:] = torch.as_tensor(np.random.rand(robot.n_dofs - 6), dtype=gs.tc_float, device=gs.device) - 0.5
+        robot.set_dofs_position(qpos, envs_idx=([i] if n_envs else None))
+
+        qvel = torch.zeros(robot.n_dofs, device=gs.device)
+        qvel[:6] = torch.as_tensor(np.random.rand(6), dtype=gs.tc_float, device=gs.device) - 0.5
+        robot.set_dofs_velocity(qvel, envs_idx=([i] if n_envs else None))
+
+    # Run a few simulation steps while monitoring the result
+    cam_debug.start_recording()
+
+    frames_prev = None
+    for i in range(NUM_STEPS):
+        # Move forward step forward in time
+        scene.step()
+
+        # Render cameras
+        if IS_BATCHRENDER:
+            # Note that the individual cameras is rendered alone first on purpose to make sure it works
+            rgb_1, depth_1, seg_1, normal_1 = cam_1.render(
+                rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
+            )
+            rgb_all, depth_all, seg_all, normal_all = scene.render_all_cameras(
+                rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
+            )
+            assert all(isinstance(img_data, torch.Tensor) for img_data in (rgb_1, depth_1, seg_1, normal_1))
+            assert all(isinstance(img_data, torch.Tensor) for img_data in (*rgb_all, *depth_all, *seg_all, *normal_all))
+        else:
+            # Emulate batch rendering which is not supported natively
+            rgb_all, depth_all, seg_all, normal_all = zip(
+                *(
+                    camera.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
+                    for camera in scene._visualizer._cameras
+                    if not camera.debug
+                )
+            )
+            if n_envs > 0:
+                rgb_all, depth_all, seg_all, normal_all = (
+                    tuple(np.swapaxes(np.stack(img_data, axis=0).reshape((n_envs, 3, *img_data[0].shape)), 0, 1))
+                    for img_data in (rgb_all, depth_all, seg_all, normal_all)
+                )
+            rgb_1, depth_1, seg_1, normal_1 = rgb_all[1], depth_all[1], seg_all[1], normal_all[1]
+
+        # Check that the dimensions are valid
+        batch_shape = (*((n_envs,) if n_envs else ()), *CAM_RES)
+        assert len(rgb_all) == len(depth_all) == 3
+        assert all(e.shape == (*batch_shape, 3) for e in (*rgb_all, *seg_all, *normal_all, rgb_1, seg_1, normal_1))
+        assert all(e.shape == batch_shape for e in (*depth_all, depth_1))
+
+        # Check that the camera whose output was rendered individually is matching batched output
+        for img_data_1, img_data_2 in (
+            (rgb_all[1], rgb_1),
+            (depth_all[1], depth_1),
+            (seg_all[1], seg_1),
+            (normal_all[1], normal_1),
+        ):
+            assert_allclose(img_data_1, img_data_2, tol=gs.EPS)
+
+        # Check that there is something to see here
+        depth_normalized_all = tuple(as_grayscale_image(tensor_to_array(img_data)) for img_data in depth_all)
+        frame_data = tuple(
+            tensor_to_array(img_data).astype(np.float32)
+            for img_data in (*rgb_all, *depth_normalized_all, *seg_all, *normal_all)
+        )
+        for img_data in frame_data:
+            for img_data_i in img_data if n_envs else (img_data,):
+                assert np.max(np.std(img_data_i.reshape((-1, img_data_i.shape[-1])), axis=0)) > 10.0
+
+        # Export a few frames for later pixel-matching validation
+        if i < 2:
+            exporter.export_frame_all_cameras(i, rgb=rgb_all, depth=depth_all, segmentation=seg_all, normal=normal_all)
+            exporter.export_frame_single_camera(
+                i, cam_1.idx, rgb=rgb_1, depth=depth_1, segmentation=seg_1, normal=normal_1
+            )
+
+        # Check that cameras are recording different part of the scene
+        for rgb_diff in np.diff(frame_data[:3], axis=0):
+            for rgb_diff_i in rgb_diff if n_envs else (rgb_diff,):
+                assert np.max(np.std(rgb_diff.reshape((-1, rgb_diff_i.shape[-1])), axis=0)) > 10.0
+
+        # Check that images are changing over time.
+        # We expect sufficient difference between two consecutive frames.
+        if frames_prev is not None:
+            try:
+                for img_data_prev, img_data in zip(frames_prev, frame_data):
+                    img_diff = np.abs(img_data_prev - img_data)
+                    assert np.sum(img_diff > np.finfo(np.float32).eps) > DIFF_TOL * img_data.size
+            except AssertionError:
+                if sys.platform == "darwin" and scene.visualizer.is_software:
+                    pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures are too close.")
+                raise
+        frames_prev = frame_data
+
+        # Add current frame to monitor video
+        rgb_debug, *_ = cam_debug.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+        assert isinstance(rgb_debug, np.ndarray)
+        assert rgb_debug.shape == (480, 640, 3)
+
+    assert len(cam_debug._recorded_imgs) == NUM_STEPS
+    cam_debug.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
+
+    # Verify that the output is correct pixel-wise over multiple simulation steps
+    try:
+        for image_file in sorted(tmp_path.rglob("*.png")):
+            with open(image_file, "rb") as f:
+                assert f.read() == png_snapshot
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer.is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
+        raise
+
+
+@pytest.mark.slow  # ~250s
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
+    CAM_POS_LOCAL = (0.0, 0.0, 2.0)
+    CAM_LOOKAT_LOCAL = (0.0, 0.0, 0.0)
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            # rendered_envs_idx=(0, 1, 2),
+            env_separate_rigid=False,
+            # When env are not separated, their world pos is different, which affects lighting
+            shadow=False,
+        ),
+        renderer=renderer,
+        show_viewer=False,
+        show_FPS=False,
+    )
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+    scene.add_entity(
+        morph=gs.morphs.Plane(
+            plane_size=(1.5, 1.5),
+        ),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ColorTexture(
+                color=(1.0, 0.5, 0.5),
+            ),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, -0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.6, 0.8, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Iron(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.5, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Gold(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(-0.2, 0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Glass(
+            color=(1.0, 1.0, 1.0),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.1,
+            pos=(0.2, -0.8, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 1.0, 1.0, 0.5),
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+            scale=0.025,
+            pos=(0.2, -0.5, 0.2),
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+            scale=0.025,
+            pos=(0.2, -0.2, 0.2),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Rough(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            )
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    cam = scene.add_camera(
+        pos=CAM_POS_LOCAL,
+        lookat=CAM_LOOKAT_LOCAL,
+        res=(500, 500),
+        fov=60,
+        spp=512,
+        GUI=show_viewer,
+    )
+    scene.build(n_envs=3, env_spacing=(2.0, 2.0))
+
+    # Apple Software Renderer is fully deterministic: successive captures do not match exactly
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        tol_env = tol_step = 1.0
+    else:
+        tol_env = 0.002
+        tol_step = gs.EPS
+
+    cam.start_recording()
+    for _ in range(7):
+        dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
+        qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.as_tensor(
+            np.random.rand(robot.n_qs), dtype=gs.tc_float, device=gs.device
+        )
+
+        steps_rgb_arrays = []
+        for _ in range(2):
+            scene.step()
+            robot.set_qpos(qpos)
+
+            if IS_BATCHRENDER:
+                rgb_array_all, *_ = cam.render(
+                    rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
+                )
+
+            env_rgb_array = None
+            for i_b in range(scene.n_envs):
+                if IS_BATCHRENDER:
+                    rgb_array = rgb_array_all[i_b]
+                else:
+                    # When env are not separated, scene cameras observe ALL batched environments. Moreover, scene
+                    # cameras are operating in local frame of the env they bind to rather than world-frame, for
+                    # consistency with camera sensors. As a result, the pos offset to apply for looking at each parallel
+                    # env depends on the env the camera is bound to.
+                    env_offset = scene.envs_offset[i_b] - scene.envs_offset[cam.env_idx]
+                    cam.set_pose(pos=CAM_POS_LOCAL + env_offset, lookat=CAM_LOOKAT_LOCAL + env_offset)
+                    rgb_array, *_ = cam.render(
+                        rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
+                    )
+                rgb_array = tensor_to_array(rgb_array).astype(np.float32)
+
+                rgb_std = rgb_array.reshape((-1, 3)).std(axis=0).max()
+                try:
+                    assert rgb_std > 20.0
+                except AssertionError:
+                    if rgb_std < gs.EPS:
+                        if sys.platform == "darwin" and scene.visualizer.is_software:
+                            pytest.xfail(
+                                "Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered."
+                            )
+                    raise
+                if env_rgb_array is None:
+                    env_rgb_array = rgb_array
+                else:
+                    rgb_env_diff = np.abs(env_rgb_array - rgb_array)
+                    assert rgb_env_diff.mean() < tol_env, "Per-env renders do not match"
+
+            steps_rgb_arrays.append(env_rgb_array)
+
+        rgb_step_diff = np.abs(np.diff(steps_rgb_arrays, axis=0))
+        assert rgb_step_diff.mean() < tol_step, "Per-step renders do not match"
+
+    cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+@pytest.mark.parametrize("n_envs", [0, 4])
+def test_renders_heterogeneous_entities(n_envs, show_viewer, png_snapshot, renderer_type, renderer):
+    # A heterogeneous entity instantiates a different morph variant per environment (a sphere in some envs, the duck
+    # mesh in others). Each variant must render only in the environments it is active in - and this must hold across
+    # every supported renderer. The rasterizer composites all environments into a single image (the env_idx == -1
+    # draw-all path), while the Madrona batch renderer returns one image per environment; both must apply the same
+    # per-environment visibility. A homogeneous green box renders alongside to confirm ordinary entities are
+    # unaffected by the masking. The captured snapshot is the ground truth.
+    CAM_RES = (160, 120)
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
+    scene = gs.Scene(
+        renderer=renderer,
+        vis_options=gs.options.VisOptions(
+            env_separate_rigid=False,
+            shadow=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(
+            plane_size=(5.0, 5.0),
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.3, 0.3, 0.3),
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(0.3, 0.8, 0.3),
+        ),
+    )
+    heterogeneous = scene.add_entity(
+        morph=(
+            gs.morphs.Sphere(
+                radius=0.3,
+            ),
+            gs.morphs.Mesh(
+                file="meshes/duck/duck.obj",
+                scale=0.003,
+                euler=(90.0, 0.0, 90.0),
+            ),
+        ),
+    )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, 5.0, 2.6),
+        lookat=(0.0, 0.0, 0.2),
+        fov=55.0,
+        GUI=show_viewer,
+    )
+    # The batch renderer has no built-in lighting, so add explicit lights; the rasterizer lights itself.
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+
+    scene.build(n_envs=n_envs)
+
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        # Small discrepancies between different hardware due the different physics integration
+        png_snapshot.extension._std_err_threshold = 3.0
+
+    # The sphere variant fills the first environments and the duck the rest, placed on opposite sides so the duck
+    # (yellow) occupies a known half of the image. The box (homogeneous) sits at the back of every environment.
+    box_pos = np.array([[0.0, 1.4, 0.15], [0.4, 1.4, 0.15], [-0.4, 1.4, 0.15], [0.2, 1.4, 0.15]])
+    het_pos = np.array([[-1.2, 0.3, 0.3], [-1.2, -0.3, 0.3], [1.2, 0.3, 0.3], [1.2, -0.3, 0.3]])
+    if n_envs == 0:
+        box.set_pos(box_pos[0])
+        heterogeneous.set_pos(het_pos[0])
+    else:
+        box.set_pos(box_pos[:n_envs])
+        heterogeneous.set_pos(het_pos[:n_envs])
+
+    rgb = tensor_to_array(camera.render(rgb=True)[0])
+    # The batch renderer returns one image per environment; the rasterizer composites all environments into one image.
+    per_env = IS_BATCHRENDER and n_envs > 0
+    if per_env:
+        assert rgb.shape == (n_envs, *CAM_RES[::-1], 3)
+        frames = list(rgb)
+    else:
+        assert rgb.shape == (*CAM_RES[::-1], 3)
+        frames = [rgb]
+
+    def duck_yellow(img):
+        # Yellow-pixel mask isolating the (textured) duck variant from the plane, box and white sphere.
+        return (img[..., 0].astype(int) > 120) & (img[..., 1].astype(int) > 120) & (img[..., 2].astype(int) < 110)
+
+    # The homogeneous green box renders in every frame.
+    for frame in frames:
+        assert ((frame[..., 1].astype(int) - frame[..., 0].astype(int)) > 40).sum() > 0
+
+    if per_env:
+        # Distinct per-env variants and positions mean no two environments may render identically.
+        for i in range(len(frames)):
+            for j in range(i + 1, len(frames)):
+                assert (frames[i] != frames[j]).any()
+        # The duck variant is active in only a subset of environments, so it must not leak into the others: at least
+        # one environment must show it and at least one must show none of it.
+        counts = [int(duck_yellow(frame).sum()) for frame in frames]
+        assert max(counts) > 3, f"duck variant never rendered; yellow per env={counts}"
+        assert min(counts) <= max(counts) // 8, f"duck variant leaked into inactive envs; yellow per env={counts}"
+    elif n_envs > 1:
+        # Combined image: the duck variant (yellow) belongs to the environments on one side, so it must not be
+        # duplicated into the sphere environments on the other side.
+        half = rgb.shape[1] // 2
+        yellow = duck_yellow(rgb)
+        left, right = int(yellow[:, :half].sum()), int(yellow[:, half:].sum())
+        assert max(left, right) > 3 * min(left, right), f"duck must render only in its env; yellow={left, right}"
+    else:
+        # Single environment: the duck variant is inactive there and must be masked out entirely; only the sphere shows.
+        n_yellow = int(duck_yellow(rgb).sum())
+        assert n_yellow <= 3, f"masked duck variant must not render; yellow={n_yellow}"
+
+    for frame in frames:
+        assert rgb_array_to_png_bytes(frame) == png_snapshot
+
+
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+@pytest.mark.parametrize("segmentation_level", ["entity", "link", "geom"])
+@pytest.mark.parametrize("particle_mode", ["visual", "particle"])
+def test_segmentation_map(segmentation_level, particle_mode, renderer_type, renderer, show_viewer):
+    scene = gs.Scene(
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
+            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,  # Disable many physics features to speedup compilation
+        ),
+        coupler_options=gs.options.LegacyCouplerOptions(
+            rigid_mpm=False,
+            rigid_sph=False,
+            rigid_pbd=False,
+            rigid_fem=False,
+            mpm_sph=False,
+            mpm_pbd=False,
+            fem_mpm=False,
+            fem_sph=False,
+        ),
+        vis_options=gs.options.VisOptions(
+            segmentation_level=segmentation_level,
+        ),
+        renderer=renderer,
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/simple/two_link_arm.urdf",
+            pos=(-1.0, -1.0, 0.5),
+            euler=(0, 0, 90),
+        ),
+    )
+
+    # We don't test "recon" for vis_mode because it is hard to install.
+    materials = ((gs.materials.Rigid(), "visual"),)
+    if renderer_type == RENDERER_TYPE.RASTERIZER:
+        materials = (
+            *materials,
+            (gs.materials.Tool(), "visual"),
+            (gs.materials.FEM.Elastic(), "visual"),
+            (gs.materials.MPM.Elastic(), particle_mode),
+            (gs.materials.PBD.Cloth(), particle_mode),
+            (gs.materials.SPH.Liquid(), "particle" if particle_mode == "visual" else particle_mode),
+            (gs.materials.Kinematic(), "visual"),
+        )
+
+    ducks = []
+    for i, (material, vis_mode) in enumerate(materials):
+        col_idx, row_idx = i // 3 - 1, i % 3 - 1
+        ducks.append(
+            scene.add_entity(
+                material=material,
+                morph=gs.morphs.Mesh(
+                    file="meshes/duck.obj",
+                    scale=0.1,
+                    pos=(col_idx * 0.5, row_idx * 0.5, 0.5),
+                ),
+                surface=gs.surfaces.Default(
+                    color=np.random.rand(3),
+                    vis_mode=vis_mode,
+                ),
+            )
+        )
+
+    camera = scene.add_camera(
+        # Using very low resolution to speed up rendering
+        res=(128, 128),
+        pos=(2.0, 0.0, 2.0),
+        lookat=(0, 0, 0.5),
+        fov=40,
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    # Segmentation count: background(1) + URDF links/entity + duck materials.
+    # Rigid and Kinematic ducks use add_rigid_node (tuple keys at link/geom level),
+    # other ducks use add_static_node (int keys). The URDF has 2 visual links.
+    n_rigid_like = sum(isinstance(m, gs.materials.Kinematic) for m, _ in materials)
+    seg_num = len(materials) + (2 if segmentation_level == "entity" else 3)
+    idx_dict = scene.segmentation_idx_dict
+    assert len(idx_dict) == seg_num
+    comp_key = 0
+    for seg_key in idx_dict.values():
+        if isinstance(seg_key, tuple):
+            comp_key += 1
+    # At entity level no tuple keys; at link/geom level: 2 URDF links + rigid-like ducks
+    assert comp_key == (0 if segmentation_level == "entity" else 2 + n_rigid_like)
+
+    for i in range(2):
+        scene.step()
+        _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
+        seg = tensor_to_array(seg)
+        assert_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+def test_point_cloud(renderer_type, renderer, show_viewer):
+    N_ENVS = 2
+    CAM_RES = (256, 256)
+    CAMERA_DIST = 8.0
+    OBJ_OFFSET = 10.0
+    BOX_HALFSIZE = 1.0
+    SPHERE_RADIUS = 1.0
+
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+    BATCH_SHAPE = (N_ENVS,) if N_ENVS > 0 and IS_BATCHRENDER else ()
+
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    if IS_BATCHRENDER:
+        scene.add_light(
+            pos=(0.0, 0.0, 1.5),
+            dir=(1.0, 1.0, -2.0),
+            directional=True,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+        scene.add_light(
+            pos=(4.0, -4.0, 4.0),
+            dir=(-1.0, 1.0, -1.0),
+            directional=False,
+            castshadow=True,
+            cutoff=45.0,
+            intensity=0.5,
+        )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            pos=(0.0, OBJ_OFFSET, 0.0),
+            radius=SPHERE_RADIUS,
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, -OBJ_OFFSET, 0.0),
+            size=(2.0 * BOX_HALFSIZE, 2.0 * BOX_HALFSIZE, 2.0 * BOX_HALFSIZE),
+            fixed=True,
+        )
+    )
+    camera_sphere = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, OBJ_OFFSET, 0.0),
+        near=2.0,
+        far=15.0,
+        GUI=show_viewer,
+    )
+    camera_box_1 = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, -OBJ_OFFSET, CAMERA_DIST),
+        lookat=(0.0, -OBJ_OFFSET, 0.0),
+        near=2.0,
+        far=15.0,
+        GUI=show_viewer,
+    )
+    camera_box_2 = scene.add_camera(
+        res=CAM_RES,
+        pos=np.array((CAMERA_DIST, CAMERA_DIST - OBJ_OFFSET, CAMERA_DIST)),
+        lookat=(0.0, -OBJ_OFFSET, 0.0),
+        near=2.0,
+        far=15.0,
+        GUI=show_viewer,
+    )
+    scene.build(n_envs=N_ENVS)
+
+    if show_viewer:
+        for camera in scene.visualizer.cameras:
+            camera.render(rgb=True, depth=True)
+
+    point_cloud, mask = camera_box_1.render_pointcloud(world_frame=False)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
+    point_cloud = point_cloud[mask]
+    assert_allclose(CAMERA_DIST - point_cloud[:, 2], BOX_HALFSIZE, atol=1e-4)
+    assert np.all(-BOX_HALFSIZE <= point_cloud[:, :2].min(axis=0))
+    assert np.all(point_cloud[:, :2].max(axis=0) <= BOX_HALFSIZE)
+
+    point_cloud, mask = camera_box_2.render_pointcloud(world_frame=False)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
+    point_cloud = point_cloud[mask]
+    point_cloud = point_cloud @ gu.z_up_to_R(np.array((1.0, 1.0, 1.0)), np.array((0.0, 0.0, 1.0))).T
+    point_cloud -= np.array((CAMERA_DIST, CAMERA_DIST, CAMERA_DIST))
+    # FIXME: Tolerance must be increased whe using Apple's Software Rendering, probably due to an OpenGL bug...
+    tol = 2e-4 if sys.platform == "darwin" else 1e-4
+    assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=tol)
+
+    point_cloud, mask = camera_box_2.render_pointcloud(world_frame=True)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
+    point_cloud = point_cloud[mask]
+    point_cloud += np.array((0.0, OBJ_OFFSET, 0.0))
+    assert_allclose(np.linalg.norm(point_cloud, ord=float("inf"), axis=-1), BOX_HALFSIZE, atol=tol)
+
+    # It is not possible to get higher accuracy because of tesselation
+    point_cloud, mask = camera_sphere.render_pointcloud(world_frame=False)
+    assert point_cloud.shape == (*BATCH_SHAPE, *CAM_RES, 3)
+    point_cloud = point_cloud[mask]
+    assert_allclose(np.linalg.norm((0.0, 0.0, CAMERA_DIST) - point_cloud, axis=-1), SPHERE_RADIUS, atol=1e-2)
+
+
+@pytest.mark.parametrize(
+    "renderer_type",
+    [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
+)
+def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
+    IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
+
+    for test_idx, (plane_size, tile_size) in enumerate(
+        (
+            ((3, 4.5), (0.5, 0.75)),
+            ((3.0, 5.0), (5.0, 3.0)),
+            ((4.0, 4.0), (1.0, 1.0)),
+        )
+    ):
+        scene = gs.Scene(
+            renderer=renderer,
+            show_viewer=False,
+            show_FPS=False,
+        )
+        if IS_BATCHRENDER:
+            scene.add_light(
+                pos=(0.0, 0.0, 1.5),
+                dir=(1.0, 1.0, -2.0),
+                directional=True,
+                castshadow=True,
+                cutoff=45.0,
+                intensity=0.5,
+            )
+            scene.add_light(
+                pos=(4.0, -4.0, 4.0),
+                dir=(-1.0, 1.0, -1.0),
+                directional=False,
+                castshadow=True,
+                cutoff=45.0,
+                intensity=0.5,
+            )
+        scene.add_entity(
+            gs.morphs.Plane(plane_size=plane_size, tile_size=tile_size),
+        )
+        camera = scene.add_camera(
+            res=(256, 256),
+            pos=(0.0, 0.0, 8),
+            lookat=(0.0, 0.0, 0.0),
+            fov=45,
+            GUI=False,
+        )
+        scene.build()
+
+        exporter = FrameImageExporter(tmp_path)
+        rgba, depth, _, _ = camera.render(rgb=True, depth=False)
+        exporter.export_frame_single_camera(test_idx, camera.idx, rgb=rgba, depth=depth)
+
+    for image_file in sorted(tmp_path.rglob("*.png")):
+        with open(image_file, "rb") as f:
+            assert f.read() == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_render_oversized_resolution(renderer):
+    # Verify that ``render_offscreen`` honors the user-requested viewport size even when it exceeds the available
+    # display area, by requesting a viewer larger than GitHub-hosted Apple M1 macos-15 runners can actually allocate
+    # and checking the returned image dimensions still match the request.
+    requested_res = (1920, 1440)
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=requested_res,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+        show_FPS=False,
+    )
+    scene.build()
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node,
+        pyrender_viewer._renderer,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+    )
+    assert rgb.shape[:2] == (requested_res[1], requested_res[0])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_context_isolation(renderer_type):
+    # Each offscreen scene owns a separate GL context, but the platform's current-context state is process/thread
+    # global. Tearing down one scene's renderer while another is mid-render - which happens under cyclic GC, or
+    # when the render thread deletes a retired renderer - must leave the rendering scene's context untouched. Force
+    # that interleaving by destroying scene B in the middle of scene A's render, and assert A renders exactly as it
+    # does without the interference, rather than rendering on B's destroyed context or losing its context entirely.
+    # The two scenes must own independent renderers, hence a fresh Rasterizer each rather than a shared instance.
+    scene_a = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_a.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 0.5), size=(0.3, 0.3, 0.3)))
+    camera_a = scene_a.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_a.build()
+    rgb_reference = camera_a.render(rgb=True)[0]
+
+    # Distinct content so that rendering A on B's context would be visibly wrong rather than coincidentally equal.
+    scene_b = gs.Scene(renderer=gs.renderers.Rasterizer(), show_viewer=False, show_FPS=False)
+    scene_b.add_entity(gs.morphs.Box(pos=(0.0, 0.0, 5.0), size=(0.3, 0.3, 0.3)))
+    camera_b = scene_b.add_camera(res=(64, 64), pos=(1.5, 1.5, 1.0), lookat=(0.0, 0.0, 0.0))
+    scene_b.build()
+    camera_b.render(rgb=True)
+
+    # Destroy scene B right after scene A's renderer makes its context current, i.e. mid-render, then check the current
+    # context directly: a stranded context does not necessarily corrupt the rendered pixels on every driver, so
+    # asserting on pixels alone is not enough to catch it. 'save_current_context' returns a restore callable for the
+    # current context, or None when none is current, so a stranded context surfaces as None here.
+    renderer_a = scene_a.visualizer._rasterizer._renderer
+    original_make_current = renderer_a.make_current
+    destroyed = False
+    restore_after_destroy = None
+
+    def make_current_then_destroy_b():
+        nonlocal destroyed, restore_after_destroy
+        original_make_current()
+        if not destroyed:
+            destroyed = True
+            scene_b.destroy()
+            restore_after_destroy = renderer_a.save_current_context()
+
+    renderer_a.make_current = make_current_then_destroy_b
+    rgb_after = camera_a.render(rgb=True)[0]
+
+    assert restore_after_destroy is not None
+    assert_pixel_match(
+        rgb_after,
+        rgb_reference,
+        err_msg="Scene A rendered differently after scene B was destroyed mid-render (wrong or lost GL context).",
+    )
+
+
+@pytest.mark.slow  # ~250s
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_camera_follow_entity(n_envs, renderer, show_viewer):
+    CAM_RES = (100, 100)
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=[max(n_envs - 1, 0)],
+            segmentation_level="entity",
+        ),
+        renderer=renderer,
+        show_viewer=False,
+        show_FPS=False,
+    )
+    for pos in ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, -1.0, 0.0)):
+        obj = scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=pos,
+            ),
+        )
+        cam = scene.add_camera(
+            res=CAM_RES,
+            pos=(0.0, 0.0, 0.0),
+            lookat=(1.0, 0, 0.0),
+            env_idx=1 if n_envs else None,
+            GUI=show_viewer,
+        )
+        cam.follow_entity(obj, smoothing=None)
+        cam.unfollow_entity()
+
+    scene.build(n_envs=n_envs)
+
+    for cam, obj in zip(scene.visualizer.cameras, scene.entities):
+        cam.follow_entity(obj, smoothing=None)
+
+    # First render
+    seg_mask = None
+    for entity_idx, cam in enumerate(scene.visualizer.cameras, 1):
+        _, _, seg, _ = cam.render(rgb=False, segmentation=True)
+        assert (np.unique(seg) == (0, entity_idx)).all()
+        if seg_mask is None:
+            seg_mask = seg != 0
+        else:
+            assert ((seg != 0) == seg_mask).all()
+
+    # Second render - same
+    for i, obj in enumerate(scene.entities):
+        obj.set_pos((10.0, 0.0, i), envs_idx=([1] if n_envs else None))
+    force_render = True
+    for entity_idx, cam in enumerate(scene.visualizer.cameras, 1):
+        _, _, seg, _ = cam.render(rgb=False, segmentation=True, force_render=force_render)
+        assert (np.unique(seg) == (0, entity_idx)).all()
+        assert ((seg != 0) == seg_mask).all()
+        force_render = False
+
+    # Third render - All objects but all different
+    for i, obj in enumerate(scene.entities):
+        obj.set_pos((0.1 * ((i // 2) % 2 - 1), 0.1 * (i % 2), 0.1 * i), envs_idx=([1] if n_envs else None))
+    force_render = True
+    seg_masks = []
+    for cam in scene.visualizer.cameras:
+        _, _, seg, _ = cam.render(rgb=False, segmentation=True, force_render=force_render)
+        assert (np.unique(seg) == np.arange(len(scene.entities) + 1)).all()
+        seg_masks.append(seg != 0)
+        force_render = False
+    assert np.diff(seg_masks, axis=0).any(axis=(1, 2)).all()
+
+    # Track a trajectory over time
+    for i in range(3):
+        pos = 2.0 * (np.random.rand(3) - 0.5)
+        quat = gu.rotvec_to_quat(np.pi * (np.random.rand(3) - 0.5))
+        obj.set_pos(pos + np.array([10.0, 0.0, 0.0]), envs_idx=([1] if n_envs else None))
+        obj.set_quat(quat, envs_idx=([1] if n_envs else None))
+        _, _, seg, _ = cam.render(segmentation=True, force_render=True)
+        assert (np.unique(seg) == (0, entity_idx)).all()
+        assert not seg[tuple([*range(0, res // 3), *range(2 * res // 3, res)] for res in CAM_RES)].any()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_camera_gimbal_lock_singularity(renderer, show_viewer):
+    # Minimal scene
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    cam = scene.add_camera(pos=(0.0, -1.5, 5.0), lookat=(0.0, 0.0, 0.0))
+    scene.build()
+
+    prev_right = None
+
+    # Move camera through singularity along y-axis: y=-1.5 to y=1.5 (singularity at y=0)
+    for i in range(7):
+        cam.set_pose(pos=(0.0, -1.5 + i * 0.5, 5.0), lookat=(0.0, 0.0, 0.0))
+
+        # Get the right vector (x-axis) from camera transform
+        transform = cam.get_transform()
+        right = transform[:3, 0]
+
+        # Check direction with the previous one
+        if prev_right is not None:
+            assert torch.dot(prev_right, right) > 0.0
+
+        prev_right = right
+
+    # Move camera through singularity along x-axis: x=-1.5 to x=1.5 (singularity at x=0)
+    prev_right = None
+    for i in range(7):
+        cam.set_pose(pos=(-1.5 + i * 0.5, 0.0, 5.0), lookat=(0.0, 0.0, 0.0))
+
+        # Get the right vector (x-axis) from camera transform
+        transform = cam.get_transform()
+        right = transform[:3, 0]
+
+        # Check direction with the previous one
+        if prev_right is not None:
+            assert torch.dot(prev_right, right) > 0.0
+
+        prev_right = right
+
+
+@pytest.mark.slow  # ~250s
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("force_show_viewer", [False, True])
+def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show_viewer):
+    if force_show_viewer and not IS_INTERACTIVE_VIEWER_AVAILABLE:
+        pytest.skip(SKIP_NO_VIEWER)
+
+    CAM_RES = (256, 256)
+    RENDERED_ENVS = (1, 2)
+
+    # FIXME: Small discrepancies between different hardware due to contact visualization with onscreen viewer
+    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.5 if force_show_viewer else 1.05
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=RENDERED_ENVS,
+            env_separate_rigid=True,
+            show_world_frame=True,
+            show_link_frame=True,
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 0.2, 1.5),
+            camera_lookat=(0.0, 0.0, 0.4),
+            res=CAM_RES,
+            run_in_thread=False,
+            enable_default_keybinds=False,
+            enable_help_text=False,
+        ),
+        renderer=renderer,
+        show_viewer=force_show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            # Add small negative offset to force contact with the ground
+            pos=(0.0, 0.0, -0.01),
+        ),
+        visualize_contact=True,
+    )
+
+    cam = scene.add_camera(
+        res=CAM_RES,
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=30,
+        GUI=show_viewer,
+    )
+    cam_debug = scene.add_camera(
+        res=CAM_RES,
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=30,
+        debug=True,
+        GUI=show_viewer,
+    )
+    scene.build(n_envs=4, env_spacing=(0.3, 0.3))
+
+    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states.
+    # Each env has a distinct pose so per-env renders differ visually.
+    franka.set_dofs_position(
+        [
+            [0.199, 1.763, -0.148, -0.224, -0.790, 0.822, 0.051, 0.002, 0.002],
+            [0.372, 1.763, 0.172, -0.369, 1.498, -0.018, -0.040, 0.000, 0.000],
+            [-0.114, -1.763, -2.885, -0.234, -1.195, 0.159, 0.316, 0.000, 0.000],
+            [-0.254, -1.763, 2.193, -0.217, 1.109, 0.501, 0.727, 0.001, 0.001],
+        ]
+    )
+    scene.step()
+
+    # Capture viewer screenshot when the interactive viewer is enabled
+    if force_show_viewer:
+        pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+        assert pyrender_viewer.is_active
+        pyrender_viewer.switch_to()
+        pyrender_viewer.on_draw()
+        viewer_rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+
+        try:
+            png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
+            assert rgb_array_to_png_bytes(viewer_rgb) == png_snapshot
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+            raise
+
+    # Render both cameras
+    rgb, *_ = cam.render(rgb=True)
+    rgb_debug, *_ = cam_debug.render(rgb=True)
+    assert rgb is not None and rgb_debug is not None
+
+    # With env_separate_rigid, renders are batched: (n_rendered_envs, H, W, 3)
+    assert rgb.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+    assert rgb_debug.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+
+    # Batched set_pose: keep side view for env 0, switch to top-down view for env 1
+    rgb_before = rgb.copy()
+    cam.set_pose(
+        pos=[(3.5, 0.0, 2.5), (0.0, 0.0, 4.0)],
+        lookat=[(0.0, 0.0, 0.5), (0.0, 0.0, 0.0)],
+        up=[(0.0, 0.0, 1.0), (0.0, 1.0, 0.0)],
+    )
+    rgb_after, *_ = cam.render(rgb=True)
+    assert rgb_after is not None
+    assert rgb_after.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+
+    # First env kept same pose — render should match; second env uses top-down view — render must differ
+    assert np.abs(rgb_after[0].astype(np.float32) - rgb_before[0].astype(np.float32)).mean() < 1.0
+    assert np.abs(rgb_after[1].astype(np.float32) - rgb_before[1].astype(np.float32)).mean() > 5.0
+
+    # Restore original camera pose for snapshot comparisons
+    cam.set_pose(
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    rgb, *_ = cam.render(rgb=True)
+    assert rgb is not None
+
+    # Non-debug camera should NOT show markers — snapshot per env validates only robots are visible
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_OFF
+    for rgb_i in rgb:
+        try:
+            assert rgb_array_to_png_bytes(rgb_i) == png_snapshot
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+            raise
+
+    # Debug camera SHOULD show markers (frames, contact arrows) — snapshot per env validates markers
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
+    for rgb_debug_i in rgb_debug:
+        assert rgb_array_to_png_bytes(rgb_debug_i) == png_snapshot
+
+    # Debug and non-debug must differ: markers add pixels that change between the two
+    for i, (rgb_i, rgb_debug_i) in enumerate(zip(rgb, rgb_debug)):
+        marker_diff = np.abs(rgb_i.astype(np.float32) - rgb_debug_i.astype(np.float32))
+        n_diff_pixels = np.sum(marker_diff.max(axis=-1) > 0)
+        assert n_diff_pixels > 100, (
+            f"Debug and non-debug too similar for env {i} ({n_diff_pixels} pixels differ) — markers not visible"
+        )
+
+    # Per-env renders must differ since robots have different joint configurations
+    for env_rgb in (rgb, rgb_debug):
+        env_diff = np.abs(env_rgb[0].astype(np.float32) - env_rgb[1].astype(np.float32))
+        assert env_diff.mean() > 5.0, "Per-env renders are too similar — env isolation may be broken"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("context_mode", ["sensor_only", "with_scene_camera", "with_viewer"])
+def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
+    if context_mode == "with_viewer" and not IS_INTERACTIVE_VIEWER_AVAILABLE:
+        pytest.skip(SKIP_NO_VIEWER)
+
+    CAM_RES = (128, 128)
+    N_ENVS = 4
+
+    def build_scene(env_spacing):
+        show_viewer = context_mode == "with_viewer"
+        viewer_options = (
+            gs.options.ViewerOptions(
+                res=CAM_RES,
+                run_in_thread=False,
+            )
+            if show_viewer
+            else None
+        )
+        scene = gs.Scene(
+            vis_options=gs.options.VisOptions(
+                env_separate_rigid=True,
+                shadow=False,
+            ),
+            viewer_options=viewer_options,
+            renderer=renderer,
+            show_viewer=show_viewer,
+            show_FPS=False,
+        )
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.5, 0.0, 0.1),
+            )
+        )
+        cam = scene.add_sensor(
+            RasterizerCameraOptions(
+                res=CAM_RES,
+                pos=(1.5, 0.0, 0.5),
+                lookat=(0.5, 0.0, 0.1),
+                fov=60,
+            )
+        )
+        if context_mode == "with_scene_camera":
+            scene.add_camera(
+                res=CAM_RES,
+                pos=(2.0, 0.0, 1.0),
+                lookat=(0.0, 0.0, 0.0),
+                fov=60,
+                GUI=False,
+            )
+        build_kwargs = {"n_envs": N_ENVS}
+        if env_spacing is not None:
+            build_kwargs["env_spacing"] = env_spacing
+        scene.build(**build_kwargs)
+        return scene, cam
+
+    # Reference: no spacing
+    scene_ref, cam_ref = build_scene(env_spacing=None)
+    img_ref = tensor_to_array(cam_ref.read(envs_idx=0).rgb)
+    scene_ref.destroy()
+
+    # Test: with spacing
+    scene_test, cam_test = build_scene(env_spacing=(2.0, 2.0))
+    img_test = tensor_to_array(cam_test.read(envs_idx=0).rgb)
+    scene_test.destroy()
+
+    # Per-env sensor images must be invariant to env_spacing — the offset is purely for
+    # visual separation in the interactive viewer and must be transparent to sensors.
+    assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0

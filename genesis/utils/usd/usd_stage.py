@@ -8,6 +8,7 @@ from .usd_context import (
     extract_links_referenced_by_joints,
     find_joints_in_range,
     find_rigid_bodies_in_range,
+    resolve_rigid_body_link_path,
 )
 from .usd_utils import UnionFind
 
@@ -69,49 +70,28 @@ def _find_connected_components(stage: Usd.Stage, all_joints: List[Usd.Prim]) -> 
     uf = UnionFind()
 
     # Build joint-to-links mapping and union connected links
-    # Only include paths that are actually rigid bodies (have RigidBodyAPI or CollisionAPI)
     joint_to_links: dict[Usd.Prim, tuple[str | None, str | None]] = {}
     all_link_paths: Set[str] = set()
-
-    def is_rigid_body(path: str) -> bool:
-        """Check if a prim path is a rigid body."""
-        prim = stage.GetPrimAtPath(path)
-        if not prim.IsValid():
-            return False
-        return prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI)
 
     for joint_prim in all_joints:
         joint = UsdPhysics.Joint(joint_prim)
         body0_targets = joint.GetBody0Rel().GetTargets()
         body1_targets = joint.GetBody1Rel().GetTargets()
-        body0_path = str(body0_targets[0]) if body0_targets else None
-        body1_path = str(body1_targets[0]) if body1_targets else None
+        body0_path = resolve_rigid_body_link_path(stage, str(body0_targets[0])) if body0_targets else None
+        body1_path = resolve_rigid_body_link_path(stage, str(body1_targets[0])) if body1_targets else None
 
         joint_to_links[joint_prim] = (body0_path, body1_path)
 
-        # Union connected links (only if they are rigid bodies)
-        # If a joint connects a non-rigid-body to a rigid body, we still include the rigid body
+        # Union connected links. A target that resolves to no rigid-body link is None; a joint with a
+        # single resolved side still contributes that link as a standalone component member.
         if body0_path and body1_path:
-            body0_is_rigid = is_rigid_body(body0_path)
-            body1_is_rigid = is_rigid_body(body1_path)
-            if body0_is_rigid and body1_is_rigid:
-                # Both are rigid bodies - union them
-                all_link_paths.add(body0_path)
-                all_link_paths.add(body1_path)
-                uf.union(body0_path, body1_path)
-            elif body0_is_rigid:
-                # Only body0 is rigid - add it as a standalone link
-                all_link_paths.add(body0_path)
-                uf.find(body0_path)  # Ensure it's in the union-find structure
-            elif body1_is_rigid:
-                # Only body1 is rigid - add it as a standalone link
-                all_link_paths.add(body1_path)
-                uf.find(body1_path)  # Ensure it's in the union-find structure
-            # If neither is rigid, skip this joint (it doesn't connect rigid bodies)
-        elif body0_path and is_rigid_body(body0_path):
+            all_link_paths.add(body0_path)
+            all_link_paths.add(body1_path)
+            uf.union(body0_path, body1_path)
+        elif body0_path:
             all_link_paths.add(body0_path)
             uf.find(body0_path)  # Ensure it's in the union-find structure
-        elif body1_path and is_rigid_body(body1_path):
+        elif body1_path:
             all_link_paths.add(body1_path)
             uf.find(body1_path)  # Ensure it's in the union-find structure
 

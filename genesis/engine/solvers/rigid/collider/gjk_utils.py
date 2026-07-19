@@ -13,13 +13,7 @@ from .utils import func_det3
 
 
 @qd.func
-def func_ray_triangle_intersection(
-    ray_v1,
-    ray_v2,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
+def func_ray_triangle_intersection(ray_v1, ray_v2, tri_v1, tri_v2, tri_v3):
     """
     Check if the ray intersects the triangle.
 
@@ -46,12 +40,7 @@ def func_ray_triangle_intersection(
 
 
 @qd.func
-def func_triangle_affine_coords(
-    point,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
+def func_triangle_affine_coords(point, tri_v1, tri_v2, tri_v3):
     """
     Compute the affine coordinates of the point with respect to the triangle.
     """
@@ -107,13 +96,7 @@ def func_triangle_affine_coords(
 
 
 @qd.func
-def func_point_triangle_intersection(
-    gjk_info: array_class.GJKInfo,
-    point,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
+def func_point_triangle_intersection(point, tri_v1, tri_v2, tri_v3, collider_info: array_class.ColliderInfo):
     """
     Check if the point is inside the triangle.
     """
@@ -126,18 +109,13 @@ def func_point_triangle_intersection(
         # Check if the point predicted by the affine coordinates is equal to the point itself
         pred = tri_v1 * _lambda[0] + tri_v2 * _lambda[1] + tri_v3 * _lambda[2]
         diff = pred - point
-        is_inside = diff.norm_sqr() < gjk_info.FLOAT_MIN_SQ[None]
+        is_inside = diff.norm_sqr() < collider_info.gjk.FLOAT_MIN_SQ[None]
 
     return is_inside
 
 
 @qd.func
-def func_point_plane_same_side(
-    point,
-    plane_v1,
-    plane_v2,
-    plane_v3,
-):
+def func_point_plane_same_side(point, plane_v1, plane_v2, plane_v3):
     """
     Check if the point is on the same side of the plane as the origin.
     """
@@ -157,12 +135,7 @@ def func_point_plane_same_side(
 
 
 @qd.func
-def func_origin_tetra_intersection(
-    tet_v1,
-    tet_v2,
-    tet_v3,
-    tet_v4,
-):
+def func_origin_tetra_intersection(tet_v1, tet_v2, tet_v3, tet_v4):
     """
     Check if the origin is inside the tetrahedron.
     """
@@ -182,12 +155,7 @@ def func_origin_tetra_intersection(
 
 
 @qd.func
-def func_project_origin_to_plane(
-    gjk_info: array_class.GJKInfo,
-    v1,
-    v2,
-    v3,
-):
+def func_project_origin_to_plane(v1, v2, v3, collider_info: array_class.ColliderInfo):
     """
     Project the origin onto the plane defined by the simplex vertices.
     """
@@ -218,7 +186,7 @@ def func_project_origin_to_plane(
             # Zero normal, cannot project.
             flag = RETURN_CODE.FAIL
             break
-        elif nn > gjk_info.FLOAT_MIN[None]:
+        elif nn > collider_info.gjk.FLOAT_MIN[None]:
             point = n * (nv / nn)
             flag = RETURN_CODE.SUCCESS
             break
@@ -226,7 +194,7 @@ def func_project_origin_to_plane(
         # Last fallback if no valid normal was found
         if i == 2:
             # If the normal is still unreliable, cannot project.
-            if nn < gjk_info.FLOAT_MIN[None]:
+            if nn < collider_info.gjk.FLOAT_MIN[None]:
                 flag = RETURN_CODE.FAIL
             else:
                 point = n * (nv / nn)

@@ -40,7 +40,7 @@ if sys.platform != "linux":
 # Map example scripts or directories to their required optional dependencies.
 # Directory keys apply recursively to all scripts within that directory.
 EXAMPLE_DEPENDENCIES = {
-    "import_stage.py": ["pxr"],  # Requires usd-core package (provides pxr module)
+    "usd": ["pxr"],  # USD examples require the usd-core package (provides pxr module)
     "IPC_Solver": ["uipc"],  # Requires pyuipc package (provides uipc module)
 }
 

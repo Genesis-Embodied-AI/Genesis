@@ -104,6 +104,10 @@ if TYPE_CHECKING:
     UnitVec3FArrayType = Vec3FArrayType
     Vec3FLaxArrayType = Vec3FArrayType | Vec3FType
     UnitVec3FLaxArrayType = Vec3FLaxArrayType
+    FGridType = Sequence[Sequence[NumericType]] | np.ndarray
+    PositiveFGridType = FGridType
+    Vec3FGridType = Sequence[Sequence[Sequence[NumericType]]] | np.ndarray
+    UnitVec3FGridType = Vec3FGridType
     RotationMatrixType = Vec3FArrayType
     Matrix3x3Type = Sequence[Sequence[NumericType]] | np.ndarray
     Matrix4x4Type = Sequence[Sequence[NumericType]] | np.ndarray
@@ -165,6 +169,10 @@ else:
     StrArrayType = Annotated[tuple[str, ...], Field(strict=False)]
     Vec3FArrayType = Annotated[tuple[Vec3FType, ...], Field(min_length=1, strict=False)]
     UnitVec3FArrayType = Annotated[tuple[UnitVec3FType, ...], Field(min_length=1, strict=False)]
+    FGridType = Annotated[tuple[FArrayType, ...], Field(min_length=1, strict=False)]
+    PositiveFGridType = Annotated[tuple[PositiveFArrayType, ...], Field(min_length=1, strict=False)]
+    Vec3FGridType = Annotated[tuple[Vec3FArrayType, ...], Field(min_length=1, strict=False)]
+    UnitVec3FGridType = Annotated[tuple[UnitVec3FArrayType, ...], Field(min_length=1, strict=False)]
     Vec3FLaxArrayType = Annotated[
         tuple[Vec3FType, ...],
         BeforeValidator(lambda v: v if is_sequence(v) and len(v) > 0 and is_sequence(v[0]) else (v,)),
