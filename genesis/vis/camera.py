@@ -242,11 +242,11 @@ class Camera(RBC):
             gs.raise_exception("Camera not attached to any rigid link.")
 
         if self._is_batched and self._env_idx is None:
-            link_pos = self._attached_link.get_pos(self._visualizer._context.rendered_envs_idx)
-            link_quat = self._attached_link.get_quat(self._visualizer._context.rendered_envs_idx)
+            link_pos = self._attached_link.get_pos(self._visualizer._context.rendered_envs_idx, relative=False)
+            link_quat = self._attached_link.get_quat(self._visualizer._context.rendered_envs_idx, relative=False)
         else:
-            link_pos = self._attached_link.get_pos(self._env_idx).reshape((-1,))
-            link_quat = self._attached_link.get_quat(self._env_idx).reshape((-1,))
+            link_pos = self._attached_link.get_pos(self._env_idx, relative=False).reshape((-1,))
+            link_quat = self._attached_link.get_quat(self._env_idx, relative=False).reshape((-1,))
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
         transform = torch.matmul(link_T, self._attached_offset_T)
         self.set_pose(transform=transform)
@@ -274,9 +274,9 @@ class Camera(RBC):
 
         if self._is_built:
             if self._is_batched and self._env_idx is None:
-                entity_pos = entity.get_pos(self._visualizer._context.rendered_envs_idx)
+                entity_pos = entity.get_pos(self._visualizer._context.rendered_envs_idx, relative=False)
             else:
-                entity_pos = entity.get_pos(self._env_idx).reshape((-1,))
+                entity_pos = entity.get_pos(self._env_idx, relative=False).reshape((-1,))
             pos_rel = self._pos - entity_pos
         else:
             pos_rel = self._initial_pos - torch.tensor(entity.base_link.pos, dtype=gs.tc_float, device=gs.device)
@@ -322,9 +322,9 @@ class Camera(RBC):
 
         # Query entity and relative camera positions
         if self._is_batched and self._env_idx is None:
-            entity_pos = self._followed_entity.get_pos(self._visualizer._context.rendered_envs_idx)
+            entity_pos = self._followed_entity.get_pos(self._visualizer._context.rendered_envs_idx, relative=False)
         else:
-            entity_pos = self._followed_entity.get_pos(self._env_idx).reshape((-1,))
+            entity_pos = self._followed_entity.get_pos(self._env_idx, relative=False).reshape((-1,))
         follow_pos_rel = self._follow_pos_rel
 
         # Smooth camera movement with a low-pass filter, in particular Exponential Moving Average (EMA) if requested

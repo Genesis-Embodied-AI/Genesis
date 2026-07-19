@@ -67,7 +67,6 @@ def _add_tactile_sensor(
         return scene.add_sensor(
             gs.sensors.KinematicTaxel(
                 probe_local_pos=probe_local_pos,
-                probe_local_normal=probe_normal,
                 probe_radius=0.002,
                 normal_stiffness=5000.0,
                 normal_damping=1.0,

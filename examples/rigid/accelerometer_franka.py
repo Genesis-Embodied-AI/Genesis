@@ -59,8 +59,8 @@ def main():
         links_pos = franka.get_links_pos()
         scene.clear_debug_objects()
 
-        _link_vel = rigid.links_state.cd_vel.to_numpy()[:, 0]
-        _link_acc = rigid.links_state.cdd_vel.to_numpy()[:, 0]
+        _link_vel = rigid.dyn_state.links.cd_vel.to_numpy()[:, 0]
+        _link_acc = rigid.dyn_state.links.cdd_vel.to_numpy()[:, 0]
         if last_link_vel is not None:
             finite_diff_acc = (_link_vel - last_link_vel) / sim_dt
         for i in range(links_acc.shape[0]):

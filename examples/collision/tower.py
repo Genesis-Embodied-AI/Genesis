@@ -10,17 +10,16 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
     object_type = args.object
-    horizon = 20 if "PYTEST_VERSION" in os.environ else 600
+    horizon = 20 if "PYTEST_VERSION" in os.environ else 10000
 
     gs.init(backend=gs.cpu, precision="32", performance_mode=True)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.02,
-            substeps=6,
+            dt=0.0015,
         ),
         rigid_options=gs.options.RigidOptions(
-            max_collision_pairs=200,
+            max_collision_pairs=400,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(20, -20, 20),

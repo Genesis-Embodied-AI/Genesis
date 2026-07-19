@@ -1,9 +1,12 @@
+import numpy as np
 import quadrants as qd
 import torch
 
 import genesis as gs
+import genesis.utils.geom as gu
+from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
 from genesis.utils import array_class
-from genesis.utils.misc import DeprecationError
+from genesis.utils.misc import DeprecationError, tensor_to_array
 from genesis.repr_base import RBC
 
 
@@ -117,7 +120,7 @@ class RigidJoint(RBC):
         the anchor point is the "output" of the joint transmission, on which the child body is welded.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_anchor_pos(self._idx, tensor, self._solver.joints_state)
+        _kernel_get_anchor_pos(self._idx, tensor, self._solver.dyn_state)
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
@@ -130,7 +133,7 @@ class RigidJoint(RBC):
         See `RigidJoint.get_anchor_pos` documentation for details about the notion on anchor point.
         """
         tensor = torch.empty((self._solver._B, 3), dtype=gs.tc_float, device=gs.device)
-        _kernel_get_anchor_axis(self._idx, tensor, self._solver.joints_state)
+        _kernel_get_anchor_axis(self._idx, tensor, self._solver.dyn_state)
         if self._solver.n_envs == 0:
             tensor = tensor[0]
         return tensor
@@ -378,6 +381,80 @@ class RigidJoint(RBC):
         return self._dofs_invweight
 
     @property
+    def dofs_length(self):
+        """
+        Returns the characteristic length of each dof, used to put dof velocities on a common linear (m/s) scale.
+        Shape is (n_dofs,), or (n_dofs, n_envs) for a heterogeneous entity whose variants differ per environment.
+
+        A translational dof has length 1, so its velocity is already a linear speed. A rotational dof has the swept
+        radius of the body as its length, so that multiplying it by an angular velocity gives the linear surface speed
+        that rotation produces; this makes a single velocity tolerance meaningful across mixed dofs (e.g. for
+        hibernation). By default the radius is per-axis: the largest perpendicular distance from that dof's own
+        rotation axis (through the joint anchor) to the geometry. With MuJoCo compatibility it is instead MuJoCo's
+        dof_length: a single bounding-sphere radius about the body COM, shared by every rotational dof. For a
+        heterogeneous entity each variant's geoms are active in their own environments, so the radius is per env.
+        """
+        n_dofs = self.n_dofs
+        enable_heterogeneous = self._solver._enable_heterogeneous
+        n_envs = self._solver._B
+        shape = (n_dofs, n_envs) if enable_heterogeneous else (n_dofs,)
+        lengths = np.ones(shape, dtype=gs.np_float)
+        if n_dofs == 0:
+            return lengths
+
+        # A kinematic/avatar link has no collision geometry to size against.
+        if not isinstance(self.link, RigidLink):
+            return lengths
+
+        geoms = self.link.geoms
+        if not geoms:
+            return lengths
+
+        # Reduce a per-geom radius to the body radius: one value, or one per env (maxing over the geoms active in each
+        # env, which for a heterogeneous entity are only its own variant's).
+        masks = [None if geom.active_envs_mask is None else tensor_to_array(geom.active_envs_mask) for geom in geoms]
+
+        def body_radius(per_geom_radius):
+            if not enable_heterogeneous:
+                return max(per_geom_radius)
+            radius = np.zeros(n_envs, dtype=gs.np_float)
+            for value, mask in zip(per_geom_radius, masks):
+                if mask is None:
+                    radius = np.maximum(radius, value)
+                else:
+                    radius[mask] = np.maximum(radius[mask], value)
+            return radius
+
+        if self._solver._enable_mujoco_compatibility:
+            # MuJoCo's dof_length: one body radius shared by every rotational dof, the largest geom bounding radius
+            # plus its COM-to-geom-origin distance.
+            com = self.link.inertial_pos
+            radii = [
+                np.linalg.norm(geom.init_verts, axis=1).max() + np.linalg.norm(com - geom.init_pos) for geom in geoms
+            ]
+            radius = body_radius(radii)
+            for i_d in range(n_dofs):
+                if np.linalg.norm(self._dofs_motion_ang[i_d]) >= gs.EPS:  # rotational dof
+                    lengths[i_d] = radius
+        else:
+            # Per rotational dof, the largest perpendicular distance from its rotation axis (through the joint anchor)
+            # to the geometry. Tighter than one shared sphere, and correct for an offset hinge (where the body rotates
+            # about one end rather than its COM).
+            anchor = self.pos
+            verts = [
+                gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat) - anchor for geom in geoms
+            ]
+            for i_d in range(n_dofs):
+                axis = self._dofs_motion_ang[i_d]
+                axis_norm = np.linalg.norm(axis)
+                if axis_norm < gs.EPS:
+                    continue  # translational dof, length stays 1
+                axis = axis / axis_norm
+                perp = [np.linalg.norm(v - np.outer(v @ axis, axis), axis=1).max() for v in verts]
+                lengths[i_d] = body_radius(perp)
+        return lengths
+
+    @property
     def dofs_frictionloss(self):
         """
         Returns the frictionloss of the dofs of the joint.
@@ -442,18 +519,18 @@ class RigidJoint(RBC):
 
 
 @qd.kernel
-def _kernel_get_anchor_pos(joint_idx: qd.i32, tensor: qd.types.ndarray(), joints_state: array_class.JointsState):
-    _B = joints_state.xanchor.shape[1]
+def _kernel_get_anchor_pos(joint_idx: qd.i32, tensor: qd.types.ndarray(), dyn_state: array_class.DynState):
+    _B = dyn_state.joints.xanchor.shape[1]
     for i_b in range(_B):
-        xpos = joints_state.xanchor[joint_idx, i_b]
+        xpos = dyn_state.joints.xanchor[joint_idx, i_b]
         for i in qd.static(range(3)):
             tensor[i_b, i] = xpos[i]
 
 
 @qd.kernel
-def _kernel_get_anchor_axis(joint_idx: qd.i32, tensor: qd.types.ndarray(), joints_state: array_class.JointsState):
-    _B = joints_state.xaxis.shape[1]
+def _kernel_get_anchor_axis(joint_idx: qd.i32, tensor: qd.types.ndarray(), dyn_state: array_class.DynState):
+    _B = dyn_state.joints.xaxis.shape[1]
     for i_b in range(_B):
-        xaxis = joints_state.xaxis[joint_idx, i_b]
+        xaxis = dyn_state.joints.xaxis[joint_idx, i_b]
         for i in qd.static(range(3)):
             tensor[i_b, i] = xaxis[i]

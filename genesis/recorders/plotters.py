@@ -380,11 +380,48 @@ class BaseMPLPlotter(BasePlotter):
         import matplotlib.pyplot as plt
 
         self.fig: plt.Figure | None = None
+        self.axes: list[plt.Axes] = []
+        self._backgrounds: list[Any] = []
         self._lock = threading.Lock()
 
         # matplotlib figsize uses inches
         dpi = mpl.rcParams.get("figure.dpi", 100)
         self.figsize = (self._options.window_size[0] / dpi, self._options.window_size[1] / dpi)
+
+    def _make_subplot_grid(self, n_subplots: int, titles: "Sequence[str] | None" = None) -> "list":
+        """
+        Create ``self.fig`` with ``n_subplots`` axes in a near-square grid and return them as a flat list (one figure,
+        many subplots).
+
+        Unused cells in the grid are hidden, the figure title is set from ``options.title``, and each axis gets the
+        matching entry of ``titles`` when provided. Subclasses fill the returned axes and then call
+        ``_cache_backgrounds()``.
+        """
+        import matplotlib.pyplot as plt
+
+        n_rows = max(1, int(np.floor(np.sqrt(n_subplots))))
+        n_cols = int(np.ceil(n_subplots / n_rows))
+        self.fig, axes = plt.subplots(n_rows, n_cols, figsize=self.figsize, squeeze=False, constrained_layout=True)
+        axes = list(axes.ravel())
+        for ax in axes[n_subplots:]:
+            ax.set_visible(False)
+        self.axes = axes[:n_subplots]
+        if titles is not None:
+            for ax, title in zip(self.axes, titles):
+                ax.set_title(title)
+        self.fig.suptitle(self._options.title)
+        return self.axes
+
+    def _cache_backgrounds(self):
+        """Draw the figure and cache each axis' background region for fast blitting."""
+        self.fig.canvas.draw()
+        self._backgrounds = [self.fig.canvas.copy_from_bbox(ax.bbox) for ax in self.axes]
+
+    def on_resize(self, event=None):
+        """Re-cache the per-axis blit backgrounds after a resize."""
+        with self._lock:
+            if self.fig is not None and self.axes:
+                self._cache_backgrounds()
 
     def _show_fig(self):
         if self._options.show_window:
@@ -657,13 +694,13 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
     """
     Live 3D vector field viewer: projects positions and vectors onto a 2D plane and plots arrows colored by magnitude.
 
-    The data_func should return an array of shape (N, 3) with the 3D vector at each position given in options.
+    The data_func returns an array of shape (N, 3) with the 3D vector at each position. When ``subplot_titles`` is
+    set (K titles), the figure holds K subplots sharing the same positions, and the data_func instead returns shape
+    (K, N, 3) -- one vector field per subplot (e.g. one per environment).
     """
 
     def build(self):
         super().build()
-
-        import matplotlib.pyplot as plt
 
         opts = self._options
         positions = np.array(opts.positions, dtype=float)
@@ -679,90 +716,78 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         (x_min, y_min), (x_max, y_max) = xy.min(axis=0), xy.max(axis=0)
         margin = 0.1 * max(np.max(np.ptp(xy, axis=0)), gs.EPS)
 
-        self.fig, self.ax = plt.subplots(figsize=self.figsize)
-        self.fig.suptitle(opts.title)
-        self.ax.set_xlim(x_min - margin, x_max + margin)
-        self.ax.set_ylim(y_min - margin, y_max + margin)
-        self.ax.set_aspect("equal")
-        self.ax.set_axis_off()
+        titles = opts.subplot_titles
+        axes = self._make_subplot_grid(len(titles) if titles else 1, titles)
 
         self._positions = positions
         self._normal = normal
         self._scale_factor = opts.scale_factor
         self._max_magnitude = opts.max_magnitude
+        self._scatters = []
+        self._quivers = []
         n = len(xy)
-        self._scatter = self.ax.scatter(
-            xy[:, 0],
-            xy[:, 1],
-            s=8,
-            c=np.zeros(n),
-            cmap="plasma",
-            vmin=0,
-            vmax=self._max_magnitude,
-            zorder=0,
-        )
-        self._quiver = self.ax.quiver(
-            xy[:, 0],
-            xy[:, 1],
-            np.zeros_like(xy[:, 0]),
-            np.zeros_like(xy[:, 1]),
-            np.zeros(len(xy)),
-            cmap="plasma",
-            clim=(0, self._max_magnitude),
-            zorder=1,
-            scale_units="xy",
-            scale=1,
-        )
-        self.fig.colorbar(self._quiver, ax=self.ax, label="Magnitude")
-        self.fig.canvas.draw()
-        self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+        for ax in axes:
+            ax.set_xlim(x_min - margin, x_max + margin)
+            ax.set_ylim(y_min - margin, y_max + margin)
+            ax.set_aspect("equal")
+            ax.set_axis_off()
+            self._scatters.append(
+                ax.scatter(
+                    xy[:, 0], xy[:, 1], s=8, c=np.zeros(n), cmap="plasma", vmin=0, vmax=self._max_magnitude, zorder=0
+                )
+            )
+            self._quivers.append(
+                ax.quiver(
+                    xy[:, 0],
+                    xy[:, 1],
+                    np.zeros(n),
+                    np.zeros(n),
+                    np.zeros(n),
+                    cmap="plasma",
+                    clim=(0, self._max_magnitude),
+                    zorder=1,
+                    scale_units="xy",
+                    scale=1,
+                )
+            )
+        self.fig.colorbar(self._quivers[-1], ax=axes, label="Magnitude")
+        self._cache_backgrounds()
         self._show_fig()
 
         self.fig.canvas.mpl_connect("resize_event", self.on_resize)
 
-    def on_resize(self, event):
-        self._lock.acquire()
-        try:
-            if self.fig is not None and self.ax is not None:
-                self.fig.canvas.draw()
-                self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-        finally:
-            self._lock.release()
-
     def process(self, data, cur_time):
-        """Process new vector data and update the quiver plot."""
-        if isinstance(data, torch.Tensor):
-            vectors = tensor_to_array(data)
-        else:
-            vectors = np.asarray(data, dtype=float)
-        if vectors.ndim != 2 or vectors.shape[1] != 3:
+        """Process new vector data and update each subplot's quiver."""
+        vectors_all = tensor_to_array(data) if isinstance(data, torch.Tensor) else np.asarray(data, dtype=float)
+        if vectors_all.ndim == 2:  # single field -> treat as a 1-subplot stack
+            vectors_all = vectors_all[None]
+        if vectors_all.ndim != 3 or vectors_all.shape[1:] != (len(self._positions), 3):
             return
-        if vectors.shape[0] != len(self._positions):
+        if vectors_all.shape[0] != len(self.axes) or not self._backgrounds:
             return
 
-        magnitudes = np.linalg.norm(vectors, axis=-1)
-        xy, uv = _project_to_plane(self._normal, self._positions, vectors)
-
-        if self._background is not None:
-            self._lock.acquire()
-            self._scatter.set_offsets(xy)
-            self._scatter.set_array(magnitudes)
-            self._quiver.set_offsets(xy)
-            self._quiver.set_UVC(*(uv * self._scale_factor).T)
-            self._quiver.set_array(magnitudes)
-            self.fig.canvas.restore_region(self._background)
-            self.ax.draw_artist(self._scatter)
-            self.ax.draw_artist(self._quiver)
-            self.fig.canvas.blit(self.ax.bbox)
+        with self._lock:
+            for ax, scatter, quiver, background, vectors in zip(
+                self.axes, self._scatters, self._quivers, self._backgrounds, vectors_all
+            ):
+                magnitudes = np.linalg.norm(vectors, axis=-1)
+                xy, uv = _project_to_plane(self._normal, self._positions, vectors)
+                scatter.set_offsets(xy)
+                scatter.set_array(magnitudes)
+                quiver.set_offsets(xy)
+                quiver.set_UVC(*(uv * self._scale_factor).T)
+                quiver.set_array(magnitudes)
+                self.fig.canvas.restore_region(background)
+                ax.draw_artist(scatter)
+                ax.draw_artist(quiver)
+                self.fig.canvas.blit(ax.bbox)
             self.fig.canvas.flush_events()
-            self._lock.release()
 
     def cleanup(self):
         super().cleanup()
-        self._scatter = None
-        self._quiver = None
+        self._scatters = None
+        self._quivers = None
         self._positions = None
         self._normal = None
         self._scale_factor = None
         self._max_magnitude = None
-        self._background = None

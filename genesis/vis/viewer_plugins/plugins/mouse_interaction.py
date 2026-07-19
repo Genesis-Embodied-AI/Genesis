@@ -133,8 +133,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
                 # Store held point in link-local frame. ray_hit.position is in world coords (with envs_offset baked in
                 # by the raycaster), while link.get_pos returns env-local coords, so subtract the offset to align.
-                link_pos = tensor_to_array(link.get_pos(envs_idx=hit_env_idx).squeeze(0))
-                link_quat = tensor_to_array(link.get_quat(envs_idx=hit_env_idx).squeeze(0))
+                link_pos = tensor_to_array(link.get_pos(envs_idx=hit_env_idx, relative=False).squeeze(0))
+                link_quat = tensor_to_array(link.get_quat(envs_idx=hit_env_idx, relative=False).squeeze(0))
                 hit_env_local = ray_hit.position - self._env_offset
                 self._held_point_local = gu.inv_transform_by_trans_quat(hit_env_local, link_pos, link_quat)
 
@@ -181,11 +181,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 self._apply_spring_force(ray_hit_plane.position, self.scene.sim.dt)
             else:
                 assert self._held_point_local is not None
-                link_quat = tensor_to_array(self._held_link.get_quat(envs_idx=envs_idx).squeeze(0))
+                link_quat = tensor_to_array(self._held_link.get_quat(envs_idx=envs_idx, relative=False).squeeze(0))
                 offset_world = gu.transform_by_quat(self._held_point_local, link_quat)
                 # Mouse target is world; entity position is env-local, so strip the env offset before setting.
                 new_link_pos = ray_hit_plane.position - self._env_offset - offset_world
-                self._held_link.entity.set_pos(new_link_pos, envs_idx=envs_idx)
+                self._held_link.entity.set_pos(new_link_pos, envs_idx=envs_idx, relative=False)
 
     @with_lock
     @override
@@ -210,8 +210,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             assert self._held_point_local is not None
 
             envs_idx = self._interact_env_idx
-            link_pos = tensor_to_array(self._held_link.get_pos(envs_idx=envs_idx).squeeze(0))
-            link_quat = tensor_to_array(self._held_link.get_quat(envs_idx=envs_idx).squeeze(0))
+            link_pos = tensor_to_array(self._held_link.get_pos(envs_idx=envs_idx, relative=False).squeeze(0))
+            link_quat = tensor_to_array(self._held_link.get_quat(envs_idx=envs_idx, relative=False).squeeze(0))
             held_point_env_local = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
             held_point_world = held_point_env_local + self._env_offset
 
@@ -326,8 +326,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         envs_idx = self._interact_env_idx
 
         # Current link state in env-local frame
-        link_pos = tensor_to_array(self._held_link.get_pos(envs_idx=envs_idx).squeeze(0))
-        link_quat = tensor_to_array(self._held_link.get_quat(envs_idx=envs_idx).squeeze(0))
+        link_pos = tensor_to_array(self._held_link.get_pos(envs_idx=envs_idx, relative=False).squeeze(0))
+        link_quat = tensor_to_array(self._held_link.get_quat(envs_idx=envs_idx, relative=False).squeeze(0))
         lin_vel = tensor_to_array(self._held_link.get_vel(envs_idx=envs_idx).squeeze(0))
         ang_vel = tensor_to_array(self._held_link.get_ang(envs_idx=envs_idx).squeeze(0))
 

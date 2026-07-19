@@ -1,3 +1,4 @@
+import dataclasses
 import enum
 import functools
 import inspect
@@ -159,6 +160,20 @@ class Solver(RBC):
         tensor = qd_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
+    def _iter_data_manager_tensors(self):
+        """Yield (store name, tensor) for every tensor reachable from the data manager, descending through the
+        nested per-component dataclasses."""
+
+        def walk(prefix, struct):
+            if dataclasses.is_dataclass(struct):
+                for field in dataclasses.fields(struct):
+                    yield from walk(f"{prefix}.{field.name}", getattr(struct, field.name))
+            elif isinstance(struct, (qd.Tensor, qd.Field, qd.Ndarray)):
+                yield prefix, struct
+
+        for attr_name, struct in self.data_manager.__dict__.items():
+            yield from walk(f"{self.__class__.__name__}.data_manager.{attr_name}", struct)
+
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
 
@@ -177,12 +192,8 @@ class Solver(RBC):
                 arrays[key_base] = data
 
         if self.data_manager is not None:
-            for attr_name, struct in self.data_manager.__dict__.items():
-                for sub_name in dir(struct):
-                    sub_arr = getattr(struct, sub_name)
-                    if isinstance(sub_arr, (qd.Tensor, qd.Field, qd.Ndarray)):
-                        store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
-                        arrays[store_name] = sub_arr.to_numpy()
+            for store_name, sub_arr in self._iter_data_manager_tensors():
+                arrays[store_name] = sub_arr.to_numpy()
 
         return arrays
 
@@ -214,15 +225,11 @@ class Solver(RBC):
 
         # if it has data_manager, add it to the arrays
         if self.data_manager is not None:
-            for attr_name, struct in self.data_manager.__dict__.items():
-                for sub_name in dir(struct):
-                    sub_arr = getattr(struct, sub_name)
-                    if isinstance(sub_arr, (qd.Tensor, qd.Field, qd.Ndarray)):
-                        store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
-                        if store_name in arr_dict:
-                            sub_arr.from_numpy(arr_dict[store_name])
-                        else:
-                            gs.logger.warning(f"Failed to load {store_name}. Not found in stored arrays.")
+            for store_name, sub_arr in self._iter_data_manager_tensors():
+                if store_name in arr_dict:
+                    sub_arr.from_numpy(arr_dict[store_name])
+                else:
+                    gs.logger.warning(f"Failed to load {store_name}. Not found in stored arrays.")
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

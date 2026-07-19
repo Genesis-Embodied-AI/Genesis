@@ -154,3 +154,6 @@ uv.lock
 
 # alarm.yml outputs
 outputs/
+
+# Local benchmark archive (not versioned)
+/benchmarks/

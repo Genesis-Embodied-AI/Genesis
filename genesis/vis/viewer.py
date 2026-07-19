@@ -313,7 +313,7 @@ class Viewer(RBC):
         """
         Update the viewer position to follow the specified entity.
         """
-        entity_pos = tensor_to_array(self._followed_entity.get_pos())
+        entity_pos = tensor_to_array(self._followed_entity.get_pos(relative=False))
         if entity_pos.ndim > 1:  # check for multiple envs
             entity_pos = entity_pos[0]
         # numpy < 2.0 doesn't support the copy keyword argument in np.asarray()

@@ -24,6 +24,25 @@ class GJK_RETURN_CODE(IntEnum):
     NUM_ERROR = 2
 
 
+class PORTAL_STATUS(IntEnum):
+    """
+    Reliability of the MPR portal left in simplex_support after a contact, driving whether GJK must refine the result
+    and whether the portal may be reused (perturbation reconstruction, EPA seeding).
+
+    INVALID: unconverged (hit the iteration cap), or a degenerate sliver triangle whose origin projects outside. The
+    penetration/normal are unreliable, so the contact must be refined by GJK.
+    DEGENERATED: the portal is not a trustworthy exact contact face - either the origin projects outside an otherwise
+    well-formed portal (the depth is only a lower-bound estimate, Theorem 4.3) or the contact came from a degenerate
+    touch/segment path with no refined portal. Not reusable, but trusted enough not to force a GJK refine.
+    VALID: converged and the origin projects inside the portal triangle, so the depth is exact (Theorem 4.2). Reliable
+    and reusable.
+    """
+
+    INVALID = 0
+    DEGENERATED = 1
+    VALID = 2
+
+
 class EPA_POLY_INIT_RETURN_CODE(IntEnum):
     """
     Return codes for the EPA polytope initialization.

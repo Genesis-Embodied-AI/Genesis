@@ -1,4 +1,3 @@
-import functools
 import math
 from typing import Any, ClassVar, Literal
 from typing_extensions import Self
@@ -9,6 +8,7 @@ from pydantic import Field, StrictBool, model_validator
 import genesis as gs
 from genesis.typing import FArrayType, UnitInterval, ValidFloat
 from genesis.utils import mesh as mu
+from genesis.utils.misc import SizeCappedCache
 
 from .misc import FoamOptions
 from .options import Options
@@ -207,12 +207,23 @@ class Surface(Options):
         return opacity
 
 
-@functools.lru_cache(maxsize=128)
+# 512 MiB of merged RGBA textures, bounded by the byte size of the image arrays they hold (full-resolution textures
+# dominate the footprint; a count-based bound would not reflect it). The entry count is also capped so that flat-color
+# surfaces (no image array, e.g. per-geom randomized collision colors) cannot accumulate unbounded. Dropped on genesis
+# teardown like the other caches.
+_RGBA_CACHE = SizeCappedCache(max_bytes=512 * 1024 * 1024, max_entries=8192)
+
+
 def _make_rgba(color_texture: Texture | None, opacity_texture: Texture | None, batch: bool) -> "BatchTexture | Texture":
     # Resolve a surface's color and opacity textures into a single RGBA texture. The result is memoized on the input
     # texture instances: surfaces sharing the same textures (e.g. all textured submeshes of a GLB) then reuse a single
     # merged array instead of allocating one full-resolution copy each. A texture update swaps in a new instance, which
     # is a natural cache miss, so no explicit invalidation is needed.
+    cache_key = (color_texture, opacity_texture, batch)
+    cached = _RGBA_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     all_textures = []
     for texture in (color_texture, opacity_texture):
         textures = texture.textures if isinstance(texture, BatchTexture) else [texture]
@@ -266,13 +277,14 @@ def _make_rgba(color_texture: Texture | None, opacity_texture: Texture | None, b
 
         rgba_textures.append(rgba_texture)
 
-    return BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
-
-
-def clear_rgba_cache() -> None:
-    # Drop the memoized RGBA textures, releasing the strong references their large image arrays would otherwise keep
-    # alive. Called on genesis destroy so textures from gone scenes do not stay resident.
-    _make_rgba.cache_clear()
+    result = BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
+    n_bytes = sum(
+        t.image_array.nbytes
+        for t in (result.textures if isinstance(result, BatchTexture) else [result])
+        if isinstance(t, ImageTexture) and t.image_array is not None
+    )
+    _RGBA_CACHE.put(cache_key, result, n_bytes)
+    return result
 
 
 ############################ Surface types ############################

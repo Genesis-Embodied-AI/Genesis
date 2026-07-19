@@ -143,6 +143,10 @@ jobs:
           fi
           pip install ".[${PYTHON_DEPS}]"
 
+          # FIXME: matplotlib 3.11.0 changed text rasterization, breaking the MPLPlotter PNG snapshot
+          # (test_recorders.py::test_plotter). Pin below 3.11 until the snapshot is regenerated.
+          pip install "matplotlib<3.11"
+
       - name: Get artifact prefix name
         id: artifact_prefix
         shell: bash

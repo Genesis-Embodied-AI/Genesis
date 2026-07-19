@@ -287,8 +287,8 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
             up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
             offset_T = pos_lookat_up_to_T(pos, lookat, up)
 
-        link_pos = self._link.get_pos()
-        link_quat = self._link.get_quat()
+        link_pos = self._link.get_pos(relative=False)
+        link_quat = self._link.get_quat(relative=False)
 
         link_T = trans_quat_to_T(link_pos, link_quat)
         camera_T = torch.matmul(link_T, offset_T)
@@ -514,8 +514,8 @@ class RasterizerCameraSensor(
         # If attached to a link and the link is built, pos is relative to link frame
         if self._link is not None and self._link.is_built:
             # Convert pos from link-relative to world coordinates
-            link_pos = self._link.get_pos()
-            link_quat = self._link.get_quat()
+            link_pos = self._link.get_pos(relative=False)
+            link_quat = self._link.get_quat(relative=False)
 
             # Apply pos directly as offset from link
             pos_world = transform_by_quat(pos, link_quat) + link_pos
@@ -559,9 +559,7 @@ class RasterizerCameraSensor(
                 if poses is not None and len(poses) > 1:
                     saved_poses[node_uid] = poses.copy()
                     poses[:, :3, 3] -= envs_offset[context.rendered_envs_idx]
-                    buf_id = context._scene.get_buffer_id(node, "model")
-                    if buf_id >= 0:
-                        context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
+                    context.jit.update_buffer(node, "model", poses.transpose((0, 2, 1)))
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._camera_wrapper, rgb=True, depth=False, segmentation=False, normal=False
@@ -571,9 +569,7 @@ class RasterizerCameraSensor(
         for node_uid, poses in saved_poses.items():
             node = context.rigid_nodes[node_uid]
             node.mesh.primitives[0].poses = poses
-            buf_id = context._scene.get_buffer_id(node, "model")
-            if buf_id >= 0:
-                context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
+            context.jit.update_buffer(node, "model", poses.transpose((0, 2, 1)))
 
         # Ensure contiguous layout because the rendered array may have negative strides.
         rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)
@@ -646,8 +642,8 @@ class RaytracerCameraSensor(
 
         # If attached to a link and the link is built, transform pos to world coordinates
         if self._link is not None and self._link.is_built:
-            link_pos = self._link.get_pos().squeeze(0)
-            link_quat = self._link.get_quat().squeeze(0)
+            link_pos = self._link.get_pos(relative=False).squeeze(0)
+            link_quat = self._link.get_quat(relative=False).squeeze(0)
 
             # Apply pos directly as offset from link
             pos = transform_by_trans_quat(pos, link_pos, link_quat)

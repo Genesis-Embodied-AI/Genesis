@@ -1,5 +1,160 @@
 # Genesis Release Note
 
+## 1.2.3
+
+This small release introduces elliptic friction cone with high-impedance option to accurately model static function. In addition, the convergence of the constraint solver under fp32 accuracy has been improved.
+
+### New Features
+
+* Add high-fidelity static friction model via elliptic friction cone with high-impedance option. (@duburcqa) (#3028, #3035, #3042)
+* Add support of heterogeneous entities in batch renderer. (@Kashu7100) (#2960)
+* Add distances-only mode to raycasting-based sensors. (@Kashu7100) (#2908)
+* Add option to ignore MJCF ground plane. (@coyaSONG) (#3050)
+
+### Bug Fixes
+
+* Fix default morph offset_quat clashing with offset_euler. (@duburcqa) (#3048)
+* Fix IPC coupler auto-detecting wrong coup_type for Plane entities. (@liminchen) (#2877)
+* Fix mass matrix for attached entities. (@duburcqa) (#3055)
+* Fix fastcache support. (@hughperkins) (#3034, #3061)
+* FiX USD parsing of geometry properties. (@Milotrince) (#3017)
+* Fix USD parsing of textures packed in .usdz archives. (@connorsoohoo) (#3064)
+* Fix MJCF parsing of 2D textures. (@thanyu-hub) (#3036)
+* Fix MJCF parsing of included files with mesh defaults. (@Fstarnb) (#3068)
+* Fix MJCF parsing of joint armatures. (@duburcqa) (#3072)
+* Honour system scroll direction in viewer plugins. (@coyaSONG) (#3030)
+* Release the offscreen EGL context before destroying it during teardown. (@duburcqa) (#3076)
+
+### Miscellaneous
+
+* Speed up non-convex collision detection with vert spatial grid and coarse SDF lower bound. (@duburcqa) (#3026)
+* Speed up non-batched CPU-based simulation (up to 30%). (@hughperkins) (#3033)
+* Speed up forward kinematics by removing unnecessary atomics. (@gayathiri-venkataraman) (#3066)
+* Improve constraint solver float32 convergence and equality constraint stability. (@duburcqa) (#3073)
+* Preserve the energy of freely tumbling bodies under implicit integration. (@duburcqa) (#3074)
+* Stop requiring 64bit precision in tactile sensors. (@Milotrince, @duburcqa) (#3057, #3058)
+* Pack rigid solver data on a per-component basis. (@duburcqa) (#3060)
+* Fix broken Apple Metal CI. (@hughperkins) (#3054)
+* Add contribution guidelines. (@duburcqa) (#3032, #3049)
+
+## 1.2.2
+
+This release introduces a rich family of realistic yet high-throughput tactile sensors that are suitable for training dexterous policy via RL. Besides, non-convex collision detection is now more robust than ever, with comparable performance to convex decomposition in terms of speed and stability. Notably, spurious deep contacts and thin-shell tunneling has been fixed. Finally, enabling 'noslip' post-processing step should now incur less than 20% slowdown for all backends.
+
+### New Features
+
+* Add noise options for tactile sensors: hysteresis, dead taxels, probe gain (@Milotrince) (#2813)
+
+### Bug Fixes
+
+* Fix contact-pruning bucket merging. (@duburcqa) (#3010)
+* Fix performance regression on some backends when sparse option is not specified. (@duburcqa) (#3010)
+* Fix data accessors for very large batch sizes (>16k). (@duburcqa) (#3010)
+* Fix go2_backflip RL training example. (@kshitijgoel007) (#2986)
+
+### Miscellaneous
+
+* Speed up per-island noslip solver. (@duburcqa) (#3009)
+* Speed up contact-island constraint solve for large batches. (@Milotrince) (#3021)
+* Speed up tactile sensors. (@Milotrince) (#2922)
+* More robust nonconvex collision detection. (@duburcqa) (#3014, #3020)
+
+## 1.2.1
+
+This release dramatically improves scaling to large scenes on CPU by better leveraging sparsity and incremental Hessian update. Scenes with 100 entities / 1000 geometries now run in real-time at 120FPS.
+
+### Breaking changes
+
+* [BUG FIX] Fix center of mass not properly aligned for composite links. (@duburcqa) (#2993)
+
+### New Features
+
+* Add JointTorqueSensor. (@matthieuvigne) (#2989)
+
+### Bug Fixes
+
+* Fix textures when loading GLB meshes with multiple materials. (@duburcqa) (#2984)
+* More robust watertighten algorithm use for non-convex meshes and inertia estimation. (@duburcqa) (#2994)
+* Fix stale deformable meshes on first rendered frame and wake-up crash during build. (@duburcqa) (#3006)
+
+### Miscellaneous
+
+* More robust convex collision detection. (@duburcqa) (#2999, #3007)
+* Speed up CPU rigid constraint solver. (@duburcqa) (#2992, #2993, #2996, #3001, #3005)
+
+## 1.2.0
+
+This release dramatically improves scaling to large scenes using islands partitioning, which a now first-class and enabled by default. Besides, the simulation speed is also scaling much better with the number of degrees of freedom per entity.
+
+### Breaking changes
+
+* [MISC] Parse kinematic trees depth-first instead of breadth-first. (@duburcqa) (#2972)
+
+### New Features
+
+* Add full support of islands and hibernation. (@duburcqa) (#2972, #2974, #2975)
+
+### Bug Fixes
+
+* Fix race condition causing ImGui plugin to crash during scene rebuild. (@Kashu7100) (#2936)
+* Fix joint-equality when attaching a floating-base entity. (@duburcqa) (#2948)
+* Fix offscreen rendering using wrong resolution when interactive viewer is enabled. (@duburcqa) (#2954)
+* Fix Windows offscreen rendering. (@duburcqa) (#2951, #2953, #2961)
+* Deduplicate BatchRenderer textures without image_path. (@NoahLinckeScout) (#2940)
+* Render each heterogeneous variant in its own environment. (@duburcqa) (#2958)
+
+### Miscellaneous
+
+* Add 'loop_config' kernel names for profiling. (@hughperkins) (#2950)
+* Fix typos and redundant placeholder/value in bug report template. (@yeezhouyi) (#2840)
+* Improve readability of entity and morph repr. (@duburcqa) (#2956)
+* Raise on ambiguous morph access for heterogeneous entities. (@kunni918) (#2798)
+* Speedup rigid body mass matrix cholesky decomposition for large dof count. (@Kashu7100) (#2915)
+* Partition mass matrix per kinematic tree to allow factoring them separately. (@duburcqa) (#2976)
+* Cache mesh processing to speed up adding many identical entities. (@duburcqa) (#2978)
+* Scale hibernation ang vel threshold by DOF swept radius. (@duburcqa) (#2979)
+
+## 1.1.2
+
+This minor release introduces morph pose offset to finally provide a viable solution to the long-lasting inconstency of spatial accessors related to non-standard mesh axes conventions (0.3.13) and inertia alignment (0.4.4). Besides, fixed-size buffers are now sized more tightly to significantly reduce the default memory footprint.
+
+### Breaking changes
+
+* Add morph pose offset and relative-frame pose accessors for rigid bodies. (@duburcqa) (#2934)
+
+### New Features
+
+* Add pruning-aware sizing of contact constraint buffers using 'max_contacts' option. (@duburcqa) (#2928)
+
+### Bug Fixes
+
+* Fix island support in rigid body solver. (@duburcqa) (#2930)
+* Fix serialized batched simulation on CPU scaling sub-linearly. (@duburcqa) (#2929)
+
+### Miscellaneous
+
+* Allocate rigid entity Jacobian and IK fields lazily on first use. (@duburcqa) (#2933)
+
+## 1.1.1
+
+This minor release mainly improves the robustness of rigid collision detection for both convex and non-convex geometries. It is no longer considered experimental to disable convex decomposition when higher fidelity is necessary.
+
+### Bug Fixes
+
+* Deduplicate textures across GLB submeshes sharing a material. (@duburcqa) (#2896)
+* Skip grayscale conversion for colorized segmentation maps. (@ACMLCZH) (#2901)
+* Fix non-deterministic simulation on GPU. (@duburcqa) (#2898, #2907, #2909)
+* Fix non-convex collision detection for concave geometries. (@duburcqa) (#2903)
+* More robust perturbation-based multi-contact convex-convex collision detection. (@duburcqa) (#2917, #2921)
+
+### Miscellaneous
+
+* Support passing sliced env mask to RigidSolver.set_base_links_(pos|quat). (@duburcqa) (#2897)
+* Improve interactive scene mode. (@duburcqa) (#2899)
+* Use qd.ndrange(axes=) to collapse layout-flip duplications. (@hughperkins) (#2861)
+* Switch dedupe contact sort to use Quadrants bitonic sort (@hughperkins) (#2853)
+* Move register-tile Cholesky into quadrants. (@hughperkins) (#2860)
+
 ## 1.1.0
 
 This release focuses on performance improvement and numerical stability of rigid solver. Genesis speed should drop less aggressively as the complexity of the scene increases, notably the number of decomposed convex geoms, floating-base entities, and dofs.

@@ -3,6 +3,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Callable, Generic, Mapping, TypeVar
 
+import numpy as np
 import torch
 
 import genesis as gs
@@ -17,14 +18,16 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-def _detach_data(data):
-    """Move all GPU tensors to CPU numpy arrays so the data is safe for background thread processing."""
+def _to_numpy(data):
+    """Recursively move all GPU tensors nested in ``data`` to CPU numpy arrays, preserving container structure."""
     if isinstance(data, torch.Tensor):
         return tensor_to_array(data)
+    if isinstance(data, np.ndarray):
+        return data
     if isinstance(data, Mapping):
-        return {k: _detach_data(v) for k, v in data.items()}
+        return {k: _to_numpy(v) for k, v in data.items()}
     if is_sequence(data):
-        return type(data)(_detach_data(v) for v in data)
+        return type(data)(_to_numpy(v) for v in data)
     return data
 
 
@@ -212,7 +215,7 @@ class Recorder(Generic[T]):
             return
 
         # threaded mode: move GPU tensors to CPU before queuing to avoid cross-thread GPU access
-        data = _detach_data(data)
+        data = _to_numpy(data)
 
         # threaded mode: put data in queue
         try:

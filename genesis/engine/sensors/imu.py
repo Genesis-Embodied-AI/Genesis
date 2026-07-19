@@ -204,8 +204,8 @@ class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, No
         """
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        quat = self._link.get_quat(env_idx).reshape((4,))
-        pos = self._link.get_pos(env_idx).reshape((3,)) + transform_by_quat(self.pos_offset, quat)
+        quat = self._link.get_quat(env_idx, relative=False).reshape((4,))
+        pos = self._link.get_pos(env_idx, relative=False).reshape((3,)) + transform_by_quat(self.pos_offset, quat)
 
         # cannot specify envs_idx for read() when n_envs=0
         data = self.read(env_idx)

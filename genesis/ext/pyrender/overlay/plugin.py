@@ -373,7 +373,13 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         editor panel. Keyed by entity name; values are the kwargs forwarded to ``scene.add_entity``."""
         self._pending_entities_kwargs = {}
         for entity in self.scene.entities:
-            kwargs: dict[str, Any] = {"morph": entity.morph}
+            # A heterogeneous entity has multiple morph variants; capture them all so a rebuild reproduces every
+            # variant instead of collapsing the entity to its first morph.
+            if isinstance(entity, gs.engine.entities.KinematicEntity):
+                morph = tuple(entity.morphs) if len(entity.morphs) > 1 else entity.main_morph
+            else:
+                morph = entity.morph
+            kwargs: dict[str, Any] = {"morph": morph}
             # Carry the material and surface so a rebuild preserves the entity's solver (e.g. a Kinematic entity must
             # not silently become Rigid, the add_entity default). visualize_contact is rigid-only.
             if isinstance(entity, gs.engine.entities.KinematicEntity):
@@ -407,8 +413,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
     def on_mouse_scroll(self, x, y, dx, dy) -> EVENT_HANDLE_STATE:
         if self._available:
-            # imgui backend expects: on_mouse_scroll(x, y, mods, scroll)
-            self._impl.on_mouse_scroll(x, y, 0, dy)
+            # Pyglet's deltas already reflect the system's scrolling preference. Forward them directly because the
+            # imgui-bundle Pyglet backend negates the vertical delta, which reverses the configured direction.
+            self._io.add_mouse_wheel_event(dx, dy)
         return EVENT_HANDLED if self._is_capturing() else None
 
     def on_mouse_motion(self, x, y, dx, dy) -> EVENT_HANDLE_STATE:
@@ -681,8 +688,8 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
         entity = data.entity
 
-        pos = tensor_to_array(entity.get_pos())
-        quat_wxyz = tensor_to_array(entity.get_quat())
+        pos = tensor_to_array(entity.get_pos(relative=False))
+        quat_wxyz = tensor_to_array(entity.get_quat(relative=False))
         if self._controlled_env_idx is not None:
             pos = pos[self._controlled_env_idx]
             quat_wxyz = quat_wxyz[self._controlled_env_idx]
@@ -732,7 +739,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 # set_quat must be absolute (relative=False), since the KinematicEntity default is relative.
                 entity.set_quat(new_quat_wxyz, envs_idx=self._controlled_env_idx, relative=False)
             else:
-                entity.set_pos(new_mat[:3, 3], envs_idx=self._controlled_env_idx)
+                entity.set_pos(new_mat[:3, 3], envs_idx=self._controlled_env_idx, relative=False)
             self._refresh_visuals()
 
     def _is_gizmo_active(self):
