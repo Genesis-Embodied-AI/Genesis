@@ -31,7 +31,7 @@ from genesis.utils.sdf import SDF
 from ..base_solver import MutatedLinks, Solver, StateChange, mutates
 from ..kinematic_solver import KinematicSolver, _select_links_offset, _offset_world_shift, _fill_base_link_geom_offsets
 from .collider import Collider
-from .constraint import ConstraintSolver
+from .constraint import ComFreeSolver, ConstraintSolver
 from .constraint.backward import (
     kernel_manual_add_collision_constraints_bw,
     kernel_manual_add_frictionloss_constraints_bw,
@@ -293,6 +293,10 @@ class RigidSolver(KinematicSolver):
         if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
             gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
 
+        # The differentiable adjoint solve backpropagates through the iterative solvers only.
+        if options.constraint_solver == gs.constraint_solver.ComFree and self._requires_grad:
+            gs.raise_exception("The ComFree constraint solver is not supported when 'requires_grad' is True.")
+
         # A high tangential-to-normal impedance ratio suppresses the tangential creep of regularized friction that
         # lets resting structures slowly slide apart under their own weight. With the elliptic cone the tangential
         # rows are stiffened independently, so it resolves to a high ratio - except under MuJoCo compatibility, where
@@ -454,8 +458,15 @@ class RigidSolver(KinematicSolver):
         # island) the partition is pure overhead, so disable it in computation even if the user opted in. Hibernation
         # does not force islands on (a scene with no island structure has nothing to gain from sleeping a lone tree);
         # use_hibernation is gated off below to follow this decision. The differentiable solve reads the dense global
-        # Hessian (nt_H), not the per-island tiles, so islands stay off under requires_grad regardless.
-        self._use_contact_island = self._use_contact_island and has_multi_island_structure and not self._requires_grad
+        # Hessian (nt_H), not the per-island tiles, so islands stay off under requires_grad regardless. The ComFree
+        # resolution is a fixed sequence of per-row and per-entity passes with no cross-row coupling, so the island
+        # partition has nothing to accelerate there either.
+        self._use_contact_island = (
+            self._use_contact_island
+            and has_multi_island_structure
+            and not self._requires_grad
+            and self._options.constraint_solver != gs.constraint_solver.ComFree
+        )
 
         # Hibernation builds on the island partition, so it cannot outlive islands being turned off by any gate above.
         # Re-sync it to the final island decision so the two never disagree.
@@ -535,12 +546,15 @@ class RigidSolver(KinematicSolver):
         # saturates the GPU, so the env bound is get_gpu_core_count() (the threshold envs_undersaturate uses below), not
         # a fixed literal, combined with n_dofs >= 16. Sparse solve is excluded (the cooperative qfrc kernel and the
         # flipped-layout jac readers are dense-only).
+        # ComFree has no cooperative kernels, and its J^T @ force gather is one thread per (dof, env) striding
+        # constraints, which the cooperative jac permutation would de-coalesce - keep the canonical layout there.
         enable_cooperative_constraint_kernels = (
             gs.backend != gs.cpu
             and not self.sim.options.requires_grad
             and not sparse_solve
             and self._sim._B <= get_gpu_core_count()
             and self.n_dofs >= 16
+            and self._options.constraint_solver != gs.constraint_solver.ComFree
         )
         constraint_layout_batch_first = (
             enable_cooperative_constraint_kernels or self.sim._para_level < gs.PARA_LEVEL.ALL
@@ -1217,13 +1231,7 @@ class RigidSolver(KinematicSolver):
 
     def _init_constraint_solver(self):
         if self._options.constraint_solver == gs.constraint_solver.ComFree:
-            from .comfree import ComFreeSolver
-
-            self.constraint_solver = ComFreeSolver(
-                self,
-                comfree_stiffness=self._options.comfree_stiffness,
-                comfree_damping=self._options.comfree_damping,
-            )
+            self.constraint_solver = ComFreeSolver(self)
         else:
             # Islands are a per-island Newton solve inside ConstraintSolver.resolve, gated on use_contact_island.
             self.constraint_solver = ConstraintSolver(self)

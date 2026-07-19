@@ -137,6 +137,8 @@ class RigidInfo:
     ls_tolerance: qd.Tensor
     noslip_iterations: qd.Tensor
     noslip_tolerance: qd.Tensor
+    comfree_stiffness: qd.Tensor
+    comfree_damping: qd.Tensor
     impratio: qd.Tensor
     n_equalities: qd.Tensor
     n_candidate_equalities: qd.Tensor
@@ -209,6 +211,8 @@ def get_rigid_info(solver, kinematic_only):
             ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            comfree_stiffness=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            comfree_damping=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             impratio=V_SCALAR_FROM(dtype=gs.qd_float, value=1.0),
             n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
@@ -249,6 +253,8 @@ def get_rigid_info(solver, kinematic_only):
         ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.ls_tolerance),
         noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.noslip_iterations),
         noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.noslip_tolerance),
+        comfree_stiffness=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.comfree_stiffness),
+        comfree_damping=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.comfree_damping),
         impratio=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.impratio),
         n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._n_equalities),
         n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=solver.n_candidate_equalities_),
@@ -437,8 +443,8 @@ class ConstraintState:
     # prior coupled cone block (Jaref is overwritten by the linesearch apply). Empty for the pyramidal cone.
     cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
-    # ComFree-only constraint scalars: signed constraint position (efc_dist) and constraint-space
-    # effective mass (efc_mass). Allocated for all solvers but only populated/read by ComFreeSolver.
+    # Signed constraint position and constraint-space effective mass of each row (see comfree_efc_mass in geom.py),
+    # written during assembly and consumed by the analytical row force. Empty unless the ComFree solver is selected.
     efc_dist: qd.Tensor
     efc_mass: qd.Tensor
     # Frictionloss rows store their friction loss; elliptic-cone head (normal) rows reuse the field to carry the
@@ -554,6 +560,7 @@ def get_constraint_state(constraint_solver, solver, collider):
     # The CPU incremental factor maintains the elliptic cone by a per-iteration rank-3 update reading the previous cone
     # residuals, so the residual cache is allocated for the CPU elliptic case.
     is_cone_incremental = solver.rigid_config.enable_elliptic_friction and solver.rigid_config.backend == gs.cpu
+    is_comfree = solver.rigid_config.solver_type == gs.constraint_solver.ComFree
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
@@ -634,7 +641,7 @@ def get_constraint_state(constraint_solver, solver, collider):
         nt_H=(
             solver.rigid_info.mass_mat_tiled_scratch
             if solver.rigid_config.enable_register_tiled_mass
-            else V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_))
+            else V(dtype=gs.qd_float, shape=maybe_shape((_B, solver.n_dofs_, solver.n_dofs_), not is_comfree))
         ),
         nt_H_env_start=V(dtype=gs.qd_int, shape=sparse_dof_shape),
         dof_perm=V(dtype=gs.qd_int, shape=sparse_dof_shape),
@@ -653,8 +660,16 @@ def get_constraint_state(constraint_solver, solver, collider):
         efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=serial_layout),
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_dist=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_mass=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
+        efc_dist=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape((len_constraints_, _B), is_comfree),
+            layout=con_layout if is_comfree else None,
+        ),
+        efc_mass=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape((len_constraints_, _B), is_comfree),
+            layout=con_layout if is_comfree else None,
+        ),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
         jac_dofs_idx=V(

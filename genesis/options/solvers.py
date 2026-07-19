@@ -440,15 +440,22 @@ class RigidOptions(Options):
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
     constraint_solver : gs.constraint_solver, optional
-        Constraint solver type. Supported solvers are 'gs.constraint_solver.CG' (conjugate gradient),
-        'gs.constraint_solver.Newton' (Newton's method), and 'gs.constraint_solver.ComFree' (complementarity-free
-        analytical solver, arXiv:2603.12185). Defaults to 'Newton'.
+        Constraint solver type. 'gs.constraint_solver.CG' (conjugate gradient) and 'gs.constraint_solver.Newton'
+        (Newton's method) solve the constraint problem iteratively to convergence: accurate and robust, with Newton
+        converging in fewer, costlier iterations. 'gs.constraint_solver.ComFree' (complementarity-free,
+        arXiv:2603.12185) instead computes every constraint force analytically in a single pass: much faster on
+        contact-dense scenes and large batches, but compliant - contacts and equality constraints behave like stiff
+        spring-dampers governed by 'comfree_stiffness' and 'comfree_damping', so accuracy depends on tuning them for
+        the scene and timestep. It supports the pyramidal friction cone only. Defaults to 'Newton'.
     comfree_stiffness : float, optional
-        Global stiffness parameter (k_user) for the ComFree solver. Only used when
-        `constraint_solver=gs.constraint_solver.ComFree`. Defaults to 0.2.
+        Stiffness of the ComFree analytical constraint force, per unit of timestep. Higher values resolve penetration
+        and equality violation faster but overshoot and jitter once too stiff for the timestep; lower values leave
+        more residual violation. Only used with 'gs.constraint_solver.ComFree'. Defaults to 0.2.
     comfree_damping : float, optional
-        Global damping parameter (d_user) for the ComFree solver. Only used when
-        `constraint_solver=gs.constraint_solver.ComFree`. Defaults to 0.001.
+        Damping of the ComFree analytical constraint force, per unit of timestep. Higher values dissipate
+        constraint-relative velocity faster, settling contacts quickly at the cost of a sticky, over-damped response
+        (e.g. slower sliding); lower values keep the response lively but let contacts oscillate longer. Only used
+        with 'gs.constraint_solver.ComFree'. Defaults to 0.001.
     iterations : int, optional
         Maximum number of iterations for the constraint solver; the solve exits early once its convergence tolerance
         is met, so this bound only binds on hard steps. Defaults to 50.
@@ -560,6 +567,8 @@ class RigidOptions(Options):
     ls_tolerance: PositiveFloat = 1e-2
     noslip_iterations: NonNegativeInt = 0
     noslip_tolerance: PositiveFloat = 1e-6
+    comfree_stiffness: PositiveFloat = 0.2
+    comfree_damping: PositiveFloat = 0.001
     friction_cone: gs.friction_cone = gs.friction_cone.pyramidal
     enable_torsional_friction: StrictBool = False
     enable_rolling_friction: StrictBool = False
@@ -567,9 +576,6 @@ class RigidOptions(Options):
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
     constraint_timeconst: PositiveFloat = 0.01
-    # ComFree analytical solver parameters (only used when constraint_solver == ComFree)
-    comfree_stiffness: PositiveFloat = 0.2
-    comfree_damping: PositiveFloat = 0.001
     use_contact_island: StrictBool = True
     box_box_detection: StrictBool = False
 
@@ -608,6 +614,14 @@ class RigidOptions(Options):
             gs.raise_exception("The elliptic friction cone is not supported with the noslip solver.")
         if self.enable_rolling_friction and not self.enable_torsional_friction:
             gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
+        if self.constraint_solver == gs.constraint_solver.ComFree:
+            # The analytical per-row force realizes the friction pyramid facet-by-facet; the coupled cone rows of
+            # the elliptic model have no per-row admissible set, and the noslip post-solve reads the iterative
+            # solver's state.
+            if self.friction_cone == gs.friction_cone.elliptic:
+                gs.raise_exception("The ComFree constraint solver only supports the pyramidal friction cone.")
+            if self.noslip_iterations > 0:
+                gs.raise_exception("The ComFree constraint solver is not supported with the noslip solver.")
 
 
 class MPMOptions(Options):

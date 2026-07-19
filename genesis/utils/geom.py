@@ -605,17 +605,29 @@ def qd_orthogonals(a):
 
 
 @qd.func
-def imp_aref(params, neg_penetration, vel, pos):
-    timeconst, dampratio, dmin, dmax, width, mid, power = params
+def constraint_imp(params, pos, width):
+    """Constraint impedance curve: interpolates from solimp's dmin to dmax as the violation pos crosses width.
 
-    imp_x = qd.abs(neg_penetration) / width
+    The width is a dedicated parameter rather than read from params, so that callers can override solimp's
+    width (see comfree_efc_mass).
+    """
+    timeconst, dampratio, dmin, dmax, _, mid, power = params
+
+    imp_x = qd.abs(pos) / width
     imp_a = (1.0 / mid ** (power - 1)) * imp_x**power
     imp_b = 1.0 - (1.0 / (1.0 - mid) ** (power - 1)) * (1.0 - imp_x) ** power
     imp_y = imp_a if imp_x < mid else imp_b
 
     imp = dmin + imp_y * (dmax - dmin)
     imp = qd.math.clamp(imp, dmin, dmax)
-    imp = dmax if imp_x > 1.0 else imp
+    return dmax if imp_x > 1.0 else imp
+
+
+@qd.func
+def imp_aref(params, neg_penetration, vel, pos):
+    timeconst, dampratio, dmin, dmax, width, mid, power = params
+
+    imp = constraint_imp(params, neg_penetration, width)
 
     b = 2.0 / (dmax * timeconst)
     k = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
@@ -659,54 +671,16 @@ def imp_aref_grad(params, neg_penetration):
 
 
 @qd.func
-def comfree_imp(params, pos_imp):
-    """Compute the constraint impedance used for the ComFree effective mass (``efc_mass``).
+def comfree_efc_mass(params, pos, invweight, eps):
+    """Constraint-space effective mass of one constraint row for the ComFree solver.
 
-    This mirrors the standard MuJoCo impedance curve (see ``imp_aref``) but pins the impedance
-    ``width`` to a constant 0.01 instead of using ``solimp[2]``. The reference ComFree
-    implementation hardcodes the width so that ``efc_mass`` does not jump abruptly when the
-    constraint violation ``pos_imp`` is large (e.g. deep initial penetration).
-
-    Reference: comfree_warp/comfree_core/_src/constraint.py:77-111 (``_efc_row``).
+    Computed as 1 / max(invweight * (1 - imp) / imp, eps), with the impedance width pinned to 0.01 instead of
+    solimp's width so the effective mass stays smooth when the violation is large (e.g. deep initial
+    penetration). The analytical row force realizes the friction pyramid facet-by-facet, so the inverse mass
+    is the plain invweight.
     """
-    timeconst, dampratio, dmin, dmax, width, mid, power = params
-
-    MJ_MINIMP = 0.0001
-    MJ_MAXIMP = 0.9999
-
-    dmin = qd.math.clamp(dmin, MJ_MINIMP, MJ_MAXIMP)
-    dmax = qd.math.clamp(dmax, MJ_MINIMP, MJ_MAXIMP)
-    width = 0.01  # hardcoded, matching reference constraint.py:93
-    mid = qd.math.clamp(mid, MJ_MINIMP, MJ_MAXIMP)
-    power = qd.max(1.0, power)
-
-    imp_x = qd.abs(pos_imp) / width
-    imp_a = (1.0 / mid ** (power - 1.0)) * imp_x**power
-    imp_b = 1.0 - (1.0 / (1.0 - mid) ** (power - 1.0)) * (1.0 - imp_x) ** power
-    imp_y = imp_a if imp_x < mid else imp_b
-
-    imp = dmin + imp_y * (dmax - dmin)
-    imp = qd.math.clamp(imp, dmin, dmax)
-    imp = dmax if imp_x > 1.0 else imp
-
-    return imp
-
-
-@qd.func
-def comfree_efc_mass(params, pos_imp, invweight, eps):
-    """Constraint-space effective mass used by the ComFree solver (``efc_mass``).
-
-    Matches the single ``efc_mass`` formula shared by every constraint type in the reference
-    (``comfree_warp/comfree_core/_src/constraint.py:125``)::
-
-        efc_mass = 1 / max(invweight * (1 - imp) / imp, eps)
-
-    where ``imp`` comes from :func:`comfree_imp` (hardcoded width). Unlike the standard contact
-    ``diag`` this uses the plain ``invweight`` (no friction-cone scaling), exactly as the reference.
-    """
-    imp = comfree_imp(params, pos_imp)
-    diag = qd.max(invweight * (1.0 - imp) / imp, eps)
-    return 1.0 / diag
+    imp = constraint_imp(params, pos, 0.01)
+    return 1.0 / qd.max(invweight * (1.0 - imp) / imp, eps)
 
 
 # ------------------------------------------------------------------------------------

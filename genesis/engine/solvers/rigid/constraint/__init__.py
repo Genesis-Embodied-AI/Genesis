@@ -4,6 +4,7 @@ Constraint solver submodule for rigid body simulation.
 Contains constraint solving, island detection, and backward pass.
 """
 
+from .comfree import ComFreeSolver
 from .solver import ConstraintSolver
 
 # first declare func_solve_body:

@@ -195,8 +195,9 @@ class ConstraintSolver:
         # Fill-reducing DOF permutation for the skyline Cholesky: a structural choice fixed once from the initial
         # body layout (forward kinematics has already run at this point), never recomputed in the step loop. The
         # reorder (COM sort) only kicks in for the CPU envelope; otherwise this initializes the identity permutation,
-        # which the sparse Hessian assembly still indexes through (including the explicit GPU sparse path).
-        if self.sparse_solve:
+        # which the sparse Hessian assembly still indexes through (including the explicit GPU sparse path). ComFree
+        # never factors a Hessian, so it has no use for the permutation.
+        if self.sparse_solve and self._solver_type != gs.constraint_solver.ComFree:
             func_compute_dof_perm(
                 self._solver.dyn_state, self.constraint_state, self._solver.dyn_info, self._solver.rigid_config
             )
@@ -831,13 +832,11 @@ def _add_friction_constraint(
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1 / diag
-    # ComFree contact scalars: signed distance (-penetration) and effective mass from the plain
-    # invweight with a hardcoded-width impedance (no friction-cone scaling).
-    # Reference: comfree_warp/comfree_core/_src/constraint.py:124-125
-    constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
-    constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
-        contact_data_sol_params, -contact_data_penetration, invweight, EPS
-    )
+    if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+        constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
+        constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
+            contact_data_sol_params, -contact_data_penetration, invweight, EPS
+        )
 
 
 @qd.func
@@ -1074,13 +1073,11 @@ def _add_collision_constraints_per_contact(
                 constraint_state.diag[n_con, i_b] = diag
                 constraint_state.aref[n_con, i_b] = aref
                 constraint_state.efc_D[n_con, i_b] = 1 / diag
-                # ComFree contact scalars: signed distance (-penetration) and effective mass from the
-                # plain invweight with a hardcoded-width impedance (no friction-cone scaling).
-                # Reference: comfree_warp/comfree_core/_src/constraint.py:124-125
-                constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
-                constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
-                    contact_data_sol_params, -contact_data_penetration, invweight, EPS
-                )
+                if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+                    constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
+                    constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
+                        contact_data_sol_params, -contact_data_penetration, invweight, EPS
+                    )
 
 
 @qd.func
@@ -1273,9 +1270,9 @@ def func_equality_connect(
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref - jdotv[i_3]
         constraint_state.efc_D[n_con, i_b] = 1.0 / diag
-        # ComFree: signed constraint position is the per-axis anchor error; mass uses hardcoded-width impedance.
-        constraint_state.efc_dist[n_con, i_b] = pos_diff[i_3]
-        constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos_diff[i_3], invweight, EPS)
+        if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+            constraint_state.efc_dist[n_con, i_b] = pos_diff[i_3]
+            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos_diff[i_3], invweight, EPS)
 
 
 @qd.func
@@ -1354,9 +1351,9 @@ def func_equality_joint(
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
-    # ComFree: signed constraint position is the joint coupling residual.
-    constraint_state.efc_dist[n_con, i_b] = pos
-    constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos, invweight, EPS)
+    if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+        constraint_state.efc_dist[n_con, i_b] = pos
+        constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos, invweight, EPS)
 
     # Populate jac_dofs_idx for this joint-equality constraint, so the sparse-Jacobian iterations see its relevant
     # DOFs (otherwise they would see 0 and produce zero forces, leading to NaN in the solver).
@@ -1671,9 +1668,9 @@ def func_equality_weld(
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref - jdotv[i]
         constraint_state.efc_D[n_con, i_b] = 1.0 / diag
-        # ComFree: signed constraint position is the per-axis weld translation error.
-        constraint_state.efc_dist[n_con, i_b] = pos_error[i]
-        constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos_error[i], invweight[0], EPS)
+        if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+            constraint_state.efc_dist[n_con, i_b] = pos_error[i]
+            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos_error[i], invweight[0], EPS)
 
     # --- Orientation part (next 3 constraints) ---
     n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 3)
@@ -1755,11 +1752,11 @@ def func_equality_weld(
             aref - 0.5 * (t1[i_con_ + 1] + t2[i_con_ + 1] + t3[i_con_ + 1]) * torquescale
         )
         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
-        # ComFree: signed constraint position is the per-axis weld rotation error.
-        constraint_state.efc_dist[i_con, i_b] = rot_error[i_con - n_con]
-        constraint_state.efc_mass[i_con, i_b] = gu.comfree_efc_mass(
-            sol_params, rot_error[i_con - n_con], invweight[1], EPS
-        )
+        if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+            constraint_state.efc_dist[i_con, i_b] = rot_error[i_con_]
+            constraint_state.efc_mass[i_con, i_b] = gu.comfree_efc_mass(
+                sol_params, rot_error[i_con_], invweight[1], EPS
+            )
 
 
 @qd.func
@@ -1806,11 +1803,11 @@ def add_joint_limit_constraints(
                         constraint_state.diag[n_con, i_b] = diag
                         constraint_state.aref[n_con, i_b] = aref
                         constraint_state.efc_D[n_con, i_b] = 1 / diag
-                        # ComFree: signed constraint position is the (negative) limit violation.
-                        constraint_state.efc_dist[n_con, i_b] = pos_delta
-                        constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
-                            dyn_info.joints.sol_params[I_j], pos_delta, dyn_info.dofs.invweight[I_d], EPS
-                        )
+                        if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+                            constraint_state.efc_dist[n_con, i_b] = pos_delta
+                            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
+                                dyn_info.joints.sol_params[I_j], pos_delta, dyn_info.dofs.invweight[I_d], EPS
+                            )
 
                         if qd.static(rigid_config.sparse_solve):
                             for i_d2_ in range(constraint_state.jac_n_dofs[n_con, i_b]):
@@ -1870,11 +1867,12 @@ def add_frictionloss_constraints(
                         constraint_state.diag[i_con, i_b] = diag
                         constraint_state.aref[i_con, i_b] = aref
                         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
-                        # ComFree: frictionloss has no positional violation (pos_imp == 0).
-                        constraint_state.efc_dist[i_con, i_b] = 0.0
-                        constraint_state.efc_mass[i_con, i_b] = gu.comfree_efc_mass(
-                            dyn_info.joints.sol_params[I_j], 0.0, dyn_info.dofs.invweight[I_d], EPS
-                        )
+                        if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+                            # Frictionloss rows carry no positional violation.
+                            constraint_state.efc_dist[i_con, i_b] = 0.0
+                            constraint_state.efc_mass[i_con, i_b] = gu.comfree_efc_mass(
+                                dyn_info.joints.sol_params[I_j], 0.0, dyn_info.dofs.invweight[I_d], EPS
+                            )
                         constraint_state.efc_frictionloss[i_con, i_b] = dyn_info.dofs.frictionloss[I_d]
                         for i_d2 in range(n_dofs):
                             constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
