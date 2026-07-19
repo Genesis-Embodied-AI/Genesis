@@ -768,11 +768,10 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     )
     scene.build()
 
-    # Segmentation count: background(1) + URDF links/entity + duck materials.
-    # Rigid and Kinematic ducks use add_rigid_node (tuple keys at link/geom level),
-    # other ducks use add_static_node (int keys). The URDF has 2 visual links.
-    # FEM entities use per-sub-mesh tuple keys (fem.idx, sub_idx) only at "geom"
-    # level; at "link" and "entity" they fall back to a plain int entity.idx.
+    # Segmentation count: background(1) + URDF links/entity + duck materials. Rigid and Kinematic ducks use
+    # add_rigid_node (tuple keys at link/geom level), other ducks use add_static_node (int keys). The URDF has
+    # 2 visual links. FEM entities use per-sub-mesh tuple keys (entity.idx, i_sub) only at "geom" level; at "link"
+    # and "entity" levels they fall back to a plain int entity.idx.
     n_rigid_like = sum(isinstance(m, gs.materials.Kinematic) for m, _ in materials)
     n_fem_geom = (
         sum(isinstance(m, gs.materials.FEM.Elastic) for m, _ in materials) if segmentation_level == "geom" else 0
@@ -784,8 +783,8 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     for seg_key in idx_dict.values():
         if isinstance(seg_key, tuple):
             comp_key += 1
-    # At entity level no tuple keys; at link level: 2 URDF links + rigid-like ducks;
-    # at geom level additionally adds one tuple per FEM sub-mesh.
+    # At entity level no tuple keys; at link level: 2 URDF links + rigid-like ducks; at geom level additionally
+    # one tuple per FEM sub-mesh.
     assert comp_key == (0 if segmentation_level == "entity" else 2 + n_rigid_like + n_fem_geom)
 
     for i in range(2):
@@ -797,12 +796,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
-def test_multi_geom_fem_render(renderer_type, renderer, show_viewer, png_snapshot):
-    """
-    Render a multi-geom FEM entity (``meshes/Trashbag_rope.glb`` — bag + channel).
-    """
-    # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
-    # without denoiser.
+def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snapshot):
     CAM_RES = (256, 256)
 
     scene = gs.Scene(
@@ -818,9 +812,7 @@ def test_multi_geom_fem_render(renderer_type, renderer, show_viewer, png_snapsho
     scene.add_entity(gs.morphs.Plane())
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file="meshes/Trashbag_rope.glb",
-            pos=(0.0, 0.0, 0.0),
-            scale=1.0,
+            file="meshes/trashbag_rope.glb",
             group_by_material=True,
         ),
         material=gs.materials.FEM.Cloth(),
@@ -835,24 +827,24 @@ def test_multi_geom_fem_render(renderer_type, renderer, show_viewer, png_snapsho
     )
     scene.build()
 
-    # Drive a small offset to exercise update_fem (sim_vert_maps re-read).
-    fem.set_position(torch.tensor([0.0, 0.0, 0.2]))
+    # Move the entity after build so rendering exercises the per-sub-mesh vertex update path.
+    fem.set_position([0.0, 0.0, 0.2])
 
     try:
         if renderer_type == RENDERER_TYPE.RAYTRACER:
+            # Relax pixel matching because RayTracer is not deterministic between different hardware
+            # (eg RTX6000 vs H100), even without denoiser.
             png_snapshot.extension._std_err_threshold = 3.0
             png_snapshot.extension._blurred_kernel_size = 3
-            # RayTracer only supports the RGB channel; the depth/seg/normal G-buffer
-            # outputs are rasterizer-only.
-            rgb, *_ = cam.render(rgb=True, depth=False, segmentation=False, normal=False)
+            # RayTracer only supports the RGB channel; depth, segmentation and normal are rasterizer-only.
+            rgb, *_ = cam.render(rgb=True)
             assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
         else:
             rgb, depth, seg, normal = cam.render(
                 rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
             )
             assert rgb_array_to_png_bytes(tensor_to_array(rgb)) == png_snapshot
-            depth_gray = as_grayscale_image(tensor_to_array(depth))
-            assert rgb_array_to_png_bytes(depth_gray) == png_snapshot
+            assert rgb_array_to_png_bytes(as_grayscale_image(tensor_to_array(depth))) == png_snapshot
             assert rgb_array_to_png_bytes(tensor_to_array(seg)) == png_snapshot
             assert rgb_array_to_png_bytes(tensor_to_array(normal)) == png_snapshot
     except AssertionError:

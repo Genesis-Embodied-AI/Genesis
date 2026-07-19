@@ -14,8 +14,8 @@ from ..utils import assert_allclose, get_hf_dataset
 @pytest.mark.required
 def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
     # A small maxvolume introduces internal vertices during tetrahedralization: all surface vertices must
-    # still lie exactly on the original quad faces, and the visualizer's mesh triangles must match the FEM
-    # entity's surface triangles.
+    # still lie exactly on the original quad faces, and the visualizer's mesh vertices must track the
+    # simulated vertices through sim_vert_maps.
     verts, faces = cube_verts_and_faces
 
     scene = gs.Scene(
@@ -84,70 +84,47 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
             f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
         )
 
-    # Verify that the visualizer mesh's vertices correctly track the FEM sim's surface vertices through
-    # `fem.sim_vert_maps`. The visualizer mesh (`render_meshes[0]`) holds the *pre-tet-split* input surface (e.g. 12
-    # box triangles), while `fem.surface_triangles` is computed from the *post-split* tetrahedral elements (with
-    # mid-edge Steiner subdivisions). The two meshes differ in granularity *by design* — so comparing triangle sets
-    # is not the right invariant. The correct invariant is that the renderer's per-vertex buffer updates from
-    # `sim_verts[svm]` produce vertex positions consistent with the sim state.
-    static_nodes = scene.visualizer.context.static_nodes
-    # FEM static_nodes are keyed by (env_idx, uid, sub_mesh_idx); single-rmesh uses sub_idx=0.
-    fem_node_mesh = static_nodes[(0, fem.uid, 0)].mesh
-    (fem_node_primitive,) = fem_node_mesh.primitives
-    viz_verts = np.asarray(fem_node_primitive.positions)
-
-    # `sim_vert_maps[i]` maps the i-th render-mesh vertex index → sim vertex index.
-    # Single-sub-mesh FEM entities expose one map.
-    svm = np.asarray(fem.sim_vert_maps[0])
-    assert svm.shape == (viz_verts.shape[0],), (
-        f"sim_vert_maps[0] size {svm.shape} does not match viz mesh vertex count {viz_verts.shape[0]}"
-    )
-
-    # Each viz vertex should equal the sim vertex at its mapped index.
-    sim_verts_at_viz = vertices[svm]
-    assert np.allclose(viz_verts, sim_verts_at_viz, atol=1e-5), (
-        "Visualizer vertices do not match sim vertices via sim_vert_maps.\n"
-        f"Max diff: {np.abs(viz_verts - sim_verts_at_viz).max()}"
-    )
+    # The visualizer draws the input surface (render_meshes[0]) whose vertices track the simulated vertices
+    # through sim_vert_maps, while surface_triangles reflects the refined tetrahedral boundary: the two meshes
+    # differ in granularity, so the invariant to check is per-vertex tracking.
+    (fem_node_primitive,) = scene.visualizer.context.static_nodes[(0, fem.uid, 0)].mesh.primitives
+    viz_verts = fem_node_primitive.positions
+    sim_verts_idx = fem.sim_vert_maps[0]
+    assert sim_verts_idx.shape == (viz_verts.shape[0],)
+    assert_allclose(viz_verts, vertices[sim_verts_idx], tol=1e-5)
 
 
 @pytest.mark.required
-def test_multi_geom_fem_render_meshes(show_viewer):
-    """
-    A FEM entity loaded from a multi-geometry GLB should produce one render
-    mesh per sub-geometry, with `sim_vert_maps` correctly indexing into the
-    merged sim vertex array, and one rasterizer static_node per sub-mesh.
-
-    `meshes/Trashbag_rope.glb` has 2 sub-meshes: 'bag' and 'channel'. Cloth
-    material is used so the entity is render-only (no FEM stress kernel runs).
-    """
-    scene = gs.Scene(show_viewer=show_viewer)
+def test_multi_submesh_render_decoupling(show_viewer):
+    # Cloth material keeps the entity out of the tetrahedralization path, exercising the welded surface as
+    # simulation elements. The GLB asset holds 2 sub-meshes (bag and channel) with distinct materials.
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file="meshes/Trashbag_rope.glb",
-            pos=(0.0, 0.0, 1.0),
-            scale=0.3,
+            file="meshes/trashbag_rope.glb",
             group_by_material=True,
         ),
         material=gs.materials.FEM.Cloth(),
     )
     scene.build()
 
-    assert len(fem.render_meshes) == 2, f"Expected 2 render meshes, got {len(fem.render_meshes)}"
+    assert len(fem.render_meshes) == 2
     assert len(fem.sim_vert_maps) == 2
-    for i, (rmesh, svm) in enumerate(zip(fem.render_meshes, fem.sim_vert_maps)):
-        assert svm.shape == (len(rmesh.verts),), (
-            f"sub-mesh {i}: sim_vert_maps size {svm.shape} != render-mesh vert count {len(rmesh.verts)}"
-        )
-        assert svm.min() >= 0 and svm.max() < fem.n_vertices, (
-            f"sub-mesh {i}: sim_vert_maps indices outside [0, {fem.n_vertices})"
-        )
-        assert rmesh.faces.shape[1] == 3
+    # Welding across sub-meshes must keep strictly fewer simulated vertices than render vertices.
+    n_render_verts = sum(len(mesh.verts) for mesh in fem.render_meshes)
+    assert fem.n_vertices < n_render_verts
+    vertices = tensor_to_array(fem.get_state().pos[0])
+    for render_mesh, sim_verts_idx in zip(fem.render_meshes, fem.sim_vert_maps):
+        assert sim_verts_idx.shape == (len(render_mesh.verts),)
+        assert sim_verts_idx.min() >= 0 and sim_verts_idx.max() < fem.n_vertices
+        # Mapped simulated vertices must land exactly on the render vertices they stand for.
+        assert_allclose(vertices[sim_verts_idx], render_mesh.verts, tol=1e-5)
 
-    # Rasterizer must register one static_node per sub-mesh, keyed by (env, uid, sub_idx).
+    # The rasterizer must register one node per sub-mesh and environment.
     static_nodes = scene.visualizer.context.static_nodes
-    sub_ids = sorted(k[2] for k in static_nodes if len(k) == 3 and k[1] == fem.uid)
-    assert sub_ids == [0, 1], f"Expected static_node sub_ids [0, 1], got {sub_ids}"
+    assert all((0, fem.uid, i_sub) in static_nodes for i_sub in range(2))
 
 
 @pytest.mark.required
