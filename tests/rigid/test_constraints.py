@@ -268,3 +268,98 @@ def test_set_sol_params(n_envs, batched, tol):
                 assert_allclose(obj.sol_params, sol_params, tol=tol)
             obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
             assert_allclose(obj.sol_params, [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
+
+
+@pytest.mark.required
+def test_comfree_incompatible_options():
+    with pytest.raises(gs.GenesisException):
+        gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.ComFree,
+            friction_cone=gs.friction_cone.elliptic,
+        )
+    with pytest.raises(gs.GenesisException):
+        gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.ComFree,
+            noslip_iterations=1,
+        )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_comfree_solver(n_envs, comfree_rig, show_viewer):
+    DT = 0.01
+    GRAVITY = 9.81
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.ComFree,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    resting_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.11),
+        ),
+    )
+    falling_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(1.0, 0.0, 2.0),
+        ),
+    )
+    rig = scene.add_entity(
+        gs.morphs.MJCF(
+            file=comfree_rig,
+        ),
+    )
+    scene.build(n_envs=n_envs)
+
+    rig.set_dofs_velocity([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, -2.0, 0.0])
+    # Start the pendulum close to its 30 deg limit so it engages the limit gently.
+    rig.set_dofs_position(np.radians(25.0), dofs_idx_local=[8])
+
+    # Constraint-free flight must match the smooth dynamics: semi-implicit Euler under gravity in closed form.
+    n_flight_steps = 30
+    for _ in range(n_flight_steps):
+        scene.step()
+    z_flight = 2.0 - GRAVITY * DT**2 * n_flight_steps * (n_flight_steps + 1) / 2
+    assert_allclose(np.atleast_1d(tensor_to_array(falling_box.get_pos()))[..., 2], z_flight, tol=1e-5)
+
+    # 120 more steps: the falling box lands (~0.6s of flight) and settles, everything else reaches steady state.
+    pendulum_qpos = []
+    for _ in range(120):
+        scene.step()
+        pendulum_qpos.append(tensor_to_array(rig.get_qpos())[..., -1])
+    pendulum_qpos = np.stack(pendulum_qpos)
+
+    # Both boxes rest on the plane, within the compliant penetration of the analytical contact force.
+    for box in (resting_box, falling_box):
+        boxes_z = np.atleast_1d(tensor_to_array(box.get_pos()))[..., 2]
+        assert ((0.095 < boxes_z) & (boxes_z < 0.102)).all()
+        assert_allclose(box.get_vel(), 0.0, tol=1e-4)
+
+    # The connect equality holds the hung body: its rows must pull as well as push.
+    hung_z = np.atleast_1d(tensor_to_array(rig.get_link("hung").get_pos()))[..., 2]
+    assert ((0.62 < hung_z) & (hung_z < 0.71)).all()
+
+    # Frictionloss decelerates both spin directions symmetrically.
+    spins_vel = tensor_to_array(rig.get_dofs_velocity())[..., 6:8]
+    assert_allclose(spins_vel[..., 0], -spins_vel[..., 1], tol=1e-6)
+    assert (np.abs(spins_vel) < 0.15).all()
+
+    # The pendulum is caught by its range limit: the transient overshoot stays within the limit compliance,
+    # and it comes to rest leaning on the limit under its gravity load.
+    assert (pendulum_qpos < np.radians(33.5)).all()
+    assert ((np.radians(29.0) < pendulum_qpos[-1]) & (pendulum_qpos[-1] < np.radians(31.5))).all()
+
+    # Identical envs must produce identical trajectories.
+    if n_envs > 0:
+        boxes_pos = tensor_to_array(falling_box.get_pos())
+        assert_allclose(boxes_pos, boxes_pos[0], tol=1e-7)

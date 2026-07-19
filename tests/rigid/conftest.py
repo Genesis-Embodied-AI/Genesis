@@ -848,3 +848,32 @@ def merged_overlapping_models():
     # Long box reaching back from the tip over the (non-adjacent) a2 link.
     ET.SubElement(palm, "geom", type="box", size="0.15 0.03 0.03", pos="-0.1 0 0", mass="0.2")
     return ET.tostring(arm, encoding="unicode"), ET.tostring(hand, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def comfree_rig():
+    """A non-colliding rig exercising every ComFree row projection: a connect-hung free body (two-sided
+    equality), two frictionloss hinges spun in opposite directions (box-bounded rows), and a range-limited
+    pendulum (one-sided rows)."""
+    mjcf = ET.Element("mujoco", model="comfree_rig")
+    ET.SubElement(mjcf, "compiler", angle="degree")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="0", conaffinity="0")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    anchor = ET.SubElement(worldbody, "body", name="anchor", pos="2 0 1")
+    ET.SubElement(anchor, "geom", type="box", size="0.05 0.05 0.05")
+    hung = ET.SubElement(worldbody, "body", name="hung", pos="2 0 0.7")
+    ET.SubElement(hung, "freejoint")
+    ET.SubElement(hung, "geom", type="box", size="0.05 0.05 0.05", mass="1")
+    spin_pos = ET.SubElement(worldbody, "body", name="spin_pos", pos="3 0 1")
+    ET.SubElement(spin_pos, "joint", name="spin_pos", type="hinge", axis="0 0 1", frictionloss="0.5")
+    ET.SubElement(spin_pos, "geom", type="box", size="0.2 0.05 0.05", mass="1")
+    spin_neg = ET.SubElement(worldbody, "body", name="spin_neg", pos="4 0 1")
+    ET.SubElement(spin_neg, "joint", name="spin_neg", type="hinge", axis="0 0 1", frictionloss="0.5")
+    ET.SubElement(spin_neg, "geom", type="box", size="0.2 0.05 0.05", mass="1")
+    pendulum = ET.SubElement(worldbody, "body", name="pendulum", pos="5 0 1")
+    ET.SubElement(pendulum, "joint", name="pendulum", type="hinge", axis="0 1 0", range="-30 30")
+    ET.SubElement(pendulum, "geom", type="capsule", fromto="0 0 0 0.3 0 0", size="0.02", mass="0.5")
+    equality = ET.SubElement(mjcf, "equality")
+    ET.SubElement(equality, "connect", body1="anchor", body2="hung", anchor="0 0 -0.3")
+    return ET.tostring(mjcf, encoding="unicode")
