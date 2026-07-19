@@ -192,14 +192,14 @@ class LegacyCoupler(RBC):
         pos_world,
         vel,
         mass,
-        particle_p,
-        particle_rest_rho,
+        pressure,
         normal_prev,
         geom_idx,
         batch_idx,
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
+        links_info: array_class.LinksInfo,
         rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
@@ -223,20 +223,26 @@ class LegacyCoupler(RBC):
                 pos_world, vel, mass, normal_rigid, influence, geom_idx, batch_idx, geoms_info, links_state, rigid_info
             )
 
-        # Pressure-based buoyancy force transfer: even when the particle is not actively colliding
-        # (rvel_normal_magnitude >= 0), its static pressure still exerts force on the rigid body.
-        # This is essential for correct buoyancy of submerged objects.
-        if signed_dist < 0 and particle_p > 0:
-            V = mass / particle_rest_rho
-            h = self.sph_solver._support_radius
-            buoyancy_force = -particle_p * V / h * normal_rigid
-            self.rigid_solver._func_apply_coupling_force(
-                pos_world,
-                buoyancy_force,
-                geoms_info.link_idx[geom_idx],
-                batch_idx,
-                links_state,
+        # Static fluid pressure pushes on the geom even at rest, where the velocity-gated collision response above
+        # transfers nothing; this is what makes submerged geoms buoyant. Mirroring the particle pressure across the
+        # surface and integrating the symmetric pressure force over the truncated kernel support yields the factor
+        # 2 * sigma(signed_dist), with sigma the kernel plane integral (see cubic_kernel_plane_integral in
+        # sph_solver.py). Sigma integrates to 1/2 across the support band, so a covering particle layer transmits
+        # exactly p per unit area: Archimedes buoyancy with no tuning constant. Fixed links are exempt: they cannot
+        # respond to the force, and the reaction is a conservative stiff kick that keeps fluid resting on them
+        # ringing forever, pumped by the acoustic pressure fluctuations of the fluid.
+        link_idx = geoms_info.link_idx[geom_idx]
+        I_l = [link_idx, batch_idx] if qd.static(self.rigid_solver._options.batch_links_info) else link_idx
+        if signed_dist < self.sph_solver._support_radius and pressure > 0 and not links_info.is_fixed[I_l]:
+            pressure_force = (
+                -2.0
+                * pressure
+                * self.sph_solver._particle_volume
+                * self.sph_solver.cubic_kernel_plane_integral(signed_dist)
+                * normal_rigid
             )
+            self.rigid_solver._func_apply_coupling_force(link_idx, batch_idx, pos_world, pressure_force, links_state)
+            vel = vel - pressure_force * (rigid_info.substep_dt[None] / mass)
 
         # attraction force
         # if 0.001 < signed_dist < 0.01:
@@ -663,6 +669,7 @@ class LegacyCoupler(RBC):
         geoms_state: array_class.GeomsState,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
+        links_info: array_class.LinksInfo,
         rigid_info: array_class.RigidInfo,
         sdf_info: array_class.SDFInfo,
         collider_static_config: qd.template(),
@@ -679,13 +686,13 @@ class LegacyCoupler(RBC):
                             self.sph_solver.particles_reordered[i_p, i_b].vel,
                             self.sph_solver.particles_info_reordered[i_p, i_b].mass,
                             self.sph_solver.particles_reordered[i_p, i_b].p,
-                            self.sph_solver.particles_info_reordered[i_p, i_b].rho,
                             self.sph_rigid_normal_reordered[i_p, i_g, i_b],
                             i_g,
                             i_b,
                             geoms_state,
                             geoms_info,
                             links_state,
+                            links_info,
                             rigid_info,
                             sdf_info,
                             collider_static_config,
@@ -897,6 +904,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.dyn_state.geoms,
                 self.rigid_solver.dyn_info.geoms,
                 self.rigid_solver.dyn_state.links,
+                self.rigid_solver.dyn_info.links,
                 self.rigid_solver.rigid_info,
                 self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
