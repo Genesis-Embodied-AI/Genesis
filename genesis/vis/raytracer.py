@@ -334,9 +334,9 @@ class Raytracer:
         if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
-                    for sub_idx, rmesh in enumerate(fem_entity.render_meshes):
-                        sub_name = f"{str(fem_entity.uid)}_sub{sub_idx}"
-                        self.add_surface(sub_name, rmesh.surface)
+                    for i_sub, render_mesh in enumerate(fem_entity.render_meshes):
+                        sub_name = f"{fem_entity.uid!s}_sub{i_sub}"
+                        self.add_surface(sub_name, render_mesh.surface)
                         self.add_deformable(sub_name)
 
     def get_transform(self, matrix):
@@ -784,30 +784,31 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
+            vertices_all = miscu.qd_to_numpy(
+                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
+                self.rendered_envs_idx[0],
+                keepdim=False,
+                transpose=True,
+            )
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode != "visual":
                     continue
 
                 sim_verts = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-
-                for sub_idx, (rmesh, svm) in enumerate(zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)):
-                    render_verts = sim_verts[svm]
-                    render_faces = rmesh.faces
+                for i_sub, (render_mesh, sim_verts_idx) in enumerate(
+                    zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)
+                ):
+                    render_verts = sim_verts[sim_verts_idx]
                     vertex_normals = trimesh.Trimesh(
-                        vertices=render_verts, faces=render_faces, process=False
+                        vertices=render_verts, faces=render_mesh.faces, process=False
                     ).vertex_normals
-                    render_uvs = (
-                        rmesh.uvs if rmesh.uvs is not None else np.zeros((len(render_verts), 2), dtype=gs.np_float)
-                    )
                     self.update_deformable(
-                        f"{str(fem_entity.uid)}_sub{sub_idx}",
+                        f"{fem_entity.uid!s}_sub{i_sub}",
                         render_verts,
-                        render_faces,
+                        render_mesh.faces,
                         vertex_normals,
-                        render_uvs,
+                        np.array([]) if render_mesh.uvs is None else render_mesh.uvs,
                     )
 
         # Flush the update buffer.
