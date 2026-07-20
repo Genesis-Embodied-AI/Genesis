@@ -463,7 +463,7 @@ class TestJointLimits:
 
         pos_arr = np.array(pos_history)
         lower, upper = limits
-        tolerance = 0.1
+        tolerance = 0.05
 
         assert pos_arr.min() >= lower - tolerance, (
             f"Joint violated lower limit: min={pos_arr.min():.4f}, limit={lower}"
