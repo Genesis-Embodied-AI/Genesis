@@ -11,18 +11,48 @@ limit and slips past it. See the 'friction_cone' and 'impratio' options of 'gs.o
 """
 
 import argparse
+import xml.etree.ElementTree as ET
 
 import genesis as gs
+from genesis.utils.misc import get_assets_dir
 
 
 GRAVITY = 9.81
 DT = 1e-2
+RADIUS = 0.1
+# Half-extent of the wooden sphere asset, whose origin sits at the bottom of its y-up frame.
+WOODEN_SPHERE_MESH_RADIUS = 3.486346
 # Load fractions straddling the Coulomb limit, so both the sub-limit creep and the past-limit slip show up.
 LOAD_RATIOS = (0.25, 0.5, 0.75, 0.95, 1.05)
 # A load holds when the drift accumulated over the horizon stays below this bound, the criterion of the
 # static-friction unit tests: a displacement (meters) for the box, a swept angle (radians) for the sphere.
 DRIFT_TOLERANCE = 5e-3
 N_STEPS = 300
+
+
+def checkered_ball_mjcf():
+    """MJCF model of a free ball: a sphere collision geom with a checker-textured ball mesh as its visual, whose
+    colorful pattern makes the rotation visible."""
+    mjcf = ET.Element("mujoco", model="checkered_ball")
+    asset = ET.SubElement(mjcf, "asset")
+    scale = RADIUS / WOODEN_SPHERE_MESH_RADIUS
+    ET.SubElement(
+        asset,
+        "mesh",
+        name="ball_visual",
+        file=f"{get_assets_dir()}/meshes/wooden_sphere_OBJ/wooden_sphere.obj",
+        scale=f"{scale} {scale} {scale}",
+    )
+    tex_kwargs = {"builtin": "checker", "rgb1": "0.9 0.2 0.2", "rgb2": "1. 0.9 0.3", "width": "128", "height": "128"}
+    ET.SubElement(asset, "texture", name="checker", type="cube", **tex_kwargs)
+    ET.SubElement(asset, "material", name="checker", texture="checker", texrepeat="4 4")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ball_body = ET.SubElement(worldbody, "body", name="ball", pos="0. 0. 0.")
+    ET.SubElement(ball_body, "joint", name="root", type="free")
+    ET.SubElement(ball_body, "geom", type="sphere", size=f"{RADIUS}")
+    visual_kwargs = {"contype": "0", "conaffinity": "0", "mass": "0.", "euler": "90 0 0", "material": "checker"}
+    ET.SubElement(ball_body, "geom", type="mesh", mesh="ball_visual", pos=f"0. 0. -{RADIUS}", **visual_kwargs)
+    return ET.tostring(mjcf, encoding="unicode")
 
 
 def measure_stiction(friction_cone, show_viewer):
@@ -48,18 +78,18 @@ def measure_stiction(friction_cone, show_viewer):
         ),
     )
     spinner = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.1,
-            pos=(0.6, 0.0, 0.1),
+        gs.morphs.MJCF(
+            file=checkered_ball_mjcf(),
+            pos=(0.6, 0.0, RADIUS),
         ),
         material=gs.materials.Rigid(
             friction_torsional=0.05,
         ),
     )
     roller = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=0.1,
-            pos=(1.2, 0.0, 0.1),
+        gs.morphs.MJCF(
+            file=checkered_ball_mjcf(),
+            pos=(1.2, 0.0, RADIUS),
         ),
         material=gs.materials.Rigid(
             friction_rolling=0.05,
@@ -88,7 +118,11 @@ def measure_stiction(friction_cone, show_viewer):
             scene.step()
             spinner_swept_angle += abs(float(spinner.get_dofs_velocity()[..., 5])) * DT
             roller_swept_angle += abs(float(roller.get_dofs_velocity()[..., 4])) * DT
-        box_drift = abs(float(box.get_pos()[..., 0]) - box_pos_start)
+            box_drift = abs(float(box.get_pos()[..., 0]) - box_pos_start)
+            # Once every entity has drifted past the tolerance the verdicts are settled; stopping there keeps the
+            # slipped entities from accelerating without bound over the rest of the horizon.
+            if min(box_drift, spinner_swept_angle, roller_swept_angle) > DRIFT_TOLERANCE:
+                break
         is_load_held.append(
             (
                 box_drift < DRIFT_TOLERANCE,
