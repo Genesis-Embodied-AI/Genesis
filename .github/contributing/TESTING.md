@@ -79,6 +79,8 @@ From `tests/conftest.py`:
 | `show_viewer` | session | Whether viewer is enabled |
 | `tol` | function | Tolerance based on precision |
 
+Every test that calls `scene.step()` must take the `show_viewer` fixture, pass it to `gs.Scene(show_viewer=...)`, and set `ViewerOptions` with a camera viewpoint tuned to frame the simulated scene, so running the test with the viewer enabled is immediately usable for debugging.
+
 ## Writing Tests
 
 ```python
