@@ -1305,9 +1305,8 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
         if errno & array_class.ErrorCode.MANUAL_BW_UNIMPLEMENTED:
             gs.raise_exception(
-                "Encountered a configuration (e.g. hibernation) that the manual backward kernels "
-                "do not support. Extend the corresponding `kernel_manual_*_bw` in "
-                "`genesis/engine/solvers/rigid/abd/manual_bw.py`."
+                "Differentiable mode encountered a configuration (e.g. hibernation) that the manual backward "
+                "kernels do not support yet. Please disable it in this scene."
             )
 
     def _kernel_detect_collision(self):
@@ -1898,7 +1897,7 @@ class RigidSolver(KinematicSolver):
             if ckpt_name not in self._ckpt:
                 self._ckpt[ckpt_name] = dict()
 
-            # `copy=True` required: with the zerocopy backend `qd_to_numpy` returns a
+            # copy=True required: with the zerocopy backend qd_to_numpy returns a
             # view, so later substeps would overwrite this ckpt's buffer in place.
             self._ckpt[ckpt_name]["qpos"] = qd_to_numpy(self._rigid_adjoint_cache.qpos, copy=True)
             self._ckpt[ckpt_name]["dofs_vel"] = qd_to_numpy(self._rigid_adjoint_cache.dofs_vel, copy=True)

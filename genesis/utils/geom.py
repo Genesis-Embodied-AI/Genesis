@@ -134,6 +134,28 @@ def qd_rotvec_to_quat(rotvec, eps):
 
 
 @qd.func
+def qd_rotvec_to_quat_grad_rotvec(rotvec, eps, out_grad):
+    """Adjoint of qd_rotvec_to_quat(rotvec, eps) with respect to rotvec, given the upstream quaternion gradient.
+
+    With theta_reg = sqrt(|rotvec|^2 + eps^2), c = cos(theta_reg / 2) and sinc = sin(theta_reg / 2) / theta_reg, the
+    forward is quat = (c, sinc * rotvec). Chain rule through theta_reg gives, per component i:
+        d(quat[0])/d(rotvec[i])   = -0.5 * sin(theta_reg / 2) * rotvec[i] / theta_reg
+        d(quat[1+j])/d(rotvec[i]) = delta(i, j) * sinc + rotvec[j] * (0.5 * c - sinc) / theta_reg^2 * rotvec[i]
+    """
+    thetasq = rotvec.dot(rotvec)
+    theta_reg = qd.sqrt(thetasq + eps * eps)
+    theta_half = 0.5 * theta_reg
+    sin_half = qd.sin(theta_half)
+    cos_half = qd.cos(theta_half)
+    sinc = sin_half / theta_reg
+    d_sinc_d_theta = (0.5 * cos_half - sinc) / theta_reg
+
+    out_grad_vec = gs.qd_vec3(out_grad[1], out_grad[2], out_grad[3])
+    coeff = -0.5 * sin_half / theta_reg * out_grad[0] + d_sinc_d_theta / theta_reg * out_grad_vec.dot(rotvec)
+    return coeff * rotvec + sinc * out_grad_vec
+
+
+@qd.func
 def qd_quat_to_R(quat, eps):
     """
     Converts quaternion to 3x3 rotation matrix.
@@ -243,6 +265,34 @@ def qd_quat_mul(u, v):
 
 
 @qd.func
+def qd_quat_mul_grad_lhs(u, v, out_grad):
+    """Adjoint of qd_quat_mul(u, v) with respect to u, given the upstream gradient of its output."""
+    return qd.Vector(
+        [
+            out_grad[0] * v[0] + out_grad[1] * v[1] + out_grad[2] * v[2] + out_grad[3] * v[3],
+            -out_grad[0] * v[1] + out_grad[1] * v[0] - out_grad[2] * v[3] + out_grad[3] * v[2],
+            -out_grad[0] * v[2] + out_grad[1] * v[3] + out_grad[2] * v[0] - out_grad[3] * v[1],
+            -out_grad[0] * v[3] - out_grad[1] * v[2] + out_grad[2] * v[1] + out_grad[3] * v[0],
+        ],
+        dt=gs.qd_float,
+    )
+
+
+@qd.func
+def qd_quat_mul_grad_rhs(u, v, out_grad):
+    """Adjoint of qd_quat_mul(u, v) with respect to v, given the upstream gradient of its output."""
+    return qd.Vector(
+        [
+            out_grad[0] * u[0] + out_grad[1] * u[1] + out_grad[2] * u[2] + out_grad[3] * u[3],
+            -out_grad[0] * u[1] + out_grad[1] * u[0] + out_grad[2] * u[3] - out_grad[3] * u[2],
+            -out_grad[0] * u[2] - out_grad[1] * u[3] + out_grad[2] * u[0] + out_grad[3] * u[1],
+            -out_grad[0] * u[3] + out_grad[1] * u[2] - out_grad[2] * u[1] + out_grad[3] * u[0],
+        ],
+        dt=gs.qd_float,
+    )
+
+
+@qd.func
 def qd_transform_quat_by_quat(v, u):
     """Transforms quat_v by quat_u.
 
@@ -268,6 +318,46 @@ def qd_transform_by_quat(v, quat):
         ],
         dt=gs.qd_float,
     ) / (q_ww + q_xx + q_yy + q_zz)
+
+
+@qd.func
+def qd_transform_by_quat_grad_quat(v, quat, out_grad):
+    """Adjoint of qd_transform_by_quat(v, quat) with respect to quat, with v held constant.
+
+    Differentiates the quaternion sandwich q v q* (the forward's numerator), which matches qd_transform_by_quat on
+    unit quaternions where its norm division equals one.
+    """
+    q_w, q_x, q_y, q_z = quat
+    v_x, v_y, v_z = v
+
+    d_out0_d_quat = 2.0 * qd.Vector(
+        [
+            q_w * v_x - q_z * v_y + q_y * v_z,
+            q_x * v_x + q_y * v_y + q_z * v_z,
+            -q_y * v_x + q_x * v_y + q_w * v_z,
+            -q_z * v_x - q_w * v_y + q_x * v_z,
+        ],
+        dt=gs.qd_float,
+    )
+    d_out1_d_quat = 2.0 * qd.Vector(
+        [
+            q_z * v_x + q_w * v_y - q_x * v_z,
+            q_y * v_x - q_x * v_y - q_w * v_z,
+            q_x * v_x + q_y * v_y + q_z * v_z,
+            q_w * v_x - q_z * v_y + q_y * v_z,
+        ],
+        dt=gs.qd_float,
+    )
+    d_out2_d_quat = 2.0 * qd.Vector(
+        [
+            -q_y * v_x + q_x * v_y + q_w * v_z,
+            q_z * v_x + q_w * v_y - q_x * v_z,
+            -q_w * v_x + q_z * v_y - q_y * v_z,
+            q_x * v_x + q_y * v_y + q_z * v_z,
+        ],
+        dt=gs.qd_float,
+    )
+    return out_grad[0] * d_out0_d_quat + out_grad[1] * d_out1_d_quat + out_grad[2] * d_out2_d_quat
 
 
 @qd.func
@@ -381,6 +471,20 @@ def motion_cross_motion(s_ang, s_vel, m_ang, m_vel):
     vel = s_ang.cross(m_vel) + s_vel.cross(m_ang)
     ang = s_ang.cross(m_ang)
     return ang, vel
+
+
+@qd.func
+def motion_cross_motion_grad(s_ang, s_vel, m_ang, m_vel, ang_grad, vel_grad):
+    """Adjoint of motion_cross_motion, returning the additive gradient deltas (s_ang, s_vel, m_ang, m_vel).
+
+    Uses the cross-product adjoint of f = a x b: a.grad += b x f.grad, b.grad += f.grad x a.
+    """
+    return (
+        m_ang.cross(ang_grad) + m_vel.cross(vel_grad),
+        m_ang.cross(vel_grad),
+        ang_grad.cross(s_ang) + vel_grad.cross(s_vel),
+        vel_grad.cross(s_ang),
+    )
 
 
 @qd.func

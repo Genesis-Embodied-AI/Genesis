@@ -1,9 +1,0 @@
-<mujoco model="spherical">
-  <worldbody>
-    <body name="ball" pos="0 0 0">
-      <joint type="ball"/>
-      <inertial mass="0.5" pos="0.1 0 0" diaginertia="0.01 0.01 0.01"/>
-      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" contype="0" conaffinity="0"/>
-    </body>
-  </worldbody>
-</mujoco>

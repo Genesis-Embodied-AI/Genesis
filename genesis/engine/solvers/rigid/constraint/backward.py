@@ -6,86 +6,6 @@ import genesis.utils.geom as gu
 
 
 @qd.func
-def _bw_transform_by_trans_quat_const_local(
-    g_out: qd.types.vector(3, dtype=gs.qd_float),
-    v: qd.types.vector(3, dtype=gs.qd_float),
-    quat: qd.types.vector(4, dtype=gs.qd_float),
-):
-    """Adjoint of `r = trans + R(quat)  *  v`, with `v` held constant.
-
-    Returns `(g_trans, g_quat)`. Used by the CONNECT equality reverse to
-    propagate `dL/d(global_anchor)` back to `dL/d(dyn_state.links.pos[link])`
-    and `dL/d(dyn_state.links.quat[link])`; the local anchor `v = eq_data[0:3]`
-    is a model parameter and is not differentiated.
-
-    R(q)  *  v expansion (Hamilton convention, q = (w, u_x, u_y, u_z)):
-        c1 = u x v + w  *  v
-        c2 = u x c1
-        R(q)  *  v = v + 2  *  c2
-    """
-    g_trans = g_out
-
-    u = gs.qd_vec3(quat[1], quat[2], quat[3])
-    w = quat[0]
-
-    c1 = u.cross(v) + w * v
-    # R(q) v = v + 2  *  c2; v is constant => all of g_r flows into c2.
-    g_c2 = 2.0 * g_out
-    # Convention (matches the cross-product adjoints used elsewhere in this
-    # module, e.g. the collision reverse): for `f = a x b`,
-    #     g_a = b x g_f,   g_b = g_f x a.
-    # c2 = u x c1:
-    g_u_a = c1.cross(g_c2)
-    g_c1 = g_c2.cross(u)
-    # c1 = u x v + w  *  v:
-    g_u_b = v.cross(g_c1)
-    g_w = g_c1.dot(v)
-    g_u = g_u_a + g_u_b
-    g_quat = qd.Vector([g_w, g_u[0], g_u[1], g_u[2]], dt=gs.qd_float)
-    return g_trans, g_quat
-
-
-@qd.func
-def _bw_quat_mul(
-    g_out: qd.types.vector(4, dtype=gs.qd_float),
-    u: qd.types.vector(4, dtype=gs.qd_float),
-    v: qd.types.vector(4, dtype=gs.qd_float),
-):
-    """Adjoint of Hamilton quat product `out = qd_quat_mul(u, v)`. Returns
-    `(g_u, g_v)`. Verified component-wise against torch autograd.
-
-    Forward (Genesis (w, x, y, z) order):
-        f[0] = u_w v_w - u_x v_x - u_y v_y - u_z v_z
-        f[1] = u_w v_x + u_x v_w + u_y v_z - u_z v_y
-        f[2] = u_w v_y - u_x v_z + u_y v_w + u_z v_x
-        f[3] = u_w v_z + u_x v_y - u_y v_x + u_z v_w
-    """
-    g0 = g_out[0]
-    g1 = g_out[1]
-    g2 = g_out[2]
-    g3 = g_out[3]
-    g_u = qd.Vector(
-        [
-            +g0 * v[0] + g1 * v[1] + g2 * v[2] + g3 * v[3],
-            -g0 * v[1] + g1 * v[0] - g2 * v[3] + g3 * v[2],
-            -g0 * v[2] + g1 * v[3] + g2 * v[0] - g3 * v[1],
-            -g0 * v[3] - g1 * v[2] + g2 * v[1] + g3 * v[0],
-        ],
-        dt=gs.qd_float,
-    )
-    g_v = qd.Vector(
-        [
-            +g0 * u[0] + g1 * u[1] + g2 * u[2] + g3 * u[3],
-            -g0 * u[1] + g1 * u[0] + g2 * u[3] - g3 * u[2],
-            -g0 * u[2] - g1 * u[3] + g2 * u[0] + g3 * u[1],
-            -g0 * u[3] + g1 * u[2] - g2 * u[1] + g3 * u[0],
-        ],
-        dt=gs.qd_float,
-    )
-    return g_u, g_v
-
-
-@qd.func
 def func_matvec_Ap(
     i_b,
     constraint_state: array_class.ConstraintState,
@@ -394,14 +314,14 @@ def kernel_accumulate_constraint_solver_grads(
 # joint-limit). Shared conventions for the kernels below.
 #
 # Why manual (not autograd): the constraint rows are built inside the forward
-# solver with a data-dependent count and ordering -- `n_con` is assigned by
+# solver with a data-dependent count and ordering -- n_con is assigned by
 # atomic_add as active constraints are discovered -- which autograd cannot
 # differentiate cleanly (the row index is not a static, taped quantity).
 #
-# Upstream grads: `kernel_compute_gradients` populates, per constraint row
-# `n_con`, `constraint_state.dL_daref[n_con]` (dL/d aref), `dL_defc_D[n_con]`
-# (dL/d efc_D), and `dL_djac[n_con, i_d]` (dL/d jac). The collision reverse uses
-# `dL_djac`; the frictionloss and joint-limit reverses ignore it (their jac
+# Upstream grads: kernel_compute_gradients populates, per constraint row
+# n_con, constraint_state.dL_daref[n_con] (dL/d aref), dL_defc_D[n_con]
+# (dL/d efc_D), and dL_djac[n_con, i_d] (dL/d jac). The collision reverse uses
+# dL_djac; the frictionloss and joint-limit reverses ignore it (their jac
 # entries are constants -- frictionloss is 1.0, joint-limit is piecewise +-1 --
 # so the sub-gradient w.r.t. jac is 0). Each kernel consumes these and
 # accumulates into its own differentiable inputs.
@@ -449,13 +369,13 @@ def kernel_manual_add_joint_limit_constraints_bw(
         d(pos_delta) / d(qpos) = sign      (chosen branch of `min`)
         d(jac_qvel) / d(vel)   = sign
 
-        dL/d(imp) = ga * d(aref)/d(imp) + gD * d(efc_D)/d(imp)
-                  ga = dL_daref[n_con],  gD = dL_defc_D[n_con]
+        dL/d(imp) = g_aref * d(aref)/d(imp) + g_efc_D * d(efc_D)/d(imp)
+                  g_aref = dL_daref[n_con],  g_efc_D = dL_defc_D[n_con]
 
-        dL/d(pos_delta) = ga * d(aref)/d(pos_delta)|_direct
+        dL/d(pos_delta) = g_aref * d(aref)/d(pos_delta)|_direct
                         + dL/d(imp) * d(imp)/d(imp_x) * d(imp_x)/d(pos_delta)
 
-        dL/d(jac_qvel)  = ga * d(aref)/d(jac_qvel) = -ga * b_coef
+        dL/d(jac_qvel)  = g_aref * d(aref)/d(jac_qvel) = -g_aref * b_coef
 
         dL/d(qpos)      += sign * dL/d(pos_delta)
         dL/d(vel)       += sign * dL/d(jac_qvel)
@@ -483,7 +403,10 @@ def kernel_manual_add_joint_limit_constraints_bw(
             for i_j in range(dyn_info.links.joint_start[I_l], dyn_info.links.joint_end[I_l]):
                 I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
 
-                if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE or dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
+                if (
+                    dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE
+                    or dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC
+                ):
                     i_q = dyn_info.joints.q_start[I_j]
                     i_d = dyn_info.joints.dof_start[I_j]
                     I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
@@ -527,8 +450,8 @@ def kernel_manual_add_joint_limit_constraints_bw(
                         diag = qd.max(diag_raw, EPS)
 
                         # Upstream grads.
-                        ga = constraint_state.dL_daref[n_con, i_b]
-                        gD = constraint_state.dL_defc_D[n_con, i_b]
+                        g_aref = constraint_state.dL_daref[n_con, i_b]
+                        g_efc_D = constraint_state.dL_defc_D[n_con, i_b]
 
                         # --- Partials of forward outputs w.r.t. intermediates ---
                         # aref = -b_coef * jac_qvel - k_coef * imp * pos_delta
@@ -560,9 +483,9 @@ def kernel_manual_add_joint_limit_constraints_bw(
                         d_imp_d_pos_delta = d_imp_d_imp_x * d_imp_x_d_pos_delta
 
                         # --- Combine ---
-                        dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
-                        dL_d_pos_delta = ga * d_aref_d_pos_delta_direct + dL_d_imp * d_imp_d_pos_delta
-                        dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+                        dL_d_imp = g_aref * d_aref_d_imp + g_efc_D * d_efc_D_d_imp
+                        dL_d_pos_delta = g_aref * d_aref_d_pos_delta_direct + dL_d_imp * d_imp_d_pos_delta
+                        dL_d_jac_qvel = g_aref * d_aref_d_jac_qvel
 
                         # --- Propagate ---
                         rigid_info.qpos.grad[i_q, i_b] += sign_f * dL_d_pos_delta
@@ -707,18 +630,18 @@ def kernel_manual_add_collision_constraints_bw(
                 n = d * friction - normal
                 n_con = const_start + i_col_ * 4 + i
 
-                ga = constraint_state.dL_daref[n_con, i_b]
-                gD = constraint_state.dL_defc_D[n_con, i_b]
+                g_aref = constraint_state.dL_daref[n_con, i_b]
+                g_efc_D = constraint_state.dL_defc_D[n_con, i_b]
 
                 # aref = -b_coef*jac_qvel + k_coef*imp*penetration  (pos arg = -penetration)
                 d_aref_d_imp = k_coef * penetration
                 d_aref_d_pen_direct = k_coef * imp
                 d_aref_d_jac_qvel = -b_coef
 
-                dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
-                dL_d_pen = ga * d_aref_d_pen_direct + dL_d_imp * d_imp_d_imp_x * d_imp_x_d_pen
+                dL_d_imp = g_aref * d_aref_d_imp + g_efc_D * d_efc_D_d_imp
+                dL_d_pen = g_aref * d_aref_d_pen_direct + dL_d_imp * d_imp_d_imp_x * d_imp_x_d_pen
                 g_pen += dL_d_pen
-                dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+                dL_d_jac_qvel = g_aref * d_aref_d_jac_qvel
 
                 # Reverse jac[n_con, i_d] over the kinematic chain.
                 dL_dn = gs.qd_vec3(0.0, 0.0, 0.0)
@@ -739,7 +662,9 @@ def kernel_manual_add_collision_constraints_bw(
                             vel_motion = cdof_vel - t_pos.cross(cdof_ang)
 
                             jac_stored = constraint_state.jac[n_con, i_d, i_b]
-                            g_jac = constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                            g_jac = (
+                                constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                            )
                             dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel * jac_stored
 
                             # jac_contrib = (sign * vel_motion) . n
@@ -846,9 +771,9 @@ def kernel_manual_add_frictionloss_constraints_bw(
                         dmax = sol_params[3]
                         b_coef = 2.0 / (dmax * timeconst)
 
-                        ga = constraint_state.dL_daref[n_con, i_b]
+                        g_aref = constraint_state.dL_daref[n_con, i_b]
                         # jac = 1.0 constant => dL/d_vel = dL/d_jac_qvel.
-                        dyn_state.dofs.vel.grad[i_d, i_b] += ga * (-b_coef)
+                        dyn_state.dofs.vel.grad[i_d, i_b] += g_aref * (-b_coef)
 
 
 @qd.kernel(fastcache=True)
@@ -975,10 +900,10 @@ def kernel_manual_add_equality_constraints_bw(
                 diag = qd.max(diag_raw, EPS)
 
                 # ---- Upstream grads ----
-                ga = constraint_state.dL_daref[n_con, i_b]
-                gD = constraint_state.dL_defc_D[n_con, i_b]
+                g_aref = constraint_state.dL_daref[n_con, i_b]
+                g_efc_D = constraint_state.dL_defc_D[n_con, i_b]
                 # jac[dof1] = 1.0 (constant) => no chain through dL_djac[n_con, i_dof1].
-                gjac2 = constraint_state.dL_djac[n_con, i_dof2, i_b]
+                g_jac2 = constraint_state.dL_djac[n_con, i_dof2, i_b]
 
                 # ---- Partials ----
                 # aref = -b  *  jac_qvel - k  *  imp  *  pos
@@ -1010,11 +935,11 @@ def kernel_manual_add_equality_constraints_bw(
                 d_imp_d_pos = d_imp_d_imp_x * sign_pos_f / width
 
                 # ---- Combine ----
-                dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
-                dL_d_jac_qvel = ga * d_aref_d_jac_qvel
-                dL_d_pos = ga * d_aref_d_pos_direct + dL_d_imp * d_imp_d_pos
+                dL_d_imp = g_aref * d_aref_d_imp + g_efc_D * d_efc_D_d_imp
+                dL_d_jac_qvel = g_aref * d_aref_d_jac_qvel
+                dL_d_pos = g_aref * d_aref_d_pos_direct + dL_d_imp * d_imp_d_pos
                 # deriv enters via (jac_qvel through jac2 = -deriv) and (jac[dof2] = -deriv).
-                dL_d_deriv = dL_d_jac_qvel * (-vel2) + gjac2 * (-1.0)
+                dL_d_deriv = dL_d_jac_qvel * (-vel2) + g_jac2 * (-1.0)
 
                 # ---- Propagate ----
                 dyn_state.dofs.vel.grad[i_dof1, i_b] += dL_d_jac_qvel * jac1
@@ -1121,19 +1046,19 @@ def kernel_manual_add_equality_constraints_bw(
                     n_con = n_con_counter
                     n_con_counter = n_con_counter + 1
 
-                    ga = constraint_state.dL_daref[n_con, i_b]
-                    gD = constraint_state.dL_defc_D[n_con, i_b]
+                    g_aref = constraint_state.dL_daref[n_con, i_b]
+                    g_efc_D = constraint_state.dL_defc_D[n_con, i_b]
 
                     d_aref_d_jac_qvel = -b_coef
                     d_aref_d_pos_diff_i3_direct = -k_coef * imp
                     d_aref_d_imp = -k_coef * pos_diff[i_3]
 
-                    dL_d_imp = ga * d_aref_d_imp + gD * d_efc_D_d_imp
-                    dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+                    dL_d_imp = g_aref * d_aref_d_imp + g_efc_D * d_efc_D_d_imp
+                    dL_d_jac_qvel = g_aref * d_aref_d_jac_qvel
 
                     # dL/d_pos_diff: (a) direct axis-i_3 term, (b) via penetration / imp.
                     g_pos_diff = gs.qd_vec3(0.0, 0.0, 0.0)
-                    g_pos_diff[i_3] = ga * d_aref_d_pos_diff_i3_direct
+                    g_pos_diff[i_3] = g_aref * d_aref_d_pos_diff_i3_direct
                     if penetration > EPS:
                         coef_pen = dL_d_imp * d_imp_d_imp_x / (width * penetration)
                         for j in qd.static(range(3)):
@@ -1165,7 +1090,8 @@ def kernel_manual_add_equality_constraints_bw(
                                 # upstream: dL_djac[n_con, i_d] + dL_d_jac_qvel  *  vel[i_d]
                                 jac_stored = constraint_state.jac[n_con, i_d, i_b]
                                 g_jac_i3 = (
-                                    constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                                    constraint_state.dL_djac[n_con, i_d, i_b]
+                                    + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
                                 )
                                 dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel * jac_stored
 
@@ -1190,18 +1116,18 @@ def kernel_manual_add_equality_constraints_bw(
                     g_ga1 = g_ga1 + g_pos_diff + g_anchor1_row
                     g_ga2 = g_ga2 - g_pos_diff + g_anchor2_row
 
-                # Propagate accumulated ga grads back to dyn_state.links.{pos, quat}.
-                # ga = trans + R(quat)  *  anchor_local; anchor_local is model param.
-                g_trans1, g_quat1 = _bw_transform_by_trans_quat_const_local(g_ga1, anchor1_local, quat1)
-                g_trans2, g_quat2 = _bw_transform_by_trans_quat_const_local(g_ga2, anchor2_local, quat2)
-                dyn_state.links.pos.grad[link1_idx, i_b] += g_trans1
-                dyn_state.links.pos.grad[link2_idx, i_b] += g_trans2
+                # Propagate accumulated g_aref grads back to dyn_state.links.{pos, quat}.
+                # g_aref = trans + R(quat)  *  anchor_local; anchor_local is model param.
+                g_quat1 = gu.qd_transform_by_quat_grad_quat(anchor1_local, quat1, g_ga1)
+                g_quat2 = gu.qd_transform_by_quat_grad_quat(anchor2_local, quat2, g_ga2)
+                dyn_state.links.pos.grad[link1_idx, i_b] += g_ga1
+                dyn_state.links.pos.grad[link2_idx, i_b] += g_ga2
                 dyn_state.links.quat.grad[link1_idx, i_b] += g_quat1
                 dyn_state.links.quat.grad[link2_idx, i_b] += g_quat2
             else:
                 # ----------------------------------------------------------
                 # WELD: 6 rows -- 3 position + 3 orientation, all sharing
-                # a single combined `pos_imp = ||all_error||` (6D).
+                # a single combined pos_imp = ||all_error|| (6D).
                 #
                 # Forward recap:
                 #   ga1 = trans(dyn_state.links.pos[link1], dyn_state.links.quat[link1])  *  eq_data[3:6]
@@ -1337,17 +1263,17 @@ def kernel_manual_add_equality_constraints_bw(
                     n_con = n_con_counter
                     n_con_counter = n_con_counter + 1
 
-                    ga = constraint_state.dL_daref[n_con, i_b]
-                    gD = constraint_state.dL_defc_D[n_con, i_b]
+                    g_aref = constraint_state.dL_daref[n_con, i_b]
+                    g_efc_D = constraint_state.dL_defc_D[n_con, i_b]
 
                     d_aref_d_jac_qvel = -b_coef
                     d_aref_d_ref_direct = -k_coef * imp
                     d_aref_d_imp = -k_coef * pos_error[i_3]
 
-                    dL_d_imp_total = dL_d_imp_total + ga * d_aref_d_imp + gD * d_efc_D_d_imp_pos
-                    dL_d_jac_qvel = ga * d_aref_d_jac_qvel
+                    dL_d_imp_total = dL_d_imp_total + g_aref * d_aref_d_imp + g_efc_D * d_efc_D_d_imp_pos
+                    dL_d_jac_qvel = g_aref * d_aref_d_jac_qvel
                     # Direct ref-axis contribution (pos_error[i_3]):
-                    g_pos_error_direct = ga * d_aref_d_ref_direct
+                    g_pos_error_direct = g_aref * d_aref_d_ref_direct
 
                     # Chain walk (same shape as CONNECT pos chain):
                     g_anchor1_row = gs.qd_vec3(0.0, 0.0, 0.0)
@@ -1372,7 +1298,8 @@ def kernel_manual_add_equality_constraints_bw(
 
                                 jac_stored = constraint_state.jac[n_con, i_d, i_b]
                                 g_jac_i3 = (
-                                    constraint_state.dL_djac[n_con, i_d, i_b] + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
+                                    constraint_state.dL_djac[n_con, i_d, i_b]
+                                    + dL_d_jac_qvel * dyn_state.dofs.vel[i_d, i_b]
                                 )
                                 dyn_state.dofs.vel.grad[i_d, i_b] += dL_d_jac_qvel * jac_stored
 
@@ -1401,16 +1328,16 @@ def kernel_manual_add_equality_constraints_bw(
                 for i_3 in range(3):
                     n_con = n_con_counter
                     n_con_counter = n_con_counter + 1
-                    ga = constraint_state.dL_daref[n_con, i_b]
-                    gD = constraint_state.dL_defc_D[n_con, i_b]
+                    g_aref = constraint_state.dL_daref[n_con, i_b]
+                    g_efc_D = constraint_state.dL_defc_D[n_con, i_b]
 
                     d_aref_d_jac_qvel = -b_coef
                     d_aref_d_ref_direct = -k_coef * imp
                     d_aref_d_imp = -k_coef * rot_error[i_3]
 
-                    dL_d_imp_total = dL_d_imp_total + ga * d_aref_d_imp + gD * d_efc_D_d_imp_rot
-                    dL_d_jac_qvel_orient[i_3] = ga * d_aref_d_jac_qvel
-                    g_rot_error[i_3] = g_rot_error[i_3] + ga * d_aref_d_ref_direct
+                    dL_d_imp_total = dL_d_imp_total + g_aref * d_aref_d_imp + g_efc_D * d_efc_D_d_imp_rot
+                    dL_d_jac_qvel_orient[i_3] = g_aref * d_aref_d_jac_qvel
+                    g_rot_error[i_3] = g_rot_error[i_3] + g_aref * d_aref_d_ref_direct
 
                 # Orientation chain walk: per i_d on chain, build g_quat3_d from
                 # the 3 orient rows, then back-prop through quat_mul/quat_mul_axis.
@@ -1447,7 +1374,8 @@ def kernel_manual_add_equality_constraints_bw(
                             quat2_d = gu.qd_quat_mul_axis(inv_q2, jac_diff_r_d)
 
                             # quat3_d = quat_mul(quat2_d, q_var)
-                            g_quat2_d, g_q_contrib = _bw_quat_mul(g_quat3_d, quat2_d, q_var)
+                            g_quat2_d = gu.qd_quat_mul_grad_lhs(quat2_d, q_var, g_quat3_d)
+                            g_q_contrib = gu.qd_quat_mul_grad_rhs(quat2_d, q_var, g_quat3_d)
                             g_q = g_q + g_q_contrib
 
                             # quat2_d = quat_mul_axis(inv_q2, jac_diff_r_d)
@@ -1456,7 +1384,8 @@ def kernel_manual_add_equality_constraints_bw(
                                 [0.0, jac_diff_r_d[0], jac_diff_r_d[1], jac_diff_r_d[2]],
                                 dt=gs.qd_float,
                             )
-                            g_inv_q2_contrib, g_v_padded = _bw_quat_mul(g_quat2_d, inv_q2, v_padded)
+                            g_inv_q2_contrib = gu.qd_quat_mul_grad_lhs(inv_q2, v_padded, g_quat2_d)
+                            g_v_padded = gu.qd_quat_mul_grad_rhs(inv_q2, v_padded, g_quat2_d)
                             g_inv_q2 = g_inv_q2 + g_inv_q2_contrib
                             g_jac_diff_r_d = gs.qd_vec3(g_v_padded[1], g_v_padded[2], g_v_padded[3])
 
@@ -1487,7 +1416,8 @@ def kernel_manual_add_equality_constraints_bw(
                     ],
                     dt=gs.qd_float,
                 )
-                g_inv_q2_eq, g_q_eq = _bw_quat_mul(g_error_quat, inv_q2, q_var)
+                g_inv_q2_eq = gu.qd_quat_mul_grad_lhs(inv_q2, q_var, g_error_quat)
+                g_q_eq = gu.qd_quat_mul_grad_rhs(inv_q2, q_var, g_error_quat)
                 g_inv_q2 = g_inv_q2 + g_inv_q2_eq
                 g_q = g_q + g_q_eq
 
@@ -1499,13 +1429,13 @@ def kernel_manual_add_equality_constraints_bw(
                 )
 
                 # q_var = quat_mul(quat_body1, relpose); relpose const => drop g_v.
-                g_quat1_from_q, _ = _bw_quat_mul(g_q, quat_body1, relpose)
+                g_quat1_from_q = gu.qd_quat_mul_grad_lhs(quat_body1, relpose, g_q)
 
                 # Anchor chain ga1, ga2 -> dyn_state.links.{pos, quat}.
-                g_trans1, g_quat1_anchor = _bw_transform_by_trans_quat_const_local(g_ga1, anchor1_local, quat_body1)
-                g_trans2, g_quat2_anchor = _bw_transform_by_trans_quat_const_local(g_ga2, anchor2_local, quat_body2)
+                g_quat1_anchor = gu.qd_transform_by_quat_grad_quat(anchor1_local, quat_body1, g_ga1)
+                g_quat2_anchor = gu.qd_transform_by_quat_grad_quat(anchor2_local, quat_body2, g_ga2)
 
-                dyn_state.links.pos.grad[link1_idx, i_b] += g_trans1
-                dyn_state.links.pos.grad[link2_idx, i_b] += g_trans2
+                dyn_state.links.pos.grad[link1_idx, i_b] += g_ga1
+                dyn_state.links.pos.grad[link2_idx, i_b] += g_ga2
                 dyn_state.links.quat.grad[link1_idx, i_b] += g_quat1_anchor + g_quat1_from_q
                 dyn_state.links.quat.grad[link2_idx, i_b] += g_quat2_anchor + g_quat2_from_inv

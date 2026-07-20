@@ -1,9 +1,0 @@
-<mujoco model="prismatic">
-  <worldbody>
-    <body name="slider" pos="0 0 0">
-      <joint type="slide" axis="1 0 0"/>
-      <inertial mass="0.5" pos="0 0 0" diaginertia="0.01 0.01 0.01"/>
-      <geom type="box" size="0.05 0.05 0.05" contype="0" conaffinity="0"/>
-    </body>
-  </worldbody>
-</mujoco>

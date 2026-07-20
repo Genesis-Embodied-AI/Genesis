@@ -1,9 +1,0 @@
-<mujoco model="capsule">
-  <compiler angle="degree"/>
-  <worldbody>
-    <body name="capsule" pos="0 0 0">
-      <geom type="capsule" size="0.1 0.2"/>
-      <joint name="capsule_joint" type="free"/>
-    </body>
-  </worldbody>
-</mujoco>

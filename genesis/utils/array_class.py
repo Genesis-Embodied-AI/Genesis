@@ -742,8 +742,8 @@ class DiffContactInput:
     # Local positions of the 1 vertex from the two geometries that define the support point for the face above
     w_local_pos1: qd.Tensor
     w_local_pos2: qd.Tensor
-    # Plane-convex contacts only: the convex support "core" (box vertex / sphere
-    # center / capsule nearest endpoint) in the convex geom's local frame.
+    # Plane-convex contacts only: the convex support "core" (box vertex / sphere center / capsule nearest endpoint)
+    # in the convex geom's local frame.
     core_local: qd.Tensor
     # Reference id of the contact point, which is needed for the backward pass
     ref_id: qd.Tensor
