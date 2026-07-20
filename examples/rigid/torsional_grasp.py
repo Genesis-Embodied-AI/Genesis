@@ -66,9 +66,6 @@ def main():
     )
 
     ########################## entities ##########################
-    scene.add_entity(
-        gs.morphs.Plane(),
-    )
     # Two fixed plates pinch the ball with a slight interpenetration that supplies the grip normal force.
     for i_side in range(2):
         scene.add_entity(
