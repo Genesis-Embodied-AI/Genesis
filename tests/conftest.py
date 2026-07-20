@@ -20,6 +20,8 @@ from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
 
+from tests.gpu_info import detect_gpu_backend
+
 # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
 has_tkinter = False
 try:
@@ -102,12 +104,14 @@ SKIP_NO_OMNIVERSE_KIT = _skip_reason("omniverse-kit support not available")
 
 
 def is_mem_monitoring_supported():
-    try:
-        assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=10)
+    if not sys.platform.startswith("linux"):
+        return False, "mem-monitoring only supported on linux"
+
+    backend = detect_gpu_backend()
+    if backend is not None:
         return True, None
-    except Exception as exc:  # platform or nvidia-smi unavailable
-        return False, exc
+
+    return False, "no supported GPU backend detected"
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -246,15 +250,17 @@ def _get_gpu_indices():
         return tuple(map(int, cuda_visible_devices.split(",")))
 
     if sys.platform == "linux":
-        nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        try:
-            return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
-        except FileNotFoundError:
-            warnings.warn(
-                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
-                "on WSL2 where the NVIDIA proc interface is not mounted.",
-                stacklevel=2,
-            )
+        backend = detect_gpu_backend()
+        if backend is not None:
+            device_count = backend.get_device_count()
+            if device_count > 0:
+                return tuple(range(device_count))
+
+        warnings.warn(
+            "No GPU backend detected. Multi-GPU support will be disabled. This is expected "
+            "on WSL2 where the GPU interface is not mounted.",
+            stacklevel=2,
+        )
 
     return (0,)
 
@@ -266,23 +272,17 @@ def _torch_get_gpu_idx(device):
         device_property = torch.cuda.get_device_properties(device)
         device_uuid = str(device_property.uuid)
 
-        nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        try:
-            for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
-                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                    device_info = f.read()
-                if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                    return device_idx
-            else:
-                return -1
-        except FileNotFoundError:
-            warnings.warn(
-                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
-                "on WSL2 where the NVIDIA proc interface is not mounted.",
-                stacklevel=2,
-            )
+        backend = detect_gpu_backend()
+        if backend is not None:
+            return backend.get_device_index_from_uuid(device_uuid)
 
-    return 0
+        warnings.warn(
+            "No GPU backend detected. Multi-GPU support will be disabled. This is expected "
+            "on WSL2 where the GPU interface is not mounted.",
+            stacklevel=2,
+        )
+
+    return -1
 
 
 def _get_egl_index(gpu_index):
@@ -339,34 +339,12 @@ def pytest_xdist_auto_num_workers(config):
     else:
         # Cannot rely on 'torch' because this would force loading devices before configuring CUDA device visibility
         devices_vram_memory = None
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=True,
-                text=True,
-            )
-            devices_vram_memory = tuple(int(e.strip()) for e in result.stdout.splitlines())
-        except ValueError:
-            # Unknown VRAM. Assuming unbounded.
-            vram_memory = float("inf")
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            try:
-                result = subprocess.run(
-                    ["rocm-smi", "--showmeminfo", "vram", "-d", "0-255"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=True,
-                    text=True,
-                )
-                devices_vram_memory = tuple(
-                    int(m.group(1)) for m in re.finditer(r"VRAM Total:\s+(\d+)\s*MiB", result.stdout)
-                )
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                pass
-        if devices_vram_memory is not None:
-            assert len(set(devices_vram_memory)) == 1, "Heterogeneous Nvidia GPU devices not supported."
+        backend = detect_gpu_backend()
+        if backend is not None:
+            devices_vram_memory = backend.get_device_vram_mib()
+
+        if devices_vram_memory:
+            assert len(set(devices_vram_memory)) == 1, "Heterogeneous GPU devices not supported."
             num_gpus = len(devices_vram_memory)
             vram_memory = sum(devices_vram_memory) / 1024
         else:
