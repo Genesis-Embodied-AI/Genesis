@@ -5142,8 +5142,11 @@ def _func_cone_middle(rows_jaref, D0, con_mu, rows_friction, N, T):
 
 @qd.func
 def _func_cone_block_product(cone_H, rows_jac_row, rows_jac_col):
-    """One entry J_row^T H_c J_col of the scattered coupled-cone Hessian: the packed symmetric local block H_c (see
-    _tri_idx) contracted with the cone rows' jacobian entries at the Hessian row DOF and column DOF."""
+    """One entry J_row^T H_c J_col of the scattered coupled-cone Hessian.
+
+    The packed symmetric local block H_c (see _tri_idx) is contracted with the cone rows' jacobian entries at the
+    Hessian row DOF and column DOF.
+    """
     n_rows = qd.static(rows_jac_row.n)
     product = gs.qd_float(0.0)
     for i_r in qd.static(range(n_rows)):

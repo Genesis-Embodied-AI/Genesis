@@ -2480,9 +2480,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
 
     @property
     def rows_per_contact(self) -> int:
-        """Constraint rows per contact: 2 opposing pyramid edges per friction axis with the pyramidal cone, or the
-        normal row plus one row per friction axis with the elliptic cone; torsional friction adds the spin axis and
-        rolling friction the two tangent axes."""
+        """Constraint rows per contact.
+
+        The pyramidal cone carries 2 opposing friction-mixed edges per friction axis, the elliptic cone the normal
+        row plus one row per friction axis; torsional friction adds the spin axis and rolling friction the two
+        tangent axes.
+        """
         n_extra_axes = int(self.enable_torsional_friction) + 2 * int(self.enable_rolling_friction)
         if self.enable_elliptic_friction:
             return 3 + n_extra_axes
@@ -2490,10 +2493,12 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
 
     @property
     def hessian_rank_update_batch(self) -> int:
-        """Number of rank-1 Cholesky updates fused into one column sweep by the CPU per-island incremental factor
-        (func_rank_batch_update_island). Sizes the nt_vec slots and the static per-column unroll: 8 amortizes the
+        """Number of rank-1 Cholesky updates fused into one column sweep by the CPU incremental factor.
+
+        Sizes the nt_vec slots and the static per-column unroll of func_rank_batch_update_island: 8 amortizes the
         active-set flip batching, widened when the coupled elliptic-cone update must stage 2 slots per cone row
-        (see func_cone_rank_update_island)."""
+        (see func_cone_rank_update_island).
+        """
         return max(8, 2 * self.rows_per_contact)
 
 
