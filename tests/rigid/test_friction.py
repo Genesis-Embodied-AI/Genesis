@@ -426,6 +426,16 @@ def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
         rtol=0.01,
     )
 
+    # A runtime coefficient update takes effect immediately: the zero-coefficient sphere, still spinning at W0, now
+    # decays exactly like the sphere that carried the same coefficient from the start.
+    spheres[0].set_friction_torsional(spheres_friction_torsional[-1])
+    for _ in range(5):
+        scene.step()
+    w_runtime_start = spheres[0].get_dofs_velocity()[..., 5]
+    for _ in range(10):
+        scene.step()
+    assert_allclose(w_runtime_start - spheres[0].get_dofs_velocity()[..., 5], spin_downs[-1], rtol=0.05, atol=1e-3)
+
 
 @pytest.mark.required
 def test_elliptic_cone_push_isotropy(show_viewer):
