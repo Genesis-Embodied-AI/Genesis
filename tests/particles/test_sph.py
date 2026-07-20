@@ -302,10 +302,12 @@ def test_pressure_carries_column_weight(show_viewer, pressure_solver):
         morph=gs.morphs.Plane(),
     )
     scene.add_entity(
-        material=gs.materials.SPH.Liquid(sampler="regular"),
         morph=gs.morphs.Box(
             pos=(0.0, 0.0, 0.25),
             size=(0.3, 0.3, 0.5),
+        ),
+        material=gs.materials.SPH.Liquid(
+            sampler="regular",
         ),
     )
     scene.build()

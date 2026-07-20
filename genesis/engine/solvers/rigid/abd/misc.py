@@ -778,6 +778,39 @@ def func_apply_coupling_force(link_idx, env_idx, pos, force, links_state: array_
     links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
 
 
+@qd.kernel
+def kernel_wakeup_coupled_links(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """
+    Wake the hibernated islands of links holding a pending coupling force.
+
+    Couplers accumulate forces into cfrc_coupling_* directly, bypassing the wake-aware public force API, while
+    forward dynamics only consumes the forces of awake entities before clearing the field. Waking the receiving
+    islands before the forces are consumed keeps hibernated links responsive to the other solvers and preserves
+    the momentum exchange whose opposite half has already been applied on the coupled side.
+    """
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l, i_b in qd.ndrange(dyn_state.links.is_hibernated.shape[0], dyn_state.links.is_hibernated.shape[1]):
+        if dyn_state.links.is_hibernated[i_l, i_b] and (
+            dyn_state.links.cfrc_coupling_vel[i_l, i_b].norm_sqr() > 0
+            or dyn_state.links.cfrc_coupling_ang[i_l, i_b].norm_sqr() > 0
+        ):
+            func_wakeup_island(
+                constraint_state.island.links_island_idx[i_l, i_b],
+                i_b,
+                dyn_state,
+                constraint_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+            )
+
+
 @qd.func
 def func_apply_link_external_force(
     link_idx, env_idx, force, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()

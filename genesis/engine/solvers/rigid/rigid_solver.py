@@ -46,6 +46,7 @@ from .abd.misc import (
     func_write_and_read_field_if,
     kernel_init_invweight,
     kernel_init_meaninertia,
+    kernel_wakeup_coupled_links,
     kernel_init_dof_fields,
     kernel_reset_hibernation,
     kernel_init_link_fields,
@@ -1198,6 +1199,17 @@ class RigidSolver(KinematicSolver):
 
         if self._requires_grad and f == 0:
             kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config)
+
+        # Coupling forces from the previous coupling phase may target hibernated links (see
+        # kernel_wakeup_coupled_links in abd/misc.py). They can only exist when another solver is active.
+        if self._use_hibernation and len(self.sim.active_solvers) > 1:
+            kernel_wakeup_coupled_links(
+                self.dyn_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+            )
 
         kernel_step_1(
             self.dyn_state,
