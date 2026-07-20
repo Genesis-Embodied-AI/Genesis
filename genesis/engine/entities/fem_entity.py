@@ -392,11 +392,10 @@ class FEMEntity(Entity):
         """
         Build the entity's render meshes and simulation mesh from its morph.
 
-        The morph surface is kept as one render mesh per sub-mesh, each with its own surface and UVs, while the
-        simulation operates on a single welded copy of its vertices: surface triangles are the elements for Cloth
-        material, and the mesh is tetrahedralized otherwise. 'sim_vert_maps' ties render vertices to simulation
-        vertices for rendering: welding and tetrahedralization both keep the input vertices first and in order,
-        so these maps remain valid indices into the simulated vertices.
+        Each morph sub-mesh is kept as a render mesh with its own surface and UVs, while the simulation operates on
+        a single welded copy of their vertices. 'sim_vert_maps' ties the two together: welding and tetrahedralization
+        both keep the input vertices first and in order, so these maps remain valid indices into the simulated
+        vertices.
         """
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
@@ -410,10 +409,8 @@ class FEMEntity(Entity):
             verts, elems = surface_verts + self._morph.pos, surface_faces
         else:
             # Tetgen refinement depends on the absolute coordinates of its input. File meshes are tetrahedralized
-            # untranslated, so the result, and its on-disk cache, are shared across all placements of the same
-            # asset. Primitives keep the morph position baked in: translating their input instead changes the
-            # refined mesh, and with it the simulated rest state, beyond what FP-sensitive tolerance calibrations
-            # absorb.
+            # untranslated so the result, and its on-disk cache, are shared across all placements of the same asset;
+            # primitives keep the position baked in, as the simulated rest state is sensitive to the exact refinement.
             is_mesh_morph = isinstance(self._morph, gs.options.morphs.Mesh)
             if not is_mesh_morph:
                 surface_verts = surface_verts + self._morph.pos
