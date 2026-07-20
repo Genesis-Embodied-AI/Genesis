@@ -28,6 +28,9 @@ LOAD_RATIOS = (0.25, 0.5, 0.75, 0.95, 1.05)
 # static-friction unit tests: a displacement (meters) for the box, a swept angle (radians) for the sphere.
 DRIFT_TOLERANCE = 5e-3
 N_STEPS = 300
+# Steps simulated past the point where every entity has drifted beyond the tolerance: long enough to make the slip
+# visible, short enough that nothing accelerates out of frame.
+N_STEPS_SLIPPED = 80
 
 
 def checkered_ball_mjcf():
@@ -114,15 +117,18 @@ def measure_stiction(friction_cone, show_viewer):
         box_pos_start = float(box.get_pos()[..., 0])
         spinner_swept_angle = 0.0
         roller_swept_angle = 0.0
+        n_steps_slipped = 0
         for _ in range(N_STEPS):
             scene.step()
             spinner_swept_angle += abs(float(spinner.get_dofs_velocity()[..., 5])) * DT
             roller_swept_angle += abs(float(roller.get_dofs_velocity()[..., 4])) * DT
             box_drift = abs(float(box.get_pos()[..., 0]) - box_pos_start)
-            # Once every entity has drifted past the tolerance the verdicts are settled; stopping there keeps the
-            # slipped entities from accelerating without bound over the rest of the horizon.
+            # Once every entity has drifted past the tolerance the verdicts are settled; the bounded tail then shows
+            # the slip without letting anything accelerate over the rest of the horizon.
             if min(box_drift, spinner_swept_angle, roller_swept_angle) > DRIFT_TOLERANCE:
-                break
+                n_steps_slipped += 1
+                if n_steps_slipped > N_STEPS_SLIPPED:
+                    break
         is_load_held.append(
             (
                 box_drift < DRIFT_TOLERANCE,
