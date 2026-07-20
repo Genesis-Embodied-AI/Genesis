@@ -380,3 +380,152 @@ class TestGroundContact:
         assert qa > 0.1, f"robot_a should track positive target, got qa={qa}"
         assert qb < -0.1, f"robot_b should track negative target, got qb={qb}"
         assert abs(qa + qb) < 0.2, f"robot_a and robot_b targets are symmetric, sum should be near zero: {qa + qb}"
+
+
+# ---------------------------------------------------------------------------
+# Joint limits and stacked free-base tests
+# ---------------------------------------------------------------------------
+
+
+def _build_two_cube_joint_mjcf(joint_type: str, joint_limits: tuple[float, float], *, fixed: bool = True) -> str:
+    """Build a two-cube MJCF with a revolute or prismatic joint."""
+    import xml.etree.ElementTree as ET
+
+    mjcf = ET.Element("mujoco", model=f"two_cube_{joint_type}")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    base = ET.SubElement(worldbody, "body", name="base")
+    if not fixed:
+        ET.SubElement(base, "freejoint", name="root")
+    ET.SubElement(base, "geom", type="box", size="0.05 0.05 0.05")
+    ET.SubElement(base, "inertial", mass="1.0", pos="0 0 0", diaginertia="0.00667 0.00667 0.00667")
+    child = ET.SubElement(base, "body", name="moving", pos="0.1 0 0")
+    ET.SubElement(child, "geom", type="box", size="0.05 0.05 0.05", pos="0.1 0 0")
+    ET.SubElement(child, "inertial", mass="1.0", pos="0 0 0", diaginertia="0.00667 0.00667 0.00667")
+    mj_type = "hinge" if joint_type == "revolute" else "slide"
+    axis = "0 1 0" if joint_type == "revolute" else "1 0 0"
+    lo, hi = joint_limits
+    ET.SubElement(child, "joint", name="joint1", type=mj_type, axis=axis, range=f"{lo} {hi}")
+    return ET.tostring(mjcf, encoding="unicode")
+
+
+class TestJointLimits:
+    """Joint position limits via bang-bang velocity control."""
+
+    @pytest.mark.xfail(reason="Velocity control (control_dofs_velocity) not yet forwarded to QIPC controller")
+    @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
+    def test_joint_position_limits_bang_bang(self, joint_type):
+        """Bang-bang velocity control respects joint theta limits."""
+        DT = 0.01
+        V_MAX = 2.0
+        HALF_PERIOD = 60
+        NUM_OSCILLATIONS = 2
+
+        if joint_type == "revolute":
+            limits = (-0.5, 0.5)
+        else:
+            limits = (-0.3, 0.3)
+
+        mjcf_content = _build_two_cube_joint_mjcf(joint_type, limits, fixed=True)
+
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(dt=DT, gravity=(0.0, 0.0, 0.0)),
+            coupler_options=gs.options.QIPCCouplerOptions(
+                contact_enable=False,
+            ),
+            show_viewer=False,
+        )
+
+        robot = scene.add_entity(
+            morph=gs.morphs.MJCF(file=mjcf_content, pos=(0, 0, 0.5)),
+            material=gs.materials.Rigid(
+                qipc_abd_kappa=1e8,
+                qipc_kappa_pivot=1e5,
+                qipc_kappa_axis=1e5,
+                qipc_default_kp=0.0,
+                qipc_default_kv=100.0,
+            ),
+        )
+
+        scene.build()
+
+        pos_history = []
+        total_steps = 2 * HALF_PERIOD * NUM_OSCILLATIONS
+        for step in range(total_steps):
+            phase = (step // HALF_PERIOD) % 2
+            vel_target = V_MAX if phase == 0 else -V_MAX
+            robot.control_dofs_velocity(vel_target, dofs_idx_local=-1)
+            scene.step()
+            pos_history.append(float(robot.get_dofs_position(dofs_idx_local=-1)[0]))
+
+        pos_arr = np.array(pos_history)
+        lower, upper = limits
+        tolerance = 0.1
+
+        assert pos_arr.min() >= lower - tolerance, (
+            f"Joint violated lower limit: min={pos_arr.min():.4f}, limit={lower}"
+        )
+        assert pos_arr.max() <= upper + tolerance, (
+            f"Joint violated upper limit: max={pos_arr.max():.4f}, limit={upper}"
+        )
+        assert pos_arr.max() > 0.1, (
+            f"Joint didn't reach positive excursion: max={pos_arr.max():.4f}"
+        )
+        assert pos_arr.min() < -0.1, (
+            f"Joint didn't reach negative excursion: min={pos_arr.min():.4f}"
+        )
+
+
+class TestStackedFreeBodies:
+    """Multiple free-base entities stacking on ground with IPC contact."""
+
+    def test_stacked_free_base_collision(self):
+        """Free-base cubes stacked on ground maintain order and no penetration."""
+        DT = 0.01
+        CONTACT_D_HAT = 0.01
+        NUM_SETTLE = 100
+
+        mjcf_content = _build_two_cube_joint_mjcf("revolute", (-1.57, 1.57), fixed=False)
+
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=DT,
+                gravity=(0.0, 0.0, -9.81),
+            ),
+            coupler_options=gs.options.QIPCCouplerOptions(
+                contact_enable=True,
+                contact_d_hat=CONTACT_D_HAT,
+                init_collision_pair_capacity=5000,
+            ),
+            show_viewer=False,
+        )
+
+        scene.add_entity(gs.morphs.Plane())
+
+        heights = [0.15, 0.40, 0.65]
+        robots = []
+        for h in heights:
+            r = scene.add_entity(
+                morph=gs.morphs.MJCF(file=mjcf_content, pos=(0, 0, h)),
+                material=gs.materials.Rigid(qipc_abd_kappa=1e8),
+            )
+            robots.append(r)
+
+        scene.build()
+
+        for _ in range(NUM_SETTLE):
+            scene.step()
+
+        base_z = []
+        for r in robots:
+            pos = r.get_pos()
+            z = float(pos[2]) if pos.dim() == 1 else float(pos[0, 2])
+            base_z.append(z)
+
+        for i, z in enumerate(base_z):
+            assert z > 0, f"Robot {i} penetrated ground: z={z:.4f}"
+
+        for i in range(len(base_z) - 1):
+            assert base_z[i] < base_z[i + 1], (
+                f"Stacking order violated: robot {i} z={base_z[i]:.4f} >= robot {i+1} z={base_z[i+1]:.4f}"
+            )
