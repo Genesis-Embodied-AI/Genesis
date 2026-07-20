@@ -68,6 +68,9 @@ class BVHContext:
     # (B,) BVH tree slot each env casts against: identity for per-env trees, all-zero for one shared tree, group ids
     # for a grouped static collision BVH (see RaycastContext.update).
     env_bvh_idx: torch.Tensor | None = None
+    # (B,) env visit order of the env-major cast mapping: envs sorted by tree slot, so warp-adjacent threads read the
+    # same tree even when group membership interleaves across envs. Identity for per-env trees.
+    env_cast_order: torch.Tensor | None = None
     # Compile-time thread -> (ray, env) mapping selector for the cast kernels: True when one tree serves several envs
     # (node loads broadcast within a warp), False for distinct per-env trees (ray-major rides ray coherence).
     is_env_major: bool = False
@@ -167,14 +170,14 @@ class RaycastContext(SharedSensorContext):
         return vgeom_enabled[vface_vgeom_idx].astype(np.int8), vgeom_enabled
 
     @staticmethod
-    def _group_envs_by_parts(B: int, parts: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def _group_envs_by_parts(B: int, parts: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Group envs by exact equality of the (B, ...) signature parts.
 
-        Returns ``(env_bvh_idx, batch_repr_env)``: the (B,) tree slot each env casts against and the (n_trees,)
-        representative env whose geometry builds each slot (the lowest env index of its group). Grouping on exact
-        equality of every build input makes a wrong merge impossible: identical envs collapse to one tree, N
-        heterogeneous variants to N, per-env divergence (e.g. set_pos on a fixed link) to one tree per distinct
-        geometry.
+        Returns ``(env_bvh_idx, batch_repr_env, env_cast_order)``: the (B,) tree slot each env casts against, the
+        (n_trees,) representative env whose geometry builds each slot (the lowest env index of its group), and the
+        (B,) envs sorted by tree slot (the env-major cast order). Grouping on exact equality of every build input
+        makes a wrong merge impossible: identical envs collapse to one tree, N heterogeneous variants to N, per-env
+        divergence (e.g. set_pos on a fixed link) to one tree per distinct geometry.
         """
         # An empty part is trivially env-shared (e.g. a placeholder buffer fully masked out) and torch.unique
         # rejects zero-width rows, so drop such parts up front.
@@ -185,6 +188,7 @@ class RaycastContext(SharedSensorContext):
             return (
                 torch.zeros(B, dtype=gs.tc_int, device=gs.device),
                 torch.zeros(1, dtype=gs.tc_int, device=gs.device),
+                torch.arange(B, dtype=gs.tc_int, device=gs.device),
             )
         # Exact per-part grouping, folded pairwise: equivalent to a unique over the concatenated signature while
         # keeping the parts' dtypes apart (a mixed-dtype concatenation would promote integer parts to float, which
@@ -199,12 +203,12 @@ class RaycastContext(SharedSensorContext):
         # Lowest env index of each group as its representative (the stable sort keeps envs ascending within a group).
         order = torch.argsort(env_groups, stable=True)
         batch_repr_env = order[torch.cumsum(counts, dim=0) - counts]
-        return env_groups.to(gs.tc_int), batch_repr_env.to(gs.tc_int)
+        return env_groups.to(gs.tc_int), batch_repr_env.to(gs.tc_int), order.to(gs.tc_int)
 
     @classmethod
     def _static_geometry_groups(
         cls, solver: RigidSolver, links_mask: torch.Tensor | None, free_verts_mask: torch.Tensor | None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Group envs by identical static collision geometry; see _group_envs_by_parts for the returns.
 
         Two envs share a tree iff every per-env input of the entry's AABB build matches: the active geom ranges
@@ -232,7 +236,7 @@ class RaycastContext(SharedSensorContext):
     @classmethod
     def _static_visual_groups(
         cls, solver: "KinematicSolver", vgeoms_mask: torch.Tensor | None, vverts_mask: torch.Tensor | None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Group envs by identical static visual geometry; see _group_envs_by_parts for the returns.
 
         Two envs share a tree iff every per-env input of the visual AABB build matches: the vgeom poses (feeding the
@@ -357,6 +361,7 @@ class RaycastContext(SharedSensorContext):
                             bvh,
                             aabb,
                             env_bvh_idx=env_tree_identity,
+                            env_cast_order=env_tree_identity,
                             face_ids=face_ids,
                             is_remapped=is_remapped,
                         )
@@ -392,7 +397,14 @@ class RaycastContext(SharedSensorContext):
                         # A movable visual mesh rebuilds every step and may diverge per env: one tree per env.
                         aabb = AABB(n_batches=n_envs, n_aabbs=n_vfaces)
                         bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                        entry = BVHContext(solver, bvh, aabb, mask, env_bvh_idx=env_tree_identity)
+                        entry = BVHContext(
+                            solver,
+                            bvh,
+                            aabb,
+                            mask,
+                            env_bvh_idx=env_tree_identity,
+                            env_cast_order=env_tree_identity,
+                        )
                     self._bvh_contexts.append(entry)
 
         if self._is_combined_collision_bvh_required:
@@ -435,12 +447,13 @@ class RaycastContext(SharedSensorContext):
                     # link splits groups (up to one tree per env) and an identical reset merges them back, so a
                     # shared tree is never stale.
                     kernel_update_all_verts(solver.dyn_state, solver.dyn_info, solver.rigid_config)
-                    env_bvh_idx, batch_repr_env = self._static_geometry_groups(
+                    env_bvh_idx, batch_repr_env, env_cast_order = self._static_geometry_groups(
                         solver, entry.signature_links_mask, entry.signature_free_verts_mask
                     )
                     n_slots = entry.face_ids.shape[0] if entry.is_remapped else solver.dyn_info.faces.geom_idx.shape[0]
                     self._sized_grouped_trees(entry, batch_repr_env.shape[0], n_slots)
                     entry.env_bvh_idx = env_bvh_idx
+                    entry.env_cast_order = env_cast_order
                     entry.is_env_major = batch_repr_env.shape[0] < solver._B
                     kernel_update_grouped_aabbs(
                         batch_repr_env,
@@ -470,11 +483,12 @@ class RaycastContext(SharedSensorContext):
                 if entry.maybe_static:
                     # Static visual geometry: group envs by identical visual geometry and build one tree per
                     # distinct geometry from its representative env, mirroring the static collision path above.
-                    env_bvh_idx, batch_repr_env = self._static_visual_groups(
+                    env_bvh_idx, batch_repr_env, env_cast_order = self._static_visual_groups(
                         solver, entry.signature_vgeoms_mask, entry.signature_vverts_mask
                     )
                     self._sized_grouped_trees(entry, batch_repr_env.shape[0], solver.dyn_info.vfaces.vgeom_idx.shape[0])
                     entry.env_bvh_idx = env_bvh_idx
+                    entry.env_cast_order = env_cast_order
                     entry.is_env_major = batch_repr_env.shape[0] < solver._B
                     kernel_update_grouped_visual_aabbs(
                         batch_repr_env, entry.raycast_mask, solver.dyn_state, entry.aabb, solver.dyn_info
@@ -663,6 +677,7 @@ class RaycasterSensor(
             args_common = (
                 shared_metadata.points_to_sensor_idx,
                 entry.env_bvh_idx,
+                entry.env_cast_order,
                 entry.bvh.nodes,
                 entry.bvh.morton_codes,
                 links_pos,

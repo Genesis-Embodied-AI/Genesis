@@ -666,6 +666,7 @@ def write_ray_hit(
 def kernel_cast_rays(
     points_to_sensor_idx: qd.types.ndarray(ndim=1),  # [n_points]
     env_bvh_idx: qd.types.ndarray(ndim=1),  # [n_env] - BVH tree slot each env casts against
+    env_cast_order: qd.types.ndarray(ndim=1),  # [n_env] - envs sorted by tree slot; read on the env-major path
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
     links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
@@ -703,14 +704,17 @@ def kernel_cast_rays(
     n_points = ray_starts.shape[0]
     n_envs = output_hits.shape[-1]
     # One flat parallel loop whose thread -> (ray, env) split is chosen at compile time from is_env_major:
-    #  - env-major (one tree serves several envs): env is the fastest-varying index, so a warp spans consecutive envs
-    #    mostly reading the same tree's nodes -> a coalesced broadcast.
+    #  - env-major (one tree serves several envs): env is the fastest-varying index, visited in tree-sorted order
+    #    (env_cast_order), so a warp spans consecutive envs reading the same tree's nodes -> a coalesced broadcast
+    #    even when group membership interleaves across envs.
     #  - ray-major (distinct per-env trees): the ray is the fastest-varying index, so a warp stays within one env's
     #    tree and rides ray coherence instead of diverging across n_env different trees.
     for i_flat in range(n_points * n_envs):
         i_p = i_flat // n_envs
         i_b = i_flat % n_envs
-        if not is_env_major:
+        if is_env_major:
+            i_b = env_cast_order[i_b]
+        else:
             i_b = i_flat // n_points
             i_p = i_flat % n_points
 
@@ -774,6 +778,7 @@ def kernel_cast_rays(
 def kernel_cast_rays_visual(
     points_to_sensor_idx: qd.types.ndarray(ndim=1),
     env_bvh_idx: qd.types.ndarray(ndim=1),
+    env_cast_order: qd.types.ndarray(ndim=1),
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     links_pos: qd.types.ndarray(ndim=3),
@@ -797,14 +802,16 @@ def kernel_cast_rays_visual(
 ):
     """Visual-mesh variant of kernel_cast_rays.
 
-    See kernel_cast_rays for env_bvh_idx, is_env_major and the thread mapping.
+    See kernel_cast_rays for env_bvh_idx, env_cast_order, is_env_major and the thread mapping.
     """
     n_points = ray_starts.shape[0]
     n_envs = output_hits.shape[-1]
     for i_flat in range(n_points * n_envs):
         i_p = i_flat // n_envs
         i_b = i_flat % n_envs
-        if not is_env_major:
+        if is_env_major:
+            i_b = env_cast_order[i_b]
+        else:
             i_b = i_flat // n_points
             i_p = i_flat % n_points
 
