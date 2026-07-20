@@ -161,8 +161,8 @@ def _func_decomp_linesearch_p0(
                                 i_c, i_b, constraint_state, rigid_config
                             )
                             rows_jv = qd.Vector.zero(gs.qd_float, n_rows)
-                            for k in qd.static(range(n_rows)):
-                                rows_jv[k] = constraint_state.jv[i_c + k, i_b]
+                            for i_r in qd.static(range(n_rows)):
+                                rows_jv[i_r] = constraint_state.jv[i_c + i_r, i_b]
                             _c_cost, c_grad, c_hess = solver._func_cone_cost_along_alpha(
                                 rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction
                             )
