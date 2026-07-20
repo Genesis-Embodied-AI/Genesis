@@ -1139,6 +1139,18 @@ def kernel_set_geoms_friction(
 
 
 @qd.kernel(fastcache=True)
+def kernel_set_geoms_friction_torsional(
+    geoms_idx: qd.types.ndarray(),
+    friction_torsional: qd.types.ndarray(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_g_ in range(geoms_idx.shape[0]):
+        dyn_info.geoms.friction_torsional[geoms_idx[i_g_]] = friction_torsional[i_g_]
+
+
+@qd.kernel(fastcache=True)
 def kernel_set_vverts(
     vvert_start: qd.i32,
     envs_idx: qd.types.ndarray(),
