@@ -1,0 +1,144 @@
+# End-to-end reverse-mode optimization on the rigid solver: Adam recovers a cartpole reference trajectory (through
+# either the initial velocity or a per-step force sequence) and drives a free box to a goal pose.
+import numpy as np
+import pytest
+import torch
+
+import genesis as gs
+from genesis.utils.misc import tensor_to_array
+
+from ..utils import assert_allclose, make_diff_scene_pair, rigid_solver_state
+
+
+pytestmark = [
+    pytest.mark.debug(False),
+]
+
+
+@pytest.mark.required
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("control_target", ["init_vel", "control_force"])
+def test_rigid_optim_cartpole_converges(control_target, grad_cartpole):
+    # Reproduce a reference cartpole trajectory by optimizing either the initial velocity or the per-step control
+    # forces; every env must drive its per-env loss below both a relative-reduction and an absolute threshold. fp32
+    # cannot push a rollout-trained scalar loss below ~1e-4, so the thresholds are the looser fp32 band.
+    N_STEPS, N_ITER, LR, N_DOFS, B = 32, 200, 1e-2, 2, 2
+    REL_REDUCTION, ABS_THRESHOLD = 1e-1, 1e-2
+    pair = make_diff_scene_pair(grad_cartpole, n_envs=2)
+    scene_ref, robot_ref = pair.scene_fd, pair.entity_fd
+    scene_opt, robot_opt = pair.scene_ana, pair.entity_ana
+    rng = np.random.default_rng(seed=11 if control_target == "init_vel" else 23)
+
+    scene_ref.reset()
+    if control_target == "init_vel":
+        target_ctrl = rng.normal(size=(B, N_DOFS)) * 0.5
+        robot_ref.set_dofs_velocity(gs.tensor(target_ctrl, dtype=gs.tc_float))
+        for _ in range(N_STEPS):
+            scene_ref.step()
+    else:
+        target_ctrl = rng.normal(size=(N_STEPS, B, N_DOFS)) * 0.2
+        for t in range(N_STEPS):
+            robot_ref.control_dofs_force(gs.tensor(target_ctrl[t], dtype=gs.tc_float))
+            scene_ref.step()
+    ref_state = rigid_solver_state(scene_ref)
+    target_qpos = ref_state.qpos.detach().clone()
+    target_vel = ref_state.dofs_vel.detach().clone()
+
+    if control_target == "init_vel":
+        init_vel = gs.tensor(target_ctrl + rng.normal(size=(B, N_DOFS)) * 0.3, dtype=gs.tc_float, requires_grad=True)
+        params = [init_vel]
+    else:
+        forces = [
+            gs.tensor(target_ctrl[t] + rng.normal(size=(B, N_DOFS)) * 0.1, dtype=gs.tc_float, requires_grad=True)
+            for t in range(N_STEPS)
+        ]
+        params = forces
+    optimizer = torch.optim.Adam(params, lr=LR)
+
+    loss_history = []
+    for _ in range(N_ITER):
+        optimizer.zero_grad(set_to_none=False)
+        scene_opt.reset()
+        if control_target == "init_vel":
+            robot_opt.set_dofs_velocity(init_vel)
+            for _ in range(N_STEPS):
+                scene_opt.step()
+        else:
+            for t in range(N_STEPS):
+                robot_opt.control_dofs_force(forces[t])
+                scene_opt.step()
+        state = rigid_solver_state(scene_opt)
+        diff_pos = (state.qpos - target_qpos).reshape(B, -1)
+        diff_vel = (state.dofs_vel - target_vel).reshape(B, -1)
+        loss_per_env = (diff_pos**2).sum(dim=-1) + (diff_vel**2).sum(dim=-1)
+        loss_history.append(tensor_to_array(loss_per_env).copy())
+        loss_per_env.sum().backward()
+        optimizer.step()
+
+    history = np.asarray(loss_history)
+    initial, final = history[0], history[-1]
+    rel_ratios = final / initial
+    assert (rel_ratios < REL_REDUCTION).all(), f"loss reduction insufficient: initial={initial}, final={final}"
+    assert (final < ABS_THRESHOLD).all(), f"final loss above absolute threshold: {final}"
+
+
+@pytest.mark.slow
+@pytest.mark.required
+def test_rigid_optim_reach_goal_pose(show_viewer):
+    goal_pos = gs.tensor([0.7, 1.0, 0.05])
+    goal_quat = gs.tensor([0.3, 0.2, 0.1, 0.9])
+    goal_quat = goal_quat / torch.norm(goal_quat, dim=-1, keepdim=True)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1e-2,
+            substeps=1,
+            requires_grad=True,
+            gravity=(0, 0, -1),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+            enable_self_collision=False,
+            enable_joint_limit=False,
+            disable_constraint=True,
+            use_contact_island=False,
+            use_hibernation=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, -0.15, 2.42),
+            camera_lookat=(0.5, 0.5, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            pos=(0, 0, 0),
+            size=(0.1, 0.1, 0.2),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.9, 0.0, 0.0, 1.0),
+        ),
+    )
+    scene.build()
+
+    init_pos = gs.tensor([0.3, 0.1, 0.28], requires_grad=True)
+    init_quat = gs.tensor([1.0, 0.0, 0.0, 0.0], requires_grad=True)
+    optimizer = torch.optim.Adam([init_pos, init_quat], lr=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200, eta_min=1e-3)
+
+    for _ in range(200):
+        scene.reset()
+        box.set_pos(init_pos)
+        box.set_quat(init_quat)
+        for _ in range(100):
+            scene.step()
+        box_state = box.get_state()
+        loss = torch.abs(box_state.pos - goal_pos).sum() + torch.abs(box_state.quat - goal_quat).sum()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        with torch.no_grad():
+            init_quat.data = init_quat / torch.norm(init_quat, dim=-1, keepdim=True)
+
+    assert_allclose(loss, 0.0, atol=1e-2)

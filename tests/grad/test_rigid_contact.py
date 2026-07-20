@@ -1,0 +1,383 @@
+# Differentiable-contact gradient checks: per-step contact-force adjoints (box-box and plane-convex, verified
+# against contact-preserving finite differences), the forward convex-contact detection path, the unsupported
+# smooth-pair guard, and the low-level contact-detection and constraint-solver backward passes.
+import numpy as np
+import pytest
+import torch
+
+import genesis as gs
+from genesis.utils import set_random_seed
+from genesis.utils.geom import R_to_quat
+from genesis.utils.misc import qd_to_numpy, qd_to_torch, tensor_to_array
+
+from ..utils import assert_allclose, rigid_solver_state
+
+
+pytestmark = [
+    pytest.mark.debug(False),
+]
+
+
+def _build_contact_scene(shape, mjcf_capsule, *, requires_grad):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            substeps=2,
+            gravity=(0.0, 0.0, -9.81),
+            requires_grad=requires_grad,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=True,
+            enable_self_collision=False,
+            enable_joint_limit=False,
+            disable_constraint=False,
+            use_hibernation=False,
+            use_contact_island=False,
+            box_box_detection=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=False,
+    )
+    if shape == "ground_box":
+        scene.add_entity(gs.morphs.Box(size=(2.0, 2.0, 0.2), pos=(0.0, 0.0, 0.1), fixed=True))
+        obj = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.4)))
+    else:
+        scene.add_entity(gs.morphs.Plane())
+        if shape == "box":
+            obj = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.3)))
+        elif shape == "sphere":
+            obj = scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.3)))
+        elif shape == "capsule":
+            obj = scene.add_entity(gs.morphs.MJCF(file=mjcf_capsule, align=False))
+        else:
+            raise ValueError(shape)
+    scene.build(n_envs=0)
+    return scene, obj
+
+
+def _n_contacts(scene):
+    return int(qd_to_numpy(scene.rigid_solver.collider._collider_state.n_contacts)[0])
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("shape", ["ground_box", "box", "sphere", "capsule"])
+def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
+    # Rest z puts the body's lowest point on its support: box / sphere half extent 0.2, upright capsule
+    # radius 0.1 + half length 0.2 = 0.3, box-on-ground centered at 0.40.
+    rest_z = {"ground_box": 0.40, "box": 0.20, "sphere": 0.20, "capsule": 0.30}[shape]
+    rest_dofs = [0.0, 0.0, rest_z, 0.0, 0.0, 0.0]
+    n_settle = 12
+    n_steps = 2
+    eps = 1e-2
+    base_force = np.array([0.0, 0.0, -8.0, 0.0, 0.0, 0.0])
+    init_force = np.broadcast_to(base_force, (n_steps, 6)).copy()
+
+    def settle(scene, obj):
+        obj.set_dofs_position(gs.tensor(rest_dofs, dtype=gs.tc_float).sceneless())
+        zero = gs.tensor([0.0] * 6, dtype=gs.tc_float)
+        for _ in range(n_settle):
+            obj.control_dofs_force(zero)
+            scene.step()
+
+    scene_ana, obj_ana = _build_contact_scene(shape, grad_capsule, requires_grad=True)
+    scene_ana.reset()
+    settle(scene_ana, obj_ana)
+    nc = _n_contacts(scene_ana)
+    assert nc > 0, f"setup error: {shape} not in contact after settle (n_contacts={nc})"
+    forces = [gs.tensor(init_force[t], dtype=gs.tc_float, requires_grad=True) for t in range(n_steps)]
+    for t in range(n_steps):
+        obj_ana.control_dofs_force(forces[t])
+        scene_ana.step()
+        assert _n_contacts(scene_ana) == nc, "contact set changed during grad window - FD invalid"
+    loss = (rigid_solver_state(scene_ana).qpos[0, :3] ** 2).sum()
+    scene_ana.backward(loss)
+    ana = np.array([[float(f.grad[d]) for d in range(6)] for f in forces])
+
+    scene_fd, obj_fd = _build_contact_scene(shape, grad_capsule, requires_grad=True)
+
+    def loss_at(perturbed):
+        scene_fd.reset()
+        settle(scene_fd, obj_fd)
+        for t in range(n_steps):
+            obj_fd.control_dofs_force(gs.tensor(perturbed[t], dtype=gs.tc_float))
+            scene_fd.step()
+            assert _n_contacts(scene_fd) == nc, "contact set changed under FD perturbation"
+        return float((rigid_solver_state(scene_fd).qpos[0, :3] ** 2).sum().detach())
+
+    for t in range(n_steps):
+        plus = init_force.copy()
+        plus[t, 2] += eps
+        minus = init_force.copy()
+        minus[t, 2] -= eps
+        fd_z = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+        # Contact gradients are small (stiff contact barely moves), so the band is absolute-dominated; rtol pins
+        # the load-bearing z entry.
+        assert_allclose(ana[t, 2], fd_z, rtol=2e-3, atol=1e-10, err_msg=f"contact force.grad mismatch at t={t}")
+
+
+@pytest.mark.required
+def test_rigid_contact_no_tunneling_forward(show_viewer):
+    # Differentiable contact detection must route convex-convex pairs through the monolithic diff_gjk path (the
+    # split narrowphase used to skip GJK under requires_grad, so bodies fell through each other), producing the
+    # same forward contacts as the non-grad path, with the contact permutation kept the identity in autodiff mode.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            requires_grad=True,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=gs.integrator.approximate_implicitfast,
+            box_box_detection=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    tops = []
+    for x in (0.8, -0.8):
+        scene.add_entity(gs.morphs.Box(size=(0.6, 0.6, 0.4), pos=(x, 0.0, 0.2), fixed=True))
+        tops.append(scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(x, 0.0, 0.6))))
+    scene.build()
+
+    for _ in range(20):
+        scene.step()
+
+    for top, x in zip(tops, (0.8, -0.8)):
+        assert_allclose(top.get_pos(), (x, 0.0, 0.6), atol=2e-4)
+        assert_allclose(top.get_dofs_velocity(), 0.0, atol=0.05)
+
+    collider = scene.sim.rigid_solver.collider
+    assert not collider._collider_static_config.spatial_sort_supported
+    n_contacts = int(np.atleast_1d(qd_to_numpy(collider._collider_state.n_contacts))[0])
+    sort_idx = qd_to_numpy(collider._collider_state.contact_sort_idx)[:n_contacts, 0]
+    assert_allclose(sort_idx, np.arange(n_contacts), atol=0)
+
+
+@pytest.mark.required
+def test_rigid_diff_contact_pair_unsupported_raises():
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            requires_grad=True,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.2), fixed=True))
+    scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.5)))
+
+    # A sphere/sphere pair has an everywhere-curved Minkowski boundary on which diff_gjk's EPA never converges, so
+    # it would silently tunnel; the build must reject it instead.
+    with pytest.raises(gs.GenesisException):
+        scene.build()
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+def test_rigid_contact_detection_jacobian_matches_fd():
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            requires_grad=True,
+        ),
+        show_viewer=False,
+    )
+    box_size = 0.25
+    vec_one = np.array([1.0, 1.0, 1.0])
+    box_pos_offset = (0.0, 0.0, 0.0) + 0.5 * box_size * vec_one
+    box0 = scene.add_entity(gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset))
+    box1 = scene.add_entity(
+        gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset + 0.8 * box_size * np.array([0, 0, 1]))
+    )
+    scene.build()
+    collider = scene.sim.rigid_solver.collider
+
+    box1.set_quat(R_to_quat(gs.euler_to_R([np.deg2rad(3.0), np.deg2rad(3.0), np.deg2rad(3.0)])))
+    box0_init_pos = box0.get_pos().clone()
+    box1_init_pos = box1.get_pos().clone()
+    box0_init_quat = box0.get_quat().clone()
+    box1_init_quat = box1.get_quat().clone()
+
+    collider.detection()
+    contacts = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
+    normal = contacts["normal"].requires_grad_()
+    position = contacts["position"].requires_grad_()
+    penetration = contacts["penetration"].requires_grad_()
+    loss = ((normal * position).sum(dim=-1) * penetration).sum()
+    dL_dnormal = torch.autograd.grad(loss, normal, retain_graph=True)[0]
+    dL_dposition = torch.autograd.grad(loss, position, retain_graph=True)[0]
+    dL_dpenetration = torch.autograd.grad(loss, penetration)[0]
+
+    collider.backward(dL_dposition, dL_dnormal, dL_dpenetration)
+    dL_dpos = qd_to_torch(scene.sim.rigid_solver.dyn_state.geoms.pos.grad)
+    dL_dquat = qd_to_torch(scene.sim.rigid_solver.dyn_state.geoms.quat.grad)
+
+    fd_eps = 1e-5
+    trials = 100
+
+    def directional_error(dL_dx, x_type):
+        error_rel = 0.0
+        for _ in range(trials):
+            rand_dx = torch.nn.functional.normalize(torch.randn_like(dL_dx), dim=-1)
+            dL = (rand_dx * dL_dx).sum()
+            losses = []
+            for sign in (1, -1):
+                if x_type == "pos":
+                    box0.set_pos(box0_init_pos + sign * rand_dx[0, 0] * fd_eps)
+                    box1.set_pos(box1_init_pos + sign * rand_dx[1, 0] * fd_eps)
+                    box0.set_quat(box0_init_quat)
+                    box1.set_quat(box1_init_quat)
+                else:
+                    box0.set_pos(box0_init_pos)
+                    box1.set_pos(box1_init_pos)
+                    box0.set_quat(box0_init_quat + sign * rand_dx[0, 0] * fd_eps)
+                    box1.set_quat(box1_init_quat + sign * rand_dx[1, 0] * fd_eps)
+                collider._collider_state.n_contacts.fill(0)
+                collider.detection()
+                c = collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
+                losses.append(((c["normal"] * c["position"]).sum(dim=-1) * c["penetration"]).sum())
+            dL_fd = (losses[0] - losses[1]) / (2 * fd_eps)
+            error_rel += (dL - dL_fd).abs() / max(dL.abs(), dL_fd.abs(), gs.EPS)
+        return error_rel / trials
+
+    assert_allclose(directional_error(dL_dpos, "pos"), 0.0, atol=1e-4)
+    assert_allclose(directional_error(dL_dquat, "quat"), 0.0, atol=1e-4)
+
+
+@pytest.mark.required
+@pytest.mark.precision("64")
+def test_rigid_constraint_solver_backward_matches_fd(monkeypatch):
+    # fp64 is required: the FD perturbation must be small enough for a reliable estimate, which fp32 cannot resolve.
+    # These internal solver symbols are imported locally to keep a mismatch with the installed engine from breaking
+    # collection of the whole module.
+    from genesis.engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
+    from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            requires_grad=True,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.Newton,
+        ),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane(pos=(0, 0, 0)))
+    scene.add_entity(gs.morphs.Box(size=(1, 1, 1), pos=(10, 10, 0.49)))
+    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.build()
+    rigid_solver = scene._sim.rigid_solver
+    constraint_solver = rigid_solver.constraint_solver
+
+    franka.set_qpos([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
+
+    def constraint_solver_resolve():
+        func_solve_init(
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
+            rigid_solver.rigid_config,
+            is_decomposed=False,
+        )
+        func_solve_body(
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
+            rigid_solver.rigid_config,
+            constraint_solver._n_iterations,
+        )
+
+    monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
+
+    kernel_step_1(
+        rigid_solver.dyn_state,
+        constraint_solver.constraint_state,
+        rigid_solver.dyn_info,
+        rigid_solver.rigid_info,
+        rigid_solver.rigid_config,
+        is_forward_pos_updated=True,
+        is_forward_vel_updated=True,
+        is_backward=False,
+    )
+    constraint_solver.add_equality_constraints()
+    rigid_solver.collider.detection()
+    constraint_solver.add_inequality_constraints()
+    constraint_solver.resolve()
+
+    def compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force):
+        rigid_solver.rigid_info.mass_mat.from_numpy(input_mass)
+        constraint_solver.constraint_state.jac.from_numpy(input_jac)
+        constraint_solver.constraint_state.aref.from_numpy(input_aref)
+        constraint_solver.constraint_state.efc_D.from_numpy(input_efc_D)
+        rigid_solver.dyn_state.dofs.force.from_numpy(input_force)
+        updated_acc_smooth = np.linalg.solve(input_mass[..., 0], input_force[..., 0])
+        rigid_solver.dyn_state.dofs.acc_smooth.from_numpy(updated_acc_smooth[..., None])
+        constraint_solver.resolve()
+        return ((qd_to_torch(constraint_solver.qacc) - target_qacc) ** 2).mean()
+
+    init_input_mass = qd_to_numpy(rigid_solver.rigid_info.mass_mat, copy=True)
+    init_input_jac = qd_to_numpy(constraint_solver.constraint_state.jac, copy=True)
+    init_input_aref = qd_to_numpy(constraint_solver.constraint_state.aref, copy=True)
+    init_input_efc_D = qd_to_numpy(constraint_solver.constraint_state.efc_D, copy=True)
+    init_input_force = qd_to_numpy(rigid_solver.dyn_state.dofs.force, copy=True)
+
+    set_random_seed(0)
+    init_output_qacc = qd_to_torch(constraint_solver.qacc)
+    target_qacc = torch.from_numpy(np.random.randn(*init_output_qacc.shape)).to(device=gs.device)
+    target_qacc = target_qacc * init_output_qacc.abs().mean()
+
+    output_qacc = qd_to_torch(constraint_solver.qacc, copy=True).requires_grad_(True)
+    loss = ((output_qacc - target_qacc) ** 2).mean()
+    dL_dqacc = tensor_to_array(torch.autograd.grad(loss, output_qacc)[0])
+    constraint_solver.constraint_state.dL_dqacc.from_numpy(dL_dqacc)
+    constraint_solver.backward()
+
+    dL_dM = qd_to_numpy(constraint_solver.constraint_state.dL_dM)
+    dL_djac = qd_to_numpy(constraint_solver.constraint_state.dL_djac)
+    dL_daref = qd_to_numpy(constraint_solver.constraint_state.dL_daref)
+    dL_defc_D = qd_to_numpy(constraint_solver.constraint_state.dL_defc_D)
+    dL_dforce = qd_to_numpy(constraint_solver.constraint_state.dL_dforce)
+
+    fd_eps = 1e-3
+    trials = 200
+    for dL_dx, x_type in (
+        (dL_dforce, "force"),
+        (dL_daref, "aref"),
+        (dL_defc_D, "efc_D"),
+        (dL_djac, "jac"),
+        (dL_dM, "mass"),
+    ):
+        error = 0.0
+        for _ in range(trials):
+            rand_dx = np.random.randn(*dL_dx.shape)
+            rand_dx = rand_dx / max(
+                np.linalg.norm(rand_dx, axis=0 if x_type in ("force", "aref", "efc_D") else (0, 1)), gs.EPS
+            )
+            if x_type == "mass":
+                rand_dx = (rand_dx + np.moveaxis(rand_dx, 0, 1)) * 0.5
+            dL = (rand_dx * dL_dx).sum()
+
+            inputs = dict(
+                input_mass=init_input_mass,
+                input_jac=init_input_jac,
+                input_aref=init_input_aref,
+                input_efc_D=init_input_efc_D,
+                input_force=init_input_force,
+            )
+            key = {
+                "force": "input_force",
+                "aref": "input_aref",
+                "efc_D": "input_efc_D",
+                "jac": "input_jac",
+                "mass": "input_mass",
+            }[x_type]
+            init_x = inputs[key]
+            loss_p = compute_loss(**{**inputs, key: init_x + rand_dx * fd_eps})
+            loss_m = compute_loss(**{**inputs, key: init_x - rand_dx * fd_eps})
+            dL_fd = (loss_p - loss_m) / (2 * fd_eps)
+            error += (dL - dL_fd).abs() / max(abs(dL), abs(dL_fd), gs.EPS)
+        assert_allclose(error / trials, 0.0, atol=1e-4)

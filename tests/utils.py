@@ -301,6 +301,131 @@ def assert_equal(actual, desired, *, err_msg=None):
     assert_allclose(actual, desired, atol=0.0, rtol=0.0, err_msg=err_msg)
 
 
+def rigid_solver_state(scene):
+    return scene.get_state().solvers_state[scene.solvers.index(scene.rigid_solver)]
+
+
+class DiffScenePair(NamedTuple):
+    scene_ana: "gs.Scene"
+    entity_ana: object
+    scene_fd: "gs.Scene"
+    entity_fd: object
+
+
+def make_diff_scene_pair(
+    mjcf,
+    *,
+    n_envs=0,
+    substeps=1,
+    gravity=(0.0, 0.0, -9.81),
+    dt=0.01,
+    enable_collision=False,
+    enable_joint_limit=False,
+    disable_constraint=True,
+    box_box_detection=None,
+):
+    # Builds a diff-mode scene (scene_ana, the only one backward() runs on) and a production-mode reference
+    # (scene_fd, the one finite differences perturb) from the same MJCF with identical config. The two kernels
+    # produce bit-identical forward states, so FD on scene_fd is a valid reference for scene_ana's analytical
+    # gradient.
+    rigid_kwargs = dict(
+        enable_collision=enable_collision,
+        enable_self_collision=False,
+        enable_joint_limit=enable_joint_limit,
+        disable_constraint=disable_constraint,
+        use_hibernation=False,
+        use_contact_island=False,
+    )
+    if box_box_detection is not None:
+        rigid_kwargs["box_box_detection"] = box_box_detection
+
+    scenes = []
+    entities = []
+    for requires_grad in (True, False):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=dt,
+                substeps=substeps,
+                gravity=gravity,
+                requires_grad=requires_grad,
+            ),
+            rigid_options=gs.options.RigidOptions(**rigid_kwargs),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(1.2, -1.2, 0.8),
+                camera_lookat=(0.0, 0.0, 0.2),
+            ),
+            show_viewer=False,
+        )
+        entity = scene.add_entity(gs.morphs.MJCF(file=mjcf))
+        scene.build(n_envs=n_envs)
+        scenes.append(scene)
+        entities.append(entity)
+    return DiffScenePair(scenes[0], entities[0], scenes[1], entities[1])
+
+
+def assert_grad_matches_fd(
+    pair, inputs, apply_fn, loss_fn, *, n_steps=None, setup_fn=None, rtol=2e-2, atol=2e-3, eps=1e-3
+):
+    # Central finite-difference check of a tracked setter's reverse-mode gradient. `inputs` holds one fp64 array per
+    # applied input; input i is applied via `apply_fn(entity, x)` before step i and must receive an independent
+    # adjoint from the backward unroll. The scene runs `n_steps` steps (default len(inputs)); when it exceeds the
+    # number of inputs the remaining steps run without re-applying (a single input driving an N-step rollout).
+    # `setup_fn(scene, entity)` runs once after reset for untracked initialization (e.g. an initial pose). The FD
+    # reference perturbs each entry of each input in turn and re-runs the full trajectory on the production-mode
+    # scene, so the cost is O(n_steps * total input size).
+    base = [np.array(inp, dtype=np.float64) for inp in inputs]
+    total_steps = len(base) if n_steps is None else n_steps
+
+    def rollout(scene, entity, tracked):
+        scene.reset()
+        if setup_fn is not None:
+            setup_fn(scene, entity)
+        applied = []
+        for i_step in range(total_steps):
+            if i_step < len(base):
+                x = gs.tensor(base[i_step], dtype=gs.tc_float, requires_grad=tracked)
+                applied.append(x)
+                apply_fn(entity, x)
+            scene.step()
+        return applied
+
+    x_anas = rollout(pair.scene_ana, pair.entity_ana, tracked=True)
+    loss = loss_fn(pair.scene_ana, pair.entity_ana)
+    assert loss.requires_grad, "loss does not require grad - output is not grad-aware"
+    loss.backward()
+    ana_grads = []
+    for i_step, x in enumerate(x_anas):
+        assert x.grad is not None, f"input {i_step}: x.grad is None after backward"
+        ana_grads.append(tensor_to_array(x.grad))
+
+    def loss_perturbed(i_input, i_entry, sign):
+        pair.scene_fd.reset()
+        if setup_fn is not None:
+            setup_fn(pair.scene_fd, pair.entity_fd)
+        for i_step in range(total_steps):
+            if i_step < len(base):
+                inp = base[i_step].copy()
+                if i_step == i_input:
+                    inp.reshape(-1)[i_entry] += sign * eps
+                apply_fn(pair.entity_fd, gs.tensor(inp, dtype=gs.tc_float))
+            pair.scene_fd.step()
+        return float(loss_fn(pair.scene_fd, pair.entity_fd))
+
+    for i_input in range(len(base)):
+        fd_grad = np.zeros_like(base[i_input])
+        for i_entry in range(base[i_input].size):
+            fd_grad.reshape(-1)[i_entry] = (
+                loss_perturbed(i_input, i_entry, +1) - loss_perturbed(i_input, i_entry, -1)
+            ) / (2.0 * eps)
+        assert_allclose(
+            torch.from_numpy(ana_grads[i_input]),
+            torch.from_numpy(fd_grad),
+            rtol=rtol,
+            atol=atol,
+            err_msg=f"input {i_input}: FD vs analytical mismatch",
+        )
+
+
 def assert_pixel_match(
     img_a: np.ndarray,
     img_b: np.ndarray,
