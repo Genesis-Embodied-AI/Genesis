@@ -39,6 +39,33 @@ def multi_free_body_path(tmp_path):
 
 
 @pytest.mark.required
+def test_constraint_capacity_covers_friction_rows(show_viewer):
+    # The island grouping writes one entry per assembled constraint, so its buffers must cover the same bound as
+    # the constraint solver, including the extra torsional and rolling rows per contact.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            enable_torsional_friction=True,
+            enable_rolling_friction=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    for i_box in range(2):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.0, 0.0, 0.2 + 0.4 * i_box),
+            ),
+        )
+    scene.build()
+    constraint_solver = scene.sim.rigid_solver.constraint_solver
+    assert constraint_solver.constraint_state.island.constraint_id.shape[0] >= constraint_solver.len_constraints
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_partition_logics(show_viewer, n_envs, multi_free_body_path, monkeypatch):
     # The welded pair never touches, so only the equality edge couples them: without it the partition would split them

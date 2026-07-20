@@ -377,11 +377,16 @@ def get_island_state(solver, collider):
         and not solver.rigid_config.sparse_envelope
     )
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
-    # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
-    # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the candidate
-    # count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise constraint_id is
-    # undersized once dynamic welds are added and the per-island grouping writes out of bounds.
-    n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
+    # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: rows_per_contact per
+    # contact + joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
+    # candidate count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise
+    # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
+    n_constraints_max = max(
+        max_candidate_contacts * solver.rigid_config.rows_per_contact
+        + 2 * n_dofs
+        + max(solver.n_candidate_equalities_, 1) * 6,
+        1,
+    )
     return IslandState(
         links_parent_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
         links_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),

@@ -733,8 +733,11 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         "group": mj_geom.group[0],
         "data": geom_data,
         "friction": mj_geom.friction[0],
-        "friction_torsional": mj_geom.friction[1],
-        "friction_rolling": mj_geom.friction[2],
+        # MuJoCo only applies torsional friction from condim 4 and rolling friction from condim 6 onward, and the
+        # friction vector carries its defaults on every geom regardless, so the coefficients of a lower-condim geom
+        # must parse as inert or the geom would resist spin or rolling that MuJoCo leaves free.
+        "friction_torsional": mj_geom.friction[1] if mj_geom.condim[0] >= 4 else 0.0,
+        "friction_rolling": mj_geom.friction[2] if mj_geom.condim[0] >= 6 else 0.0,
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
     if is_col:
