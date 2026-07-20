@@ -1,12 +1,14 @@
-from collections import defaultdict
-import subprocess
-import time
-import os
 import argparse
-import psutil
+import os
 import re
+import time
+from collections import defaultdict
 
-from tests.gpu_info import detect_gpu_backend
+import psutil
+
+# This module is launched as a standalone script ('python tests/monitor_test_mem.py'), so its own directory is
+# on sys.path and 'gpu_info' is imported as a top-level module rather than through the 'tests' package.
+from gpu_info import detect_gpu_backend
 
 
 CHECK_INTERVAL = 2.0
@@ -50,7 +52,7 @@ def parse_test_name(test_name: str) -> dict[str, str]:
 
 
 def get_cuda_usage() -> dict[int, int]:
-    """Get per-process GPU memory usage using the detected GPU backend."""
+    """VRAM in MiB used on the GPUs by each process, keyed by process id."""
     backend = detect_gpu_backend()
     if backend is not None:
         return backend.get_per_process_vram_mib()

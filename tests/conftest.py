@@ -2,7 +2,6 @@ import ctypes
 import gc
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -257,8 +256,7 @@ def _get_gpu_indices():
                 return tuple(range(device_count))
 
         warnings.warn(
-            "No GPU backend detected. Multi-GPU support will be disabled. This is expected "
-            "on WSL2 where the GPU interface is not mounted.",
+            "No GPU backend detected (neither NVML nor AMD SMI); multi-GPU support will be disabled.",
             stacklevel=2,
         )
 
@@ -266,23 +264,19 @@ def _get_gpu_indices():
 
 
 def _torch_get_gpu_idx(device):
-    if sys.platform == "linux":
-        import torch
+    # The caller only invokes this for a CUDA device, so torch is using this GPU and its identity must be
+    # confirmable. Returns the resolved physical device index, or -1 when it cannot be confirmed (no GPU
+    # management library, or a UUID unknown to it), which the caller turns into a hard error rather than
+    # letting an unverified device through.
+    import torch
 
-        device_property = torch.cuda.get_device_properties(device)
-        device_uuid = str(device_property.uuid)
+    device_uuid = str(torch.cuda.get_device_properties(device).uuid)
 
-        backend = detect_gpu_backend()
-        if backend is not None:
-            return backend.get_device_index_from_uuid(device_uuid)
+    backend = detect_gpu_backend()
+    if backend is None:
+        return -1
 
-        warnings.warn(
-            "No GPU backend detected. Multi-GPU support will be disabled. This is expected "
-            "on WSL2 where the GPU interface is not mounted.",
-            stacklevel=2,
-        )
-
-    return -1
+    return backend.get_device_index_from_uuid(device_uuid)
 
 
 def _get_egl_index(gpu_index):
@@ -814,6 +808,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
+            # The device torch selected must be one this worker is allowed to use. Anything else - including a
+            # -1 meaning the device could not be confirmed - fails hard rather than letting an unverified device
+            # through, on every platform.
             device_idx = _torch_get_gpu_idx(gs.device.index)
             if device_idx not in _get_gpu_indices():
                 raise RuntimeError(f"Invalid CUDA GPU device, got {device_idx}, not in {_get_gpu_indices()}.")
