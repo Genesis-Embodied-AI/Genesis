@@ -312,9 +312,7 @@ def kernel_manual_forward_kinematics_bw(
                     xaxis = gu.qd_transform_by_quat(axis, quat_in)
                     # pos_out = pos_in + xaxis * displacement ; quat_out = quat_in
                     displacement_grad = xaxis[0] * g_pos[0] + xaxis[1] * g_pos[1] + xaxis[2] * g_pos[2]
-                    rigid_info.qpos.grad[q_start, i_b] = (
-                        rigid_info.qpos.grad[q_start, i_b] + displacement_grad
-                    )
+                    rigid_info.qpos.grad[q_start, i_b] = rigid_info.qpos.grad[q_start, i_b] + displacement_grad
                     g_xaxis = qd.Vector(
                         [
                             g_pos[0] * displacement + xaxis_grad[0],
@@ -350,9 +348,7 @@ def kernel_manual_forward_kinematics_bw(
                     g_qloc = d_quat_mul__drhs(quat_in, qloc, gq_out)
                     g_quat_in_apply = d_quat_mul__dlhs(quat_in, qloc, gq_out)
                     for j in qd.static(range(4)):
-                        rigid_info.qpos.grad[q_start + j, i_b] = (
-                            rigid_info.qpos.grad[q_start + j, i_b] + g_qloc[j]
-                        )
+                        rigid_info.qpos.grad[q_start + j, i_b] = rigid_info.qpos.grad[q_start + j, i_b] + g_qloc[j]
                     g_xanchor = g_pos + xanchor_grad
                     g_quat_in = (
                         g_quat_in_apply
@@ -380,7 +376,9 @@ def kernel_manual_forward_kinematics_bw(
                 parent_quat_grad_from_pos = d_transform_by_quat__dq(link_off_pos, parent_quat, g_pos)
                 parent_quat_grad_from_quat = d_quat_mul__dlhs(parent_quat, link_off_quat, g_quat)
                 for j in qd.static(range(3)):
-                    dyn_state.links.pos.grad[parent_idx, i_b][j] = dyn_state.links.pos.grad[parent_idx, i_b][j] + g_pos[j]
+                    dyn_state.links.pos.grad[parent_idx, i_b][j] = (
+                        dyn_state.links.pos.grad[parent_idx, i_b][j] + g_pos[j]
+                    )
                 for j in qd.static(range(4)):
                     dyn_state.links.quat.grad[parent_idx, i_b][j] = (
                         dyn_state.links.quat.grad[parent_idx, i_b][j]
@@ -633,8 +631,12 @@ def kernel_manual_forward_velocity_bw(
                 slot0_a_g = dyn_state.links.cd_ang_bw.grad[i_l, 0, i_b]
                 if i_p != -1:
                     for k in qd.static(range(3)):
-                        dyn_state.links.cd_vel.grad[i_p, i_b][k] = dyn_state.links.cd_vel.grad[i_p, i_b][k] + slot0_v_g[k]
-                        dyn_state.links.cd_ang.grad[i_p, i_b][k] = dyn_state.links.cd_ang.grad[i_p, i_b][k] + slot0_a_g[k]
+                        dyn_state.links.cd_vel.grad[i_p, i_b][k] = (
+                            dyn_state.links.cd_vel.grad[i_p, i_b][k] + slot0_v_g[k]
+                        )
+                        dyn_state.links.cd_ang.grad[i_p, i_b][k] = (
+                            dyn_state.links.cd_ang.grad[i_p, i_b][k] + slot0_a_g[k]
+                        )
                 # consume slot 0
                 for k in qd.static(range(3)):
                     dyn_state.links.cd_vel_bw.grad[i_l, 0, i_b][k] = 0.0
@@ -648,62 +650,38 @@ def kernel_manual_compute_qacc_bw(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    """Manual backward for `func_compute_qacc` via Implicit Function Theorem.
+    """Manual backward for func_compute_qacc via the implicit function theorem (IFT).
 
-    Forward chain (`func_compute_qacc`):
-        acc_smooth = M^{-1} . force   (via LDLT solve in `func_solve_mass`)
+    Forward chain (func_compute_qacc):
+        acc_smooth = M^{-1} . force   (per-block LDL^T solve in func_solve_mass)
         acc[i]     = acc_smooth[i]    (identity copy)
 
     Reverse chain (manual, by IFT and symmetry of M = L^T D L):
-        acc_smooth.grad += acc.grad   (reverse of identity copy)
-        acc.grad         = 0          (forward overwrites acc)
-        force_contrib    = M^{-1} . acc_smooth.grad
+        acc_smooth.grad += acc.grad   (reverse of the identity copy; acc.grad is then consumed since the forward
+                                       copy overwrites acc)
+        force_contrib    = M^{-1} . acc_smooth.grad   (M is symmetric, so M^{-T} = M^{-1})
         force.grad      += force_contrib
-                                       (M is symmetric, so M^{-T} = M^{-1})
-        # Symmetric lower-tri storage of mass_mat: forward only reads
-        # mass_mat[i, j] for i >= j (lower-tri). Each off-diagonal parameter
-        # appears once in the forward, but the implicit symmetry means the
-        # IFT contribution to the lower-tri parameter combines both `(i, j)`
-        # and `(j, i)` chain terms (the upper mirror is logically present
-        # via symmetry of the matrix being inverted).
         mass_mat[i, i].grad += -force_contrib[i] * acc_smooth[i]
-        mass_mat[i, j].grad += -(force_contrib[i] * acc_smooth[j]
-                                + force_contrib[j] * acc_smooth[i])    (i > j)
+        mass_mat[i, j].grad += -(force_contrib[i] * acc_smooth[j] + force_contrib[j] * acc_smooth[i])    (i > j)
+    mass_mat is stored lower-triangular with the upper half implicit by symmetry, so each off-diagonal parameter
+    combines the chain terms of both its (i, j) and (j, i) occurrences. The forward factored the dense mass_mat into
+    mass_mat_L / mass_mat_D_inv already, so only mass_mat.grad is touched here; this kernel is the single place the
+    backward path populates it, and kernel_forward_dynamics_without_qacc.grad then reverses it into link poses.
 
-    LDLT structure (Genesis transposed convention M = L^T D L):
-        Step 1: solve L^T . u = acc_smooth.grad       (descending i_d)
-        Step 2:        v = D^{-1} . u
-        Step 3: solve L   . delta_force_grad = v      (ascending i_d)
-
-    Inputs vs outputs (note the asymmetry between the values *read* from
-    `rigid_info` and the grad fields *written* into it):
-        Reads:
-          - dyn_state.dofs.acc.grad, dyn_state.dofs.acc_smooth.grad   (seed)
-          - rigid_info.mass_mat_L                       (LDLT solve)
-          - rigid_info.mass_mat_D_inv                   (LDLT solve)
-          - dyn_state.dofs.acc_smooth                              (IFT outer product)
-        Writes:
-          - dyn_state.dofs.force.grad                              (M^{-1} . seed)
-          - rigid_info.mass_mat.grad                    (IFT seed)
-          - dyn_state.dofs.acc.grad, dyn_state.dofs.acc_smooth.grad    (consumed -> 0)
-
-    The dense `mass_mat` is *not* read here (the forward already factored it
-    into `mass_mat_L` / `mass_mat_D_inv`), but its `.grad` is the parameter
-    the IFT chain naturally exposes, so this kernel is the only place
-    `mass_mat.grad` gets populated in the backward path.
+    Like func_solve_mass_entity, the triangular solves and the IFT outer product are restricted to the mass blocks
+    rooted in each entity (see entities_mass_block_dof_start in array_class.py): elimination never crosses a block,
+    and cross-block mass entries are structural zeros whose grads must stay zero.
     """
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_e, i_b in qd.ndrange(dyn_info.entities.n_links.shape[0], dyn_state.dofs.force.shape[1]):
         if rigid_info.mass_mat_mask[i_e, i_b]:
-            entity_dof_start = dyn_info.entities.dof_start[i_e]
-            entity_dof_end = dyn_info.entities.dof_end[i_e]
-            n_dofs = dyn_info.entities.n_dofs[i_e]
+            blocks_dof_start = rigid_info.entities_mass_block_dof_start[i_e]
+            blocks_dof_end = rigid_info.entities_mass_block_dof_end[i_e]
 
-            # Reverse of `acc[i] = acc_smooth[i]`: drain acc.grad -> seed acc_smooth.grad.
-            # Stash the combined seed in `acc_smooth_bw[0]` as the input to the LDLT
-            # reverse solve. Then zero `acc.grad` since the forward copy overwrites
-            # `acc` (its old value is destroyed, so any prior `acc.grad` is consumed).
-            for i_d in range(entity_dof_start, entity_dof_end):
+            # Reverse of acc[i] = acc_smooth[i]: drain acc.grad into the acc_smooth.grad seed, stashed in
+            # acc_smooth_bw[0] as the input of the LDL^T reverse solve. acc.grad is consumed since the forward copy
+            # overwrites acc.
+            for i_d in range(blocks_dof_start, blocks_dof_end):
                 dyn_state.dofs.acc_smooth_bw[0, i_d, i_b] = (
                     dyn_state.dofs.acc_smooth.grad[i_d, i_b] + dyn_state.dofs.acc.grad[i_d, i_b]
                 )
@@ -712,51 +690,46 @@ def kernel_manual_compute_qacc_bw(
 
             # Step 1: solve L^T . u = seed (input from [0], output to [1])
             #   u[i] = seed[i] - sum_{j>i} L[j,i] * u[j]
-            for i_d_ in range(n_dofs):
-                i_d = entity_dof_end - i_d_ - 1
+            for i_d_ in range(blocks_dof_end - blocks_dof_start):
+                i_d = blocks_dof_end - i_d_ - 1
+                block_end = rigid_info.dofs_mass_block_end[i_d]
                 curr = dyn_state.dofs.acc_smooth_bw[0, i_d, i_b]
-                for j_d in range(i_d + 1, entity_dof_end):
+                for j_d in range(i_d + 1, block_end):
                     curr = curr - rigid_info.mass_mat_L[j_d, i_d, i_b] * dyn_state.dofs.acc_smooth_bw[1, j_d, i_b]
                 dyn_state.dofs.acc_smooth_bw[1, i_d, i_b] = curr
 
             # Step 2: v = D^{-1} . u (output to [0], overwriting input)
-            for i_d in range(entity_dof_start, entity_dof_end):
+            for i_d in range(blocks_dof_start, blocks_dof_end):
                 dyn_state.dofs.acc_smooth_bw[0, i_d, i_b] = (
                     dyn_state.dofs.acc_smooth_bw[1, i_d, i_b] * rigid_info.mass_mat_D_inv[i_d, i_b]
                 )
 
             # Step 3: solve L . delta = v (input from [0], output to [1])
             #   delta[i] = v[i] - sum_{j<i} L[i,j] * delta[j]
-            for i_d in range(entity_dof_start, entity_dof_end):
+            for i_d in range(blocks_dof_start, blocks_dof_end):
+                block_start = rigid_info.dofs_mass_block_start[i_d]
                 curr = dyn_state.dofs.acc_smooth_bw[0, i_d, i_b]
-                for j_d in range(entity_dof_start, i_d):
+                for j_d in range(block_start, i_d):
                     curr = curr - rigid_info.mass_mat_L[i_d, j_d, i_b] * dyn_state.dofs.acc_smooth_bw[1, j_d, i_b]
                 dyn_state.dofs.acc_smooth_bw[1, i_d, i_b] = curr
 
             # Accumulate into force.grad.
-            for i_d in range(entity_dof_start, entity_dof_end):
+            for i_d in range(blocks_dof_start, blocks_dof_end):
                 dyn_state.dofs.force.grad[i_d, i_b] = (
                     dyn_state.dofs.force.grad[i_d, i_b] + dyn_state.dofs.acc_smooth_bw[1, i_d, i_b]
                 )
 
-            # IFT seed for mass_mat.grad. `mass_mat` is stored as lower-tri
-            # (with the upper half implicitly equal by symmetry). For each
-            # lower-tri parameter:
-            #   diagonal (i == j): dL/dM_ii = -force_contrib[i]  *  acc_smooth[i]
-            #   off-diag (i > j):  dL/dM_ij = -(force_contrib[i]  *  acc_smooth[j]
-            #                                  + force_contrib[j]  *  acc_smooth[i])
-            # The off-diagonal sum picks up the chain through both the
-            # (i, j) and (j, i) occurrences of the parameter in the symmetric
-            # matrix.
-            for i_d in range(entity_dof_start, entity_dof_end):
-                fi = dyn_state.dofs.acc_smooth_bw[1, i_d, i_b]
-                ai = dyn_state.dofs.acc_smooth[i_d, i_b]
+            # IFT seed for mass_mat.grad, restricted to each lower-triangular in-block pair (see the docstring).
+            for i_d in range(blocks_dof_start, blocks_dof_end):
+                block_start = rigid_info.dofs_mass_block_start[i_d]
+                force_contrib_i = dyn_state.dofs.acc_smooth_bw[1, i_d, i_b]
+                acc_smooth_i = dyn_state.dofs.acc_smooth[i_d, i_b]
                 rigid_info.mass_mat.grad[i_d, i_d, i_b] = (
-                    rigid_info.mass_mat.grad[i_d, i_d, i_b] - fi * ai
+                    rigid_info.mass_mat.grad[i_d, i_d, i_b] - force_contrib_i * acc_smooth_i
                 )
-                for j_d in range(entity_dof_start, i_d):
-                    fj = dyn_state.dofs.acc_smooth_bw[1, j_d, i_b]
-                    aj = dyn_state.dofs.acc_smooth[j_d, i_b]
+                for j_d in range(block_start, i_d):
+                    force_contrib_j = dyn_state.dofs.acc_smooth_bw[1, j_d, i_b]
+                    acc_smooth_j = dyn_state.dofs.acc_smooth[j_d, i_b]
                     rigid_info.mass_mat.grad[i_d, j_d, i_b] = rigid_info.mass_mat.grad[i_d, j_d, i_b] - (
-                        fi * aj + fj * ai
+                        force_contrib_i * acc_smooth_j + force_contrib_j * acc_smooth_i
                     )
