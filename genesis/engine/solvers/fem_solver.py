@@ -1188,17 +1188,19 @@ class FEMSolver(Solver):
             self.surface[i_global].active = True
 
     @qd.kernel
-    def _kernel_add_vertices(
+    def _kernel_add_cloth(
         self,
         f: qd.i32,
         v_start: qd.i32,
+        s_start: qd.i32,
         verts: qd.types.ndarray(),
+        tri2v: qd.types.ndarray(),
     ):
         """
-        Add vertices to the solver for position tracking only.
+        Add cloth vertices and surface triangles to the solver, for position tracking and coupling only.
 
-        Used for Cloth material entities, whose elements and mass are owned by the IPC coupler: the vertex info
-        holds placeholder values.
+        Cloth elements and mass are owned by the IPC coupler, so the vertex info holds placeholder values and each
+        surface triangle references itself as element.
         """
         n_verts_local = verts.shape[0]
         for i_v, i_b in qd.ndrange(n_verts_local, self._B):
@@ -1212,6 +1214,13 @@ class FEMSolver(Solver):
             self.elements_v_info[i_global].mass = 1.0
             self.elements_v_info[i_global].mass_over_dt2 = 0.0
             self.elements_v_info[i_global].friction_mu = 0.0
+
+        for i_s in range(tri2v.shape[0]):
+            i_global = i_s + s_start
+            for j in qd.static(range(3)):
+                self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
+            self.surface[i_global].tri2el = i_global
+            self.surface[i_global].active = True
 
     @qd.kernel
     def _kernel_set_elements_pos(

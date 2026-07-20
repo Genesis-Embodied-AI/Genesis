@@ -453,10 +453,12 @@ class FEMEntity(Entity):
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
 
         if is_cloth:
-            self._solver._kernel_add_vertices(
+            self._solver._kernel_add_cloth(
                 f=self._sim.cur_substep_local,
                 v_start=self._v_start,
+                s_start=self._s_start,
                 verts=verts_numpy,
+                tri2v=self._surface_tri_np,
             )
         else:
             elems_np = self.elems.astype(gs.np_int, copy=False)
