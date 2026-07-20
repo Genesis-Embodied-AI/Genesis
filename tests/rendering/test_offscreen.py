@@ -768,10 +768,14 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     )
     scene.build()
 
-    # Segmentation count: background(1) + URDF links/entity + duck materials.
-    # Rigid and Kinematic ducks use add_rigid_node (tuple keys at link/geom level),
-    # other ducks use add_static_node (int keys). The URDF has 2 visual links.
+    # Segmentation count: background(1) + URDF links/entity + duck materials. Rigid and Kinematic ducks use
+    # add_rigid_node (tuple keys at link/geom level), other ducks use add_static_node (int keys). The URDF has
+    # 2 visual links. FEM entities use per-visual-geom tuple keys (entity.idx, i_g) only at "geom" level; at "link"
+    # and "entity" levels they fall back to a plain int entity.idx.
     n_rigid_like = sum(isinstance(m, gs.materials.Kinematic) for m, _ in materials)
+    n_fem_geom = (
+        sum(isinstance(m, gs.materials.FEM.Elastic) for m, _ in materials) if segmentation_level == "geom" else 0
+    )
     seg_num = len(materials) + (2 if segmentation_level == "entity" else 3)
     idx_dict = scene.segmentation_idx_dict
     assert len(idx_dict) == seg_num
@@ -779,14 +783,73 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     for seg_key in idx_dict.values():
         if isinstance(seg_key, tuple):
             comp_key += 1
-    # At entity level no tuple keys; at link/geom level: 2 URDF links + rigid-like ducks
-    assert comp_key == (0 if segmentation_level == "entity" else 2 + n_rigid_like)
+    # At entity level no tuple keys; at link level: 2 URDF links + rigid-like ducks; at geom level additionally
+    # one tuple per FEM sub-mesh.
+    assert comp_key == (0 if segmentation_level == "entity" else 2 + n_rigid_like + n_fem_geom)
 
     for i in range(2):
         scene.step()
         _, _, seg, _ = camera.render(rgb=False, depth=False, segmentation=True, colorize_seg=False, normal=False)
         seg = tensor_to_array(seg)
         assert_equal(np.sort(np.unique(seg.flat)), np.arange(0, seg_num))
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
+def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snapshot):
+    CAM_RES = (256, 256)
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            segmentation_level="geom",
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    # The scene has no ground plane: it serves no purpose here, and its out-of-frustum vertices would be
+    # misrasterized by the Apple Software Renderer.
+    fem = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/trashbag_rope.glb",
+            group_by_material=True,
+        ),
+        material=gs.materials.FEM.Cloth(),
+    )
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.6, 0.6, 0.55),
+        lookat=(0.0, 0.0, 0.32),
+        fov=45,
+        GUI=show_viewer,
+        denoise=False,
+    )
+    scene.build()
+
+    # Move the entity after build so rendering exercises the per-sub-mesh vertex update path.
+    fem.set_position([0.0, 0.0, 0.2])
+
+    if renderer_type == RENDERER_TYPE.RAYTRACER:
+        # Relax pixel matching because RayTracer is not deterministic between different hardware
+        # (eg RTX6000 vs H100), even without denoiser.
+        png_snapshot.extension._std_err_threshold = 3.0
+        png_snapshot.extension._blurred_kernel_size = 3
+        # RayTracer only supports the RGB channel; depth, segmentation and normal are rasterizer-only.
+        rgb, *_ = camera.render(rgb=True)
+        assert rgb_array_to_png_bytes(rgb) == png_snapshot
+    else:
+        if scene.visualizer.is_software:
+            # Software renderers add per-pixel sampling jitter on the speckled bag texture and along silhouette
+            # edges; blur it away and relax the threshold so the comparison still catches structural differences.
+            png_snapshot.extension._std_err_threshold = 3.0
+            png_snapshot.extension._blurred_kernel_size = 3
+        rgb, depth, seg, normal = camera.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
+        assert rgb_array_to_png_bytes(rgb) == png_snapshot
+        assert rgb_array_to_png_bytes(as_grayscale_image(tensor_to_array(depth))) == png_snapshot
+        assert rgb_array_to_png_bytes(seg) == png_snapshot
+        assert rgb_array_to_png_bytes(normal) == png_snapshot
 
 
 @pytest.mark.required

@@ -89,18 +89,21 @@ class Base(Material["FEMEntity"]):
     def _pre_compute_noop(self, J, F, i_e, i_b):
         pass
 
+    # The noop dispatch funcs below return a zero material response: they are compiled into the solver kernels for
+    # materials whose physics lives outside the FEM solver (e.g. Cloth is simulated by the IPC coupler), and
+    # quadrants funcs cannot raise.
     @qd.func
     def _update_stress_noop(self, mu, lam, J, F, actu, m_dir):
-        raise NotImplementedError
+        return qd.Matrix.zero(gs.qd_float, 3, 3)
 
     @qd.func
     def _compute_energy_gradient_hessian_noop(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
-        raise NotImplementedError
+        pass
 
     @qd.func
     def _compute_energy_gradient_noop(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
-        raise NotImplementedError
+        pass
 
     @qd.func
     def _compute_energy_noop(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
-        raise NotImplementedError
+        pass

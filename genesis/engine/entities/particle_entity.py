@@ -91,12 +91,10 @@ class ParticleEntity(Entity):
             self._surface = self._vmesh[0].surface
 
         elif isinstance(self._morph, (gs.options.morphs.Primitive, gs.options.morphs.Mesh)):
-            self._vmesh = gs.Mesh.from_morph_surface(self.morph, self.surface)
-            if isinstance(self._vmesh, list):
-                if len(self._vmesh) > 1:
-                    gs.raise_exception("Mesh file with multiple sub-meshes are not supported.")
-                else:
-                    self._vmesh = self._vmesh[0]
+            meshes = gs.Mesh.from_morph_surface(self.morph, self.surface)
+            if len(meshes) > 1:
+                gs.raise_exception("Mesh file with multiple sub-meshes are not supported.")
+            self._vmesh = meshes[0]
             self._surface = self._vmesh.surface
 
         else:

@@ -25,7 +25,7 @@ from .constants import (
 from .font import FontCache
 from .light import DirectionalLight, PointLight, SpotLight
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
-from .shader_program import ShaderProgramCache
+from .shader_program import NormalShaderCache, ShaderProgramCache
 from .utils import format_color_vector
 from .texture import Texture
 
@@ -78,6 +78,7 @@ class Renderer(object):
 
         # Shader Program Cache
         self._program_cache = ShaderProgramCache()
+        self._normal_program_cache = NormalShaderCache()
         self._font_cache = FontCache()
         self._meshes = set()
         self._mesh_textures = set()
@@ -319,6 +320,7 @@ class Renderer(object):
         """Free all allocated OpenGL resources."""
         # Free shaders
         self._program_cache.clear()
+        self._normal_program_cache.clear()
 
         # Free fonts
         self._font_cache.clear()
@@ -849,6 +851,8 @@ class Renderer(object):
         elif flags & RenderFlags.FLAT:
             vertex_shader = "flat.vert"
             fragment_shader = "flat.frag"
+            if primitive.double_sided:
+                defines["DOUBLE_SIDED"] = 1
         elif flags & RenderFlags.SEG:
             vertex_shader = "segmentation.vert"
             fragment_shader = "segmentation.frag"
@@ -1150,4 +1154,5 @@ class Renderer(object):
 
     def reload_program(self):
         self._program_cache.clear()
+        self._normal_program_cache.clear()
         self.jit.program_id.clear()
