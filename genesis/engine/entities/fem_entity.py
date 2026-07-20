@@ -1,6 +1,5 @@
 from functools import wraps
 from pathlib import Path
-from typing import NamedTuple
 
 import igl
 import numpy as np
@@ -16,35 +15,74 @@ from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
+from genesis.repr_base import RBC
 from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
 
 from .base_entity import Entity
 
 
-class FEMVisGeom(NamedTuple):
-    """A visual geom of a FEM entity: a render mesh whose vertices track a subset of the simulated vertices.
+class FEMVisGeom(RBC):
+    """A visual geom of a FEM entity, the deformable counterpart of `RigidVisGeom`.
 
-    'sim_verts_idx' maps each render-mesh vertex to the simulated vertex standing for it; vertices co-located
-    across visual geoms or duplicated by texture seams share a single simulated vertex.
+    It carries the render mesh drawn by the visualizer, decoupled from the simulation mesh, and 'sim_verts_idx',
+    the map from each render-mesh vertex to the simulated vertex standing for it (vertices co-located across visual
+    geoms or duplicated by texture seams share a single simulated vertex).
     """
 
-    vmesh: gs.Mesh
-    sim_verts_idx: np.ndarray
+    def __init__(self, entity, vmesh, sim_verts_idx):
+        self._uid = gs.UID()
+        self._entity = entity
+        self._vmesh = vmesh
+        self._sim_verts_idx = sim_verts_idx
+
+    def get_trimesh(self):
+        """The underlying `trimesh.Trimesh` of the render mesh."""
+        return self._vmesh.trimesh
 
     @property
     def uid(self):
         """Unique ID of the vgeom."""
-        return self.vmesh.uid
+        return self._uid
+
+    @property
+    def entity(self):
+        """The FEM entity the vgeom belongs to."""
+        return self._entity
+
+    @property
+    def vmesh(self):
+        """The render mesh."""
+        return self._vmesh
+
+    @property
+    def sim_verts_idx(self):
+        """Map from render-mesh vertex index to the entity's simulated vertex index."""
+        return self._sim_verts_idx
 
     @property
     def surface(self):
         """Surface object of the vgeom."""
-        return self.vmesh.surface
+        return self._vmesh.surface
 
     @property
     def uvs(self):
         """UV coordinates of the vgeom."""
-        return self.vmesh.uvs
+        return self._vmesh.uvs
+
+    @property
+    def metadata(self):
+        """Metadata of the render mesh."""
+        return self._vmesh.metadata
+
+    @property
+    def n_vverts(self):
+        """Number of render vertices of the vgeom."""
+        return len(self._vmesh.verts)
+
+    @property
+    def n_vfaces(self):
+        """Number of render faces of the vgeom."""
+        return len(self._vmesh.faces)
 
 
 def assert_muscle(method):
@@ -424,7 +462,7 @@ class FEMEntity(Entity):
             [mesh.verts for mesh in meshes], [mesh.faces for mesh in meshes]
         )
         self._vgeoms = gs.List(
-            FEMVisGeom(vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, verts_maps)
+            FEMVisGeom(entity=self, vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, verts_maps)
         )
 
         if isinstance(self.material, gs.materials.FEM.Cloth):
