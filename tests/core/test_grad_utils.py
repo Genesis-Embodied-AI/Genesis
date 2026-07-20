@@ -1,37 +1,8 @@
-"""Unit tests for the `scene.backward(loss)` API.
-
-Within the differentiable-rigid test suite, this is the *plumbing* layer —
-orthogonal to which physics is active. The other files check that the gradient
-is numerically correct; this one checks that the backward *machinery* (state
-snapshot/restore, gradient-tape clearing, no grad leak across chunked horizons)
-is correct.
-
-`scene.backward(loss)` folds the snapshot → backward → restore dance
-(`scene.get_state()` → `loss.backward()` → `scene.reset(snapshot)`) into a single
-call; the flagship test below exercises it directly.
-
-The flagship test, ``test_horizon_truncation_matches_independent_scenes``,
-runs three scenes in parallel:
-
-    Scene A: single scene, 5-step horizon 1 → ``scene.backward(loss1)``
-             (snapshot + backward + restore in one call) → 5-step horizon 2
-             → ``scene.backward(loss2)``. Yields ``grad1_A`` and ``grad2_A``.
-    Scene B: same as A's horizon 1 only; ``scene.backward`` returns the
-             captured mid-trajectory snapshot. Yields ``grad1_B`` (compared
-             to ``grad1_A``) and that snapshot.
-    Scene C: fresh scene, starts from B's snapshot, runs 5-step horizon 2 →
-             ``scene.backward(loss2)``. Yields ``grad2_C`` (compared to ``grad2_A``).
-
-If `scene.backward(loss)` correctly (a) restores physics state, (b) clears
-the gradient tape, and (c) doesn't leak grad accumulation across horizons,
-then ``grad1_A == grad1_B`` and ``grad2_A == grad2_C`` exactly.
-"""
-
 import numpy as np
 import pytest
 
 import genesis as gs
-from genesis.utils.misc import qd_to_torch
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from ..utils import assert_allclose
 
@@ -41,162 +12,149 @@ pytestmark = [
 ]
 
 
-# Parametrization params (mirrors `test_grad_fd.py`).
-_PRECISION_PARAMS = [
-    pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
-    pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
-]
+@pytest.fixture
+def build_scene(show_viewer):
+    def build(model_xml, n_envs=0, substeps=1):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(
+                dt=0.01,
+                substeps=substeps,
+                gravity=(0.0, 0.0, 0.0),
+                requires_grad=True,
+            ),
+            rigid_options=gs.options.RigidOptions(
+                enable_collision=False,
+                enable_self_collision=False,
+                enable_joint_limit=False,
+                disable_constraint=True,
+                use_hibernation=False,
+                use_contact_island=False,
+            ),
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(1.5, -1.5, 1.0),
+                camera_lookat=(0.0, 0.0, 0.0),
+            ),
+            show_viewer=show_viewer,
+        )
+        robot = scene.add_entity(
+            gs.morphs.MJCF(
+                file=model_xml,
+            ),
+        )
+        scene.build(n_envs=n_envs)
+        return scene, robot
 
-_N_ENVS_PARAMS = [
-    pytest.param(0, id="single"),
-    pytest.param(4, id="batched"),
-]
-
-_TOL = {
-    "64": dict(atol=1e-12, rtol=1e-10),
-    "32": dict(atol=1e-5, rtol=1e-4),
-}
-
-
-# J1~J5 joint topologies, loaded from the shared `xml/grad/` MJCF assets.
-_TOPOLOGIES = [
-    pytest.param("free", 6, id="J1_free"),
-    pytest.param("revolute", 1, id="J2_revolute"),
-    pytest.param("prismatic", 1, id="J3_prismatic"),
-    pytest.param("free_with_revolute", 7, id="J4_free_rev"),
-    pytest.param("revolute_chain3", 3, id="J5_chain3"),
-]
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_scene(model_name: str, n_envs: int = 0, substeps: int = 1):
-    """Build a diff-rigid scene with the standard "no collision / no constraint" config."""
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-            substeps=substeps,
-            gravity=(0.0, 0.0, 0.0),
-            requires_grad=True,
-        ),
-        rigid_options=gs.options.RigidOptions(
-            enable_collision=False,
-            enable_self_collision=False,
-            enable_joint_limit=False,
-            disable_constraint=True,
-            use_hibernation=False,
-            use_contact_island=False,
-        ),
-        show_viewer=False,
-    )
-    robot = scene.add_entity(gs.morphs.MJCF(file=f"xml/grad/{model_name}.xml"))
-    scene.build(n_envs=n_envs)
-    return scene, robot
+    return build
 
 
-def _make_velocity(n_envs: int, n_dofs: int, seed: int) -> np.ndarray:
-    """Per-env-distinct velocity vector. Single env: shape (n_dofs,). Batched: (n_envs, n_dofs)."""
-    rng = np.random.default_rng(seed)
-    if n_envs == 0:
-        return rng.standard_normal(n_dofs)
-    return rng.standard_normal((n_envs, n_dofs))
+@pytest.fixture
+def run_segment():
+    # The loss reads qpos through scene.get_state(), so it is a gs.Tensor wired to the scene gradient tape and its
+    # backward triggers the scene backward unroll.
+    def run(scene, robot, velocity, n_steps):
+        robot.set_dofs_velocity(velocity)
+        for _ in range(n_steps):
+            scene.step()
+        state = scene.get_state()
+        rigid_state = state.solvers_state[scene.solvers.index(scene.rigid_solver)]
+        return (rigid_state.qpos**2).sum()
+
+    return run
 
 
-def _rigid_qpos_loss(scene):
-    """Differentiable scalar loss = sum((qpos)**2). Reads `state.qpos` via
-    `scene.get_state()` so the resulting tensor is a gs.Tensor whose
-    `.backward()` triggers `scene._backward()`."""
-    state = scene.get_state()
-    rigid_state = state.solvers_state[scene.solvers.index(scene.rigid_solver)]
-    return (rigid_state.qpos**2).sum()
+@pytest.fixture
+def read_qpos():
+    def read(scene):
+        return qd_to_numpy(scene.rigid_solver.rigid_info.qpos, copy=True)
 
-
-def _run_segment(scene, robot, v_tensor, n_steps: int):
-    """Apply `set_dofs_velocity(v_tensor)` once, then step `n_steps` times.
-    Returns the resulting (post-step) scalar loss."""
-    robot.set_dofs_velocity(v_tensor)
-    for _ in range(n_steps):
-        scene.step()
-    return _rigid_qpos_loss(scene)
-
-
-def _read_qpos(scene) -> np.ndarray:
-    """Read the simulator's current qpos field (detached)."""
-    solver = scene.rigid_solver
-    return qd_to_torch(solver._rigid_global_info.qpos, copy=True).cpu().numpy()
+    return read
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision_str", _PRECISION_PARAMS)
+@pytest.mark.parametrize(
+    "precision_str",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
 @pytest.mark.parametrize("substeps", [1, 4])
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("model_name, n_dofs", _TOPOLOGIES)
-def test_horizon_truncation_matches_independent_scenes(model_name, n_dofs, n_envs, substeps, precision_str):
-    """Two-segment trajectory in Scene A matches the same two
-    segments run in independent Scene B (horizon 1) and Scene C (horizon 2,
-    started from B's mid-trajectory snapshot via `scene.reset(state)`).
-
-    Verifies that `scene.get_state()` + `scene.reset(state)` correctly
-    isolates two consecutive horizons: physics state propagates seamlessly,
-    but the autograd tapes are independent."""
-    tol = _TOL[precision_str]
-    rng_v1 = _make_velocity(n_envs, n_dofs, seed=101)
-    rng_v2 = _make_velocity(n_envs, n_dofs, seed=202)
-    H = 5
+@pytest.mark.parametrize(
+    "n_envs",
+    [
+        pytest.param(0, id="single"),
+        pytest.param(2, id="batched"),
+    ],
+)
+@pytest.mark.parametrize(
+    "model_fixture, n_dofs",
+    [
+        pytest.param("grad_free", 6, id="J1_free"),
+        pytest.param("grad_revolute", 1, id="J2_revolute"),
+        pytest.param("grad_prismatic", 1, id="J3_prismatic"),
+        pytest.param("grad_free_with_revolute", 7, id="J4_free_rev"),
+        pytest.param("grad_revolute_chain3", 3, id="J5_chain3"),
+    ],
+)
+def test_horizon_truncation_matches_independent_scenes(
+    model_fixture, n_dofs, n_envs, substeps, precision_str, build_scene, run_segment, read_qpos, request
+):
+    tol = dict(atol=1e-12, rtol=1e-10) if precision_str == "64" else dict(atol=1e-5, rtol=1e-4)
+    model_xml = request.getfixturevalue(model_fixture)
+    # Per-env-distinct velocity vectors. Single env: shape (n_dofs,). Batched: (n_envs, n_dofs).
+    shape = (n_dofs,) if n_envs == 0 else (n_envs, n_dofs)
+    v1_np = np.random.default_rng(seed=101).standard_normal(shape)
+    v2_np = np.random.default_rng(seed=202).standard_normal(shape)
+    horizon = 5
 
     # ----- Scene A: one scene, snapshot+reset between two horizons -----
-    sceneA, robotA = _build_scene(model_name, n_envs=n_envs, substeps=substeps)
+    sceneA, robotA = build_scene(model_xml, n_envs=n_envs, substeps=substeps)
     sceneA.reset()
-    v1A = gs.tensor(rng_v1, dtype=gs.tc_float, requires_grad=True)
-    loss_h1_A = _run_segment(sceneA, robotA, v1A, H)
-    qpos_mid_A = _read_qpos(sceneA)
-    # `scene.backward` snapshots the terminal state, runs the backward unroll,
-    # and restores that state — so horizon 2 continues seamlessly from here.
+    v1A = gs.tensor(v1_np, dtype=gs.tc_float, requires_grad=True)
+    loss_h1_A = run_segment(sceneA, robotA, v1A, horizon)
+    qpos_mid_A = read_qpos(sceneA)
+    # scene.backward snapshots the terminal state, runs the backward unroll, and restores that state, so horizon 2
+    # continues seamlessly from here.
     sceneA.backward(loss_h1_A)
-    # backward consumes the adstack / input buffer, so the step & substep
-    # counters reset to 0 (they index that buffer) — unlike the physics state,
-    # which is restored. Horizon 2 below thus records a fresh tape from 0.
+    # backward consumes the adstack / input buffer, so the step and substep counters reset to 0 (they index that
+    # buffer) while the restored physics state carries over. Horizon 2 below thus records a fresh tape from 0.
     assert sceneA._t == 0 and sceneA._sim._cur_substep_global == 0
-    grad1_A = v1A.grad.detach().clone().cpu().numpy()
+    grad1_A = tensor_to_array(v1A.grad).copy()
 
-    v2A = gs.tensor(rng_v2, dtype=gs.tc_float, requires_grad=True)
-    loss_h2_A = _run_segment(sceneA, robotA, v2A, H)
-    qpos_end_A = _read_qpos(sceneA)
+    v2A = gs.tensor(v2_np, dtype=gs.tc_float, requires_grad=True)
+    loss_h2_A = run_segment(sceneA, robotA, v2A, horizon)
+    qpos_end_A = read_qpos(sceneA)
     sceneA.backward(loss_h2_A)
-    grad2_A = v2A.grad.detach().clone().cpu().numpy()
+    grad2_A = tensor_to_array(v2A.grad).copy()
 
     # ----- Scene B: same horizon 1 only -----
-    sceneB, robotB = _build_scene(model_name, n_envs=n_envs, substeps=substeps)
+    sceneB, robotB = build_scene(model_xml, n_envs=n_envs, substeps=substeps)
     sceneB.reset()
-    v1B = gs.tensor(rng_v1, dtype=gs.tc_float, requires_grad=True)
-    loss_h1_B = _run_segment(sceneB, robotB, v1B, H)
-    qpos_mid_B = _read_qpos(sceneB)
-    # `scene.backward` returns the terminal snapshot it captured; Scene C below
-    # loads it into a fresh scene via `reset(snapshot_B)`.
+    v1B = gs.tensor(v1_np, dtype=gs.tc_float, requires_grad=True)
+    loss_h1_B = run_segment(sceneB, robotB, v1B, horizon)
+    qpos_mid_B = read_qpos(sceneB)
+    # scene.backward returns the terminal snapshot it captured; Scene C below starts a fresh scene from it.
     snapshot_B = sceneB.backward(loss_h1_B)
-    grad1_B = v1B.grad.detach().clone().cpu().numpy()
+    grad1_B = tensor_to_array(v1B.grad).copy()
 
     # Sanity: A and B end at the same intermediate state and produce the same loss.
     assert_allclose(qpos_mid_A, qpos_mid_B, atol=0, rtol=0)
-    assert_allclose(loss_h1_A.detach().cpu().item(), loss_h1_B.detach().cpu().item(), atol=0, rtol=0)
+    assert_allclose(float(tensor_to_array(loss_h1_A)), float(tensor_to_array(loss_h1_B)), atol=0, rtol=0)
     # Core assertion: horizon-1 gradient identical.
     assert_allclose(grad1_A, grad1_B, **tol)
 
     # ----- Scene C: fresh scene, start from B's mid-trajectory snapshot -----
-    sceneC, robotC = _build_scene(model_name, n_envs=n_envs, substeps=substeps)
+    sceneC, robotC = build_scene(model_xml, n_envs=n_envs, substeps=substeps)
     sceneC.reset(snapshot_B)
-    v2C = gs.tensor(rng_v2, dtype=gs.tc_float, requires_grad=True)
-    loss_h2_C = _run_segment(sceneC, robotC, v2C, H)
-    qpos_end_C = _read_qpos(sceneC)
+    v2C = gs.tensor(v2_np, dtype=gs.tc_float, requires_grad=True)
+    loss_h2_C = run_segment(sceneC, robotC, v2C, horizon)
+    qpos_end_C = read_qpos(sceneC)
     sceneC.backward(loss_h2_C)
-    grad2_C = v2C.grad.detach().clone().cpu().numpy()
+    grad2_C = tensor_to_array(v2C.grad).copy()
 
     # Sanity: A and C end at the same final state and produce the same loss.
     assert_allclose(qpos_end_A, qpos_end_C, atol=0, rtol=0)
-    assert_allclose(loss_h2_A.detach().cpu().item(), loss_h2_C.detach().cpu().item(), atol=0, rtol=0)
+    assert_allclose(float(tensor_to_array(loss_h2_A)), float(tensor_to_array(loss_h2_C)), atol=0, rtol=0)
     # Core assertion: horizon-2 gradient identical.
     assert_allclose(grad2_A, grad2_C, **tol)

@@ -1,21 +1,5 @@
-"""FD-vs-analytical gradient checks for the differentiable rigid solver.
-
-This is the *correctness* layer of the grad test suite: every test compares the
-diff-mode analytical gradient against central finite differences. It is split
-into three sections, innermost backward layer first:
-
-  1. Forward-kinematics  (constraints OFF): the unconstrained FK + velocity
-     gradient, per joint topology — the base local-gradient bar.
-  2. Joint-limit         (enable_joint_limit=True): the joint-limit inequality
-     constraint reverse, plus forward enforcement.
-  3. Contact             (enable_collision=True): the collision constraint +
-     diff-GJK narrow-phase reverse (box-box and plane-convex).
-
-Each section keeps its OWN scene builder — the FK builder disables all
-constraints, while the joint-limit / contact builders turn the relevant
-constraint on — so the configs never bleed across sections.
-"""
-
+# FD-vs-analytical gradient checks for the differentiable rigid solver, in three sections: forward kinematics
+# (constraints off), joint limit, and contact, each with its own scene builder so configs never bleed across.
 import math
 
 import numpy as np
@@ -35,32 +19,15 @@ pytestmark = [
 ]
 
 
-# Per-precision FD tolerance. fp32 is intentionally looser.
-# The "quat" kind covers outputs that go through a non-linear pose composition
-# (set_dofs_velocity → state.quat) where Genesis autograd is currently a ~1%
-# noisier than FD.
-_TOL = {
-    ("64", "default"): dict(rtol=1e-4, atol=1e-6, eps=1e-5),
-    ("64", "quat"): dict(rtol=2e-2, atol=1e-3, eps=1e-5),
-    ("32", "default"): dict(rtol=2e-2, atol=2e-3, eps=1e-3),
-    ("32", "quat"): dict(rtol=5e-2, atol=5e-3, eps=1e-3),
-}
-
-
-_PRECISION_PARAMS = [
-    pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
-    pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
-]
-
-_N_ENVS_PARAMS = [
-    pytest.param(0, id="single"),
-    pytest.param(4, id="batched"),
-]
-
-_SUBSTEPS_PARAMS = [
-    pytest.param(1, id="ss1"),
-    pytest.param(4, id="ss4"),
-]
+def _fd_tol(precision, kind):
+    # Per-precision FD tolerance, looser at fp32. The "quat" kind covers outputs that go through a nonlinear pose
+    # composition (set_dofs_velocity -> state.quat) where the analytical gradient sits ~1% away from central FD.
+    return {
+        ("64", "default"): dict(rtol=1e-4, atol=1e-6, eps=1e-5),
+        ("64", "quat"): dict(rtol=2e-2, atol=1e-3, eps=1e-5),
+        ("32", "default"): dict(rtol=2e-2, atol=2e-3, eps=1e-3),
+        ("32", "quat"): dict(rtol=5e-2, atol=5e-3, eps=1e-3),
+    }[precision, kind]
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +35,7 @@ _SUBSTEPS_PARAMS = [
 # ---------------------------------------------------------------------------
 
 
-def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0, substeps: int = 1):
+def _build_scene(mjcf: str, *, requires_grad: bool, n_envs: int = 0, substeps: int = 1, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -84,48 +51,44 @@ def _build_scene(mjcf_path: str, *, requires_grad: bool, n_envs: int = 0, subste
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=n_envs)
     return scene, robot
 
 
-def _make_scene_pair(mjcf_file: str, n_envs: int = 0, substeps: int = 1):
-    """Build two parallel scenes from the same MJCF:
-
-      * `scene_ana` runs the differentiable-mode forward and is the only one we
-        ever call `loss.backward()` on. Once a backward has run, that scene's
-        internal target-replay state is left in a configuration that silently
-        ignores subsequent setters — so reusing it for FD probes would give
-        loss_p == loss_m and a fake zero gradient.
-      * `scene_fd` runs the production forward (`requires_grad=False`) and is
-        what FD perturbs. By construction it never sees a backward, so each
-        reset → set → step cycle is clean.
-
-    FD therefore checks "does the diff-mode analytical gradient match the
-    production forward's local sensitivity". With `n_envs > 0` both scenes
-    run in batched mode so we can verify that per-env adjoints are
-    independently correct.
-    """
-    scene_ana, robot_ana = _build_scene(mjcf_file, requires_grad=True, n_envs=n_envs, substeps=substeps)
-    scene_fd, robot_fd = _build_scene(mjcf_file, requires_grad=False, n_envs=n_envs, substeps=substeps)
-    return scene_ana, robot_ana, scene_fd, robot_fd, mjcf_file
+def _make_scene_pair(mjcf: str, n_envs: int = 0, substeps: int = 1, show_viewer: bool = False):
+    # scene_ana runs the differentiable-mode forward and is the only one loss.backward() ever runs on: a backward
+    # leaves the scene's target-replay state silently ignoring subsequent setters, so FD-probing it would return a
+    # fake zero gradient. scene_fd runs the production forward and is what FD perturbs, so each reset -> set -> step
+    # cycle stays clean. FD therefore checks the diff-mode analytical gradient against the production forward's
+    # local sensitivity, per env when n_envs > 0.
+    # The Metal reverse-mode adstack is undersized for the integrator's joint-type branch and corrupts batched
+    # gradients (lane 0 replicated across envs); CPU and CUDA are correct. See
+    # https://github.com/Genesis-Embodied-AI/quadrants/issues/791.
+    if gs.backend == gs.metal and n_envs > 0:
+        pytest.skip("Batched reverse-mode kernels are broken on Metal (quadrants#791).")
+    scene_ana, robot_ana = _build_scene(
+        mjcf, requires_grad=True, n_envs=n_envs, substeps=substeps, show_viewer=show_viewer
+    )
+    scene_fd, robot_fd = _build_scene(mjcf, requires_grad=False, n_envs=n_envs, substeps=substeps)
+    return scene_ana, robot_ana, scene_fd, robot_fd, mjcf
 
 
 def _batch_size(scene) -> int:
-    """Effective batch dimension. scene.n_envs == 0 still allocates B=1 internally."""
     return scene.n_envs if scene.n_envs > 0 else 1
 
 
 def _input_shape(base_shape, n_envs):
-    """Setter inputs are unbatched when n_envs==0; batched (n_envs, *base) otherwise."""
     return (n_envs,) + tuple(base_shape) if n_envs > 0 else tuple(base_shape)
 
 
 def _solver_state(scene):
-    """Return the rigid solver's RigidSolverState (grad-aware; provides
-    links_pos / links_quat for every link in the entity)."""
     state = scene.get_state()
     return state.solvers_state[scene.solvers.index(scene.rigid_solver)]
 
@@ -144,18 +107,9 @@ def _grad_matches_fd(
     atol: float = 1e-6,
     eps: float = 1e-5,
 ):
-    # NOTE on tolerances: the production-mode and diff-mode forward kernels were
-    # verified to produce bit-identical state.pos/state.quat for the same input
-    # (probe_optionB.py, 2026-05-03), so an FD probed on the no-grad scene
-    # is a valid reference for the diff scene's analytical gradient.
-    #
-    # Most input/output pairs hit rtol=1e-4 trivially. The set_dofs_velocity →
-    # state.quat path is the outlier: it carries a known ~1% systematic drift
-    # between Genesis autograd and central FD (output magnitude is ~1e-2, so
-    # the absolute mismatch sits at ~1e-4 — well above truncation/roundoff
-    # at fp64). Tracked as a separate followup; for those cases callers should
-    # pass a looser `rtol` (e.g. 2e-2) rather than tightening this default.
-    base_np = np.asarray(init_input, dtype=np.float64).copy()
+    # The production-mode and diff-mode forward kernels produce bit-identical states for the same input, so an FD
+    # probed on the no-grad scene is a valid reference for the diff scene's analytical gradient.
+    base_np = np.array(init_input, dtype=np.float64)
 
     # --- analytical (diff-mode scene) ---
     x_ana = gs.tensor(base_np, dtype=gs.tc_float, requires_grad=True)
@@ -163,10 +117,10 @@ def _grad_matches_fd(
     apply_fn(robot_ana, x_ana)
     scene_ana.step()
     loss = loss_fn(scene_ana, robot_ana)
-    assert loss.requires_grad, f"[{label}] loss does not require grad — output is not grad-aware"
+    assert loss.requires_grad, f"[{label}] loss does not require grad - output is not grad-aware"
     loss.backward()
     assert x_ana.grad is not None, f"[{label}] x.grad is None after backward"
-    ana_grad = x_ana.grad.detach().cpu().numpy().copy()
+    ana_grad = tensor_to_array(x_ana.grad)
 
     # --- central FD (production-mode scene) ---
     n = base_np.size
@@ -177,14 +131,14 @@ def _grad_matches_fd(
         scene_fd.reset()
         apply_fn(robot_fd, gs.tensor(plus, dtype=gs.tc_float))
         scene_fd.step()
-        loss_p = float(loss_fn(scene_fd, robot_fd).detach().cpu())
+        loss_p = float(loss_fn(scene_fd, robot_fd))
 
         minus = base_np.copy()
         minus.reshape(-1)[i] = base_np.reshape(-1)[i] - eps
         scene_fd.reset()
         apply_fn(robot_fd, gs.tensor(minus, dtype=gs.tc_float))
         scene_fd.step()
-        loss_m = float(loss_fn(scene_fd, robot_fd).detach().cpu())
+        loss_m = float(loss_fn(scene_fd, robot_fd))
 
         fd_grad.reshape(-1)[i] = (loss_p - loss_m) / (2.0 * eps)
 
@@ -202,7 +156,7 @@ def _grad_matches_fd_multistep(
     robot_ana,
     scene_fd,
     robot_fd,
-    init_inputs,  # list[np.ndarray] — one input per timestep, each shape matches the setter's expectation
+    init_inputs,  # list[np.ndarray] - one input per timestep, each shape matches the setter's expectation
     apply_fn,  # callable(robot, x): apply x via a @tracked setter
     loss_fn,  # callable(scene, robot) -> scalar tensor
     *,
@@ -211,21 +165,12 @@ def _grad_matches_fd_multistep(
     atol: float = 1e-6,
     eps: float = 1e-5,
 ):
-    """Multi-step variant of `_grad_matches_fd`.
-
-    Forwards `N = len(init_inputs)` simulator steps, applying a different
-    `@tracked`-setter input at each step. After `loss.backward()`, the
-    simulator must produce a correct adjoint for each step's input
-    independently (i.e. `scene._backward()` correctly walks the per-substep
-    `process_input_grad` chain).
-
-    The FD reference perturbs each entry of each step's input separately
-    and re-runs the full N-step trajectory on `scene_fd`. Cost is
-    O(N · sum_inputs_size) forward runs of N steps each; with N=10 and
-    n_dofs ~ 3-7 this is ~600-1400 step calls per topology.
-    """
+    # Multi-step variant of _grad_matches_fd: N = len(init_inputs) steps, one tracked-setter input per step, each of
+    # which must receive an independent adjoint from the backward unroll. The FD reference perturbs each entry of
+    # each step's input separately and re-runs the full N-step trajectory on scene_fd (O(N * sum of input sizes)
+    # forward runs of N steps each).
     N = len(init_inputs)
-    base_np = [np.asarray(inp, dtype=np.float64).copy() for inp in init_inputs]
+    base_np = [np.array(inp, dtype=np.float64) for inp in init_inputs]
 
     # --- analytical (diff-mode scene) ---
     scene_ana.reset()
@@ -236,12 +181,12 @@ def _grad_matches_fd_multistep(
         apply_fn(robot_ana, x)
         scene_ana.step()
     loss = loss_fn(scene_ana, robot_ana)
-    assert loss.requires_grad, f"[{label}] loss does not require grad — output is not grad-aware"
+    assert loss.requires_grad, f"[{label}] loss does not require grad - output is not grad-aware"
     loss.backward()
     ana_grads = []
     for t, x in enumerate(x_anas):
         assert x.grad is not None, f"[{label}] step {t}: x.grad is None after backward"
-        ana_grads.append(x.grad.detach().cpu().numpy().copy())
+        ana_grads.append(tensor_to_array(x.grad))
 
     # --- central FD (production-mode scene): for each (t, i) entry, run the
     # full N-step trajectory twice with the perturbation injected only at
@@ -256,7 +201,7 @@ def _grad_matches_fd_multistep(
                 inp.reshape(-1)[i_perturb] += sign * eps
             apply_fn(robot_fd, gs.tensor(inp, dtype=gs.tc_float))
             scene_fd.step()
-        return float(loss_fn(scene_fd, robot_fd).detach().cpu())
+        return float(loss_fn(scene_fd, robot_fd))
 
     for t in range(N):
         for i in range(base_np[t].size):
@@ -274,7 +219,7 @@ def _grad_matches_fd_multistep(
         )
 
 
-# loss factories — all use sum-of-squared-deviation to a fixed random target so
+# loss factories - all use sum-of-squared-deviation to a fixed random target so
 # every entry of the input has a nontrivial sensitivity. Targets and outputs are
 # both flattened before the subtraction so multi-link shapes (B, n_links, 3|4)
 # don't trip torch broadcasting.
@@ -324,24 +269,27 @@ def _target(shape, seed):
 
 
 # ---------------------------------------------------------------------------
-# Tests — one per joint topology, several (input, output) checks inside.
+# Tests - one per joint topology, several (input, output) checks inside.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
-    """J1: single free body. Covers (n_envs ∈ {0, 4}) × (precision ∈ {fp64, fp32})."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
-        "xml/grad/free.xml", n_envs=n_envs, substeps=substeps
-    )
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps, grad_free):
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(grad_free, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
 
     tgt_pos = _target((B, 3), seed=1)
     tgt_quat = _target((B, 4), seed=2)
@@ -354,7 +302,7 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((3,), n_envs), seed=10),
         apply_fn=lambda r, x: r.set_pos(x),
         loss_fn=_loss_state_pos(tgt_pos),
-        label="J1 set_pos → state.pos",
+        label="J1 set_pos -> state.pos",
         **tol_default,
     )
 
@@ -370,7 +318,7 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
         init_input=init_q,
         apply_fn=lambda r, x: r.set_quat(x),
         loss_fn=_loss_state_quat(tgt_quat),
-        label="J1 set_quat → state.quat",
+        label="J1 set_quat -> state.quat",
         **tol_quat,
     )
 
@@ -382,7 +330,7 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=12),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
-        label="J1 set_dofs_velocity → state.pos (after 1 step)",
+        label="J1 set_dofs_velocity -> state.pos (after 1 step)",
         **tol_default,
     )
 
@@ -394,16 +342,16 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=13),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
-        label="J1 set_dofs_velocity → state.quat (after 1 step)",
+        label="J1 set_dofs_velocity -> state.quat (after 1 step)",
         **tol_quat,
     )
 
-    # fp64 only: d(state.pos)/d(force) ≈ dt^2 / (2 * inertia) ≈ 1e-4 after 1
-    # step. At fp32 with FD eps=1e-3 the loss difference is ~1e-7 — at fp32's
-    # precision floor — and the FD probe disagrees with analytical by ~1e-4
+    # fp64 only: d(state.pos)/d(force) ~ dt^2 / (2 * inertia) ~ 1e-4 after 1
+    # step. At fp32 with FD eps=1e-3 the loss difference is ~1e-7 - at fp32's
+    # precision floor - and the FD probe disagrees with analytical by ~1e-4
     # absolute, well above the fp32 default tol band. The J2/J3/J4/J5 force
     # checks below are also fp64-only for the same reason; J2's
-    # `control_dofs_force → state.quat` does pass at fp32 only because its
+    # `control_dofs_force -> state.quat` does pass at fp32 only because its
     # check uses the wider quat tolerance.
     if precision == "64":
         _grad_matches_fd(
@@ -414,25 +362,28 @@ def test_diff_fk_freejoint(show_viewer, n_envs, precision, substeps):
             init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=14),
             apply_fn=lambda r, x: r.control_dofs_force(x),
             loss_fn=_loss_state_pos(tgt_pos),
-            label="J1 control_dofs_force → state.pos (after 1 step)",
+            label="J1 control_dofs_force -> state.pos (after 1 step)",
             **tol_default,
         )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_revolute(show_viewer, n_envs, precision, substeps):
-    """J2: single revolute joint, fixed base. Covers (n_envs ∈ {0, 4}) × (precision ∈ {fp64, fp32})."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
-        "xml/grad/revolute.xml", n_envs=n_envs, substeps=substeps
-    )
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_revolute(show_viewer, n_envs, precision, substeps, grad_revolute):
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(grad_revolute, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 1
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
 
     tgt_pos = _target((B, 3), seed=21)
     tgt_quat = _target((B, 4), seed=22)
@@ -445,7 +396,7 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=30),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
-        label="J2 set_dofs_velocity → state.pos",
+        label="J2 set_dofs_velocity -> state.pos",
         **tol_default,
     )
 
@@ -457,7 +408,7 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=31),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
-        label="J2 set_dofs_velocity → state.quat",
+        label="J2 set_dofs_velocity -> state.quat",
         **tol_quat,
     )
 
@@ -469,28 +420,28 @@ def test_diff_fk_revolute(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=32),
         apply_fn=lambda r, x: r.control_dofs_force(x),
         loss_fn=_loss_state_quat(tgt_quat),
-        label="J2 control_dofs_force → state.quat",
+        label="J2 control_dofs_force -> state.quat",
         **tol_quat,
     )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_spherical(show_viewer, n_envs, precision, substeps):
-    """J6: single spherical (ball) joint, fixed base. 3 angular DOFs / 4 qpos
-    (quaternion). Exercises the SPHERICAL branch of
-    `kernel_manual_forward_kinematics_bw` — verifies that the `qloc → qpos[0:4]`
-    chain rule matches FD."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
-        "xml/grad/spherical.xml", n_envs=n_envs, substeps=substeps
-    )
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_spherical(show_viewer, n_envs, precision, substeps, grad_spherical):
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(grad_spherical, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 3
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
 
     tgt_pos = _target((B, 3), seed=61)
     tgt_quat = _target((B, 4), seed=62)
@@ -503,7 +454,7 @@ def test_diff_fk_spherical(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=70),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
-        label="J6 set_dofs_velocity → state.pos",
+        label="J6 set_dofs_velocity -> state.pos",
         **tol_default,
     )
 
@@ -515,7 +466,7 @@ def test_diff_fk_spherical(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=71),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_quat(tgt_quat),
-        label="J6 set_dofs_velocity → state.quat",
+        label="J6 set_dofs_velocity -> state.quat",
         **tol_quat,
     )
 
@@ -527,24 +478,27 @@ def test_diff_fk_spherical(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=72),
         apply_fn=lambda r, x: r.control_dofs_force(x),
         loss_fn=_loss_state_quat(tgt_quat),
-        label="J6 control_dofs_force → state.quat",
+        label="J6 control_dofs_force -> state.quat",
         **tol_quat,
     )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_prismatic(show_viewer, n_envs, precision, substeps):
-    """J3: single prismatic joint, fixed base. No rotational DOF — skip the quat output."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
-        "xml/grad/prismatic.xml", n_envs=n_envs, substeps=substeps
-    )
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_prismatic(show_viewer, n_envs, precision, substeps, grad_prismatic):
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(grad_prismatic, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 1
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
+    tol_default = _fd_tol(precision, "default")
     tgt_pos = _target((B, 3), seed=41)
 
     _grad_matches_fd(
@@ -555,11 +509,11 @@ def test_diff_fk_prismatic(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=50),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_state_pos(tgt_pos),
-        label="J3 set_dofs_velocity → state.pos",
+        label="J3 set_dofs_velocity -> state.pos",
         **tol_default,
     )
 
-    # fp64-only — see J1's control_dofs_force comment for why FD-vs-analytical
+    # fp64-only - see J1's control_dofs_force comment for why FD-vs-analytical
     # on force-driven position is at fp32's precision floor.
     if precision == "64":
         _grad_matches_fd(
@@ -570,25 +524,28 @@ def test_diff_fk_prismatic(show_viewer, n_envs, precision, substeps):
             init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=51),
             apply_fn=lambda r, x: r.control_dofs_force(x),
             loss_fn=_loss_state_pos(tgt_pos),
-            label="J3 control_dofs_force → state.pos",
+            label="J3 control_dofs_force -> state.pos",
             **tol_default,
         )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_cartpole(show_viewer, n_envs, precision, substeps):
-    """J7: cartpole (prismatic cart + revolute pole). 2 links / 2 DOFs.
-    Same chain as J4 (multi-link entity with translation + rotation
-    coupling)."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair("xml/cartpole.xml", n_envs=n_envs, substeps=substeps)
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_cartpole(show_viewer, n_envs, precision, substeps, grad_cartpole):
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(grad_cartpole, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 2 (slider + hinge)
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
 
     tgt_links_pos = _target((B, 2, 3), seed=181)
     tgt_links_quat = _target((B, 2, 4), seed=182)
@@ -601,7 +558,7 @@ def test_diff_fk_cartpole(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=190),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J7 set_dofs_velocity → links_pos",
+        label="J7 set_dofs_velocity -> links_pos",
         **tol_default,
     )
 
@@ -613,7 +570,7 @@ def test_diff_fk_cartpole(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=191),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
-        label="J7 set_dofs_velocity → links_quat",
+        label="J7 set_dofs_velocity -> links_quat",
         **tol_quat,
     )
 
@@ -625,25 +582,29 @@ def test_diff_fk_cartpole(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=192),
         apply_fn=lambda r, x: r.control_dofs_force(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J7 control_dofs_force → links_pos",
+        label="J7 control_dofs_force -> links_pos",
         **tol_default,
     )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_hopper(show_viewer, n_envs, precision, substeps):
-    """J8: hopper, built collision-free. 4 links / 6 DOFs (planar floating base
-    rootx+rootz+rooty, then thigh/leg/foot hinges)."""
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair("xml/hopper.xml", n_envs=n_envs, substeps=substeps)
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_hopper(show_viewer, n_envs, precision, substeps, grad_hopper):
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(grad_hopper, n_envs=n_envs, substeps=substeps)
     n_dofs = robot_ana.n_dofs  # = 6 (rootx, rootz, rooty, thigh, leg, foot)
     n_links = robot_ana.n_links  # = 5 (base + torso, thigh, leg, foot)
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
     # Hopper is the largest topology here (5 links, 6 DOFs). At fp32 the batched
     # (n_envs=4) FD probe quantizes the small-sensitivity links_pos/links_quat
     # entries to a ~2e-3 step, leaving a few entries ~6e-3 from the analytical.
@@ -664,7 +625,7 @@ def test_diff_fk_hopper(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=210),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J8 set_dofs_velocity → links_pos",
+        label="J8 set_dofs_velocity -> links_pos",
         **tol_default,
     )
 
@@ -676,11 +637,11 @@ def test_diff_fk_hopper(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=211),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
-        label="J8 set_dofs_velocity → links_quat",
+        label="J8 set_dofs_velocity -> links_quat",
         **tol_quat,
     )
 
-    # fp64-only — see J1's control_dofs_force comment.
+    # fp64-only - see J1's control_dofs_force comment.
     if precision == "64":
         _grad_matches_fd(
             scene_ana,
@@ -690,27 +651,31 @@ def test_diff_fk_hopper(show_viewer, n_envs, precision, substeps):
             init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=212),
             apply_fn=lambda r, x: r.control_dofs_force(x),
             loss_fn=_loss_links_pos(tgt_links_pos),
-            label="J8 control_dofs_force → links_pos",
+            label="J8 control_dofs_force -> links_pos",
             **tol_default,
         )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
-    """J4: freejoint root + one revolute child. Outputs use
-    multi-link solver_state.links_pos/quat so the child link's FK is exercised too."""
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps, grad_free_with_revolute):
     scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
-        "xml/grad/free_with_revolute.xml", n_envs=n_envs, substeps=substeps
+        grad_free_with_revolute, n_envs=n_envs, substeps=substeps
     )
     n_dofs = robot_ana.n_dofs  # 6 free + 1 hinge = 7
     n_links = robot_ana.n_links  # 2
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
     tgt_links_pos = _target((B, n_links, 3), seed=61)
     tgt_links_quat = _target((B, n_links, 4), seed=62)
 
@@ -722,7 +687,7 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((3,), n_envs), seed=70),
         apply_fn=lambda r, x: r.set_pos(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J4 set_pos → links_pos",
+        label="J4 set_pos -> links_pos",
         **tol_default,
     )
 
@@ -738,7 +703,7 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
         init_input=init_q,
         apply_fn=lambda r, x: r.set_quat(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
-        label="J4 set_quat → links_quat",
+        label="J4 set_quat -> links_quat",
         **tol_quat,
     )
 
@@ -750,7 +715,7 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=72),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J4 set_dofs_velocity → links_pos",
+        label="J4 set_dofs_velocity -> links_pos",
         **tol_default,
     )
 
@@ -762,11 +727,11 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=73),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
-        label="J4 set_dofs_velocity → links_quat",
+        label="J4 set_dofs_velocity -> links_quat",
         **tol_quat,
     )
 
-    # fp64-only — see J1's control_dofs_force comment.
+    # fp64-only - see J1's control_dofs_force comment.
     if precision == "64":
         _grad_matches_fd(
             scene_ana,
@@ -776,26 +741,31 @@ def test_diff_fk_free_with_revolute(show_viewer, n_envs, precision, substeps):
             init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=74),
             apply_fn=lambda r, x: r.control_dofs_force(x),
             loss_fn=_loss_links_pos(tgt_links_pos),
-            label="J4 control_dofs_force → links_pos",
+            label="J4 control_dofs_force -> links_pos",
             **tol_default,
         )
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("precision", _PRECISION_PARAMS)
-@pytest.mark.parametrize("n_envs", _N_ENVS_PARAMS)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
-def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision, substeps):
-    """J5: 3-link serial revolute chain, fixed base. Tests deeper FK chain."""
+@pytest.mark.parametrize(
+    "precision",
+    [
+        pytest.param("64", marks=pytest.mark.precision("64"), id="fp64"),
+        pytest.param("32", marks=pytest.mark.precision("32"), id="fp32"),
+    ],
+)
+@pytest.mark.parametrize("n_envs", [pytest.param(0, id="single"), pytest.param(2, id="batched")])
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
+def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision, substeps, grad_revolute_chain3):
     scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
-        "xml/grad/revolute_chain3.xml", n_envs=n_envs, substeps=substeps
+        grad_revolute_chain3, n_envs=n_envs, substeps=substeps
     )
     n_dofs = robot_ana.n_dofs  # 3
     n_links = robot_ana.n_links  # 3
     B = _batch_size(scene_ana)
-    tol_default = _TOL[(precision, "default")]
-    tol_quat = _TOL[(precision, "quat")]
+    tol_default = _fd_tol(precision, "default")
+    tol_quat = _fd_tol(precision, "quat")
     tgt_links_pos = _target((B, n_links, 3), seed=81)
     tgt_links_quat = _target((B, n_links, 4), seed=82)
 
@@ -807,7 +777,7 @@ def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=90),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_pos(tgt_links_pos),
-        label="J5 set_dofs_velocity → links_pos",
+        label="J5 set_dofs_velocity -> links_pos",
         **tol_default,
     )
 
@@ -819,11 +789,11 @@ def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision, substeps):
         init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=91),
         apply_fn=lambda r, x: r.set_dofs_velocity(x),
         loss_fn=_loss_links_quat(tgt_links_quat),
-        label="J5 set_dofs_velocity → links_quat",
+        label="J5 set_dofs_velocity -> links_quat",
         **tol_quat,
     )
 
-    # fp64-only — see J1's control_dofs_force comment.
+    # fp64-only - see J1's control_dofs_force comment.
     if precision == "64":
         _grad_matches_fd(
             scene_ana,
@@ -833,48 +803,40 @@ def test_diff_fk_revolute_chain3(show_viewer, n_envs, precision, substeps):
             init_input=_rand_np(_input_shape((n_dofs,), n_envs), seed=92),
             apply_fn=lambda r, x: r.control_dofs_force(x),
             loss_fn=_loss_links_pos(tgt_links_pos),
-            label="J5 control_dofs_force → links_pos",
+            label="J5 control_dofs_force -> links_pos",
             **tol_default,
         )
 
 
 # ---------------------------------------------------------------------------
-# Multi-step gradient verification — exercises cross-step adjoint propagation.
+# Multi-step gradient verification - exercises cross-step adjoint propagation.
 # ---------------------------------------------------------------------------
-
-
-_MULTISTEP_TOPOLOGIES = [
-    pytest.param("xml/grad/free.xml", "J1 freejoint", 6, _loss_state_pos, (3,), 161, id="J1_free"),
-    pytest.param("xml/grad/revolute.xml", "J2 revolute", 1, _loss_state_pos, (3,), 162, id="J2_revolute"),
-    pytest.param("xml/grad/prismatic.xml", "J3 prismatic", 1, _loss_state_pos, (3,), 163, id="J3_prismatic"),
-    pytest.param(
-        "xml/grad/free_with_revolute.xml", "J4 free+revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev"
-    ),
-    pytest.param("xml/grad/revolute_chain3.xml", "J5 chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3"),
-    pytest.param("xml/grad/spherical.xml", "J6 spherical", 3, _loss_state_pos, (3,), 166, id="J6_spherical"),
-    pytest.param("xml/cartpole.xml", "J7 cartpole", 2, _loss_links_pos, (2, 3), 167, id="J7_cartpole"),
-    pytest.param("xml/hopper.xml", "J8 hopper", 6, _loss_links_pos, (5, 3), 168, id="J8_hopper"),
-]
 
 
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("mjcf_str, name, n_dofs, loss_factory, output_shape, seed", _MULTISTEP_TOPOLOGIES)
-@pytest.mark.parametrize("substeps", _SUBSTEPS_PARAMS)
+@pytest.mark.parametrize(
+    "model_name, n_dofs, loss_factory, output_shape, seed",
+    [
+        pytest.param("grad_free", 6, _loss_state_pos, (3,), 161, id="J1_free"),
+        pytest.param("grad_revolute", 1, _loss_state_pos, (3,), 162, id="J2_revolute"),
+        pytest.param("grad_prismatic", 1, _loss_state_pos, (3,), 163, id="J3_prismatic"),
+        pytest.param("grad_free_with_revolute", 7, _loss_links_pos, (2, 3), 164, id="J4_free_rev"),
+        pytest.param("grad_revolute_chain3", 3, _loss_links_pos, (3, 3), 165, id="J5_chain3"),
+        pytest.param("grad_spherical", 3, _loss_state_pos, (3,), 166, id="J6_spherical"),
+        pytest.param("grad_cartpole", 2, _loss_links_pos, (2, 3), 167, id="J7_cartpole"),
+        pytest.param("grad_hopper", 6, _loss_links_pos, (5, 3), 168, id="J8_hopper"),
+    ],
+)
+@pytest.mark.parametrize("substeps", [pytest.param(1, id="ss1"), pytest.param(4, id="ss4")])
 def test_diff_fk_multistep_control_force(
-    show_viewer, mjcf_str, name, n_dofs, loss_factory, output_shape, seed, substeps
+    show_viewer, request, model_name, n_dofs, loss_factory, output_shape, seed, substeps
 ):
-    """Per-topology check that `control_dofs_force` applied with a *different*
-    input at each of N=10 steps produces per-step gradients that match FD.
-
-    fp64 + single env only: N=10 with batched + fp32 makes the test slow
-    (~30s per topology) and the fp32 + batched ulps-level noise across
-    multiple steps stacks up enough to require relaxed tolerances that
-    obscure real bugs. Single-step tests already cover fp32 + batched
-    against the same setter.
-    """
-    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(mjcf_str, n_envs=0, substeps=substeps)
+    mjcf = request.getfixturevalue(model_name)
+    scene_ana, robot_ana, scene_fd, robot_fd, _ = _make_scene_pair(
+        mjcf, n_envs=0, substeps=substeps, show_viewer=show_viewer
+    )
     B = _batch_size(scene_ana)
     target = _target((B, *output_shape), seed=seed)
 
@@ -890,7 +852,7 @@ def test_diff_fk_multistep_control_force(
         init_inputs=init_inputs,
         apply_fn=lambda r, x: r.control_dofs_force(x),
         loss_fn=loss_factory(target),
-        label=f"{name} control_dofs_force × {N} steps",
+        label=f"{model_name} control_dofs_force x {N} steps",
     )
 
 
@@ -899,7 +861,7 @@ def test_diff_fk_multistep_control_force(
 # ===========================================================================
 
 
-def _build(mjcf_path: str, *, requires_grad: bool, enable_joint_limit: bool):
+def _build(mjcf: str, *, requires_grad: bool, enable_joint_limit: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -915,9 +877,13 @@ def _build(mjcf_path: str, *, requires_grad: bool, enable_joint_limit: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -929,14 +895,11 @@ def _rigid_state(scene):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_joint_limit_forward_enforcement(show_viewer):
-    """With `enable_joint_limit=True` and slider range=[-4,4], pushing the
-    cart at v=100 for 60 steps must keep |x| bounded; with the limit off
-    the cart drifts past 90 m (control case)."""
-    mjcf_path = "xml/grad/slider_limit.xml"
+def test_diff_joint_limit_forward_enforcement(show_viewer, grad_slider_limit):
+    mjcf = grad_slider_limit
 
     # Control: limit OFF
-    scene, robot = _build(mjcf_path, requires_grad=False, enable_joint_limit=False)
+    scene, robot = _build(mjcf, requires_grad=False, enable_joint_limit=False)
     scene.reset()
     robot.set_dofs_velocity(gs.tensor([100.0], dtype=gs.tc_float))
     for _ in range(60):
@@ -944,8 +907,8 @@ def test_diff_joint_limit_forward_enforcement(show_viewer):
     x_off = float(_rigid_state(scene).qpos[0, 0].detach())
     assert abs(x_off) > 50.0, f"control (limit OFF) cart should drift past 50m, got x={x_off}"
 
-    # Limit ON — should stay bounded.
-    scene, robot = _build(mjcf_path, requires_grad=False, enable_joint_limit=True)
+    # Limit ON - should stay bounded.
+    scene, robot = _build(mjcf, requires_grad=False, enable_joint_limit=True)
     scene.reset()
     robot.set_dofs_velocity(gs.tensor([100.0], dtype=gs.tc_float))
     for _ in range(60):
@@ -958,17 +921,13 @@ def test_diff_joint_limit_forward_enforcement(show_viewer):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("init_vel", [0.5, 5.0])
-def test_diff_joint_limit_backward_finite_no_limit_hit(show_viewer, init_vel):
-    """When the rollout stays well inside the joint range, the joint-limit
-    branch should *not* activate (`pos_delta >= 0`), and the gradient should
-    match the no-limit baseline almost byte-exactly. This pins the
-    "limit-on but inactive" path through the constraint solver."""
-    mjcf_path = "xml/grad/slider_limit.xml"
-    N_STEPS = 1  # short — cart doesn't reach limit
+def test_diff_joint_limit_backward_finite_no_limit_hit(show_viewer, init_vel, grad_slider_limit):
+    mjcf = grad_slider_limit
+    N_STEPS = 1  # short - cart doesn't reach limit
 
     grads = {}
     for limit in (False, True):
-        scene, robot = _build(mjcf_path, requires_grad=True, enable_joint_limit=limit)
+        scene, robot = _build(mjcf, requires_grad=True, enable_joint_limit=limit)
         scene.reset()
         v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
         robot.set_dofs_velocity(v)
@@ -981,7 +940,7 @@ def test_diff_joint_limit_backward_finite_no_limit_hit(show_viewer, init_vel):
         assert math.isfinite(g), f"limit={limit}: gradient is not finite ({g})"
         grads[limit] = g
 
-    # Limit-inactive case should match the no-limit baseline tightly — the
+    # Limit-inactive case should match the no-limit baseline tightly - the
     # constraint branch only runs `n_constraints += 0`, so the autograd tape
     # should be identical up to floating-point.
     assert_allclose(grads[True], grads[False], rtol=1e-6, atol=1e-9)
@@ -990,16 +949,13 @@ def test_diff_joint_limit_backward_finite_no_limit_hit(show_viewer, init_vel):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_joint_limit_backward_fd_one_step(show_viewer):
-    """FD vs analytical gradient when the cart starts well inside the limit
-    and takes a single step — verifies the constraint-solver-inclusive
-    forward+backward chain still satisfies central FD."""
-    mjcf_path = "xml/grad/slider_limit.xml"
+def test_diff_joint_limit_backward_fd_one_step(show_viewer, grad_slider_limit):
+    mjcf = grad_slider_limit
     init_vel = 2.0
     eps = 1e-5
 
     # Analytical
-    scene_ana, robot_ana = _build(mjcf_path, requires_grad=True, enable_joint_limit=True)
+    scene_ana, robot_ana = _build(mjcf, requires_grad=True, enable_joint_limit=True)
     scene_ana.reset()
     v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1009,7 +965,7 @@ def test_diff_joint_limit_backward_fd_one_step(show_viewer):
     ana = float(v.grad[0])
 
     # FD
-    scene_fd, robot_fd = _build(mjcf_path, requires_grad=False, enable_joint_limit=True)
+    scene_fd, robot_fd = _build(mjcf, requires_grad=False, enable_joint_limit=True)
 
     def loss_at(val: float) -> float:
         scene_fd.reset()
@@ -1023,42 +979,23 @@ def test_diff_joint_limit_backward_fd_one_step(show_viewer):
 
 
 # (init_vel, n_steps) cases where the cart actually crosses |x|=4 during the
-# rollout. Each case engages the constraint solver during the integration —
-# they cover the `M^{-1} J^T λ` correction path that the unconstrained
+# rollout. Each case engages the constraint solver during the integration -
+# they cover the M^{-1} J^T lambda correction path that the unconstrained
 # `kernel_manual_compute_qacc_bw` could not produce. Resolved 2026-05-25 by
 # wiring `constraint_solver.backward` + `kernel_manual_add_joint_limit_constraints_bw`
 # into `substep_pre_coupling_grad`.
-_FD_ACTIVE_CASES = [
-    (500.0, 1),
-    (200.0, 2),
-    (100.0, 5),
-    (50.0, 10),
-]
 
 
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("init_vel,n_steps", _FD_ACTIVE_CASES)
-def test_diff_joint_limit_backward_fd_active(show_viewer, init_vel, n_steps):
-    """FD vs analytical when the cart actually crosses the joint limit during
-    the rollout. Exercises the constrained backward path
-    (`constraint_solver.backward` + `kernel_manual_add_joint_limit_constraints_bw`)
-    on cases where the unconstrained IFT alone would drop the `M^{-1} J^T λ`
-    correction and disagree with FD (often sign-flipped). Snapshot of the
-    expected gradients (FP64 CPU, FD with eps=1e-4) at fix time:
-
-        init_vel  n_steps  x_final   v.grad
-        500       1        +4.464    +5.51e-2
-        200       2        +4.203    +9.46e-2
-        100       5        +3.892    -1.60e-1
-         50      10        +3.606    -1.16e+0
-    """
-    mjcf_path = "xml/grad/slider_limit.xml"
+@pytest.mark.parametrize("init_vel, n_steps", [(500.0, 1), (200.0, 2), (100.0, 5), (50.0, 10)])
+def test_diff_joint_limit_backward_fd_active(show_viewer, init_vel, n_steps, grad_slider_limit):
+    mjcf = grad_slider_limit
     eps = 1e-4
 
     # Analytical
-    scene_ana, robot_ana = _build(mjcf_path, requires_grad=True, enable_joint_limit=True)
+    scene_ana, robot_ana = _build(mjcf, requires_grad=True, enable_joint_limit=True)
     scene_ana.reset()
     v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1077,7 +1014,7 @@ def test_diff_joint_limit_backward_fd_active(show_viewer, init_vel, n_steps):
     ana = float(v.grad[0])
 
     # FD
-    scene_fd, robot_fd = _build(mjcf_path, requires_grad=False, enable_joint_limit=True)
+    scene_fd, robot_fd = _build(mjcf, requires_grad=False, enable_joint_limit=True)
 
     def loss_at(val: float) -> float:
         scene_fd.reset()
@@ -1100,25 +1037,20 @@ def test_diff_joint_limit_backward_fd_active(show_viewer, init_vel, n_steps):
 # early-horizon steps leaks a wrong gradient when the constrained backward
 # chain (`constraint_solver.backward` + manual joint-limit BW +
 # `fwd_dynamics_without_qacc.grad` accumulation) runs across many substeps.
-_FD_FORCE_CASES = [10]
 
 
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("n_steps", _FD_FORCE_CASES)
-def test_diff_joint_limit_backward_fd_per_step_force(show_viewer, n_steps):
-    """Central-FD vs analytical gradient on a per-step `control_dofs_force`
-    time series that drives the cart into the slider limit during the
-    rollout. Multi-step variant of `test_diff_joint_limit_backward_fd_active`.
-    """
-    mjcf_path = "xml/grad/slider_limit.xml"
+@pytest.mark.parametrize("n_steps", [10])
+def test_diff_joint_limit_backward_fd_per_step_force(show_viewer, n_steps, grad_slider_limit):
+    mjcf = grad_slider_limit
     eps = 1e-2
     force_value = 500.0
     init_force = np.full((n_steps, 1), force_value, dtype=np.float64)
 
     # Analytical
-    scene_ana, robot_ana = _build(mjcf_path, requires_grad=True, enable_joint_limit=True)
+    scene_ana, robot_ana = _build(mjcf, requires_grad=True, enable_joint_limit=True)
     scene_ana.reset()
     forces = [gs.tensor(init_force[t], dtype=gs.tc_float, requires_grad=True) for t in range(n_steps)]
     for t in range(n_steps):
@@ -1139,7 +1071,7 @@ def test_diff_joint_limit_backward_fd_per_step_force(show_viewer, n_steps):
     ana = np.array([float(f.grad[0]) for f in forces])
 
     # FD per-step
-    scene_fd, robot_fd = _build(mjcf_path, requires_grad=False, enable_joint_limit=True)
+    scene_fd, robot_fd = _build(mjcf, requires_grad=False, enable_joint_limit=True)
 
     def loss_at(perturbed: np.ndarray) -> float:
         scene_fd.reset()
@@ -1170,8 +1102,7 @@ def test_diff_joint_limit_backward_fd_per_step_force(show_viewer, n_steps):
         )
 
 
-def _build_cartpole(mjcf_path: str, *, requires_grad: bool):
-    """Build a multi-body cart+pole scene with gravity + slider limit on."""
+def _build_cartpole(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1187,9 +1118,13 @@ def _build_cartpole(mjcf_path: str, *, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1198,20 +1133,10 @@ def _build_cartpole(mjcf_path: str, *, requires_grad: bool):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [15])
-def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_steps):
-    """Multi-body variant of `test_diff_joint_limit_backward_fd_per_step_force`.
-
-    Same per-step `control_dofs_force` setup but on the *cart+pole* MJCF
-    (slider [-4, 4] + free-rotating hinge with gravity). cart DOF is
-    actuated at `force_value`, pole DOF takes 0 force. Loss is `cart_x^2`
-    at the terminal step. Both cart_force.grad AND pole_force.grad are
-    compared to central FD — pole_force.grad is *non-zero* because a
-    hinge torque accelerates the pole, the pole's swing exerts reactive
-    horizontal force on the cart via the hinge, which moves cart_x.
-    """
-    mjcf_path = "xml/cartpole.xml"
+def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_steps, grad_cartpole):
+    mjcf = grad_cartpole
     eps = 1e-2
-    # cart+pole effective mass ≈ 11 (cart 1 + pole 10 horizontal-locked at
+    # cart+pole effective mass ~ 11 (cart 1 + pole 10 horizontal-locked at
     # hanging), so cart force needs to be larger than the cart-only test
     # to reach the limit within `n_steps`.
     force_value = 2000.0
@@ -1224,7 +1149,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_ste
     init_qpos = [0.0, -math.pi]
 
     # Analytical
-    scene_ana, robot_ana = _build_cartpole(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_cartpole(mjcf, requires_grad=True)
     scene_ana.reset()
     robot_ana.set_dofs_position(gs.tensor(init_qpos, dtype=gs.tc_float))
     forces = [gs.tensor(init_force[t], dtype=gs.tc_float, requires_grad=True) for t in range(n_steps)]
@@ -1246,7 +1171,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_ste
     ana_pole = np.array([float(f.grad[1]) for f in forces])
 
     # FD per-step on the cart-force slot only.
-    scene_fd, robot_fd = _build_cartpole(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_cartpole(mjcf, requires_grad=False)
 
     def loss_at(perturbed: np.ndarray) -> float:
         scene_fd.reset()
@@ -1271,7 +1196,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_ste
         minus[t, 1] -= eps
         fd_pole[t] = (loss_at(plus) - loss_at(minus)) / (2 * eps)
 
-    # Cart-force grad — straight chain from action to cart_x.
+    # Cart-force grad - straight chain from action to cart_x.
     for t in range(n_steps):
         assert_allclose(
             ana_cart[t],
@@ -1284,7 +1209,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_ste
                 f"full ana={ana_cart}, fd={fd_cart}"
             ),
         )
-    # Pole-force grad — hinge torque chain: pole_force -> pole_angle ->
+    # Pole-force grad - hinge torque chain: pole_force -> pole_angle ->
     # pole COM horizontal accel -> reactive force on cart via hinge ->
     # cart_x. Non-zero, must still match FD step-by-step.
     for t in range(n_steps):
@@ -1301,13 +1226,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_cartpole(show_viewer, n_ste
         )
 
 
-def _build_hopper(mjcf_path: str, *, requires_grad: bool):
-    """Build the hopper collision-free with joint limits ON and gravity off.
-
-    Collision is off so the joint-limit constraint is the only constraint in
-    play (no foot-ground contact); gravity is off so the base doesn't drift,
-    keeping the rollout focused on driving a leg joint into its range limit.
-    """
+def _build_hopper(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1323,9 +1242,13 @@ def _build_hopper(mjcf_path: str, *, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1334,21 +1257,8 @@ def _build_hopper(mjcf_path: str, *, requires_grad: bool):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [10])
-def test_diff_joint_limit_backward_fd_per_step_force_hopper(show_viewer, n_steps):
-    """Joint-limit backward FD check on the hopper — combines the multi-joint
-    planar base (slide+slide+hinge on the torso) with an *active* joint-limit
-    constraint, both collision-free.
-
-    A constant torque on the foot joint drives it past its `[-0.785, 0.785]`
-    range during the rollout, engaging the joint-limit inequality constraint.
-    The loss is on the foot LINK world position (so the gradient flows through
-    the full FK chain — exercising `kernel_manual_forward_kinematics_bw`'s multi-joint
-    reverse for the base — as well as the constraint backward). Every DOF's
-    per-step `control_dofs_force.grad` is compared to central FD: the foot DOF
-    is the forced + limited one; the other DOFs are reached only through the
-    articulated coupling, so their FD sensitivity is non-trivial too.
-    """
-    mjcf_path = "xml/hopper.xml"
+def test_diff_joint_limit_backward_fd_per_step_force_hopper(show_viewer, n_steps, grad_hopper):
+    mjcf = grad_hopper
     n_dofs = 6  # rootx, rootz, rooty, thigh, leg, foot
     foot_dof = 5
     eps = 1e-2
@@ -1361,7 +1271,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_hopper(show_viewer, n_steps
         return (lp.reshape(-1) ** 2).sum()
 
     # Analytical
-    scene_ana, robot_ana = _build_hopper(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_hopper(mjcf, requires_grad=True)
     scene_ana.reset()
     forces = [gs.tensor(init_force[t], dtype=gs.tc_float, requires_grad=True) for t in range(n_steps)]
     for t in range(n_steps):
@@ -1382,7 +1292,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_hopper(show_viewer, n_steps
     ana = np.array([[float(f.grad[d]) for d in range(n_dofs)] for f in forces])  # (n_steps, n_dofs)
 
     # FD per-step, per-dof
-    scene_fd, robot_fd = _build_hopper(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_hopper(mjcf, requires_grad=False)
 
     def loss_at(perturbed: np.ndarray) -> float:
         scene_fd.reset()
@@ -1419,11 +1329,7 @@ def test_diff_joint_limit_backward_fd_per_step_force_hopper(show_viewer, n_steps
 # ===========================================================================
 
 
-def _build_frictionloss(mjcf_path: str, *, requires_grad: bool):
-    """Frictionloss is activated by `dofs_info.frictionloss > 0` in the model;
-    no flag in `RigidOptions`. The forward emits a row whenever a dof has it,
-    so we just keep the constraint solver enabled (joint-limit off, collision
-    off) and load an MJCF whose joint has `frictionloss`."""
+def _build_frictionloss(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1439,9 +1345,13 @@ def _build_frictionloss(mjcf_path: str, *, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1449,12 +1359,8 @@ def _build_frictionloss(mjcf_path: str, *, requires_grad: bool):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_frictionloss_forward_emits_row(show_viewer):
-    """Sanity: an MJCF dof with `frictionloss="0.5"` actually triggers the
-    forward to emit exactly one frictionloss row. This pins the upstream
-    invariant that the manual reverse seeds its row counter from
-    `n_constraints_frictionloss`."""
-    scene, _robot = _build_frictionloss("xml/grad/revolute_frictionloss.xml", requires_grad=False)
+def test_diff_frictionloss_forward_emits_row(show_viewer, grad_revolute_frictionloss):
+    scene, _robot = _build_frictionloss(grad_revolute_frictionloss, requires_grad=False)
     scene.reset()
     scene.step()
     cs = scene.rigid_solver.constraint_solver.constraint_state
@@ -1466,14 +1372,11 @@ def test_diff_frictionloss_forward_emits_row(show_viewer):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("init_vel", [0.5, 2.0, 5.0])
-def test_diff_frictionloss_backward_fd_one_step(show_viewer, init_vel):
-    """FD vs analytical gradient through `add_frictionloss_constraints`.
-    The constraint solver adds a friction row that damps `vel`; the gradient
-    of `qpos**2` w.r.t. the initial `vel` must match central FD."""
-    mjcf_path = "xml/grad/revolute_frictionloss.xml"
+def test_diff_frictionloss_backward_fd_one_step(show_viewer, init_vel, grad_revolute_frictionloss):
+    mjcf = grad_revolute_frictionloss
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_frictionloss(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_frictionloss(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1482,7 +1385,7 @@ def test_diff_frictionloss_backward_fd_one_step(show_viewer, init_vel):
     loss.backward()
     ana = float(v.grad[0])
 
-    scene_fd, robot_fd = _build_frictionloss(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_frictionloss(mjcf, requires_grad=False)
 
     def loss_at(val: float) -> float:
         scene_fd.reset()
@@ -1499,14 +1402,12 @@ def test_diff_frictionloss_backward_fd_one_step(show_viewer, init_vel):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [1, 4, 10])
-def test_diff_frictionloss_backward_fd_multistep(show_viewer, n_steps):
-    """FD vs analytical over multiple steps — exercises the per-step BPTT
-    chain through the frictionloss constraint row."""
-    mjcf_path = "xml/grad/revolute_frictionloss.xml"
+def test_diff_frictionloss_backward_fd_multistep(show_viewer, n_steps, grad_revolute_frictionloss):
+    mjcf = grad_revolute_frictionloss
     init_vel = 2.0
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_frictionloss(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_frictionloss(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([init_vel], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1516,7 +1417,7 @@ def test_diff_frictionloss_backward_fd_multistep(show_viewer, n_steps):
     loss.backward()
     ana = float(v.grad[0])
 
-    scene_fd, robot_fd = _build_frictionloss(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_frictionloss(mjcf, requires_grad=False)
 
     def loss_at(val: float) -> float:
         scene_fd.reset()
@@ -1535,11 +1436,7 @@ def test_diff_frictionloss_backward_fd_multistep(show_viewer, n_steps):
 # ===========================================================================
 
 
-def _build_equality_joint(mjcf_path: str, *, requires_grad: bool):
-    """Equality constraints (`<equality>` in MJCF) are activated by the loaded
-    model; the constraint solver must be enabled (no other flag in
-    `RigidOptions`). Joint-limit and collision are off so the only constraint
-    row added is the JOINT equality."""
+def _build_equality_joint(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1555,9 +1452,13 @@ def _build_equality_joint(mjcf_path: str, *, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1565,10 +1466,8 @@ def _build_equality_joint(mjcf_path: str, *, requires_grad: bool):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_equality_joint_forward_emits_row(show_viewer):
-    """Sanity: an MJCF with `<equality><joint .../></equality>` emits exactly
-    one JOINT equality row in the forward solver."""
-    scene, _robot = _build_equality_joint("xml/grad/hinge_pair_joint_eq_linear.xml", requires_grad=False)
+def test_diff_equality_joint_forward_emits_row(show_viewer, grad_hinge_pair_joint_eq_linear):
+    scene, _robot = _build_equality_joint(grad_hinge_pair_joint_eq_linear, requires_grad=False)
     scene.reset()
     scene.step()
     cs = scene.rigid_solver.constraint_solver.constraint_state
@@ -1579,21 +1478,12 @@ def test_diff_equality_joint_forward_emits_row(show_viewer):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize(
-    "mjcf_path",
-    [
-        "xml/grad/hinge_pair_joint_eq_linear.xml",
-        "xml/grad/hinge_pair_joint_eq_quadratic.xml",
-    ],
-)
-def test_diff_equality_joint_backward_fd_one_step(show_viewer, mjcf_path):
-    """FD vs analytical gradient through `func_equality_joint`. The constraint
-    solver adds one row coupling two scalar dofs via a polynomial; both the
-    linear (deriv = const) and quadratic (deriv depends on diff) MJCF cases
-    must match central FD."""
+@pytest.mark.parametrize("model_name", ["grad_hinge_pair_joint_eq_linear", "grad_hinge_pair_joint_eq_quadratic"])
+def test_diff_equality_joint_backward_fd_one_step(show_viewer, request, model_name):
+    mjcf = request.getfixturevalue(model_name)
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_equality_joint(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_equality_joint(mjcf, requires_grad=True)
     scene_ana.reset()
     # Two-DOF state. (vel[j1], vel[j2]).
     v = gs.tensor([1.0, -0.5], dtype=gs.tc_float, requires_grad=True)
@@ -1603,9 +1493,9 @@ def test_diff_equality_joint_backward_fd_one_step(show_viewer, mjcf_path):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_equality_joint(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_equality_joint(mjcf, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -1631,13 +1521,11 @@ def test_diff_equality_joint_backward_fd_one_step(show_viewer, mjcf_path):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [1, 4, 10])
-def test_diff_equality_joint_backward_fd_multistep(show_viewer, n_steps):
-    """FD vs analytical for multistep BPTT through the JOINT equality
-    constraint, with quadratic polycoef so the deriv chain is exercised."""
-    mjcf_path = "xml/grad/hinge_pair_joint_eq_quadratic.xml"
+def test_diff_equality_joint_backward_fd_multistep(show_viewer, n_steps, grad_hinge_pair_joint_eq_quadratic):
+    mjcf = grad_hinge_pair_joint_eq_quadratic
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_equality_joint(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_equality_joint(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([0.8, -0.3], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1646,9 +1534,9 @@ def test_diff_equality_joint_backward_fd_multistep(show_viewer, n_steps):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_equality_joint(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_equality_joint(mjcf, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -1676,9 +1564,7 @@ def test_diff_equality_joint_backward_fd_multistep(show_viewer, n_steps):
 # ===========================================================================
 
 
-def _build_equality_connect(mjcf_path: str, *, requires_grad: bool):
-    """Same boilerplate as `_build_equality_joint`; the CONNECT rows are added
-    by the forward whenever the MJCF has `<equality><connect/></equality>`."""
+def _build_equality_connect(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1694,9 +1580,13 @@ def _build_equality_connect(mjcf_path: str, *, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1704,9 +1594,8 @@ def _build_equality_connect(mjcf_path: str, *, requires_grad: bool):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_equality_connect_forward_emits_rows(show_viewer):
-    """Sanity: an MJCF with a CONNECT equality emits exactly 3 equality rows."""
-    scene, _ = _build_equality_connect("xml/grad/connect_loop.xml", requires_grad=False)
+def test_diff_equality_connect_forward_emits_rows(show_viewer, grad_connect_loop):
+    scene, _ = _build_equality_connect(grad_connect_loop, requires_grad=False)
     scene.reset()
     scene.step()
     cs = scene.rigid_solver.constraint_solver.constraint_state
@@ -1717,12 +1606,11 @@ def test_diff_equality_connect_forward_emits_rows(show_viewer):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_equality_connect_backward_fd_one_step(show_viewer):
-    """FD vs analytical gradient through the CONNECT equality reverse."""
-    mjcf_path = "xml/grad/connect_loop.xml"
+def test_diff_equality_connect_backward_fd_one_step(show_viewer, grad_connect_loop):
+    mjcf = grad_connect_loop
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_equality_connect(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_equality_connect(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([1.0, -0.5], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1730,9 +1618,9 @@ def test_diff_equality_connect_backward_fd_one_step(show_viewer):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_equality_connect(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_equality_connect(mjcf, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -1758,12 +1646,11 @@ def test_diff_equality_connect_backward_fd_one_step(show_viewer):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [1, 4, 10])
-def test_diff_equality_connect_backward_fd_multistep(show_viewer, n_steps):
-    """FD vs analytical for multistep BPTT through the CONNECT equality."""
-    mjcf_path = "xml/grad/connect_loop.xml"
+def test_diff_equality_connect_backward_fd_multistep(show_viewer, n_steps, grad_connect_loop):
+    mjcf = grad_connect_loop
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_equality_connect(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_equality_connect(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([0.8, -0.3], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1772,9 +1659,9 @@ def test_diff_equality_connect_backward_fd_multistep(show_viewer, n_steps):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_equality_connect(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_equality_connect(mjcf, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -1802,9 +1689,7 @@ def test_diff_equality_connect_backward_fd_multistep(show_viewer, n_steps):
 # ===========================================================================
 
 
-def _build_equality_weld(mjcf_path: str, *, requires_grad: bool):
-    """Same boilerplate as CONNECT; the WELD forward emits 6 rows whenever
-    the MJCF declares `<equality><weld/></equality>`."""
+def _build_equality_weld(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1820,9 +1705,13 @@ def _build_equality_weld(mjcf_path: str, *, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf_path))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1830,9 +1719,8 @@ def _build_equality_weld(mjcf_path: str, *, requires_grad: bool):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_equality_weld_forward_emits_rows(show_viewer):
-    """Sanity: an MJCF with a WELD equality emits exactly 6 equality rows."""
-    scene, _ = _build_equality_weld("xml/grad/weld_pair.xml", requires_grad=False)
+def test_diff_equality_weld_forward_emits_rows(show_viewer, grad_weld_pair):
+    scene, _ = _build_equality_weld(grad_weld_pair, requires_grad=False)
     scene.reset()
     scene.step()
     cs = scene.rigid_solver.constraint_solver.constraint_state
@@ -1843,12 +1731,11 @@ def test_diff_equality_weld_forward_emits_rows(show_viewer):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_equality_weld_backward_fd_one_step(show_viewer):
-    """FD vs analytical gradient through the WELD equality reverse (6 rows)."""
-    mjcf_path = "xml/grad/weld_pair.xml"
+def test_diff_equality_weld_backward_fd_one_step(show_viewer, grad_weld_pair):
+    mjcf = grad_weld_pair
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_equality_weld(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_equality_weld(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([1.0, -0.5], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1856,9 +1743,9 @@ def test_diff_equality_weld_backward_fd_one_step(show_viewer):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_equality_weld(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_equality_weld(mjcf, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -1884,12 +1771,11 @@ def test_diff_equality_weld_backward_fd_one_step(show_viewer):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [1, 4, 10])
-def test_diff_equality_weld_backward_fd_multistep(show_viewer, n_steps):
-    """FD vs analytical for multistep BPTT through the WELD equality."""
-    mjcf_path = "xml/grad/weld_pair.xml"
+def test_diff_equality_weld_backward_fd_multistep(show_viewer, n_steps, grad_weld_pair):
+    mjcf = grad_weld_pair
     eps = 1e-5
 
-    scene_ana, robot_ana = _build_equality_weld(mjcf_path, requires_grad=True)
+    scene_ana, robot_ana = _build_equality_weld(mjcf, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor([0.8, -0.3], dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -1898,9 +1784,9 @@ def test_diff_equality_weld_backward_fd_multistep(show_viewer, n_steps):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = qpos[0] ** 2 + 0.7 * qpos[1] ** 2
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_equality_weld(mjcf_path, requires_grad=False)
+    scene_fd, robot_fd = _build_equality_weld(mjcf, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -1929,16 +1815,7 @@ def test_diff_equality_weld_backward_fd_multistep(show_viewer, n_steps):
 # ===========================================================================
 
 
-def _build_all_eq_fric(*, requires_grad: bool):
-    """6-body scene wiring every group `kernel_manual_add_equality_constraints_bw`
-    + `kernel_manual_add_frictionloss_constraints_bw` cover:
-        j1 has frictionloss; (j1, j2) coupled by JOINT;
-        arm3 <-> arm4 by CONNECT (3 rows);
-        arm5 <-> arm6 by WELD (6 rows).
-    Disjoint pairs → constraint solver is well-conditioned per pair, so the
-    integration test reflects reverse correctness across all groups
-    simultaneously rather than just stiff-solver behavior.
-    """
+def _build_all_eq_fric(mjcf: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1.0 / 60.0,
@@ -1954,9 +1831,13 @@ def _build_all_eq_fric(*, requires_grad: bool):
             use_hibernation=False,
             use_contact_island=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
-    robot = scene.add_entity(gs.morphs.MJCF(file="xml/grad/all_eq_fric.xml"))
+    robot = scene.add_entity(gs.morphs.MJCF(file=mjcf))
     scene.build(n_envs=0)
     return scene, robot
 
@@ -1964,9 +1845,8 @@ def _build_all_eq_fric(*, requires_grad: bool):
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_diff_all_constraints_forward_row_counts(show_viewer):
-    """Sanity: forward emits 1 frictionloss row + (1 JOINT + 3 CONNECT + 6 WELD) = 10 equality rows."""
-    scene, _ = _build_all_eq_fric(requires_grad=False)
+def test_diff_all_constraints_forward_row_counts(show_viewer, grad_all_eq_fric):
+    scene, _ = _build_all_eq_fric(grad_all_eq_fric, requires_grad=False)
     scene.reset()
     scene.step()
     cs = scene.rigid_solver.constraint_solver.constraint_state
@@ -1980,10 +1860,7 @@ def test_diff_all_constraints_forward_row_counts(show_viewer):
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("n_steps", [1, 4, 10])
-def test_diff_all_constraints_backward_fd(show_viewer, n_steps):
-    """FD vs analytical with all four differentiated groups co-active. Verifies
-    that the row-offset bookkeeping across `equality (JOINT+CONNECT+WELD) →
-    frictionloss` is correct end-to-end."""
+def test_diff_all_constraints_backward_fd(show_viewer, n_steps, grad_all_eq_fric):
     eps = 1e-5
     n_dofs = 6
     init = np.array([0.8, -0.3, 0.5, -0.2, 0.4, -0.6], dtype=np.float64)
@@ -1996,7 +1873,7 @@ def test_diff_all_constraints_backward_fd(show_viewer, n_steps):
             out = out + weights[d] * qp[d] ** 2
         return out
 
-    scene_ana, robot_ana = _build_all_eq_fric(requires_grad=True)
+    scene_ana, robot_ana = _build_all_eq_fric(grad_all_eq_fric, requires_grad=True)
     scene_ana.reset()
     v = gs.tensor(init, dtype=gs.tc_float, requires_grad=True)
     robot_ana.set_dofs_velocity(v)
@@ -2005,9 +1882,9 @@ def test_diff_all_constraints_backward_fd(show_viewer, n_steps):
     qpos = _rigid_state(scene_ana).qpos[0]
     loss = loss_from_qpos(qpos)
     loss.backward()
-    ana = v.grad.detach().cpu().numpy().copy()
+    ana = tensor_to_array(v.grad)
 
-    scene_fd, robot_fd = _build_all_eq_fric(requires_grad=False)
+    scene_fd, robot_fd = _build_all_eq_fric(grad_all_eq_fric, requires_grad=False)
 
     def loss_at(val_array) -> float:
         scene_fd.reset()
@@ -2039,7 +1916,7 @@ def test_diff_all_constraints_backward_fd(show_viewer, n_steps):
 # ===========================================================================
 
 
-def _build_box_box(*, requires_grad: bool):
+def _build_box_box(*, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -2056,7 +1933,11 @@ def _build_box_box(*, requires_grad: bool):
             use_contact_island=False,
             box_box_detection=False,  # general convex-convex GJK (differentiable) path
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Box(size=(2.0, 2.0, 0.2), pos=(0.0, 0.0, 0.1), fixed=True))
     box = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.4)))
@@ -2064,7 +1945,7 @@ def _build_box_box(*, requires_grad: bool):
     return scene, box
 
 
-def _build_plane_convex(shape: str, *, requires_grad: bool):
+def _build_plane_convex(mjcf_capsule: str, shape: str, *, requires_grad: bool, show_viewer: bool = False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -2081,7 +1962,11 @@ def _build_plane_convex(shape: str, *, requires_grad: bool):
             use_contact_island=False,
             box_box_detection=False,
         ),
-        show_viewer=False,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
+        ),
+        show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
     if shape == "box":
@@ -2089,7 +1974,7 @@ def _build_plane_convex(shape: str, *, requires_grad: bool):
     elif shape == "sphere":
         obj = scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.3)))
     elif shape == "capsule":
-        obj = scene.add_entity(gs.morphs.MJCF(file="xml/grad/capsule.xml", align=False))
+        obj = scene.add_entity(gs.morphs.MJCF(file=mjcf_capsule, align=False))
     else:
         raise ValueError(shape)
     scene.build(n_envs=0)
@@ -2097,7 +1982,7 @@ def _build_plane_convex(shape: str, *, requires_grad: bool):
 
 
 def _n_contacts(scene) -> int:
-    return int(scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0])
+    return int(qd_to_numpy(scene.rigid_solver.collider._collider_state.n_contacts)[0])
 
 
 def _settle(scene, obj, n_settle: int):
@@ -2108,18 +1993,6 @@ def _settle(scene, obj, n_settle: int):
 
 
 def _run_fd_per_step_force(build_fn, rest_dofs, *, base_force, n_settle, n_steps, fd_dofs, eps, rtol, atol):
-    """Analytical-vs-central-FD driver for a free convex pressed into a fixed
-    collider by a per-step downward force.
-
-    The force is purely downward/centered: a lateral or torque component would
-    tip the body and change the contact manifold (breaking contact-pair
-    preservation), so only the load-bearing z DOF is FD-checked. Its gradient
-    still runs through contact_pos / normal / penetration inside the constraint
-    reverse and the differentiable narrow phase. The FD scene runs in
-    `requires_grad=True` (forward only) so it produces the *same* contact
-    manifold as the analytical scene; a production-mode scene would take a
-    different (non-diff) narrow-phase path with a different contact set.
-    """
     init_force = np.broadcast_to(base_force, (n_steps, 6)).copy()
 
     # --- analytical ---
@@ -2134,7 +2007,7 @@ def _run_fd_per_step_force(build_fn, rest_dofs, *, base_force, n_settle, n_steps
     for t in range(n_steps):
         obj_ana.control_dofs_force(forces[t])
         scene_ana.step()
-        assert _n_contacts(scene_ana) == nc, "contact set changed during grad window — FD invalid"
+        assert _n_contacts(scene_ana) == nc, "contact set changed during grad window - FD invalid"
     loss = (_rigid_state(scene_ana).qpos[0, :3] ** 2).sum()
     scene_ana.backward(loss)
     ana = np.array([[float(f.grad[d]) for d in range(6)] for f in forces])  # (N, 6)
@@ -2195,24 +2068,23 @@ def test_diff_contact_fd_per_step_force(show_viewer):
 
 # rest z so the body's lowest point sits on the plane (z=0): box/sphere half
 # extent 0.2; capsule radius 0.1 + half_length 0.2 = 0.3 (upright).
-_PLANE_REST = {
-    "box": [0.0, 0.0, 0.20, 0.0, 0.0, 0.0],
-    "sphere": [0.0, 0.0, 0.20, 0.0, 0.0, 0.0],
-    "capsule": [0.0, 0.0, 0.30, 0.0, 0.0, 0.0],
-}
 
 
 @pytest.mark.required
 @pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("shape", ["box", "sphere", "capsule"])
-def test_diff_contact_fd_plane_convex(shape, show_viewer):
+def test_diff_contact_fd_plane_convex(shape, show_viewer, grad_capsule):
+    # Rest z puts the shape's lowest point on the plane: box / sphere half extent 0.2; upright capsule
+    # radius 0.1 + half length 0.2 = 0.3.
+    rest_dofs = {"box": 0.20, "sphere": 0.20, "capsule": 0.30}[shape]
+    rest_dofs = [0.0, 0.0, rest_dofs, 0.0, 0.0, 0.0]
     # Plane (fixed) + free convex. The analytic plane contact is reconstructed
     # differentiably via `func_differentiable_plane_contact` (stored convex
     # support core + radius), so the same FD chain as box-box applies.
     _run_fd_per_step_force(
-        lambda *, requires_grad: _build_plane_convex(shape, requires_grad=requires_grad),
-        _PLANE_REST[shape],
+        lambda *, requires_grad: _build_plane_convex(grad_capsule, shape, requires_grad=requires_grad),
+        rest_dofs,
         base_force=np.array([0.0, 0.0, -8.0, 0.0, 0.0, 0.0], dtype=np.float64),
         n_settle=12,
         n_steps=2,
@@ -2284,8 +2156,8 @@ def test_diff_contact():
 
     # Compute analytical gradients of the geoms position and quaternion
     collider.backward(dL_dposition, dL_dnormal, dL_dpenetration)
-    dL_dpos = qd_to_torch(solver.geoms_state.pos.grad)
-    dL_dquat = qd_to_torch(solver.geoms_state.quat.grad)
+    dL_dpos = qd_to_torch(solver.dyn_state.geoms.pos.grad)
+    dL_dquat = qd_to_torch(solver.dyn_state.geoms.quat.grad)
 
     ### Compute directional derivatives along random directions
     FD_EPS = 1e-5
@@ -2385,21 +2257,20 @@ def test_diff_solver(monkeypatch):
     # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
     def constraint_solver_resolve():
         func_solve_init(
-            dofs_info=rigid_solver.dofs_info,
-            dofs_state=rigid_solver.dofs_state,
-            entities_info=rigid_solver.entities_info,
-            constraint_state=constraint_solver.constraint_state,
-            rigid_global_info=rigid_solver._rigid_global_info,
-            static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
+            rigid_solver.rigid_config,
+            is_decomposed=False,
         )
         func_solve_body(
-            entities_info=rigid_solver.entities_info,
-            dofs_info=rigid_solver.dofs_info,
-            dofs_state=rigid_solver.dofs_state,
-            constraint_state=constraint_solver.constraint_state,
-            rigid_global_info=rigid_solver._rigid_global_info,
-            static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-            _n_iterations=constraint_solver._n_iterations,
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
+            rigid_solver.rigid_config,
+            constraint_solver._n_iterations,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
@@ -2407,19 +2278,11 @@ def test_diff_solver(monkeypatch):
     # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
     kernel_step_1(
-        links_state=rigid_solver.links_state,
-        links_info=rigid_solver.links_info,
-        joints_state=rigid_solver.joints_state,
-        joints_info=rigid_solver.joints_info,
-        dofs_state=rigid_solver.dofs_state,
-        dofs_info=rigid_solver.dofs_info,
-        geoms_state=rigid_solver.geoms_state,
-        geoms_info=rigid_solver.geoms_info,
-        entities_state=rigid_solver.entities_state,
-        entities_info=rigid_solver.entities_info,
-        rigid_global_info=rigid_solver._rigid_global_info,
-        static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-        contact_island_state=constraint_solver.contact_island.contact_island_state,
+        rigid_solver.dyn_state,
+        constraint_solver.constraint_state,
+        rigid_solver.dyn_info,
+        rigid_solver.rigid_info,
+        rigid_solver.rigid_config,
         is_forward_pos_updated=True,
         is_forward_vel_updated=True,
         is_backward=False,
@@ -2431,25 +2294,25 @@ def test_diff_solver(monkeypatch):
 
     # Loss function to compute gradients using finite difference method
     def compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force):
-        rigid_solver._rigid_global_info.mass_mat.from_numpy(input_mass)
+        rigid_solver.rigid_info.mass_mat.from_numpy(input_mass)
         constraint_solver.constraint_state.jac.from_numpy(input_jac)
         constraint_solver.constraint_state.aref.from_numpy(input_aref)
         constraint_solver.constraint_state.efc_D.from_numpy(input_efc_D)
-        rigid_solver.dofs_state.force.from_numpy(input_force)
+        rigid_solver.dyn_state.dofs.force.from_numpy(input_force)
 
         # Recompute acc_smooth from the updated input variables
         updated_acc_smooth = np.linalg.solve(input_mass[..., 0], input_force[..., 0])
-        rigid_solver.dofs_state.acc_smooth.from_numpy(updated_acc_smooth[..., None])
+        rigid_solver.dyn_state.dofs.acc_smooth.from_numpy(updated_acc_smooth[..., None])
         constraint_solver.resolve()
 
         output_qacc = qd_to_torch(constraint_solver.qacc)
         return ((output_qacc - target_qacc) ** 2).mean()
 
-    init_input_mass = qd_to_numpy(rigid_solver._rigid_global_info.mass_mat, copy=True)
+    init_input_mass = qd_to_numpy(rigid_solver.rigid_info.mass_mat, copy=True)
     init_input_jac = qd_to_numpy(constraint_solver.constraint_state.jac, copy=True)
     init_input_aref = qd_to_numpy(constraint_solver.constraint_state.aref, copy=True)
     init_input_efc_D = qd_to_numpy(constraint_solver.constraint_state.efc_D, copy=True)
-    init_input_force = qd_to_numpy(rigid_solver.dofs_state.force, copy=True)
+    init_input_force = qd_to_numpy(rigid_solver.dyn_state.dofs.force, copy=True)
 
     # Initial output of the constraint solver
     set_random_seed(0)
