@@ -174,81 +174,74 @@ class RaycastContext(SharedSensorContext):
         return env_groups.to(gs.tc_int), batch_repr_env.to(gs.tc_int)
 
     @classmethod
-    def _static_geometry_groups(
-        cls, solver: RigidSolver, faces_idx: torch.Tensor | None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Group envs by identical static collision geometry; see _group_envs_by_parts for the returns.
+    def _static_entry_groups(cls, entry: BVHContext) -> tuple[torch.Tensor, torch.Tensor]:
+        """Group envs by the entry's static geometry; see _group_envs_by_parts for the returns.
 
-        Two envs share a tree iff every per-env input of the entry's AABB build matches: the active geom ranges
-        (present only when link info is batched) and the free-vert positions, both restricted to the entry's face
-        subset (``faces_idx``, None covering every face); fixed verts are env-shared. The restriction keeps a static
-        subset shared across envs while the solver's movable verts diverge under physics. Reads the free verts, so
-        callers must refresh them first.
+        Two envs share a tree iff every per-env input of the entry's AABB build matches. For a collision entry: the
+        active geom ranges (present only when link info is batched) and the free-vert positions, both restricted to
+        the entry's face subset - fixed verts are env-shared, and the restriction keeps a static subset shared
+        across envs while the solver's movable verts diverge under physics. For a visual entry: the vgeom poses
+        (feeding the forward-kinematics vvert positions) and the custom vvert buffer, restricted to the vgeoms whose
+        vfaces its raycast_mask opts into raycasting. An env-uniform entry is env-identical by construction, so its
+        signature is left unread. Reads the entry's build state, so callers must refresh it first (verts for
+        collision, vgeom poses for visual).
         """
-        links_mask = free_verts_mask = None
-        if faces_idx is not None:
-            faces_geom_idx = qd_to_numpy(solver.dyn_info.faces.geom_idx)
-            subset_faces_idx = tensor_to_array(faces_idx)
-            links_mask_np = np.zeros(solver.n_links, dtype=np.bool_)
-            links_mask_np[qd_to_numpy(solver.dyn_info.geoms.link_idx)[faces_geom_idx[subset_faces_idx]]] = True
-            links_mask = torch.as_tensor(links_mask_np, device=gs.device)
-            verts_is_fixed = qd_to_numpy(solver.dyn_info.verts.is_fixed)
-            subset_verts_idx = np.unique(qd_to_numpy(solver.dyn_info.faces.verts_idx)[subset_faces_idx])
-            subset_verts_idx = subset_verts_idx[~verts_is_fixed[subset_verts_idx]]
-            free_verts_mask_np = np.zeros(solver.n_free_verts, dtype=np.bool_)
-            free_verts_mask_np[qd_to_numpy(solver.dyn_info.verts.verts_state_idx)[subset_verts_idx]] = True
-            free_verts_mask = torch.as_tensor(free_verts_mask_np, device=gs.device)
+        solver = entry.solver
+        if entry.is_env_uniform:
+            return cls._group_envs_by_parts(solver._B, [])
         parts = []
-        if solver._options.batch_links_info:
-            # (B, n_links) active-geom range per env
-            geom_start = qd_to_torch(solver.dyn_info.links.geom_start, transpose=True)
-            geom_end = qd_to_torch(solver.dyn_info.links.geom_end, transpose=True)
-            if links_mask is not None:
-                geom_start = geom_start[:, links_mask]
-                geom_end = geom_end[:, links_mask]
-            parts += [geom_start, geom_end]
-        if solver.n_free_verts > 0:
-            # (B, n_free_verts, 3) per-env vertex positions
-            free_verts_pos = qd_to_torch(solver.dyn_state.free_verts.pos, transpose=True)
-            if free_verts_mask is not None:
-                free_verts_pos = free_verts_pos[:, free_verts_mask]
-            parts.append(free_verts_pos)
-        return cls._group_envs_by_parts(solver._B, parts)
-
-    @classmethod
-    def _static_visual_groups(
-        cls, solver: "KinematicSolver", raycast_mask: np.ndarray
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Group envs by identical static visual geometry; see _group_envs_by_parts for the returns.
-
-        Two envs share a tree iff every per-env input of the visual AABB build matches: the vgeom poses (feeding the
-        forward-kinematics vvert positions) and the custom vvert buffer, both restricted to the vgeoms whose vfaces
-        ``raycast_mask`` opts into raycasting, so a per-env divergence of entities the raycast never sees keeps the
-        trees shared. Reads the vgeom poses, so callers must refresh them first.
-        """
-        vgeoms_mask_np = np.zeros(solver.n_vgeoms, dtype=np.bool_)
-        vgeoms_mask_np[qd_to_numpy(solver.dyn_info.vfaces.vgeom_idx)[raycast_mask != 0]] = True
-        vgeoms_mask = None
-        if not vgeoms_mask_np.all():
-            vgeoms_mask = torch.as_tensor(vgeoms_mask_np, device=gs.device)
-        # (B, n_vgeoms, 3/4) per-env visual geom poses
-        vgeoms_pos = qd_to_torch(solver.dyn_state.vgeoms.pos, transpose=True)
-        vgeoms_quat = qd_to_torch(solver.dyn_state.vgeoms.quat, transpose=True)
-        if vgeoms_mask is not None:
-            vgeoms_pos = vgeoms_pos[:, vgeoms_mask]
-            vgeoms_quat = vgeoms_quat[:, vgeoms_mask]
-        parts = [vgeoms_pos, vgeoms_quat]
-        if solver.dyn_state.vverts.pos.shape[0] > 0:
-            # (B, n_vvert_slots, 3) per-env custom vvert positions (set_vverts overrides), restricted to the opted-in
-            # vgeoms' slots.
-            vverts_state_idx = qd_to_numpy(solver.dyn_info.vverts.vverts_state_idx)
-            slots_sel = (vverts_state_idx >= 0) & vgeoms_mask_np[qd_to_numpy(solver.dyn_info.vverts.vgeom_idx)]
-            vverts_mask_np = np.zeros(solver.dyn_state.vverts.pos.shape[0], dtype=np.bool_)
-            vverts_mask_np[vverts_state_idx[slots_sel]] = True
-            vverts_pos = qd_to_torch(solver.dyn_state.vverts.pos, transpose=True)
-            if not vverts_mask_np.all():
-                vverts_pos = vverts_pos[:, torch.as_tensor(vverts_mask_np, device=gs.device)]
-            parts.append(vverts_pos)
+        if entry.raycast_mask is None:
+            links_mask = free_verts_mask = None
+            if entry.faces_idx is not None:
+                faces_geom_idx = qd_to_numpy(solver.dyn_info.faces.geom_idx)
+                subset_faces_idx = tensor_to_array(entry.faces_idx)
+                links_mask_np = np.zeros(solver.n_links, dtype=np.bool_)
+                links_mask_np[qd_to_numpy(solver.dyn_info.geoms.link_idx)[faces_geom_idx[subset_faces_idx]]] = True
+                links_mask = torch.as_tensor(links_mask_np, device=gs.device)
+                verts_is_fixed = qd_to_numpy(solver.dyn_info.verts.is_fixed)
+                subset_verts_idx = np.unique(qd_to_numpy(solver.dyn_info.faces.verts_idx)[subset_faces_idx])
+                subset_verts_idx = subset_verts_idx[~verts_is_fixed[subset_verts_idx]]
+                free_verts_mask_np = np.zeros(solver.n_free_verts, dtype=np.bool_)
+                free_verts_mask_np[qd_to_numpy(solver.dyn_info.verts.verts_state_idx)[subset_verts_idx]] = True
+                free_verts_mask = torch.as_tensor(free_verts_mask_np, device=gs.device)
+            if solver._options.batch_links_info:
+                # (B, n_links) active-geom range per env
+                geom_start = qd_to_torch(solver.dyn_info.links.geom_start, transpose=True)
+                geom_end = qd_to_torch(solver.dyn_info.links.geom_end, transpose=True)
+                if links_mask is not None:
+                    geom_start = geom_start[:, links_mask]
+                    geom_end = geom_end[:, links_mask]
+                parts += [geom_start, geom_end]
+            if solver.n_free_verts > 0:
+                # (B, n_free_verts, 3) per-env vertex positions
+                free_verts_pos = qd_to_torch(solver.dyn_state.free_verts.pos, transpose=True)
+                if free_verts_mask is not None:
+                    free_verts_pos = free_verts_pos[:, free_verts_mask]
+                parts.append(free_verts_pos)
+        else:
+            vgeoms_mask_np = np.zeros(solver.n_vgeoms, dtype=np.bool_)
+            vgeoms_mask_np[qd_to_numpy(solver.dyn_info.vfaces.vgeom_idx)[entry.raycast_mask != 0]] = True
+            vgeoms_mask = None
+            if not vgeoms_mask_np.all():
+                vgeoms_mask = torch.as_tensor(vgeoms_mask_np, device=gs.device)
+            # (B, n_vgeoms, 3/4) per-env visual geom poses
+            vgeoms_pos = qd_to_torch(solver.dyn_state.vgeoms.pos, transpose=True)
+            vgeoms_quat = qd_to_torch(solver.dyn_state.vgeoms.quat, transpose=True)
+            if vgeoms_mask is not None:
+                vgeoms_pos = vgeoms_pos[:, vgeoms_mask]
+                vgeoms_quat = vgeoms_quat[:, vgeoms_mask]
+            parts += [vgeoms_pos, vgeoms_quat]
+            if solver.dyn_state.vverts.pos.shape[0] > 0:
+                # (B, n_vvert_slots, 3) per-env custom vvert positions (set_vverts overrides), restricted to the
+                # opted-in vgeoms' slots.
+                vverts_state_idx = qd_to_numpy(solver.dyn_info.vverts.vverts_state_idx)
+                slots_sel = (vverts_state_idx >= 0) & vgeoms_mask_np[qd_to_numpy(solver.dyn_info.vverts.vgeom_idx)]
+                vverts_mask_np = np.zeros(solver.dyn_state.vverts.pos.shape[0], dtype=np.bool_)
+                vverts_mask_np[vverts_state_idx[slots_sel]] = True
+                vverts_pos = qd_to_torch(solver.dyn_state.vverts.pos, transpose=True)
+                if not vverts_mask_np.all():
+                    vverts_pos = vverts_pos[:, torch.as_tensor(vverts_mask_np, device=gs.device)]
+                parts.append(vverts_pos)
         return cls._group_envs_by_parts(solver._B, parts)
 
     @staticmethod
@@ -417,11 +410,7 @@ class RaycastContext(SharedSensorContext):
                     # shared tree is never stale.
                     if solver is not verts_updated_solver:
                         kernel_update_all_verts(solver.dyn_state, solver.dyn_info, solver.rigid_config)
-                    if entry.is_env_uniform:
-                        # Env-identical by construction: a single tree, with the geometry signature left unread.
-                        env_bvh_idx, batch_repr_env = self._group_envs_by_parts(solver._B, [])
-                    else:
-                        env_bvh_idx, batch_repr_env = self._static_geometry_groups(solver, entry.faces_idx)
+                    env_bvh_idx, batch_repr_env = self._static_entry_groups(entry)
                     if entry.faces_idx is None:
                         n_slots = solver.dyn_info.faces.geom_idx.shape[0]
                     else:
@@ -472,7 +461,7 @@ class RaycastContext(SharedSensorContext):
                 if entry.maybe_static:
                     # Static visual geometry: group envs by identical visual geometry and build one tree per
                     # distinct geometry from its representative env, mirroring the static collision path above.
-                    env_bvh_idx, batch_repr_env = self._static_visual_groups(solver, entry.raycast_mask)
+                    env_bvh_idx, batch_repr_env = self._static_entry_groups(entry)
                     self._sized_grouped_trees(entry, batch_repr_env.shape[0], solver.dyn_info.vfaces.vgeom_idx.shape[0])
                     entry.env_bvh_idx = env_bvh_idx
                     kernel_update_grouped_visual_aabbs(
