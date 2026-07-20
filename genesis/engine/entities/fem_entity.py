@@ -421,8 +421,7 @@ class FEMEntity(Entity):
         """
         meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
         surface_verts, surface_faces, verts_maps = mu.merge_submeshes(
-            [mesh.verts for mesh in meshes],
-            [mesh.faces for mesh in meshes],
+            [mesh.verts for mesh in meshes], [mesh.faces for mesh in meshes]
         )
         self._vgeoms = gs.List(
             FEMVisGeom(vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, verts_maps)

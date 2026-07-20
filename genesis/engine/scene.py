@@ -595,14 +595,7 @@ class Scene(RBC):
         meshes = gs.Mesh.from_morph_surface(morph, gs.surfaces.Plastic(smooth=False))
         for mesh in meshes:
             self._visualizer.add_mesh_light(
-                mesh,
-                color,
-                intensity,
-                morph.pos,
-                morph.quat,
-                revert_dir,
-                double_sided,
-                cutoff,
+                mesh, color, intensity, morph.pos, morph.quat, revert_dir, double_sided, cutoff
             )
 
     @gs.assert_unbuilt

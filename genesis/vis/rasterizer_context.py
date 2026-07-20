@@ -894,18 +894,14 @@ class RasterizerContext:
                 sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for i_g, vgeom in enumerate(fem_entity.vgeoms):
                     visual = mu.surface_uvs_to_trimesh_visual(
-                        vgeom.surface,
-                        uvs=vgeom.uvs,
-                        n_verts=len(vgeom.sim_verts_idx),
+                        vgeom.surface, uvs=vgeom.uvs, n_verts=len(vgeom.sim_verts_idx)
                     )
                     seg_key = (fem_entity.idx, i_g) if self.segmentation_level == "geom" else fem_entity.idx
                     for env_i, i_b in enumerate(self.rendered_envs_idx):
                         mesh = trimesh.Trimesh(sim_verts[env_i, vgeom.sim_verts_idx], vgeom.vmesh.faces, process=False)
                         mesh.visual = visual
                         node = pyrender.Mesh.from_trimesh(
-                            mesh,
-                            smooth=vgeom.surface.smooth,
-                            double_sided=vgeom.surface.double_sided,
+                            mesh, smooth=vgeom.surface.smooth, double_sided=vgeom.surface.double_sided
                         )
                         static_node = self.add_node(node)
                         self.static_nodes[(i_b, vgeom.uid)] = static_node

@@ -800,9 +800,7 @@ class Raytracer:
                 for vgeom in fem_entity.vgeoms:
                     render_verts = sim_verts[vgeom.sim_verts_idx]
                     vertex_normals = trimesh.Trimesh(
-                        vertices=render_verts,
-                        faces=vgeom.vmesh.faces,
-                        process=False,
+                        vertices=render_verts, faces=vgeom.vmesh.faces, process=False
                     ).vertex_normals
                     self.update_deformable(
                         str(vgeom.uid),
