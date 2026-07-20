@@ -28,7 +28,7 @@ from genesis.utils.misc import (
 )
 from genesis.utils.sdf import SDF
 
-from ..base_solver import Solver, StateChange, mutates
+from ..base_solver import MutatedLinks, Solver, StateChange, mutates
 from ..kinematic_solver import KinematicSolver, _select_links_offset, _offset_world_shift, _fill_base_link_geom_offsets
 from .collider import Collider
 from .constraint import ConstraintSolver
@@ -1846,7 +1846,7 @@ class RigidSolver(KinematicSolver):
     def set_links_pos(self, pos, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -1968,7 +1968,7 @@ class RigidSolver(KinematicSolver):
     def set_links_quat(self, quat, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -2165,7 +2165,7 @@ class RigidSolver(KinematicSolver):
             friction_ratio = friction_ratio[None]
         kernel_set_geoms_friction_ratio(geoms_idx, envs_idx, friction_ratio, self.dyn_state, self.rigid_config)
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if self.collider is not None:
             self.collider.reset(envs_idx)
@@ -2409,7 +2409,7 @@ class RigidSolver(KinematicSolver):
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)

@@ -18,7 +18,7 @@ from genesis.utils.misc import (
     assign_indexed_tensor,
 )
 
-from .base_solver import Solver, StateChange, mutates
+from .base_solver import MutatedLinks, Solver, StateChange, mutates
 from .rigid.abd.misc import (
     kernel_init_dof_fields,
     kernel_init_link_fields,
@@ -214,6 +214,10 @@ class KinematicSolver(Solver):
 
         for entity in self._entities:
             entity._build()
+
+        # Resolve the link-reach structures of @mutates notifications; see Solver.__init__.
+        self._articulated_links_idx = np.array([link.idx for link in self.links if not link.is_fixed])
+        self._links_parent_idx = np.array([link.parent_idx for link in self.links])
 
         self._n_qs = self.n_qs
         self._n_dofs = self.n_dofs
@@ -771,7 +775,7 @@ class KinematicSolver(Solver):
 
         return tensor_, inputs_idx_, envs_idx_
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -827,7 +831,7 @@ class KinematicSolver(Solver):
             links_idx, envs_idx, pos_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -895,7 +899,7 @@ class KinematicSolver(Solver):
             links_idx, envs_idx, quat_grad_, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
         )
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = qd_to_torch(self.rigid_info.qpos, transpose=True, copy=False)
@@ -941,7 +945,7 @@ class KinematicSolver(Solver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-    @mutates(StateChange.DYNAMICS)
+    @mutates(StateChange.DYNAMICS, links=MutatedLinks.ARTICULATED)
     def set_dofs_velocity(self, velocity, dofs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             vel = qd_to_torch(self.dyn_state.dofs.vel, transpose=True, copy=False)
@@ -1008,7 +1012,7 @@ class KinematicSolver(Solver):
             velocity_grad_ = velocity_grad_.unsqueeze(0)
         kernel_set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad_, self.dyn_state, self.rigid_config)
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
