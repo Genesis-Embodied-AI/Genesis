@@ -407,16 +407,23 @@ class FEMEntity(Entity):
 
         if isinstance(self.material, ClothMaterial):
             # Cloth needs no tetrahedralization: the welded surface triangles are the simulation elements.
-            verts, elems = surface_verts, surface_faces
+            verts, elems = surface_verts + self._morph.pos, surface_faces
         else:
-            # Tetrahedralize before applying the morph position: tetgen's Steiner-point refinement depends on the
-            # absolute coordinates, so translating afterward keeps the tetrahedralization, and its on-disk cache,
-            # shared across all placements of the same geometry.
+            # Tetgen refinement depends on the absolute coordinates of its input. File meshes are tetrahedralized
+            # untranslated, so the result, and its on-disk cache, are shared across all placements of the same
+            # asset. Primitives keep the morph position baked in: translating their input instead changes the
+            # refined mesh, and with it the simulated rest state, beyond what FP-sensitive tolerance calibrations
+            # absorb.
+            is_mesh_morph = isinstance(self._morph, gs.options.morphs.Mesh)
+            if not is_mesh_morph:
+                surface_verts = surface_verts + self._morph.pos
             surface_trimesh = trimesh.Trimesh(vertices=surface_verts, faces=surface_faces, process=False)
             verts, elems = eu.mesh_to_elements(surface_trimesh, tet_cfg=self.tet_cfg)
+            if is_mesh_morph:
+                verts = verts + self._morph.pos
             verts, elems = eu.split_all_surface_tets(verts, elems)
 
-        self.instantiate(verts + self._morph.pos, elems)
+        self.instantiate(verts, elems)
 
     def _add_to_solver(self, in_backward=False):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
