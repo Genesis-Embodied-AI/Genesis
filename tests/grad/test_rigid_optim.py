@@ -1,5 +1,7 @@
 # End-to-end reverse-mode optimization on the rigid solver: Adam recovers a cartpole reference trajectory (through
 # either the initial velocity or a per-step force sequence) and drives a free box to a goal pose.
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -7,24 +9,33 @@ import torch
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from ..utils import assert_allclose, make_diff_scene_pair, rigid_solver_state
-
-
-pytestmark = [
-    pytest.mark.debug(False),
-]
+from ..conftest import SKIP_METAL_GRAD
+from ..utils import assert_allclose
+from .utils import make_diff_scene_pair
 
 
 @pytest.mark.required
-@pytest.mark.precision("32")
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,
+        pytest.param(gs.gpu, marks=pytest.mark.skipif(sys.platform == "darwin", reason=SKIP_METAL_GRAD)),
+    ],
+)
 @pytest.mark.parametrize("control_target", ["init_vel", "control_force"])
-def test_rigid_optim_cartpole_converges(control_target, grad_cartpole):
+@pytest.mark.debug(False)
+def test_rigid_optim_cartpole_converges(control_target, grad_cartpole, show_viewer):
     # Reproduce a reference cartpole trajectory by optimizing either the initial velocity or the per-step control
-    # forces; every env must drive its per-env loss below both a relative-reduction and an absolute threshold. fp32
-    # cannot push a rollout-trained scalar loss below ~1e-4, so the thresholds are the looser fp32 band.
-    N_STEPS, N_ITER, LR, N_DOFS, B = 32, 200, 1e-2, 2, 2
-    REL_REDUCTION, ABS_THRESHOLD = 1e-1, 1e-2
-    pair = make_diff_scene_pair(grad_cartpole, n_envs=2)
+    # forces; every env must drive its per-env loss below both a relative-reduction and an absolute threshold. The
+    # reference is exactly reproducible, so a correct gradient lets Adam crush the loss to its optimizer plateau
+    # (fp32 and fp64 reach the same floor). init_vel (4 params) converges far below control_force (128 per-step
+    # forces), hence the per-target thresholds - each pinned just above the measured converged loss.
+    N_STEPS, N_ITER, LR, N_DOFS, B = 32, 150, 1e-2, 2, 2
+    REL_REDUCTION, ABS_THRESHOLD = {
+        "init_vel": (2e-6, 2e-7),
+        "control_force": (1e-3, 5e-7),
+    }[control_target]
+    pair = make_diff_scene_pair(grad_cartpole, n_envs=2, show_viewer=show_viewer)
     scene_ref, robot_ref = pair.scene_fd, pair.entity_fd
     scene_opt, robot_opt = pair.scene_ana, pair.entity_ana
     rng = np.random.default_rng(seed=11 if control_target == "init_vel" else 23)
@@ -40,7 +51,7 @@ def test_rigid_optim_cartpole_converges(control_target, grad_cartpole):
         for t in range(N_STEPS):
             robot_ref.control_dofs_force(gs.tensor(target_ctrl[t], dtype=gs.tc_float))
             scene_ref.step()
-    ref_state = rigid_solver_state(scene_ref)
+    ref_state = scene_ref.rigid_solver.get_state()
     target_qpos = ref_state.qpos.detach().clone()
     target_vel = ref_state.dofs_vel.detach().clone()
 
@@ -67,7 +78,7 @@ def test_rigid_optim_cartpole_converges(control_target, grad_cartpole):
             for t in range(N_STEPS):
                 robot_opt.control_dofs_force(forces[t])
                 scene_opt.step()
-        state = rigid_solver_state(scene_opt)
+        state = scene_opt.rigid_solver.get_state()
         diff_pos = (state.qpos - target_qpos).reshape(B, -1)
         diff_vel = (state.dofs_vel - target_vel).reshape(B, -1)
         loss_per_env = (diff_pos**2).sum(dim=-1) + (diff_vel**2).sum(dim=-1)
@@ -78,12 +89,13 @@ def test_rigid_optim_cartpole_converges(control_target, grad_cartpole):
     history = np.asarray(loss_history)
     initial, final = history[0], history[-1]
     rel_ratios = final / initial
-    assert (rel_ratios < REL_REDUCTION).all(), f"loss reduction insufficient: initial={initial}, final={final}"
-    assert (final < ABS_THRESHOLD).all(), f"final loss above absolute threshold: {final}"
+    assert_allclose(rel_ratios, 0.0, atol=REL_REDUCTION, err_msg=f"loss reduction insufficient (initial={initial})")
+    assert_allclose(final, 0.0, atol=ABS_THRESHOLD, err_msg="final loss above absolute threshold")
 
 
 @pytest.mark.slow
 @pytest.mark.required
+@pytest.mark.debug(False)
 def test_rigid_optim_reach_goal_pose(show_viewer):
     goal_pos = gs.tensor([0.7, 1.0, 0.05])
     goal_quat = gs.tensor([0.3, 0.2, 0.1, 0.9])

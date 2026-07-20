@@ -7,38 +7,33 @@ import torch
 import genesis as gs
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from ..utils import assert_allclose, make_diff_scene_pair, rigid_solver_state
-
-
-pytestmark = [
-    pytest.mark.debug(False),
-]
+from ..utils import assert_allclose
+from .utils import make_diff_scene_pair
 
 
 @pytest.mark.required
-@pytest.mark.precision("32")
 @pytest.mark.parametrize("model_name", ["grad_free", "grad_revolute", "grad_free_with_revolute"])
-def test_grad_horizon_truncation_matches_independent_scenes(model_name, request):
+def test_grad_horizon_truncation_matches_independent_scenes(model_name, request, show_viewer):
     mjcf = request.getfixturevalue(model_name)
     tol = dict(atol=1e-5, rtol=1e-4)
     horizon = 5
     B = 2
 
-    def build():
-        pair = make_diff_scene_pair(mjcf, n_envs=2, substeps=4, gravity=(0.0, 0.0, 0.0))
+    def build(show_viewer=False):
+        pair = make_diff_scene_pair(mjcf, n_envs=2, substeps=4, gravity=(0.0, 0.0, 0.0), show_viewer=show_viewer)
         return pair.scene_ana, pair.entity_ana
 
     def run_segment(scene, entity, velocity):
         entity.set_dofs_velocity(velocity)
         for _ in range(horizon):
             scene.step()
-        return (rigid_solver_state(scene).qpos ** 2).sum()
+        return (scene.rigid_solver.get_state().qpos ** 2).sum()
 
     def read_qpos(scene):
         return qd_to_numpy(scene.rigid_solver.rigid_info.qpos, copy=True)
 
     # Scene A: one scene, snapshot + reset between two horizons.
-    scene_a, robot_a = build()
+    scene_a, robot_a = build(show_viewer=show_viewer)
     v1 = np.random.default_rng(seed=101).standard_normal((B, robot_a.n_dofs))
     v2 = np.random.default_rng(seed=202).standard_normal((B, robot_a.n_dofs))
     scene_a.reset()
@@ -110,12 +105,12 @@ def test_rigid_sim_vs_solver_state_grad_parity(show_viewer):
     ctrl = gs.tensor(np.random.randn(robot.n_dofs), dtype=gs.tc_float, requires_grad=True)
 
     grads = []
-    for use_sim_state in (False, True):
+    for is_sim_state_source in (False, True):
         scene.reset()
         robot.set_dofs_velocity(ctrl)
         scene.step()
-        if use_sim_state:
-            chassis_pos = rigid_solver_state(scene).links_pos[:, 0].squeeze()
+        if is_sim_state_source:
+            chassis_pos = scene.rigid_solver.get_state().links_pos[:, 0].squeeze()
         else:
             chassis_pos = robot.get_state().pos.squeeze()
         loss = torch.linalg.norm(chassis_pos)
@@ -123,6 +118,6 @@ def test_rigid_sim_vs_solver_state_grad_parity(show_viewer):
         grads.append(ctrl.grad.detach().clone())
         ctrl.grad.zero_()
         assert (grads[-1][..., :3].abs() > gs.EPS).all()
-        assert (grads[-1][..., 3:].abs() < gs.EPS).all()
+        assert_allclose(grads[-1][..., 3:], 0.0, atol=gs.EPS)
 
     assert_allclose(*grads, atol=gs.EPS)

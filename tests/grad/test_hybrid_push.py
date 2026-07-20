@@ -8,6 +8,7 @@ import genesis as gs
 
 @pytest.mark.slow  # ~350s
 @pytest.mark.required
+@pytest.mark.debug(False)
 def test_hybrid_mpm_tool_push_grad(show_viewer):
     HORIZON = 10
 

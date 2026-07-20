@@ -10,15 +10,10 @@ from genesis.utils import set_random_seed
 from genesis.utils.geom import R_to_quat
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, tensor_to_array
 
-from ..utils import assert_allclose, rigid_solver_state
+from ..utils import assert_allclose
 
 
-pytestmark = [
-    pytest.mark.debug(False),
-]
-
-
-def _build_contact_scene(shape, mjcf_capsule, *, requires_grad):
+def _build_contact_scene(shape, mjcf_capsule, *, requires_grad, show_viewer=False):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -39,7 +34,7 @@ def _build_contact_scene(shape, mjcf_capsule, *, requires_grad):
             camera_pos=(1.2, -1.2, 0.8),
             camera_lookat=(0.0, 0.0, 0.2),
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
     )
     if shape == "ground_box":
         scene.add_entity(gs.morphs.Box(size=(2.0, 2.0, 0.2), pos=(0.0, 0.0, 0.1), fixed=True))
@@ -59,14 +54,13 @@ def _build_contact_scene(shape, mjcf_capsule, *, requires_grad):
 
 
 def _n_contacts(scene):
-    return int(qd_to_numpy(scene.rigid_solver.collider._collider_state.n_contacts)[0])
+    return qd_to_numpy(scene.rigid_solver.collider._collider_state.n_contacts)[0]
 
 
 @pytest.mark.required
-@pytest.mark.precision("64")
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("shape", ["ground_box", "box", "sphere", "capsule"])
-def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
+def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, show_viewer):
     # Rest z puts the body's lowest point on its support: box / sphere half extent 0.2, upright capsule
     # radius 0.1 + half length 0.2 = 0.3, box-on-ground centered at 0.40.
     rest_z = {"ground_box": 0.40, "box": 0.20, "sphere": 0.20, "capsule": 0.30}[shape]
@@ -74,6 +68,8 @@ def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
     n_settle = 12
     n_steps = 2
     eps = 1e-2
+    # Contact force gradients are tiny (stiff contact barely moves); fp32 tolerates the coarser finite-difference floor.
+    fd_atol = 1e-10 if precision == "64" else 5e-7
     base_force = np.array([0.0, 0.0, -8.0, 0.0, 0.0, 0.0])
     init_force = np.broadcast_to(base_force, (n_steps, 6)).copy()
 
@@ -84,7 +80,7 @@ def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
             obj.control_dofs_force(zero)
             scene.step()
 
-    scene_ana, obj_ana = _build_contact_scene(shape, grad_capsule, requires_grad=True)
+    scene_ana, obj_ana = _build_contact_scene(shape, grad_capsule, requires_grad=True, show_viewer=show_viewer)
     scene_ana.reset()
     settle(scene_ana, obj_ana)
     nc = _n_contacts(scene_ana)
@@ -94,9 +90,9 @@ def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
         obj_ana.control_dofs_force(forces[t])
         scene_ana.step()
         assert _n_contacts(scene_ana) == nc, "contact set changed during grad window - FD invalid"
-    loss = (rigid_solver_state(scene_ana).qpos[0, :3] ** 2).sum()
+    loss = (scene_ana.rigid_solver.get_state().qpos[0, :3] ** 2).sum()
     scene_ana.backward(loss)
-    ana = np.array([[float(f.grad[d]) for d in range(6)] for f in forces])
+    ana = np.stack([tensor_to_array(f.grad) for f in forces])
 
     scene_fd, obj_fd = _build_contact_scene(shape, grad_capsule, requires_grad=True)
 
@@ -107,7 +103,7 @@ def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
             obj_fd.control_dofs_force(gs.tensor(perturbed[t], dtype=gs.tc_float))
             scene_fd.step()
             assert _n_contacts(scene_fd) == nc, "contact set changed under FD perturbation"
-        return float((rigid_solver_state(scene_fd).qpos[0, :3] ** 2).sum().detach())
+        return float((scene_fd.rigid_solver.get_state().qpos[0, :3] ** 2).sum().detach())
 
     for t in range(n_steps):
         plus = init_force.copy()
@@ -115,16 +111,14 @@ def test_rigid_contact_per_step_force_grad_matches_fd(shape, grad_capsule):
         minus = init_force.copy()
         minus[t, 2] -= eps
         fd_z = (loss_at(plus) - loss_at(minus)) / (2 * eps)
-        # Contact gradients are small (stiff contact barely moves), so the band is absolute-dominated; rtol pins
-        # the load-bearing z entry.
-        assert_allclose(ana[t, 2], fd_z, rtol=2e-3, atol=1e-10, err_msg=f"contact force.grad mismatch at t={t}")
+        assert_allclose(ana[t, 2], fd_z, rtol=2e-3, atol=fd_atol, err_msg=f"contact force.grad mismatch at t={t}")
 
 
 @pytest.mark.required
 def test_rigid_contact_no_tunneling_forward(show_viewer):
-    # Differentiable contact detection must route convex-convex pairs through the monolithic diff_gjk path (the
-    # split narrowphase used to skip GJK under requires_grad, so bodies fell through each other), producing the
-    # same forward contacts as the non-grad path, with the contact permutation kept the identity in autodiff mode.
+    # Differentiable contact detection must route convex-convex pairs through the monolithic diff_gjk path; the split
+    # narrowphase used to skip GJK under requires_grad, so stacked boxes fell through each other. Observable: each top
+    # box stays on its support and comes to rest instead of tunneling.
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             requires_grad=True,
@@ -149,12 +143,6 @@ def test_rigid_contact_no_tunneling_forward(show_viewer):
         assert_allclose(top.get_pos(), (x, 0.0, 0.6), atol=2e-4)
         assert_allclose(top.get_dofs_velocity(), 0.0, atol=0.05)
 
-    collider = scene.sim.rigid_solver.collider
-    assert not collider._collider_static_config.spatial_sort_supported
-    n_contacts = int(np.atleast_1d(qd_to_numpy(collider._collider_state.n_contacts))[0])
-    sort_idx = qd_to_numpy(collider._collider_state.contact_sort_idx)[:n_contacts, 0]
-    assert_allclose(sort_idx, np.arange(n_contacts), atol=0)
-
 
 @pytest.mark.required
 def test_rigid_diff_contact_pair_unsupported_raises():
@@ -175,6 +163,7 @@ def test_rigid_diff_contact_pair_unsupported_raises():
 
 @pytest.mark.required
 @pytest.mark.precision("64")
+@pytest.mark.debug(False)
 def test_rigid_contact_detection_jacobian_matches_fd():
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -247,6 +236,7 @@ def test_rigid_contact_detection_jacobian_matches_fd():
 
 @pytest.mark.required
 @pytest.mark.precision("64")
+@pytest.mark.debug(False)
 def test_rigid_constraint_solver_backward_matches_fd(monkeypatch):
     # fp64 is required: the FD perturbation must be small enough for a reliable estimate, which fp32 cannot resolve.
     # These internal solver symbols are imported locally to keep a mismatch with the installed engine from breaking

@@ -100,6 +100,7 @@ SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madro
 SKIP_NO_LUISA = _skip_reason("RayTracer is not supported because 'LuisaRenderPy' is not available.")
 SKIP_NO_VIEWER = _skip_reason("Interactive viewer not supported on this platform.")
 SKIP_NO_OMNIVERSE_KIT = _skip_reason("omniverse-kit support not available")
+SKIP_METAL_GRAD = _skip_reason("Apple Metal GPU computes wrong reverse-mode gradients (Quadrants backward bug).")
 
 
 def is_mem_monitoring_supported():
