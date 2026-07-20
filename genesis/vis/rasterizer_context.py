@@ -892,21 +892,20 @@ class RasterizerContext:
                     continue
 
                 sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                for i_sub, (render_mesh, sim_verts_idx) in enumerate(
-                    zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)
-                ):
+                for i_g, vgeom in enumerate(fem_entity.vgeoms):
+                    vmesh = vgeom.vmesh
                     visual = mu.surface_uvs_to_trimesh_visual(
-                        render_mesh.surface, uvs=render_mesh.uvs, n_verts=len(sim_verts_idx)
+                        vmesh.surface, uvs=vmesh.uvs, n_verts=len(vgeom.sim_verts_idx)
                     )
-                    seg_key = (fem_entity.idx, i_sub) if self.segmentation_level == "geom" else fem_entity.idx
+                    seg_key = (fem_entity.idx, i_g) if self.segmentation_level == "geom" else fem_entity.idx
                     for i_env, idx in enumerate(self.rendered_envs_idx):
-                        mesh = trimesh.Trimesh(sim_verts[i_env, sim_verts_idx], render_mesh.faces, process=False)
+                        mesh = trimesh.Trimesh(sim_verts[i_env, vgeom.sim_verts_idx], vmesh.faces, process=False)
                         mesh.visual = visual
                         node = pyrender.Mesh.from_trimesh(
-                            mesh, smooth=render_mesh.surface.smooth, double_sided=render_mesh.surface.double_sided
+                            mesh, smooth=vmesh.surface.smooth, double_sided=vmesh.surface.double_sided
                         )
                         static_node = self.add_node(node)
-                        self.static_nodes[(idx, fem_entity.uid, i_sub)] = static_node
+                        self.static_nodes[(idx, vmesh.uid)] = static_node
                         self.create_node_seg(seg_key, static_node)
 
     def update_fem(self):
@@ -922,10 +921,10 @@ class RasterizerContext:
                     continue
 
                 sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                for i_sub, sim_verts_idx in enumerate(fem_entity.sim_vert_maps):
+                for vgeom in fem_entity.vgeoms:
                     for i_env, idx in enumerate(self.rendered_envs_idx):
-                        node = self.static_nodes[(idx, fem_entity.uid, i_sub)]
-                        render_verts = sim_verts[i_env, sim_verts_idx].astype(np.float32, copy=False)
+                        node = self.static_nodes[(idx, vgeom.vmesh.uid)]
+                        render_verts = sim_verts[i_env, vgeom.sim_verts_idx].astype(np.float32, copy=False)
                         update_data = self._scene.reorder_vertices(node, render_verts)
                         self.jit.update_buffer(node, "pos", update_data)
                         normal_data = self.jit.update_normal(node, update_data)

@@ -1,5 +1,6 @@
 from functools import wraps
 from pathlib import Path
+from typing import NamedTuple
 
 import igl
 import numpy as np
@@ -18,6 +19,17 @@ from genesis.engine.states.entities import FEMEntityState
 from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
 
 from .base_entity import Entity
+
+
+class FEMVisGeom(NamedTuple):
+    """A visual geom of a FEM entity: a render mesh whose vertices track a subset of the simulated vertices.
+
+    'sim_verts_idx' maps each render-mesh vertex to the simulated vertex standing for it; vertices co-located
+    across visual geoms or duplicated by texture seams share a single simulated vertex.
+    """
+
+    vmesh: gs.Mesh
+    sim_verts_idx: np.ndarray
 
 
 def assert_muscle(method):
@@ -390,18 +402,21 @@ class FEMEntity(Entity):
 
     def sample(self):
         """
-        Build the entity's render meshes and simulation mesh from its morph.
+        Build the entity's visual geoms and simulation mesh from its morph.
 
-        Each morph sub-mesh is kept as a render mesh with its own surface and UVs, while the simulation operates on
-        a single welded copy of their vertices. 'sim_vert_maps' ties the two together: welding and tetrahedralization
-        both keep the input vertices first and in order, so these maps remain valid indices into the simulated
-        vertices.
+        Each morph sub-mesh becomes a visual geom with its own surface and UVs, while the simulation operates on a
+        single welded copy of their vertices, tracked through 'FEMVisGeom.sim_verts_idx': welding and
+        tetrahedralization both keep the input vertices first and in order, so these maps remain valid indices into
+        the simulated vertices.
         """
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
-        self._render_meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
-        surface_verts, surface_faces, self._sim_vert_maps = mu.merge_submeshes(
-            [mesh.verts for mesh in self._render_meshes], [mesh.faces for mesh in self._render_meshes]
+        meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
+        surface_verts, surface_faces, sim_verts_maps = mu.merge_submeshes(
+            [mesh.verts for mesh in meshes], [mesh.faces for mesh in meshes]
+        )
+        self._vgeoms = gs.List(
+            FEMVisGeom(vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, sim_verts_maps)
         )
 
         if isinstance(self.material, ClothMaterial):
@@ -1033,14 +1048,9 @@ class FEMEntity(Entity):
         return len(self.init_positions)
 
     @property
-    def render_meshes(self):
-        """Render meshes, one per morph sub-mesh, each carrying its own surface and UVs."""
-        return self._render_meshes
-
-    @property
-    def sim_vert_maps(self):
-        """For each render mesh, the map from its vertex indices to the entity's simulated vertex indices."""
-        return self._sim_vert_maps
+    def vgeoms(self):
+        """The list of visual geoms (`FEMVisGeom`) in the entity, one per morph sub-mesh."""
+        return self._vgeoms
 
     @property
     def n_elements(self):

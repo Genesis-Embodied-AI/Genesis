@@ -15,7 +15,7 @@ from ..utils import assert_allclose, get_hf_dataset
 def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
     # A small maxvolume introduces internal vertices during tetrahedralization: all surface vertices must
     # still lie exactly on the original quad faces, and the visualizer's mesh vertices must track the
-    # simulated vertices through sim_vert_maps.
+    # simulated vertices through the visual geom's sim_verts_idx.
     verts, faces = cube_verts_and_faces
 
     scene = gs.Scene(
@@ -84,14 +84,14 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
             f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
         )
 
-    # The visualizer draws the input surface (render_meshes[0]) whose vertices track the simulated vertices
-    # through sim_vert_maps, while surface_triangles reflects the refined tetrahedral boundary: the two meshes
+    # The visualizer draws the input surface, whose vertices track the simulated vertices through the visual
+    # geom's sim_verts_idx, while surface_triangles reflects the refined tetrahedral boundary: the two meshes
     # differ in granularity, so the invariant to check is per-vertex tracking.
-    (fem_node_primitive,) = scene.visualizer.context.static_nodes[(0, fem.uid, 0)].mesh.primitives
+    (vgeom,) = fem.vgeoms
+    (fem_node_primitive,) = scene.visualizer.context.static_nodes[(0, vgeom.vmesh.uid)].mesh.primitives
     viz_verts = fem_node_primitive.positions
-    sim_verts_idx = fem.sim_vert_maps[0]
-    assert sim_verts_idx.shape == (viz_verts.shape[0],)
-    assert_allclose(viz_verts, vertices[sim_verts_idx], tol=1e-5)
+    assert vgeom.sim_verts_idx.shape == (viz_verts.shape[0],)
+    assert_allclose(viz_verts, vertices[vgeom.sim_verts_idx], tol=1e-5)
 
 
 @pytest.mark.required
@@ -110,21 +110,20 @@ def test_multi_submesh_render_decoupling(show_viewer):
     )
     scene.build()
 
-    assert len(fem.render_meshes) == 2
-    assert len(fem.sim_vert_maps) == 2
-    # Welding across sub-meshes must keep strictly fewer simulated vertices than render vertices.
-    n_render_verts = sum(len(mesh.verts) for mesh in fem.render_meshes)
+    assert len(fem.vgeoms) == 2
+    # Welding across visual geoms must keep strictly fewer simulated vertices than render vertices.
+    n_render_verts = sum(len(vgeom.vmesh.verts) for vgeom in fem.vgeoms)
     assert fem.n_vertices < n_render_verts
     vertices = tensor_to_array(fem.get_state().pos[0])
-    for render_mesh, sim_verts_idx in zip(fem.render_meshes, fem.sim_vert_maps):
-        assert sim_verts_idx.shape == (len(render_mesh.verts),)
-        assert sim_verts_idx.min() >= 0 and sim_verts_idx.max() < fem.n_vertices
+    for vgeom in fem.vgeoms:
+        assert vgeom.sim_verts_idx.shape == (len(vgeom.vmesh.verts),)
+        assert vgeom.sim_verts_idx.min() >= 0 and vgeom.sim_verts_idx.max() < fem.n_vertices
         # Mapped simulated vertices must land exactly on the render vertices they stand for.
-        assert_allclose(vertices[sim_verts_idx], render_mesh.verts, tol=1e-5)
+        assert_allclose(vertices[vgeom.sim_verts_idx], vgeom.vmesh.verts, tol=1e-5)
 
-    # The rasterizer must register one node per sub-mesh and environment.
+    # The rasterizer must register one node per visual geom and environment.
     static_nodes = scene.visualizer.context.static_nodes
-    assert all((0, fem.uid, i_sub) in static_nodes for i_sub in range(2))
+    assert all((0, vgeom.vmesh.uid) in static_nodes for vgeom in fem.vgeoms)
 
 
 @pytest.mark.required

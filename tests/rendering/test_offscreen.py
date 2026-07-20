@@ -770,7 +770,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
 
     # Segmentation count: background(1) + URDF links/entity + duck materials. Rigid and Kinematic ducks use
     # add_rigid_node (tuple keys at link/geom level), other ducks use add_static_node (int keys). The URDF has
-    # 2 visual links. FEM entities use per-sub-mesh tuple keys (entity.idx, i_sub) only at "geom" level; at "link"
+    # 2 visual links. FEM entities use per-visual-geom tuple keys (entity.idx, i_g) only at "geom" level; at "link"
     # and "entity" levels they fall back to a plain int entity.idx.
     n_rigid_like = sum(isinstance(m, gs.materials.Kinematic) for m, _ in materials)
     n_fem_geom = (

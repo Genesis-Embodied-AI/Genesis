@@ -334,10 +334,9 @@ class Raytracer:
         if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
-                    for i_sub, render_mesh in enumerate(fem_entity.render_meshes):
-                        sub_name = f"{fem_entity.uid!s}_sub{i_sub}"
-                        self.add_surface(sub_name, render_mesh.surface)
-                        self.add_deformable(sub_name)
+                    for vgeom in fem_entity.vgeoms:
+                        self.add_surface(str(vgeom.vmesh.uid), vgeom.vmesh.surface)
+                        self.add_deformable(str(vgeom.vmesh.uid))
 
     def get_transform(self, matrix):
         if matrix is None:
@@ -796,19 +795,17 @@ class Raytracer:
                     continue
 
                 sim_verts = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                for i_sub, (render_mesh, sim_verts_idx) in enumerate(
-                    zip(fem_entity.render_meshes, fem_entity.sim_vert_maps)
-                ):
-                    render_verts = sim_verts[sim_verts_idx]
+                for vgeom in fem_entity.vgeoms:
+                    render_verts = sim_verts[vgeom.sim_verts_idx]
                     vertex_normals = trimesh.Trimesh(
-                        vertices=render_verts, faces=render_mesh.faces, process=False
+                        vertices=render_verts, faces=vgeom.vmesh.faces, process=False
                     ).vertex_normals
                     self.update_deformable(
-                        f"{fem_entity.uid!s}_sub{i_sub}",
+                        str(vgeom.vmesh.uid),
                         render_verts,
-                        render_mesh.faces,
+                        vgeom.vmesh.faces,
                         vertex_normals,
-                        np.array([]) if render_mesh.uvs is None else render_mesh.uvs,
+                        np.array([]) if vgeom.vmesh.uvs is None else vgeom.vmesh.uvs,
                     )
 
         # Flush the update buffer.
