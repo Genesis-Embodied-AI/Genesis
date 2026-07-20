@@ -606,14 +606,15 @@ def _func_contact_row_direction(
     d2,
     friction,
     friction_torsional,
+    friction_rolling,
     rigid_config: qd.template(),
 ):
     """Direction of collision row i_friction, as a translational part n and an angular part n_ang.
 
-    Elliptic rows [normal, t1, t2(, spin)] follow the contact frame unmixed (the cone couples them in the solver; the
-    spin row's friction strength lives in its regularization, see the diag computation in _add_friction_constraint).
-    Pyramidal rows are 2 opposing friction-mixed edges per tangent axis, then the torsional pair mixing the spin axis
-    through the angular jacobian.
+    Elliptic rows [normal, t1, t2(, spin)(, roll1, roll2)] follow the contact frame unmixed (the cone couples them in
+    the solver; the spin and rolling rows' friction strength lives in their regularization, see the diag computation
+    in _add_friction_constraint). Pyramidal rows are 2 opposing friction-mixed edges per tangent axis, then the
+    torsional and rolling pairs mixing the spin and tangent axes through the angular jacobian.
     """
     n = -normal
     n_ang = qd.Vector.zero(gs.qd_float, 3)
@@ -630,6 +631,12 @@ def _func_contact_row_direction(
                 n = qd.Vector.zero(gs.qd_float, 3)
                 if friction_torsional > 0.0:
                     n_ang = -normal
+        if qd.static(rigid_config.enable_rolling_friction):
+            # The rolling axes follow the tangent rows' frame; a zero coefficient zeroes them like the spin row.
+            if i_friction >= 4:
+                n = qd.Vector.zero(gs.qd_float, 3)
+                if friction_rolling > 0.0:
+                    n_ang = d1 if i_friction == 4 else d2
     else:
         d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
         n = d * friction - normal
@@ -637,11 +644,18 @@ def _func_contact_row_direction(
             # A zero coefficient zeroes the pair (aref alongside, see _add_friction_constraint): the rows would
             # otherwise degenerate to two extra pure-normal rows that stiffen the normal response and report phantom
             # contact force.
-            if i_friction >= 4:
+            if i_friction >= 4 and i_friction < 6:
                 n = qd.Vector.zero(gs.qd_float, 3)
                 if friction_torsional > 0.0:
                     n = -normal
                     n_ang = ((2 * (i_friction % 2) - 1) * friction_torsional) * normal
+        if qd.static(rigid_config.enable_rolling_friction):
+            # The rolling pairs mix the tangent axes; a zero coefficient zeroes them like the torsional pair.
+            if i_friction >= 6:
+                n = qd.Vector.zero(gs.qd_float, 3)
+                if friction_rolling > 0.0:
+                    n = -normal
+                    n_ang = ((2 * (i_friction % 2) - 1) * friction_rolling) * (d1 if i_friction < 8 else d2)
     return n, n_ang
 
 
@@ -698,6 +712,9 @@ def _add_friction_constraint(
     contact_data_friction_torsional = gs.qd_float(0.0)
     if qd.static(rigid_config.enable_torsional_friction):
         contact_data_friction_torsional = collider_state.contact_data.friction_torsional[i_col, i_b]
+    contact_data_friction_rolling = gs.qd_float(0.0)
+    if qd.static(rigid_config.enable_rolling_friction):
+        contact_data_friction_rolling = collider_state.contact_data.friction_rolling[i_col, i_b]
     n, n_ang = _func_contact_row_direction(
         i_friction,
         contact_data_normal,
@@ -705,6 +722,7 @@ def _add_friction_constraint(
         d2,
         contact_data_friction,
         contact_data_friction_torsional,
+        contact_data_friction_rolling,
         rigid_config,
     )
 
@@ -773,8 +791,8 @@ def _add_friction_constraint(
         diag = invweight * (1 - imp) / imp
         if i_friction > 0:
             diag = diag / rigid_info.impratio[None]
-        # The cone solver reads the contact friction coefficient off the head (normal) row, and the torsional one
-        # off the spin row.
+        # The cone solver reads the contact friction coefficient off the head (normal) row, and the torsional and
+        # rolling ones off their own rows.
         efc_frictionloss = contact_data_friction if i_friction == 0 else gs.qd_float(0.0)
         if qd.static(rigid_config.enable_torsional_friction):
             # The mu ratio lives in the spin row's regularization (jacobian unscaled), matching MuJoCo's elliptic
@@ -784,6 +802,12 @@ def _add_friction_constraint(
                 if contact_data_friction_torsional > 0.0:
                     diag = diag * contact_data_friction**2 / contact_data_friction_torsional**2
                 efc_frictionloss = contact_data_friction_torsional
+        if qd.static(rigid_config.enable_rolling_friction):
+            # The rolling rows carry the mu ratio in their regularization like the spin row.
+            if i_friction >= 4:
+                if contact_data_friction_rolling > 0.0:
+                    diag = diag * contact_data_friction**2 / contact_data_friction_rolling**2
+                efc_frictionloss = contact_data_friction_rolling
         constraint_state.efc_frictionloss[n_con, i_b] = efc_frictionloss
     else:
         imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
@@ -796,7 +820,11 @@ def _add_friction_constraint(
         if qd.static(rigid_config.enable_torsional_friction):
             # A zeroed torsional pair (see _func_contact_row_direction) must also drop the positional reference:
             # with it, the zero-jacobian rows would carry a phantom force that pollutes the reported contact force.
-            if i_friction >= 4 and contact_data_friction_torsional <= 0.0:
+            if i_friction >= 4 and i_friction < 6 and contact_data_friction_torsional <= 0.0:
+                aref = gs.qd_float(0.0)
+        if qd.static(rigid_config.enable_rolling_friction):
+            # A zeroed rolling pair drops its positional reference like the torsional pair.
+            if i_friction >= 6 and contact_data_friction_rolling <= 0.0:
                 aref = gs.qd_float(0.0)
     diag = qd.max(diag, EPS)
     constraint_state.diag[n_con, i_b] = diag
@@ -924,6 +952,9 @@ def _add_collision_constraints_per_contact(
             contact_data_friction_torsional = gs.qd_float(0.0)
             if qd.static(rigid_config.enable_torsional_friction):
                 contact_data_friction_torsional = collider_state.contact_data.friction_torsional[i_col, i_b]
+            contact_data_friction_rolling = gs.qd_float(0.0)
+            if qd.static(rigid_config.enable_rolling_friction):
+                contact_data_friction_rolling = collider_state.contact_data.friction_rolling[i_col, i_b]
 
             for i_friction in range(rows_per_contact):
                 n, n_ang = _func_contact_row_direction(
@@ -933,6 +964,7 @@ def _add_collision_constraints_per_contact(
                     d2,
                     contact_data_friction,
                     contact_data_friction_torsional,
+                    contact_data_friction_rolling,
                     rigid_config,
                 )
 
@@ -1006,6 +1038,12 @@ def _add_collision_constraints_per_contact(
                             if contact_data_friction_torsional > 0.0:
                                 diag = diag * contact_data_friction**2 / contact_data_friction_torsional**2
                             efc_frictionloss = contact_data_friction_torsional
+                    if qd.static(rigid_config.enable_rolling_friction):
+                        # Rolling-row regularization and coefficient storage: see _add_friction_constraint.
+                        if i_friction >= 4:
+                            if contact_data_friction_rolling > 0.0:
+                                diag = diag * contact_data_friction**2 / contact_data_friction_rolling**2
+                            efc_frictionloss = contact_data_friction_rolling
                     constraint_state.efc_frictionloss[n_con, i_b] = efc_frictionloss
                 else:
                     imp, aref = gu.imp_aref(
@@ -1018,7 +1056,11 @@ def _add_collision_constraints_per_contact(
                     diag = diag * 2 * friction_sq_reg * (1 - imp) / imp
                     if qd.static(rigid_config.enable_torsional_friction):
                         # A zeroed torsional pair drops its positional reference: see _add_friction_constraint.
-                        if i_friction >= 4 and contact_data_friction_torsional <= 0.0:
+                        if i_friction >= 4 and i_friction < 6 and contact_data_friction_torsional <= 0.0:
+                            aref = gs.qd_float(0.0)
+                    if qd.static(rigid_config.enable_rolling_friction):
+                        # A zeroed rolling pair drops its positional reference: see _add_friction_constraint.
+                        if i_friction >= 6 and contact_data_friction_rolling <= 0.0:
                             aref = gs.qd_float(0.0)
                 diag = qd.max(diag, EPS)
                 constraint_state.diag[n_con, i_b] = diag
@@ -5004,10 +5046,10 @@ def _func_cone_head_load(
     """Load the shared per-contact scalars of the elliptic cone whose head (normal) row is i_c.
 
     Returns (rows_efc_D, rows_friction, con_mu, rows_jaref): the per-row impedances, the per-row friction
-    coefficients (sliding on the head and tangent slots, torsional on the spin slot, see efc_frictionloss in
-    array_class.py), the regularized master coefficient con_mu = friction / sqrt(impratio) (computed as
-    friction * sqrt(rows_efc_D[0] / rows_efc_D[1]) since the friction rows are impratio times stiffer), and the
-    per-row residuals.
+    coefficients (sliding on the head and tangent slots, torsional and rolling on their own slots, see
+    efc_frictionloss in array_class.py), the regularized master coefficient con_mu = friction / sqrt(impratio)
+    (computed as friction * sqrt(rows_efc_D[0] / rows_efc_D[1]) since the friction rows are impratio times stiffer),
+    and the per-row residuals.
     """
     n_rows = qd.static(rigid_config.rows_per_contact)
     rows_efc_D = qd.Vector.zero(gs.qd_float, n_rows)
@@ -5020,7 +5062,8 @@ def _func_cone_head_load(
     for i_r in qd.static(range(n_rows)):
         rows_friction[i_r] = friction
     if qd.static(rigid_config.enable_torsional_friction):
-        rows_friction[n_rows - 1] = constraint_state.efc_frictionloss[i_c + n_rows - 1, i_b]
+        for i_r in qd.static(range(3, n_rows)):
+            rows_friction[i_r] = constraint_state.efc_frictionloss[i_c + i_r, i_b]
     con_mu = friction * qd.sqrt(rows_efc_D[0] / rows_efc_D[1])
     return rows_efc_D, rows_friction, con_mu, rows_jaref
 
@@ -6371,8 +6414,9 @@ def func_update_contact_force(
             force = qd.Vector.zero(gs.qd_float, 3)
             d1, d2 = gu.qd_orthogonals(contact_data_normal)
             if qd.static(rigid_config.enable_elliptic_friction):
-                # Cone rows [normal, t1, t2(, spin)] contiguous in the collision segment; the spin row carries
-                # torque only, so the linear contact force sums the three translational directions.
+                # Cone rows [normal, t1, t2(, spin)(, roll1, roll2)] contiguous in the collision segment; the spin
+                # and rolling rows carry torque only, so the linear contact force sums the three translational
+                # directions.
                 base = i_c * rows_per_contact + const_start
                 force = -contact_data_normal * constraint_state.efc_force[base, i_b]
                 force = force + d1 * constraint_state.efc_force[base + 1, i_b]
@@ -6382,8 +6426,8 @@ def func_update_contact_force(
                     d = (2 * (i_dir % 2) - 1) * (d1 if i_dir < 2 else d2)
                     n = d * contact_data_friction - contact_data_normal
                     force = force + n * constraint_state.efc_force[i_c * rows_per_contact + i_dir + const_start, i_b]
-                # The torsional pyramid pair mixes the spin axis through the angular jacobian; its linear part is the
-                # shared normal opposition.
+                # The torsional and rolling pyramid pairs mix the spin and tangent axes through the angular
+                # jacobian; their linear part is the shared normal opposition.
                 if qd.static(rigid_config.enable_torsional_friction):
                     for i_dir in qd.static(range(4, rows_per_contact)):
                         force = (

@@ -14,9 +14,14 @@ import genesis as gs
 
 
 GRAVITY = 9.81
+# SAFETY_FACTOR scales the ramp end past the analytic Coulomb limit so the breakaway is bracketed on both cones,
+# whether it lands below the limit (regularized pyramid) or slightly above it.
+SAFETY_FACTOR = 1.5
+SLIP_THRESHOLD = 0.05
+N_STEPS = 300
 
 
-def measure_breakaway(friction_cone, show_viewer, slip_threshold=0.05, n_steps=300, load_margin=1.5):
+def measure_breakaway(friction_cone, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -GRAVITY),
@@ -54,8 +59,8 @@ def measure_breakaway(friction_cone, show_viewer, slip_threshold=0.05, n_steps=3
 
     breakaway_ratios = [None, None]
     creep_speeds_half_load = [None, None]
-    for i_step in range(n_steps):
-        load_ratio = load_margin * (i_step + 1) / n_steps
+    for i_step in range(N_STEPS):
+        load_ratio = SAFETY_FACTOR * (i_step + 1) / N_STEPS
         box.control_dofs_force([load_ratio * box_load_coulomb, 0.0, 0.0, 0.0, 0.0, 0.0])
         sphere.control_dofs_force([0.0, 0.0, 0.0, 0.0, 0.0, load_ratio * sphere_load_coulomb])
         scene.step()
@@ -63,7 +68,7 @@ def measure_breakaway(friction_cone, show_viewer, slip_threshold=0.05, n_steps=3
         for i_e, speed in enumerate(speeds):
             if creep_speeds_half_load[i_e] is None and load_ratio >= 0.5:
                 creep_speeds_half_load[i_e] = speed
-            if breakaway_ratios[i_e] is None and speed > slip_threshold:
+            if breakaway_ratios[i_e] is None and speed > SLIP_THRESHOLD:
                 breakaway_ratios[i_e] = load_ratio
     return breakaway_ratios, creep_speeds_half_load
 

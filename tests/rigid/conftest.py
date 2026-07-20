@@ -34,6 +34,21 @@ def box_plan():
 
 
 @pytest.fixture(scope="session")
+def sphere_plane_roll():
+    """Generate an MJCF model for a sphere rolling on a plane, with torsional and rolling friction (condim=6)."""
+    mjcf = ET.Element("mujoco", model="sphere_plane_roll")
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="6", friction="1. 0.005 0.002")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="10. 10. 10.")
+    sphere_body = ET.SubElement(worldbody, "body", name="sphere", pos="0. 0. 0.1")
+    ET.SubElement(sphere_body, "geom", type="sphere", size="0.1", pos="0. 0. 0.")
+    ET.SubElement(sphere_body, "joint", name="root", type="free")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
 def sphere_plane_spin():
     """Generate an MJCF model for a sphere spinning in place on a plane, with torsional friction (condim=4)."""
     mjcf = ET.Element("mujoco", model="sphere_plane_spin")

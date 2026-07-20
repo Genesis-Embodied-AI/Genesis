@@ -690,7 +690,8 @@ def build_genesis_sim(
     mj_sim,
     *,
     friction_cone,
-    torsional_friction,
+    friction_torsional,
+    friction_rolling,
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -709,7 +710,8 @@ def build_genesis_sim(
             constraint_solver=gs_solver,
             enable_mujoco_compatibility=mujoco_compatibility,
             friction_cone=friction_cone,
-            enable_torsional_friction=torsional_friction,
+            enable_torsional_friction=friction_torsional,
+            enable_rolling_friction=friction_rolling,
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,

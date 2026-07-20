@@ -54,8 +54,14 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
-@pytest.mark.torsional_friction(True)
-@pytest.mark.parametrize("model_name", ["sphere_plane_spin"])
+@pytest.mark.friction_torsional(True)
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "sphere_plane_spin",
+        pytest.param("sphere_plane_roll", marks=pytest.mark.friction_rolling(True)),
+    ],
+)
 @pytest.mark.parametrize(
     "gs_solver, gs_integrator",
     [
@@ -69,11 +75,11 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
     ],
 )
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_torsional_friction(gs_sim, mj_sim, tol):
-    # Sliding while spinning couples the tangential and spin friction axes through slip, stick, and rest. The slight
+def test_torsional_and_rolling_friction(gs_sim, mj_sim, tol):
+    # Sliding while spinning and rolling couples every friction axis through slip, stick, and rest. The slight
     # initial penetration makes the contact exist from the first step.
     qpos = np.array([0.0, 0.0, 0.0999, 1.0, 0.0, 0.0, 0.0])
-    qvel = np.array([0.5, 0.0, 0.0, 0.0, 0.0, 3.0])
+    qvel = np.array([0.5, 0.0, 0.0, 0.0, 4.0, 3.0])
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=60, tol=tol)
 
 

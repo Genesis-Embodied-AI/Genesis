@@ -420,8 +420,8 @@ class RigidOptions(Options):
         Maximum number of collision pairs. Defaults to 100.
     max_contacts : int, optional
         Maximum number of simultaneous contact points per environment that the constraint solver can handle, which
-        determines the size of the contact constraint buffers (3 to 6 constraint rows per contact point depending on
-        'friction_cone' and 'enable_torsional_friction'). Defaults to None.
+        determines the size of the contact constraint buffers (3 to 10 constraint rows per contact point depending on
+        'friction_cone', 'enable_torsional_friction', and 'enable_rolling_friction'). Defaults to None.
 
         This limit applies to the final contact points after pruning, not to the candidate contact points that
         collision detection can emit (see 'max_collision_pairs'). Exceeding it at runtime halts the simulation with
@@ -471,6 +471,12 @@ class RigidOptions(Options):
         object twisting in a gripper, a top spinning in place - motions a point contact transmits no torque against,
         so they persist indefinitely otherwise. The extra spin resistance slows down the constraint solve on every
         contact, including those where spin is irrelevant. Defaults to False.
+    enable_rolling_friction : bool, optional
+        Whether contacts also resist rolling, with strength set per geometry by the material option 'friction_rolling'
+        (see 'gs.materials.Rigid'). Enable it when rolling resistance matters - a ball or wheel coasting to rest, a
+        cylinder settling on a slope - motions a point contact otherwise never slows down. The extra rolling
+        resistance slows down the constraint solve on every contact, more so than torsional friction (two extra axes),
+        and requires 'enable_torsional_friction'. Defaults to False.
     impratio : float, optional
         Ratio of tangential (friction) to normal constraint impedance at contacts. Raising it above 1 stiffens
         friction so resting stacks and piles hold their pose under sustained shear, at the cost of a slower solve that
@@ -549,6 +555,7 @@ class RigidOptions(Options):
     noslip_tolerance: PositiveFloat = 1e-6
     friction_cone: gs.friction_cone = gs.friction_cone.pyramidal
     enable_torsional_friction: StrictBool = False
+    enable_rolling_friction: StrictBool = False
     impratio: PositiveFloat | None = None
     contact_pruning_tolerance: PositiveFloat | None = 0.02
     sparse_solve: StrictBool | None = None
@@ -589,6 +596,8 @@ class RigidOptions(Options):
             self.contact_pruning_tolerance = None
         if self.friction_cone == gs.friction_cone.elliptic and self.noslip_iterations > 0:
             gs.raise_exception("The elliptic friction cone is not supported with the noslip solver.")
+        if self.enable_rolling_friction and not self.enable_torsional_friction:
+            gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
 
 
 class MPMOptions(Options):
