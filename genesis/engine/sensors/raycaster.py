@@ -81,6 +81,12 @@ class BVHContext:
     # take no face_ids). See RaycastContext.activate for the static/dynamic face split.
     face_ids: torch.Tensor | None = None
     is_remapped: bool = False
+    # Bool masks selecting the rows of the batched solver fields that feed a static collision entry's grouping
+    # signature: the links owning its faces (only read when links_info is batched) and the free verts its faces
+    # reference. None selects every row (the entry covers the whole solver). Restricting the signature to the entry's
+    # own subset keeps a static subset shared across envs while the solver's movable verts diverge under physics.
+    signature_links_mask: torch.Tensor | None = None
+    signature_free_verts_mask: torch.Tensor | None = None
 
 
 class RaycastContext(SharedSensorContext):
@@ -156,26 +162,35 @@ class RaycastContext(SharedSensorContext):
         return vgeom_enabled[vface_vgeom_idx].astype(np.int8)
 
     @staticmethod
-    def _static_geometry_groups(solver: RigidSolver) -> tuple[torch.Tensor, torch.Tensor]:
+    def _static_geometry_groups(
+        solver: RigidSolver, links_mask: torch.Tensor | None, free_verts_mask: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Group envs by identical static collision geometry.
 
         Returns ``(env_bvh_idx, batch_repr_env)``: the (B,) tree slot each env casts against and the (n_trees,)
         representative env whose geometry builds each slot (the lowest env index of its group). Two envs share a tree
-        iff every per-env input of the AABB build matches: the active geom ranges (present only when link info is
-        batched) and the free-vert positions; fixed verts are env-shared. Grouping on exact equality makes a wrong
-        merge impossible: identical envs collapse to one tree, N heterogeneous variants to N, per-env divergence
-        (e.g. set_pos on a fixed link) to one tree per distinct geometry. Reads the free verts, so callers must
-        refresh them first.
+        iff every per-env input of the entry's AABB build matches: the active geom ranges (present only when link
+        info is batched) and the free-vert positions, both restricted to the entry's subset by the signature masks
+        (see BVHContext); fixed verts are env-shared. Grouping on exact equality makes a wrong merge impossible:
+        identical envs collapse to one tree, N heterogeneous variants to N, per-env divergence (e.g. set_pos on a
+        fixed link) to one tree per distinct geometry. Reads the free verts, so callers must refresh them first.
         """
         B = solver._B
         parts = []
         if solver._options.batch_links_info:
             # (B, n_links) active-geom range per env
-            parts.append(qd_to_torch(solver.dyn_info.links.geom_start, transpose=True))
-            parts.append(qd_to_torch(solver.dyn_info.links.geom_end, transpose=True))
+            geom_start = qd_to_torch(solver.dyn_info.links.geom_start, transpose=True)
+            geom_end = qd_to_torch(solver.dyn_info.links.geom_end, transpose=True)
+            if links_mask is not None:
+                geom_start = geom_start[:, links_mask]
+                geom_end = geom_end[:, links_mask]
+            parts += [geom_start, geom_end]
         if solver.n_free_verts > 0:
             # (B, n_free_verts, 3) per-env vertex positions
-            parts.append(qd_to_torch(solver.dyn_state.free_verts.pos, transpose=True))
+            free_verts_pos = qd_to_torch(solver.dyn_state.free_verts.pos, transpose=True)
+            if free_verts_mask is not None:
+                free_verts_pos = free_verts_pos[:, free_verts_mask]
+            parts.append(free_verts_pos)
         # Identical-envs short-circuit: a zero-copy row comparison, skipping the sort-based grouping of the general
         # case. This is the dominant layout (env-shared terrain) and runs on every regroup, e.g. at episode resets.
         if B == 1 or all(bool((part == part[:1]).all()) for part in parts):
@@ -254,7 +269,30 @@ class RaycastContext(SharedSensorContext):
                         # tree per distinct per-env geometry - a single tree when envs are identical - dropping the
                         # n_envs-fold node/aabb/morton/radix-scratch replication that dominates GPU memory for a
                         # high-poly terrain.
-                        entry = BVHContext(solver, maybe_static=True, face_ids=face_ids, is_remapped=is_remapped)
+                        signature_links_mask = signature_free_verts_mask = None
+                        if is_remapped:
+                            # Restrict the grouping signature to the subset's own rows (see the BVHContext fields):
+                            # the movable subset's verts diverge per env under physics, and reading them would split
+                            # a still-identical static subset into per-env trees at its next regroup.
+                            links_mask = np.zeros(links_is_fixed.shape[0], dtype=np.bool_)
+                            links_mask[geoms_link_idx[np.unique(faces_geom_idx[subset_faces_idx])]] = True
+                            signature_links_mask = torch.as_tensor(links_mask, device=gs.device)
+                            faces_verts_idx = qd_to_numpy(solver.dyn_info.faces.verts_idx)
+                            verts_state_idx = qd_to_numpy(solver.dyn_info.verts.verts_state_idx)
+                            verts_is_fixed = qd_to_numpy(solver.dyn_info.verts.is_fixed)
+                            subset_verts_idx = np.unique(faces_verts_idx[subset_faces_idx])
+                            subset_verts_idx = subset_verts_idx[~verts_is_fixed[subset_verts_idx]]
+                            free_verts_mask = np.zeros(solver.n_free_verts, dtype=np.bool_)
+                            free_verts_mask[verts_state_idx[subset_verts_idx]] = True
+                            signature_free_verts_mask = torch.as_tensor(free_verts_mask, device=gs.device)
+                        entry = BVHContext(
+                            solver,
+                            maybe_static=True,
+                            face_ids=face_ids,
+                            is_remapped=is_remapped,
+                            signature_links_mask=signature_links_mask,
+                            signature_free_verts_mask=signature_free_verts_mask,
+                        )
                     else:
                         # A movable subset rebuilds every step and may diverge per env, so keep one tree per env.
                         aabb = AABB(n_batches=n_envs, n_aabbs=face_ids.shape[0] if is_remapped else n_faces)
@@ -319,7 +357,9 @@ class RaycastContext(SharedSensorContext):
                 # splits groups (up to one tree per env) and an identical reset merges them back, so a shared tree
                 # is never stale.
                 kernel_update_all_verts(solver.dyn_state, solver.dyn_info, solver.rigid_config)
-                env_bvh_idx, batch_repr_env = self._static_geometry_groups(solver)
+                env_bvh_idx, batch_repr_env = self._static_geometry_groups(
+                    solver, entry.signature_links_mask, entry.signature_free_verts_mask
+                )
                 n_trees = batch_repr_env.shape[0]
                 if entry.aabb is None or entry.aabb.n_batches != n_trees:
                     trees = entry.bvh_by_n_trees.get(n_trees)

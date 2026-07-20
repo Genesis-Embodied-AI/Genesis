@@ -736,6 +736,17 @@ def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
     assert static_entry.aabb.n_batches == 1
     assert dynamic_entry.aabb.n_batches == max(n_envs, 1)
 
+    if n_envs > 0:
+        # A per-env set_pos on the dynamic box diverges the movable verts and flags a static-subset regroup (the
+        # GEOMETRY subscription is solver-wide): the static grouping signature reads only its own subset, so the
+        # static tree stays shared while each env reads its own dynamic hit.
+        dynamic_box.set_dofs_velocity((0.0, 0.0, 0.0), dofs_idx_local=slice(0, 3))
+        dynamic_box.set_pos(np.array([[0.0, 0.0, DYNAMIC_TOP_Z - 0.2], FAR_POS], dtype=gs.np_float))
+        scene.step()
+        assert static_entry.aabb.n_batches == 1
+        for s in (sensor, distances_only_sensor):
+            assert_allclose(s.read().distances[:, 0, 0], (MOUNT_Z - DYNAMIC_TOP_Z, NO_HIT), tol=tol)
+
 
 @pytest.mark.required
 def test_tactile_raycast_consumer_forces_combined_collision_bvh(show_viewer):
