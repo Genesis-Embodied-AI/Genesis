@@ -487,28 +487,28 @@ def bvh_ray_cast_visual(
 
 
 @qd.func
-def update_visual_aabbs(
+def update_visual_face_aabb(
+    i_t: int,
+    i_b: int,
+    i_f: int,
     face_mask: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
 ):
-    """Update per-vface AABBs from the visual mesh.
+    """Update the AABB of vface i_f in tree slot i_t from env i_b's visual mesh (i_t == i_b for a per-env BVH).
 
     face_mask gates inclusion: 0 keeps the AABB inverted (unhittable) so vfaces from entities not opted into
     raycasting are skipped by ray queries.
     """
-    _B = dyn_state.vgeoms.pos.shape[1]
-    n_vfaces = dyn_info.vfaces.vverts_idx.shape[0]
-    for i_b, i_f in qd.ndrange(_B, n_vfaces):
-        aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
-        aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
-        if face_mask[i_f] != 0:
-            for i in qd.static(range(3)):
-                i_vv = dyn_info.vfaces.vverts_idx[i_f][i]
-                pos_v = get_visual_vvert_pos(i_vv, i_b, dyn_state, dyn_info)
-                aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-                aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+    aabb_state.aabbs[i_t, i_f].min.fill(qd.math.inf)
+    aabb_state.aabbs[i_t, i_f].max.fill(-qd.math.inf)
+    if face_mask[i_f] != 0:
+        for i in qd.static(range(3)):
+            i_vv = dyn_info.vfaces.vverts_idx[i_f][i]
+            pos_v = get_visual_vvert_pos(i_vv, i_b, dyn_state, dyn_info)
+            aabb_state.aabbs[i_t, i_f].min = qd.min(aabb_state.aabbs[i_t, i_f].min, pos_v)
+            aabb_state.aabbs[i_t, i_f].max = qd.max(aabb_state.aabbs[i_t, i_f].max, pos_v)
 
 
 @qd.kernel
@@ -518,7 +518,28 @@ def kernel_update_visual_aabbs(
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
 ):
-    update_visual_aabbs(face_mask, dyn_state, aabb_state, dyn_info)
+    """Update the per-vface AABBs of a per-env visual BVH (one tree slot per env). See update_visual_face_aabb."""
+    _B = dyn_state.vgeoms.pos.shape[1]
+    n_vfaces = dyn_info.vfaces.vverts_idx.shape[0]
+    for i_b, i_f in qd.ndrange(_B, n_vfaces):
+        update_visual_face_aabb(i_b, i_b, i_f, face_mask, dyn_state, aabb_state, dyn_info)
+
+
+@qd.kernel
+def kernel_update_grouped_visual_aabbs(
+    batch_repr_env: qd.types.ndarray(ndim=1),  # [n_trees] env whose geometry builds each tree slot
+    face_mask: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    aabb_state: qd.template(),
+    dyn_info: array_class.DynInfo,
+):
+    """Build the per-vface AABBs of a grouped static visual BVH: one tree slot per distinct per-env visual geometry.
+
+    Each tree slot is built from its representative env, whose visual geometry is bit-identical to every env routed
+    to that slot (see RaycastContext update).
+    """
+    for i_t, i_f in qd.ndrange(aabb_state.aabbs.shape[0], dyn_info.vfaces.vverts_idx.shape[0]):
+        update_visual_face_aabb(i_t, batch_repr_env[i_t], i_f, face_mask, dyn_state, aabb_state, dyn_info)
 
 
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.

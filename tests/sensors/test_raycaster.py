@@ -461,6 +461,17 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
             collision=False,
         )
     )
+    visual_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.4, 0.4, 0.4),
+            pos=(6.0, 0.0, 0.5),
+            fixed=True,
+            collision=False,
+        ),
+        material=gs.materials.Rigid(
+            use_visual_raycasting=True,
+        ),
+    )
     lidar = scene.add_sensor(
         gs.sensors.Lidar(
             entity_idx=sensor_mount.idx,
@@ -471,25 +482,40 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
     scene.build(n_envs=n_envs)
     scene.step()
 
-    # Env-identical static collision geometry collapses to a single tree read by every env.
+    # Env-identical static geometry collapses to a single tree read by every env, for the collision and the visual
+    # BVH alike.
     collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)
-    assert collision_bvh.maybe_static
+    visual_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is not None)
+    assert collision_bvh.maybe_static and visual_bvh.maybe_static
     assert collision_bvh.aabb.n_batches == 1
+    assert visual_bvh.aabb.n_batches == 1
     assert_allclose(lidar.read().distances[..., 0, 0], 0.8, tol=5e-3)
 
     if n_envs > 0:
-        # A per-env set_pos on the fixed box diverges the envs: the BVH must regroup to one tree per distinct
-        # geometry so each env reads its own moved box. The env order is deliberately non-monotonic in x, so any
-        # confusion between the env -> tree routing and the env backing a tree's geometry shifts the distances.
+        # A per-env set_pos on the fixed box diverges the envs: the collision BVH must regroup to one tree per
+        # distinct geometry so each env reads its own moved box. The env order is deliberately non-monotonic in x,
+        # so any confusion between the env -> tree routing and the env backing a tree's geometry shifts the
+        # distances. The visual geometry stays env-identical through its regroup, so it keeps a single tree.
         box.set_pos(np.array([[1.0, 0.0, 0.5], [4.0, 0.0, 0.5], [3.0, 0.0, 0.5], [2.0, 0.0, 0.5]], dtype=gs.np_float))
         scene.step()
         assert collision_bvh.aabb.n_batches == n_envs
+        assert visual_bvh.aabb.n_batches == 1
         assert_allclose(lidar.read().distances[:, 0, 0], (0.8, 3.8, 2.8, 1.8), tol=5e-3)
 
-        # An identical reset restores the built geometry and merges back to one shared tree.
+        # A per-env set_pos on the visual box splits the visual BVH into one tree per distinct geometry - two here,
+        # with interleaved env membership - and the merge picks the visual hit where it is the closest.
+        visual_box.set_pos(
+            np.array([[6.0, 0.0, 0.5], [6.0, 0.0, 0.5], [1.5, 0.0, 0.5], [6.0, 0.0, 0.5]], dtype=gs.np_float)
+        )
+        scene.step()
+        assert visual_bvh.aabb.n_batches == 2
+        assert_allclose(lidar.read().distances[:, 0, 0], (0.8, 3.8, 1.3, 1.8), tol=5e-3)
+
+        # An identical reset restores the built geometry and merges everything back to one shared tree each.
         scene.reset()
         scene.step()
         assert collision_bvh.aabb.n_batches == 1
+        assert visual_bvh.aabb.n_batches == 1
         assert_allclose(lidar.read().distances[:, 0, 0], 0.8, tol=5e-3)
 
 
