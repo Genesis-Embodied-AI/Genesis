@@ -831,25 +831,29 @@ def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snap
     # Move the entity after build so rendering exercises the per-sub-mesh vertex update path.
     fem.set_position([0.0, 0.0, 0.2])
 
-    if renderer_type == RENDERER_TYPE.RAYTRACER:
-        # Relax pixel matching because RayTracer is not deterministic between different hardware
-        # (eg RTX6000 vs H100), even without denoiser.
+    # The Apple Software Renderer that macOS CI falls back to differs from hardware on anti-aliased channels, and
+    # RayTracer is non-deterministic across GPUs; relax the pixel match for the color-like outputs in both cases.
+    if scene.visualizer.is_software or renderer_type == RENDERER_TYPE.RAYTRACER:
         png_snapshot.extension._std_err_threshold = 3.0
         png_snapshot.extension._blurred_kernel_size = 3
-        # RayTracer only supports the RGB channel; depth, segmentation and normal are rasterizer-only.
+
+    if renderer_type == RENDERER_TYPE.RAYTRACER:
+        # RayTracer only produces the RGB channel.
         rgb, *_ = camera.render(rgb=True)
         assert rgb_array_to_png_bytes(rgb) == png_snapshot
     else:
-        if scene.visualizer.is_software:
-            # Software renderers add per-pixel sampling jitter on the speckled bag texture and along silhouette
-            # edges; blur it away and relax the threshold so the comparison still catches structural differences.
-            png_snapshot.extension._std_err_threshold = 3.0
-            png_snapshot.extension._blurred_kernel_size = 3
         rgb, depth, seg, normal = camera.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
         assert rgb_array_to_png_bytes(rgb) == png_snapshot
         assert rgb_array_to_png_bytes(as_grayscale_image(tensor_to_array(depth))) == png_snapshot
-        assert rgb_array_to_png_bytes(seg) == png_snapshot
         assert rgb_array_to_png_bytes(normal) == png_snapshot
+
+        # Segmentation ids are integer labels rasterized without anti-aliasing, so coverage is fixed by the OpenGL
+        # fill rules and identical on every renderer: assert the map bit-exactly. This is the channel that proves
+        # each sub-mesh reaches the renderer with its own id.
+        png_snapshot.extension._std_err_threshold = 0.0
+        png_snapshot.extension._ratio_err_threshold = 0.0
+        png_snapshot.extension._blurred_kernel_size = 1
+        assert rgb_array_to_png_bytes(seg) == png_snapshot
 
 
 @pytest.mark.required
