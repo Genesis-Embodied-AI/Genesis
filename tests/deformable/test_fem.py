@@ -88,14 +88,14 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
     # geom's sim_verts_idx, while surface_triangles reflects the refined tetrahedral boundary: the two meshes
     # differ in granularity, so the invariant to check is per-vertex tracking.
     (vgeom,) = fem.vgeoms
-    (fem_node_primitive,) = scene.visualizer.context.static_nodes[(0, vgeom.vmesh.uid)].mesh.primitives
+    (fem_node_primitive,) = scene.visualizer.context.static_nodes[(0, vgeom.uid)].mesh.primitives
     viz_verts = fem_node_primitive.positions
-    assert vgeom.sim_verts_idx.shape == (viz_verts.shape[0],)
-    assert_allclose(viz_verts, vertices[vgeom.sim_verts_idx], tol=1e-5)
+    assert_allclose(viz_verts, vertices[vgeom.sim_verts_idx], tol=gs.EPS)
 
 
 @pytest.mark.required
-def test_multi_submesh_render_decoupling(show_viewer):
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_multi_submesh_render_decoupling(n_envs, show_viewer):
     # Cloth material keeps the entity out of the tetrahedralization path, exercising the welded surface as
     # simulation elements. The GLB asset holds 2 sub-meshes (bag and channel) with distinct materials.
     scene = gs.Scene(
@@ -108,22 +108,23 @@ def test_multi_submesh_render_decoupling(show_viewer):
         ),
         material=gs.materials.FEM.Cloth(),
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     assert len(fem.vgeoms) == 2
-    # Welding across visual geoms must keep strictly fewer simulated vertices than render vertices.
+    # The two sub-meshes share their boundary vertices, so welding strictly reduces the vertex count.
     n_render_verts = sum(len(vgeom.vmesh.verts) for vgeom in fem.vgeoms)
     assert fem.n_vertices < n_render_verts
-    vertices = tensor_to_array(fem.get_state().pos[0])
+    vertices = tensor_to_array(fem.get_state().pos)
     for vgeom in fem.vgeoms:
-        assert vgeom.sim_verts_idx.shape == (len(vgeom.vmesh.verts),)
-        assert vgeom.sim_verts_idx.min() >= 0 and vgeom.sim_verts_idx.max() < fem.n_vertices
-        # Mapped simulated vertices must land exactly on the render vertices they stand for.
-        assert_allclose(vertices[vgeom.sim_verts_idx], vgeom.vmesh.verts, tol=1e-5)
+        # Negative indices would wrap around silently.
+        assert vgeom.sim_verts_idx.min() >= 0
+        # Mapped simulated vertices must land on the render vertices they stand for, in every environment, up to
+        # the quantization of the float64 authored vertices to the simulation dtype.
+        assert_allclose(vertices[..., vgeom.sim_verts_idx, :], vgeom.vmesh.verts, tol=gs.EPS)
 
     # The rasterizer must register one node per visual geom and environment.
     static_nodes = scene.visualizer.context.static_nodes
-    assert all((0, vgeom.vmesh.uid) in static_nodes for vgeom in fem.vgeoms)
+    assert all((i_b, vgeom.uid) in static_nodes for i_b in range(max(n_envs, 1)) for vgeom in fem.vgeoms)
 
 
 @pytest.mark.required

@@ -784,7 +784,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
         if isinstance(seg_key, tuple):
             comp_key += 1
     # At entity level no tuple keys; at link level: 2 URDF links + rigid-like ducks; at geom level additionally
-    # one tuple per FEM sub-mesh.
+    # one tuple per FEM visual geom (the FEM ducks have one each, so counting FEM entities suffices).
     assert comp_key == (0 if segmentation_level == "entity" else 2 + n_rigid_like + n_fem_geom)
 
     for i in range(2):
@@ -801,16 +801,16 @@ def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snap
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
-            segmentation_level="geom",
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+            segmentation_level="geom",
         ),
         renderer=renderer,
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    # The scene has no ground plane: it serves no purpose here, and its out-of-frustum vertices would be
-    # misrasterized by the Apple Software Renderer.
+    # Every vertex of the scene must stay inside the camera frustum: the Apple Software Renderer misrasterizes
+    # out-of-frustum geometry.
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/trashbag_rope.glb",

@@ -1115,7 +1115,6 @@ class FEMSolver(Solver):
         mat_lam: qd.f32,
         mat_rho: qd.f32,
         mat_friction_mu: qd.f32,
-        n_surfaces: qd.i32,
         v_start: qd.i32,
         el_start: qd.i32,
         s_start: qd.i32,
@@ -1180,7 +1179,7 @@ class FEMSolver(Solver):
             self.elements_el[f, i_global, i_b].actu = 0.0
             self.elements_el_ng[f, i_global, i_b].active = True
 
-        for i_s in range(n_surfaces):
+        for i_s in range(tri2v.shape[0]):
             i_global = i_s + s_start
             for j in qd.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start

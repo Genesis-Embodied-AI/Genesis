@@ -255,7 +255,7 @@ class Raytracer:
                         self.add_surface(str(geom.uid), geom.surface)
             elif isinstance(entity, entities.FEMEntity):
                 for vgeom in entity.vgeoms:
-                    self.add_surface(str(vgeom.vmesh.uid), vgeom.vmesh.surface)
+                    self.add_surface(str(vgeom.uid), vgeom.surface)
             else:
                 self.add_surface(str(entity.uid), entity.surface)
 
@@ -338,7 +338,7 @@ class Raytracer:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
                     for vgeom in fem_entity.vgeoms:
-                        self.add_deformable(str(vgeom.vmesh.uid))
+                        self.add_deformable(str(vgeom.uid))
 
     def get_transform(self, matrix):
         if matrix is None:
@@ -800,14 +800,16 @@ class Raytracer:
                 for vgeom in fem_entity.vgeoms:
                     render_verts = sim_verts[vgeom.sim_verts_idx]
                     vertex_normals = trimesh.Trimesh(
-                        vertices=render_verts, faces=vgeom.vmesh.faces, process=False
+                        vertices=render_verts,
+                        faces=vgeom.vmesh.faces,
+                        process=False,
                     ).vertex_normals
                     self.update_deformable(
-                        str(vgeom.vmesh.uid),
+                        str(vgeom.uid),
                         render_verts,
                         vgeom.vmesh.faces,
                         vertex_normals,
-                        np.array([]) if vgeom.vmesh.uvs is None else vgeom.vmesh.uvs,
+                        np.array([]) if vgeom.uvs is None else vgeom.uvs,
                     )
 
         # Flush the update buffer.

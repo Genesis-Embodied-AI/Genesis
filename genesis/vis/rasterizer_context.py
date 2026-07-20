@@ -893,19 +893,22 @@ class RasterizerContext:
 
                 sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for i_g, vgeom in enumerate(fem_entity.vgeoms):
-                    vmesh = vgeom.vmesh
                     visual = mu.surface_uvs_to_trimesh_visual(
-                        vmesh.surface, uvs=vmesh.uvs, n_verts=len(vgeom.sim_verts_idx)
+                        vgeom.surface,
+                        uvs=vgeom.uvs,
+                        n_verts=len(vgeom.sim_verts_idx),
                     )
                     seg_key = (fem_entity.idx, i_g) if self.segmentation_level == "geom" else fem_entity.idx
                     for env_i, i_b in enumerate(self.rendered_envs_idx):
-                        mesh = trimesh.Trimesh(sim_verts[env_i, vgeom.sim_verts_idx], vmesh.faces, process=False)
+                        mesh = trimesh.Trimesh(sim_verts[env_i, vgeom.sim_verts_idx], vgeom.vmesh.faces, process=False)
                         mesh.visual = visual
                         node = pyrender.Mesh.from_trimesh(
-                            mesh, smooth=vmesh.surface.smooth, double_sided=vmesh.surface.double_sided
+                            mesh,
+                            smooth=vgeom.surface.smooth,
+                            double_sided=vgeom.surface.double_sided,
                         )
                         static_node = self.add_node(node)
-                        self.static_nodes[(i_b, vmesh.uid)] = static_node
+                        self.static_nodes[(i_b, vgeom.uid)] = static_node
                         self.create_node_seg(seg_key, static_node)
 
     def update_fem(self):
@@ -923,7 +926,7 @@ class RasterizerContext:
                 sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for vgeom in fem_entity.vgeoms:
                     for env_i, i_b in enumerate(self.rendered_envs_idx):
-                        node = self.static_nodes[(i_b, vgeom.vmesh.uid)]
+                        node = self.static_nodes[(i_b, vgeom.uid)]
                         render_verts = sim_verts[env_i, vgeom.sim_verts_idx].astype(np.float32, copy=False)
                         update_data = self._scene.reorder_vertices(node, render_verts)
                         self.jit.update_buffer(node, "pos", update_data)

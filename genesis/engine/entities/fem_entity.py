@@ -31,6 +31,21 @@ class FEMVisGeom(NamedTuple):
     vmesh: gs.Mesh
     sim_verts_idx: np.ndarray
 
+    @property
+    def uid(self):
+        """Unique ID of the vgeom."""
+        return self.vmesh.uid
+
+    @property
+    def surface(self):
+        """Surface object of the vgeom."""
+        return self.vmesh.surface
+
+    @property
+    def uvs(self):
+        """UV coordinates of the vgeom."""
+        return self.vmesh.uvs
+
 
 def assert_muscle(method):
     @wraps(method)
@@ -84,12 +99,7 @@ class FEMEntity(Entity):
         self._step_global_added = None
         self.sample()
 
-        # Check if this is cloth (elements are already triangles)
-        from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
-
-        is_cloth = isinstance(self.material, ClothMaterial)
-
-        if is_cloth:
+        if isinstance(self.material, gs.materials.FEM.Cloth):
             # For cloth, elements are already surface triangles
             self._surface_tri_np = self.elems
             self._n_surfaces = len(self._surface_tri_np)
@@ -409,17 +419,16 @@ class FEMEntity(Entity):
         tetrahedralization both keep the input vertices first and in order, so these maps remain valid indices into
         the simulated vertices.
         """
-        from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
-
         meshes = gs.Mesh.from_morph_surface(self._morph, self._surface)
-        surface_verts, surface_faces, sim_verts_maps = mu.merge_submeshes(
-            [mesh.verts for mesh in meshes], [mesh.faces for mesh in meshes]
+        surface_verts, surface_faces, verts_maps = mu.merge_submeshes(
+            [mesh.verts for mesh in meshes],
+            [mesh.faces for mesh in meshes],
         )
         self._vgeoms = gs.List(
-            FEMVisGeom(vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, sim_verts_maps)
+            FEMVisGeom(vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, verts_maps)
         )
 
-        if isinstance(self.material, ClothMaterial):
+        if isinstance(self.material, gs.materials.FEM.Cloth):
             # Cloth needs no tetrahedralization: the welded surface triangles are the simulation elements.
             verts = surface_verts + self._morph.pos
             elems = surface_faces
@@ -439,10 +448,6 @@ class FEMEntity(Entity):
         self.instantiate(verts, elems)
 
     def _add_to_solver(self, in_backward=False):
-        from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
-
-        is_cloth = isinstance(self.material, ClothMaterial)
-
         if not in_backward:
             self._step_global_added = self._sim.cur_step_global
             gs.logger.info(
@@ -452,7 +457,7 @@ class FEMEntity(Entity):
         # Convert to appropriate numpy array types
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
 
-        if is_cloth:
+        if isinstance(self.material, gs.materials.FEM.Cloth):
             self._solver._kernel_add_cloth(
                 f=self._sim.cur_substep_local,
                 v_start=self._v_start,
@@ -469,7 +474,6 @@ class FEMEntity(Entity):
                 mat_lam=self._material.lam,
                 mat_rho=self._material.rho,
                 mat_friction_mu=self._material.friction_mu,
-                n_surfaces=self._n_surfaces,
                 v_start=self._v_start,
                 el_start=self._el_start,
                 s_start=self._s_start,

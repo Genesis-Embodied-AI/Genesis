@@ -85,8 +85,8 @@ class NormalShaderCache(ShaderProgramCache):
     def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
         is_double_sided = defines is not None and "DOUBLE_SIDED" in defines
         return super().get_program(
-            "mesh_normal.vert",
-            "mesh_normal.frag",
+            vertex_shader="mesh_normal.vert",
+            fragment_shader="mesh_normal.frag",
             geometry_shader="mesh_normal_double_sided.geom" if is_double_sided else None,
             defines=defines,
         )
