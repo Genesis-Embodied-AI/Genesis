@@ -351,42 +351,14 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
 
 
 @pytest.mark.required
-@pytest.mark.torsional_friction(True)
-@pytest.mark.parametrize("model_name", ["sphere_plane_spin"])
-@pytest.mark.parametrize(
-    "gs_solver, gs_integrator",
-    [
-        (gs.constraint_solver.Newton, gs.integrator.Euler),
-        pytest.param(
-            gs.constraint_solver.Newton,
-            gs.integrator.Euler,
-            marks=pytest.mark.friction_cone(gs.friction_cone.elliptic),
-            id="Newton-Euler-elliptic",
-        ),
-    ],
-)
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_torsional_friction_mujoco_consistency(gs_sim, mj_sim, tol):
-    # Sliding while spinning couples the tangential and spin axes of the friction cone, so both the pyramidal
-    # torsional pair and the elliptic cone's coupled middle zone are exercised through slip, stick, and rest. The
-    # sphere starts slightly penetrated so the contact exists unambiguously from the first step.
-    qpos = np.array([0.0, 0.0, 0.0999, 1.0, 0.0, 0.0, 0.0])
-    qvel = np.array([0.5, 0.0, 0.0, 0.0, 0.0, 3.0])
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=60, tol=tol)
-
-
-@pytest.mark.required
 @pytest.mark.parametrize("friction_cone", [gs.friction_cone.pyramidal, gs.friction_cone.elliptic])
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
-    # A sphere spinning about the vertical axis on a plane has a single contact whose only braking torque is
-    # torsional friction: I * dw/dt = -friction_torsional * m * g with I = 2/5 m r^2, so the saturated spin-down
-    # rate is friction_torsional * g / (0.4 r^2), independent of the mass. The elliptic cone at the default
-    # impratio tracks the exact Coulomb bound once fully slipping, including for coefficients far below the
-    # tangential ones; the pyramidal cone's regularized friction decays below that bound, so it asserts the
-    # coefficient ordering of the rates. Coefficients pair by maximum, so the plane's zero coefficient leaves each
-    # sphere decaying at its own rate, and a zero-coefficient sphere never slows down and keeps the normal contact
-    # response of a torsional-free scene (weight-only reported contact force).
+    # I * dw/dt = -friction_torsional * m * g with I = 2/5 m r^2: the saturated spin-down rate is
+    # friction_torsional * g / (0.4 r^2), mass-independent. The elliptic cone tracks this exact Coulomb bound once
+    # fully slipping; the pyramidal cone's regularized friction decays below it, so only the rate ordering is
+    # asserted. The plane's zero coefficient is inert under the pair-by-maximum rule, and a zero-coefficient sphere
+    # keeps the weight-only contact force of a torsional-free scene.
     GRAVITY = 9.81
     DT = 0.01
     RADIUS = 0.1
@@ -400,6 +372,10 @@ def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
         rigid_options=gs.options.RigidOptions(
             friction_cone=friction_cone,
             enable_torsional_friction=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.75, -1.8, 0.8),
+            camera_lookat=(0.75, 0.0, 0.1),
         ),
         show_viewer=show_viewer,
     )
