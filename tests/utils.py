@@ -1092,15 +1092,10 @@ def check_mujoco_data_consistency(
                     + gs_sim.rigid_solver.constraint_solver.n_constraints_frictionloss.to_numpy()[0]
                 )
                 rows_per_contact = gs_sim.rigid_solver.rigid_config.rows_per_contact
-                gs_cones_counted = (
-                    (
-                        gs_counted[gs_nef : gs_nef + gs_n_cone]
-                        | (np.abs(gs_efc_force[gs_nef : gs_nef + gs_n_cone]) > 0.0)
-                    )
-                    .reshape(-1, rows_per_contact)
-                    .any(axis=1)
-                )
-                gs_counted[gs_nef : gs_nef + gs_n_cone] = np.repeat(gs_cones_counted, rows_per_contact)
+                gs_cone_rows = slice(gs_nef, gs_nef + gs_n_cone)
+                gs_cone_rows_counted = gs_counted[gs_cone_rows] | (np.abs(gs_efc_force[gs_cone_rows]) > 0.0)
+                gs_cones_counted = gs_cone_rows_counted.reshape(-1, rows_per_contact).any(axis=1)
+                gs_counted[gs_cone_rows] = np.repeat(gs_cones_counted, rows_per_contact)
             gs_nactive = gs_counted.sum()
             mj_native = mj_sim.data.solver.nactive[mj_iter]
             if not (gs_sim.rigid_solver.dyn_info.dofs.frictionloss.to_numpy() > gs.EPS).any():
