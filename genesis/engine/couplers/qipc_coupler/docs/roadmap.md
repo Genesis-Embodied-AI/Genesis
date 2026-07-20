@@ -1,95 +1,128 @@
 # QIPCCoupler Roadmap
 
-## Current Status (2026-07-15)
+## Current Status (2026-07-20)
 
-Core data pipeline fully aligned with QIPC standalone. Fixed-joint merging, per-entity material config, home pose via init_theta, and actuator gain resolution all working. Draft PR #3043 submitted to `feat/ipc_coupler`.
+Multi-entity support with IPC ground contact fully working. Unified writeback kernel, absolute joint position control, free-base qpos writeback, strong-typed code. PR #3043 on `feat/qipc-coupler`.
 
 ### What Works
 
-- Entity parsing, ABD body creation, joint topology with correct anchor/axis
+- Multi-entity: N ABD robots + M ground planes in one scene
+- IPC contact enabled by default (halfplane ground auto-detection from Plane entities)
+- Unified writeback kernel (links_state + dofs_state + free-base qpos in single launch)
+- Entity classification upfront (plane vs abd), joint classification by type
+- FREE joint handled as free ABD body with qpos writeback
 - Fixed-joint merging (parallel axis theorem, relative-transform writeback)
 - Home pose via QIPC init_theta (absolute joint-angle frame)
 - Per-entity config via `gs.materials.Rigid(qipc_*=...)`
 - Actuator gain resolution (MJCF-parsed > material override > defaults)
 - Revolute, prismatic, and mixed joint configurations
 - IK-based end-effector teleop example
-- Initial state writeback at end of build()
+- Strong-typed NamedTuples, full type annotations, no getattr/hasattr
+- Stacked free-base collision (passes where IPC coupler xfails)
 
 ### What Remains
 
 1. `reset()` implementation
-2. Multi-entity support (currently single entity only)
-3. `n_envs > 1` support
-4. Observation API validation (`get_pos`, `get_quat` at entity level)
+2. `n_envs > 1` support
+3. Velocity control mode (requires cuda-graph-qipc kernel change)
+4. Per-pair contact tabular (per-entity ContactElement + friction/resistance)
+5. Observation API validation (`get_pos`, `get_quat` at entity level)
 
 ---
 
-## Next: Test Suite (Priority 1)
+## Next: Velocity Control (Priority 1)
 
-Restructure tests to `tests/qipc/` following the IPC pattern (`tests/ipc/`), and add physics-asserting test cases covering what IPC tests already validate plus QIPC-specific features.
+QIPC currently supports position control and direct force control. Velocity
+control is needed for bang-bang limit testing, locomotion policies, and Genesis
+API compatibility (`control_dofs_velocity`).
 
-### Structure
+### Design (see `cuda-graph-qipc/docs/joint_controller.md`)
 
-```
-tests/qipc/
-  __init__.py
-  utils.py              # shared helpers (scene builders, comparison utilities)
-  test_alignment.py     # solver state alignment vs standalone QIPC
-  test_rigid.py         # rigid-body physics tests
-  test_joint.py         # joint control and limits
-```
+Shift the implicit damping energy rest-velocity from zero to `target_velocity`:
 
-### Test cases to implement
+$$E_{\mathrm{damp}} = \Delta t \cdot \frac{1}{2}\,k_v\,(\Delta\theta - \dot\theta_{\mathrm{target}}\,\Delta t)^2$$
 
-#### test_alignment.py (migrate from current test_qipc.py)
+When `target_velocity=0`, reduces to current behavior. Variational stability
+preserved (Hessian structure unchanged).
+
+### Implementation tasks
+
+- [ ] `cuda-graph-qipc`: add `_joint_target_velocity` buffer to `Solver`
+- [ ] `cuda-graph-qipc`: modify `revolute_damping_assemble_kernel` to shift `s`
+- [ ] `cuda-graph-qipc`: modify `prismatic_damping_assemble_kernel` same shift
+- [ ] `cuda-graph-qipc`: add `JointCollection.control_dofs_velocity()` Python API
+- [ ] `genesis-world`: forward `dofs_state.ctrl_vel` in `QIPCCoupler.preprocess`
+- [ ] `genesis-world`: remove xfail from `test_joint_position_limits_bang_bang`
+
+---
+
+## Priority 2: Test Suite
+
+Restructure tests to `tests/qipc/` following the IPC pattern (`tests/ipc/`), and add physics-asserting test cases.
+
+### Test cases
+
+#### Alignment (current test_qipc.py)
 
 - [x] init state alignment (revolute, prismatic, mixed, fixed-joint merge)
 - [x] step alignment (gravity, no control)
 - [x] control alignment (target tracking)
 - [ ] alignment with home_qpos / init_theta
 
-#### test_rigid.py (analogous to tests/ipc/test_rigid.py)
+#### Rigid-body physics
 
-- [ ] `test_freefall` — object in freefall matches `z = z0 - 0.5*g*t^2`
-- [ ] `test_ground_contact` — object resting on ground does not penetrate (requires QIPC contact)
-- [ ] `test_fixed_base_holds` — fixed-base robot does not move under gravity
-- [ ] `test_merged_body_coherence` — links merged by fixed joints move as one rigid body
+- [ ] `test_freefall` -- object in freefall matches `z = z0 - 0.5*g*t^2`
+- [x] `test_ground_contact` -- object on ground, `z > 0` (IPC no-penetration)
+- [ ] `test_fixed_base_holds` -- fixed-base robot does not move under gravity
+- [ ] `test_merged_body_coherence` -- links merged by fixed joints move as one rigid body
+- [x] `test_stacked_free_base_collision` -- multiple free-base entities stack on ground
 
-#### test_joint.py (analogous to tests/ipc/test_rigid.py joint tests)
+#### Joint control
 
-- [ ] `test_single_joint_tracking` — sinusoidal PD target, verify correlation and amplitude
-- [ ] `test_joint_position_limits` — bang-bang velocity command respects joint limits
-- [ ] `test_joint_type_matrix` — parametrize over revolute/prismatic x fixed/free base
-- [ ] `test_actuator_gains_from_mjcf` — verify kp/kv match MJCF actuator section
-- [ ] `test_home_qpos_offset` — verify theta at init equals home_qpos, control at home_qpos holds pose
+- [ ] `test_single_joint_tracking` -- sinusoidal PD target, verify correlation and amplitude
+- [x] `test_joint_position_limits` -- bang-bang velocity command respects limits (xfail: velocity control not yet implemented)
+- [ ] `test_joint_type_matrix` -- parametrize over revolute/prismatic x fixed/free base
+- [ ] `test_actuator_gains_from_mjcf` -- verify kp/kv match MJCF actuator section
+- [ ] `test_home_qpos_offset` -- verify theta at init equals home_qpos, control at home_qpos holds pose
+- [ ] `test_velocity_control` -- direct velocity control tracking (blocked on Priority 1)
 
-### IPC test gaps (not yet covered by IPC, opportunity for QIPC to lead)
+#### Multi-entity
 
-- [ ] `test_stacked_free_base` — IPC marks this xfail; QIPC may handle it differently
-- [ ] `test_velocity_control` — direct velocity control tracking
-- [ ] `test_multi_entity` — multiple robots in one scene (blocked on multi-entity support)
+- [x] `test_multi_entity` -- two robots track opposite targets independently
 
 ---
 
-## Priority 2: Reset Implementation
+## Priority 3: Reset Implementation
 
 Implement `reset()` to restore QIPC scene state:
 - Reset ABD q to initial transforms
 - Reset joint theta to init_theta values
-- Reset target_theta, velocities
+- Reset target_theta, target_velocity
 - Writeback to Genesis
 
 ---
 
-## Priority 3: Multi-entity and n_envs
+## Priority 4: Per-pair Contact Tabular
 
-- Support multiple entities per scene (iterate over all rigid entities in build)
-- Support n_envs > 1 (batched simulation)
+- Per-entity ContactElement registration
+- Pairwise friction/resistance via geometric/harmonic mean (matching IPCCoupler)
+- Genesis material `coup_friction` / `contact_resistance` forwarding
+
+---
+
+## Priority 5: n_envs > 1
+
+- Batched simulation support
 
 ---
 
 ## Resolved
 
+- Multi-entity support (2026-07-20)
+- Ground contact via halfplane auto-detection (2026-07-20)
+- Unified single-kernel writeback (2026-07-20)
+- Free-base qpos writeback from ABD transform (2026-07-20)
+- getattr/hasattr cleanup, strong typing (2026-07-20)
 - Joint theta direction alignment
 - Fixed-joint merging
 - Per-entity material config (moved from QIPCCouplerOptions)

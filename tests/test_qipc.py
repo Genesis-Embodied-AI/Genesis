@@ -212,8 +212,12 @@ class TestQIPCAlignment:
         for key in ("anchor_left", "anchor_right", "axis_left", "axis_right", "kappa_pivot", "kappa_axis"):
             torch.testing.assert_close(rev_a[key], rev_b[key], atol=1e-12, rtol=0)
 
-        torch.testing.assert_close(coupler_scene.solver._joint_kp, standalone.solver._joint_kp, atol=1e-12, rtol=0)
-        torch.testing.assert_close(coupler_scene.solver._joint_kv, standalone.solver._joint_kv, atol=1e-12, rtol=0)
+        torch.testing.assert_close(
+            coupler_scene.joint_system.kp, standalone.joint_system.kp, atol=1e-12, rtol=0
+        )
+        torch.testing.assert_close(
+            coupler_scene.joint_system.kv, standalone.joint_system.kv, atol=1e-12, rtol=0
+        )
 
     def test_init_state_fixed_joint_merge(self, fixed_joint_dir):
         """Fixed joints cause link merging; merged body count and transforms must match standalone."""
@@ -241,7 +245,7 @@ class TestQIPCAlignment:
 
         torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=1e-6, rtol=0)
         torch.testing.assert_close(
-            coupler_scene.solver._joint_theta, standalone.solver._joint_theta, atol=1e-6, rtol=0,
+            coupler_scene.joint_system.theta, standalone.joint_system.theta, atol=1e-6, rtol=0,
         )
 
     def test_control_alignment(self, simple_revolute_dir):
@@ -262,7 +266,7 @@ class TestQIPCAlignment:
             coupler.couple(0)
 
         torch.testing.assert_close(
-            coupler._scene.solver._joint_theta, standalone.solver._joint_theta, atol=1e-6, rtol=0,
+            coupler._scene.joint_system.theta, standalone.joint_system.theta, atol=1e-6, rtol=0,
         )
 
 
@@ -412,7 +416,6 @@ def _build_two_cube_joint_mjcf(joint_type: str, joint_limits: tuple[float, float
 class TestJointLimits:
     """Joint position limits via bang-bang velocity control."""
 
-    @pytest.mark.xfail(reason="Velocity control (control_dofs_velocity) not yet forwarded to QIPC controller")
     @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
     def test_joint_position_limits_bang_bang(self, joint_type):
         """Bang-bang velocity control respects joint theta limits."""

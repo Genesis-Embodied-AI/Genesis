@@ -388,15 +388,26 @@ class QIPCCoupler(RBC):
         pass
 
     def preprocess(self, f: int) -> None:
-        """Read ctrl_pos from Genesis and forward to QIPC (absolute frame)."""
+        """Forward Genesis control targets to QIPC joint controller.
+
+        Unconditionally forwards both position and velocity targets. The
+        effective control mode is determined by the gain settings (kp/kv):
+        - Position control: kp > 0, target_velocity = 0
+        - Velocity control: kp = 0, target_velocity = user target
+        - Force control: kp = 0, target_velocity = 0, use control_dofs_force
+        """
         if self._jc is None:
             return
-        ctrl_pos_view: torch.Tensor = qd_to_torch(
-            self._sim.rigid_solver.dofs_state.ctrl_pos
-        )
-        ctrl_pos_all: torch.Tensor = ctrl_pos_view[:, 0].to(torch.float64)
-        targets: torch.Tensor = ctrl_pos_all[self._genesis_dof_order]
-        self._jc.control_dofs_position(targets)
+
+        dofs_state = self._sim.rigid_solver.dofs_state
+        ctrl_pos_all: torch.Tensor = qd_to_torch(dofs_state.ctrl_pos)[:, 0].to(torch.float64)
+        ctrl_vel_all: torch.Tensor = qd_to_torch(dofs_state.ctrl_vel)[:, 0].to(torch.float64)
+
+        pos_targets: torch.Tensor = ctrl_pos_all[self._genesis_dof_order]
+        vel_targets: torch.Tensor = ctrl_vel_all[self._genesis_dof_order]
+
+        self._jc.control_dofs_position(pos_targets)
+        self._jc.control_dofs_velocity(vel_targets)
 
     def couple(self, f: int) -> None:
         self._substep_count += 1
