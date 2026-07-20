@@ -28,7 +28,7 @@ from genesis.utils.misc import (
 )
 from genesis.utils.sdf import SDF
 
-from ..base_solver import Solver, StateChange, mutates
+from ..base_solver import MutatedLinks, Solver, StateChange, mutates
 from ..kinematic_solver import KinematicSolver, _select_links_offset, _offset_world_shift, _fill_base_link_geom_offsets
 from .collider import Collider
 from .constraint import ConstraintSolver
@@ -46,6 +46,7 @@ from .abd.misc import (
     func_write_and_read_field_if,
     kernel_init_invweight,
     kernel_init_meaninertia,
+    kernel_wakeup_coupled_links,
     kernel_init_dof_fields,
     kernel_reset_hibernation,
     kernel_init_link_fields,
@@ -159,7 +160,11 @@ from .abd.accessor import (
     kernel_set_drone_rpm,
     kernel_update_drone_propeller_vgeoms,
     kernel_set_geom_friction,
+    kernel_set_geom_friction_rolling,
+    kernel_set_geom_friction_torsional,
     kernel_set_geoms_friction,
+    kernel_set_geoms_friction_rolling,
+    kernel_set_geoms_friction_torsional,
     kernel_adjust_link_inertia,
 )
 from .abd.diff import (
@@ -535,6 +540,8 @@ class RigidSolver(KinematicSolver):
             batch_joints_info=self._options.batch_joints_info,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_elliptic_friction=self._options.friction_cone == gs.friction_cone.elliptic,
+            enable_torsional_friction=self._options.enable_torsional_friction,
+            enable_rolling_friction=self._options.enable_rolling_friction,
             enable_multi_contact=self._enable_multi_contact,
             enable_collision=self._enable_collision,
             enable_joint_limit=self._enable_joint_limit,
@@ -1104,6 +1111,8 @@ class RigidSolver(KinematicSolver):
                 np.array([geom.init_quat for geom in geoms], dtype=gs.np_float),
                 np.array([geom.type for geom in geoms], dtype=gs.np_int),
                 np.array([geom.friction for geom in geoms], dtype=gs.np_float),
+                np.array([geom.friction_torsional for geom in geoms], dtype=gs.np_float),
+                np.array([geom.friction_rolling for geom in geoms], dtype=gs.np_float),
                 geoms_sol_params,
                 np.array([geom.data for geom in geoms], dtype=gs.np_float),
                 np.array([geom.is_convex for geom in geoms], dtype=gs.np_bool),
@@ -1198,6 +1207,17 @@ class RigidSolver(KinematicSolver):
 
         if self._requires_grad and f == 0:
             kernel_save_adjoint_cache(f, self.dyn_state, self._rigid_adjoint_cache, self.rigid_info, self.rigid_config)
+
+        # Coupling forces from the previous coupling phase may target hibernated links (see
+        # kernel_wakeup_coupled_links in abd/misc.py). They can only exist when another solver is active.
+        if self._use_hibernation and len(self.sim.active_solvers) > 1:
+            kernel_wakeup_coupled_links(
+                self.dyn_state,
+                self.constraint_solver.constraint_state,
+                self.dyn_info,
+                self.rigid_info,
+                self.rigid_config,
+            )
 
         kernel_step_1(
             self.dyn_state,
@@ -1834,7 +1854,7 @@ class RigidSolver(KinematicSolver):
     def set_links_pos(self, pos, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -1956,7 +1976,7 @@ class RigidSolver(KinematicSolver):
     def set_links_quat(self, quat, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links="links_idx")
     def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
@@ -2153,7 +2173,7 @@ class RigidSolver(KinematicSolver):
             friction_ratio = friction_ratio[None]
         kernel_set_geoms_friction_ratio(geoms_idx, envs_idx, friction_ratio, self.dyn_state, self.rigid_config)
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if self.collider is not None:
             self.collider.reset(envs_idx)
@@ -2397,7 +2417,7 @@ class RigidSolver(KinematicSolver):
     def set_dofs_limit(self, lower, upper, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
-    @mutates(StateChange.GEOMETRY)
+    @mutates(StateChange.GEOMETRY, links=MutatedLinks.ARTICULATED)
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
         self.collider.reset(envs_idx)
         self.constraint_solver.reset(envs_idx)
@@ -2929,11 +2949,29 @@ class RigidSolver(KinematicSolver):
     def set_geom_friction(self, friction, geoms_idx):
         kernel_set_geom_friction(geoms_idx, self.dyn_info, friction)
 
+    def set_geom_friction_torsional(self, friction_torsional, geoms_idx):
+        kernel_set_geom_friction_torsional(geoms_idx, self.dyn_info, friction_torsional)
+
+    def set_geom_friction_rolling(self, friction_rolling, geoms_idx):
+        kernel_set_geom_friction_rolling(geoms_idx, self.dyn_info, friction_rolling)
+
     def set_geoms_friction(self, friction, geoms_idx=None):
         friction, geoms_idx, _ = self._sanitize_io_variables(
             friction, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
         )
         kernel_set_geoms_friction(geoms_idx, friction, self.dyn_info, self.rigid_config)
+
+    def set_geoms_friction_torsional(self, friction_torsional, geoms_idx=None):
+        friction_torsional, geoms_idx, _ = self._sanitize_io_variables(
+            friction_torsional, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
+        )
+        kernel_set_geoms_friction_torsional(geoms_idx, friction_torsional, self.dyn_info, self.rigid_config)
+
+    def set_geoms_friction_rolling(self, friction_rolling, geoms_idx=None):
+        friction_rolling, geoms_idx, _ = self._sanitize_io_variables(
+            friction_rolling, geoms_idx, self.n_geoms, "geoms_idx", envs_idx=None, batched=False, skip_allocation=True
+        )
+        kernel_set_geoms_friction_rolling(geoms_idx, friction_rolling, self.dyn_info, self.rigid_config)
 
     def add_weld_constraint(self, link1_idx, link2_idx, envs_idx=None):
         return self.constraint_solver.add_weld_constraint(link1_idx, link2_idx, envs_idx)

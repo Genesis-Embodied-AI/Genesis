@@ -377,11 +377,16 @@ def get_island_state(solver, collider):
         and not solver.rigid_config.sparse_envelope
     )
     max_candidate_contacts = max(collider._collider_info.max_candidate_contacts[None], 1)
-    # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: 4 per contact +
-    # joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the candidate
-    # count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise constraint_id is
-    # undersized once dynamic welds are added and the per-island grouping writes out of bounds.
-    n_constraints_max = max(max_candidate_contacts * 4 + 2 * n_dofs + max(solver.n_candidate_equalities_, 1) * 6, 1)
+    # Safe upper bound on active constraints, mirroring ConstraintSolver.len_constraints: rows_per_contact per
+    # contact + joint-limit/frictionloss (<= n_dofs each) + equality rows (<= 6 each). The equality term must use the
+    # candidate count (model equalities plus the dynamic-weld budget), not just the model equalities, otherwise
+    # constraint_id is undersized once dynamic welds are added and the per-island grouping writes out of bounds.
+    n_constraints_max = max(
+        max_candidate_contacts * solver.rigid_config.rows_per_contact
+        + 2 * n_dofs
+        + max(solver.n_candidate_equalities_, 1) * 6,
+        1,
+    )
     return IslandState(
         links_parent_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
         links_island_idx=V(dtype=gs.qd_int, shape=maybe_shape((n_links, _B), is_active)),
@@ -425,8 +430,9 @@ class ConstraintState:
     jac_n_dofs: qd.Tensor
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
-    # Number of elliptic-cone contact rows (3 per contact), laid out contiguously at the start of the collision
-    # segment. Zero for the pyramidal cone. The cone rows occupy [ne + n_frictionloss, ne + n_frictionloss + n_cone).
+    # Number of elliptic-cone contact rows (rows_per_contact per contact), laid out contiguously at the start of the
+    # collision segment. Zero for the pyramidal cone. The cone rows occupy
+    # [ne + n_frictionloss, ne + n_frictionloss + n_cone).
     n_constraints_cone: qd.Tensor
     improved: qd.Tensor
     Jaref: qd.Tensor
@@ -440,7 +446,8 @@ class ConstraintState:
     cone_prev_jaref: qd.Tensor
     efc_D: qd.Tensor
     # Frictionloss rows store their friction loss; elliptic-cone head (normal) rows reuse the field to carry the
-    # contact friction coefficient read by the cone solver (their tangent rows hold 0).
+    # contact sliding friction coefficient read by the cone solver, and with torsional friction the spin row carries
+    # the torsional coefficient the same way (the tangent rows hold 0).
     efc_frictionloss: qd.Tensor
     efc_force: qd.Tensor
     active: qd.Tensor
@@ -696,6 +703,8 @@ class ContactData:
     normal: qd.Tensor
     pos: qd.Tensor
     friction: qd.Tensor
+    friction_torsional: qd.Tensor
+    friction_rolling: qd.Tensor
     sol_params: qd.Tensor
     force: qd.Tensor
     link_a: qd.Tensor
@@ -714,6 +723,8 @@ def get_contact_data(solver, max_candidate_contacts, requires_grad):
         pos=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         penetration=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         friction=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        friction_torsional=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        friction_rolling=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
         sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
         force=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
@@ -1950,6 +1961,8 @@ class GeomsInfo:
     link_idx: qd.Tensor
     type: qd.Tensor
     friction: qd.Tensor
+    friction_torsional: qd.Tensor
+    friction_rolling: qd.Tensor
     sol_params: qd.Tensor
     vert_num: qd.Tensor
     vert_start: qd.Tensor
@@ -1985,6 +1998,8 @@ def get_geoms_info(solver, is_active=True):
         link_idx=V(dtype=gs.qd_int, shape=shape),
         type=V(dtype=gs.qd_int, shape=shape),
         friction=V(dtype=gs.qd_float, shape=shape),
+        friction_torsional=V(dtype=gs.qd_float, shape=shape),
+        friction_rolling=V(dtype=gs.qd_float, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         vert_num=V(dtype=gs.qd_int, shape=shape),
         vert_start=V(dtype=gs.qd_int, shape=shape),
@@ -2404,6 +2419,13 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # Whether the cone-free assembled Hessian is persisted in nt_H's mirror slots (diagonal in nt_H_cone_free_diag);
     # see the nt_H declaration for the packed-storage mechanics and the rigid solver's resolution for the gating.
     enable_cone_free_hessian_reuse: bool = False
+    # Whether contacts carry torsional friction rows resisting relative spin about the contact normal: one extra
+    # opposing pyramid pair per contact with the pyramidal cone, one extra cone row with the elliptic cone.
+    enable_torsional_friction: bool = False
+    # Whether contacts also carry rolling friction rows resisting relative rotation about the two tangent axes: two
+    # extra opposing pyramid pairs per contact with the pyramidal cone, two extra cone rows with the elliptic cone.
+    # Requires enable_torsional_friction (the rolling rows sit after the spin row in the contact row layout).
+    enable_rolling_friction: bool = False
     # Consecutive sub-tolerance steps a body's max DOF velocity must hold before it is ready to hibernate. Guards
     # against a body that is only momentarily slow (e.g. at the apex of a toss) sleeping prematurely.
     hibernation_min_steps: int = 10
@@ -2417,9 +2439,6 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # based on n_dofs: 32 wins for large problems (e.g. dex_hand, n_dofs=62); 16 wins when n_dofs is small or lands in a
     # padding-unfavorable band (e.g. g1_fall, n_dofs=35).
     cholesky_tile_size: int = 32
-    # Number of rank-1 Cholesky updates fused into one column sweep by the CPU per-island incremental factor
-    # (func_rank_batch_update_island). Sizes the nt_vec slots and the static per-column unroll.
-    hessian_rank_update_batch: int = 8
     # Register-streaming tiled per-entity mass factor for the >shared-cap branch of func_factor_mass (GPU forward
     # only). When True, each entity's single-mass-block submatrix factors in registers via the same TileNxN Cholesky
     # primitive as the Hessian, instead of the shared-pivot cooperative LDL^T. Only enabled when every entity is a
@@ -2463,6 +2482,29 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
+
+    @property
+    def rows_per_contact(self) -> int:
+        """Constraint rows per contact.
+
+        The pyramidal cone carries 2 opposing friction-mixed edges per friction axis, the elliptic cone the normal
+        row plus one row per friction axis; torsional friction adds the spin axis and rolling friction the two
+        tangent axes.
+        """
+        n_extra_axes = int(self.enable_torsional_friction) + 2 * int(self.enable_rolling_friction)
+        if self.enable_elliptic_friction:
+            return 3 + n_extra_axes
+        return 4 + 2 * n_extra_axes
+
+    @property
+    def hessian_rank_update_batch(self) -> int:
+        """Number of rank-1 Cholesky updates fused into one column sweep by the CPU incremental factor.
+
+        Sizes the nt_vec slots and the static per-column unroll of func_rank_batch_update_island: 8 amortizes the
+        active-set flip batching, widened when the coupled elliptic-cone update must stage 2 slots per cone row
+        (see func_cone_rank_update_island).
+        """
+        return max(8, 2 * self.rows_per_contact)
 
 
 # =========================================== DataManager ===========================================

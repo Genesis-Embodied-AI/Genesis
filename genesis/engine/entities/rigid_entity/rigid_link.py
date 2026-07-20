@@ -915,6 +915,8 @@ class RigidLink(KinematicLink):
         init_quat,
         type,
         friction,
+        friction_torsional,
+        friction_rolling,
         sol_params,
         center_init=None,
         needs_coup=False,
@@ -935,6 +937,8 @@ class RigidLink(KinematicLink):
             init_quat=init_quat,
             type=type,
             friction=friction,
+            friction_torsional=friction_torsional,
+            friction_rolling=friction_rolling,
             sol_params=sol_params,
             center_init=center_init,
             needs_coup=needs_coup,
@@ -1034,6 +1038,20 @@ class RigidLink(KinematicLink):
         """
         for geom in self._geoms:
             geom.set_friction(friction)
+
+    def set_friction_torsional(self, friction_torsional):
+        """
+        Set the torsional friction of all the link's geoms (see 'gs.materials.Rigid').
+        """
+        for geom in self._geoms:
+            geom.set_friction_torsional(friction_torsional)
+
+    def set_friction_rolling(self, friction_rolling):
+        """
+        Set the rolling friction of all the link's geoms (see 'gs.materials.Rigid').
+        """
+        for geom in self._geoms:
+            geom.set_friction_rolling(friction_rolling)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

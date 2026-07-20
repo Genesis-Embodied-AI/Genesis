@@ -46,22 +46,16 @@ def bvh_ray_cast(
     max_range: float,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     eps: float,
-    is_remapped: qd.template(),
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
 
     ``i_t`` selects the BVH tree slot (nodes / morton codes) and ``i_b`` the env whose verts back the leaf
-    triangles: ``i_t == i_b`` for a per-env BVH, while a static collision BVH shared by several envs routes
-    ``i_t`` through ``env_bvh_idx`` (the routed envs have bit-identical verts, so each env reads its own).
-
-    `is_remapped` is a compile-time flag set when the BVH covers a compacted face subset (see
-    RaycastContext.activate): `face_ids` then maps a leaf slot back to the global face index. When False the BVH
-    covers every face in order, `face_ids` is ignored and the remap compiles out.
+    triangles: ``i_t == i_b`` for a per-env BVH, while a grouped static BVH shared by several envs routes ``i_t``
+    through ``env_bvh_idx`` (the routed envs have bit-identical verts, so each env reads its own).
 
     Returns
     -------
@@ -95,11 +89,9 @@ def bvh_ray_cast(
 
         if aabb_t >= 0.0 and aabb_t < closest_distance:
             if node.left == -1:  # Leaf node
-                # The morton code carries the leaf slot; a subset BVH remaps it to the global face index.
+                # The leaf payload carries the global face index; see kernel_remap_leaf_faces.
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
                 i_f = qd.cast(bvh_morton_codes[i_t, sorted_leaf_idx][1], gs.qd_int)
-                if qd.static(is_remapped):
-                    i_f = face_ids[i_f]
 
                 # Get triangle vertices
                 tri_vertices = get_triangle_vertices(i_f, i_b, dyn_state, dyn_info)
@@ -293,20 +285,18 @@ def triangle_face_normal(v0: qd.types.vector(3), v1: qd.types.vector(3), v2: qd.
 @qd.func
 def update_face_aabb(
     i_t: int,
-    i_b: int,
     i_a: int,
-    face_ids: qd.types.ndarray(ndim=1),
+    i_f: int,
+    i_b: int,
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
-    is_remapped: qd.template(),
 ):
-    """Update AABB slot i_a of tree slot i_t from env i_b's geometry (i_t == i_b for a per-env BVH).
+    """Fit AABB slot i_a of tree slot i_t to face i_f from env i_b's current vertex positions.
 
-    AABB slot i_a holds the bounding box of face `face_ids[i_a]` when `is_remapped` (a compile-time flag, see
-    bvh_ray_cast), so the rebuild scales with the subset size; otherwise slot i_a holds face i_a and `face_ids` is
-    ignored.
+    ``i_t == i_b`` for a per-env BVH; a grouped static BVH builds each tree slot from its representative env (see
+    RaycastContext update).
 
     A face contributes to env i_b only if its geom lies in that env's active geom range (links_info.geom_start /
     geom_end); otherwise its AABB is left inverted (unhittable) and skipped by ray queries. For a homogeneous solver
@@ -314,9 +304,6 @@ def update_face_aabb(
     one vertex buffer but activate different per-env geom ranges, it makes each env cast against only its own variant
     instead of the union of every variant.
     """
-    i_f = i_a
-    if qd.static(is_remapped):
-        i_f = face_ids[i_a]
     aabb_state.aabbs[i_t, i_a].min.fill(qd.math.inf)
     aabb_state.aabbs[i_t, i_a].max.fill(-qd.math.inf)
 
@@ -339,60 +326,105 @@ def update_face_aabb(
 
 @qd.func
 def update_aabbs(
-    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
-    is_remapped: qd.template(),
 ):
-    """Update the per-face collision AABBs of a per-env BVH (one tree slot per env). See update_face_aabb."""
-    for i_b, i_a in qd.ndrange(dyn_state.free_verts.pos.shape[1], aabb_state.aabbs.shape[1]):
-        update_face_aabb(i_b, i_b, i_a, face_ids, dyn_state, aabb_state, dyn_info, rigid_config, is_remapped)
+    """Update the per-face collision AABBs of a per-env BVH covering every face in order. See update_face_aabb."""
+    for i_b, i_f in qd.ndrange(dyn_state.free_verts.pos.shape[1], dyn_info.faces.verts_idx.shape[0]):
+        update_face_aabb(i_b, i_f, i_f, i_b, dyn_state, aabb_state, dyn_info, rigid_config)
+
+
+@qd.func
+def update_subset_aabbs(
+    faces_idx: qd.types.ndarray(ndim=1),
+    dyn_state: array_class.DynState,
+    aabb_state: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    """Update the per-face collision AABBs of a per-env BVH covering the compacted face subset `faces_idx` (slot i_a
+    holds face faces_idx[i_a]), so the rebuild scales with the subset size. See update_face_aabb."""
+    for i_b, i_a in qd.ndrange(dyn_state.free_verts.pos.shape[1], faces_idx.shape[0]):
+        update_face_aabb(i_b, i_a, faces_idx[i_a], i_b, dyn_state, aabb_state, dyn_info, rigid_config)
 
 
 @qd.kernel
 def kernel_update_verts_and_aabbs(
-    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
-    is_remapped: qd.template(),
 ):
     func_update_all_verts(dyn_state, dyn_info, rigid_config)
-    update_aabbs(face_ids, dyn_state, aabb_state, dyn_info, rigid_config, is_remapped)
+    update_aabbs(dyn_state, aabb_state, dyn_info, rigid_config)
+
+
+@qd.kernel
+def kernel_update_verts_and_subset_aabbs(
+    faces_idx: qd.types.ndarray(ndim=1),
+    dyn_state: array_class.DynState,
+    aabb_state: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    func_update_all_verts(dyn_state, dyn_info, rigid_config)
+    update_subset_aabbs(faces_idx, dyn_state, aabb_state, dyn_info, rigid_config)
+
+
+@qd.kernel
+def kernel_update_subset_aabbs(
+    faces_idx: qd.types.ndarray(ndim=1),
+    dyn_state: array_class.DynState,
+    aabb_state: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    update_subset_aabbs(faces_idx, dyn_state, aabb_state, dyn_info, rigid_config)
 
 
 @qd.kernel
 def kernel_update_grouped_aabbs(
     batch_repr_env: qd.types.ndarray(ndim=1),  # [n_trees] env whose geometry builds each tree slot
-    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
-    is_remapped: qd.template(),
 ):
-    """Build the per-face AABBs of a grouped static collision BVH: one tree slot per distinct per-env geometry.
+    """Build the per-face AABBs of a grouped static BVH covering every face in order: one tree slot per distinct
+    per-env geometry, each built from its representative env (see RaycastContext update). The verts must be up to
+    date (kernel_update_all_verts); grouping happens between the vert refresh and this build, which is why it is a
+    separate kernel from kernel_update_verts_and_aabbs."""
+    for i_t, i_f in qd.ndrange(aabb_state.aabbs.shape[0], dyn_info.faces.verts_idx.shape[0]):
+        update_face_aabb(i_t, i_f, i_f, batch_repr_env[i_t], dyn_state, aabb_state, dyn_info, rigid_config)
 
-    Each tree slot is built from its representative env, whose geometry is bit-identical to every env routed to that
-    slot (see RaycastContext update), over the entry's face subset (see update_face_aabb for face_ids / is_remapped).
-    The verts must be up to date (kernel_update_all_verts); grouping happens between the vert refresh and this build,
-    which is why it is a separate kernel from kernel_update_verts_and_aabbs.
+
+@qd.kernel
+def kernel_update_grouped_subset_aabbs(
+    batch_repr_env: qd.types.ndarray(ndim=1),
+    faces_idx: qd.types.ndarray(ndim=1),
+    dyn_state: array_class.DynState,
+    aabb_state: qd.template(),
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+):
+    """Compacted-subset variant of kernel_update_grouped_aabbs; see update_subset_aabbs for faces_idx."""
+    for i_t, i_a in qd.ndrange(aabb_state.aabbs.shape[0], faces_idx.shape[0]):
+        update_face_aabb(i_t, i_a, faces_idx[i_a], batch_repr_env[i_t], dyn_state, aabb_state, dyn_info, rigid_config)
+
+
+@qd.kernel
+def kernel_remap_leaf_faces(faces_idx: qd.types.ndarray(ndim=1), bvh_morton_codes: qd.template()):
+    """Rewrite the sorted leaf payloads of a compacted-subset BVH from subset slots to global face indices.
+
+    Run once after each such build (build() recomputes the payloads); every traversal then reads global faces
+    directly, with no per-leaf indirection and no knowledge of the subset. A zero-copy view write would be preferred
+    for a pure accessor like this, but quadrants' DLPack export does not support u32 fields, so the kernel is the
+    only implementation.
     """
-    for i_t, i_a in qd.ndrange(aabb_state.aabbs.shape[0], aabb_state.aabbs.shape[1]):
-        update_face_aabb(
-            i_t,
-            batch_repr_env[i_t],
-            i_a,
-            face_ids,
-            dyn_state,
-            aabb_state,
-            dyn_info,
-            rigid_config,
-            is_remapped,
-        )
+    for i_b, i in qd.ndrange(bvh_morton_codes.shape[0], bvh_morton_codes.shape[1]):
+        bvh_morton_codes[i_b, i][1] = qd.cast(faces_idx[qd.cast(bvh_morton_codes[i_b, i][1], gs.qd_int)], qd.u32)
 
 
 # =========================================== Visual Mesh Raycasting ===========================================
@@ -489,14 +521,14 @@ def bvh_ray_cast_visual(
 @qd.func
 def update_visual_face_aabb(
     i_t: int,
-    i_b: int,
     i_f: int,
+    i_b: int,
     face_mask: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
 ):
-    """Update the AABB of vface i_f in tree slot i_t from env i_b's visual mesh (i_t == i_b for a per-env BVH).
+    """Fit the AABB of vface i_f in tree slot i_t from env i_b's visual mesh (i_t == i_b for a per-env BVH).
 
     face_mask gates inclusion: 0 keeps the AABB inverted (unhittable) so vfaces from entities not opted into
     raycasting are skipped by ray queries.
@@ -522,7 +554,7 @@ def kernel_update_visual_aabbs(
     _B = dyn_state.vgeoms.pos.shape[1]
     n_vfaces = dyn_info.vfaces.vverts_idx.shape[0]
     for i_b, i_f in qd.ndrange(_B, n_vfaces):
-        update_visual_face_aabb(i_b, i_b, i_f, face_mask, dyn_state, aabb_state, dyn_info)
+        update_visual_face_aabb(i_b, i_f, i_b, face_mask, dyn_state, aabb_state, dyn_info)
 
 
 @qd.kernel
@@ -533,13 +565,10 @@ def kernel_update_grouped_visual_aabbs(
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
 ):
-    """Build the per-vface AABBs of a grouped static visual BVH: one tree slot per distinct per-env visual geometry.
-
-    Each tree slot is built from its representative env, whose visual geometry is bit-identical to every env routed
-    to that slot (see RaycastContext update).
-    """
+    """Build the per-vface AABBs of a grouped static visual BVH: one tree slot per distinct per-env visual geometry,
+    each built from its representative env (see RaycastContext update)."""
     for i_t, i_f in qd.ndrange(aabb_state.aabbs.shape[0], dyn_info.vfaces.vverts_idx.shape[0]):
-        update_visual_face_aabb(i_t, batch_repr_env[i_t], i_f, face_mask, dyn_state, aabb_state, dyn_info)
+        update_visual_face_aabb(i_t, i_f, batch_repr_env[i_t], face_mask, dyn_state, aabb_state, dyn_info)
 
 
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
@@ -550,7 +579,6 @@ def kernel_cast_ray(
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
-    face_ids: qd.types.ndarray(ndim=1),  # ignored: the viewer BVH covers every face (is_remapped=False)
     dyn_state: array_class.DynState,
     result: array_class.RaycastResult,
     dyn_info: array_class.DynInfo,
@@ -585,11 +613,9 @@ def kernel_cast_ray(
             max_range,
             bvh_nodes,
             bvh_morton_codes,
-            face_ids,
             dyn_state,
             dyn_info,
             eps,
-            is_remapped=False,
         )
         if cur_hit_face >= 0:
             result.distance[i_b] = cur_distance
@@ -681,24 +707,22 @@ def kernel_cast_rays(
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
     sensor_return_points: qd.types.ndarray(ndim=1),  # [n_sensors] - True to store hit points, False for distances-only
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
-    face_ids: qd.types.ndarray(ndim=1),  # leaf slot -> global face index; ignored unless is_remapped
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     eps: float,
     is_merge: qd.template(),
     is_last: qd.template(),
-    is_remapped: qd.template(),
     is_env_major: qd.template(),
 ):
     """Cast rays against a collision-mesh BVH.
 
-    See write_ray_hit for `is_merge` / `is_last` semantics and bvh_ray_cast for `is_remapped`. The result
-    `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each sensor's data is
-    stored as [sensor_points (n_points * 3), sensor_ranges (n_points)], the point block being present only for
-    sensors with sensor_return_points set.
+    See write_ray_hit for `is_merge` / `is_last` semantics. The result `output_hits` is a 2D array of shape
+    (total_cache_size, n_env) where in the first dimension each sensor's data is stored as [sensor_points
+    (n_points * 3), sensor_ranges (n_points)], the point block being present only for sensors with
+    sensor_return_points set.
 
     env_bvh_idx routes each env to the BVH tree slot it casts against: identity for per-env trees, all-zero for one
-    shared tree, group ids for a grouped static collision BVH (N distinct geometries, N <= n_env). is_env_major is a
+    shared tree, group ids for a grouped static BVH (N distinct geometries, N <= n_env). is_env_major is a
     compile-time flag selecting the thread -> (ray, env) mapping matching that tree layout.
     """
     n_points = ray_starts.shape[0]
@@ -739,11 +763,9 @@ def kernel_cast_rays(
             max_ranges[i_s],
             bvh_nodes,
             bvh_morton_codes,
-            face_ids,
             dyn_state,
             dyn_info,
             eps,
-            is_remapped,
         )
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]

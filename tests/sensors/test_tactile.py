@@ -332,7 +332,7 @@ def test_raycast_probe_on_fully_fixed_solver(show_viewer):
     scene.build(n_envs=2)
     scene.step()
 
-    collision_bvh = probe._shared_context.collision_bvh_context
+    (collision_bvh,) = probe._shared_context.collision_bvh_contexts
     assert collision_bvh.maybe_static
     assert collision_bvh.aabb.n_batches == 1
     assert_equal(probe.read_ground_truth(), 0.0)

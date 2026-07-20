@@ -461,6 +461,8 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
             collision=False,
         )
     )
+    # The visual box lives on the kinematic solver, whose links are all fixed: its visual BVH is static and groups
+    # across envs even though the rigid solver hosts a movable entity.
     visual_box = scene.add_entity(
         gs.morphs.Box(
             size=(0.4, 0.4, 0.4),
@@ -468,9 +470,15 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
             fixed=True,
             collision=False,
         ),
-        material=gs.materials.Rigid(
+        material=gs.materials.Kinematic(
             use_visual_raycasting=True,
         ),
+    )
+    movable_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(3.0, 2.0, 0.5),
+        )
     )
     lidar = scene.add_sensor(
         gs.sensors.Lidar(
@@ -482,23 +490,24 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
     scene.build(n_envs=n_envs)
     scene.step()
 
-    # Env-identical static geometry collapses to a single tree read by every env, for the collision and the visual
-    # BVH alike.
-    collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)
+    # Env-identical static geometry collapses to a single tree read by every env, for the static collision subset
+    # (its verts are batched, so the collapse comes from the geometry signature) and the visual BVH alike.
+    static_bvh = next(entry for entry in lidar._shared_context.collision_bvh_contexts if entry.maybe_static)
     visual_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is not None)
-    assert collision_bvh.maybe_static and visual_bvh.maybe_static
-    assert collision_bvh.aabb.n_batches == 1
+    assert not static_bvh.is_env_uniform
+    assert visual_bvh.maybe_static
+    assert static_bvh.aabb.n_batches == 1
     assert visual_bvh.aabb.n_batches == 1
     assert_allclose(lidar.read().distances[..., 0, 0], 0.8, tol=5e-3)
 
     if n_envs > 0:
-        # A per-env set_pos on the fixed box diverges the envs: the collision BVH must regroup to one tree per
+        # A per-env set_pos on the fixed box diverges the envs: the static subset must regroup to one tree per
         # distinct geometry so each env reads its own moved box. The env order is deliberately non-monotonic in x,
         # so any confusion between the env -> tree routing and the env backing a tree's geometry shifts the
         # distances. The visual geometry stays env-identical through its regroup, so it keeps a single tree.
         box.set_pos(np.array([[1.0, 0.0, 0.5], [4.0, 0.0, 0.5], [3.0, 0.0, 0.5], [2.0, 0.0, 0.5]], dtype=gs.np_float))
         scene.step()
-        assert collision_bvh.aabb.n_batches == n_envs
+        assert static_bvh.aabb.n_batches == n_envs
         assert visual_bvh.aabb.n_batches == 1
         assert_allclose(lidar.read().distances[:, 0, 0], (0.8, 3.8, 2.8, 1.8), tol=5e-3)
 
@@ -511,10 +520,21 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
         assert visual_bvh.aabb.n_batches == 2
         assert_allclose(lidar.read().distances[:, 0, 0], (0.8, 3.8, 1.3, 1.8), tol=5e-3)
 
+        # Diverge the movable box per env (off the ray corridor), then restore the static box to identical poses:
+        # the static grouping signature reads only its own subset's verts, so the diverged movable verts cannot keep
+        # the merged static tree split.
+        movable_box.set_pos(
+            np.array([[3.0, 2.0, 0.5], [4.0, 2.0, 0.5], [5.0, 2.0, 0.5], [6.0, 2.0, 0.5]], dtype=gs.np_float)
+        )
+        box.set_pos((1.0, 0.0, 0.5))
+        scene.step()
+        assert static_bvh.aabb.n_batches == 1
+        assert_allclose(lidar.read().distances[:, 0, 0], 0.8, tol=5e-3)
+
         # An identical reset restores the built geometry and merges everything back to one shared tree each.
         scene.reset()
         scene.step()
-        assert collision_bvh.aabb.n_batches == 1
+        assert static_bvh.aabb.n_batches == 1
         assert visual_bvh.aabb.n_batches == 1
         assert_allclose(lidar.read().distances[:, 0, 0], 0.8, tol=5e-3)
 
@@ -596,6 +616,14 @@ def test_heterogeneous_object(show_viewer, tol):
             gs.morphs.Box(size=(0.6, 0.6, 0.6), pos=(1.0, 0.0, 0.5), fixed=True),
         ),
     )
+    # A movable entity parked off the ray's path: it makes the solver mixed, so the heterogeneous variants are served
+    # through the static subset of the split collision BVH.
+    movable_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.4, 0.4),
+            pos=(3.0, 2.0, 0.5),
+        )
+    )
     lidar = scene.add_sensor(
         gs.sensors.Lidar(
             entity_idx=sensor_mount.idx,
@@ -612,19 +640,31 @@ def test_heterogeneous_object(show_viewer, tol):
     distances = lidar.read().distances[:, 0, 0]
     assert_allclose(distances, (0.9, 0.9, 0.8, 0.8, 0.7, 0.7), tol=5e-3)
 
-    # The static BVH groups envs by identical geometry: 3 distinct variants across 6 envs yield 3 trees, each env
-    # casting against its own variant's tree.
-    collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)
-    assert collision_bvh.maybe_static
-    assert collision_bvh.aabb.n_batches == 3
+    # The static subset groups envs by identical geometry while keeping the rebuild skip: 3 distinct variants across
+    # 6 envs yield 3 trees, each env casting against its own variant's tree.
+    collision_entries = [entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None]
+    assert len(collision_entries) == 2
+    static_bvh = next(entry for entry in collision_entries if entry.maybe_static)
+    assert static_bvh.aabb.n_batches == 3
 
     # The static BVH is rebuilt only when its geometry actually changes - exactly what is necessary, nothing more: an
     # idle step records no change (rebuild skipped), while a set_pos records a pending change (rebuild scheduled).
-    subscriber = collision_bvh.rebuild_subscriber
+    subscriber = static_bvh.rebuild_subscriber
     scene.step()
     assert not subscriber.pending
     het_obstacle.set_pos((1.0, 0.0, 0.5))
     assert subscriber.pending
+
+    # The movable box slides into the ray's path: the dynamic subset merges its closer hit identically in every env,
+    # in front of each env's own static variant.
+    movable_box.set_pos((0.5, 0.0, 0.5))
+    scene.step()
+    assert_allclose(lidar.read().distances[:, 0, 0], 0.475, tol=5e-3)
+
+    # And back out: each env again sees exactly its own variant through the (skipped) static subset.
+    movable_box.set_pos((3.0, 2.0, 0.5))
+    scene.step()
+    assert_allclose(lidar.read().distances[:, 0, 0], (0.9, 0.9, 0.8, 0.8, 0.7, 0.7), tol=5e-3)
 
 
 @pytest.mark.required
@@ -637,6 +677,12 @@ def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
     FAR_POS = (5.0, 5.0, 0.2)
     NO_HIT = -1.0  # below max_range on purpose: a miss must still lose the merge against any real hit
     DT = 0.01
+    TACTILE_POS = (10.0, 0.0)  # tactile cluster, laterally away from the ray corridor
+    PAD_POS_Z = 0.0025  # pad half-height 0.003: rests 0.5mm into the table so the table becomes a probe candidate
+    TACTILE_BOX_BOTTOM_Z = -0.001
+    PROBE_RADIUS = 0.005
+    PROBE_1_LOCAL_Z = -0.002  # world z=0.0005: 0.5mm above the table top, 1.5mm inside the box above its bottom face
+    PROBE_2_LOCAL = (0.018, 0.0, 0.002)  # world z=0.0045: 2mm inside the box's x side face, the nearest face overall
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -650,6 +696,7 @@ def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
             size=(1.0, 1.0, 1.0),
             pos=(0.0, 0.0, 0.5),
             fixed=True,
+            batch_fixed_verts=False,
         )
     )
     visual_box = scene.add_entity(
@@ -675,6 +722,48 @@ def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
         gs.morphs.Box(
             size=(0.4, 0.4, 0.4),
             pos=FAR_POS,
+        )
+    )
+    # Tactile cluster: a movable sensor pad resting 0.5mm into a fixed table (static tree) with a movable box pressed
+    # through it (dynamic tree), so its probes hold candidates in both trees.
+    table = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.4, 0.4, 0.1),
+            pos=(*TACTILE_POS, -0.05),
+            fixed=True,
+            batch_fixed_verts=False,
+        )
+    )
+    pad = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.006),
+            pos=(*TACTILE_POS, PAD_POS_Z),
+        )
+    )
+    tactile_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(*TACTILE_POS, TACTILE_BOX_BOTTOM_Z + 0.02),
+        )
+    )
+    depth_probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            entity_idx=pad.idx,
+            probe_local_pos=((0.0, 0.0, PROBE_1_LOCAL_Z), PROBE_2_LOCAL),
+            probe_radius=PROBE_RADIUS,
+            contact_depth_query="raycast",
+        )
+    )
+    taxel = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            entity_idx=pad.idx,
+            probe_local_pos=((0.0, 0.0, PROBE_1_LOCAL_Z), PROBE_2_LOCAL),
+            probe_radius=PROBE_RADIUS,
+            normal_stiffness=100.0,
+            normal_damping=0.0,
+            shear_scalar=0.0,
+            twist_scalar=0.0,
+            contact_depth_query="raycast",
         )
     )
     sensor = scene.add_sensor(
@@ -706,18 +795,43 @@ def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
     assert len(collision_entries) == 2
     static_entry = next(entry for entry in collision_entries if entry.maybe_static)
     dynamic_entry = next(entry for entry in collision_entries if not entry.maybe_static)
-    assert static_entry.is_remapped and dynamic_entry.is_remapped
-    # No consumer required the combined collision BVH, so the single-tree entry does not exist.
-    with pytest.raises(gs.GenesisException):
-        sensor._shared_context.collision_bvh_context
+    assert static_entry.faces_idx is not None and dynamic_entry.faces_idx is not None
+    # The static box declines batched fixed verts, so the static tree's build inputs are env-independent and the
+    # shared read across envs holds by construction, sparing the per-rebuild AABB comparison.
+    assert static_entry.is_env_uniform
+    assert not dynamic_entry.is_env_uniform
 
     # Dynamic box parked far away: the ray hits the static box top through the static BVH; the closer static hit
     # must survive the dynamic (miss) and visual (farther hit) merge passes.
     scene.step()
     assert_distances(MOUNT_Z - STATIC_TOP_Z)
 
-    # Dynamic box under the ray, above the static box: the closer dynamic hit wins the merge.
+    # Tactile probes fold both trees by the globally nearest triangle. The step above populated the candidate
+    # contact pairs (pad-table, pad-box); the contact response displaced the interpenetrating movable pair, so their
+    # poses are restored before sampling the sensors alone. Probe 1 is nearer to the table face (0.5mm outside,
+    # static tree) than to the box bottom (1.5mm inside): a fold selecting by deepest penetration instead of
+    # smallest signed-distance magnitude would report the box's larger depth. Probe 2 is nearest to the box's x side
+    # face (2mm inside, dynamic tree).
+    pad.set_pos((*TACTILE_POS, PAD_POS_Z))
+    tactile_box.set_pos((*TACTILE_POS, TACTILE_BOX_BOTTOM_Z + 0.02))
+    scene.sim._sensor_manager.step()
+    probe_1_world_z = PAD_POS_Z + PROBE_1_LOCAL_Z
+    assert_allclose(
+        depth_probe.read_ground_truth(),
+        (PROBE_RADIUS - probe_1_world_z, PROBE_RADIUS + 0.002),
+        tol=1e-6,
+    )
+    # The taxel's contact normal must come from the same nearest triangle: the table's upward face at probe 1 (the
+    # box's deeper answer would push along its bottom face's downward normal instead).
+    assert (taxel.read_ground_truth().force[..., 0, 2] > gs.EPS).all()
+    # Park the tactile pair apart: left interpenetrating, the contact response keeps ejecting them across the scene.
+    pad.set_pos((*TACTILE_POS, 1.0))
+    tactile_box.set_pos((10.0, 3.0, 1.0))
+
+    # Dynamic box under the ray, above the static box: the closer dynamic hit wins the merge. Its set_pos cannot
+    # move the fixed links, so the link-filtered subscription must never even flag the static tree.
     dynamic_box.set_pos((0.0, 0.0, DYNAMIC_TOP_Z - 0.2))
+    assert not static_entry.rebuild_subscriber.pending
     scene.step()
     assert_distances(MOUNT_Z - DYNAMIC_TOP_Z)
 
@@ -757,75 +871,13 @@ def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
     scene.step()
     assert_distances(MOUNT_Z - DYNAMIC_TOP_Z + 2 * DT, tol=tol)
 
+    # A reset restores the initial poses, possibly of fixed links (here the teleported static box), so it must
+    # rebuild the static tree; static entries resume skipping on subsequent steps.
+    scene.reset()
+    scene.step()
+    assert_distances(MOUNT_Z - STATIC_TOP_Z)
+
     # Identical fixed geometry in every env: the static subset collapses to a single shared tree, while the dynamic
     # subset keeps one tree per env by construction.
     assert static_entry.aabb.n_batches == 1
     assert dynamic_entry.aabb.n_batches == max(n_envs, 1)
-
-    if n_envs > 0:
-        # A per-env set_pos on the dynamic box diverges the movable verts and flags a static-subset regroup (the
-        # GEOMETRY subscription is solver-wide): the static grouping signature reads only its own subset, so the
-        # static tree stays shared while each env reads its own dynamic hit.
-        dynamic_box.set_dofs_velocity((0.0, 0.0, 0.0), dofs_idx_local=slice(0, 3))
-        dynamic_box.set_pos(np.array([[0.0, 0.0, DYNAMIC_TOP_Z - 0.2], FAR_POS], dtype=gs.np_float))
-        scene.step()
-        assert static_entry.aabb.n_batches == 1
-        for s in (sensor, distances_only_sensor):
-            assert_allclose(s.read().distances[:, 0, 0], (MOUNT_Z - DYNAMIC_TOP_Z, NO_HIT), tol=tol)
-
-
-@pytest.mark.required
-def test_tactile_raycast_consumer_forces_combined_collision_bvh(show_viewer):
-    PAD_SIZE = (0.2, 0.2, 0.05)
-    BALL_R = 0.04
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
-        ),
-        show_viewer=show_viewer,
-    )
-    pad = scene.add_entity(
-        gs.morphs.Box(
-            size=PAD_SIZE,
-            pos=(0.0, 0.0, PAD_SIZE[2] / 2),
-            fixed=True,
-        )
-    )
-    ball = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=BALL_R,
-            pos=(0.0, 0.0, 0.4),
-        )
-    )
-    depth_probe = scene.add_sensor(
-        gs.sensors.ContactDepthProbe(
-            entity_idx=pad.idx,
-            probe_local_pos=((0.0, 0.0, PAD_SIZE[2] / 2),),
-            probe_radius=0.01,
-            contact_depth_query="raycast",
-        )
-    )
-    raycaster = scene.add_sensor(
-        gs.sensors.Raycaster(
-            pattern=gs.sensors.raycaster.GridPattern(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
-            entity_idx=pad.idx,
-            pos_offset=(0.05, 0.05, 1.0),
-            return_world_frame=False,
-        )
-    )
-    scene.build()
-
-    # The tactile probe's query kernels walk a single tree over every collision face, so despite the mixed
-    # static/dynamic scene the collision mesh must stay in one combined BVH, exposed as collision_bvh_context.
-    collision_entries = [entry for entry in raycaster._shared_context.bvh_contexts if entry.raycast_mask is None]
-    assert len(collision_entries) == 1
-    assert not collision_entries[0].is_remapped
-    assert raycaster._shared_context.collision_bvh_context is collision_entries[0]
-
-    # Both consumers stay functional: the probe sees the ball pressed into the pad through the combined tree, and the
-    # raycaster (offset away from the ball) hits the pad top.
-    ball.set_pos((0.0, 0.0, PAD_SIZE[2] + BALL_R - 0.005))
-    scene.step()
-    assert (depth_probe.read_ground_truth() > gs.EPS).all()
-    assert_allclose(raycaster.read().distances, 1.0 - PAD_SIZE[2] / 2, tol=gs.EPS)

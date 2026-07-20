@@ -513,6 +513,8 @@ def kernel_init_geom_fields(
     geoms_quat: qd.types.ndarray(),
     geoms_type: qd.types.ndarray(),
     geoms_friction: qd.types.ndarray(),
+    geoms_friction_torsional: qd.types.ndarray(),
+    geoms_friction_rolling: qd.types.ndarray(),
     geoms_sol_params: qd.types.ndarray(),
     geoms_data: qd.types.ndarray(),
     geoms_is_convex: qd.types.ndarray(),
@@ -564,6 +566,8 @@ def kernel_init_geom_fields(
         dyn_info.geoms.link_idx[i_g] = geoms_link_idx[i_g]
         dyn_info.geoms.type[i_g] = geoms_type[i_g]
         dyn_info.geoms.friction[i_g] = geoms_friction[i_g]
+        dyn_info.geoms.friction_torsional[i_g] = geoms_friction_torsional[i_g]
+        dyn_info.geoms.friction_rolling[i_g] = geoms_friction_rolling[i_g]
 
         dyn_info.geoms.is_convex[i_g] = geoms_is_convex[i_g]
         dyn_info.geoms.is_hollow[i_g] = geoms_is_hollow[i_g]
@@ -776,6 +780,39 @@ def func_apply_coupling_force(link_idx, env_idx, pos, force, links_state: array_
     torque = (pos - links_state.root_COM[link_idx, env_idx]).cross(force)
     links_state.cfrc_coupling_ang[link_idx, env_idx] -= torque
     links_state.cfrc_coupling_vel[link_idx, env_idx] -= force
+
+
+@qd.kernel
+def kernel_wakeup_coupled_links(
+    dyn_state: array_class.DynState,
+    constraint_state: array_class.ConstraintState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+):
+    """
+    Wake the hibernated islands of links holding a pending coupling force.
+
+    Couplers accumulate forces into cfrc_coupling_* directly, bypassing the wake-aware public force API, while
+    forward dynamics only consumes the forces of awake entities before clearing the field. Waking the receiving
+    islands before the forces are consumed keeps hibernated links responsive to the other solvers and preserves
+    the momentum exchange whose opposite half has already been applied on the coupled side.
+    """
+    qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.PARTIAL)
+    for i_l, i_b in qd.ndrange(dyn_state.links.is_hibernated.shape[0], dyn_state.links.is_hibernated.shape[1]):
+        if dyn_state.links.is_hibernated[i_l, i_b] and (
+            dyn_state.links.cfrc_coupling_vel[i_l, i_b].norm_sqr() > 0
+            or dyn_state.links.cfrc_coupling_ang[i_l, i_b].norm_sqr() > 0
+        ):
+            func_wakeup_island(
+                constraint_state.island.links_island_idx[i_l, i_b],
+                i_b,
+                dyn_state,
+                constraint_state,
+                dyn_info,
+                rigid_info,
+                rigid_config,
+            )
 
 
 @qd.func

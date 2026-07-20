@@ -1,6 +1,7 @@
 """Tests for the entity naming system."""
 
 import os
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -401,13 +402,38 @@ def test_gs_mesh_sample_point_cloud_wrapper():
     assert_allclose(np.linalg.norm(normals, axis=1), 1.0, tol=1e-5)
 
 
+@pytest.fixture
+def two_link_fixed_urdf():
+    robot = ET.Element("robot", name="two_link_fixed")
+    ET.SubElement(robot, "link", name="base")
+    child = ET.SubElement(robot, "link", name="child")
+    collision = ET.SubElement(child, "collision")
+    geometry = ET.SubElement(collision, "geometry")
+    ET.SubElement(geometry, "box", size="0.1 0.1 0.1")
+    joint = ET.SubElement(robot, "joint", name="weld", type="fixed")
+    ET.SubElement(joint, "parent", link="base")
+    ET.SubElement(joint, "child", link="child")
+    ET.SubElement(joint, "origin", xyz="0 0 0.1")
+    return ET.tostring(robot, encoding="unicode")
+
+
 @pytest.mark.required
-def test_solver_state_change_subscribers(show_viewer):
+def test_solver_state_change_subscribers(show_viewer, two_link_fixed_urdf):
     # Imported lazily: the solver package pulls in quadrants kernels that need gs.qd_float, set only by gs.init.
     from genesis.engine.solvers.base_solver import StateChange, Subscriber
 
     scene = gs.Scene(show_viewer=show_viewer)
-    scene.add_entity(gs.morphs.Plane())
+    plane = scene.add_entity(gs.morphs.Plane())
+    # A fixed entity whose collision geometry lives on a fixed child link, the common URDF/MJCF layout: teleporting
+    # it through its base link must reach subscribers watching the child.
+    tower = scene.add_entity(
+        gs.morphs.URDF(
+            file=two_link_fixed_urdf,
+            pos=(2.0, 0.0, 0.0),
+            fixed=True,
+            merge_fixed_links=False,
+        )
+    )
     cube = scene.add_entity(
         gs.morphs.Box(
             size=(0.2, 0.2, 0.2),
@@ -479,6 +505,38 @@ def test_solver_state_change_subscribers(show_viewer):
     solver.subscribe(both)
     cube.set_pos([[0.0, 0.0, 4.0], [0.0, 0.0, 5.0]])
     assert both.pending == frozenset({StateChange.GEOMETRY, StateChange.DYNAMICS})
+
+    # A link-filtered subscriber only wakes on changes that can affect its links. The plane's base link is fixed, so
+    # the cube's base-pose setter (an explicit, disjoint link selection) and its configuration-space setters (which
+    # can never displace a link without degrees of freedom) both stay silent.
+    plane_watcher = Subscriber(to=frozenset({StateChange.GEOMETRY}), links_filter=[plane.base_link_idx])
+    solver.subscribe(plane_watcher)
+    cube.set_pos([[0.0, 0.0, 6.0], [0.0, 0.0, 7.0]], zero_velocity=False)
+    cube.set_qpos([[0.0, 0.0, 8.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 9.0, 1.0, 0.0, 0.0, 0.0]])
+    assert plane_watcher.pending == frozenset()
+    # A base-pose setter naming a watched link wakes it.
+    plane.set_pos((0.0, 0.0, -0.1))
+    assert plane_watcher.pending == frozenset({StateChange.GEOMETRY})
+    plane_watcher.clear()
+    # A base-pose setter with the implicit selection (every base link, the watched fixed one included) wakes it
+    # too. The pose is env-agnostic: an env-specific pose on a fixed link would require batch_fixed_verts.
+    solver.set_base_links_pos(solver.get_links_pos(links_idx=solver._base_links_idx)[0])
+    assert plane_watcher.pending == frozenset({StateChange.GEOMETRY})
+    plane_watcher.clear()
+    # A base-pose setter reaches the named links' whole kinematic subtree (forward kinematics carries the new pose
+    # to every descendant): teleporting the fixed tower through its base link wakes a watcher of its fixed child
+    # link, where the collision geometry lives.
+    child_link = next(link for link in tower.links if link.name == "child")
+    child_watcher = Subscriber(to=frozenset({StateChange.GEOMETRY}), links_filter=[child_link.idx])
+    solver.subscribe(child_watcher)
+    cube.set_pos([[0.0, 0.0, 10.0], [0.0, 0.0, 11.0]], zero_velocity=False)
+    assert child_watcher.pending == frozenset()
+    tower.set_pos((2.0, 1.0, 0.0))
+    assert child_watcher.pending == frozenset({StateChange.GEOMETRY})
+
+    # A whole-state restore may move any link, so the unbounded reach always passes the filter.
+    scene.reset()
+    assert plane_watcher.pending == frozenset({StateChange.GEOMETRY})
 
 
 @pytest.mark.parametrize("backend", [None])

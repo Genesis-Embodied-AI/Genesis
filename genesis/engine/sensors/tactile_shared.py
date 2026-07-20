@@ -13,11 +13,7 @@ from genesis.options.sensors.options import ProbesWithNormalSensorOptionsMixin
 from genesis.utils.misc import concat_with_tensor, gaussian_crosstalk_kernel, make_tensor_field
 
 if TYPE_CHECKING:
-    from genesis.options.sensors import SensorOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
-
-    from .raycaster import RaycastContext
-    from .sensor_manager import SensorManager
 
 
 _GRID_TOL = 1.0e-5  # Tolerance for grid-regularity / orthogonality / normal-uniformity checks.
@@ -554,23 +550,6 @@ class ContactDepthQuerySensorMixin:
     and need not call ``resolve_contact_depth_query`` themselves. Requires ``_shared_metadata``,
     ``_options.contact_depth_query``, and a ``_shared_context`` ``RaycastContext``.
     """
-
-    def __init__(
-        self,
-        options: "SensorOptions",
-        idx: int,
-        shared_context: "RaycastContext",
-        shared_metadata,
-        manager: "SensorManager",
-    ):
-        super().__init__(options, idx, shared_context, shared_metadata, manager)
-        # The probe query kernels behind this mixin walk a single tree over every collision face
-        # (collision_bvh_context), which the static/dynamic face split would tear apart. The class-wide backend
-        # resolves to "raycast" exactly when some sensor of the class passes it explicitly (None defers, defaulting
-        # to "sdf"), so that sensor's construction is early enough to forbid the split - build() is not, since the
-        # context may activate during another sensor type's build first.
-        if options.contact_depth_query == "raycast":
-            shared_context.require_combined_collision_bvh()
 
     def build(self):
         super().build()

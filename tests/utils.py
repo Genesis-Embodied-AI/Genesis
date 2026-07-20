@@ -690,6 +690,8 @@ def build_genesis_sim(
     mj_sim,
     *,
     friction_cone,
+    friction_torsional,
+    friction_rolling,
 ):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -708,6 +710,8 @@ def build_genesis_sim(
             constraint_solver=gs_solver,
             enable_mujoco_compatibility=mujoco_compatibility,
             friction_cone=friction_cone,
+            enable_torsional_friction=friction_torsional,
+            enable_rolling_friction=friction_rolling,
             box_box_detection=True,
             enable_self_collision=True,
             enable_adjacent_collision=adjacent_collision,
@@ -1078,8 +1082,23 @@ def check_mujoco_data_consistency(
 
             # Note that 'constraint_solver.active' refers to whether the quadratic part of a constraint is active,
             # unlike Mujoco that defines 'nactive' as the number of active constraints regardless of its type.
-            # In practice, this only makes a difference if frictionloss is enabled.
-            gs_nactive = sum(gs_sim.rigid_solver.constraint_solver.active.to_numpy()[:gs_n_constraints, 0])
+            # In practice, this only makes a difference if frictionloss is enabled. Middle-zone (slipping) elliptic
+            # cone rows are excluded from the per-row quadratic (handled as a coupled block) yet count as active in
+            # Mujoco's stat, which engages a cone as a whole; counting every row of a cone that carries any force
+            # translates Genesis's convention into Mujoco's.
+            gs_counted = gs_sim.rigid_solver.constraint_solver.active.to_numpy()[:gs_n_constraints, 0].copy()
+            gs_n_cone = gs_sim.rigid_solver.constraint_solver.n_constraints_cone.to_numpy()[0]
+            if gs_n_cone:
+                gs_nef = (
+                    gs_sim.rigid_solver.constraint_solver.n_constraints_equality.to_numpy()[0]
+                    + gs_sim.rigid_solver.constraint_solver.n_constraints_frictionloss.to_numpy()[0]
+                )
+                rows_per_contact = gs_sim.rigid_solver.rigid_config.rows_per_contact
+                gs_cone_rows = slice(gs_nef, gs_nef + gs_n_cone)
+                gs_cone_rows_counted = gs_counted[gs_cone_rows] | (np.abs(gs_efc_force[gs_cone_rows]) > 0.0)
+                gs_cones_counted = gs_cone_rows_counted.reshape(-1, rows_per_contact).any(axis=1)
+                gs_counted[gs_cone_rows] = np.repeat(gs_cones_counted, rows_per_contact)
+            gs_nactive = gs_counted.sum()
             mj_native = mj_sim.data.solver.nactive[mj_iter]
             if not (gs_sim.rigid_solver.dyn_info.dofs.frictionloss.to_numpy() > gs.EPS).any():
                 assert mj_native == gs_nactive

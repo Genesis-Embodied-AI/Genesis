@@ -249,7 +249,7 @@ def build_model(
     return mj
 
 
-def parse_xml(morph, surface):
+def parse_xml(morph, surface, rigid_options=None):
     # Always merge fixed links unless explicitly asked not to do so
     merge_fixed_links, links_to_keep = False, ()
     if isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
@@ -283,6 +283,27 @@ def parse_xml(morph, surface):
 
     # Parsing all equality constraints
     eqs_info = parse_equalities(mj, morph.scale)
+
+    # Friction features the model declares but the rigid options leave disabled parse to inert values; warn so their
+    # absence in the simulation is no surprise. rigid_options is None on the secondary URDF parse, whose compiled
+    # model only carries MuJoCo defaults.
+    if rigid_options is not None:
+        if mj.opt.cone == mujoco.mjtCone.mjCONE_ELLIPTIC and rigid_options.friction_cone != gs.friction_cone.elliptic:
+            gs.logger.warning(
+                "(MJCF) The model declares the elliptic friction cone; set 'friction_cone' to "
+                "'gs.friction_cone.elliptic' to honor it."
+            )
+        geoms_max_condim = mj.geom_condim.max() if mj.ngeom else 3
+        if geoms_max_condim >= 4 and not rigid_options.enable_torsional_friction:
+            gs.logger.warning(
+                "(MJCF) The model declares torsional friction (geom condim >= 4); enable "
+                "'enable_torsional_friction' to honor the parsed coefficients."
+            )
+        if geoms_max_condim >= 6 and not rigid_options.enable_rolling_friction:
+            gs.logger.warning(
+                "(MJCF) The model declares rolling friction (geom condim >= 6); enable "
+                "'enable_rolling_friction' to honor the parsed coefficients."
+            )
 
     return l_infos, links_j_infos, links_g_infos, eqs_info
 
@@ -712,6 +733,11 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         "group": mj_geom.group[0],
         "data": geom_data,
         "friction": mj_geom.friction[0],
+        # MuJoCo only applies torsional friction from condim 4 and rolling friction from condim 6 onward, and the
+        # friction vector carries its defaults on every geom regardless, so the coefficients of a lower-condim geom
+        # must parse as inert or the geom would resist spin or rolling that MuJoCo leaves free.
+        "friction_torsional": mj_geom.friction[1] if mj_geom.condim[0] >= 4 else 0.0,
+        "friction_rolling": mj_geom.friction[2] if mj_geom.condim[0] >= 6 else 0.0,
         "sol_params": np.concatenate((mj_geom.solref, mj_geom.solimp)),
     }
     if is_col:

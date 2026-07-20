@@ -151,19 +151,20 @@ def _func_decomp_linesearch_p0(
                 i_c = tid
                 while i_c < n_con:
                     if qd.static(rigid_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
-                        # Elliptic cone: the head thread carries the exact coupled grad/hess of the whole triple
+                        # Elliptic cone: the head thread carries the exact coupled grad/hess of the whole cone
                         # (evaluated at alpha=0 through the shared per-alpha routine, matching the serial linesearch);
-                        # the two tangent threads are no-ops so the triple is counted once. The cone cost itself
+                        # the friction-row threads are no-ops so the cone is counted once. The cone cost itself
                         # cancels in the shifted convention (see quad_gauss in array_class.py).
-                        if (i_c - nef) % 3 == 0:
-                            d0, d1v, d2v, friction, con_mu, jar0, jar1, jar2 = solver._func_cone_head_load(
-                                i_c, i_b, constraint_state
+                        if (i_c - nef) % qd.static(rigid_config.rows_per_contact) == 0:
+                            n_rows = qd.static(rigid_config.rows_per_contact)
+                            rows_efc_D, rows_friction, con_mu, rows_jaref = solver._func_cone_head_load(
+                                i_c, i_b, constraint_state, rigid_config
                             )
-                            jv0 = constraint_state.jv[i_c, i_b]
-                            jv1 = constraint_state.jv[i_c + 1, i_b]
-                            jv2 = constraint_state.jv[i_c + 2, i_b]
+                            rows_jv = qd.Vector.zero(gs.qd_float, n_rows)
+                            for i_r in qd.static(range(n_rows)):
+                                rows_jv[i_r] = constraint_state.jv[i_c + i_r, i_b]
                             _c_cost, c_grad, c_hess = solver._func_cone_cost_along_alpha(
-                                jar0, jar1, jar2, jv0, jv1, jv2, 0.0, d0, d1v, d2v, con_mu, friction
+                                rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction
                             )
                             local_constraint_grad += c_grad
                             local_constraint_hess += 0.5 * c_hess
@@ -453,11 +454,11 @@ def _func_update_constraint_forces_body(
         ncone = ncone + constraint_state.n_constraints_cone[i_b]
 
     if qd.static(rigid_config.enable_elliptic_friction) and (nef <= i_c and i_c < ncone):
-        # Elliptic cone (one-thread-per-row): only the head thread resolves the coupled triple and writes all three
-        # rows; the two tangent threads are no-ops (race-free). The coupled middle-zone cost is discarded here; the
+        # Elliptic cone (one-thread-per-row): only the head thread resolves the coupled rows and writes all of
+        # them; the friction-row threads are no-ops (race-free). The coupled middle-zone cost is discarded here; the
         # linesearch evaluates the cone cost delta directly.
-        if (i_c - nef) % 3 == 0:
-            solver.func_cone_update_rows(i_c, i_b, constraint_state)
+        if (i_c - nef) % qd.static(rigid_config.rows_per_contact) == 0:
+            solver.func_cone_update_rows(i_c, i_b, constraint_state, rigid_config)
     else:
         if qd.static(
             rigid_config.solver_type == gs.constraint_solver.Newton and not rigid_config.enable_elliptic_friction
@@ -668,7 +669,7 @@ def _func_newton_only_nt_hessian_and_cholesky(
     in-place.  H patching is not used because the subsequent Cholesky would destroy H anyway.
     """
     solver.func_hessian_direct_tiled(constraint_state, rigid_info)
-    # func_hessian_direct_tiled assembles M + J^T D J only; add the coupled elliptic-cone 3x3 block as an additive
+    # func_hessian_direct_tiled assembles M + J^T D J only; add the coupled elliptic-cone block as an additive
     # post-pass before the factor reads nt_H, matching the monolith tiled path (this path rebuilds every improved env).
     if qd.static(rigid_config.enable_elliptic_friction):
         _B_envs = constraint_state.jac.shape[2]

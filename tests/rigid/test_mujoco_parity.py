@@ -54,6 +54,36 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.friction_torsional(True)
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "sphere_plane_spin",
+        pytest.param("sphere_plane_roll", marks=pytest.mark.friction_rolling(True)),
+    ],
+)
+@pytest.mark.parametrize(
+    "gs_solver, gs_integrator",
+    [
+        (gs.constraint_solver.Newton, gs.integrator.Euler),
+        pytest.param(
+            gs.constraint_solver.Newton,
+            gs.integrator.Euler,
+            marks=pytest.mark.friction_cone(gs.friction_cone.elliptic),
+            id="Newton-Euler-elliptic",
+        ),
+    ],
+)
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_torsional_and_rolling_friction(gs_sim, mj_sim, tol):
+    # Sliding while spinning and rolling couples every friction axis through slip, stick, and rest. The slight
+    # initial penetration makes the contact exist from the first step.
+    qpos = np.array([0.0, 0.0, 0.0999, 1.0, 0.0, 0.0, 0.0])
+    qvel = np.array([0.5, 0.0, 0.0, 0.0, 4.0, 3.0])
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=60, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.adjacent_collision(True)
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
