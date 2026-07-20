@@ -472,7 +472,7 @@ def test_shared_static_bvh_regroup(show_viewer, n_envs):
     scene.step()
 
     # Env-identical static collision geometry collapses to a single tree read by every env.
-    collision_bvh = lidar._shared_context.collision_bvh_context
+    collision_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.raycast_mask is None)
     assert collision_bvh.maybe_static
     assert collision_bvh.aabb.n_batches == 1
     assert_allclose(lidar.read().distances[..., 0, 0], 0.8, tol=5e-3)
@@ -599,3 +599,196 @@ def test_heterogeneous_object(show_viewer, tol):
     assert not subscriber.pending
     het_obstacle.set_pos((1.0, 0.0, 0.5))
     assert subscriber.pending
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_static_dynamic_bvh_split_merge(show_viewer, n_envs, tol):
+    MOUNT_Z = 3.0
+    STATIC_TOP_Z = 1.0
+    VISUAL_TOP_Z = 0.5
+    DYNAMIC_TOP_Z = 2.4  # dynamic box (edge 0.4) centered at z=2.2
+    FAR_POS = (5.0, 5.0, 0.2)
+    NO_HIT = -1.0  # below max_range on purpose: a miss must still lose the merge against any real hit
+    DT = 0.01
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    static_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 1.0),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        )
+    )
+    visual_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(1.0, 1.0, 0.5),
+            pos=(0.0, 0.0, 0.25),
+            fixed=True,
+            collision=False,
+        ),
+        material=gs.materials.Rigid(
+            use_visual_raycasting=True,
+        ),
+    )
+    mount = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=(0.0, 0.0, MOUNT_Z),
+            fixed=True,
+            collision=False,
+        )
+    )
+    dynamic_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.4, 0.4, 0.4),
+            pos=FAR_POS,
+        )
+    )
+    sensor = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
+            entity_idx=mount.idx,
+            return_world_frame=False,
+            no_hit_value=NO_HIT,
+        )
+    )
+    distances_only_sensor = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
+            entity_idx=mount.idx,
+            return_world_frame=False,
+            return_points=False,
+            no_hit_value=NO_HIT,
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    def assert_distances(expected, tol=gs.EPS):
+        assert_allclose(sensor.read().distances, expected, tol=tol)
+        assert_allclose(distances_only_sensor.read().distances, expected, tol=tol)
+
+    # The solver mixes static (fixed-link) and dynamic (movable-link) collision faces, so its collision mesh is split
+    # into one compacted BVH per group; the visual box contributes a third, visual entry.
+    collision_entries = [entry for entry in sensor._shared_context.bvh_contexts if entry.raycast_mask is None]
+    assert len(collision_entries) == 2
+    static_entry = next(entry for entry in collision_entries if entry.maybe_static)
+    dynamic_entry = next(entry for entry in collision_entries if not entry.maybe_static)
+    assert static_entry.is_remapped and dynamic_entry.is_remapped
+    # No consumer required the combined collision BVH, so the single-tree entry does not exist.
+    with pytest.raises(gs.GenesisException):
+        sensor._shared_context.collision_bvh_context
+
+    # Dynamic box parked far away: the ray hits the static box top through the static BVH; the closer static hit
+    # must survive the dynamic (miss) and visual (farther hit) merge passes.
+    scene.step()
+    assert_distances(MOUNT_Z - STATIC_TOP_Z)
+
+    # Dynamic box under the ray, above the static box: the closer dynamic hit wins the merge.
+    dynamic_box.set_pos((0.0, 0.0, DYNAMIC_TOP_Z - 0.2))
+    scene.step()
+    assert_distances(MOUNT_Z - DYNAMIC_TOP_Z)
+
+    # Dynamic box parked again: back to the static hit (the dynamic BVH tracked the motion).
+    dynamic_box.set_pos(FAR_POS)
+    scene.step()
+    assert_distances(MOUNT_Z - STATIC_TOP_Z)
+
+    # Teleporting the static box is an explicit set_pos on otherwise-static geometry: it must flag the skipped static
+    # BVH for rebuild, after which the ray falls through to the visual box - a first-pass miss followed by a last-pass
+    # hit, the ordering that would report NO_HIT if a miss stamped it before the merge completed.
+    static_box.set_pos((5.0, -5.0, 0.5))
+    assert static_entry.rebuild_subscriber.pending
+    scene.step()
+    assert_distances(MOUNT_Z - VISUAL_TOP_Z)
+
+    # Same ordering with the hit coming from the middle (dynamic) pass instead of the last (visual) one.
+    dynamic_box.set_pos((0.0, 0.0, DYNAMIC_TOP_Z - 0.2))
+    scene.step()
+    assert_distances(MOUNT_Z - DYNAMIC_TOP_Z)
+
+    # Move everything out of the ray's path: only a miss on every pass settles to no_hit_value.
+    visual_box.set_pos((5.0, 0.0, 0.25))
+    dynamic_box.set_pos(FAR_POS)
+    scene.step()
+    assert_distances(NO_HIT)
+
+    # Physics-driven motion: a constant downward velocity moves the dynamic box without any GEOMETRY event, so the
+    # static BVH keeps skipping its rebuild (nothing pending, nothing flagged) while the dynamic BVH tracks the fall.
+    dynamic_box.set_pos((0.0, 0.0, DYNAMIC_TOP_Z - 0.2))
+    dynamic_box.set_dofs_velocity((0.0, 0.0, -1.0), dofs_idx_local=slice(0, 3))
+    scene.step()
+    assert_distances(MOUNT_Z - DYNAMIC_TOP_Z + DT, tol=tol)
+    assert static_entry.maybe_static
+    assert not static_entry.needs_rebuild
+    assert not static_entry.rebuild_subscriber.pending
+    scene.step()
+    assert_distances(MOUNT_Z - DYNAMIC_TOP_Z + 2 * DT, tol=tol)
+
+    # Identical fixed geometry in every env: the static subset collapses to a single shared tree, while the dynamic
+    # subset keeps one tree per env by construction.
+    assert static_entry.aabb.n_batches == 1
+    assert dynamic_entry.aabb.n_batches == max(n_envs, 1)
+
+
+@pytest.mark.required
+def test_tactile_raycast_consumer_forces_combined_collision_bvh(show_viewer):
+    PAD_SIZE = (0.2, 0.2, 0.05)
+    BALL_R = 0.04
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    pad = scene.add_entity(
+        gs.morphs.Box(
+            size=PAD_SIZE,
+            pos=(0.0, 0.0, PAD_SIZE[2] / 2),
+            fixed=True,
+        )
+    )
+    ball = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=BALL_R,
+            pos=(0.0, 0.0, 0.4),
+        )
+    )
+    depth_probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            entity_idx=pad.idx,
+            probe_local_pos=((0.0, 0.0, PAD_SIZE[2] / 2),),
+            probe_radius=0.01,
+            contact_depth_query="raycast",
+        )
+    )
+    raycaster = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(resolution=1.0, size=(0.0, 0.0), direction=(0.0, 0.0, -1.0)),
+            entity_idx=pad.idx,
+            pos_offset=(0.05, 0.05, 1.0),
+            return_world_frame=False,
+        )
+    )
+    scene.build()
+
+    # The tactile probe's query kernels walk a single tree over every collision face, so despite the mixed
+    # static/dynamic scene the collision mesh must stay in one combined BVH, exposed as collision_bvh_context.
+    collision_entries = [entry for entry in raycaster._shared_context.bvh_contexts if entry.raycast_mask is None]
+    assert len(collision_entries) == 1
+    assert not collision_entries[0].is_remapped
+    assert raycaster._shared_context.collision_bvh_context is collision_entries[0]
+
+    # Both consumers stay functional: the probe sees the ball pressed into the pad through the combined tree, and the
+    # raycaster (offset away from the ball) hits the pad top.
+    ball.set_pos((0.0, 0.0, PAD_SIZE[2] + BALL_R - 0.005))
+    scene.step()
+    assert (depth_probe.read_ground_truth() > gs.EPS).all()
+    assert_allclose(raycaster.read().distances, 1.0 - PAD_SIZE[2] / 2, tol=gs.EPS)

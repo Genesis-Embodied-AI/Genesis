@@ -46,9 +46,11 @@ def bvh_ray_cast(
     max_range: float,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
+    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     eps: float,
+    is_remapped: qd.template(),
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
@@ -57,16 +59,21 @@ def bvh_ray_cast(
     triangles: ``i_t == i_b`` for a per-env BVH, while a static collision BVH shared by several envs routes
     ``i_t`` through ``env_bvh_idx`` (the routed envs have bit-identical verts, so each env reads its own).
 
+    `is_remapped` is a compile-time flag set when the BVH covers a compacted face subset (see
+    RaycastContext.activate): `face_ids` then maps a leaf slot back to the global face index. When False the BVH
+    covers every face in order, `face_ids` is ignored and the remap compiles out.
+
     Returns
     -------
     hit_face : gs.qd_int
-        index of the hit triangle (-1 if no hit)
+        index of the hit (global) triangle (-1 if no hit)
     hit_distance : gs.qd_float
         distance to hit point (unchanged max_range if no hit)
     hit_normal : qd.math.vec3
         normal vector at hit point (zero vector if no hit)
     """
-    n_triangles = dyn_info.faces.verts_idx.shape[0]
+    # The BVH's own leaf count. For a subset BVH this is the subset size, smaller than the solver's face count.
+    n_triangles = bvh_morton_codes.shape[1]
 
     hit_face = -1
     closest_distance = gs.qd_float(max_range)
@@ -88,9 +95,11 @@ def bvh_ray_cast(
 
         if aabb_t >= 0.0 and aabb_t < closest_distance:
             if node.left == -1:  # Leaf node
-                # Get original triangle/face index
+                # The morton code carries the leaf slot; a subset BVH remaps it to the global face index.
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
                 i_f = qd.cast(bvh_morton_codes[i_t, sorted_leaf_idx][1], gs.qd_int)
+                if qd.static(is_remapped):
+                    i_f = face_ids[i_f]
 
                 # Get triangle vertices
                 tri_vertices = get_triangle_vertices(i_f, i_b, dyn_state, dyn_info)
@@ -285,13 +294,19 @@ def triangle_face_normal(v0: qd.types.vector(3), v1: qd.types.vector(3), v2: qd.
 def update_face_aabb(
     i_t: int,
     i_b: int,
-    i_f: int,
+    i_a: int,
+    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
+    is_remapped: qd.template(),
 ):
-    """Update the AABB of face i_f in tree slot i_t from env i_b's geometry (i_t == i_b for a per-env BVH).
+    """Update AABB slot i_a of tree slot i_t from env i_b's geometry (i_t == i_b for a per-env BVH).
+
+    AABB slot i_a holds the bounding box of face `face_ids[i_a]` when `is_remapped` (a compile-time flag, see
+    bvh_ray_cast), so the rebuild scales with the subset size; otherwise slot i_a holds face i_a and `face_ids` is
+    ignored.
 
     A face contributes to env i_b only if its geom lies in that env's active geom range (links_info.geom_start /
     geom_end); otherwise its AABB is left inverted (unhittable) and skipped by ray queries. For a homogeneous solver
@@ -299,8 +314,11 @@ def update_face_aabb(
     one vertex buffer but activate different per-env geom ranges, it makes each env cast against only its own variant
     instead of the union of every variant.
     """
-    aabb_state.aabbs[i_t, i_f].min.fill(qd.math.inf)
-    aabb_state.aabbs[i_t, i_f].max.fill(-qd.math.inf)
+    i_f = i_a
+    if qd.static(is_remapped):
+        i_f = face_ids[i_a]
+    aabb_state.aabbs[i_t, i_a].min.fill(qd.math.inf)
+    aabb_state.aabbs[i_t, i_a].max.fill(-qd.math.inf)
 
     i_g = dyn_info.faces.geom_idx[i_f]
     i_l = dyn_info.geoms.link_idx[i_g]
@@ -311,53 +329,70 @@ def update_face_aabb(
             i_fv = dyn_info.verts.verts_state_idx[i_v]
             if dyn_info.verts.is_fixed[i_v]:
                 pos_v = dyn_state.fixed_verts.pos[i_fv]
-                aabb_state.aabbs[i_t, i_f].min = qd.min(aabb_state.aabbs[i_t, i_f].min, pos_v)
-                aabb_state.aabbs[i_t, i_f].max = qd.max(aabb_state.aabbs[i_t, i_f].max, pos_v)
+                aabb_state.aabbs[i_t, i_a].min = qd.min(aabb_state.aabbs[i_t, i_a].min, pos_v)
+                aabb_state.aabbs[i_t, i_a].max = qd.max(aabb_state.aabbs[i_t, i_a].max, pos_v)
             else:
                 pos_v = dyn_state.free_verts.pos[i_fv, i_b]
-                aabb_state.aabbs[i_t, i_f].min = qd.min(aabb_state.aabbs[i_t, i_f].min, pos_v)
-                aabb_state.aabbs[i_t, i_f].max = qd.max(aabb_state.aabbs[i_t, i_f].max, pos_v)
+                aabb_state.aabbs[i_t, i_a].min = qd.min(aabb_state.aabbs[i_t, i_a].min, pos_v)
+                aabb_state.aabbs[i_t, i_a].max = qd.max(aabb_state.aabbs[i_t, i_a].max, pos_v)
 
 
 @qd.func
 def update_aabbs(
+    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
+    is_remapped: qd.template(),
 ):
     """Update the per-face collision AABBs of a per-env BVH (one tree slot per env). See update_face_aabb."""
-    for i_b, i_f in qd.ndrange(dyn_state.free_verts.pos.shape[1], dyn_info.faces.verts_idx.shape[0]):
-        update_face_aabb(i_b, i_b, i_f, dyn_state, aabb_state, dyn_info, rigid_config)
+    for i_b, i_a in qd.ndrange(dyn_state.free_verts.pos.shape[1], aabb_state.aabbs.shape[1]):
+        update_face_aabb(i_b, i_b, i_a, face_ids, dyn_state, aabb_state, dyn_info, rigid_config, is_remapped)
 
 
 @qd.kernel
 def kernel_update_verts_and_aabbs(
+    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
+    is_remapped: qd.template(),
 ):
     func_update_all_verts(dyn_state, dyn_info, rigid_config)
-    update_aabbs(dyn_state, aabb_state, dyn_info, rigid_config)
+    update_aabbs(face_ids, dyn_state, aabb_state, dyn_info, rigid_config, is_remapped)
 
 
 @qd.kernel
 def kernel_update_grouped_aabbs(
     batch_repr_env: qd.types.ndarray(ndim=1),  # [n_trees] env whose geometry builds each tree slot
+    face_ids: qd.types.ndarray(ndim=1),
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
+    is_remapped: qd.template(),
 ):
     """Build the per-face AABBs of a grouped static collision BVH: one tree slot per distinct per-env geometry.
 
     Each tree slot is built from its representative env, whose geometry is bit-identical to every env routed to that
-    slot (see RaycastContext update). The verts must be up to date (kernel_update_all_verts); grouping happens between
-    the vert refresh and this build, which is why it is a separate kernel from kernel_update_verts_and_aabbs.
+    slot (see RaycastContext update), over the entry's face subset (see update_face_aabb for face_ids / is_remapped).
+    The verts must be up to date (kernel_update_all_verts); grouping happens between the vert refresh and this build,
+    which is why it is a separate kernel from kernel_update_verts_and_aabbs.
     """
-    for i_t, i_f in qd.ndrange(aabb_state.aabbs.shape[0], dyn_info.faces.verts_idx.shape[0]):
-        update_face_aabb(i_t, batch_repr_env[i_t], i_f, dyn_state, aabb_state, dyn_info, rigid_config)
+    for i_t, i_a in qd.ndrange(aabb_state.aabbs.shape[0], aabb_state.aabbs.shape[1]):
+        update_face_aabb(
+            i_t,
+            batch_repr_env[i_t],
+            i_a,
+            face_ids,
+            dyn_state,
+            aabb_state,
+            dyn_info,
+            rigid_config,
+            is_remapped,
+        )
 
 
 # =========================================== Visual Mesh Raycasting ===========================================
@@ -494,6 +529,7 @@ def kernel_cast_ray(
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
+    face_ids: qd.types.ndarray(ndim=1),  # ignored: the viewer BVH covers every face (is_remapped=False)
     dyn_state: array_class.DynState,
     result: array_class.RaycastResult,
     dyn_info: array_class.DynInfo,
@@ -528,9 +564,11 @@ def kernel_cast_ray(
             max_range,
             bvh_nodes,
             bvh_morton_codes,
+            face_ids,
             dyn_state,
             dyn_info,
             eps,
+            is_remapped=False,
         )
         if cur_hit_face >= 0:
             result.distance[i_b] = cur_distance
@@ -552,18 +590,23 @@ def write_ray_hit(
     ray_direction_world,
     ray_dir_local,
     is_world_frame: qd.types.ndarray(ndim=1),
+    max_ranges: qd.types.ndarray(ndim=1),
     no_hit_values: qd.types.ndarray(ndim=1),
     sensor_return_points: qd.types.ndarray(ndim=1),
     output_hits: qd.types.ndarray(ndim=2),
     eps: float,
     is_merge: qd.template(),
+    is_last: qd.template(),
 ):
     """Common post-BVH write block for both collision and visual cast kernels.
 
-    `is_merge` is a compile-time flag. When False the function writes a value into every output slot (hit or
-    no_hit_value), initializing the cache. When True the function only writes when it found a closer hit than what
-    is already in the cache, so multiple BVH casts can be composed by chaining calls (first with is_merge=False,
-    subsequent with is_merge=True) into the same output buffer with no scratch storage.
+    `is_merge` and `is_last` are compile-time flags marking a cast's position in a chain of BVH passes sharing one
+    output buffer (first pass is_merge=False, subsequent passes is_merge=True, final pass is_last=True): the first
+    pass writes a value into every slot, and each later pass only overwrites a slot when it found a closer hit, so
+    the chain composes with no scratch storage. A miss must not beat a real hit from another pass whatever the
+    sensor's ``no_hit_value`` (it may be below max_range, e.g. 0 or -1): a miss on a non-final pass seeds the slot
+    with ``max_range`` - a hit is always strictly below it, so a hit wins every distance comparison - and
+    ``no_hit_value`` is stamped only by the final pass, over any slot still holding that sentinel.
 
     `sensor_return_points[i_s]` gates the hit-point writes; a distances-only sensor skips them.
     """
@@ -582,12 +625,20 @@ def write_ray_hit(
             output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
             output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
     elif not is_merge:
-        # No hit
+        # First-pass miss: zero the point and seed the distance - no_hit_value if this pass is also the last (single
+        # BVH), else the max_range sentinel so a later pass's hit wins.
         if sensor_return_points[i_s]:
             output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
             output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
             output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
-        output_hits[i_p_dist, i_b] = no_hit_values[i_s]
+        if is_last:
+            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
+        else:
+            output_hits[i_p_dist, i_b] = max_ranges[i_s]
+    elif is_last:
+        # Final-pass miss: a slot still at the sentinel means every pass missed, so stamp no_hit_value.
+        if output_hits[i_p_dist, i_b] >= max_ranges[i_s]:
+            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
 
 
 @qd.kernel
@@ -608,17 +659,21 @@ def kernel_cast_rays(
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
     sensor_return_points: qd.types.ndarray(ndim=1),  # [n_sensors] - True to store hit points, False for distances-only
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
+    face_ids: qd.types.ndarray(ndim=1),  # leaf slot -> global face index; ignored unless is_remapped
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     eps: float,
     is_merge: qd.template(),
+    is_last: qd.template(),
+    is_remapped: qd.template(),
     is_env_major: qd.template(),
 ):
     """Cast rays against a collision-mesh BVH.
 
-    See write_ray_hit for `is_merge` semantics. The result `output_hits` is a 2D array of shape (total_cache_size,
-    n_env) where in the first dimension each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges
-    (n_points)], the point block being present only for sensors with sensor_return_points set.
+    See write_ray_hit for `is_merge` / `is_last` semantics and bvh_ray_cast for `is_remapped`. The result
+    `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each sensor's data is
+    stored as [sensor_points (n_points * 3), sensor_ranges (n_points)], the point block being present only for
+    sensors with sensor_return_points set.
 
     env_bvh_idx routes each env to the BVH tree slot it casts against: identity for per-env trees, all-zero for one
     shared tree, group ids for a grouped static collision BVH (N distinct geometries, N <= n_env). is_env_major is a
@@ -659,9 +714,11 @@ def kernel_cast_rays(
             max_ranges[i_s],
             bvh_nodes,
             bvh_morton_codes,
+            face_ids,
             dyn_state,
             dyn_info,
             eps,
+            is_remapped,
         )
 
         i_p_sensor = i_p - sensor_point_offsets[i_s]
@@ -682,11 +739,13 @@ def kernel_cast_rays(
             ray_direction_world,
             ray_dir_local,
             is_world_frame,
+            max_ranges,
             no_hit_values,
             sensor_return_points,
             output_hits,
             eps,
             is_merge,
+            is_last,
         )
 
 
@@ -712,6 +771,7 @@ def kernel_cast_rays_visual(
     dyn_info: array_class.DynInfo,
     eps: float,
     is_merge: qd.template(),
+    is_last: qd.template(),
     is_env_major: qd.template(),
 ):
     """Visual-mesh variant of kernel_cast_rays.
@@ -771,9 +831,11 @@ def kernel_cast_rays_visual(
             ray_direction_world,
             ray_dir_local,
             is_world_frame,
+            max_ranges,
             no_hit_values,
             sensor_return_points,
             output_hits,
             eps,
             is_merge,
+            is_last,
         )
