@@ -809,7 +809,8 @@ def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snap
         show_viewer=show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(gs.morphs.Plane())
+    # The scene has no ground plane: it serves no purpose here, and its out-of-frustum vertices would be
+    # misrasterized by the Apple Software Renderer.
     fem = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/trashbag_rope.glb",
