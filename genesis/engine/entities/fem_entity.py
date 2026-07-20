@@ -421,7 +421,8 @@ class FEMEntity(Entity):
 
         if isinstance(self.material, ClothMaterial):
             # Cloth needs no tetrahedralization: the welded surface triangles are the simulation elements.
-            verts, elems = surface_verts + self._morph.pos, surface_faces
+            verts = surface_verts + self._morph.pos
+            elems = surface_faces
         else:
             # Tetgen refinement depends on the absolute coordinates of its input. File meshes are tetrahedralized
             # untranslated so the result, and its on-disk cache, are shared across all placements of the same asset;
@@ -452,14 +453,12 @@ class FEMEntity(Entity):
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
 
         if is_cloth:
-            # Cloth physics is managed by the IPC coupler; the FEM solver only tracks vertex positions.
             self._solver._kernel_add_vertices(
                 f=self._sim.cur_substep_local,
                 v_start=self._v_start,
                 verts=verts_numpy,
             )
         else:
-            # Regular FEM: add vertices, elements, and surfaces for physics
             elems_np = self.elems.astype(gs.np_int, copy=False)
             self._solver._kernel_add_elements(
                 f=self._sim.cur_substep_local,

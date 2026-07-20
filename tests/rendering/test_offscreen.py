@@ -818,13 +818,13 @@ def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snap
         ),
         material=gs.materials.FEM.Cloth(),
     )
-    cam = scene.add_camera(
+    camera = scene.add_camera(
         res=CAM_RES,
         pos=(0.6, 0.6, 0.55),
         lookat=(0.0, 0.0, 0.32),
         fov=45,
-        denoise=False,
         GUI=show_viewer,
+        denoise=False,
     )
     scene.build()
 
@@ -837,7 +837,7 @@ def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snap
         png_snapshot.extension._std_err_threshold = 3.0
         png_snapshot.extension._blurred_kernel_size = 3
         # RayTracer only supports the RGB channel; depth, segmentation and normal are rasterizer-only.
-        rgb, *_ = cam.render(rgb=True)
+        rgb, *_ = camera.render(rgb=True)
         assert rgb_array_to_png_bytes(rgb) == png_snapshot
     else:
         if scene.visualizer.is_software:
@@ -845,7 +845,7 @@ def test_multi_submesh_fem_render(renderer_type, renderer, show_viewer, png_snap
             # edges; blur it away and relax the threshold so the comparison still catches structural differences.
             png_snapshot.extension._std_err_threshold = 3.0
             png_snapshot.extension._blurred_kernel_size = 3
-        rgb, depth, seg, normal = cam.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
+        rgb, depth, seg, normal = camera.render(rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True)
         assert rgb_array_to_png_bytes(rgb) == png_snapshot
         assert rgb_array_to_png_bytes(as_grayscale_image(tensor_to_array(depth))) == png_snapshot
         assert rgb_array_to_png_bytes(seg) == png_snapshot

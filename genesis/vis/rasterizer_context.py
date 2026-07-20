@@ -898,14 +898,14 @@ class RasterizerContext:
                         vmesh.surface, uvs=vmesh.uvs, n_verts=len(vgeom.sim_verts_idx)
                     )
                     seg_key = (fem_entity.idx, i_g) if self.segmentation_level == "geom" else fem_entity.idx
-                    for i_env, idx in enumerate(self.rendered_envs_idx):
-                        mesh = trimesh.Trimesh(sim_verts[i_env, vgeom.sim_verts_idx], vmesh.faces, process=False)
+                    for env_i, i_b in enumerate(self.rendered_envs_idx):
+                        mesh = trimesh.Trimesh(sim_verts[env_i, vgeom.sim_verts_idx], vmesh.faces, process=False)
                         mesh.visual = visual
                         node = pyrender.Mesh.from_trimesh(
                             mesh, smooth=vmesh.surface.smooth, double_sided=vmesh.surface.double_sided
                         )
                         static_node = self.add_node(node)
-                        self.static_nodes[(idx, vmesh.uid)] = static_node
+                        self.static_nodes[(i_b, vmesh.uid)] = static_node
                         self.create_node_seg(seg_key, static_node)
 
     def update_fem(self):
@@ -922,9 +922,9 @@ class RasterizerContext:
 
                 sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for vgeom in fem_entity.vgeoms:
-                    for i_env, idx in enumerate(self.rendered_envs_idx):
-                        node = self.static_nodes[(idx, vgeom.vmesh.uid)]
-                        render_verts = sim_verts[i_env, vgeom.sim_verts_idx].astype(np.float32, copy=False)
+                    for env_i, i_b in enumerate(self.rendered_envs_idx):
+                        node = self.static_nodes[(i_b, vgeom.vmesh.uid)]
+                        render_verts = sim_verts[env_i, vgeom.sim_verts_idx].astype(np.float32, copy=False)
                         update_data = self._scene.reorder_vertices(node, render_verts)
                         self.jit.update_buffer(node, "pos", update_data)
                         normal_data = self.jit.update_normal(node, update_data)

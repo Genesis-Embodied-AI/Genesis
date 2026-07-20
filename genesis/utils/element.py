@@ -10,6 +10,7 @@ from . import mesh as mu
 
 
 def mesh_to_elements(mesh, tet_cfg=dict()):
+    """Tetrahedralize a surface trimesh, with the result cached on disk keyed on vertices, faces and configuration."""
     # compute file name via hashing for caching
     tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
 

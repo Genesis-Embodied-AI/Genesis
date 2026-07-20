@@ -253,6 +253,9 @@ class Raytracer:
                 if isinstance(entity, entities.RigidEntity):
                     for geom in entity.geoms:
                         self.add_surface(str(geom.uid), geom.surface)
+            elif isinstance(entity, entities.FEMEntity):
+                for vgeom in entity.vgeoms:
+                    self.add_surface(str(vgeom.vmesh.uid), vgeom.vmesh.surface)
             else:
                 self.add_surface(str(entity.uid), entity.surface)
 
@@ -335,7 +338,6 @@ class Raytracer:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
                     for vgeom in fem_entity.vgeoms:
-                        self.add_surface(str(vgeom.vmesh.uid), vgeom.vmesh.surface)
                         self.add_deformable(str(vgeom.vmesh.uid))
 
     def get_transform(self, matrix):

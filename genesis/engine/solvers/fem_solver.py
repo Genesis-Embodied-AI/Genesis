@@ -218,9 +218,9 @@ class FEMSolver(Solver):
             active=gs.qd_bool,
         )
 
-        # for rendering (this is more of a surface)
-        surface_state_render_v = qd.types.struct(
-            vertices=gs.qd_vec3,
+        # environment-offset vertex positions for rendering
+        vert_state_render = qd.types.struct(
+            pos=gs.qd_vec3,
         )
 
         self.surface = surface_state.field(
@@ -229,7 +229,7 @@ class FEMSolver(Solver):
             layout=qd.Layout.SOA,
         )
 
-        self.surface_render_v = surface_state_render_v.field(
+        self.verts_render = vert_state_render.field(
             shape=(n_vertices_max, self._B),
             needs_grad=False,
             layout=qd.Layout.SOA,
@@ -1092,7 +1092,7 @@ class FEMSolver(Solver):
     def get_state_render(self, f):
         """Refresh and return the environment-offset vertex positions field, with shape (n_vertices, B)."""
         self._kernel_get_state_render(f)
-        return self.surface_render_v.vertices
+        return self.verts_render.pos
 
     def get_forces(self):
         """
@@ -1195,10 +1195,10 @@ class FEMSolver(Solver):
         verts: qd.types.ndarray(),
     ):
         """
-        Add vertices to the solver for position tracking only, without any simulation element.
+        Add vertices to the solver for position tracking only.
 
-        Used for Cloth material entities, whose physics is managed by the IPC coupler: the mass is a placeholder
-        the solver never integrates with.
+        Used for Cloth material entities, whose elements and mass are owned by the IPC coupler: the vertex info
+        holds placeholder values.
         """
         n_verts_local = verts.shape[0]
         for i_v, i_b in qd.ndrange(n_verts_local, self._B):
@@ -1359,7 +1359,7 @@ class FEMSolver(Solver):
         for i_v, i_b in qd.ndrange(self.n_vertices, self._B):
             for j in qd.static(range(3)):
                 pos_j = qd.cast(self.elements_v[f, i_v, i_b].pos[j], qd.f32)
-                self.surface_render_v[i_v, i_b].vertices[j] = pos_j + self.envs_offset[i_b][j]
+                self.verts_render[i_v, i_b].pos[j] = pos_j + self.envs_offset[i_b][j]
 
     @qd.kernel
     def _kernel_set_state(

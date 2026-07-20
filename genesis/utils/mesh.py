@@ -1351,20 +1351,20 @@ def merge_submeshes(verts_list, faces_list):
         For each sub-mesh, the map from its local vertex indices to indices into the welded vertices.
     """
     sub_offsets = (0, *np.cumsum([len(verts) for verts in verts_list]))
-    all_verts = np.concatenate(verts_list, axis=0)
-    all_faces = np.concatenate([faces + offset for faces, offset in zip(faces_list, sub_offsets)], axis=0)
+    stacked_verts = np.concatenate(verts_list, axis=0)
+    stacked_faces = np.concatenate([faces + offset for faces, offset in zip(faces_list, sub_offsets)], axis=0)
 
     # Weld by quantized position: co-located vertices are authored with identical coordinates, so a tight absolute
     # quantum absorbs sub-nanometer parsing noise while keeping genuinely distinct vertices separate.
-    quantized = np.round(all_verts * 1e8).astype(np.int64)
+    quantized = np.round(stacked_verts * 1e8).astype(np.int64)
     _, unique_idx, remap = np.unique(quantized, axis=0, return_index=True, return_inverse=True)
     # np.unique orders groups by quantized key; rank the first-occurrence indices to restore input order instead.
     rank = np.empty(len(unique_idx), dtype=unique_idx.dtype)
     rank[np.argsort(unique_idx)] = np.arange(len(unique_idx))
     remap = rank[remap]
 
-    verts = all_verts[np.sort(unique_idx)]
-    faces = remap[all_faces]
+    verts = stacked_verts[np.sort(unique_idx)]
+    faces = remap[stacked_faces]
     verts_maps = [remap[start:end] for start, end in zip(sub_offsets, sub_offsets[1:])]
     return verts, faces, verts_maps
 
