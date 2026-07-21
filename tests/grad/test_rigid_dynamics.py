@@ -16,9 +16,8 @@ from .utils import assert_grad_matches_fd, make_diff_scene_pair
     "backend",
     [
         gs.cpu,
-        # FIXME: Quadrants' native-Metal reverse-mode autodiff mis-writes multi-component adjoints (the second
-        # gradient entry of a vector input is overwritten by the first), so the analytical gradient is wrong on
-        # Apple GPUs. Re-enable once the Quadrants Metal backward pass is fixed.
+        # FIXME: Quadrants' released native-Metal reverse-mode autodiff collapses per-env adjoints (fixed upstream,
+        # see Quadrants issue #805). Re-enable once the fix ships in a Quadrants release.
         pytest.param(gs.gpu, marks=pytest.mark.skipif(sys.platform == "darwin", reason=SKIP_METAL_GRAD)),
     ],
 )
@@ -77,8 +76,8 @@ def test_rigid_fk_grad_matches_fd(model_name, request, precision, show_viewer):
 
     pos_shape = (B, 3) if is_single_link else (B, n_links, 3)
     quat_shape = (B, 4) if is_single_link else (B, n_links, 4)
-    tgt_pos = gs.tensor(np.random.RandomState(pos_seed).standard_normal(pos_shape)).reshape(-1)
-    tgt_quat = gs.tensor(np.random.RandomState(quat_seed).standard_normal(quat_shape)).reshape(-1)
+    tgt_pos = gs.tensor(np.random.RandomState(pos_seed).standard_normal(pos_shape), dtype=gs.tc_float).reshape(-1)
+    tgt_quat = gs.tensor(np.random.RandomState(quat_seed).standard_normal(quat_shape), dtype=gs.tc_float).reshape(-1)
     for setter, output, input_seed in checks:
         rng = np.random.default_rng(input_seed)
         if setter == "pos":
@@ -150,7 +149,7 @@ def test_rigid_fk_multistep_force_grad_matches_fd(model_name, request, precision
     }[model_name]
     pair = make_diff_scene_pair(request.getfixturevalue(model_name), n_envs=0, substeps=4, show_viewer=show_viewer)
     n_dofs = pair.entity_ana.n_dofs
-    target = gs.tensor(np.random.RandomState(seed).standard_normal((1, *output_shape))).reshape(-1)
+    target = gs.tensor(np.random.RandomState(seed).standard_normal((1, *output_shape)), dtype=gs.tc_float).reshape(-1)
     inputs = [np.random.default_rng(seed * 100 + t).standard_normal((n_dofs,)) for t in range(10)]
 
     def loss_fn(scene, entity):
