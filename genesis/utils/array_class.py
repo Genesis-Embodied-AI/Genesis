@@ -2632,6 +2632,9 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     n_knots: int
     n_seeds: int
     n_eval_per_candidate: int
+    # Sampling-fallback extents: independent RRT-Connect tree pairs per env and the node capacity per tree pair.
+    n_rrt_trees: int
+    n_rrt_nodes: int
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2809,6 +2812,18 @@ class PlannerState:
     lbfgs_s: qd.Tensor
     lbfgs_y: qd.Tensor
     lbfgs_rho: qd.Tensor
+    # RRT-Connect fallback: node storage (column = i_t * n_rrt_nodes + i_n; the start tree grows in the lower
+    # half, the goal tree in the upper half), parent links, per-half node counts, bridge nodes, and the
+    # extracted path per tree.
+    rrt_qpos: qd.Tensor
+    rrt_parent: qd.Tensor
+    # Per-(tree, side) node counts, flattened to 2 * i_t + side: dynamic lane indexing into a vector field is
+    # unreliable in kernels, a flat scalar field is not.
+    rrt_n_nodes: qd.Tensor
+    rrt_bridge: qd.Tensor
+    rrt_is_done: qd.Tensor
+    rrt_path: qd.Tensor
+    rrt_path_len: qd.Tensor
     # Per-column and per-candidate cost / validation outputs.
     cost_wp: qd.Tensor
     cost: qd.Tensor
@@ -2826,6 +2841,8 @@ def get_planner_state(planner_config, B):
     NF = C * planner_config.n_knots
     E = C * planner_config.n_eval_per_candidate
     n_sph_tot = planner_config.n_spheres + planner_config.n_attach_max
+    NT = B * planner_config.n_rrt_trees
+    n_rrt_cols = NT * planner_config.n_rrt_nodes
 
     return PlannerState(
         qpos_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
@@ -2848,6 +2865,13 @@ def get_planner_state(planner_config, B):
         lbfgs_s=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
         lbfgs_y=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
         lbfgs_rho=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, C)),
+        rrt_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
+        rrt_parent=V(dtype=gs.qd_int, shape=(max(n_rrt_cols, 1),)),
+        rrt_n_nodes=V(dtype=gs.qd_int, shape=(2 * max(NT, 1),)),
+        rrt_bridge=V_VEC(2, dtype=gs.qd_int, shape=(max(NT, 1),)),
+        rrt_is_done=V(dtype=gs.qd_bool, shape=(max(NT, 1),)),
+        rrt_path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
+        rrt_path_len=V(dtype=gs.qd_int, shape=(max(NT, 1),)),
         cost_wp=V(dtype=gs.qd_float, shape=(NF,)),
         cost=V(dtype=gs.qd_float, shape=(C,)),
         is_active=V(dtype=gs.qd_bool, shape=(C,)),
