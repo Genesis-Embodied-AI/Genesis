@@ -5,8 +5,15 @@ from genesis.utils.misc import qd_to_numpy
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
+@pytest.mark.parametrize(
+    "n_envs, pressure_solver",
+    [
+        (0, "WCSPH"),
+        (0, "DFSPH"),
+        pytest.param(2, "WCSPH", marks=pytest.mark.slow),  # ~150s
+        pytest.param(2, "DFSPH", marks=pytest.mark.slow),  # ~300s
+    ],
+)
 def test_rigid_flotation_follows_density_ratio(n_envs, pressure_solver, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
