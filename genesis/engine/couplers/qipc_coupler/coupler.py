@@ -156,7 +156,7 @@ def _kernel_qipc_writeback(
     free_base_q_starts: qd.types.ndarray(),
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    rigid_info: array_class.RigidInfo,
 ):
     """Single-kernel writeback: ABD q -> links_state + dofs_state + free-base qpos.
 
@@ -207,14 +207,14 @@ def _kernel_qipc_writeback(
         link_idx = free_base_link_indices[i]
         q_start = free_base_q_starts[i]
         # pos: read from links_state (already written above)
-        rigid_global_info.qpos[q_start, 0] = links_state.pos[link_idx, 0][0]
-        rigid_global_info.qpos[q_start + 1, 0] = links_state.pos[link_idx, 0][1]
-        rigid_global_info.qpos[q_start + 2, 0] = links_state.pos[link_idx, 0][2]
+        rigid_info.qpos[q_start, 0] = links_state.pos[link_idx, 0][0]
+        rigid_info.qpos[q_start + 1, 0] = links_state.pos[link_idx, 0][1]
+        rigid_info.qpos[q_start + 2, 0] = links_state.pos[link_idx, 0][2]
         # quat: read from links_state (already written above)
-        rigid_global_info.qpos[q_start + 3, 0] = links_state.quat[link_idx, 0][0]
-        rigid_global_info.qpos[q_start + 4, 0] = links_state.quat[link_idx, 0][1]
-        rigid_global_info.qpos[q_start + 5, 0] = links_state.quat[link_idx, 0][2]
-        rigid_global_info.qpos[q_start + 6, 0] = links_state.quat[link_idx, 0][3]
+        rigid_info.qpos[q_start + 3, 0] = links_state.quat[link_idx, 0][0]
+        rigid_info.qpos[q_start + 4, 0] = links_state.quat[link_idx, 0][1]
+        rigid_info.qpos[q_start + 5, 0] = links_state.quat[link_idx, 0][2]
+        rigid_info.qpos[q_start + 6, 0] = links_state.quat[link_idx, 0][3]
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +399,7 @@ class QIPCCoupler(RBC):
         if self._jc is None:
             return
 
-        dofs_state = self._sim.rigid_solver.dofs_state
+        dofs_state = self._sim.rigid_solver.dyn_state.dofs
         ctrl_pos_all: torch.Tensor = qd_to_torch(dofs_state.ctrl_pos)[:, 0].to(torch.float64)
         ctrl_vel_all: torch.Tensor = qd_to_torch(dofs_state.ctrl_vel)[:, 0].to(torch.float64)
 
@@ -462,9 +462,9 @@ class QIPCCoupler(RBC):
             free_base_body_indices=self._free_base_body_indices_t,
             free_base_link_indices=self._free_base_link_indices_t,
             free_base_q_starts=self._free_base_q_starts_t,
-            links_state=self._sim.rigid_solver.links_state,
-            dofs_state=self._sim.rigid_solver.dofs_state,
-            rigid_global_info=self._sim.rigid_solver._rigid_global_info,
+            links_state=self._sim.rigid_solver.dyn_state.links,
+            dofs_state=self._sim.rigid_solver.dyn_state.dofs,
+            rigid_info=self._sim.rigid_solver.rigid_info,
         )
 
     # -------------------------------------------------------------------------
