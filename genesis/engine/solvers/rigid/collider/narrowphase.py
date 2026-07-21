@@ -559,6 +559,8 @@ def func_add_polytope_vertex_contacts_sdf(
                         ga_quat,
                         gb_pos,
                         gb_quat,
+                        gs.qd_float(1.0),
+                        gs.qd_float(1.0),
                         dyn_info,
                         rigid_config,
                     )
@@ -987,9 +989,22 @@ def func_add_polytope_vertex_contacts_sdf_shell(
                 normal_c = gu.qd_normalize(normal_c, EPS)
                 is_emit = True
         if is_emit:
-            # Snap onto A's smooth surface when A is a smooth primitive; a no-op for polytope-typed A.
+            # Snap onto A's smooth surface when A is a smooth primitive; a no-op for polytope-typed A. The SDF path
+            # requires a nonconvex mesh, which set_scale rejects, so the scale is always 1.0 here.
             contact_pos = func_apply_smooth_refinement(
-                i_ga, i_gb, normal_c, emit_pen, contact_pos, ga_pos, ga_quat, gb_pos, gb_quat, dyn_info, rigid_config
+                i_ga,
+                i_gb,
+                normal_c,
+                emit_pen,
+                contact_pos,
+                ga_pos,
+                ga_quat,
+                gb_pos,
+                gb_quat,
+                gs.qd_float(1.0),
+                gs.qd_float(1.0),
+                dyn_info,
+                rigid_config,
             )
             func_add_contact(
                 i_ga,
@@ -1483,6 +1498,8 @@ def func_contact_mpr_terrain(
                                             dyn_state.geoms.quat[i_ga, i_b],
                                             dyn_state.geoms.pos[i_gb, i_b],
                                             dyn_state.geoms.quat[i_gb, i_b],
+                                            scale_a,
+                                            scale_b,
                                             dyn_info,
                                             rigid_config,
                                         )
@@ -1574,6 +1591,8 @@ def func_recompute_perturbed_contact(
     ga_quat_original: qd.types.vector(4),
     gb_pos_original: qd.types.vector(3),
     gb_quat_original: qd.types.vector(4),
+    scale_a,
+    scale_b,
     used_gjk,
     mpr_state: array_class.MPRState,
     gjk_state: array_class.GJKState,
@@ -1691,6 +1710,8 @@ def func_recompute_perturbed_contact(
         ga_quat_original,
         gb_pos_original,
         gb_quat_original,
+        scale_a,
+        scale_b,
         dyn_info,
         rigid_config,
     )
@@ -2037,6 +2058,8 @@ def func_convex_convex_contact(
                                                     ga_quat_current,
                                                     gb_pos_current,
                                                     gb_quat_current,
+                                                    scale_a,
+                                                    scale_b,
                                                     dyn_info,
                                                     rigid_config,
                                                 )
@@ -2074,6 +2097,8 @@ def func_convex_convex_contact(
                     ga_quat_current,
                     gb_pos_current,
                     gb_quat_current,
+                    scale_a,
+                    scale_b,
                     dyn_info,
                     rigid_config,
                 )
@@ -2137,6 +2162,8 @@ def func_convex_convex_contact(
                         ga_quat_original,
                         gb_pos_original,
                         gb_quat_original,
+                        scale_a,
+                        scale_b,
                         _used_gjk,
                         mpr_state,
                         gjk_state,
@@ -2366,6 +2393,12 @@ def _func_multicontact_mpr(
     gb_pos_original = dyn_state.geoms.pos[i_gb, i_b]
     gb_quat_original = dyn_state.geoms.quat[i_gb, i_b]
 
+    scale_a = gs.qd_float(1.0)
+    scale_b = gs.qd_float(1.0)
+    if qd.static(collider_static_config.enable_geom_scaling):
+        scale_a = dyn_state.geoms.scale[i_ga, i_b]
+        scale_b = dyn_state.geoms.scale[i_gb, i_b]
+
     multi_contact = (
         rigid_config.enable_multi_contact
         and dyn_info.geoms.type[i_ga] != gs.GEOM_TYPE.SPHERE
@@ -2435,6 +2468,8 @@ def _func_multicontact_mpr(
                             ga_quat_original,
                             gb_pos_original,
                             gb_quat_original,
+                            scale_a,
+                            scale_b,
                             dyn_info,
                             rigid_config,
                         )
@@ -2463,6 +2498,8 @@ def _func_multicontact_mpr(
                     ga_quat_original,
                     gb_pos_original,
                     gb_quat_original,
+                    scale_a,
+                    scale_b,
                     dyn_info,
                     rigid_config,
                 )
@@ -2592,6 +2629,8 @@ def _func_multicontact_mpr(
                         ga_quat_original,
                         gb_pos_original,
                         gb_quat_original,
+                        scale_a,
+                        scale_b,
                         _used_gjk,
                         mpr_state,
                         gjk_state,
@@ -2995,6 +3034,8 @@ def _func_narrowphase_contact0(
                     dyn_state.geoms.quat[i_ga, i_b],
                     dyn_state.geoms.pos[i_gb, i_b],
                     dyn_state.geoms.quat[i_gb, i_b],
+                    scale_a,
+                    scale_b,
                     dyn_info,
                     rigid_config,
                 )

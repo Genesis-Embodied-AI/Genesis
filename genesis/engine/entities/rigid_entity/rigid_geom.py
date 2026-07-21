@@ -958,7 +958,11 @@ class RigidVisGeom(RBC):
             self.link.get_pos(envs_idx, relative=False),
             self.link.get_quat(envs_idx, relative=False),
         )
-        vverts_pos = pos[..., None, :] + gu.transform_by_quat(self._aabb_verts, quat[..., None, :])
+        aabb_verts = self._aabb_verts
+        if self._solver._options.enable_geom_scaling:
+            vgeoms_scale = qd_to_torch(self._solver.dyn_state.vgeoms.scale, envs_idx, transpose=True, copy=None)
+            aabb_verts = aabb_verts[None] * vgeoms_scale[..., self.idx, None, None]
+        vverts_pos = pos[..., None, :] + gu.transform_by_quat(aabb_verts, quat[..., None, :])
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
 
     @gs.assert_built
@@ -1000,6 +1004,9 @@ class RigidVisGeom(RBC):
         init = torch.as_tensor(self.init_vverts, dtype=gs.tc_float, device=gs.device)
         pos = vgeoms_pos[..., self.idx, :].unsqueeze(-2)
         quat = vgeoms_quat[..., self.idx, :].unsqueeze(-2)
+        if self._solver._options.enable_geom_scaling:
+            vgeoms_scale = qd_to_torch(self._solver.dyn_state.vgeoms.scale, envs_idx, transpose=True, copy=None)
+            init = init[None] * vgeoms_scale[..., self.idx, None, None]
         tensor = gu.transform_by_trans_quat(init, pos, quat)
         return tensor[0] if self._solver.n_envs == 0 else tensor
 

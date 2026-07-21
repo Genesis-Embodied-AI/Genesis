@@ -2381,11 +2381,17 @@ class KinematicEntity(Entity):
         self._solver.update_vgeoms()
         vgeoms_pos = qd_to_torch(self._solver.dyn_state.vgeoms.pos, envs_idx, transpose=True, copy=None)
         vgeoms_quat = qd_to_torch(self._solver.dyn_state.vgeoms.quat, envs_idx, transpose=True, copy=None)
+        is_scaled = self._solver._options.enable_geom_scaling
+        vgeoms_scale = (
+            qd_to_torch(self._solver.dyn_state.vgeoms.scale, envs_idx, transpose=True, copy=None) if is_scaled else None
+        )
         parts = []
         for vgeom in self.vgeoms:
             init = torch.as_tensor(vgeom.init_vverts, dtype=gs.tc_float, device=gs.device)
             pos = vgeoms_pos[..., vgeom.idx, :].unsqueeze(-2)
             quat = vgeoms_quat[..., vgeom.idx, :].unsqueeze(-2)
+            if is_scaled:
+                init = init[None] * vgeoms_scale[..., vgeom.idx, None, None]
             parts.append(gu.transform_by_trans_quat(init, pos, quat))
         tensor = torch.cat(parts, dim=-2)
         return tensor[0] if self._solver.n_envs == 0 else tensor

@@ -72,6 +72,8 @@ def test_scale_rejects_unsupported_entities(show_viewer):
 def test_scaled_shapes_mass_extent_and_rest(n_envs, show_viewer):
     box_size = 0.2
     sphere_radius = 0.1
+    cyl_radius, cyl_height = 0.1, 0.2
+    platform_top = 0.2
     scale = 1.5 if n_envs == 0 else np.array([1.0, 1.5])
     scale_1d = np.atleast_1d(scale)
 
@@ -106,11 +108,32 @@ def test_scaled_shapes_mass_extent_and_rest(n_envs, show_viewer):
             convexify=True,
         ),
     )
+    # A cylinder resting on an unscaled platform is a smooth-primitive-vs-box contact, which resolves through the
+    # support path and the smooth-contact refinement; both must apply the runtime scale for it to rest at the
+    # scaled radius rather than penetrate or hover.
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.8, 0.8, 2 * platform_top),
+            pos=(3.0, 0.0, 0.0),
+            fixed=True,
+        ),
+    )
+    cylinder = scene.add_entity(
+        gs.morphs.Cylinder(
+            radius=cyl_radius,
+            height=cyl_height,
+            pos=(3.0, 0.0, 0.45),
+        ),
+    )
     scene.build(n_envs=n_envs)
 
     mass0 = box.get_mass()
     duck_extent0 = np.asarray(duck.get_AABB().cpu()).reshape(-1, 2, 3)
-    for shape in (box, sphere, duck):
+    box_vaabb0 = np.asarray(box.get_vAABB().cpu()).reshape(-1, 2, 3)
+    duck_vaabb0 = np.asarray(duck.get_vAABB().cpu()).reshape(-1, 2, 3)
+    box_vv0 = np.asarray(box.get_vverts().cpu())
+    box_vspan0 = (box_vv0.max(-2) - box_vv0.min(-2)).reshape(-1, 3)
+    for shape in (box, sphere, duck, cylinder):
         shape.set_scale(scale)
     assert_allclose(box.get_scale(), scale, tol=1e-6)
 
@@ -123,6 +146,18 @@ def test_scaled_shapes_mass_extent_and_rest(n_envs, show_viewer):
     duck_ratio = (duck_extent1[:, 1] - duck_extent1[:, 0]) / (duck_extent0[:, 1] - duck_extent0[:, 0])
     assert_allclose(duck_ratio, scale_1d[:, None], tol=1e-4)
 
+    # Visual queries track the scaled render geometry (compared as a ratio to cancel hull decimation).
+    box_vaabb1 = np.asarray(box.get_vAABB().cpu()).reshape(-1, 2, 3)
+    assert_allclose(
+        (box_vaabb1[:, 1] - box_vaabb1[:, 0]) / (box_vaabb0[:, 1] - box_vaabb0[:, 0]), scale_1d[:, None], tol=1e-4
+    )
+    duck_vaabb1 = np.asarray(duck.get_vAABB().cpu()).reshape(-1, 2, 3)
+    assert_allclose(
+        (duck_vaabb1[:, 1] - duck_vaabb1[:, 0]) / (duck_vaabb0[:, 1] - duck_vaabb0[:, 0]), scale_1d[:, None], tol=1e-4
+    )
+    box_vv1 = np.asarray(box.get_vverts().cpu())
+    assert_allclose((box_vv1.max(-2) - box_vv1.min(-2)).reshape(-1, 3) / box_vspan0, scale_1d[:, None], tol=1e-4)
+
     for _ in range(80):
         scene.step()
 
@@ -134,6 +169,12 @@ def test_scaled_shapes_mass_extent_and_rest(n_envs, show_viewer):
     # The scaled mesh rests on the plane without tunnelling through it.
     duck_min_z = np.asarray(duck.get_AABB().cpu()).reshape(-1, 2, 3)[:, 0, 2]
     assert (duck_min_z > -0.01).all()
+
+    # The scaled cylinder rests upright on the platform at the scaled half-height, and its refined contact keeps it
+    # centered (a contact point computed from the unscaled radius would drive it off-center).
+    cyl_pos = np.atleast_2d(cylinder.get_pos().cpu().numpy())
+    assert_allclose(cyl_pos[:, 2], platform_top + 0.5 * cyl_height * scale_1d, tol=5e-3)
+    assert_allclose(cyl_pos[:, :2], np.array([3.0, 0.0]), tol=2e-2)
 
 
 @pytest.mark.required

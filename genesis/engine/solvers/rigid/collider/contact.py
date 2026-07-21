@@ -98,6 +98,8 @@ def func_apply_smooth_refinement(
     ga_quat: qd.types.vector(4),
     gb_pos: qd.types.vector(3),
     gb_quat: qd.types.vector(4),
+    scale_a,
+    scale_b,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
 ):
@@ -123,7 +125,7 @@ def func_apply_smooth_refinement(
             or type_a == gs.GEOM_TYPE.CYLINDER
         ):
             contact_pos = func_refine_smooth_contact_pos(
-                type_a, dyn_info.geoms.data[i_ga], ga_pos, ga_quat, normal, penetration, contact_pos
+                type_a, scale_a * dyn_info.geoms.data[i_ga], ga_pos, ga_quat, normal, penetration, contact_pos
             )
         elif (
             type_b == gs.GEOM_TYPE.SPHERE
@@ -132,7 +134,7 @@ def func_apply_smooth_refinement(
             or type_b == gs.GEOM_TYPE.CYLINDER
         ):
             contact_pos = func_refine_smooth_contact_pos(
-                type_b, dyn_info.geoms.data[i_gb], gb_pos, gb_quat, -normal, penetration, contact_pos
+                type_b, scale_b * dyn_info.geoms.data[i_gb], gb_pos, gb_quat, -normal, penetration, contact_pos
             )
     return contact_pos
 
