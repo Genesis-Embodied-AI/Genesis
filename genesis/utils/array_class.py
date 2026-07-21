@@ -87,6 +87,7 @@ class ErrorCode(IntEnum):
     INVALID_FORCE_NAN = 0b00000000000000000000000000001000
     INVALID_ACC_NAN = 0b00000000000000000000000000010000
     OVERFLOW_CONTACTS = 0b00000000000000000000000000100000
+    OVERFLOW_PLANNER_EXCLUSIONS = 0b00000000000000000000000001000000
 
 
 # =========================================== RigidInfo ===========================================
@@ -2599,6 +2600,10 @@ def get_raycast_result(n_envs: int):
 
 # =========================================== Planner ===========================================
 
+# Capacity of the per-env start-config contact-exclusion lists (see PlannerEntityInfo); overflow raises through
+# the planner errno since it indicates a start configuration deeply entangled with the world.
+_PLANNER_N_EXCL_MAX = 64
+
 
 @qd.data_oriented
 class PlannerStaticConfig(metaclass=AutoInitMeta):
@@ -2647,6 +2652,42 @@ class PlannerEntityInfo:
     dof_reach: qd.Tensor
     # Per-(dof, env) lock mask: locked DOFs hold their start value (auto-grasp freezes gripper chains).
     dof_is_locked: qd.Tensor
+    # Plan inputs: start / goal configurations (entity-local q) and the optional Cartesian goal on the ee link.
+    qpos_start: qd.Tensor
+    qpos_goal: qd.Tensor
+    goal_link_idx: qd.Tensor
+    goal_pos: qd.Tensor
+    goal_quat: qd.Tensor
+    has_pose_goal: qd.Tensor
+    # Cost weights, activation distances, and required clearance - runtime scalars so tuning never recompiles.
+    w_obs: qd.Tensor
+    w_self: qd.Tensor
+    w_lim: qd.Tensor
+    w_acc: qd.Tensor
+    w_jerk: qd.Tensor
+    w_pose_pos: qd.Tensor
+    w_pose_rot: qd.Tensor
+    w_posture: qd.Tensor
+    eps_act: qd.Tensor
+    eps_self: qd.Tensor
+    d_safe: qd.Tensor
+    # Iteration budgets - runtime scalars for the same reason.
+    mppi_n_iters: qd.Tensor
+    mppi_n_particles: qd.Tensor
+    mppi_sigma: qd.Tensor
+    lbfgs_n_iters: qd.Tensor
+    ls_n_trials: qd.Tensor
+    # Per-call deterministic noise key (counter-based hash RNG, see trajopt.py).
+    seed_key: qd.Tensor
+    # Start-config contact exclusions: pairs already violating the margin at qpos_start are allowed to keep their
+    # start clearance (never get worse), so grasped-object starts (fingers squeezing, object still on the table)
+    # optimize and certify. Sphere-vs-world entries pack (i_s, i_gw), self entries the self-pair index.
+    excl_world_pair: qd.Tensor
+    excl_world_sd: qd.Tensor
+    excl_world_count: qd.Tensor
+    excl_self_pair: qd.Tensor
+    excl_self_sd: qd.Tensor
+    excl_self_count: qd.Tensor
 
 
 def get_planner_entity_info(planner_config, n_self_pairs, B):
@@ -2666,6 +2707,35 @@ def get_planner_entity_info(planner_config, n_self_pairs, B):
         jerk_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
         dof_reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
         dof_is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
+        qpos_start=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
+        qpos_goal=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
+        goal_link_idx=V(dtype=gs.qd_int, shape=()),
+        goal_pos=V_VEC(3, dtype=gs.qd_float, shape=(B,)),
+        goal_quat=V_VEC(4, dtype=gs.qd_float, shape=(B,)),
+        has_pose_goal=V(dtype=gs.qd_bool, shape=()),
+        w_obs=V(dtype=gs.qd_float, shape=()),
+        w_self=V(dtype=gs.qd_float, shape=()),
+        w_lim=V(dtype=gs.qd_float, shape=()),
+        w_acc=V(dtype=gs.qd_float, shape=()),
+        w_jerk=V(dtype=gs.qd_float, shape=()),
+        w_pose_pos=V(dtype=gs.qd_float, shape=()),
+        w_pose_rot=V(dtype=gs.qd_float, shape=()),
+        w_posture=V(dtype=gs.qd_float, shape=()),
+        eps_act=V(dtype=gs.qd_float, shape=()),
+        eps_self=V(dtype=gs.qd_float, shape=()),
+        d_safe=V(dtype=gs.qd_float, shape=()),
+        mppi_n_iters=V(dtype=gs.qd_int, shape=()),
+        mppi_n_particles=V(dtype=gs.qd_int, shape=()),
+        mppi_sigma=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        lbfgs_n_iters=V(dtype=gs.qd_int, shape=()),
+        ls_n_trials=V(dtype=gs.qd_int, shape=()),
+        seed_key=V(dtype=gs.qd_int, shape=()),
+        excl_world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+        excl_world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+        excl_world_count=V(dtype=gs.qd_int, shape=(B,)),
+        excl_self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+        excl_self_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+        excl_self_count=V(dtype=gs.qd_int, shape=(B,)),
     )
 
 
@@ -2721,9 +2791,12 @@ class PlannerState:
     eval_joints_xanchor: qd.Tensor
     eval_joints_xaxis: qd.Tensor
     eval_spheres_pos: qd.Tensor
-    # Per-candidate optimizer state.
+    # Per-column and per-candidate cost / validation outputs.
+    cost_wp: qd.Tensor
     cost: qd.Tensor
     is_active: qd.Tensor
+    valid_flags: qd.Tensor
+    min_clearance: qd.Tensor
     # Per-env outputs.
     best_seed_idx: qd.Tensor
     is_env_valid: qd.Tensor
@@ -2750,8 +2823,11 @@ def get_planner_state(planner_config, B):
         eval_joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
         eval_joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
         eval_spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+        cost_wp=V(dtype=gs.qd_float, shape=(NF,)),
         cost=V(dtype=gs.qd_float, shape=(C,)),
         is_active=V(dtype=gs.qd_bool, shape=(C,)),
+        valid_flags=V(dtype=gs.qd_int, shape=(C,)),
+        min_clearance=V(dtype=gs.qd_float, shape=(C,)),
         best_seed_idx=V(dtype=gs.qd_int, shape=(B,)),
         is_env_valid=V(dtype=gs.qd_bool, shape=(B,)),
         errno=V(dtype=gs.qd_int, shape=(B,)),
