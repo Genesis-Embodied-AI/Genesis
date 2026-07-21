@@ -178,6 +178,58 @@ def test_scaled_shapes_mass_extent_and_rest(n_envs, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_set_scale_matches_native_build_scale(n_envs, show_viewer):
+    # set_scale(s) must reproduce building the geometry at native scale s: native build-scale is the reference
+    # implementation, so equality across shape types catches any consumer that forgets the runtime scale (collision
+    # support, smooth-contact refinement, visual queries, ...). Extents (not positions) are compared so the paired
+    # entities can sit at different places, and only the deterministic upright shapes are compared after settling.
+    s = 1.7
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        rigid_options=gs.options.RigidOptions(
+            enable_geom_scaling=True,
+            batch_links_info=True,
+            gravity=(0.0, 0.0, -9.81),
+            dt=0.01,
+        ),
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box_n = scene.add_entity(gs.morphs.Box(size=(0.2 * s, 0.2 * s, 0.2 * s), pos=(-1.0, -0.6, 0.5)))
+    box_r = scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(-1.0, 0.6, 0.5)))
+    cyl_n = scene.add_entity(gs.morphs.Cylinder(radius=0.1 * s, height=0.2 * s, pos=(0.0, -0.6, 0.5)))
+    cyl_r = scene.add_entity(gs.morphs.Cylinder(radius=0.1, height=0.2, pos=(0.0, 0.6, 0.5)))
+    duck_n = scene.add_entity(
+        morph=gs.morphs.Mesh(file="meshes/duck.obj", scale=0.1 * s, pos=(1.0, -0.6, 0.5), convexify=True),
+    )
+    duck_r = scene.add_entity(
+        morph=gs.morphs.Mesh(file="meshes/duck.obj", scale=0.1, pos=(1.0, 0.6, 0.5), convexify=True),
+    )
+    scene.build(n_envs=n_envs)
+
+    for shape in (box_r, cyl_r, duck_r):
+        shape.set_scale(s)
+
+    # Collision geometry of the runtime-scaled entity matches the natively-scaled one for every shape (the convex
+    # hull is scale-equivariant, so this is exact; visual-AABB scaling is checked as a same-entity ratio elsewhere
+    # because hull decimation is not scale-equivariant across two separately built meshes).
+    for native, runtime in ((box_n, box_r), (cyl_n, cyl_r), (duck_n, duck_r)):
+        aabb_n = np.asarray(native.get_AABB().cpu()).reshape(-1, 2, 3)
+        aabb_r = np.asarray(runtime.get_AABB().cpu()).reshape(-1, 2, 3)
+        assert_allclose(aabb_r[:, 1] - aabb_r[:, 0], aabb_n[:, 1] - aabb_n[:, 0], tol=1e-4)
+
+    for _ in range(80):
+        scene.step()
+
+    # The box (box-plane) and cylinder (smooth-primitive-vs-plane) settle deterministically, so the runtime-scaled
+    # rest height must match the native one exactly; a missed scale in the contact path would shift it.
+    for native, runtime in ((box_n, box_r), (cyl_n, cyl_r)):
+        z_n = np.atleast_1d(native.get_pos().cpu().numpy()[..., 2])
+        z_r = np.atleast_1d(runtime.get_pos().cpu().numpy()[..., 2])
+        assert_allclose(z_r, z_n, tol=5e-3)
+
+
+@pytest.mark.required
 def test_isotropic_scale_rotational_inertia():
     scene = gs.Scene(
         show_viewer=False,
