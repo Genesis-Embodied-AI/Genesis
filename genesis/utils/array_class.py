@@ -1634,6 +1634,7 @@ class DofsInfo:
     motion_ang: qd.Tensor
     motion_vel: qd.Tensor
     limit: qd.Tensor
+    vel_limit: qd.Tensor
     act_gain: qd.Tensor
     act_bias: qd.Tensor
     force_range: qd.Tensor
@@ -1653,6 +1654,7 @@ def get_dofs_info(solver):
         motion_ang=V(dtype=gs.qd_vec3, shape=shape),
         motion_vel=V(dtype=gs.qd_vec3, shape=shape),
         limit=V(dtype=gs.qd_vec2, shape=shape),
+        vel_limit=V(dtype=gs.qd_float, shape=shape),
         act_gain=V(dtype=gs.qd_float, shape=shape),
         act_bias=V(dtype=gs.qd_vec3, shape=shape),
         force_range=V(dtype=gs.qd_vec2, shape=shape),

@@ -652,11 +652,17 @@ class KinematicEntity(Entity):
                                 break
                 l_infos = l_infos_mj
 
-                # Mujoco is not parsing actuators properties
+                # Mujoco is not parsing actuators properties nor URDF joint velocity limits
                 for j_info_gs in chain.from_iterable(links_j_infos):
                     for j_info_mj in chain.from_iterable(links_j_infos_mj):
                         if j_info_mj["name"] == j_info_gs["name"]:
-                            for name in ("dofs_force_range", "dofs_armature", "dofs_act_gain", "dofs_act_bias"):
+                            for name in (
+                                "dofs_force_range",
+                                "dofs_armature",
+                                "dofs_act_gain",
+                                "dofs_act_bias",
+                                "dofs_vel_limit",
+                            ):
                                 j_info_mj[name] = j_info_gs[name]
                             break
                 links_j_infos = links_j_infos_mj
@@ -1163,6 +1169,7 @@ class KinematicEntity(Entity):
                 dofs_motion_ang=dofs_motion_ang,
                 dofs_motion_vel=dofs_motion_vel,
                 dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
+                dofs_vel_limit=j_info.get("dofs_vel_limit", np.full((n_dofs,), np.inf)),
                 dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
                 dofs_frictionloss=j_info.get("dofs_frictionloss", np.zeros(n_dofs)),
                 dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
@@ -3920,6 +3927,23 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
 
     @gs.assert_built
+    def set_dofs_vel_limit(self, vel_limit, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the maximum absolute velocity of the entity's dofs, used to time-parametrize planned paths.
+
+        Parameters
+        ----------
+        vel_limit : array_like
+            The maximum absolute velocity of each dof.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_vel_limit(vel_limit, dofs_idx, envs_idx)
+
+    @gs.assert_built
     def set_dofs_stiffness(self, stiffness, dofs_idx_local=None, envs_idx=None):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
@@ -4228,6 +4252,18 @@ class RigidEntity(KinematicEntity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_force_range(dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def get_dofs_vel_limit(self, dofs_idx_local=None, envs_idx=None):
+        """
+        Get the maximum absolute velocity of the entity's dofs. Infinite when the asset carries no limit.
+
+        Returns
+        -------
+        vel_limit : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_vel_limit(dofs_idx, envs_idx)
 
     @gs.assert_built
     def get_dofs_stiffness(self, dofs_idx_local=None, envs_idx=None):

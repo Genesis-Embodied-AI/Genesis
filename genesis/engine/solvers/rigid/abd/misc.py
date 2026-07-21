@@ -156,6 +156,7 @@ def kernel_init_dof_fields(
     dofs_motion_ang: qd.types.ndarray(),
     dofs_motion_vel: qd.types.ndarray(),
     dofs_limit: qd.types.ndarray(),
+    dofs_vel_limit: qd.types.ndarray(),
     dofs_invweight: qd.types.ndarray(),
     dofs_stiffness: qd.types.ndarray(),
     dofs_damping: qd.types.ndarray(),
@@ -184,6 +185,7 @@ def kernel_init_dof_fields(
             dyn_info.dofs.limit[I_d][j] = dofs_limit[i_d, j]
             dyn_info.dofs.force_range[I_d][j] = dofs_force_range[i_d, j]
 
+        dyn_info.dofs.vel_limit[I_d] = dofs_vel_limit[i_d]
         dyn_info.dofs.armature[I_d] = dofs_armature[i_d]
         dyn_info.dofs.invweight[I_d] = dofs_invweight[i_d]
         dyn_info.dofs.stiffness[I_d] = dofs_stiffness[i_d]
