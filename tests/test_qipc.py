@@ -278,7 +278,7 @@ class TestQIPCAlignment:
 class TestGroundContact:
     """IPC ground contact: strict no-penetration via half-plane barrier."""
 
-    def test_ground_contact(self, simple_revolute_dir):
+    def test_ground_contact(self, simple_revolute_dir, show_viewer):
         """A free ABD box falls onto ground and stops above z=0 (IPC no-penetration)."""
 
         scene = gs.Scene(
@@ -291,7 +291,11 @@ class TestGroundContact:
                 contact_d_hat=0.01,
                 init_collision_pair_capacity=1000,
             ),
-            show_viewer=False,
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(0.5, -0.5, 0.7),
+                camera_lookat=(0.0, 0.0, 0.3),
+            ),
+            show_viewer=show_viewer,
         )
 
         scene.add_entity(gs.morphs.Plane())
@@ -320,7 +324,7 @@ class TestGroundContact:
         z = float(pos[2]) if pos.dim() == 1 else float(pos[0, 2])
         assert z > 0, f"IPC no-penetration violated: z={z}"
 
-    def test_multi_entity(self, simple_revolute_dir):
+    def test_multi_entity(self, simple_revolute_dir, show_viewer):
         """Two entities + ground: each entity's state is independently correct."""
 
         scene = gs.Scene(
@@ -333,7 +337,11 @@ class TestGroundContact:
                 contact_d_hat=0.01,
                 init_collision_pair_capacity=2000,
             ),
-            show_viewer=False,
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(1.0, -1.0, 0.8),
+                camera_lookat=(0.5, 0.0, 0.3),
+            ),
+            show_viewer=show_viewer,
         )
 
         scene.add_entity(gs.morphs.Plane())
@@ -429,7 +437,7 @@ class TestJointLimits:
     """
 
     @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
-    def test_joint_position_limits_bang_bang(self, joint_type):
+    def test_joint_position_limits_bang_bang(self, joint_type, show_viewer):
         """Bang-bang velocity control respects joint theta limits."""
         DT = 0.01
         V_MAX = 2.0
@@ -448,7 +456,11 @@ class TestJointLimits:
             coupler_options=gs.options.QIPCCouplerOptions(
                 contact_enable=False,
             ),
-            show_viewer=False,
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(0.3, -0.3, 0.6),
+                camera_lookat=(0.1, 0.0, 0.5),
+            ),
+            show_viewer=show_viewer,
         )
 
         robot = scene.add_entity(
@@ -500,7 +512,7 @@ class TestStackedFreeBodies:
     free ABD body.
     """
 
-    def test_stacked_free_base_collision(self):
+    def test_stacked_free_base_collision(self, show_viewer):
         """Free-base cubes stacked on ground maintain order and no penetration."""
         DT = 0.01
         CONTACT_D_HAT = 0.01
@@ -518,7 +530,11 @@ class TestStackedFreeBodies:
                 contact_d_hat=CONTACT_D_HAT,
                 init_collision_pair_capacity=5000,
             ),
-            show_viewer=False,
+            viewer_options=gs.options.ViewerOptions(
+                camera_pos=(0.5, -0.5, 1.0),
+                camera_lookat=(0.0, 0.0, 0.3),
+            ),
+            show_viewer=show_viewer,
         )
 
         scene.add_entity(gs.morphs.Plane())
