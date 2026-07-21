@@ -1,5 +1,3 @@
-# Reverse-mode gradient through a hybrid rigid-tool / MPM-object push: the per-step stick velocities that move the
-# deformable object toward a goal must carry non-zero gradients, except the final step which cannot affect the loss.
 import pytest
 import torch
 
@@ -9,7 +7,7 @@ import genesis as gs
 @pytest.mark.slow  # ~350s
 @pytest.mark.required
 @pytest.mark.debug(False)
-def test_hybrid_mpm_tool_push_grad(show_viewer):
+def test_mpm_tool_push_grad(show_viewer):
     HORIZON = 10
 
     scene = gs.Scene(

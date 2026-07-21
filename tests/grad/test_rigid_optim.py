@@ -1,5 +1,3 @@
-# End-to-end reverse-mode optimization on the rigid solver: Adam recovers a cartpole reference trajectory (through
-# either the initial velocity or a per-step force sequence) and drives a free box to a goal pose.
 import sys
 
 import numpy as np
@@ -24,18 +22,19 @@ from .utils import make_diff_scene_pair
 )
 @pytest.mark.parametrize("control_target", ["init_vel", "control_force"])
 @pytest.mark.debug(False)
-def test_rigid_optim_cartpole_converges(control_target, grad_cartpole, show_viewer):
+def test_reference_trajectory_recovery_converges(control_target, grad_cartpole, show_viewer):
     # Reproduce a reference cartpole trajectory by optimizing either the initial velocity or the per-step control
     # forces; every env must drive its per-env loss below both a relative-reduction and an absolute threshold. The
     # reference is exactly reproducible, so a correct gradient lets Adam crush the loss to its optimizer plateau
     # (fp32 and fp64 reach the same floor). init_vel (4 params) converges far below control_force (128 per-step
     # forces), hence the per-target thresholds - each pinned just above the measured converged loss.
-    N_STEPS, N_ITER, LR, N_DOFS, B = 32, 150, 1e-2, 2, 2
+    N_STEPS, N_ITER, LR, B = 32, 150, 1e-2, 2
     REL_REDUCTION, ABS_THRESHOLD = {
         "init_vel": (2e-6, 2e-7),
         "control_force": (1e-3, 5e-7),
     }[control_target]
-    pair = make_diff_scene_pair(grad_cartpole, n_envs=2, show_viewer=show_viewer)
+    pair = make_diff_scene_pair(grad_cartpole, n_envs=B, show_viewer=show_viewer)
+    N_DOFS = pair.entity_ana.n_dofs
     scene_ref, robot_ref = pair.scene_fd, pair.entity_fd
     scene_opt, robot_opt = pair.scene_ana, pair.entity_ana
     rng = np.random.default_rng(seed=11 if control_target == "init_vel" else 23)
@@ -86,7 +85,7 @@ def test_rigid_optim_cartpole_converges(control_target, grad_cartpole, show_view
         loss_per_env.sum().backward()
         optimizer.step()
 
-    history = np.asarray(loss_history)
+    history = np.array(loss_history)
     initial, final = history[0], history[-1]
     rel_ratios = final / initial
     assert_allclose(rel_ratios, 0.0, atol=REL_REDUCTION, err_msg=f"loss reduction insufficient (initial={initial})")
@@ -96,25 +95,20 @@ def test_rigid_optim_cartpole_converges(control_target, grad_cartpole, show_view
 @pytest.mark.slow
 @pytest.mark.required
 @pytest.mark.debug(False)
-def test_rigid_optim_reach_goal_pose(show_viewer):
+def test_goal_pose_optimization_converges(show_viewer):
     goal_pos = gs.tensor([0.7, 1.0, 0.05])
     goal_quat = gs.tensor([0.3, 0.2, 0.1, 0.9])
     goal_quat = goal_quat / torch.norm(goal_quat, dim=-1, keepdim=True)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-2,
-            substeps=1,
             requires_grad=True,
             gravity=(0, 0, -1),
         ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
-            enable_self_collision=False,
-            enable_joint_limit=False,
             disable_constraint=True,
             use_contact_island=False,
-            use_hibernation=False,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, -0.15, 2.42),

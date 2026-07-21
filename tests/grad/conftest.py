@@ -3,10 +3,11 @@ import xml.etree.ElementTree as ET
 import pytest
 
 
-def _add_hinge_arm(parent, body_name, pos, **joint_kwargs):
-    """Add a 1-DOF hinge arm link (y-axis hinge, capsule geom, explicit inertia) and return its body element."""
+def _add_hinge_arm(parent, body_name, pos, axis="0 1 0", **joint_kwargs):
+    """Add a 1-DOF hinge arm link (y-axis hinge by default, capsule geom, explicit inertia) and return its body
+    element."""
     body = ET.SubElement(parent, "body", name=body_name, pos=pos)
-    ET.SubElement(body, "joint", type="hinge", axis="0 1 0", **joint_kwargs)
+    ET.SubElement(body, "joint", type="hinge", axis=axis, **joint_kwargs)
     ET.SubElement(body, "inertial", mass="0.5", pos="0.1 0 0", diaginertia="0.01 0.01 0.01")
     ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", contype="0", conaffinity="0")
     return body
@@ -27,7 +28,7 @@ def grad_free():
 def grad_revolute():
     mjcf = ET.Element("mujoco", model="revolute")
     worldbody = ET.SubElement(mjcf, "worldbody")
-    _add_hinge_arm(worldbody, "arm", "0 0 0")
+    _add_hinge_arm(worldbody, "arm", "0 0 0", stiffness="2.0")
     return ET.tostring(mjcf, encoding="unicode")
 
 
@@ -88,13 +89,18 @@ def grad_free_with_revolute():
 
 
 @pytest.fixture(scope="session")
-def grad_revolute_chain3():
+def grad_chain3():
+    # Hinge -> offset slide -> hinge: the middle slide joint carries a position offset so its anchor depends on the
+    # moving parent orientation, and the chain mixes joint types within one entity.
     mjcf = ET.Element("mujoco", model="chain3")
     worldbody = ET.SubElement(mjcf, "worldbody")
     parent = worldbody
     for name in ("l1", "l2", "l3"):
         body = ET.SubElement(parent, "body", name=name, pos="0 0 0" if name == "l1" else "0.2 0 0")
-        ET.SubElement(body, "joint", type="hinge", axis="0 1 0")
+        if name == "l2":
+            ET.SubElement(body, "joint", type="slide", axis="1 0 0", pos="0.05 0.02 0.03")
+        else:
+            ET.SubElement(body, "joint", type="hinge", axis="0 1 0")
         ET.SubElement(body, "inertial", mass="0.3", pos="0.1 0 0", diaginertia="0.005 0.005 0.005")
         ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", contype="0", conaffinity="0")
         parent = body
@@ -104,7 +110,6 @@ def grad_revolute_chain3():
 @pytest.fixture(scope="session")
 def grad_slider_limit():
     mjcf = ET.Element("mujoco", model="slider_limit")
-    ET.SubElement(mjcf, "option", gravity="0 0 0")
     worldbody = ET.SubElement(mjcf, "worldbody")
     body = ET.SubElement(worldbody, "body", name="cart", pos="0 0 0")
     ET.SubElement(body, "joint", name="slider", type="slide", axis="1 0 0", range="-4 4", damping="0.0")
@@ -141,30 +146,36 @@ def grad_hinge_pair_joint_eq_quadratic():
 
 @pytest.fixture(scope="session")
 def grad_connect_loop():
+    # arm2 hangs off arm1 and the connect closes the loop within one kinematic tree: the constraint rows then share
+    # arm1's dof across both chains (dedup path) and both anchors move with the chain (velocity-product bias).
     mjcf = ET.Element("mujoco", model="connect_loop")
     worldbody = ET.SubElement(mjcf, "worldbody")
-    _add_hinge_arm(worldbody, "arm1", "0 0 0", name="j1")
-    _add_hinge_arm(worldbody, "arm2", "0 0.3 0", name="j2")
+    arm1 = _add_hinge_arm(worldbody, "arm1", "0 0 0", name="j1")
+    _add_hinge_arm(arm1, "arm2", "0.2 0 0", name="j2")
     equality = ET.SubElement(mjcf, "equality")
     ET.SubElement(
-        equality, "connect", body1="arm1", body2="arm2", anchor="0.2 0 0", solimp="0.95 0.99 0.001", solref="0.005 1"
+        equality, "connect", body1="arm2", body2="arm1", anchor="0.2 0 0", solimp="0.95 0.99 0.001", solref="0.005 1"
     )
     return ET.tostring(mjcf, encoding="unicode")
 
 
 @pytest.fixture(scope="session")
 def grad_weld_pair():
+    # arm2 hangs off arm1 about a skew axis and the weld ties it back to arm1: the constraint rows share arm1's dof
+    # across both chains (dedup path), and the nested hinge's angular velocity-product bias (parent angular velocity
+    # cross child axis) is nonzero. A weld between parallel-axis or single-hinge chains would leave the rotation
+    # rows' velocity bias identically zero and its adjoint untested.
     mjcf = ET.Element("mujoco", model="weld_pair")
     worldbody = ET.SubElement(mjcf, "worldbody")
-    _add_hinge_arm(worldbody, "arm1", "0 0 0", name="j1")
-    _add_hinge_arm(worldbody, "arm2", "0 0.3 0", name="j2")
+    arm1 = _add_hinge_arm(worldbody, "arm1", "0 0 0", name="j1")
+    _add_hinge_arm(arm1, "arm2", "0.2 0 0", name="j2", axis="1 0 0")
     equality = ET.SubElement(mjcf, "equality")
     ET.SubElement(
         equality,
         "weld",
-        body1="arm1",
-        body2="arm2",
-        relpose="0 -0.3 0 1 0 0 0",
+        body1="arm2",
+        body2="arm1",
+        relpose="0.2 0 0 1 0 0 0",
         solimp="0.95 0.99 0.001",
         solref="0.005 1",
     )
@@ -203,7 +214,6 @@ def grad_all_eq_fric():
 @pytest.fixture(scope="session")
 def grad_cartpole():
     mjcf = ET.Element("mujoco", model="cartpole")
-    ET.SubElement(mjcf, "option", gravity="0 0 -9.81")
     worldbody = ET.SubElement(mjcf, "worldbody")
     cart = ET.SubElement(worldbody, "body", name="cart", pos="0 0 0")
     ET.SubElement(cart, "joint", name="slider", type="slide", axis="1 0 0", range="-4 4", damping="0.0")

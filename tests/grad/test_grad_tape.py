@@ -1,26 +1,24 @@
-# Autodiff-tape behavior: horizon truncation (snapshot + reset between two backward windows must reproduce the
-# gradients and states of independent fresh scenes), and gradient-source parity (entity state vs rigid-solver state).
 import numpy as np
 import pytest
 import torch
 
 import genesis as gs
-from genesis.utils.misc import qd_to_numpy, tensor_to_array
+from genesis.utils.misc import tensor_to_array
 
-from ..utils import assert_allclose
+from ..utils import assert_allclose, assert_equal
 from .utils import make_diff_scene_pair
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["grad_free", "grad_revolute", "grad_free_with_revolute"])
-def test_grad_horizon_truncation_matches_independent_scenes(model_name, request, show_viewer):
+def test_horizon_truncation_matches_independent_scenes(model_name, request, show_viewer):
     mjcf = request.getfixturevalue(model_name)
     tol = dict(atol=1e-5, rtol=1e-4)
     horizon = 5
     B = 2
 
     def build(show_viewer=False):
-        pair = make_diff_scene_pair(mjcf, n_envs=2, substeps=4, gravity=(0.0, 0.0, 0.0), show_viewer=show_viewer)
+        pair = make_diff_scene_pair(mjcf, n_envs=B, substeps=4, gravity=(0.0, 0.0, 0.0), show_viewer=show_viewer)
         return pair.scene_ana, pair.entity_ana
 
     def run_segment(scene, entity, velocity):
@@ -30,7 +28,7 @@ def test_grad_horizon_truncation_matches_independent_scenes(model_name, request,
         return (scene.rigid_solver.get_state().qpos ** 2).sum()
 
     def read_qpos(scene):
-        return qd_to_numpy(scene.rigid_solver.rigid_info.qpos, copy=True)
+        return tensor_to_array(scene.rigid_solver.get_state().qpos)
 
     # Scene A: one scene, snapshot + reset between two horizons.
     scene_a, robot_a = build(show_viewer=show_viewer)
@@ -43,7 +41,7 @@ def test_grad_horizon_truncation_matches_independent_scenes(model_name, request,
     scene_a.backward(loss_h1_a)
     # backward consumes the input buffer, so the step / substep counters (which index it) reset to 0 while the
     # restored physics state carries over; horizon 2 records a fresh tape from 0.
-    assert scene_a._t == 0 and scene_a._sim._cur_substep_global == 0
+    assert scene_a.t == 0 and scene_a._sim._cur_substep_global == 0
     grad1_a = tensor_to_array(v1_a.grad).copy()
 
     v2_a = gs.tensor(v2, dtype=gs.tc_float, requires_grad=True)
@@ -61,8 +59,8 @@ def test_grad_horizon_truncation_matches_independent_scenes(model_name, request,
     snapshot_b = scene_b.backward(loss_h1_b)
     grad1_b = tensor_to_array(v1_b.grad).copy()
 
-    assert_allclose(qpos_mid_a, qpos_mid_b, atol=0, rtol=0)
-    assert_allclose(float(tensor_to_array(loss_h1_a)), float(tensor_to_array(loss_h1_b)), atol=0, rtol=0)
+    assert_equal(qpos_mid_a, qpos_mid_b)
+    assert_equal(loss_h1_a, loss_h1_b)
     assert_allclose(grad1_a, grad1_b, **tol)
 
     # Scene C: fresh scene resumed from B's mid-trajectory snapshot.
@@ -74,15 +72,14 @@ def test_grad_horizon_truncation_matches_independent_scenes(model_name, request,
     scene_c.backward(loss_h2_c)
     grad2_c = tensor_to_array(v2_c.grad).copy()
 
-    assert_allclose(qpos_end_a, qpos_end_c, atol=0, rtol=0)
-    assert_allclose(float(tensor_to_array(loss_h2_a)), float(tensor_to_array(loss_h2_c)), atol=0, rtol=0)
+    assert_equal(qpos_end_a, qpos_end_c)
+    assert_equal(loss_h2_a, loss_h2_c)
     assert_allclose(grad2_a, grad2_c, **tol)
 
 
 @pytest.mark.slow
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_rigid_sim_vs_solver_state_grad_parity(show_viewer):
+def test_sim_vs_solver_state_grad_parity(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -91,6 +88,10 @@ def test_rigid_sim_vs_solver_state_grad_parity(show_viewer):
         ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.2, -1.2, 0.8),
+            camera_lookat=(0.0, 0.0, 0.2),
         ),
         show_viewer=show_viewer,
     )

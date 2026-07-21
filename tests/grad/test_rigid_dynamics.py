@@ -1,5 +1,3 @@
-# Finite-difference vs analytical reverse-mode gradient checks for rigid forward kinematics (constraints off), one
-# packed test per joint topology exercising every tracked setter, and a multi-step control-force adjoint check.
 import sys
 
 import numpy as np
@@ -29,16 +27,24 @@ from .utils import assert_grad_matches_fd, make_diff_scene_pair
         "grad_prismatic",
         "grad_spherical",
         "grad_free_with_revolute",
-        "grad_revolute_chain3",
+        "grad_chain3",
         "grad_cartpole",
         "grad_hopper",
     ],
 )
-def test_rigid_fk_grad_matches_fd(model_name, request, precision, show_viewer):
-    pair = make_diff_scene_pair(request.getfixturevalue(model_name), n_envs=2, substeps=4, show_viewer=show_viewer)
+def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
+    is_tall = model_name in ("grad_cartpole", "grad_hopper")
+    B = 2
+    pair = make_diff_scene_pair(
+        request.getfixturevalue(model_name),
+        n_envs=B,
+        substeps=4,
+        show_viewer=show_viewer,
+        camera_pos=(2.5, -2.5, 1.8) if is_tall else (1.2, -1.2, 0.8),
+        camera_lookat=(0.0, 0.0, 0.9) if is_tall else (0.0, 0.0, 0.2),
+    )
     n_dofs = pair.entity_ana.n_dofs
     n_links = pair.entity_ana.n_links
-    B = 2
 
     # Single-link joints read the entity pose; multi-link topologies read the rigid-solver per-link pose.
     is_single_link = model_name in ("grad_free", "grad_revolute", "grad_prismatic", "grad_spherical")
@@ -54,7 +60,7 @@ def test_rigid_fk_grad_matches_fd(model_name, request, precision, show_viewer):
             61,
             62,
         ),
-        "grad_revolute_chain3": ((("vel", "pos", 90), ("vel", "quat", 91)), 81, 82),
+        "grad_chain3": ((("vel", "pos", 90), ("vel", "quat", 91)), 81, 82),
         "grad_cartpole": ((("vel", "pos", 190), ("vel", "quat", 191), ("force", "pos", 192)), 181, 182),
         "grad_hopper": ((("vel", "pos", 210), ("vel", "quat", 211)), 201, 202),
     }
@@ -69,7 +75,7 @@ def test_rigid_fk_grad_matches_fd(model_name, request, precision, show_viewer):
         "grad_prismatic": (5e-6, 3e-2),
         "grad_spherical": (1e-4, 3e-2),
         "grad_free_with_revolute": (5e-4, 1e-2),
-        "grad_revolute_chain3": (2e-4, 3e-2),
+        "grad_chain3": (2e-4, 3e-2),
         "grad_cartpole": (2e-4, 3e-2),
         "grad_hopper": (5e-4, 3e-2),
     }[model_name]
@@ -125,14 +131,14 @@ def test_rigid_fk_grad_matches_fd(model_name, request, precision, show_viewer):
         "grad_revolute",
         "grad_prismatic",
         "grad_free_with_revolute",
-        "grad_revolute_chain3",
+        "grad_chain3",
         "grad_spherical",
         "grad_cartpole",
         "grad_hopper",
     ],
 )
 @pytest.mark.debug(False)
-def test_rigid_fk_multistep_force_grad_matches_fd(model_name, request, precision, show_viewer):
+def test_fk_multistep_force_grad_matches_fd(model_name, request, precision, show_viewer):
     # Ten distinct per-step control forces, each of which must receive an independent adjoint across the unroll.
     # (output kind: entity state vs rigid-solver links, per-link output shape, target seed, fp32 tolerance). The
     # per-topology fp32 floor spans 2e-6 (prismatic) to 2e-4 (hopper), tracking how far the ten-step unroll
@@ -142,12 +148,20 @@ def test_rigid_fk_multistep_force_grad_matches_fd(model_name, request, precision
         "grad_revolute": ("state", (3,), 162, 1e-5),
         "grad_prismatic": ("state", (3,), 163, 2e-6),
         "grad_free_with_revolute": ("links", (2, 3), 164, 5e-5),
-        "grad_revolute_chain3": ("links", (3, 3), 165, 1e-4),
+        "grad_chain3": ("links", (3, 3), 165, 1e-4),
         "grad_spherical": ("state", (3,), 166, 1e-5),
         "grad_cartpole": ("links", (2, 3), 167, 2e-5),
         "grad_hopper": ("links", (5, 3), 168, 2e-4),
     }[model_name]
-    pair = make_diff_scene_pair(request.getfixturevalue(model_name), n_envs=0, substeps=4, show_viewer=show_viewer)
+    is_tall = model_name in ("grad_cartpole", "grad_hopper")
+    pair = make_diff_scene_pair(
+        request.getfixturevalue(model_name),
+        n_envs=0,
+        substeps=4,
+        show_viewer=show_viewer,
+        camera_pos=(2.5, -2.5, 1.8) if is_tall else (1.2, -1.2, 0.8),
+        camera_lookat=(0.0, 0.0, 0.9) if is_tall else (0.0, 0.0, 0.2),
+    )
     n_dofs = pair.entity_ana.n_dofs
     target = gs.tensor(np.random.RandomState(seed).standard_normal((1, *output_shape)), dtype=gs.tc_float).reshape(-1)
     inputs = [np.random.default_rng(seed * 100 + t).standard_normal((n_dofs,)) for t in range(10)]
@@ -156,11 +170,20 @@ def test_rigid_fk_multistep_force_grad_matches_fd(model_name, request, precision
         pose = entity.get_state().pos if output == "state" else scene.rigid_solver.get_state().links_pos
         return ((pose.reshape(-1) - target) ** 2).sum()
 
+    def apply_force(entity, force):
+        # Split the same-step control across two dof subsets (the standard arm + gripper pattern): each call must
+        # keep its own tape slot and gradient path.
+        if n_dofs == 1:
+            entity.control_dofs_force(force)
+        else:
+            entity.control_dofs_force(force[..., :1], dofs_idx_local=[0])
+            entity.control_dofs_force(force[..., 1:], dofs_idx_local=list(range(1, n_dofs)))
+
     # fp32 needs a large step to clear the state-noise floor; fp64 needs a small step to bound truncation error.
     assert_grad_matches_fd(
         pair,
         inputs,
-        lambda e, x: e.control_dofs_force(x),
+        apply_force,
         loss_fn,
         rtol=5e-9 if precision == "64" else fp32_tol,
         atol=5e-9 if precision == "64" else fp32_tol,
