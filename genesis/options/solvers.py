@@ -99,6 +99,8 @@ class LegacyCouplerOptions(BaseCouplerOptions):
         Whether to enable coupling between FEM and MPM solvers. Defaults to True.
     fem_sph : bool, optional
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
+    sph_akinci_boundary : bool, optional
+        Enable Akinci et al. 2012 SPH boundary particles for rigid-SPH WCSPH coupling. Defaults to False.
     """
 
     rigid_mpm: StrictBool = True
@@ -109,6 +111,7 @@ class LegacyCouplerOptions(BaseCouplerOptions):
     mpm_pbd: StrictBool = True
     fem_mpm: StrictBool = True
     fem_sph: StrictBool = True
+    sph_akinci_boundary: StrictBool = False
 
 
 class SAPCouplerOptions(BaseCouplerOptions):
