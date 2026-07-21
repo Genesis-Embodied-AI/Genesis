@@ -383,10 +383,11 @@ class TestGroundContact:
 
         # Verify global DOF index mapping: each robot received its own target,
         # not the other's. If indices are crossed, qa would be negative or zero.
-        assert qa > 0.1, f"robot_a should track positive target, got qa={qa}"
-        assert qb < -0.1, f"robot_b should track negative target, got qb={qb}"
-        # Symmetric setup (same kp/kv/dt) -> symmetric response
-        assert abs(qa + qb) < 0.2, f"robot_a and robot_b targets are symmetric, sum should be near zero: {qa + qb}"
+        # Measured values: qa ~ 0.497, qb ~ -0.497 (target 0.5, PD tracking error < 1%)
+        assert qa > 0.45, f"robot_a should track positive target, got qa={qa}"
+        assert qb < -0.45, f"robot_b should track negative target, got qb={qb}"
+        # Symmetric setup (same kp/kv/dt/geometry) -> exactly symmetric response
+        assert abs(qa + qb) < 1e-6, f"robot_a and robot_b should be symmetric, sum={qa + qb}"
 
 
 # ---------------------------------------------------------------------------
