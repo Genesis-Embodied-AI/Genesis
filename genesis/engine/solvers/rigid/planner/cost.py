@@ -130,6 +130,7 @@ def func_planner_collision_cost(
     i_col,
     i_b,
     swp,
+    dq_inf,
     spheres_pos: qd.Tensor,
     plan_info: array_class.PlannerEntityInfo,
     plan_world: array_class.PlannerWorldState,
@@ -173,7 +174,8 @@ def func_planner_collision_cost(
         radius_b = func_planner_sphere_radius(i_sb, i_b, plan_info, planner_config)
         if radius_a > 0.0 and radius_b > 0.0:
             dist = (spheres_pos[i_sa, i_col] - spheres_pos[i_sb, i_col]).norm()
-            sd_eff = dist - radius_a - radius_b - plan_info.d_safe[None] - 2.0 * swp
+            swp_pair = qd.min(0.5 * plan_info.self_pairs_reach[i_p] * dq_inf, plan_info.eps_act[None])
+            sd_eff = dist - radius_a - radius_b - plan_info.d_safe[None] - swp_pair
             offset = func_planner_excl_self_offset(i_p, i_b, plan_info)
             if offset < 0.0:
                 # See the world-pair exclusion above.
@@ -335,6 +337,14 @@ def func_planner_knot_cost_grad(
             swp = qd.max(swp, 0.5 * (plan_state.spheres_pos[i_s, i_cw + 1] - plan_state.spheres_pos[i_s, i_cw]).norm())
     swp = qd.min(swp, plan_info.eps_act[None])
 
+    # L-inf joint travel toward the neighbor knots, for the per-pair self-collision sweep bound.
+    dq_inf = gs.qd_float(0.0)
+    for i_dp in range(n_dp):
+        if i_w > 0:
+            dq_inf = qd.max(dq_inf, qd.abs(plan_state.qpos_traj[i_dp, i_cw] - plan_state.qpos_traj[i_dp, i_cw - 1]))
+        if i_w < n_knots - 1:
+            dq_inf = qd.max(dq_inf, qd.abs(plan_state.qpos_traj[i_dp, i_cw + 1] - plan_state.qpos_traj[i_dp, i_cw]))
+
     # World collision, with gradient through the chain walk.
     for i_s in range(n_sph_tot):
         radius = func_planner_sphere_radius(i_s, i_b, plan_info, planner_config)
@@ -384,7 +394,8 @@ def func_planner_knot_cost_grad(
         if radius_a > 0.0 and radius_b > 0.0:
             delta = plan_state.spheres_pos[i_sa, i_cw] - plan_state.spheres_pos[i_sb, i_cw]
             dist = delta.norm()
-            sd_eff = dist - radius_a - radius_b - plan_info.d_safe[None] - 2.0 * swp
+            swp_pair = qd.min(0.5 * plan_info.self_pairs_reach[i_p] * dq_inf, plan_info.eps_act[None])
+            sd_eff = dist - radius_a - radius_b - plan_info.d_safe[None] - swp_pair
             offset = func_planner_excl_self_offset(i_p, i_b, plan_info)
             if offset < 0.0:
                 # See the exclusion comment in func_planner_collision_cost.
@@ -639,6 +650,7 @@ def kernel_planner_validate(
                 i_w = qd.min(gs.qd_int(t), n_knots - 2)
                 alpha = t - qd.cast(i_w, gs.qd_float)
                 swp = gs.qd_float(0.0)
+                dq_inf = gs.qd_float(0.0)
                 for i_dp in range(n_dp):
                     q0 = plan_state.qpos_traj[i_dp, i_c * n_knots + i_w]
                     q1 = plan_state.qpos_traj[i_dp, i_c * n_knots + i_w + 1]
@@ -646,7 +658,21 @@ def kernel_planner_validate(
                     plan_state.eval_qpos[i_dp, i_e_col] = q
                     # Half the inter-sample joint travel bounds the workspace motion of every sphere.
                     swp += 0.5 * plan_info.dof_reach[i_dp] * qd.abs(q1 - q0) / float(_VALIDATE_UPSAMPLE)
-                    if q > plan_info.q_limit_upper[i_dp] + gs.EPS or q < plan_info.q_limit_lower[i_dp] - gs.EPS:
+                    dq_inf = qd.max(dq_inf, qd.abs(q1 - q0) / float(_VALIDATE_UPSAMPLE))
+                    # A start (or goal) configuration supplied beyond a limit is a boundary condition, so a knot
+                    # is only flagged when it exceeds the limit by more than the boundary conditions already do.
+                    over_allow = qd.max(
+                        plan_info.qpos_start[i_dp, i_b] - plan_info.q_limit_upper[i_dp],
+                        plan_info.qpos_goal[i_dp, i_b] - plan_info.q_limit_upper[i_dp],
+                    )
+                    under_allow = qd.max(
+                        plan_info.q_limit_lower[i_dp] - plan_info.qpos_start[i_dp, i_b],
+                        plan_info.q_limit_lower[i_dp] - plan_info.qpos_goal[i_dp, i_b],
+                    )
+                    if (
+                        q > plan_info.q_limit_upper[i_dp] + qd.max(over_allow, 0.0) + 1e-5
+                        or q < plan_info.q_limit_lower[i_dp] - qd.max(under_allow, 0.0) - 1e-5
+                    ):
                         flags |= JOINT_LIMIT
 
                 func_planner_fk(
@@ -677,6 +703,7 @@ def kernel_planner_validate(
                     i_e_col,
                     i_b,
                     swp,
+                    dq_inf,
                     spheres_pos=plan_state.eval_spheres_pos,
                     plan_info=plan_info,
                     plan_world=plan_world,

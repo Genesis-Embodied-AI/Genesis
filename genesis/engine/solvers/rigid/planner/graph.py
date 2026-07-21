@@ -17,6 +17,7 @@ def func_planner_rrt_config_is_free(
     i_t,
     i_b,
     swp,
+    dq_inf,
     plan_state: array_class.PlannerState,
     plan_info: array_class.PlannerEntityInfo,
     plan_world: array_class.PlannerWorldState,
@@ -56,6 +57,7 @@ def func_planner_rrt_config_is_free(
         i_t,
         i_b,
         swp,
+        dq_inf,
         spheres_pos=plan_state.eval_spheres_pos,
         plan_info=plan_info,
         plan_world=plan_world,
@@ -98,6 +100,13 @@ def func_planner_rrt_edge_is_free(
     # whose clearance is below half the activation band).
     n_sub = gs.qd_int(qd.ceil(4.0 * reach / qd.max(plan_info.eps_act[None], 1e-3))) + 1
     swp = 0.5 * reach / qd.cast(n_sub, gs.qd_float)
+    dq_inf = gs.qd_float(0.0)
+    for i_dp in range(n_dp):
+        dq_inf = qd.max(
+            dq_inf,
+            qd.abs(plan_state.rrt_qpos[i_dp, col_to] - plan_state.rrt_qpos[i_dp, col_from])
+            / qd.cast(n_sub, gs.qd_float),
+        )
 
     is_free = True
     i_sub = 1
@@ -111,6 +120,7 @@ def func_planner_rrt_edge_is_free(
             i_t,
             i_b,
             swp,
+            dq_inf,
             plan_state=plan_state,
             plan_info=plan_info,
             plan_world=plan_world,

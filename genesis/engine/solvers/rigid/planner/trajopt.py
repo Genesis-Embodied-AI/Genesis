@@ -80,15 +80,18 @@ def func_planner_traj_cost(
     cost = gs.qd_float(0.0)
 
     for i_w in range(n_knots):
-        # Sweep allowance from the joint travel toward both neighbors.
+        # Sweep allowance and L-inf joint travel toward both neighbors.
         swp = gs.qd_float(0.0)
+        dq_inf = gs.qd_float(0.0)
         for i_dp in range(n_dp):
             q = qpos_cols[i_dp, col_base + i_w]
             plan_state.eval_qpos[i_dp, i_e_col] = q
             if i_w > 0:
                 swp = qd.max(swp, 0.5 * plan_info.dof_reach[i_dp] * qd.abs(q - qpos_cols[i_dp, col_base + i_w - 1]))
+                dq_inf = qd.max(dq_inf, qd.abs(q - qpos_cols[i_dp, col_base + i_w - 1]))
             if i_w < n_knots - 1:
                 swp = qd.max(swp, 0.5 * plan_info.dof_reach[i_dp] * qd.abs(qpos_cols[i_dp, col_base + i_w + 1] - q))
+                dq_inf = qd.max(dq_inf, qd.abs(qpos_cols[i_dp, col_base + i_w + 1] - q))
         swp = qd.min(swp, plan_info.eps_act[None])
 
         func_planner_fk(
@@ -119,6 +122,7 @@ def func_planner_traj_cost(
             i_e_col,
             i_b,
             swp,
+            dq_inf,
             spheres_pos=plan_state.eval_spheres_pos,
             plan_info=plan_info,
             plan_world=plan_world,
@@ -279,20 +283,24 @@ def kernel_planner_mppi(
                 # Pass 1: score every particle (particle 0 is the unperturbed mean).
                 for i_p in range(n_particles):
                     for i_w in range(n_knots):
+                        is_clamped = func_planner_mask_clamped(i_c, i_w, i_b, plan_info, planner_config)
                         for i_dp in range(n_dp):
-                            delta = gs.qd_float(0.0)
-                            if i_p > 0 and not plan_info.dof_is_locked[i_dp, i_b]:
-                                for i_k in range(n_noise):
-                                    key = ((it * array_class.PLANNER_MPPI_P_MAX + i_p) * n_noise + i_k) * n_dp + i_dp
-                                    delta += plan_info.noise_basis[i_w, i_k] * func_planner_gauss(
-                                        plan_info.seed_key[None], i_c, key, 0
-                                    )
-                                delta *= anneal * plan_info.mppi_sigma[i_dp]
-                            plan_state.trial_qpos[i_dp, col_base + i_w] = qd.math.clamp(
-                                plan_state.qpos_traj[i_dp, col_base + i_w] + delta,
-                                plan_info.q_limit_lower[i_dp],
-                                plan_info.q_limit_upper[i_dp],
-                            )
+                            q = plan_state.qpos_traj[i_dp, col_base + i_w]
+                            if not is_clamped:
+                                delta = gs.qd_float(0.0)
+                                if i_p > 0 and not plan_info.dof_is_locked[i_dp, i_b]:
+                                    for i_k in range(n_noise):
+                                        key = (
+                                            (it * array_class.PLANNER_MPPI_P_MAX + i_p) * n_noise + i_k
+                                        ) * n_dp + i_dp
+                                        delta += plan_info.noise_basis[i_w, i_k] * func_planner_gauss(
+                                            plan_info.seed_key[None], i_c, key, 0
+                                        )
+                                    delta *= anneal * plan_info.mppi_sigma[i_dp]
+                                q = qd.math.clamp(
+                                    q + delta, plan_info.q_limit_lower[i_dp], plan_info.q_limit_upper[i_dp]
+                                )
+                            plan_state.trial_qpos[i_dp, col_base + i_w] = q
                     costs[i_p] = func_planner_traj_cost(
                         i_c,
                         i_b,
@@ -324,23 +332,26 @@ def kernel_planner_mppi(
 
                 # Pass 2: rebuild the weighted noise mixture and fold it into the mean.
                 for i_w in range(n_knots):
-                    for i_dp in range(n_dp):
-                        if not plan_info.dof_is_locked[i_dp, i_b]:
-                            delta_mean = gs.qd_float(0.0)
-                            for i_p in range(1, n_particles):
-                                weight = qd.exp(-(costs[i_p] - cost_min) / beta) / weight_sum
-                                delta = gs.qd_float(0.0)
-                                for i_k in range(n_noise):
-                                    key = ((it * array_class.PLANNER_MPPI_P_MAX + i_p) * n_noise + i_k) * n_dp + i_dp
-                                    delta += plan_info.noise_basis[i_w, i_k] * func_planner_gauss(
-                                        plan_info.seed_key[None], i_c, key, 0
-                                    )
-                                delta_mean += weight * delta * anneal * plan_info.mppi_sigma[i_dp]
-                            plan_state.qpos_traj[i_dp, col_base + i_w] = qd.math.clamp(
-                                plan_state.qpos_traj[i_dp, col_base + i_w] + delta_mean,
-                                plan_info.q_limit_lower[i_dp],
-                                plan_info.q_limit_upper[i_dp],
-                            )
+                    if not func_planner_mask_clamped(i_c, i_w, i_b, plan_info, planner_config):
+                        for i_dp in range(n_dp):
+                            if not plan_info.dof_is_locked[i_dp, i_b]:
+                                delta_mean = gs.qd_float(0.0)
+                                for i_p in range(1, n_particles):
+                                    weight = qd.exp(-(costs[i_p] - cost_min) / beta) / weight_sum
+                                    delta = gs.qd_float(0.0)
+                                    for i_k in range(n_noise):
+                                        key = (
+                                            (it * array_class.PLANNER_MPPI_P_MAX + i_p) * n_noise + i_k
+                                        ) * n_dp + i_dp
+                                        delta += plan_info.noise_basis[i_w, i_k] * func_planner_gauss(
+                                            plan_info.seed_key[None], i_c, key, 0
+                                        )
+                                    delta_mean += weight * delta * anneal * plan_info.mppi_sigma[i_dp]
+                                plan_state.qpos_traj[i_dp, col_base + i_w] = qd.math.clamp(
+                                    plan_state.qpos_traj[i_dp, col_base + i_w] + delta_mean,
+                                    plan_info.q_limit_lower[i_dp],
+                                    plan_info.q_limit_upper[i_dp],
+                                )
 
 
 @qd.kernel
@@ -473,13 +484,16 @@ def kernel_planner_lbfgs(
                             alpha = _LS_LADDER[i_l]
                     alpha *= jitter
                     for i_w in range(n_knots):
+                        is_clamped = func_planner_mask_clamped(i_c, i_w, i_b, plan_info, planner_config)
                         for i_dp in range(n_dp):
-                            plan_state.trial_qpos[i_dp, col_base + i_w] = qd.math.clamp(
-                                plan_state.qpos_traj[i_dp, col_base + i_w]
-                                - alpha * plan_state.dir_traj[i_dp, col_base + i_w],
-                                plan_info.q_limit_lower[i_dp],
-                                plan_info.q_limit_upper[i_dp],
-                            )
+                            q = plan_state.qpos_traj[i_dp, col_base + i_w]
+                            if not is_clamped:
+                                q = qd.math.clamp(
+                                    q - alpha * plan_state.dir_traj[i_dp, col_base + i_w],
+                                    plan_info.q_limit_lower[i_dp],
+                                    plan_info.q_limit_upper[i_dp],
+                                )
+                            plan_state.trial_qpos[i_dp, col_base + i_w] = q
                     cost_trial = func_planner_traj_cost(
                         i_c,
                         i_b,
@@ -508,15 +522,17 @@ def kernel_planner_lbfgs(
                     n_stall = 0
                     # Accept the step; stage s = x_new - x_old into the history slot.
                     for i_w in range(n_knots):
+                        is_clamped = func_planner_mask_clamped(i_c, i_w, i_b, plan_info, planner_config)
                         for i_dp in range(n_dp):
                             q_old = plan_state.qpos_traj[i_dp, col_base + i_w]
                             plan_state.qpos_prev[i_dp, col_base + i_w] = q_old
                             plan_state.grad_prev[i_dp, col_base + i_w] = plan_state.grad_traj[i_dp, col_base + i_w]
-                            plan_state.qpos_traj[i_dp, col_base + i_w] = qd.math.clamp(
-                                q_old - alpha_best * plan_state.dir_traj[i_dp, col_base + i_w],
-                                plan_info.q_limit_lower[i_dp],
-                                plan_info.q_limit_upper[i_dp],
-                            )
+                            if not is_clamped:
+                                plan_state.qpos_traj[i_dp, col_base + i_w] = qd.math.clamp(
+                                    q_old - alpha_best * plan_state.dir_traj[i_dp, col_base + i_w],
+                                    plan_info.q_limit_lower[i_dp],
+                                    plan_info.q_limit_upper[i_dp],
+                                )
                     cost = func_planner_candidate_cost_grad(
                         i_c,
                         i_b,

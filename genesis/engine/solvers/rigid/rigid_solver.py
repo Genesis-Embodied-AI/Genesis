@@ -1188,6 +1188,8 @@ class RigidSolver(KinematicSolver):
 
     def _init_collider(self):
         self.collider = Collider(self)
+        # The motion planner is created lazily on the first plan_path call - scenes that never plan pay nothing.
+        self.planner = None
 
         if self.collider._collider_static_config.has_terrain:
             link_idx_ = next(

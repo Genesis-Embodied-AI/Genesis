@@ -496,6 +496,7 @@ from .constants import (
     constraint_solver,
     friction_cone,
     broadphase_traversal,
+    planner_arm,
 )
 
 from .utils.uid import UID

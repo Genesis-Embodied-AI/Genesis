@@ -2602,7 +2602,7 @@ def get_raycast_result(n_envs: int):
 
 # Capacity of the per-env start-config contact-exclusion lists (see PlannerEntityInfo); overflow raises through
 # the planner errno since it indicates a start configuration deeply entangled with the world.
-_PLANNER_N_EXCL_MAX = 64
+_PLANNER_N_EXCL_MAX = 128
 # Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) history depth and the smooth-noise knot count of the
 # MPPI basis; both bound in-kernel local arrays, so they are module constants rather than options.
 PLANNER_LBFGS_M = 8
@@ -2643,8 +2643,11 @@ class PlannerEntityInfo:
     spheres_link_idx: qd.Tensor
     spheres_pos_local: qd.Tensor
     spheres_radius: qd.Tensor
-    # Flat robot self-collision sphere-index pairs (link-pair filter expanded to spheres).
+    # Flat robot self-collision sphere-index pairs (link-pair filter expanded to spheres), with the per-pair
+    # relative reach bound: how far the pair's spheres can approach per radian of L-inf joint motion, from the
+    # DOFs on the kinematic path between their links (absolute reach would double-count common ancestors).
     self_pairs: qd.Tensor
+    self_pairs_reach: qd.Tensor
     # Attached-object spheres, composed into their attach link frame per env (grasps differ across envs).
     attach_spheres_link_idx: qd.Tensor
     attach_spheres_pos_local: qd.Tensor
@@ -2707,6 +2710,7 @@ def get_planner_entity_info(planner_config, n_self_pairs, B):
         spheres_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
         spheres_radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
         self_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
+        self_pairs_reach=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1),)),
         attach_spheres_link_idx=V(dtype=gs.qd_int, shape=(max(planner_config.n_attach_max, 1),)),
         attach_spheres_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1), B)),
         attach_spheres_radius=V(dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1),)),

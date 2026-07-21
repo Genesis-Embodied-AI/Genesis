@@ -1,3 +1,4 @@
+import dataclasses
 import inspect
 import math
 import os
@@ -3427,127 +3428,121 @@ class RigidEntity(KinematicEntity):
     @gs.assert_built
     def plan_path(
         self,
-        qpos_goal,
+        qpos_goal=None,
         qpos_start=None,
-        max_nodes=2000,
-        resolution=0.05,
-        timeout=None,
+        num_waypoints=None,
         max_retry=1,
-        smooth_path=True,
-        num_waypoints=300,
+        safety_margin=0.0,
         ignore_collision=False,
-        planner="RRTConnect",
         envs_idx=None,
-        return_valid_mask=False,
         *,
+        goal_link=None,
+        goal_pos=None,
+        goal_quat=None,
         ee_link_name=None,
         with_entity=None,
-        **kwargs,
+        attach_held_entities=None,
+        seed=None,
     ):
         """
-        Plan a path from `qpos_start` to `qpos_goal`.
+        Plan a collision-free, time-parametrized path to a joint-space or Cartesian goal.
+
+        Planning never alters the state of the scene: the world geometry is frozen at call time and the whole
+        search runs on planner-owned buffers. Entities the robot is currently holding are carried along
+        automatically (see `attach_held_entities`), and the returned trajectory is certified collision-free at
+        `safety_margin` before being reported valid.
 
         Parameters
         ----------
-        qpos_goal : array_like
-            The goal state. [B, Nq] or [1, Nq]
+        qpos_goal : None | array_like, optional
+            Joint-space goal, shape [n_qs] or [B, n_qs]. Exactly one of `qpos_goal` or a Cartesian goal
+            (`goal_pos` and/or `goal_quat` with `goal_link`) must be given.
         qpos_start : None | array_like, optional
-            The start state. If None, the current state of the rigid entity will be used.
-            Defaults to None. [B, Nq] or [1, Nq]
-        resolution : float, optiona
-            Joint-space resolution. It corresponds to the maximum distance between states to be checked
-            for validity along a path segment.
-        timeout : float, optional
-            The max time to spend for each planning in seconds. Note that the timeout is not exact.
-        max_retry : float, optional
-            Maximum number of retry in case of timeout or convergence failure. Default to 1.
-        smooth_path : bool, optional
-            Whether to smooth the path after finding a solution. Defaults to True.
-        num_waypoints : int, optional
-            The number of waypoints to interpolate the path. If None, no interpolation will be performed.
-            Defaults to 100.
+            Start configuration. If None, the current configuration is used. Defaults to None.
+        num_waypoints : None | int, optional
+            Output resolution. None spaces the waypoints exactly at the scene dt (per-env duration, padded with a
+            zero-velocity terminal hold), so stepping the returned waypoints tracks the planned timing; an integer
+            returns exactly that many waypoints with the true per-env spacing in `dt`. Defaults to None.
+        max_retry : int, optional
+            Extra full attempts (fresh seeds) for envs whose plan is still invalid. Defaults to 1.
+        safety_margin : float, optional
+            Clearance [m] the certified path keeps from every obstacle. Larger margins tolerate tracking error
+            but shrink free space, so tight passages become slower to solve or infeasible. Defaults to 0.0
+            (contact-free: the collision proxy already over-approximates the robot).
         ignore_collision : bool, optional
-            Whether to ignore collision checking during motion planning. Defaults to False.
-        ignore_joint_limit : bool, optional
-            This option has been deprecated and is not longer doing anything.
-        planner : str, optional
-            The name of the motion planning algorithm to use.
-            Supported planners: 'RRT', 'RRTConnect'. Defaults to 'RRTConnect'.
+            Skip collision costs and certification: the result is the retimed straight-line interpolation.
+            Defaults to False.
         envs_idx : None | array_like, optional
-            The indices of the environments to set. If None, all environments will be set. Defaults to None.
-        return_valid_mask: bool
-            Obtain valid mask of the succesful planed path over batch.
-        ee_link_name: str
-            The name of the link, which we "attach" the object during the planning
-        with_entity: RigidEntity
-            The (non-articulated) object to "attach" during the planning
+            The indices of the environments to plan for. If None, all environments. Defaults to None.
+        goal_link : RigidLink, optional
+            Target link of the Cartesian goal.
+        goal_pos : None | array_like, optional
+            World-frame goal position of `goal_link`, shape [3] or [B, 3].
+        goal_quat : None | array_like, optional
+            World-frame goal orientation of `goal_link`, shape [4] or [B, 4].
+        ee_link_name : str, optional
+            Link carrying `with_entity` during the plan (explicit attachment).
+        with_entity : RigidEntity, optional
+            Entity rigidly carried during the plan, attached to `ee_link_name` with the grasp transform captured
+            from the current poses. Explicitly attached entities are excluded from auto-detection.
+        attach_held_entities : None | bool, optional
+            Whether entities currently squeezed between robot links are carried along automatically, as if
+            rigidly attached (auto-grasp). Convenient but contact-heuristic; pass explicit
+            `ee_link_name`/`with_entity` to pin the attachment exactly, or False to plan through held objects.
+            Defaults to None (True).
+        seed : None | int, optional
+            Deterministic seed of this plan, independent of call history. None derives one from the global
+            `gs.init` seed and a call counter. Defaults to None.
 
         Returns
         -------
-        path : torch.Tensor
-            A tensor of waypoints representing the planned path.
-            Each waypoint is an array storing the entity's qpos of a single time step.
-        is_invalid: torch.Tensor
-            A tensor of boolean mask indicating the batch indices with failed plan.
+        path : PlannerPath
+            Trajectory (`qpos`, `dofs_vel`, `dofs_acc` of shape [N, B, n] or [N, n] when the scene is
+            non-parallelized, per-env waypoint spacing `dt`, and the per-env `is_valid` certification mask).
         """
-        if self._solver.n_envs > 0:
-            n_envs = len(self._scene._sanitize_envs_idx(envs_idx))
-        else:
-            n_envs = 1
+        # Local import breaking the rigid_solver <-> entity import cycle.
+        from genesis.engine.solvers.rigid.planner import Planner
 
-        if "ignore_joint_limit" in kwargs:
-            gs.logger.warning("`ignore_joint_limit` is deprecated")
-
-        ee_link_idx = None
-        if ee_link_name is not None:
-            assert with_entity is not None, "`with_entity` must be specified."
-            ee_link_idx = self.get_link(ee_link_name).idx
+        if (qpos_goal is None) == (goal_pos is None and goal_quat is None):
+            gs.raise_exception("Exactly one of 'qpos_goal' or a Cartesian goal ('goal_pos'/'goal_quat') is required.")
+        if (goal_pos is not None or goal_quat is not None) and goal_link is None:
+            gs.raise_exception("'goal_link' is required for a Cartesian goal.")
+        if (ee_link_name is None) != (with_entity is None):
+            gs.raise_exception("'ee_link_name' and 'with_entity' must be specified together.")
+        explicit_attachments = []
         if with_entity is not None:
-            assert ee_link_name is not None, "reference link of the robot must be specified."
-            assert len(with_entity.links) == 1, "only non-articulated object is supported for now."
+            if len(with_entity.links) != 1:
+                gs.raise_exception("Only non-articulated entities can be attached during planning.")
+            explicit_attachments.append((with_entity, self.get_link(ee_link_name)))
+        if attach_held_entities is None:
+            attach_held_entities = True
 
-        # import here to avoid circular import
-        from genesis.utils.path_planning import RRT, RRTConnect
-
-        match planner:
-            case "RRT":
-                planner_obj = RRT(self)
-            case "RRTConnect":
-                planner_obj = RRTConnect(self)
-            case _:
-                gs.raise_exception(f"invalid planner {planner} specified.")
-
-        path = torch.empty((num_waypoints, n_envs, self.n_qs), dtype=gs.tc_float, device=gs.device)
-        is_invalid = torch.ones((n_envs,), dtype=torch.bool, device=gs.device)
-        for i in range(1 + max_retry):
-            retry_path, retry_is_invalid = planner_obj.plan(
-                qpos_goal,
-                qpos_start=qpos_start,
-                resolution=resolution,
-                timeout=timeout,
-                max_nodes=max_nodes,
-                smooth_path=smooth_path,
-                num_waypoints=num_waypoints,
-                ignore_collision=ignore_collision,
-                envs_idx=envs_idx,
-                ee_link_idx=ee_link_idx,
-                obj_entity=with_entity,
+        if self._solver.planner is None:
+            self._solver.planner = Planner(self._solver)
+        path = self._solver.planner.plan(
+            self,
+            qpos_goal=qpos_goal,
+            qpos_start=qpos_start,
+            num_waypoints=num_waypoints,
+            max_retry=max_retry,
+            safety_margin=safety_margin,
+            ignore_collision=ignore_collision,
+            envs_idx=envs_idx,
+            goal_link=goal_link,
+            goal_pos=goal_pos,
+            goal_quat=goal_quat,
+            explicit_attachments=explicit_attachments,
+            attach_held_entities=attach_held_entities,
+            seed=seed,
+        )
+        # The trajectory axes follow the getter convention (batch first internally); expose waypoints first.
+        if self._solver.n_envs > 0:
+            return dataclasses.replace(
+                path,
+                qpos=path.qpos.transpose(0, 1),
+                dofs_vel=path.dofs_vel.transpose(0, 1),
+                dofs_acc=path.dofs_acc.transpose(0, 1),
             )
-            # NOTE: update the previously failed path with the new results
-            path[:, is_invalid] = retry_path[:, is_invalid]
-
-            is_invalid &= retry_is_invalid
-            if not is_invalid.any():
-                break
-            gs.logger.info(f"Planning failed. Retrying for {is_invalid.sum()} environments...")
-
-        if self._solver.n_envs == 0:
-            if return_valid_mask:
-                return path.squeeze(1), ~is_invalid[0]
-            return path.squeeze(1)
-
-        if return_valid_mask:
-            return path, ~is_invalid
         return path
 
     # ------------------------------------------------------------------------------------
