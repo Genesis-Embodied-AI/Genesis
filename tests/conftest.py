@@ -573,6 +573,8 @@ def precision(request, backend):
         # Only default to 64bits precision when running the unit tests on CPU backend
         expr = Expression.compile(request.config.option.markexpr)
         is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        if isinstance(backend, str):
+            backend = getattr(gs.constants.backend, backend)
         precision = "64" if not is_benchmarks and backend == gs.cpu else "32"
     return precision
 
