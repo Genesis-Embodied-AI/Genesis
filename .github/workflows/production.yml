@@ -39,7 +39,8 @@ jobs:
       fail-fast: true
       max-parallel: 1
       matrix:
-        GS_ENABLE_NDARRAY: ["0", "1"]
+        # Run ndarray mode first, because it is twice faster.
+        GS_ENABLE_NDARRAY: ["1", "0"]
 
     env:
       GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
