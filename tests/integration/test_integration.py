@@ -189,8 +189,8 @@ def test_hanging_rigid_cable(show_viewer, tol):
     )
     scene.build()
 
-    links_pos_0 = scene.rigid_solver.links_state.pos.to_numpy()[:, 0]
-    links_quat_0 = scene.rigid_solver.links_state.quat.to_numpy()[:, 0]
+    links_pos_0 = scene.rigid_solver.dyn_state.links.pos.to_numpy()[:, 0]
+    links_quat_0 = scene.rigid_solver.dyn_state.links.quat.to_numpy()[:, 0]
     links_quat_0 /= np.linalg.norm(links_quat_0, axis=-1, keepdims=True)
 
     robot.set_dofs_position(robot.get_dofs_position())
@@ -199,8 +199,8 @@ def test_hanging_rigid_cable(show_viewer, tol):
     for _ in range(100):
         scene.step()
 
-    links_pos_f = scene.rigid_solver.links_state.pos.to_numpy()[:, 0]
-    links_quat_f = scene.rigid_solver.links_state.quat.to_numpy()[:, 0]
+    links_pos_f = scene.rigid_solver.dyn_state.links.pos.to_numpy()[:, 0]
+    links_quat_f = scene.rigid_solver.dyn_state.links.quat.to_numpy()[:, 0]
     links_quat_f /= np.linalg.norm(links_quat_f, axis=-1, keepdims=True)
     links_quat_err = 2.0 * np.arccos(np.minimum(np.abs(np.sum(links_quat_f * links_quat_0, axis=-1)), 1.0))
 

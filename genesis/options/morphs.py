@@ -97,11 +97,11 @@ class Morph(Options):
         world-frame shift, and when the orientation is identity it simply adds to `pos`. Defaults to (0.0, 0.0, 0.0).
     offset_euler : tuple, shape (3,), optional
         The orientation offset `offset_quat` given as an euler angle in degrees (scipy extrinsic x-y-z convention).
-        Setting both `offset_euler` and `offset_quat` raises an error. Defaults to None.
+        Mutually exclusive with `offset_quat`. Defaults to None.
     offset_quat : tuple, shape (4,), optional
         A fixed orientation offset (w-x-y-z convention); see `offset_pos` for how it compounds with `pos`/`quat` to
         form the world pose. Up-axis conversions (e.g. loading a Z-up asset) are stored here.
-        Defaults to (1.0, 0.0, 0.0, 0.0).
+        Mutually exclusive with `offset_euler`. Defaults to None.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -122,7 +122,7 @@ class Morph(Options):
     quat: UnitVec4FType | None = None
     offset_pos: Vec3FType = (0.0, 0.0, 0.0)
     offset_euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
-    offset_quat: UnitVec4FType = (1.0, 0.0, 0.0, 0.0)
+    offset_quat: UnitVec4FType | None = None
     visualization: StrictBool = True
     collision: StrictBool = True
     requires_jac_and_IK: StrictBool = False
@@ -143,10 +143,17 @@ class Morph(Options):
         elif quat is None:
             data["quat"] = (1.0, 0.0, 0.0, 0.0)
         offset_euler = data.get("offset_euler")
-        if offset_euler is not None and data.get("offset_quat") is not None:
-            gs.raise_exception("'offset_euler' and 'offset_quat' cannot both be set.")
+        offset_quat = data.get("offset_quat")
         if offset_euler is not None:
-            data["offset_quat"] = tuple(gu.xyz_to_quat(np.array(offset_euler), rpy=True, degrees=True))
+            euler_quat = gu.xyz_to_quat(np.array(offset_euler), rpy=True, degrees=True)
+            # A quaternion and its negation encode the same rotation, so accept either sign.
+            if offset_quat is not None and not (
+                np.allclose(offset_quat, euler_quat, atol=gs.EPS) or np.allclose(offset_quat, -euler_quat, atol=gs.EPS)
+            ):
+                gs.raise_exception("'offset_euler' and 'offset_quat' cannot both be set.")
+            data["offset_quat"] = tuple(euler_quat)
+        elif offset_quat is None:
+            data["offset_quat"] = (1.0, 0.0, 0.0, 0.0)
         return data
 
     def model_post_init(self, context: Any) -> None:
@@ -982,14 +989,18 @@ class MJCF(FileMorph):
         aligned with the principal axes of inertia. Only applies to root (floating-base) links. Default to False.
         **This is only used for RigidEntity.**
     default_armature : float, optional
-        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
-        actuated. None to disable. Default to 0.1.
+        Default rotor inertia of the actuators, applied to every joint whose armature is not specified in the model
+        file, regardless of whether it is actuated. None to disable. Defaults to 0.1 if MuJoCo compatibility is
+        disabled on the rigid solver, None otherwise.
+    exclude_ground_plane : bool, optional
+        Whether to exclude plane geometries authored directly under the MJCF worldbody if any. Defaults to False.
     """
 
     pos: Vec3FType | None = None
     quat: UnitVec4FType | None = None
     requires_jac_and_IK: StrictBool = True
     default_armature: float | None = Field(default=0.1, ge=0)
+    exclude_ground_plane: StrictBool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -1120,8 +1131,9 @@ class URDF(FileMorph):
         aligned with the principal axes of inertia. Only applies to root (floating-base) links. Default to False.
         **This is only used for RigidEntity.**
     default_armature : float, optional
-        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
-        actuated. None to disable. Default to 0.1.
+        Default rotor inertia of the actuators, applied to every joint whose armature is not specified in the model
+        file, regardless of whether it is actuated. None to disable. Defaults to 0.1 if MuJoCo compatibility is
+        disabled on the rigid solver, None otherwise.
     xacro_args : dict, optional
         Key-value pairs to override ``xacro:arg`` declarations in the xacro file
         (e.g. ``{"use_sim": "true", "arm_length": "0.5"}``). Only used for ``.xacro`` files. Defaults to ``{}``.
@@ -1261,8 +1273,9 @@ class Drone(FileMorph):
     links_to_keep : list of str, optional
         A list of link names that should not be skipped during link merging. Defaults to ().
     default_armature : float, optional
-        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
-        actuated. None to disable. Default to 0.1.
+        Default rotor inertia of the actuators, applied to every joint whose armature is not specified in the model
+        file, regardless of whether it is actuated. None to disable. Defaults to 0.1 if MuJoCo compatibility is
+        disabled on the rigid solver, None otherwise.
     default_base_ang_damping_scale : float, optional
         Default angular damping applied on the floating base that will be rescaled by the total mass.
         None to disable. Default to 1e-5.
@@ -1601,8 +1614,8 @@ class USD(FileMorph):
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     default_armature : float, optional
-        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
-        actuated. None to disable. Default to 0.1.
+        Default rotor inertia of the actuators, applied to every joint whose armature is not specified in the model
+        file, regardless of whether it is actuated. None to disable. Default to 0.1.
 
     Joint Dynamics Options
     ----------------------

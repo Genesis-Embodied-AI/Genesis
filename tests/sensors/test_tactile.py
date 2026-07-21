@@ -301,6 +301,44 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
 
 
 @pytest.mark.required
+def test_raycast_probe_on_fully_fixed_solver(show_viewer):
+    # A fully-fixed solver shares its static collision BVH across identical envs (a single tree, see the raycaster's
+    # RaycastContext), so the raycast probe must traverse it through the env -> tree routing. Fixed-fixed pairs are
+    # filtered out of collision detection, so the candidate-geom mask stays empty and the probe reads zero depth
+    # despite the geometric overlap.
+    scene = gs.Scene(show_viewer=show_viewer)
+    pad = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.05),
+            pos=(0.0, 0.0, 0.025),
+            fixed=True,
+        )
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.05),
+            pos=(0.0, 0.0, 0.06),
+            fixed=True,
+        )
+    )
+    probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            entity_idx=pad.idx,
+            probe_local_pos=((0.0, 0.0, 0.025),),
+            probe_radius=0.01,
+            contact_depth_query="raycast",
+        )
+    )
+    scene.build(n_envs=2)
+    scene.step()
+
+    (collision_bvh,) = probe._shared_context.collision_bvh_contexts
+    assert collision_bvh.maybe_static
+    assert collision_bvh.aabb.n_batches == 1
+    assert_equal(probe.read_ground_truth(), 0.0)
+
+
+@pytest.mark.required
 def test_contact_probe_hysteresis(show_viewer):
     # ContactProbe with release_threshold < contact_threshold latches like a Schmitt trigger. Depth-probe
     # semantics: depth = probe_radius - sd(probe, geom). With the probe at the box center (link-local origin) and

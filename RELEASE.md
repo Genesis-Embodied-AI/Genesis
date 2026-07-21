@@ -1,5 +1,42 @@
 # Genesis Release Note
 
+## 1.2.3
+
+This small release introduces elliptic friction cone with high-impedance option to accurately model static function. In addition, the convergence of the constraint solver under fp32 accuracy has been improved.
+
+### New Features
+
+* Add high-fidelity static friction model via elliptic friction cone with high-impedance option. (@duburcqa) (#3028, #3035, #3042)
+* Add support of heterogeneous entities in batch renderer. (@Kashu7100) (#2960)
+* Add distances-only mode to raycasting-based sensors. (@Kashu7100) (#2908)
+* Add option to ignore MJCF ground plane. (@coyaSONG) (#3050)
+
+### Bug Fixes
+
+* Fix default morph offset_quat clashing with offset_euler. (@duburcqa) (#3048)
+* Fix IPC coupler auto-detecting wrong coup_type for Plane entities. (@liminchen) (#2877)
+* Fix mass matrix for attached entities. (@duburcqa) (#3055)
+* Fix fastcache support. (@hughperkins) (#3034, #3061)
+* FiX USD parsing of geometry properties. (@Milotrince) (#3017)
+* Fix USD parsing of textures packed in .usdz archives. (@connorsoohoo) (#3064)
+* Fix MJCF parsing of 2D textures. (@thanyu-hub) (#3036)
+* Fix MJCF parsing of included files with mesh defaults. (@Fstarnb) (#3068)
+* Fix MJCF parsing of joint armatures. (@duburcqa) (#3072)
+* Honour system scroll direction in viewer plugins. (@coyaSONG) (#3030)
+* Release the offscreen EGL context before destroying it during teardown. (@duburcqa) (#3076)
+
+### Miscellaneous
+
+* Speed up non-convex collision detection with vert spatial grid and coarse SDF lower bound. (@duburcqa) (#3026)
+* Speed up non-batched CPU-based simulation (up to 30%). (@hughperkins) (#3033)
+* Speed up forward kinematics by removing unnecessary atomics. (@gayathiri-venkataraman) (#3066)
+* Improve constraint solver float32 convergence and equality constraint stability. (@duburcqa) (#3073)
+* Preserve the energy of freely tumbling bodies under implicit integration. (@duburcqa) (#3074)
+* Stop requiring 64bit precision in tactile sensors. (@Milotrince, @duburcqa) (#3057, #3058)
+* Pack rigid solver data on a per-component basis. (@duburcqa) (#3060)
+* Fix broken Apple Metal CI. (@hughperkins) (#3054)
+* Add contribution guidelines. (@duburcqa) (#3032, #3049)
+
 ## 1.2.2
 
 This release introduces a rich family of realistic yet high-throughput tactile sensors that are suitable for training dexterous policy via RL. Besides, non-convex collision detection is now more robust than ever, with comparable performance to convex decomposition in terms of speed and stability. Notably, spurious deep contacts and thin-shell tunneling has been fixed. Finally, enabling 'noslip' post-processing step should now incur less than 20% slowdown for all backends.
@@ -8,12 +45,11 @@ This release introduces a rich family of realistic yet high-throughput tactile s
 
 * Add noise options for tactile sensors: hysteresis, dead taxels, probe gain (@Milotrince) (#2813)
 
-### Breaking changes
+### Bug Fixes
 
 * Fix contact-pruning bucket merging. (@duburcqa) (#3010)
 * Fix performance regression on some backends when sparse option is not specified. (@duburcqa) (#3010)
 * Fix data accessors for very large batch sizes (>16k). (@duburcqa) (#3010)
-* More robust nonconvex collision detection. (@duburcqa) (#3014, #3020)
 * Fix go2_backflip RL training example. (@kshitijgoel007) (#2986)
 
 ### Miscellaneous
@@ -21,6 +57,7 @@ This release introduces a rich family of realistic yet high-throughput tactile s
 * Speed up per-island noslip solver. (@duburcqa) (#3009)
 * Speed up contact-island constraint solve for large batches. (@Milotrince) (#3021)
 * Speed up tactile sensors. (@Milotrince) (#2922)
+* More robust nonconvex collision detection. (@duburcqa) (#3014, #3020)
 
 ## 1.2.1
 

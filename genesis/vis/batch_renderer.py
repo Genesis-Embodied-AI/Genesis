@@ -68,11 +68,11 @@ class GenesisGeomRetriever:
         vgeoms = self.rigid_solver.vgeoms
 
         # Retrieve geom data
-        mesh_vertices = self.rigid_solver.vverts_info.init_pos.to_numpy()
-        mesh_faces = self.rigid_solver.vfaces_info.vverts_idx.to_numpy()
-        mesh_vertex_offsets = self.rigid_solver.vgeoms_info.vvert_start.to_numpy()
-        mesh_face_starts = self.rigid_solver.vgeoms_info.vface_start.to_numpy()
-        mesh_face_ends = self.rigid_solver.vgeoms_info.vface_end.to_numpy()
+        mesh_vertices = self.rigid_solver.dyn_info.vverts.init_pos.to_numpy()
+        mesh_faces = self.rigid_solver.dyn_info.vfaces.vverts_idx.to_numpy()
+        mesh_vertex_offsets = self.rigid_solver.dyn_info.vgeoms.vvert_start.to_numpy()
+        mesh_face_starts = self.rigid_solver.dyn_info.vgeoms.vface_start.to_numpy()
+        mesh_face_ends = self.rigid_solver.dyn_info.vgeoms.vface_end.to_numpy()
         total_uv_size = 0
         mesh_uvs = []
         mesh_uv_offsets = []
@@ -210,8 +210,8 @@ class GenesisGeomRetriever:
 
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_state_torch(self):
-        geom_pos = qd_to_torch(self.rigid_solver.vgeoms_state.pos)
-        geom_rot = qd_to_torch(self.rigid_solver.vgeoms_state.quat)
+        geom_pos = qd_to_torch(self.rigid_solver.dyn_state.vgeoms.pos)
+        geom_rot = qd_to_torch(self.rigid_solver.dyn_state.vgeoms.quat)
         geom_pos = geom_pos.transpose(0, 1).contiguous()
         geom_rot = geom_rot.transpose(0, 1).contiguous()
         return geom_pos, geom_rot

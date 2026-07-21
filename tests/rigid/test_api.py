@@ -50,7 +50,7 @@ def test_data_accessor(n_envs, batched, tol):
 
     # Initialize the simulation
     np.random.seed(0)
-    dof_bounds = gs_s.dofs_info.limit.to_numpy()
+    dof_bounds = gs_s.dyn_info.dofs.limit.to_numpy()
     dof_bounds[..., :2, :] = np.array((-1.0, 1.0))
     dof_bounds[..., 2, :] = np.array((0.7, 1.0))
     dof_bounds[..., 3:6, :] = np.array((-np.pi / 2, np.pi / 2))
@@ -142,41 +142,47 @@ def test_data_accessor(n_envs, batched, tol):
 
     for arg1_max, arg2_max, getter_or_spec, setter, qd_data in (
         # SOLVER
-        (gs_s.n_links, n_envs, gs_s.get_links_pos, None, gs_s.links_state.pos),
-        (gs_s.n_links, n_envs, gs_s.get_links_quat, None, gs_s.links_state.quat),
+        (gs_s.n_links, n_envs, gs_s.get_links_pos, None, gs_s.dyn_state.links.pos),
+        (gs_s.n_links, n_envs, gs_s.get_links_quat, None, gs_s.dyn_state.links.quat),
         (gs_s.n_links, n_envs, gs_s.get_links_vel, None, None),
-        (gs_s.n_links, n_envs, gs_s.get_links_ang, None, gs_s.links_state.cd_ang),
+        (gs_s.n_links, n_envs, gs_s.get_links_ang, None, gs_s.dyn_state.links.cd_ang),
         (gs_s.n_links, n_envs, gs_s.get_links_acc, None, None),
-        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.links_state.root_COM),
-        (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.links_state.mass_shift),
-        (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.links_state.i_pos_shift),
-        (gs_s.n_links, -1, gs_s.get_links_inertial_mass, gs_s.set_links_inertial_mass, gs_s.links_info.inertial_mass),
-        (gs_s.n_links, -1, gs_s.get_links_invweight, None, gs_s.links_info.invweight),
+        (gs_s.n_links, n_envs, gs_s.get_links_root_COM, None, gs_s.dyn_state.links.root_COM),
+        (gs_s.n_links, n_envs, gs_s.get_links_mass_shift, gs_s.set_links_mass_shift, gs_s.dyn_state.links.mass_shift),
+        (gs_s.n_links, n_envs, gs_s.get_links_COM_shift, gs_s.set_links_COM_shift, gs_s.dyn_state.links.i_pos_shift),
+        (
+            gs_s.n_links,
+            -1,
+            gs_s.get_links_inertial_mass,
+            gs_s.set_links_inertial_mass,
+            gs_s.dyn_info.links.inertial_mass,
+        ),
+        (gs_s.n_links, -1, gs_s.get_links_invweight, None, gs_s.dyn_info.links.invweight),
         (gs_s.n_dofs, n_envs, gs_s.get_dofs_control_force, gs_s.control_dofs_force, None),
-        (gs_s.n_dofs, n_envs, gs_s.get_dofs_force, None, gs_s.dofs_state.force),
-        (gs_s.n_dofs, n_envs, gs_s.get_dofs_velocity, gs_s.set_dofs_velocity, gs_s.dofs_state.vel),
-        (gs_s.n_dofs, n_envs, gs_s.get_dofs_position, gs_s.set_dofs_position, gs_s.dofs_state.pos),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_force_range, gs_s.set_dofs_force_range, gs_s.dofs_info.force_range),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_limit, gs_s.set_dofs_limit, gs_s.dofs_info.limit),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, gs_s.set_dofs_stiffness, gs_s.dofs_info.stiffness),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dofs_info.invweight),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_armature, gs_s.set_dofs_armature, gs_s.dofs_info.armature),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_damping, gs_s.set_dofs_damping, gs_s.dofs_info.damping),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_frictionloss, gs_s.set_dofs_frictionloss, gs_s.dofs_info.frictionloss),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.act_gain),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_force, None, gs_s.dyn_state.dofs.force),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_velocity, gs_s.set_dofs_velocity, gs_s.dyn_state.dofs.vel),
+        (gs_s.n_dofs, n_envs, gs_s.get_dofs_position, gs_s.set_dofs_position, gs_s.dyn_state.dofs.pos),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_force_range, gs_s.set_dofs_force_range, gs_s.dyn_info.dofs.force_range),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_limit, gs_s.set_dofs_limit, gs_s.dyn_info.dofs.limit),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_stiffness, gs_s.set_dofs_stiffness, gs_s.dyn_info.dofs.stiffness),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_invweight, None, gs_s.dyn_info.dofs.invweight),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_armature, gs_s.set_dofs_armature, gs_s.dyn_info.dofs.armature),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_damping, gs_s.set_dofs_damping, gs_s.dyn_info.dofs.damping),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_frictionloss, gs_s.set_dofs_frictionloss, gs_s.dyn_info.dofs.frictionloss),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dyn_info.dofs.act_gain),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, None),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_act_bias, gs_s.set_dofs_act_bias, gs_s.dofs_info.act_bias),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_act_gain, gs_s.set_dofs_act_gain, gs_s.dofs_info.act_gain),
-        (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
-        (gs_s.n_geoms, n_envs, gs_s.get_geoms_quat, None, gs_s.geoms_state.quat),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_act_bias, gs_s.set_dofs_act_bias, gs_s.dyn_info.dofs.act_bias),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_act_gain, gs_s.set_dofs_act_gain, gs_s.dyn_info.dofs.act_gain),
+        (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.dyn_state.geoms.pos),
+        (gs_s.n_geoms, n_envs, gs_s.get_geoms_quat, None, gs_s.dyn_state.geoms.quat),
         (
             gs_s.n_geoms,
             n_envs,
             gs_s.get_geoms_friction_ratio,
             gs_s.set_geoms_friction_ratio,
-            gs_s.geoms_state.friction_ratio,
+            gs_s.dyn_state.geoms.friction_ratio,
         ),
-        (gs_s.n_geoms, -1, gs_s.get_geoms_friction, gs_s.set_geoms_friction, gs_s.geoms_info.friction),
+        (gs_s.n_geoms, -1, gs_s.get_geoms_friction, gs_s.set_geoms_friction, gs_s.dyn_info.geoms.friction),
         (gs_s.n_qs, n_envs, gs_s.get_qpos, gs_s.set_qpos, gs_s.qpos),
         # ROBOT
         (gs_robot.n_links, n_envs, gs_robot.get_links_pos, None, None),
@@ -437,15 +443,15 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
     scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
     scene.build(n_envs=2)
 
-    links_info = terrain.solver.data_manager.links_info
+    links_info = terrain.solver.data_manager.dyn_info.links
     entity_idx = links_info.entity_idx.to_numpy()
     assert entity_idx.shape == (12, 2) if batch_links_info else (12,)
 
-    joints_info = terrain.solver.data_manager.joints_info
+    joints_info = terrain.solver.data_manager.dyn_info.joints
     pos = joints_info.pos.to_numpy()
     assert pos.shape == (10, 2, 3) if batch_joints_info else (10, 3)
 
-    dofs_info = terrain.solver.data_manager.dofs_info
+    dofs_info = terrain.solver.data_manager.dyn_info.dofs
     act_gain = dofs_info.act_gain.to_numpy()
     assert act_gain.shape == (9, 2) if batch_dofs_info else (9,)
 
@@ -891,17 +897,17 @@ def test_reset(show_viewer):
         scene.reset(state=init_state, envs_idx=envs_idx)
         for actual, init_ref, fallen_ref in (
             (
-                qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True),
+                qd_to_torch(scene.rigid_solver.rigid_info.qpos, transpose=True, copy=True),
                 init_rigid_state.qpos,
                 fallen_rigid_state.qpos,
             ),
             (
-                qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True),
+                qd_to_torch(scene.rigid_solver.dyn_state.dofs.vel, transpose=True, copy=True),
                 init_rigid_state.dofs_vel,
                 fallen_rigid_state.dofs_vel,
             ),
             (
-                qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True),
+                qd_to_torch(scene.rigid_solver.dyn_state.links.pos, transpose=True, copy=True),
                 init_rigid_state.links_pos,
                 fallen_rigid_state.links_pos,
             ),
@@ -913,9 +919,12 @@ def test_reset(show_viewer):
     for _ in range(50):
         scene.step()
     for actual, fallen_ref in (
-        (qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
-        (qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
-        (qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True), fallen_rigid_state.links_pos),
+        (qd_to_torch(scene.rigid_solver.rigid_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
+        (qd_to_torch(scene.rigid_solver.dyn_state.dofs.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
+        (
+            qd_to_torch(scene.rigid_solver.dyn_state.links.pos, transpose=True, copy=True),
+            fallen_rigid_state.links_pos,
+        ),
     ):
         assert_allclose(actual[BOOL_MASK], fallen_ref[BOOL_MASK], tol=gs.EPS)
 

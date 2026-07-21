@@ -35,26 +35,22 @@ class SDF:
                     coarse_val = np.take(coarse_val, windows, axis=axis).min(axis=axis + 1)
                 geoms_sdf_coarse_val.append(coarse_val.reshape((-1,)))
             sdf_kernel_init_geom_fields(
-                geoms_T_mesh_to_sdf=np.array([geom.T_mesh_to_sdf for geom in geoms], dtype=gs.np_float),
-                geoms_sdf_res=np.array([geom.sdf_res for geom in geoms], dtype=gs.np_int),
-                geoms_sdf_cell_start=np.array([geom.cell_start for geom in geoms], dtype=gs.np_int),
-                geoms_sdf_val=np.concatenate([geom.sdf_val_flattened for geom in geoms], dtype=gs.np_float),
-                geoms_sdf_grad=np.concatenate([geom.sdf_grad_flattened for geom in geoms], dtype=gs.np_float),
-                geoms_sdf_max=np.array([geom.sdf_max for geom in geoms], dtype=gs.np_float),
-                geoms_sdf_cell_size=np.array(
+                np.array([geom.cell_start for geom in geoms], dtype=gs.np_int),
+                np.concatenate(([0], self._geoms_sdf_coarse_res.prod(axis=-1).cumsum()[:-1]), dtype=gs.np_int),
+                np.array([geom.T_mesh_to_sdf for geom in geoms], dtype=gs.np_float),
+                np.array([geom.sdf_res for geom in geoms], dtype=gs.np_int),
+                np.concatenate([geom.sdf_val_flattened for geom in geoms], dtype=gs.np_float),
+                np.concatenate([geom.sdf_grad_flattened for geom in geoms], dtype=gs.np_float),
+                np.array([geom.sdf_max for geom in geoms], dtype=gs.np_float),
+                np.array(
                     [np.broadcast_to(np.asarray(geom.sdf_cell_size, dtype=gs.np_float), (3,)) for geom in geoms],
                     dtype=gs.np_float,
                 ),
-                geoms_sdf_closest_vert=np.concatenate(
-                    [geom.sdf_closest_vert_flattened for geom in geoms], dtype=gs.np_int
-                ),
-                geoms_sdf_coarse_res=self._geoms_sdf_coarse_res,
-                geoms_sdf_coarse_cell_start=np.concatenate(
-                    ([0], self._geoms_sdf_coarse_res.prod(axis=-1).cumsum()[:-1]), dtype=gs.np_int
-                ),
-                geoms_sdf_coarse_val=np.concatenate(geoms_sdf_coarse_val, dtype=gs.np_float),
-                static_rigid_sim_config=self.solver._static_rigid_sim_config,
-                sdf_info=self._sdf_info,
+                np.concatenate([geom.sdf_closest_vert_flattened for geom in geoms], dtype=gs.np_int),
+                self._geoms_sdf_coarse_res,
+                np.concatenate(geoms_sdf_coarse_val, dtype=gs.np_float),
+                self._sdf_info,
+                self.solver.rigid_config,
             )
 
         self._is_active = True
@@ -66,25 +62,25 @@ class SDF:
 
 @qd.kernel
 def sdf_kernel_init_geom_fields(
+    geoms_sdf_cell_start: qd.types.ndarray(),
+    geoms_sdf_coarse_cell_start: qd.types.ndarray(),
     geoms_T_mesh_to_sdf: qd.types.ndarray(),
     geoms_sdf_res: qd.types.ndarray(),
-    geoms_sdf_cell_start: qd.types.ndarray(),
     geoms_sdf_val: qd.types.ndarray(),
     geoms_sdf_grad: qd.types.ndarray(),
     geoms_sdf_max: qd.types.ndarray(),
     geoms_sdf_cell_size: qd.types.ndarray(),
     geoms_sdf_closest_vert: qd.types.ndarray(),
     geoms_sdf_coarse_res: qd.types.ndarray(),
-    geoms_sdf_coarse_cell_start: qd.types.ndarray(),
     geoms_sdf_coarse_val: qd.types.ndarray(),
-    static_rigid_sim_config: qd.template(),
     sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
 ):
     n_geoms = sdf_info.geoms_sdf_start.shape[0]
     n_cells = sdf_info.geoms_sdf_val.shape[0]
     n_coarse_cells = sdf_info.geoms_sdf_coarse_val.shape[0]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i in range(n_geoms):
         for j, k in qd.static(qd.ndrange(4, 4)):
             sdf_info.geoms_info.T_mesh_to_sdf[i][j, k] = geoms_T_mesh_to_sdf[i, j, k]
@@ -112,12 +108,12 @@ def sdf_kernel_init_geom_fields(
 
 @qd.func
 def sdf_func_world(
+    geom_idx,
+    batch_idx,
+    pos_world,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     sdf_info: array_class.SDFInfo,
-    pos_world,
-    geom_idx,
-    batch_idx,
 ):
     """
     sdf value from world coordinate
@@ -126,24 +122,17 @@ def sdf_func_world(
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 
-    return sdf_func_world_local(
-        geoms_info=geoms_info,
-        sdf_info=sdf_info,
-        pos_world=pos_world,
-        geom_idx=geom_idx,
-        geom_pos=g_pos,
-        geom_quat=g_quat,
-    )
+    return sdf_func_world_local(geom_idx, pos_world, g_pos, g_quat, geoms_info, sdf_info)
 
 
 @qd.func
 def sdf_func_world_local(
-    geoms_info: array_class.GeomsInfo,
-    sdf_info: array_class.SDFInfo,
-    pos_world: qd.types.vector(3),
     geom_idx,
+    pos_world: qd.types.vector(3),
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
 ):
     """
     Computes SDF value from world coordinate, using provided geometry pose
@@ -163,24 +152,24 @@ def sdf_func_world_local(
     else:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
         pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
-        sd = sdf_func_sdf(sdf_info, pos_sdf, geom_idx)
+        sd = sdf_func_sdf(geom_idx, pos_sdf, sdf_info)
 
     return sd
 
 
 @qd.func
-def sdf_func_coarse_sd_lower_bound(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
+def sdf_func_coarse_sd_lower_bound(geom_idx, pos_sdf, collider_info: array_class.ColliderInfo):
     """
     Certified lower bound on the trilinear sd at an in-grid point: the minimum node value over the 4^3-cell node
     block containing its interpolation cell. Exact by convexity - the interpolant only combines nodes of that
     block - at the cost of a single load instead of the 8-node gather.
     """
-    res = sdf_info.geoms_info.sdf_res[geom_idx]
+    res = collider_info.sdf.geoms_info.sdf_res[geom_idx]
     base = qd.min(qd.floor(pos_sdf, gs.qd_int), res - 2)
     coarse_cell = base // 4
-    coarse_res = sdf_info.geoms_info.sdf_coarse_res[geom_idx]
-    return sdf_info.geoms_sdf_coarse_val[
-        sdf_info.geoms_info.sdf_coarse_cell_start[geom_idx]
+    coarse_res = collider_info.sdf.geoms_info.sdf_coarse_res[geom_idx]
+    return collider_info.sdf.geoms_sdf_coarse_val[
+        collider_info.sdf.geoms_info.sdf_coarse_cell_start[geom_idx]
         + (coarse_cell[0] * coarse_res[1] + coarse_cell[1]) * coarse_res[2]
         + coarse_cell[2]
     ]
@@ -188,13 +177,13 @@ def sdf_func_coarse_sd_lower_bound(sdf_info: array_class.SDFInfo, pos_sdf, geom_
 
 @qd.func
 def sdf_func_world_local_banded(
-    geoms_info: array_class.GeomsInfo,
-    sdf_info: array_class.SDFInfo,
-    pos_world: qd.types.vector(3),
     geom_idx,
+    pos_world: qd.types.vector(3),
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
     band,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     Band-gated variant of sdf_func_world_local, returning (is_in_band, sd).
@@ -206,30 +195,30 @@ def sdf_func_world_local_banded(
     is_in_band = False
     sd = gs.qd_float(0.0)
 
-    if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
-        sd = (pos_world - geom_pos).norm() - geoms_info.data[geom_idx][0]
+    if dyn_info.geoms.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+        sd = (pos_world - geom_pos).norm() - dyn_info.geoms.data[geom_idx][0]
         is_in_band = sd < band
 
-    elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+    elif dyn_info.geoms.type[geom_idx] == gs.GEOM_TYPE.PLANE:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
-        geom_data = geoms_info.data[geom_idx]
+        geom_data = dyn_info.geoms.data[geom_idx]
         plane_normal = gs.qd_vec3([geom_data[0], geom_data[1], geom_data[2]])
         sd = pos_mesh.dot(plane_normal)
         is_in_band = sd < band
 
     else:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
-        pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
-        if sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, geom_idx):
-            sd = sdf_func_proxy_sdf(sdf_info, pos_sdf, geom_idx)
+        pos_sdf = gu.qd_transform_by_T(pos_mesh, collider_info.sdf.geoms_info.T_mesh_to_sdf[geom_idx])
+        if sdf_func_is_outside_sdf_grid(geom_idx, pos_sdf, collider_info.sdf):
+            sd = sdf_func_proxy_sdf(geom_idx, pos_sdf, collider_info.sdf)
             is_in_band = sd < band
         else:
-            coarse_lower_bound = sdf_func_coarse_sd_lower_bound(sdf_info, pos_sdf, geom_idx)
+            coarse_lower_bound = sdf_func_coarse_sd_lower_bound(geom_idx, pos_sdf, collider_info)
             # The bound holds in exact arithmetic, but the floating-point evaluation of the trilinear sum can
             # round below the block minimum; the relative guard keeps a vertex whose exact interpolant clears the
             # band from being misclassified when its rounded value dips just inside.
             if not (coarse_lower_bound - 1e-6 * (1.0 + qd.abs(coarse_lower_bound)) >= band):
-                sd = sdf_func_true_sdf(sdf_info, pos_sdf, geom_idx)
+                sd = sdf_func_true_sdf(geom_idx, pos_sdf, collider_info.sdf)
                 is_in_band = sd < band
 
     return is_in_band, sd
@@ -237,28 +226,30 @@ def sdf_func_world_local_banded(
 
 @qd.func
 def sdf_func_ray_exit_distance(
-    geoms_info: array_class.GeomsInfo,
-    sdf_info: array_class.SDFInfo,
+    geom_idx,
     origin: qd.types.vector(3),
     direction: qd.types.vector(3),
     max_dist,
     tolerance,
-    geom_idx,
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     Distance from a point inside the geom to its surface along a unit direction, bisected down to tolerance.
     """
     dist = max_dist
-    sd_end = sdf_func_world_local(geoms_info, sdf_info, origin + max_dist * direction, geom_idx, geom_pos, geom_quat)
+    sd_end = sdf_func_world_local(
+        geom_idx, origin + max_dist * direction, geom_pos, geom_quat, dyn_info.geoms, collider_info.sdf
+    )
     if sd_end > 0.0:
         t_lo = gs.qd_float(0.0)
         t_hi = max_dist
         while t_hi - t_lo > tolerance:
             t_mid = 0.5 * (t_lo + t_hi)
             sd_mid = sdf_func_world_local(
-                geoms_info, sdf_info, origin + t_mid * direction, geom_idx, geom_pos, geom_quat
+                geom_idx, origin + t_mid * direction, geom_pos, geom_quat, dyn_info.geoms, collider_info.sdf
             )
             if sd_mid < 0.0:
                 t_lo = t_mid
@@ -269,27 +260,27 @@ def sdf_func_ray_exit_distance(
 
 
 @qd.func
-def sdf_func_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
+def sdf_func_sdf(geom_idx, pos_sdf, sdf_info: array_class.SDFInfo):
     """
     sdf value at sdf frame coordinate.
     Note that the stored sdf magnitude is already w.r.t world/mesh frame.
     """
     signed_dist = gs.qd_float(0.0)
-    if sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, geom_idx):
-        signed_dist = sdf_func_proxy_sdf(sdf_info, pos_sdf, geom_idx)
+    if sdf_func_is_outside_sdf_grid(geom_idx, pos_sdf, sdf_info):
+        signed_dist = sdf_func_proxy_sdf(geom_idx, pos_sdf, sdf_info)
     else:
-        signed_dist = sdf_func_true_sdf(sdf_info, pos_sdf, geom_idx)
+        signed_dist = sdf_func_true_sdf(geom_idx, pos_sdf, sdf_info)
     return signed_dist
 
 
 @qd.func
-def sdf_func_is_outside_sdf_grid(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
+def sdf_func_is_outside_sdf_grid(geom_idx, pos_sdf, sdf_info: array_class.SDFInfo):
     res = sdf_info.geoms_info.sdf_res[geom_idx]
     return (pos_sdf >= res - 1).any() or (pos_sdf <= 0).any()
 
 
 @qd.func
-def sdf_func_proxy_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
+def sdf_func_proxy_sdf(geom_idx, pos_sdf, sdf_info: array_class.SDFInfo):
     """
     Use distance to center as a proxy sdf, strictly greater than any point inside the cube to ensure value comparison
     is valid.
@@ -305,7 +296,7 @@ def sdf_func_proxy_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
 
 
 @qd.func
-def sdf_func_true_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
+def sdf_func_true_sdf(geom_idx, pos_sdf, sdf_info: array_class.SDFInfo):
     """
     True sdf interpolated using stored sdf grid.
     """
@@ -318,14 +309,14 @@ def sdf_func_true_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
         w = w_xyz[0] * w_xyz[1] * w_xyz[2]
         signed_dist = (
             signed_dist
-            + w * sdf_info.geoms_sdf_val[sdf_func_ravel_cell_idx(sdf_info, pos_cell, geom_sdf_res, geom_idx)]
+            + w * sdf_info.geoms_sdf_val[sdf_func_ravel_cell_idx(pos_cell, geom_idx, geom_sdf_res, sdf_info)]
         )
 
     return signed_dist
 
 
 @qd.func
-def sdf_func_ravel_cell_idx(sdf_info: array_class.SDFInfo, cell_idx, sdf_res, geom_idx):
+def sdf_func_ravel_cell_idx(cell_idx, geom_idx, sdf_res, sdf_info: array_class.SDFInfo):
     return (
         sdf_info.geoms_info.sdf_cell_start[geom_idx]
         + cell_idx[0] * sdf_res[1] * sdf_res[2]
@@ -336,38 +327,31 @@ def sdf_func_ravel_cell_idx(sdf_info: array_class.SDFInfo, cell_idx, sdf_res, ge
 
 @qd.func
 def sdf_func_grad_world(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
-    pos_world,
     geom_idx,
     batch_idx,
+    pos_world,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    collider_static_config: qd.template(),
 ):
-    g_pos = geoms_state.pos[geom_idx, batch_idx]
-    g_quat = geoms_state.quat[geom_idx, batch_idx]
+    g_pos = dyn_state.geoms.pos[geom_idx, batch_idx]
+    g_quat = dyn_state.geoms.quat[geom_idx, batch_idx]
 
     return sdf_func_grad_world_local(
-        geoms_info=geoms_info,
-        rigid_global_info=rigid_global_info,
-        collider_static_config=collider_static_config,
-        sdf_info=sdf_info,
-        pos_world=pos_world,
-        geom_idx=geom_idx,
-        geom_pos=g_pos,
-        geom_quat=g_quat,
+        geom_idx, pos_world, g_pos, g_quat, dyn_info.geoms, rigid_info, collider_info.sdf, collider_static_config
     )
 
 
 @qd.func
 def sdf_func_grad(
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
-    pos_sdf,
     geom_idx,
+    pos_sdf,
+    geoms_info: array_class.GeomsInfo,
+    rigid_info: array_class.RigidInfo,
+    sdf_info: array_class.SDFInfo,
+    collider_static_config: qd.template(),
 ):
     """
     sdf grad at sdf frame coordinate.
@@ -375,17 +359,15 @@ def sdf_func_grad(
     Note that the stored sdf magnitude is already w.r.t world/mesh frame.
     """
     grad_sdf = qd.Vector.zero(gs.qd_float, 3)
-    if sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, geom_idx):
-        grad_sdf = sdf_func_proxy_grad(rigid_global_info, sdf_info, pos_sdf, geom_idx)
+    if sdf_func_is_outside_sdf_grid(geom_idx, pos_sdf, sdf_info):
+        grad_sdf = sdf_func_proxy_grad(geom_idx, pos_sdf, rigid_info, sdf_info)
     else:
-        grad_sdf = sdf_func_true_grad(geoms_info, collider_static_config, sdf_info, pos_sdf, geom_idx)
+        grad_sdf = sdf_func_true_grad(geom_idx, pos_sdf, geoms_info, sdf_info, collider_static_config)
     return grad_sdf
 
 
 @qd.func
-def sdf_func_proxy_grad(
-    rigid_global_info: array_class.RigidGlobalInfo, sdf_info: array_class.SDFInfo, pos_sdf, geom_idx
-):
+def sdf_func_proxy_grad(geom_idx, pos_sdf, rigid_info: array_class.RigidInfo, sdf_info: array_class.SDFInfo):
     """
     Use direction from sdf center, scaled per-axis by the anisotropic cell size, to approximate the gradient
     direction outside the cube.
@@ -399,17 +381,17 @@ def sdf_func_proxy_grad(
     delta = pos_sdf - center
     cs = sdf_info.geoms_info.sdf_cell_size[geom_idx]
     scaled = qd.Vector([delta[0] * cs[0], delta[1] * cs[1], delta[2] * cs[2]], dt=gs.qd_float)
-    proxy_sdf_grad = gu.qd_normalize(scaled, rigid_global_info.EPS[None])
+    proxy_sdf_grad = gu.qd_normalize(scaled, rigid_info.EPS[None])
     return proxy_sdf_grad
 
 
 @qd.func
 def sdf_func_true_grad(
-    geoms_info: array_class.GeomsInfo,
-    collider_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
-    pos_sdf,
     geom_idx,
+    pos_sdf,
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
+    collider_static_config: qd.template(),
 ):
     """
     True sdf grad interpolated using stored sdf grad grid.
@@ -426,7 +408,7 @@ def sdf_func_true_grad(
                 inc[i] += delta
                 dec[i] -= delta
                 sdf_grad_sdf[i] = (
-                    sdf_func_true_sdf(sdf_info, inc, geom_idx) - sdf_func_true_sdf(sdf_info, dec, geom_idx)
+                    sdf_func_true_sdf(geom_idx, inc, sdf_info) - sdf_func_true_sdf(geom_idx, dec, sdf_info)
                 ) / (2 * delta)
 
     else:
@@ -438,7 +420,7 @@ def sdf_func_true_grad(
             w = w_xyz[0] * w_xyz[1] * w_xyz[2]
             sdf_grad_sdf = (
                 sdf_grad_sdf
-                + w * sdf_info.geoms_sdf_grad[sdf_func_ravel_cell_idx(sdf_info, pos_cell, geom_sdf_res, geom_idx)]
+                + w * sdf_info.geoms_sdf_grad[sdf_func_ravel_cell_idx(pos_cell, geom_idx, geom_sdf_res, sdf_info)]
             )
 
     return sdf_grad_sdf
@@ -446,13 +428,13 @@ def sdf_func_true_grad(
 
 @qd.func
 def sdf_func_grad_world_local_consistent(
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    sdf_info: array_class.SDFInfo,
-    pos_world: qd.types.vector(3),
     geom_idx,
+    pos_world: qd.types.vector(3),
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     SDF gradient in world coordinates as the analytic gradient of the trilinear value interpolant, NOT the
@@ -463,28 +445,30 @@ def sdf_func_grad_world_local_consistent(
     the penetration level sets, which makes a settled stack of nested shells ratchet sideways. That smoothness is
     load-bearing for sliding thin features (bolt threads), so only the nested-shell contact path uses this variant.
     """
-    EPS = rigid_global_info.EPS[None]
+    EPS = rigid_info.EPS[None]
     grad_world = qd.Vector.zero(gs.qd_float, 3)
-    if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+    if dyn_info.geoms.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
         grad_world = gu.qd_normalize(pos_world - geom_pos, EPS)
-    elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
-        geom_data = geoms_info.data[geom_idx]
+    elif dyn_info.geoms.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+        geom_data = dyn_info.geoms.data[geom_idx]
         plane_normal = gs.qd_vec3([geom_data[0], geom_data[1], geom_data[2]])
         grad_world = gu.qd_transform_by_quat(plane_normal, geom_quat)
     else:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
-        pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
+        pos_sdf = gu.qd_transform_by_T(pos_mesh, collider_info.sdf.geoms_info.T_mesh_to_sdf[geom_idx])
         grad_mesh = qd.Vector.zero(gs.qd_float, 3)
-        if sdf_func_is_outside_sdf_grid(sdf_info, pos_sdf, geom_idx):
-            grad_mesh = sdf_func_proxy_grad(rigid_global_info, sdf_info, pos_sdf, geom_idx)
+        if sdf_func_is_outside_sdf_grid(geom_idx, pos_sdf, collider_info.sdf):
+            grad_mesh = sdf_func_proxy_grad(geom_idx, pos_sdf, rigid_info, collider_info.sdf)
         else:
-            geom_sdf_res = sdf_info.geoms_info.sdf_res[geom_idx]
-            cs = sdf_info.geoms_info.sdf_cell_size[geom_idx]
+            geom_sdf_res = collider_info.sdf.geoms_info.sdf_res[geom_idx]
+            cs = collider_info.sdf.geoms_info.sdf_cell_size[geom_idx]
             base = qd.min(qd.floor(pos_sdf, gs.qd_int), geom_sdf_res - 2)
             for offset in qd.grouped(qd.ndrange(2, 2, 2)):
                 pos_cell = base + offset
                 w_xyz = 1 - qd.abs(pos_sdf - pos_cell)
-                val = sdf_info.geoms_sdf_val[sdf_func_ravel_cell_idx(sdf_info, pos_cell, geom_sdf_res, geom_idx)]
+                val = collider_info.sdf.geoms_sdf_val[
+                    sdf_func_ravel_cell_idx(pos_cell, geom_idx, geom_sdf_res, collider_info.sdf)
+                ]
                 grad_mesh[0] += (2 * offset[0] - 1) * w_xyz[1] * w_xyz[2] * val / cs[0]
                 grad_mesh[1] += w_xyz[0] * (2 * offset[1] - 1) * w_xyz[2] * val / cs[1]
                 grad_mesh[2] += w_xyz[0] * w_xyz[1] * (2 * offset[2] - 1) * val / cs[2]
@@ -494,40 +478,33 @@ def sdf_func_grad_world_local_consistent(
 
 @qd.func
 def sdf_func_normal_world(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
-    pos_world,
     geom_idx,
     batch_idx,
+    pos_world,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    rigid_info: array_class.RigidInfo,
+    sdf_info: array_class.SDFInfo,
+    collider_static_config: qd.template(),
 ):
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 
     return sdf_func_normal_world_local(
-        geoms_info=geoms_info,
-        rigid_global_info=rigid_global_info,
-        collider_static_config=collider_static_config,
-        sdf_info=sdf_info,
-        pos_world=pos_world,
-        geom_idx=geom_idx,
-        geom_pos=g_pos,
-        geom_quat=g_quat,
+        geom_idx, pos_world, g_pos, g_quat, geoms_info, rigid_info, sdf_info, collider_static_config
     )
 
 
 @qd.func
 def sdf_func_normal_world_local(
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
-    pos_world: qd.types.vector(3),
     geom_idx,
+    pos_world: qd.types.vector(3),
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geoms_info: array_class.GeomsInfo,
+    rigid_info: array_class.RigidInfo,
+    sdf_info: array_class.SDFInfo,
+    collider_static_config: qd.template(),
 ):
     """
     Computes normalized SDF gradient (surface normal) in world coordinates,
@@ -535,35 +512,28 @@ def sdf_func_normal_world_local(
     """
     return gu.qd_normalize(
         sdf_func_grad_world_local(
-            geoms_info,
-            rigid_global_info,
-            collider_static_config,
-            sdf_info,
-            pos_world,
-            geom_idx,
-            geom_pos,
-            geom_quat,
+            geom_idx, pos_world, geom_pos, geom_quat, geoms_info, rigid_info, sdf_info, collider_static_config
         ),
-        rigid_global_info.EPS[None],
+        rigid_info.EPS[None],
     )
 
 
 @qd.func
 def sdf_func_grad_world_local(
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
-    pos_world: qd.types.vector(3),
     geom_idx,
+    pos_world: qd.types.vector(3),
     geom_pos: qd.types.vector(3),
     geom_quat: qd.types.vector(4),
+    geoms_info: array_class.GeomsInfo,
+    rigid_info: array_class.RigidInfo,
+    sdf_info: array_class.SDFInfo,
+    collider_static_config: qd.template(),
 ):
     """
     Computes SDF gradient in world coordinates, using provided geometry pose
     instead of reading from geoms_state.
     """
-    EPS = rigid_global_info.EPS[None]
+    EPS = rigid_info.EPS[None]
 
     grad_world = qd.Vector.zero(gs.qd_float, 3)
 
@@ -578,7 +548,7 @@ def sdf_func_grad_world_local(
     else:
         pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
         pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
-        grad_sdf = sdf_func_grad(geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_sdf, geom_idx)
+        grad_sdf = sdf_func_grad(geom_idx, pos_sdf, geoms_info, rigid_info, sdf_info, collider_static_config)
 
         grad_mesh = grad_sdf  # no rotation between mesh and sdf frame
         grad_world = gu.qd_transform_by_quat(grad_mesh, geom_quat)
@@ -588,23 +558,25 @@ def sdf_func_grad_world_local(
 
 @qd.func
 def sdf_func_find_closest_vert(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    sdf_info: array_class.SDFInfo,
-    pos_world,
     geom_idx,
     i_b,
+    pos_world,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
 ):
     """
     Returns vert of geom that's closest to pos_world
     """
-    g_pos = geoms_state.pos[geom_idx, i_b]
-    g_quat = geoms_state.quat[geom_idx, i_b]
-    geom_sdf_res = sdf_info.geoms_info.sdf_res[geom_idx]
+    g_pos = dyn_state.geoms.pos[geom_idx, i_b]
+    g_quat = dyn_state.geoms.quat[geom_idx, i_b]
+    geom_sdf_res = collider_info.sdf.geoms_info.sdf_res[geom_idx]
     pos_mesh = gu.qd_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
-    pos_sdf = gu.qd_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
+    pos_sdf = gu.qd_transform_by_T(pos_mesh, collider_info.sdf.geoms_info.T_mesh_to_sdf[geom_idx])
     nearest_cell = qd.cast(qd.min(qd.max(pos_sdf, 0), geom_sdf_res - 1), gs.qd_int)
     return (
-        sdf_info.geoms_sdf_closest_vert[sdf_func_ravel_cell_idx(sdf_info, nearest_cell, geom_sdf_res, geom_idx)]
-        + geoms_info.vert_start[geom_idx]
+        collider_info.sdf.geoms_sdf_closest_vert[
+            sdf_func_ravel_cell_idx(nearest_cell, geom_idx, geom_sdf_res, collider_info.sdf)
+        ]
+        + dyn_info.geoms.vert_start[geom_idx]
     )

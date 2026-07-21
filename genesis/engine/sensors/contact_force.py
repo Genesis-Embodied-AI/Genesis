@@ -25,11 +25,11 @@ if TYPE_CHECKING:
 
 @qd.kernel
 def _kernel_get_contacts_forces(
+    sensors_link_idx: qd.types.ndarray(),
     contact_forces: qd.types.ndarray(),
     link_a: qd.types.ndarray(),
     link_b: qd.types.ndarray(),
     links_quat: qd.types.ndarray(),
-    sensors_link_idx: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
     for i_c, i_s, i_b in qd.ndrange(link_a.shape[-1], sensors_link_idx.shape[-1], output.shape[-1]):
@@ -82,12 +82,7 @@ class ContactSensor(SimpleSensor[ContactSensorOptions, None, ContactSensorMetada
     """
 
     def __init__(
-        self,
-        options: ContactSensorOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
+        self, options: ContactSensorOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
 
@@ -214,12 +209,7 @@ class ContactForceSensor(
     """
 
     def __init__(
-        self,
-        options: ContactForceSensorOptions,
-        idx: int,
-        shared_context,
-        shared_metadata,
-        manager: "SensorManager",
+        self, options: ContactForceSensorOptions, idx: int, shared_context, shared_metadata, manager: "SensorManager"
     ):
         super().__init__(options, idx, shared_context, shared_metadata, manager)
 
@@ -285,11 +275,11 @@ class ContactForceSensor(
         else:
             raw_data_T.zero_()
             _kernel_get_contacts_forces(
+                shared_metadata.links_idx,
                 force.contiguous(),
                 link_a.contiguous(),
                 link_b.contiguous(),
                 links_quat.contiguous(),
-                shared_metadata.links_idx,
                 raw_data_T,
             )
 

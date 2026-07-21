@@ -253,6 +253,9 @@ class Raytracer:
                 if isinstance(entity, entities.RigidEntity):
                     for geom in entity.geoms:
                         self.add_surface(str(geom.uid), geom.surface)
+            elif isinstance(entity, entities.FEMEntity):
+                for vgeom in entity.vgeoms:
+                    self.add_surface(str(vgeom.uid), vgeom.surface)
             else:
                 self.add_surface(str(entity.uid), entity.surface)
 
@@ -334,7 +337,8 @@ class Raytracer:
         if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
-                    self.add_deformable(str(fem_entity.uid))
+                    for vgeom in fem_entity.vgeoms:
+                        self.add_deformable(str(vgeom.uid))
 
     def get_transform(self, matrix):
         if matrix is None:
@@ -781,27 +785,29 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all, uvs_qd = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
-            triangles_all = triangles_all.to_numpy().reshape((-1, 3))
-            uvs_all = uvs_qd.to_numpy()
+            vertices_all = miscu.qd_to_numpy(
+                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
+                self.rendered_envs_idx[0],
+                keepdim=False,
+                transpose=True,
+            )
 
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
-                    vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                    triangles = (
-                        triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
-                        - fem_entity.v_start
-                    )
-                    vertex_normals = trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals
-                    uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
+                if fem_entity.surface.vis_mode != "visual":
+                    continue
 
+                sim_verts = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
+                for vgeom in fem_entity.vgeoms:
+                    render_verts = sim_verts[vgeom.sim_verts_idx]
+                    vertex_normals = trimesh.Trimesh(
+                        vertices=render_verts, faces=vgeom.vmesh.faces, process=False
+                    ).vertex_normals
                     self.update_deformable(
-                        str(fem_entity.uid),
-                        vertices,
-                        triangles,
+                        str(vgeom.uid),
+                        render_verts,
+                        vgeom.vmesh.faces,
                         vertex_normals,
-                        uvs,
+                        np.array([]) if vgeom.uvs is None else vgeom.uvs,
                     )
 
         # Flush the update buffer.

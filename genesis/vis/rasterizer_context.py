@@ -145,9 +145,7 @@ class RasterizerContext:
 
         # pyrender scene
         self._scene = pyrender.Scene(
-            ambient_light=self.ambient_light,
-            bg_color=self.background_color,
-            n_envs=len(self.rendered_envs_idx),
+            ambient_light=self.ambient_light, bg_color=self.background_color, n_envs=len(self.rendered_envs_idx)
         )
 
         self.jit = JITRenderer(self._scene, [], [])
@@ -281,8 +279,7 @@ class RasterizerContext:
             for camera in self.cameras:
                 self.frustum_nodes[camera.uid] = self.add_node(
                     pyrender.Mesh.from_trimesh(
-                        mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)),
-                        smooth=False,
+                        mu.create_camera_frustum(camera, color=(1.0, 1.0, 1.0, 0.3)), smooth=False
                     )
                 )
             self.camera_frustum_shown = True
@@ -308,8 +305,8 @@ class RasterizerContext:
 
     def _link_frame_T(self, solver):
         """World-space 4x4 transforms for every (env, link) of solver, flattened in env-major, link-minor order."""
-        pos = qd_to_numpy(solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True)
-        quat = qd_to_numpy(solver.links_state.quat, self.rendered_envs_idx, transpose=True)
+        pos = qd_to_numpy(solver.dyn_state.links.pos, self.rendered_envs_idx, transpose=True, copy=True)
+        quat = qd_to_numpy(solver.dyn_state.links.quat, self.rendered_envs_idx, transpose=True)
         pos += self.scene.envs_offset[self.rendered_envs_idx, None]
         return gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
 
@@ -321,19 +318,14 @@ class RasterizerContext:
                     n_links = len(solver.links)
                     for i, link in enumerate(solver.links):
                         mesh = pyrender.Mesh.from_trimesh(
-                            mesh=self.link_frame_mesh,
-                            poses=all_T[i::n_links],
-                            env_shared=False,
-                            is_marker=True,
+                            mesh=self.link_frame_mesh, poses=all_T[i::n_links], env_shared=False, is_marker=True
                         )
                         self.link_frame_nodes[link.uid] = self.add_node(mesh)
             else:
                 all_T_parts = [self._link_frame_T(solver) for solver in self._rigid_solvers()]
                 if all_T_parts:
                     mesh = pyrender.Mesh.from_trimesh(
-                        mesh=self.link_frame_mesh,
-                        poses=np.concatenate(all_T_parts, axis=0),
-                        is_marker=True,
+                        mesh=self.link_frame_mesh, poses=np.concatenate(all_T_parts, axis=0), is_marker=True
                     )
                     self.link_frame_node = self.add_node(mesh)
             self.link_frame_shown = True
@@ -490,7 +482,7 @@ class RasterizerContext:
                             # Seed primitive.positions with the current world-space vverts: buffer updates bypass
                             # primitive.positions, which keeps feeding the scene bounds (shadow map extents), so it
                             # must hold world-space data.
-                            vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                            vverts = qd_to_numpy(solver.dyn_state.vverts.pos, self.rendered_envs_idx, transpose=True)
                             envs_offset = self.scene.envs_offset
                             custom_offset = entity._custom_vvert_start - entity._vvert_start
                             for geom in entity.vgeoms:
@@ -512,7 +504,7 @@ class RasterizerContext:
                                             mesh=mesh,
                                             smooth=geom.surface.smooth,
                                             double_sided=geom.surface.double_sided,
-                                        ),
+                                        )
                                     )
                                     env_i = self.rendered_envs_idx.index(i_b)
                                     geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
@@ -531,7 +523,7 @@ class RasterizerContext:
                                     self.create_node_seg(seg_key, node)
                             self._per_env_vverts_entity_uids.add(entity.uid)
 
-                        vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                        vverts = qd_to_numpy(solver.dyn_state.vverts.pos, self.rendered_envs_idx, transpose=True)
                         envs_offset = self.scene.envs_offset
                         custom_offset = entity._custom_vvert_start - entity._vvert_start
                         for geom in entity.vgeoms:
@@ -634,10 +626,7 @@ class RasterizerContext:
                     for link_idx, sign in ((contacts_info["link_a"][i_c], -1), (contacts_info["link_b"][i_c], 1)):
                         if self.sim.rigid_solver.links[link_idx].visualize_contact:
                             self.draw_contact_arrow(
-                                pos=contact_pos[i_c],
-                                radius=radius[i_c],
-                                force=sign * contact_force[i_c],
-                                env_idx=env_i,
+                                pos=contact_pos[i_c], radius=radius[i_c], force=sign * contact_force[i_c], env_idx=env_i
                             )
                             self.draw_debug_arrow(
                                 pos=contact_pos[i_c],
@@ -892,53 +881,50 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_qd, triangles_qd, uvs_qd = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = qd_to_numpy(vertices_qd)
-            triangles_all = qd_to_numpy(triangles_qd).reshape((-1, 3))
-            uvs_all = qd_to_numpy(uvs_qd)
+            vertices_all = qd_to_numpy(
+                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
+                self.rendered_envs_idx,
+                transpose=True,
+            )
 
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
-                    triangles = (
-                        triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
-                        - fem_entity.v_start
-                    )
-                    for idx in self.rendered_envs_idx:
-                        vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices, idx]
-                        uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
-                        # Select only vertices used in surface triangles, then reindex triangles against the new vertex list
-                        surf_idx, inv = np.unique(triangles.flat, return_inverse=True)
-                        triangles_reindexed = inv.reshape(triangles.shape)
-                        vertices = vertices[surf_idx]
-                        uvs = uvs[surf_idx]
+                if fem_entity.surface.vis_mode != "visual":
+                    continue
 
-                        mesh = trimesh.Trimesh(vertices, triangles_reindexed, process=False)
-                        mesh.visual = mu.surface_uvs_to_trimesh_visual(
-                            fem_entity.surface, uvs=uvs, n_verts=fem_entity.n_surface_vertices
+                sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
+                for i_g, vgeom in enumerate(fem_entity.vgeoms):
+                    visual = mu.surface_uvs_to_trimesh_visual(
+                        vgeom.surface, uvs=vgeom.uvs, n_verts=len(vgeom.sim_verts_idx)
+                    )
+                    seg_key = (fem_entity.idx, i_g) if self.segmentation_level == "geom" else fem_entity.idx
+                    for env_i, i_b in enumerate(self.rendered_envs_idx):
+                        mesh = trimesh.Trimesh(sim_verts[env_i, vgeom.sim_verts_idx], vgeom.vmesh.faces, process=False)
+                        mesh.visual = visual
+                        node = pyrender.Mesh.from_trimesh(
+                            mesh, smooth=vgeom.surface.smooth, double_sided=vgeom.surface.double_sided
                         )
-                        self.add_static_node(
-                            fem_entity,
-                            pyrender.Mesh.from_trimesh(
-                                mesh,
-                                smooth=fem_entity.surface.smooth,
-                                double_sided=fem_entity.surface.double_sided,
-                            ),
-                            i_b=idx,
-                        )
+                        static_node = self.add_node(node)
+                        self.static_nodes[(i_b, vgeom.uid)] = static_node
+                        self.create_node_seg(seg_key, static_node)
 
     def update_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = vertices_all.to_numpy(dtype=gs.np_float)
-            triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
+            vertices_all = qd_to_numpy(
+                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
+                self.rendered_envs_idx,
+                transpose=True,
+            )
 
             for fem_entity in self.sim.fem_solver.entities:
-                if fem_entity.surface.vis_mode == "visual":
-                    for idx in self.rendered_envs_idx:
-                        vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices, idx]
+                if fem_entity.surface.vis_mode != "visual":
+                    continue
 
-                        node = self.static_nodes[(idx, fem_entity.uid)]
-                        update_data = self._scene.reorder_vertices(node, vertices)
+                sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
+                for vgeom in fem_entity.vgeoms:
+                    for env_i, i_b in enumerate(self.rendered_envs_idx):
+                        node = self.static_nodes[(i_b, vgeom.uid)]
+                        render_verts = sim_verts[env_i, vgeom.sim_verts_idx].astype(np.float32, copy=False)
+                        update_data = self._scene.reorder_vertices(node, render_verts)
                         self.jit.update_buffer(node, "pos", update_data)
                         normal_data = self.jit.update_normal(node, update_data)
                         if normal_data is not None:
@@ -1115,12 +1101,7 @@ class RasterizerContext:
 
     def draw_debug_box(self, bounds, color=(1.0, 0.0, 0.0, 1.0), wireframe=True, wireframe_radius=0.002):
         bounds = tensor_to_array(bounds)
-        mesh = mu.create_box(
-            bounds=bounds,
-            wireframe=wireframe,
-            wireframe_radius=wireframe_radius,
-            color=color,
-        )
+        mesh = mu.create_box(bounds=bounds, wireframe=wireframe, wireframe_radius=wireframe_radius, color=color)
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_box_{gs.UID()}", is_marker=True)
         self.add_external_node(node)
         return node

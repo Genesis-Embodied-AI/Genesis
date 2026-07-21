@@ -375,7 +375,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
 
     # Extract X/Y forces while making sure observed forces are consistent
     box_forces_xy = []
-    applied_forces = qd_to_numpy(scene.rigid_solver.dofs_state.qf_applied, None, transpose=True)
+    applied_forces = qd_to_numpy(scene.rigid_solver.dyn_state.dofs.qf_applied, None, transpose=True)
     for box in boxes:
         dofs_idx = slice(box.dof_start, box.dof_end)
         box_forces = applied_forces[..., dofs_idx]

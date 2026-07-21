@@ -142,7 +142,7 @@ def main():
         if measured is not None:
             step_rate[0] = measured
         # Read the awake count outside the timed region so it does not enter the reported step rate.
-        n_awake[0] = n_bodies - int(qd_to_numpy(scene.rigid_solver.links_state.is_hibernated, transpose=True).sum())
+        n_awake[0] = n_bodies - int(qd_to_numpy(scene.rigid_solver.dyn_state.links.is_hibernated, transpose=True).sum())
         if args.record and i_step % render_every == 0:
             camera.render()
     if args.record:

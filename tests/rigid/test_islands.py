@@ -39,6 +39,33 @@ def multi_free_body_path(tmp_path):
 
 
 @pytest.mark.required
+def test_constraint_capacity_covers_friction_rows(show_viewer):
+    # The island grouping writes one entry per assembled constraint, so its buffers must cover the same bound as
+    # the constraint solver, including the extra torsional and rolling rows per contact.
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            enable_torsional_friction=True,
+            enable_rolling_friction=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    for i_box in range(2):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.0, 0.0, 0.2 + 0.4 * i_box),
+            ),
+        )
+    scene.build()
+    constraint_solver = scene.sim.rigid_solver.constraint_solver
+    assert constraint_solver.constraint_state.island.constraint_id.shape[0] >= constraint_solver.len_constraints
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_partition_logics(show_viewer, n_envs, multi_free_body_path, monkeypatch):
     # The welded pair never touches, so only the equality edge couples them: without it the partition would split them
@@ -117,7 +144,7 @@ def test_partition_logics(show_viewer, n_envs, multi_free_body_path, monkeypatch
 
     # The partition is rebuilt inside every step; inspect the one the solver actually used this step.
     solver = scene.rigid_solver
-    island_state = solver.constraint_solver.island_state
+    island_state = solver.constraint_solver.constraint_state.island
 
     island_idx = qd_to_numpy(island_state.links_island_idx)
     island_of = {
@@ -233,7 +260,7 @@ def test_partition_track_changes(show_viewer, n_envs, monkeypatch):
     scene.build(n_envs=n_envs)
 
     # The step rebuilds the partition; read the island count the solver actually used this step.
-    island_state = scene.rigid_solver.constraint_solver.island_state
+    island_state = scene.rigid_solver.constraint_solver.constraint_state.island
 
     def n_islands_now():
         return qd_to_numpy(island_state.n_islands)
@@ -354,7 +381,7 @@ def test_monolith_seed_oversaturated(show_viewer, monkeypatch):
     ]
     scene.build(n_envs=2)
 
-    cfg = scene.rigid_solver._static_rigid_sim_config
+    cfg = scene.rigid_solver.rigid_config
     # Guard against the test silently ceasing to exercise the gap (e.g. if the saturation heuristic changes).
     assert not cfg.enable_cooperative_constraint_kernels
     assert not cfg.enable_fused_factor_solve_init
@@ -447,7 +474,7 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     solver = scene.rigid_solver
 
     def asleep():
-        return all(qd_to_numpy(solver.entities_state.is_hibernated, duck.idx).all() for duck in ducks)
+        return all(qd_to_numpy(solver.dyn_state.entities.is_hibernated, duck.idx).all() for duck in ducks)
 
     for _ in range(200):
         scene.step()
@@ -466,8 +493,8 @@ def test_hibernation_with_pruning(show_viewer, n_envs):
     # Resetting wakes every body: the restored state is a discontinuity, so a body left hibernated would stay frozen
     # and never be resimulated. After reset the ducks are awake again, with their flags cleared and awake counter zeroed.
     scene.reset()
-    assert not any(qd_to_numpy(solver.entities_state.is_hibernated, duck.idx).any() for duck in ducks)
-    assert (qd_to_numpy(solver.links_state.awake_steps) == 0).all()
+    assert not any(qd_to_numpy(solver.dyn_state.entities.is_hibernated, duck.idx).any() for duck in ducks)
+    assert (qd_to_numpy(solver.dyn_state.links.awake_steps) == 0).all()
 
 
 @pytest.mark.required
@@ -494,7 +521,7 @@ def test_dof_length_scales_with_body_size(mujoco_compatibility):
     het = scene.add_entity(morph=tuple(gs.morphs.Sphere(radius=r, pos=(0.0, 2.0, 1.0)) for r in variant_radii))
     scene.build(n_envs=4)
 
-    dof_length = qd_to_numpy(scene.rigid_solver.dofs_info.dof_length)
+    dof_length = qd_to_numpy(scene.rigid_solver.dyn_info.dofs.dof_length)
     for sphere, radius in zip(spheres, radii):
         dof_length_sphere = dof_length[sphere.dof_start : sphere.dof_start + sphere.n_dofs]
         assert_allclose(dof_length_sphere[:3], 1.0, tol=gs.EPS)
@@ -653,7 +680,7 @@ def test_hibernation_wakes_on_user_input(show_viewer, n_envs):
     solver = scene.rigid_solver
 
     def asleep(entity):
-        return qd_to_numpy(solver.entities_state.is_hibernated, entity.idx).all()
+        return qd_to_numpy(solver.dyn_state.entities.is_hibernated, entity.idx).all()
 
     def z_of(entity):
         return entity.get_pos()[..., 2]
@@ -768,10 +795,10 @@ def test_hibernation_wakes_on_collision(show_viewer, n_envs, broadphase_traversa
     solver = scene.rigid_solver
 
     def asleep(entity):
-        return qd_to_numpy(solver.entities_state.is_hibernated, entity.idx).all()
+        return qd_to_numpy(solver.dyn_state.entities.is_hibernated, entity.idx).all()
 
     def link_asleep(link):
-        return qd_to_numpy(solver.links_state.is_hibernated, link.idx).all()
+        return qd_to_numpy(solver.dyn_state.links.is_hibernated, link.idx).all()
 
     for _ in range(50):
         scene.step()
@@ -843,7 +870,7 @@ def test_hibernation_wakes_on_daisy_chain(show_viewer, n_envs):
     solver.add_weld_constraint(box_a.base_link_idx, box_b.base_link_idx)
 
     def asleep(entity):
-        return qd_to_numpy(solver.entities_state.is_hibernated, entity.idx).all()
+        return qd_to_numpy(solver.dyn_state.entities.is_hibernated, entity.idx).all()
 
     for _ in range(50):
         scene.step()
@@ -891,13 +918,13 @@ def test_hibernation_repartitioning(show_viewer, n_envs):
     solver = scene.sim.rigid_solver
     box1_idx = box1._idx_in_solver
     box2_idx = box2._idx_in_solver
-    island_state = solver.constraint_solver.island_state
+    island_state = solver.constraint_solver.constraint_state.island
 
     def asleep(idx):
-        return qd_to_numpy(solver.entities_state.is_hibernated, idx).all()
+        return qd_to_numpy(solver.dyn_state.entities.is_hibernated, idx).all()
 
     def awake(idx):
-        return not qd_to_numpy(solver.entities_state.is_hibernated, idx).any()
+        return not qd_to_numpy(solver.dyn_state.entities.is_hibernated, idx).any()
 
     for _ in range(60):
         scene.step()
