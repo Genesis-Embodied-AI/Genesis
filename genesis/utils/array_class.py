@@ -2597,4 +2597,165 @@ def get_raycast_result(n_envs: int):
     )
 
 
+# =========================================== Planner ===========================================
+
+
+@qd.data_oriented
+class PlannerStaticConfig(metaclass=AutoInitMeta):
+    """Compile-time constants of a planning-entity context. Iteration budgets are runtime scalars in PlannerInfo."""
+
+    para_level: int
+    is_batched_arm: bool
+    # Planned-entity extents; the planner works in entity-local link / joint / q coordinates.
+    entity_idx: int
+    link_offset: int
+    joint_offset: int
+    q_offset: int
+    n_dp: int
+    n_links: int
+    n_joints: int
+    n_spheres: int
+    n_attach_max: int
+    # Trajectory knots (W), seeds per env (S), and the widest cost-only evaluation fan-out per candidate
+    # (max of MPPI particles and line-search trials), which sizes the per-thread FK scratch columns.
+    n_knots: int
+    n_seeds: int
+    n_eval_per_candidate: int
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerEntityInfo:
+    # Robot collision proxy: spheres in link-local frames, sorted by link (see sphere_proxy.py).
+    spheres_link_idx: qd.Tensor
+    spheres_pos_local: qd.Tensor
+    spheres_radius: qd.Tensor
+    # Flat robot self-collision sphere-index pairs (link-pair filter expanded to spheres).
+    self_pairs: qd.Tensor
+    # Attached-object spheres, composed into their attach link frame per env (grasps differ across envs).
+    attach_spheres_link_idx: qd.Tensor
+    attach_spheres_pos_local: qd.Tensor
+    attach_spheres_radius: qd.Tensor
+    attach_spheres_is_active: qd.Tensor
+    # Joint-space box and derivative limits of the planned DOFs.
+    q_limit_lower: qd.Tensor
+    q_limit_upper: qd.Tensor
+    vel_limit: qd.Tensor
+    acc_limit: qd.Tensor
+    jerk_limit: qd.Tensor
+    # Per-DOF workspace reach bound: config-independent Lipschitz constant of the FK map used by the swept-collision
+    # cover and the certified edge checks (sum of distal chain segment lengths + max sphere offset + radius).
+    dof_reach: qd.Tensor
+    # Per-(dof, env) lock mask: locked DOFs hold their start value (auto-grasp freezes gripper chains).
+    dof_is_locked: qd.Tensor
+
+
+def get_planner_entity_info(planner_config, n_self_pairs, B):
+    return PlannerEntityInfo(
+        spheres_link_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
+        spheres_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+        spheres_radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+        self_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
+        attach_spheres_link_idx=V(dtype=gs.qd_int, shape=(max(planner_config.n_attach_max, 1),)),
+        attach_spheres_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1), B)),
+        attach_spheres_radius=V(dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1),)),
+        attach_spheres_is_active=V(dtype=gs.qd_bool, shape=(max(planner_config.n_attach_max, 1), B)),
+        q_limit_lower=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        q_limit_upper=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        vel_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        acc_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        jerk_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        dof_reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+        dof_is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerWorldState:
+    """World-geometry snapshot frozen at plan start; the planner never reads live poses past this point."""
+
+    n_geoms: qd.Tensor
+    geoms_idx: qd.Tensor
+    geoms_pos: qd.Tensor
+    geoms_quat: qd.Tensor
+    geoms_aabb_min: qd.Tensor
+    geoms_aabb_max: qd.Tensor
+    # Per-(geom, env) collision-enable mask: attached entities ride with the robot instead of obstructing it, and
+    # future grasp/release intents exempt their target the same way.
+    geoms_is_active: qd.Tensor
+    # Largest activation band the geom's distance query answers metrically: infinite for analytic primitives,
+    # the grid margin beyond the mesh axis-aligned bounding box (AABB) for grid signed distance fields.
+    geoms_max_band: qd.Tensor
+
+
+def get_planner_world_state(n_geoms, B):
+    return PlannerWorldState(
+        n_geoms=V(dtype=gs.qd_int, shape=()),
+        geoms_idx=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
+        geoms_pos=V_VEC(3, dtype=gs.qd_float, shape=(max(n_geoms, 1), B)),
+        geoms_quat=V_VEC(4, dtype=gs.qd_float, shape=(max(n_geoms, 1), B)),
+        geoms_aabb_min=V_VEC(3, dtype=gs.qd_float, shape=(max(n_geoms, 1), B)),
+        geoms_aabb_max=V_VEC(3, dtype=gs.qd_float, shape=(max(n_geoms, 1), B)),
+        geoms_is_active=V(dtype=gs.qd_bool, shape=(max(n_geoms, 1), B)),
+        geoms_max_band=V(dtype=gs.qd_float, shape=(max(n_geoms, 1),)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerState:
+    """Planner-owned scratch. The candidate axis C = B*S folds env x seed; NF = C*W adds the knot axis."""
+
+    # Knot trajectories under optimization and their gradient, entity-local q coordinates. Column i_cw = i_c *
+    # n_knots + i_w so the same 2D (n_dp, column) layout serves the optimizer and the FK column convention.
+    qpos_traj: qd.Tensor
+    grad_traj: qd.Tensor
+    # Forward kinematics (FK) cache of the gradient path, one column per (candidate, knot).
+    links_pos: qd.Tensor
+    links_quat: qd.Tensor
+    joints_xanchor: qd.Tensor
+    joints_xaxis: qd.Tensor
+    spheres_pos: qd.Tensor
+    # Cost-only evaluation scratch, one column per in-flight rollout / line-search trial (serial over knots).
+    eval_qpos: qd.Tensor
+    eval_links_pos: qd.Tensor
+    eval_links_quat: qd.Tensor
+    eval_joints_xanchor: qd.Tensor
+    eval_joints_xaxis: qd.Tensor
+    eval_spheres_pos: qd.Tensor
+    # Per-candidate optimizer state.
+    cost: qd.Tensor
+    is_active: qd.Tensor
+    # Per-env outputs.
+    best_seed_idx: qd.Tensor
+    is_env_valid: qd.Tensor
+    errno: qd.Tensor
+
+
+def get_planner_state(planner_config, B):
+    C = B * planner_config.n_seeds
+    NF = C * planner_config.n_knots
+    E = C * planner_config.n_eval_per_candidate
+    n_sph_tot = planner_config.n_spheres + planner_config.n_attach_max
+
+    return PlannerState(
+        qpos_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+        grad_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+        links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, NF)),
+        links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, NF)),
+        joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
+        joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
+        spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, NF)),
+        eval_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, E)),
+        eval_links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
+        eval_links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
+        eval_joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
+        eval_joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
+        eval_spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+        cost=V(dtype=gs.qd_float, shape=(C,)),
+        is_active=V(dtype=gs.qd_bool, shape=(C,)),
+        best_seed_idx=V(dtype=gs.qd_int, shape=(B,)),
+        is_env_valid=V(dtype=gs.qd_bool, shape=(B,)),
+        errno=V(dtype=gs.qd_int, shape=(B,)),
+    )
+
+
 GeomsInitAABB = qd.Tensor
