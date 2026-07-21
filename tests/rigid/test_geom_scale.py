@@ -140,6 +140,8 @@ def test_scaled_shapes_mass_extent_and_rest(n_envs, show_viewer):
     # A uniform scale s is a similarity transform: mass grows by s^3 and every extent by s (mesh included). The
     # extents are read at rest orientation before settling, isolating geometry scale from the drop.
     assert_allclose(box.get_mass() / mass0, scale**3, tol=1e-4)
+    # Scaling preserves density, so the per-link masses stay consistent with the density-preserving entity mass.
+    assert_allclose(sum(link.get_mass() for link in box.links), box.get_mass(), tol=1e-5)
     box_aabb = np.asarray(box.get_AABB().cpu()).reshape(-1, 2, 3)
     assert_allclose(box_aabb[:, 1] - box_aabb[:, 0], box_size * scale_1d[:, None], tol=1e-4)
     duck_extent1 = np.asarray(duck.get_AABB().cpu()).reshape(-1, 2, 3)

@@ -1013,28 +1013,44 @@ class RigidLink(KinematicLink):
         mass = tensor_to_array(mass)
         if np.any(mass < gs.EPS):
             gs.raise_exception(f"Attempt to set mass of link '{self.name}' to {mass}. Mass must be strictly positive.")
-        if mass.ndim > 0 and not self._solver._options.batch_links_info:
-            gs.raise_exception(
-                f"Impossible to set per-env mass of link '{self.name}'. Please specify "
-                "'RigidOptions.batch_links_info=True'."
-            )
+        if mass.ndim > 0:
+            if not self._solver._options.batch_links_info:
+                gs.raise_exception(
+                    f"Impossible to set per-env mass of link '{self.name}'. Please specify "
+                    "'RigidOptions.batch_links_info=True'."
+                )
+            if self._solver.n_envs > 0 and mass.shape[0] != self._solver.n_envs:
+                gs.raise_exception(
+                    f"Expected one mass per environment ({self._solver.n_envs}) for link '{self.name}', "
+                    f"got {mass.shape[0]}."
+                )
 
-        ratio = mass / self._inertial_mass
+        # Scale relative to the current mass so the result is correct even when the live inertial differs from the
+        # build baseline -- after set_scale or for a heterogeneous variant.
+        current_mass = (
+            tensor_to_array(self._solver.get_links_inertial_mass(self._idx))[..., 0]
+            if self._entity._has_per_env_inertial
+            else self._inertial_mass
+        )
+        ratio = mass / current_mass
         self._solver.set_links_inertia(ratio, [self.idx])
         self._inertial_mass = mass
         self._inertial_i = self._inertial_i * ratio[..., None, None]
         self._invweight = self._invweight / ratio[..., None]
 
     @gs.assert_built
-    def get_mass(self):
+    def get_mass(self, envs_idx=None):
         """
-        Get the mass of the link.
+        Get the mass of the link in kg.
 
-        Returns the build-time baseline (or the value last written by set_mass), which set_mass relies on as its
-        reference. It does NOT reflect runtime set_scale, which writes the scaled mass to the solver rather than
-        this cached baseline -- so under scaling this disagrees with entity.get_mass (a known gap; reconciling it
-        requires reworking set_mass's baseline handling).
+        Per-environment (a scalar for ``n_envs == 0``, otherwise a ``(n_envs,)`` tensor) when the owning entity's
+        inertial can differ across environments -- per-env geom scaling (``set_scale``) or a heterogeneous entity
+        -- so it reflects the current scaled mass and agrees with ``entity.get_mass``. Otherwise the build-time
+        mass shared across environments.
         """
+        if self._entity._has_per_env_inertial:
+            mass = self._solver.get_links_inertial_mass(self._idx, envs_idx)[..., 0]
+            return float(mass) if self._solver.n_envs == 0 else mass
         return self._inertial_mass
 
     def set_friction(self, friction):

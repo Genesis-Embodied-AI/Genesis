@@ -4621,6 +4621,14 @@ class RigidEntity(KinematicEntity):
         for link in self.links:
             link.set_mass(link.get_mass() * ratio)
 
+    @property
+    def _has_per_env_inertial(self) -> bool:
+        """Whether this entity's inertial (mass/com/inertia) can differ across environments -- true under per-env
+        geom scaling (``set_scale``) or a heterogeneous entity. Keyed per entity (not solver-wide) so a mixed
+        scene does not treat homogeneous entities as per-env.
+        """
+        return self._solver._options.enable_geom_scaling or self._enable_heterogeneous
+
     @gs.assert_built
     def get_mass(self, envs_idx=None):
         """
@@ -4635,7 +4643,7 @@ class RigidEntity(KinematicEntity):
         -------
         mass : float | torch.Tensor
         """
-        if self._solver._options.enable_geom_scaling or self._enable_heterogeneous:
+        if self._has_per_env_inertial:
             total = self.get_links_inertial_mass(envs_idx=envs_idx).sum(dim=-1)
             return float(total) if self._solver.n_envs == 0 else total
         mass = 0.0
