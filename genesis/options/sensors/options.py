@@ -188,6 +188,33 @@ class RigidEntitySensorOptionsMixin(RigidSensorOptionsMixin[SensorT]):
             gs.raise_exception(f"{type(self).__name__} requires entity_idx >= 0, got {self.entity_idx}.")
 
 
+class ContactFilterOptionsMixin(RigidSensorOptionsMixin[SensorT]):
+    """
+    Shared options for the contact sensors whose reading can be scoped to ignore contacts with chosen counterpart
+    links -- Contact, ContactForce, and the contact-driven tactile probes (ContactProbe, ContactDepthProbe,
+    KinematicTaxel).
+
+    Parameters
+    ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link whose other participant is one
+        of these links are ignored: the sensor behaves as if those counterparts were not touching. Use it to scope a
+        reading to a chosen set of contacts (e.g. force on a foot from the ground, excluding self-contact). Default
+        is empty, so every contact with the sensor link counts.
+    """
+
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if self.filter_link_idx:
+            n_links = scene.sim.rigid_solver.n_links
+            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
+                gs.raise_exception(
+                    f"{type(self).__name__}: filter_link_idx must be in [0, {n_links}). Got {self.filter_link_idx}."
+                )
+
+
 class SimpleSensorOptions(SensorOptions[SensorT]):
     """
     Options carrying SimpleSensor's imperfection parameters.
@@ -320,15 +347,12 @@ class JointTorque(RigidEntitySensorOptionsMixin["JointTorqueSensor"], SimpleSens
             )
 
 
-class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["ContactSensor"]):
+class Contact(ContactFilterOptionsMixin["ContactSensor"], SimpleSensorOptions["ContactSensor"]):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
 
     Parameters
     ----------
-    filter_link_idx : array-like[int], optional
-        Global rigid link indices (solver link space). Contacts with the sensor link where the other
-        participant is one of these links are ignored. Default is empty (no filtering).
     threshold : float, optional
         The bool-conversion threshold applied at read time to the underlying float contact magnitude
         (kernel produces float). A bin reads ``True`` iff its magnitude exceeds this value. Default
@@ -339,22 +363,12 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["Con
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
-    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
     threshold: NonNegativeFloat = 0.0
     debug_sphere_radius: PositiveFloat = 0.05
     debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
 
-    def validate_scene(self, scene: "Scene"):
-        super().validate_scene(scene)
-        if self.filter_link_idx:
-            n_links = scene.sim.rigid_solver.n_links
-            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
-                gs.raise_exception(
-                    f"Contact sensor filter_link_idx should be in range [0, {n_links}). Got {self.filter_link_idx}"
-                )
 
-
-class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOptions["ContactForceSensor"]):
+class ContactForce(ContactFilterOptionsMixin["ContactForceSensor"], SimpleSensorOptions["ContactForceSensor"]):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 

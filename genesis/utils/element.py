@@ -2,7 +2,6 @@ import os
 import pickle as pkl
 
 import numpy as np
-import trimesh
 import igl
 
 import genesis as gs
@@ -10,33 +9,8 @@ import genesis as gs
 from . import mesh as mu
 
 
-def box_to_elements(pos=(0, 0, 0), size=(1, 1, 1), tet_cfg=dict()):
-    trimesh_obj = trimesh.creation.box(extents=size)
-    trimesh_obj.vertices += np.array(pos)
-    verts, elems = mu.tetrahedralize_mesh(trimesh_obj, tet_cfg)
-
-    return verts, elems
-
-
-def sphere_to_elements(pos=(0, 0, 0), radius=0.5, tet_cfg=dict()):
-    trimesh_obj = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
-    trimesh_obj.vertices *= np.array(radius)
-    trimesh_obj.vertices += np.array(pos)
-    verts, elems = mu.tetrahedralize_mesh(trimesh_obj, tet_cfg)
-
-    return verts, elems
-
-
-def cylinder_to_elements():
-    raise NotImplementedError
-
-
-def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
-    mesh = mu.load_mesh(file)
-
-    mesh.vertices = mesh.vertices * scale
-
-    # compute file name via hashing for caching
+def mesh_to_elements(mesh, tet_cfg=dict()):
+    """Tetrahedralize a surface trimesh, with the result cached on disk keyed on vertices, faces and configuration."""
     tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
 
     # loading pre-computed cache if available
@@ -58,19 +32,7 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
             with open(tet_file_path, "wb") as tet_file:
                 pkl.dump((verts, elems), tet_file)
 
-    verts += np.array(pos)
-
-    # Build full UV array
-    uvs = None
-    if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
-        # Extract UVs from mesh before tetrahedralization.
-        # Note that 'tetgen' preserves original vertices at start of output array.
-        uvs_orig = mesh.visual.uv.astype(gs.np_float, copy=False)
-
-        # Original vertices get their UVs, interior vertices get zeros
-        uvs = np.pad(uvs_orig, ((0, len(verts) - len(mesh.vertices)), (0, 0)))
-
-    return verts, elems, uvs
+    return verts, elems
 
 
 def split_all_surface_tets(verts, elems):

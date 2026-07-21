@@ -2,7 +2,6 @@ import ctypes
 import gc
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +18,8 @@ import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
+
+from tests.gpu_info import detect_gpu_backend
 
 # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
 has_tkinter = False
@@ -102,12 +103,14 @@ SKIP_NO_OMNIVERSE_KIT = _skip_reason("omniverse-kit support not available")
 
 
 def is_mem_monitoring_supported():
-    try:
-        assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=10)
+    if not sys.platform.startswith("linux"):
+        return False, "mem-monitoring only supported on linux"
+
+    backend = detect_gpu_backend()
+    if backend is not None:
         return True, None
-    except Exception as exc:  # platform or nvidia-smi unavailable
-        return False, exc
+
+    return False, "no supported GPU backend detected"
 
 
 def pytest_make_parametrize_id(config, val, argname):
@@ -246,43 +249,34 @@ def _get_gpu_indices():
         return tuple(map(int, cuda_visible_devices.split(",")))
 
     if sys.platform == "linux":
-        nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        try:
-            return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
-        except FileNotFoundError:
-            warnings.warn(
-                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
-                "on WSL2 where the NVIDIA proc interface is not mounted.",
-                stacklevel=2,
-            )
+        backend = detect_gpu_backend()
+        if backend is not None:
+            device_count = backend.get_device_count()
+            if device_count > 0:
+                return tuple(range(device_count))
+
+        warnings.warn(
+            "No GPU backend detected (neither NVML nor AMD SMI); multi-GPU support will be disabled.",
+            stacklevel=2,
+        )
 
     return (0,)
 
 
 def _torch_get_gpu_idx(device):
-    if sys.platform == "linux":
-        import torch
+    # The caller only invokes this for a CUDA device, so torch is using this GPU and its identity must be
+    # confirmable. Returns the resolved physical device index, or -1 when it cannot be confirmed (no GPU
+    # management library, or a UUID unknown to it), which the caller turns into a hard error rather than
+    # letting an unverified device through.
+    import torch
 
-        device_property = torch.cuda.get_device_properties(device)
-        device_uuid = str(device_property.uuid)
+    device_uuid = str(torch.cuda.get_device_properties(device).uuid)
 
-        nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        try:
-            for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
-                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                    device_info = f.read()
-                if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                    return device_idx
-            else:
-                return -1
-        except FileNotFoundError:
-            warnings.warn(
-                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
-                "on WSL2 where the NVIDIA proc interface is not mounted.",
-                stacklevel=2,
-            )
+    backend = detect_gpu_backend()
+    if backend is None:
+        return -1
 
-    return 0
+    return backend.get_device_index_from_uuid(device_uuid)
 
 
 def _get_egl_index(gpu_index):
@@ -339,34 +333,12 @@ def pytest_xdist_auto_num_workers(config):
     else:
         # Cannot rely on 'torch' because this would force loading devices before configuring CUDA device visibility
         devices_vram_memory = None
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=True,
-                text=True,
-            )
-            devices_vram_memory = tuple(int(e.strip()) for e in result.stdout.splitlines())
-        except ValueError:
-            # Unknown VRAM. Assuming unbounded.
-            vram_memory = float("inf")
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            try:
-                result = subprocess.run(
-                    ["rocm-smi", "--showmeminfo", "vram", "-d", "0-255"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=True,
-                    text=True,
-                )
-                devices_vram_memory = tuple(
-                    int(m.group(1)) for m in re.finditer(r"VRAM Total:\s+(\d+)\s*MiB", result.stdout)
-                )
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                pass
-        if devices_vram_memory is not None:
-            assert len(set(devices_vram_memory)) == 1, "Heterogeneous Nvidia GPU devices not supported."
+        backend = detect_gpu_backend()
+        if backend is not None:
+            devices_vram_memory = backend.get_device_vram_mib()
+
+        if devices_vram_memory:
+            assert len(set(devices_vram_memory)) == 1, "Heterogeneous GPU devices not supported."
             num_gpus = len(devices_vram_memory)
             vram_memory = sum(devices_vram_memory) / 1024
         else:
@@ -601,6 +573,8 @@ def precision(request, backend):
         # Only default to 64bits precision when running the unit tests on CPU backend
         expr = Expression.compile(request.config.option.markexpr)
         is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        if isinstance(backend, str):
+            backend = getattr(gs.constants.backend, backend)
         precision = "64" if not is_benchmarks and backend == gs.cpu else "32"
     return precision
 
@@ -657,6 +631,32 @@ def gjk_collision(request):
     if gjk_collision is None:
         gjk_collision = False
     return gjk_collision
+
+
+@pytest.fixture
+def friction_torsional(request):
+    friction_torsional = None
+    for mark in request.node.iter_markers("friction_torsional"):
+        if mark.args:
+            if friction_torsional is not None:
+                pytest.fail("'friction_torsional' can only be specified once.")
+            (friction_torsional,) = mark.args
+    if friction_torsional is None:
+        friction_torsional = False
+    return friction_torsional
+
+
+@pytest.fixture
+def friction_rolling(request):
+    friction_rolling = None
+    for mark in request.node.iter_markers("friction_rolling"):
+        if mark.args:
+            if friction_rolling is not None:
+                pytest.fail("'friction_rolling' can only be specified once.")
+            (friction_rolling,) = mark.args
+    if friction_rolling is None:
+        friction_rolling = False
+    return friction_rolling
 
 
 @pytest.fixture
@@ -810,6 +810,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
+            # The device torch selected must be one this worker is allowed to use. Anything else - including a
+            # -1 meaning the device could not be confirmed - fails hard rather than letting an unverified device
+            # through, on every platform.
             device_idx = _torch_get_gpu_idx(gs.device.index)
             if device_idx not in _get_gpu_indices():
                 raise RuntimeError(f"Invalid CUDA GPU device, got {device_idx}, not in {_get_gpu_indices()}.")
@@ -861,6 +864,8 @@ def gs_sim(
     adjacent_collision,
     gjk_collision,
     friction_cone,
+    friction_torsional,
+    friction_rolling,
     show_viewer,
     mj_sim,
 ):
@@ -878,6 +883,8 @@ def gs_sim(
         show_viewer,
         mj_sim,
         friction_cone=friction_cone,
+        friction_torsional=friction_torsional,
+        friction_rolling=friction_rolling,
     )
 
 

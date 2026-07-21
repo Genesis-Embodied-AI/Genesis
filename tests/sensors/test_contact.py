@@ -171,7 +171,7 @@ def test_gravity_force(n_envs, show_viewer, tol):
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
-def test_filter_link_idx(show_viewer):
+def test_filter_link_idx(show_viewer, tol):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, -10.0),
@@ -203,6 +203,17 @@ def test_filter_link_idx(show_viewer):
             filter_link_idx=(floor.link_start,),
         )
     )
+    force_sensor = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_on_floor.idx,
+        )
+    )
+    force_sensor_filtered = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_on_floor.idx,
+            filter_link_idx=(floor.link_start,),
+        )
+    )
     scene.build(n_envs=2)
     box.set_pos(
         (
@@ -218,3 +229,16 @@ def test_filter_link_idx(show_viewer):
     assert not filtered_data[0], "Contact sensor with filter_link_idx should filter out contact with the floor"
     assert data[1], "Contact sensor should detect contact with the box"
     assert filtered_data[1], "Contact sensor with filter_link_idx should still detect contact with the box"
+
+    force = force_sensor.read()
+    force_filtered = force_sensor_filtered.read()
+    # env 0: box_on_floor only touches the floor, which supports it (+z).
+    assert force[0, 2] > 1.0, "ContactForce should report the upward floor support force"
+    # filtering the floor (the only contact) leaves zero force
+    assert_allclose(force_filtered[0], 0.0, tol=tol)
+    # env 1: box_on_floor touches the floor (below, +z support) and the top box (above, -z push).
+    assert force[1, 2] > 1.0, "net contact force on box_on_floor is upward (floor support exceeds top-box weight)"
+    assert force_filtered[1, 2] < -1.0, "filtering the floor leaves only the top box's downward push"
+    # filtering the floor must change the result
+    with np.testing.assert_raises(AssertionError):
+        assert_allclose(force[1], force_filtered[1], tol=tol)

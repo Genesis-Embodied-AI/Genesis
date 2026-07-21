@@ -20,6 +20,7 @@ from genesis.typing import (
 )
 
 from .options import (
+    ContactFilterOptionsMixin,
     ProbeSensorOptionsMixin,
     ProbesWithNormalSensorOptionsMixin,
     RigidSensorOptionsMixin,
@@ -270,7 +271,7 @@ class ContactHysteresisOptionsMixin(SensorOptions[SensorT]):
 
 
 class ContactProbe(
-    RigidSensorOptionsMixin["ContactProbeSensor"],
+    ContactFilterOptionsMixin["ContactProbeSensor"],
     SimpleSensorOptions["ContactProbeSensor"],
     TactileProbeSensorOptionsMixin["ContactProbeSensor"],
     ViscoelasticHysteresisOptionsMixin["ContactProbeSensor"],
@@ -304,7 +305,7 @@ class ContactProbe(
 
 
 class ContactDepthProbe(
-    RigidSensorOptionsMixin["ContactDepthProbeSensor"],
+    ContactFilterOptionsMixin["ContactDepthProbeSensor"],
     SimpleSensorOptions["ContactDepthProbeSensor"],
     TactileProbeSensorOptionsMixin["ContactDepthProbeSensor"],
     ViscoelasticHysteresisOptionsMixin["ContactDepthProbeSensor"],
@@ -322,7 +323,7 @@ class ContactDepthProbe(
 
 
 class KinematicTaxel(
-    RigidSensorOptionsMixin["KinematicTaxelSensor"],
+    ContactFilterOptionsMixin["KinematicTaxelSensor"],
     SimpleSensorOptions["KinematicTaxelSensor"],
     TactileProbeSensorOptionsMixin["KinematicTaxelSensor"],
     ViscoelasticHysteresisOptionsMixin["KinematicTaxelSensor"],

@@ -11,14 +11,24 @@ uniform mat4 V;
 uniform mat4 P;
 
 // Outputs
-out vec3 frag_position;
-out vec3 frag_normal;
+#ifdef DOUBLE_SIDED
+    out vec3 v_frag_position;
+    out vec3 v_frag_normal;
+#else
+    out vec3 frag_position;
+    out vec3 frag_normal;
+#endif
 
 void main()
 {
     gl_Position = P * V * M * inst_m * vec4(position, 1);
-    frag_position = vec3(M * inst_m * vec4(position, 1.0));
-
     mat4 N = transpose(inverse(M * inst_m));
+
+#ifdef DOUBLE_SIDED
+    v_frag_position = vec3(M * inst_m * vec4(position, 1.0));
+    v_frag_normal = normalize(vec3(N * vec4(normal, 0.0)));
+#else
+    frag_position = vec3(M * inst_m * vec4(position, 1.0));
     frag_normal = normalize(vec3(N * vec4(normal, 0.0)));
+#endif
 }

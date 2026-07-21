@@ -719,6 +719,77 @@ def test_mjcf_parse_mesh_normals(normals_mjcf):
     assert_allclose(parsed.vertex_normals[parsed_order], raw.vertex_normals[raw_order], atol=1e-3)
 
 
+@pytest.mark.required
+def test_mjcf_2d_texture_mapping(textured_mjcf):
+    SCALE = 2.0
+    OBJECT_RELATIVE_GEOMS = (
+        ("plane_repeated", (3.0, 5.0)),
+        ("sphere_repeated", (2.0, 2.0)),
+        ("capsule_repeated", (2.0, 2.0)),
+        ("cylinder_repeated", (2.0, 2.0)),
+        ("mesh_generated", (1.0, 2.0)),
+        ("mesh_generated_scaled", (3.0, 6.0)),
+    )
+    FITTED_GEOMS = (
+        ("box_fitted_repeated", (1.0, 2.0)),
+        ("box_fitted_repeated_scaled", (3.0, 6.0)),
+    )
+    SPATIAL_GEOM_NAMES = (
+        "plane_uniform",
+        "plane_infinite",
+        "ellipsoid_uniform",
+        "box_uniform",
+    )
+    EXPECTED_EXPLICIT_UVS = ((0.125, 0.25), (0.5, 0.875), (0.625, 0.75), (0.75, 0.25))
+
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file=textured_mjcf,
+            scale=SCALE,
+        ),
+    )
+    scene.build()
+
+    vgeoms = {vgeom.metadata["name"]: vgeom for vgeom in entity.vgeoms}
+
+    object_relative_uvs = []
+    expected_object_relative_uvs = []
+    for name, render_size in OBJECT_RELATIVE_GEOMS:
+        vgeom = vgeoms[name]
+        object_xy = vgeom.init_vverts[:, :2] / np.multiply(SCALE, render_size)
+        object_relative_uvs.append(vgeom.uvs)
+        expected_object_relative_uvs.append(np.column_stack((object_xy[:, 0] - 0.5, -1.25 * object_xy[:, 1] - 0.5)))
+    assert_allclose(np.concatenate(object_relative_uvs), np.concatenate(expected_object_relative_uvs), tol=gs.EPS)
+
+    fitted_uvs = []
+    expected_fitted_uvs = []
+    for name, render_size in FITTED_GEOMS:
+        vgeom = vgeoms[name]
+        object_xy = vgeom.init_vverts[:, :2] / np.multiply(SCALE, render_size)
+        repeat = np.divide((2.0, 2.5), render_size)
+        fitted_uvs.append(vgeom.uvs)
+        expected_fitted_uvs.append(
+            np.column_stack((0.5 * repeat[0] * object_xy[:, 0] - 0.5, -0.5 * repeat[1] * object_xy[:, 1] - 0.5))
+        )
+    assert_allclose(np.concatenate(fitted_uvs), np.concatenate(expected_fitted_uvs), tol=5e-8)
+
+    spatial_xy = np.concatenate([vgeoms[name].init_vverts[:, :2] for name in SPATIAL_GEOM_NAMES], axis=0)
+    spatial_uvs = np.concatenate([vgeoms[name].uvs for name in SPATIAL_GEOM_NAMES], axis=0)
+    expected_spatial_uvs = np.column_stack((spatial_xy[:, 0] - 0.5, -1.25 * spatial_xy[:, 1] - 0.5))
+    assert_allclose(spatial_uvs, expected_spatial_uvs, tol=gs.EPS)
+
+    fitted_uniform = vgeoms["box_fitted"]
+    fitted_uniform_xy = fitted_uniform.init_vverts[:, :2] / np.multiply(SCALE, (1.0, 2.0))
+    expected_fitted_uniform_uvs = np.column_stack(
+        (SCALE * fitted_uniform_xy[:, 0] - 0.5, -1.25 * SCALE * fitted_uniform_xy[:, 1] - 0.5)
+    )
+    assert_allclose(fitted_uniform.uvs, expected_fitted_uniform_uvs, tol=gs.EPS)
+
+    explicit_uvs = [np.unique(vgeoms["mesh_explicit_a"].uvs, axis=0), np.unique(vgeoms["mesh_explicit_b"].uvs, axis=0)]
+    assert_allclose(explicit_uvs, EXPECTED_EXPLICIT_UVS, tol=gs.EPS)
+
+
 # ==================== Surface Reconstruction Tests ====================
 
 

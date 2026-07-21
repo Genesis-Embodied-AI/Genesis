@@ -59,6 +59,24 @@ def test_mjcf_parsing_with_include():
 
 
 @pytest.mark.required
+def test_mjcf_include_rewrites_asset_mesh_and_skips_default_mesh(mjcf_include_default_and_asset_mesh):
+    scene_path, extents = mjcf_include_default_and_asset_mesh
+
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=scene_path,
+        )
+    )
+    scene.build()
+
+    (geom,) = entity.geoms
+    assert geom.type == gs.GEOM_TYPE.MESH
+    aabb = geom.get_AABB()
+    assert_allclose(aabb[1] - aabb[0], extents, tol=5e-8)
+
+
+@pytest.mark.required
 def test_ground_plane_preservation(box_plan):
     mjcf = ET.tostring(box_plan, encoding="unicode")
 
@@ -422,8 +440,9 @@ def test_default_armature_freeflyer(xml_path):
     armature = robot.get_dofs_armature()
     assert_allclose(armature[:6], 0.0, tol=gs.EPS)
     assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
-    if xml_path.endswith(".mjcf"):
-        assert abs(armature[7]) > gs.EPS and abs(armature[7] - DEFAULT_ARMATURE) > gs.EPS
+    if xml_path.endswith(".xml"):
+        assert_allclose(armature[7], 42.0, tol=gs.EPS)
+        assert_allclose(armature[8], 0.0002, tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
@@ -1460,6 +1479,8 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         monkeypatch.setenv("QD_NUM_THREADS", "3")
 
     EULER_OFFSET = (0, 0, 45)
+    TOOL_MOUNT_POS = (0.0, 0.0, 0.05)
+    TOOL_MOUNT_QUAT = (math.cos(math.pi / 8), math.sin(math.pi / 8), 0.0, 0.0)  # 45 deg about x
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1500,6 +1521,8 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     tool = scene.add_entity(
         gs.morphs.Sphere(
             radius=0.005,
+            # A conflicting morph pose: the explicit mounting transform below must override it.
+            pos=(1.0, -2.0, 3.0),
         ),
     )
     box = scene.add_entity(
@@ -1510,8 +1533,17 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     )
     with pytest.raises(gs.GenesisException):
         franka.attach(hand, "right_finger")
+    # Omitting the mounting transform keeps the child's morph pose acting as the mount.
     hand.attach(franka, "attachment")
-    tool.attach(hand, "right_finger")
+    # Malformed mounting transforms (wrong shape, or a zero-length quaternion) raise before any kinematic-tree
+    # mutation, leaving the entity attachable.
+    with pytest.raises(gs.GenesisException):
+        tool.attach(hand, "right_finger", pos=(0.0, 0.0))
+    with pytest.raises(gs.GenesisException):
+        tool.attach(hand, "right_finger", quat=(1.0, 0.0, 0.0))
+    with pytest.raises(gs.GenesisException):
+        tool.attach(hand, "right_finger", quat=(0.0, 0.0, 0.0, 0.0))
+    tool.attach(hand, "right_finger", pos=TOOL_MOUNT_POS, quat=TOOL_MOUNT_QUAT)
     scene.build()
     with pytest.raises(gs.GenesisException):
         box.attach(hand, "right_finger")
@@ -1547,4 +1579,14 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     if not merge_fixed_links:
         assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
 
-    assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
+    # The tool's explicit mounting transform overrides its conflicting morph pose: it sits at (pos, quat) in the
+    # right-finger frame rather than at the finger origin.
+    finger_link = hand.get_link("right_finger")
+    expected_tool_pos = finger_link.get_pos() + gu.transform_by_quat(
+        torch.tensor(TOOL_MOUNT_POS, dtype=gs.tc_float, device=gs.device), finger_link.get_quat()
+    )
+    expected_tool_quat = gu.transform_quat_by_quat(
+        torch.tensor(TOOL_MOUNT_QUAT, dtype=gs.tc_float, device=gs.device), finger_link.get_quat()
+    )
+    assert_allclose(tool.get_pos(), expected_tool_pos, tol=tol)
+    assert_allclose(tool.get_quat(), expected_tool_quat, tol=tol)

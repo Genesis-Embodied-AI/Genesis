@@ -2,7 +2,7 @@ import inspect
 import math
 import os
 from itertools import chain
-from typing import TYPE_CHECKING, Literal, Any, Sequence
+from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
 
 import quadrants as qd
@@ -22,6 +22,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch
+from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -600,7 +601,7 @@ class KinematicEntity(Entity):
         # initialized undetermined physics parameters.
         if isinstance(morph, gs.morphs.MJCF):
             # Mujoco's unified MJCF+URDF parser systematically for MJCF files
-            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface)
+            l_infos, links_j_infos, links_g_infos, eqs_info = mju.parse_xml(morph, surface, self._solver._options)
         elif isinstance(morph, (gs.morphs.URDF, gs.morphs.Drone)):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
@@ -1392,7 +1393,13 @@ class KinematicEntity(Entity):
         self._links_offset_quat[link_idx - self._link_start] = offset_quat
 
     @gs.assert_unbuilt
-    def attach(self, parent_entity, parent_link_name: str | None = None):
+    def attach(
+        self,
+        parent_entity,
+        parent_link_name: str | None = None,
+        pos: Vec3FType | None = None,
+        quat: UnitVec4FType | None = None,
+    ):
         """
         Merge two entities to act as single one, by attaching the base link of this entity as a child of a given link of
         another entity.
@@ -1408,9 +1415,29 @@ class KinematicEntity(Entity):
         parent_link_name : str
             The name of the link in the parent entity to be linked. Default to the latest link the parent kinematic
             tree.
+        pos : array_like, shape (3,), optional
+            Mounting position of this entity's base link relative to the parent link frame. If neither `pos` nor
+            `quat` is provided, the base link keeps its current local pose, i.e. the morph `pos` / `quat` this entity
+            was created with acts as the mounting transform. If only `quat` is provided, defaults to (0, 0, 0).
+        quat : array_like, shape (4,), optional
+            Mounting orientation (w, x, y, z) of this entity's base link relative to the parent link frame. If only
+            `pos` is provided, defaults to the identity quaternion. Providing `pos` and/or `quat` overrides the pose
+            inherited from the morph.
         """
         if self._is_attached:
             gs.raise_exception("Entity already attached.")
+
+        is_mounting = pos is not None or quat is not None
+        if is_mounting:
+            mount_pos = gu.zero_pos() if pos is None else np.asarray(pos, dtype=gs.np_float)
+            mount_quat = gu.identity_quat() if quat is None else np.asarray(quat, dtype=gs.np_float)
+            if mount_pos.shape != (3,):
+                gs.raise_exception(f"Mounting 'pos' must have shape (3,), got {mount_pos.shape}.")
+            if mount_quat.shape != (4,):
+                gs.raise_exception(f"Mounting 'quat' must have shape (4,) (w, x, y, z), got {mount_quat.shape}.")
+            if np.linalg.norm(mount_quat) < gs.EPS:
+                gs.raise_exception("Mounting 'quat' cannot be a zero-length quaternion.")
+            mount_quat = gu.normalize(mount_quat)
 
         if not isinstance(parent_entity, KinematicEntity):
             gs.raise_exception("Parent entity must derive from 'KinematicEntity'.")
@@ -1420,6 +1447,11 @@ class KinematicEntity(Entity):
 
         if parent_entity.idx > self.idx:
             gs.raise_exception("Parent entity must be instantiated before child entity.")
+
+        # Attaching reshapes the kinematic tree, but the post-build pass that anchors each heterogeneous variant's
+        # inertia and frame runs per free root and cannot follow a reparented (or absorbed) base link.
+        if self._enable_heterogeneous or parent_entity._enable_heterogeneous:
+            gs.raise_exception("Attaching heterogeneous entities is not supported.")
 
         # Check if base link was fixed but no longer is
         base_link = self.links[0]
@@ -1502,6 +1534,15 @@ class KinematicEntity(Entity):
                 link._root_idx = parent_link.root_idx
                 link._is_fixed &= parent_link.is_fixed
                 link._invweight = None
+
+        # Apply the explicit mounting transform. Forward kinematics interprets the base link's local pose relative to
+        # its (new) parent link, so overwriting it here mounts the entity at (pos, quat) in the parent link frame.
+        # Compose with the morph frame offset exactly as '_align_link' does for the morph pose at load time, so the
+        # relative pose getters keep stripping the offset correctly.
+        if is_mounting:
+            base_link._pos, base_link._quat = gu.transform_pos_quat_by_trans_quat(
+                self._offset_pos, self._offset_quat, mount_pos, mount_quat
+            )
 
         self._is_attached = True
 
@@ -2449,6 +2490,12 @@ class RigidEntity(KinematicEntity):
             friction = self.material.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
+            friction_torsional = self.material.friction_torsional
+            if friction_torsional is None:
+                friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
+            friction_rolling = self.material.friction_rolling
+            if friction_rolling is None:
+                friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
             link._add_geom(
                 mesh=g_info["mesh"],
@@ -2456,6 +2503,8 @@ class RigidEntity(KinematicEntity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
                 type=g_info["type"],
                 friction=friction,
+                friction_torsional=friction_torsional,
+                friction_rolling=friction_rolling,
                 sol_params=g_info["sol_params"],
                 data=g_info.get("data"),
                 needs_coup=needs_coup,
@@ -2707,6 +2756,12 @@ class RigidEntity(KinematicEntity):
             friction = self.material.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
+            friction_torsional = self.material.friction_torsional
+            if friction_torsional is None:
+                friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
+            friction_rolling = self.material.friction_rolling
+            if friction_rolling is None:
+                friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
             link._add_geom(
                 mesh=g_info["mesh"],
@@ -2714,6 +2769,8 @@ class RigidEntity(KinematicEntity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
                 type=g_info["type"],
                 friction=friction,
+                friction_torsional=friction_torsional,
+                friction_rolling=friction_rolling,
                 sol_params=g_info["sol_params"],
                 data=g_info.get("data"),
                 needs_coup=needs_coup,
@@ -4411,6 +4468,48 @@ class RigidEntity(KinematicEntity):
 
         for link in self._links:
             link.set_friction(friction)
+
+    def set_friction_torsional(self, friction_torsional):
+        """
+        Set the torsional friction coefficient of all the links (and in turn, geometries) of the rigid entity.
+
+        Note
+        ----
+        The torsional friction coefficient associated with a pair of geometries in contact is defined as the maximum
+        between their respective values (see 'gs.materials.Rigid'). Only effective when torsional friction is enabled
+        at the scene level (see 'RigidOptions.enable_torsional_friction').
+
+        Parameters
+        ----------
+        friction_torsional : float
+            The torsional friction coefficient to set.
+        """
+        if friction_torsional < 0:
+            gs.raise_exception("`friction_torsional` must be non-negative.")
+
+        for link in self._links:
+            link.set_friction_torsional(friction_torsional)
+
+    def set_friction_rolling(self, friction_rolling):
+        """
+        Set the rolling friction coefficient of all the links (and in turn, geometries) of the rigid entity.
+
+        Note
+        ----
+        The rolling friction coefficient associated with a pair of geometries in contact is defined as the maximum
+        between their respective values (see 'gs.materials.Rigid'). Only effective when rolling friction is enabled
+        at the scene level (see 'RigidOptions.enable_rolling_friction').
+
+        Parameters
+        ----------
+        friction_rolling : float
+            The rolling friction coefficient to set.
+        """
+        if friction_rolling < 0:
+            gs.raise_exception("`friction_rolling` must be non-negative.")
+
+        for link in self._links:
+            link.set_friction_rolling(friction_rolling)
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- mass / inertia -----------------------------------

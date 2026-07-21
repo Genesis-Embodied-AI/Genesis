@@ -37,6 +37,9 @@ from .misc import (
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
 CVX_PATH_QUANTIZE_FACTOR = 1e-6
+# Vertex welding quantum: co-located vertices are authored with identical coordinates, so a tight absolute quantum
+# absorbs sub-nanometer parsing noise while keeping genuinely distinct vertices separate.
+VERT_WELD_QUANTIZE_FACTOR = 1e-8
 Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
     [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
 )
@@ -1326,6 +1329,47 @@ def make_tetgen_switches(cfg):
         flags.append("V" * v)
 
     return "".join(flags)
+
+
+def merge_submeshes(verts_list, faces_list):
+    """Concatenate sub-meshes into a single mesh, welding vertices that share a position.
+
+    Welding covers both duplicated vertices within a sub-mesh (e.g. texture-seam splits) and vertices shared across
+    sub-meshes, so that downstream consumers (e.g. tetrahedralization) see one connected surface.
+
+    Parameters
+    ----------
+    verts_list : list of np.ndarray
+        Per-sub-mesh vertex arrays with shape (n_verts, 3).
+    faces_list : list of np.ndarray
+        Per-sub-mesh face arrays with shape (n_faces, 3), indexing into the matching vertex array.
+
+    Returns
+    -------
+    verts : np.ndarray
+        Welded vertices, ordered by first occurrence in the concatenated input.
+    faces : np.ndarray
+        Concatenated faces, re-indexed against the welded vertices.
+    verts_maps : list of np.ndarray
+        For each sub-mesh, the map from its local vertex indices to indices into the welded vertices.
+    """
+    submeshes_offset = (0, *np.cumsum([len(verts) for verts in verts_list]))
+    stacked_verts = np.concatenate(verts_list, axis=0)
+    stacked_faces = np.concatenate([faces + offset for faces, offset in zip(faces_list, submeshes_offset)], axis=0)
+
+    # Weld by quantized position (see VERT_WELD_QUANTIZE_FACTOR). int64 is required: quantized metre-scale
+    # coordinates overflow int32.
+    quantized = np.round(stacked_verts / VERT_WELD_QUANTIZE_FACTOR).astype(np.int64)
+    _, unique_idx, remap = np.unique(quantized, axis=0, return_index=True, return_inverse=True)
+    # np.unique orders groups by quantized key; rank the first-occurrence indices to restore input order instead.
+    rank = np.empty(len(unique_idx), dtype=gs.np_int)
+    rank[np.argsort(unique_idx)] = np.arange(len(unique_idx))
+    remap = rank[remap]
+
+    verts = stacked_verts[np.sort(unique_idx)]
+    faces = remap[stacked_faces]
+    verts_maps = [remap[start:end] for start, end in zip(submeshes_offset, submeshes_offset[1:])]
+    return verts, faces, verts_maps
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):

@@ -90,6 +90,8 @@ def func_collision_clear(
                         collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
                         collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
                         collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
+                        collider_state.contact_data.friction_torsional[i_c_hibernated, i_b] = collider_state.contact_data.friction_torsional[i_c, i_b]
+                        collider_state.contact_data.friction_rolling[i_c_hibernated, i_b] = collider_state.contact_data.friction_rolling[i_c, i_b]
                         collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
                         collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
                         collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]

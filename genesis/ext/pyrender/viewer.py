@@ -53,13 +53,10 @@ from .constants import (
 from .light import DirectionalLight
 from .node import Node
 from .renderer import Renderer
-from .shader_program import ShaderProgram
 from .trackball import Trackball
 
 if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
-
-MODULE_DIR = os.path.dirname(__file__)
 
 HELP_TEXT_KEY = Key.I
 HELP_TEXT_KEYBIND_NAME = "toggle_instructions"
@@ -1149,22 +1146,8 @@ class Viewer(pyglet.window.Window):
             retval = ()
 
         if normal:
-
-            class CustomShaderCache:
-                def __init__(self):
-                    self.program = None
-
-                def get_program(self, vertex_shader, fragment_shader, geometry_shader=None, defines=None):
-                    if self.program is None:
-                        self.program = ShaderProgram(
-                            os.path.join(MODULE_DIR, "shaders/mesh_normal.vert"),
-                            os.path.join(MODULE_DIR, "shaders/mesh_normal.frag"),
-                            defines=defines,
-                        )
-                    return self.program
-
             old_cache = renderer._program_cache
-            renderer._program_cache = CustomShaderCache()
+            renderer._program_cache = renderer._normal_program_cache
 
             flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
             if self.render_flags["env_separate_rigid"]:

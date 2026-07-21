@@ -18,18 +18,49 @@ def xml_path(request, tmp_path, model_name):
     return file_path
 
 
+def _build_plane_contact_model(model_name, condim, friction, plane_size):
+    """Generate the shared skeleton of the plane-contact MJCF models: one contact default applying to every geom and
+    a plane floor, with the free bodies appended by _add_free_body."""
+    mjcf = ET.Element("mujoco", model=model_name)
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim=condim, friction=friction)
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size=plane_size)
+    return mjcf
+
+
+def _add_free_body(mjcf, name, geom_type, geom_size, pos, rgba=None):
+    """Append a free-floating body with a single geom to a plane-contact MJCF model."""
+    body = ET.SubElement(mjcf.find("worldbody"), "body", name=name, pos=pos)
+    geom_kwargs = {} if rgba is None else {"rgba": rgba}
+    ET.SubElement(body, "geom", type=geom_type, size=geom_size, pos="0. 0. 0.", **geom_kwargs)
+    ET.SubElement(body, "joint", name=f"{name}_root", type="free")
+
+
 @pytest.fixture(scope="session")
 def box_plan():
     """Generate an MJCF model for a box on a plane."""
-    mjcf = ET.Element("mujoco", model="one_box")
-    ET.SubElement(mjcf, "option", timestep="0.01")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
-    box_body = ET.SubElement(worldbody, "body", name="box", pos="0. 0. 0.3")
-    ET.SubElement(box_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(box_body, "joint", name="root", type="free")
+    mjcf = _build_plane_contact_model("box_plan", condim="3", friction="1. 0.5 0.5", plane_size="40. 40. 40.")
+    _add_free_body(mjcf, name="box", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.3")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def sphere_plane_roll():
+    """Generate an MJCF model for a sphere rolling on a plane, with torsional and rolling friction (condim=6)."""
+    mjcf = _build_plane_contact_model(
+        "sphere_plane_roll", condim="6", friction="1. 0.005 0.002", plane_size="10. 10. 10."
+    )
+    _add_free_body(mjcf, name="sphere", geom_type="sphere", geom_size="0.1", pos="0. 0. 0.1")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def sphere_plane_spin():
+    """Generate an MJCF model for a sphere spinning in place on a plane, with torsional friction (condim=4)."""
+    mjcf = _build_plane_contact_model("sphere_plane_spin", condim="4", friction="1. 0.005 0.", plane_size="10. 10. 10.")
+    _add_free_body(mjcf, name="sphere", geom_type="sphere", geom_size="0.1", pos="0. 0. 0.1")
     return mjcf
 
 
@@ -53,19 +84,10 @@ def mimic_hinges():
 
 @pytest.fixture(scope="session")
 def box_box():
-    """Generate an MJCF model for two boxes."""
-    mjcf = ET.Element("mujoco", model="one_box")
-    ET.SubElement(mjcf, "option", timestep="0.01")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
-    box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.2")
-    ET.SubElement(box1_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 1 0 0.4")
-    ET.SubElement(box1_body, "joint", name="root1", type="free")
-    box2_body = ET.SubElement(worldbody, "body", name="box2", pos="0. 0. 0.8")
-    ET.SubElement(box2_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 0 1 0.4")
-    ET.SubElement(box2_body, "joint", name="root2", type="free")
+    """Generate an MJCF model for two boxes stacked on a plane."""
+    mjcf = _build_plane_contact_model("box_box", condim="3", friction="1. 0.5 0.5", plane_size="40. 40. 40.")
+    _add_free_body(mjcf, name="box1", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.2", rgba="0 1 0 0.4")
+    _add_free_body(mjcf, name="box2", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.8", rgba="0 0 1 0.4")
     return mjcf
 
 
@@ -172,6 +194,32 @@ def decompose_fusion_groups(asset_tmp_path):
     ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0 -0.5 1", contype="16777216")
     ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0.15 -0.5 1", contype="16777217")
     return mjcf
+
+
+@pytest.fixture(scope="session")
+def mjcf_include_default_and_asset_mesh(asset_tmp_path):
+    """Scene MJCF that <include>s a subdirectory model mixing a file-less <default> mesh class with a real <asset>
+    mesh, so the include preprocessing must rewrite only the asset mesh path (relative to the included file). Returns
+    the scene file path and the authored box extents."""
+    extents = (0.2, 0.4, 0.6)
+    include_dir = asset_tmp_path / "mjcf_include"
+    include_dir.mkdir(exist_ok=True)
+    trimesh.creation.box(extents=extents).export(include_dir / "box.obj")
+
+    robot = ET.Element("mujoco", model="robot")
+    default = ET.SubElement(robot, "default")
+    ET.SubElement(default, "mesh", maxhullvert="64")
+    asset = ET.SubElement(robot, "asset")
+    ET.SubElement(asset, "mesh", name="box", file="box.obj")
+    worldbody = ET.SubElement(robot, "worldbody")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="box")
+    ET.ElementTree(robot).write(include_dir / "robot.xml", encoding="utf-8", xml_declaration=True)
+
+    scene_mjcf = ET.Element("mujoco", model="scene")
+    ET.SubElement(scene_mjcf, "include", file="mjcf_include/robot.xml")
+    scene_path = str(asset_tmp_path / "mjcf_include_scene.xml")
+    ET.ElementTree(scene_mjcf).write(scene_path, encoding="utf-8", xml_declaration=True)
+    return scene_path, extents
 
 
 @pytest.fixture(scope="session")
@@ -579,6 +627,9 @@ def box_freejoint_offset():
 @pytest.fixture(scope="session")
 def freeflyer_mjcf():
     mjcf = ET.Element("mujoco", model="freeflyer")
+    default = ET.SubElement(mjcf, "default")
+    default_authored = ET.SubElement(default, "default", {"class": "authored"})
+    ET.SubElement(default_authored, "joint", armature="0.0002")
     worldbody = ET.SubElement(mjcf, "worldbody")
     body = ET.SubElement(worldbody, "body", name="base", pos="0 0 1")
     ET.SubElement(body, "joint", type="free")
@@ -592,6 +643,10 @@ def freeflyer_mjcf():
     ET.SubElement(grandchild, "joint", type="slide", axis="1 0 0", armature="42.0")
     ET.SubElement(grandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
     ET.SubElement(grandchild, "geom", type="sphere", size="0.01")
+    greatgrandchild = ET.SubElement(grandchild, "body", name="greatgrandchild", pos="0 0 0.1")
+    ET.SubElement(greatgrandchild, "joint", {"type": "slide", "axis": "0 1 0", "class": "authored"})
+    ET.SubElement(greatgrandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
+    ET.SubElement(greatgrandchild, "geom", type="sphere", size="0.01")
     return mjcf
 
 

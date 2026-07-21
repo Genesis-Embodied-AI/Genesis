@@ -218,35 +218,22 @@ class FEMSolver(Solver):
             active=gs.qd_bool,
         )
 
-        # for rendering (this is more of a surface)
-        surface_state_render_v = qd.types.struct(
-            vertices=gs.qd_vec3,
+        # environment-offset vertex positions for rendering
+        vert_state_render = qd.types.struct(
+            pos=gs.qd_vec3,
         )
 
-        surface_state_render_f = qd.types.struct(
-            indices=gs.qd_int,
-        )
-
-        # construct field
         self.surface = surface_state.field(
             shape=(n_surfaces_max),
             needs_grad=False,
             layout=qd.Layout.SOA,
         )
 
-        self.surface_render_v = surface_state_render_v.field(
+        self.verts_render = vert_state_render.field(
             shape=(n_vertices_max, self._B),
             needs_grad=False,
             layout=qd.Layout.SOA,
         )
-        self.surface_render_f = surface_state_render_f.field(
-            shape=(n_surfaces_max * 3),
-            needs_grad=False,
-            layout=qd.Layout.SOA,
-        )
-
-        # UV coordinates for rendering (per-vertex UVs, initialized to zeros)
-        self.surface_render_uvs = qd.field(dtype=gs.qd_vec2, shape=(max(n_vertices_max, 1),), needs_grad=False)
 
     def _init_surface_info(self):
         self.vertices_on_surface = qd.field(dtype=gs.qd_bool, shape=(self.n_vertices,))
@@ -1103,12 +1090,9 @@ class FEMSolver(Solver):
         return state
 
     def get_state_render(self, f):
-        self.get_state_render_kernel(f)
-        vertices = self.surface_render_v.vertices
-        indices = self.surface_render_f.indices
-        uvs = self.surface_render_uvs
-
-        return vertices, indices, uvs
+        """Refresh and return the environment-offset vertex positions field, with shape (n_vertices, B)."""
+        self._kernel_get_state_render(f)
+        return self.verts_render.pos
 
     def get_forces(self):
         """
@@ -1131,7 +1115,6 @@ class FEMSolver(Solver):
         mat_lam: qd.f32,
         mat_rho: qd.f32,
         mat_friction_mu: qd.f32,
-        n_surfaces: qd.i32,
         v_start: qd.i32,
         el_start: qd.i32,
         s_start: qd.i32,
@@ -1139,7 +1122,6 @@ class FEMSolver(Solver):
         elems: qd.types.ndarray(),
         tri2v: qd.types.ndarray(),
         tri2el: qd.types.ndarray(),
-        uvs: qd.types.ndarray(),
     ):
         n_verts_local = verts.shape[0]
         for i_v, i_b in qd.ndrange(n_verts_local, self._B):
@@ -1147,12 +1129,6 @@ class FEMSolver(Solver):
             for j in qd.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = qd.Vector.zero(gs.qd_float, 3)
-
-        # Copy UVs to solver field (skip if no UVs provided)
-        n_uvs = uvs.shape[0]
-        for i_v in range(n_uvs):
-            i_global = i_v + v_start
-            self.surface_render_uvs[i_global] = qd.Vector([uvs[i_v, 0], uvs[i_v, 1]])
 
         for i_v in range(n_verts_local):
             i_global = i_v + v_start
@@ -1203,7 +1179,7 @@ class FEMSolver(Solver):
             self.elements_el[f, i_global, i_b].actu = 0.0
             self.elements_el_ng[f, i_global, i_b].active = True
 
-        for i_s in range(n_surfaces):
+        for i_s in range(tri2v.shape[0]):
             i_global = i_s + s_start
             for j in qd.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
@@ -1211,21 +1187,20 @@ class FEMSolver(Solver):
             self.surface[i_global].active = True
 
     @qd.kernel
-    def _kernel_add_cloth_for_rendering(
+    def _kernel_add_cloth(
         self,
         f: qd.i32,
-        n_surfaces: qd.i32,
         v_start: qd.i32,
         s_start: qd.i32,
         verts: qd.types.ndarray(),
         tri2v: qd.types.ndarray(),
-        uvs: qd.types.ndarray(),
     ):
         """
-        Add cloth vertices and surfaces for rendering only (no physics computation).
-        Cloth is simulated by IPC, but needs to be in FEM solver's rendering pipeline.
+        Add cloth vertices and surface triangles to the solver, for position tracking and coupling only.
+
+        Cloth elements and mass are owned by the IPC coupler, so the vertex info holds placeholder values and each
+        surface triangle references itself as element.
         """
-        # Add vertices for rendering
         n_verts_local = verts.shape[0]
         for i_v, i_b in qd.ndrange(n_verts_local, self._B):
             i_global = i_v + v_start
@@ -1233,25 +1208,16 @@ class FEMSolver(Solver):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = qd.Vector.zero(gs.qd_float, 3)
 
-        # Copy UVs to solver field (skip if no UVs provided)
-        n_uvs = uvs.shape[0]
-        for i_v in range(n_uvs):
-            i_global = i_v + v_start
-            self.surface_render_uvs[i_global] = qd.Vector([uvs[i_v, 0], uvs[i_v, 1]])
-
-        # Initialize vertex info (mass will be managed by IPC, set to dummy value)
         for i_v in range(n_verts_local):
             i_global = i_v + v_start
-            self.elements_v_info[i_global].mass = 1.0  # Dummy value, not used for cloth
+            self.elements_v_info[i_global].mass = 1.0
             self.elements_v_info[i_global].mass_over_dt2 = 0.0
             self.elements_v_info[i_global].friction_mu = 0.0
 
-        # Add surface triangles for rendering
-        for i_s in range(n_surfaces):
+        for i_s in range(tri2v.shape[0]):
             i_global = i_s + s_start
             for j in qd.static(range(3)):
                 self.surface[i_global].tri2v[j] = tri2v[i_s, j] + v_start
-            # For cloth, tri2el points to itself (no tetrahedral element)
             self.surface[i_global].tri2el = i_global
             self.surface[i_global].active = True
 
@@ -1397,16 +1363,11 @@ class FEMSolver(Solver):
             active[i_b, i_e] = self.elements_el_ng[f, i_e, i_b].active
 
     @qd.kernel
-    def get_state_render_kernel(self, f: qd.i32):
+    def _kernel_get_state_render(self, f: qd.i32):
         for i_v, i_b in qd.ndrange(self.n_vertices, self._B):
             for j in qd.static(range(3)):
                 pos_j = qd.cast(self.elements_v[f, i_v, i_b].pos[j], qd.f32)
-                self.surface_render_v[i_v, i_b].vertices[j] = pos_j + self.envs_offset[i_b][j]
-
-        # Fill triangle indices (flat array, 3 ints per triangle)
-        for i_s in range(self.n_surfaces):
-            for j in qd.static(range(3)):
-                self.surface_render_f[i_s * 3 + j].indices = qd.cast(self.surface[i_s].tri2v[j], qd.i32)
+                self.verts_render[i_v, i_b].pos[j] = pos_j + self.envs_offset[i_b][j]
 
     @qd.kernel
     def _kernel_set_state(

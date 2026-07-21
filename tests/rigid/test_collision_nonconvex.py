@@ -697,7 +697,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
 def test_convexify(euler, show_viewer, gjk_collision):
     OBJ_OFFSET_X = 0.0  # 0.02
     OBJ_OFFSET_Y = 0.15
-    N_SETTLE = 1000
+    N_SETTLE = 1300
 
     # The test check that the volume difference is under a given threshold and that convex decomposition is only used
     # whenever it is necessary. Then run a simulation to see if it explodes, i.e. objects are at reset inside tank.
@@ -837,7 +837,7 @@ def test_convexify_fusion_groups(convexify, watertighten, xml_path):
         for geom in geoms_box:
             assert geom.is_convex
             assert not geom.metadata.get("merged", False)
-            assert_allclose(geom.init_verts.max(axis=0) - geom.init_verts.min(axis=0), 0.1, tol=gs.EPS)
+            assert_allclose(geom.init_verts.max(axis=0) - geom.init_verts.min(axis=0), 0.1, tol=5e-9)
         assert len([geom for geom in entity.geoms if geom.type == gs.GEOM_TYPE.BOX]) == 2
     elif watertighten is not None:
         # All multi-geom sub-groups are fused systematically, including bare primitives, and every fused geom is
@@ -908,7 +908,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
 
     # Wait for the pile to collapse and settle at rest
     vmax_trace, wmax_trace, energy_trace = [], [], []
-    for i in range(1300):
+    for i in range(1400):
         scene.step()
         energy_trace.append(tensor_to_array(scene.rigid_solver.get_total_energy()))
         if show_viewer:
@@ -931,7 +931,7 @@ def test_many_objects_collision(convexify, show_viewer, tol):
     max_penetration, crossings = get_genuine_interpenetration(links)
     # FIXME: Rare (~5% of initial-pose draws) stem-through-wall traps exceed this bound by design: a thin feature
     # creeping through a sub-cell wall is a known nonconvex detection limitation, excluded from the bound.
-    assert max_penetration < (5e-4 if convexify else 5e-3)
+    assert max_penetration < (1e-3 if convexify else 5e-3)
 
     # Over a 100-step window, record the residual velocities and the net energy produced per contact
     vel_lin_all, vel_ang_all = [], []

@@ -14,9 +14,19 @@ from ..utils import assert_allclose, assert_equal
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     SPHERE_RADIUS = 0.05
+    BOX_SIZE = 0.1
     DISTANCE = 0.15
     MAX_RANGE = 10.0
-    BOX_PROBE_POS = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.05)]
+    N_SETTLE = 5
+    # Overlap of the untracked distractor sphere into the box's +y face. With zero gravity the contact pushes the
+    # free box a few mm along -y over the settle steps, so the box-mounted probes move and the sensor is validated
+    # against the live box pose rather than a static analytic value.
+    DISTRACTOR_PENETRATION = 0.01
+    # The sensor measures to the tracked collision MESH, so its nearest point can sit up to this far inside the
+    # analytic sphere surface (icosphere faceting). Used only for the on-surface grounding check; the distance
+    # self-consistency check stays exact.
+    MESH_TOL = 5e-4
+    BOX_PROBE_POS = [(0.0, 0.0, 0.0), (0.0, 0.0, BOX_SIZE / 2.0)]
     SPHERE_PROBE_POS = [(0.0, 0.0, SPHERE_RADIUS)]
 
     scene = gs.Scene(
@@ -30,7 +40,7 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     )
     box = scene.add_entity(
         gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
             pos=(0.0, 0.0, 0.0),
         ),
     )
@@ -47,11 +57,13 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
             pos=(0.0, 0.0, DISTANCE * 2.0),
         ),
     )
-    # Not tracked objects
+    # Untracked distractor whose surface overlaps the box +y face by DISTRACTOR_PENETRATION (see above); the contact
+    # pushes the free box centrally, so it only translates (no torque). It is also closer to the probes than either
+    # tracked sphere, so a bug that ignored track_link_idx and measured every link would change the reading.
     sphere3 = scene.add_entity(
         gs.morphs.Sphere(
             radius=SPHERE_RADIUS,
-            pos=(0.0, DISTANCE / 2.0, 0.0),
+            pos=(0.0, BOX_SIZE / 2.0 + SPHERE_RADIUS - DISTRACTOR_PENETRATION, 0.0),
         ),
     )
 
@@ -77,45 +89,65 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     )
     scene.build(n_envs=n_envs)
 
-    scene.step()
+    for _ in range(N_SETTLE):
+        scene.step()
+
+    # The overlapping distractor should have pushed the box clear of the origin, exercising the moving-probe path.
+    assert (box.get_pos()[..., 1] < -MESH_TOL).all(), "the penetrating distractor should push the box along -y"
 
     box_prox_data = box_to_spheres_dist_sensor.read()
     sphere_prox_noisy_data = sphere_to_box_dist_sensor.read()
     sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
 
-    for i in range(len(BOX_PROBE_POS)):
-        assert_allclose(box_prox_data[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
-    assert_allclose(box_to_spheres_dist_sensor.nearest_points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
+    # Both box probes see sphere1, the nearest tracked sphere. Each probe's reported distance must equal the distance
+    # from its LIVE world position (box pose applied to the local probe) to the reported nearest point (exact), and
+    # that point must lie on sphere1's meshed surface -- validating the moving-probe path without an analytic value.
+    box_pos = box.get_pos()
+    box_quat = box.get_quat()
+    nearest = box_to_spheres_dist_sensor.nearest_points
+    sphere1_center = torch.as_tensor((0.0, 0.0, DISTANCE), dtype=box_pos.dtype, device=box_pos.device)
+    for i, probe_local in enumerate(BOX_PROBE_POS):
+        offset = torch.as_tensor(probe_local, dtype=box_pos.dtype, device=box_pos.device).broadcast_to(box_pos.shape)
+        probe_world = box_pos + gu.transform_by_quat(offset, box_quat)
+        assert_allclose(box_prox_data[..., i], torch.linalg.norm(nearest[..., i, :] - probe_world, dim=-1), tol=tol)
+        assert_allclose(torch.linalg.norm(nearest[..., i, :] - sphere1_center, dim=-1), SPHERE_RADIUS, tol=MESH_TOL)
+    # The box drifts only in y, so the box face directly under the sphere-mounted probe stays put and the gap holds.
     assert_allclose(sphere_prox_data, DISTANCE, tol=tol)
-
     with np.testing.assert_raises(AssertionError):
         assert_allclose(sphere_prox_noisy_data, sphere_prox_data, tol=tol)
 
+    # Move sphere1 out of reach; sphere2 becomes the nearest tracked sphere for the box probes.
     sphere1_pos = np.array((0.0, 0.0, DISTANCE * 3.0))
     sphere1.set_pos(sphere1_pos)
-
     scene.step()
 
+    box_pos = box.get_pos()
+    box_quat = box.get_quat()
     box_prox_data = box_to_spheres_dist_sensor.read()
-    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
+    nearest = box_to_spheres_dist_sensor.nearest_points
+    sphere2_center = torch.as_tensor((0.0, 0.0, DISTANCE * 2.0), dtype=box_pos.dtype, device=box_pos.device)
+    for i, probe_local in enumerate(BOX_PROBE_POS):
+        offset = torch.as_tensor(probe_local, dtype=box_pos.dtype, device=box_pos.device).broadcast_to(box_pos.shape)
+        probe_world = box_pos + gu.transform_by_quat(offset, box_quat)
+        assert_allclose(box_prox_data[..., i], torch.linalg.norm(nearest[..., i, :] - probe_world, dim=-1), tol=tol)
+        assert_allclose(torch.linalg.norm(nearest[..., i, :] - sphere2_center, dim=-1), SPHERE_RADIUS, tol=MESH_TOL)
+    assert_allclose(sphere_to_box_dist_sensor.read_ground_truth(), DISTANCE * 3.0, tol=tol)
 
-    assert_allclose(box_prox_data[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
-    assert_allclose(box_prox_data[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
-    assert_allclose(sphere_prox_data, DISTANCE * 3.0, tol=tol)
-
-    box_pos = np.array((0.0, 0.0, -MAX_RANGE))
-    box.set_pos(box_pos)
+    # Move the box far below everything: both sensors go out of range, reporting MAX_RANGE with the nearest point
+    # pinned to the probe's own world position.
+    box.set_pos((0.0, 0.0, -MAX_RANGE))
     scene.step()
 
-    box_prox_data = box_to_spheres_dist_sensor.read()
-    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
-
-    assert_allclose(box_prox_data, MAX_RANGE, tol=tol)
-    assert_allclose(sphere_prox_data, MAX_RANGE, tol=tol)
-    for i in range(len(BOX_PROBE_POS)):
+    box_pos = box.get_pos()
+    box_quat = box.get_quat()
+    assert_allclose(box_to_spheres_dist_sensor.read_ground_truth(), MAX_RANGE, tol=tol)
+    assert_allclose(sphere_to_box_dist_sensor.read_ground_truth(), MAX_RANGE, tol=tol)
+    for i, probe_local in enumerate(BOX_PROBE_POS):
+        offset = torch.as_tensor(probe_local, dtype=box_pos.dtype, device=box_pos.device).broadcast_to(box_pos.shape)
+        probe_world = box_pos + gu.transform_by_quat(offset, box_quat)
         assert_allclose(
             box_to_spheres_dist_sensor.nearest_points[..., i, :],
-            np.array(BOX_PROBE_POS[i]) + box_pos,
+            probe_world,
             tol=tol,
             err_msg="When out of range, points should be the probe position in world frame",
         )
@@ -148,7 +180,7 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
         ),
         show_viewer=show_viewer,
     )
-    scene.add_entity(gs.morphs.Plane())
+    floor = scene.add_entity(gs.morphs.Plane())
     box = scene.add_entity(
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
@@ -244,6 +276,27 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
             draw_debug=show_viewer,
         )
     )
+    # filter_link_idx drops the ground link: only the bottom probe (idx 3) sees the ground, so filtering it must
+    # zero that probe while leaving the sphere-facing top probes (idx 0/2) identical to the unfiltered sensors.
+    contact_probe_ground_filtered = scene.add_sensor(
+        gs.sensors.ContactProbe(
+            contact_threshold=CONTACT_THRESHOLD,
+            filter_link_idx=(floor.link_start,),
+            **common_kwargs,
+        )
+    )
+    depth_probe_ground_filtered = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            filter_link_idx=(floor.link_start,),
+            **common_kwargs,
+        )
+    )
+    taxel_ground_filtered = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            filter_link_idx=(floor.link_start,),
+            **taxel_kwargs,
+        )
+    )
 
     scene.build(n_envs=n_envs)
     scene.step()
@@ -277,6 +330,11 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     assert_allclose(gained_force[..., 3, :], force[..., 3, :] * GAIN, tol=tol)
     assert_allclose(gained_taxel.read_ground_truth().force, force, tol=gs.EPS)
 
+    # Ground is the only contact so far, so filtering it zeros the bottom probe on every branch.
+    assert_allclose(depth_probe_ground_filtered.read_ground_truth(), 0.0, tol=gs.EPS)
+    assert not contact_probe_ground_filtered.read_ground_truth().any()
+    assert_allclose(taxel_ground_filtered.read_ground_truth().force, 0.0, tol=gs.EPS)
+
     # Now position the sphere to penetrate the top of the box.
     box_top_z = BOX_SIZE - PENETRATION
     sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS - PENETRATION))
@@ -294,10 +352,60 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     assert (depth[..., 2] > tol).all(), "Large offset probe should detect the nearby sphere."
     assert (sphere_force[..., 0, 2] > tol).all(), "Sphere taxel should see the box underneath."
 
+    # With the sphere pressing the top and the ground under the bottom, filtering the ground zeros only the bottom
+    # probe (idx 3); the sphere-driven top probe (idx 0) is untouched and matches the unfiltered sensor.
+    depth_ground_filtered = depth_probe_ground_filtered.read_ground_truth()
+    force_ground_filtered = taxel_ground_filtered.read_ground_truth().force
+    contact_ground_filtered = contact_probe_ground_filtered.read_ground_truth()
+    assert_allclose(depth_ground_filtered[..., 3], 0.0, tol=gs.EPS)
+    assert_allclose(force_ground_filtered[..., 3, :], 0.0, tol=gs.EPS)
+    assert_allclose(depth_ground_filtered[..., 0], depth[..., 0], tol=tol)
+    assert_allclose(force_ground_filtered[..., 0, :], force[..., 0, :], tol=tol)
+    assert contact_ground_filtered[..., 0].all(), "top probe still contacts the sphere"
+    assert not contact_ground_filtered[..., 3].any(), "bottom probe no longer contacts the filtered ground"
+
     # Move sphere away and check no contact.
     sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS + PROBE_RADIUS + 0.2))
     scene.step()
     assert_allclose(sphere_taxel.read_ground_truth().force, 0.0, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_raycast_probe_on_fully_fixed_solver(show_viewer):
+    # A fully-fixed solver shares its static collision BVH across identical envs (a single tree, see the raycaster's
+    # RaycastContext), so the raycast probe must traverse it through the env -> tree routing. Fixed-fixed pairs are
+    # filtered out of collision detection, so the candidate-geom mask stays empty and the probe reads zero depth
+    # despite the geometric overlap.
+    scene = gs.Scene(show_viewer=show_viewer)
+    pad = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.05),
+            pos=(0.0, 0.0, 0.025),
+            fixed=True,
+        )
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.05),
+            pos=(0.0, 0.0, 0.06),
+            fixed=True,
+        )
+    )
+    probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            entity_idx=pad.idx,
+            probe_local_pos=((0.0, 0.0, 0.025),),
+            probe_radius=0.01,
+            contact_depth_query="raycast",
+        )
+    )
+    scene.build(n_envs=2)
+    scene.step()
+
+    (collision_bvh,) = probe._shared_context.collision_bvh_contexts
+    assert collision_bvh.maybe_static
+    assert collision_bvh.aabb.n_batches == 1
+    assert_equal(probe.read_ground_truth(), 0.0)
 
 
 @pytest.mark.required
@@ -678,6 +786,15 @@ def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
 
         common = dict(entity_idx=pad.idx, probe_local_pos=(CENTER_PROBE,), probe_radius=PROBE_R)
         depth = scene.add_sensor(gs.sensors.ContactDepthProbe(contact_depth_query=mode, **common))
+        # Filtering the ball (the only counterpart) must zero the depth on both backends: the SDF path drops it from
+        # the per-sensor geom list, the raycast path drops it from the candidate-geom mask.
+        depth_filtered = scene.add_sensor(
+            gs.sensors.ContactDepthProbe(
+                contact_depth_query=mode,
+                filter_link_idx=(ball.base_link_idx,),
+                **common,
+            )
+        )
         kin = scene.add_sensor(
             gs.sensors.KinematicTaxel(
                 normal_stiffness=100.0,
@@ -708,10 +825,15 @@ def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
             tensor_to_array(depth.read_ground_truth()),
             tensor_to_array(kin.read_ground_truth().force).reshape(-1, 3),
             tensor_to_array(elast.read_ground_truth()),
+            tensor_to_array(depth_filtered.read_ground_truth()),
         )
 
-    sdf_d, sdf_f, sdf_e = build_and_read("sdf")
-    ray_d, ray_f, ray_e = build_and_read("raycast")
+    sdf_d, sdf_f, sdf_e, sdf_d_filtered = build_and_read("sdf")
+    ray_d, ray_f, ray_e, ray_d_filtered = build_and_read("raycast")
+
+    # Filtering the only counterpart zeros the depth on both backends (SDF geom list / raycast candidate mask).
+    assert_allclose(sdf_d_filtered, 0.0, tol=gs.EPS)
+    assert_allclose(ray_d_filtered, 0.0, tol=gs.EPS)
 
     # ContactDepthProbe -- both backends report a positive depth of the same order. They do not match tightly: SDF
     # uses the ball's analytic sphere SDF while raycast hits its faceted mesh, so the depths differ by a
@@ -728,6 +850,62 @@ def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
 
     # ElastomerTaxel dilate displacement: face-on contact, identical on both modes when geom is a sphere primitive.
     assert_allclose(sdf_e, ray_e, tol=0.1 * PROBE_R)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_filtered_contact_survives_prefilter_cap(show_viewer, monkeypatch, n_envs):
+    # The raycast contact-depth path prefilters the sensor link's contacts into a capped per-sensor list before
+    # querying depth. The counterpart filter must run before that cap: otherwise a filtered manifold can fill the
+    # list and starve an allowed contact. Shrink the cap to 1 so a single filtered contact would exhaust it, then
+    # filter the sphere (whose contact is enumerated before the ground manifold). The allowed ground contact must
+    # still reach the bottom probe -- with the filter applied too late, both probes read zero.
+    monkeypatch.setattr("genesis.engine.sensors.kinematic_tactile._MAX_CONTACTS_PER_SENSOR", 1)
+    BOX_SIZE = 0.2
+    SPHERE_RADIUS = 0.1
+    PENETRATION = 0.02
+    PROBE_RADIUS = 0.05
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS - 2 * PENETRATION),
+            fixed=True,
+        )
+    )
+    probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            entity_idx=box.idx,
+            probe_local_pos=((0.0, 0.0, BOX_SIZE / 2), (0.0, 0.0, -BOX_SIZE / 2)),
+            probe_radius=PROBE_RADIUS,
+            contact_depth_query="raycast",
+            filter_link_idx=(sphere.base_link_idx,),
+        )
+    )
+    scene.build(n_envs=n_envs)
+    scene.step()
+
+    depth = probe.read_ground_truth()
+    # Bottom probe faces the unfiltered ground: it must survive the cap despite the filtered sphere contact.
+    assert (depth[..., 1] > gs.EPS).all(), "allowed ground contact must survive the counterpart-filter prefilter cap"
+    # Top probe faces the filtered sphere, which contributes nothing.
+    assert_allclose(depth[..., 0], 0.0, tol=gs.EPS)
 
 
 @pytest.mark.required
