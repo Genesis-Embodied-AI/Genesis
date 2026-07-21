@@ -915,6 +915,24 @@ class RigidSolver(KinematicSolver):
         # Compute meaninertia from mass matrix
         kernel_init_meaninertia(envs_idx, self.dyn_info, self.rigid_info, self.rigid_config)
 
+    def _refresh_derived_inertial_state(self, envs_idx=None):
+        """Recompute invweight/meaninertia from the current per-environment inertials, then restore the working
+        qpos so forward kinematics re-runs and stale contact caches clear.
+
+        Runtime per-environment inertial changes (e.g. set_scale, dof armature) invalidate the neutral-rest
+        invweight/meaninertia. This is the shared refresh: '_init_invweight_and_meaninertia' recomputes them but
+        leaves qpos at the neutral configuration, so the working qpos must be saved before and restored after.
+        A no-op when the solver carries no DOFs.
+        """
+        if self._n_dofs == 0:
+            return
+        # A non-parallelized scene has a single, index-less environment.
+        envs_idx = envs_idx if self.n_envs > 0 else None
+        qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
+        qpos_saved = self.get_qpos(qs_idx=qs_idx, envs_idx=envs_idx)
+        self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True)
+        self.set_qpos(qpos_saved, qs_idx=qs_idx, envs_idx=envs_idx)
+
     def _init_mass_mat(self):
         self.mass_mat = self.rigid_info.mass_mat
         self.mass_mat_L = self.rigid_info.mass_mat_L
@@ -2284,6 +2302,12 @@ class RigidSolver(KinematicSolver):
         Inertials are re-derived from the build-time (unit-scale) baseline - mass s^3, center of mass s, inertia
         tensor s^5 - so repeated calls set an absolute size and override any prior set_mass.
         """
+        # Per-environment geometry has two orthogonal axes. This is the TRANSFORM axis: a continuous per-env scale
+        # of a shared geom, applied transform-on-read (resolved where the true env index is live, then threaded as
+        # a scalar through the env-agnostic support stack). The DISTINCT-GEOM axis (heterogeneous variants, and the
+        # future GPU pool / ragged topology) instead selects a per-env geom SET via the batched LinksInfo ranges +
+        # broadphase, needing no per-consumer threading; a runtime rebind there reuses _refresh_derived_inertial_state.
+        # The two coexist (a geom may be both scaled and a variant) but do not yet compose for get_verts / get_AABB.
         if not self._options.enable_geom_scaling:
             gs.raise_exception("set_scale requires the scene built with RigidOptions(enable_geom_scaling=True).")
         if self._requires_grad:
@@ -2304,8 +2328,9 @@ class RigidSolver(KinematicSolver):
         if (scale <= 0.0).any():
             gs.raise_exception("scale must be strictly positive.")
 
-        # A scaled geom's contact with a nonconvex mesh would query its distance field at unscaled coordinates, so
-        # reject while the scene holds one (a potential contact partner).
+        # A scaled geom's contact with a nonconvex mesh would query its distance field at unscaled coordinates.
+        # The scan is intentionally scene-wide (self.geoms), not entity-local: the scaled geom may contact a
+        # nonconvex mesh belonging to any other entity.
         for scene_geom in self.geoms:
             if (
                 scene_geom.type == gs.GEOM_TYPE.MESH
@@ -2350,7 +2375,8 @@ class RigidSolver(KinematicSolver):
             vgeoms_scale = np.ascontiguousarray(np.broadcast_to(scale[:, None], (n_sel, len(vgeoms_idx))))
             kernel_set_vgeoms_scale(vgeoms_idx, envs_idx_np, vgeoms_scale, self.dyn_state, self.rigid_config)
 
-        # Rescale inertials from the unit-scale baseline (similarity transform, orientation preserved).
+        # Rescale inertials from the build-time unit-scale baseline (similarity transform, orientation preserved).
+        # The baseline is single-variant; composing scale with per-env variants later needs a per-variant baseline.
         links = entity.links
         links_idx = np.array([link.idx for link in links], dtype=gs.np_int)
         mass0 = np.array([link._inertial_mass for link in links], dtype=gs.np_float)
@@ -2375,15 +2401,10 @@ class RigidSolver(KinematicSolver):
                 out_link_pos[:, i_l_] = scale[:, None] * base_pos
         kernel_set_links_local_pos(links_idx, envs_idx_np, out_link_pos, self.dyn_info, self.rigid_config)
 
-        # Refresh invweight/meaninertia, then restore qpos (re-runs forward kinematics and clears stale contact
-        # caches so geom poses and AABBs pick up the scale).
+        # The rescaled inertials invalidate the neutral-rest invweight/meaninertia; refresh them (also re-runs
+        # forward kinematics and clears stale contact caches so geom poses and AABBs pick up the scale).
         if self._n_dofs > 0:
-            restore_envs = envs_idx if self.n_envs > 0 else None
-            qpos_saved = qd_to_torch(self.qpos, envs_idx, transpose=True, copy=True)
-            if self.n_envs == 0:
-                qpos_saved = qpos_saved[0]
-            self._init_invweight_and_meaninertia(envs_idx=restore_envs)
-            self.set_qpos(qpos_saved, envs_idx=restore_envs)
+            self._refresh_derived_inertial_state(envs_idx)
         else:
             if self.collider is not None:
                 self.collider.reset(envs_idx)
@@ -2590,10 +2611,7 @@ class RigidSolver(KinematicSolver):
             kernel_set_dofs_stiffness(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "armature":
             kernel_set_dofs_armature(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
-            qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
-            qpos_cur = self.get_qpos(qs_idx=qs_idx, envs_idx=envs_idx)
-            self._init_invweight_and_meaninertia(envs_idx=envs_idx, force_update=True)
-            self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx)
+            self._refresh_derived_inertial_state(envs_idx)
         elif name == "damping":
             kernel_set_dofs_damping(dofs_idx, envs_idx_, *tensor_list, self.dyn_info, self.rigid_config)
         elif name == "frictionloss":

@@ -1029,6 +1029,11 @@ class RigidLink(KinematicLink):
     def get_mass(self):
         """
         Get the mass of the link.
+
+        Returns the build-time baseline (or the value last written by set_mass), which set_mass relies on as its
+        reference. It does NOT reflect runtime set_scale, which writes the scaled mass to the solver rather than
+        this cached baseline -- so under scaling this disagrees with entity.get_mass (a known gap; reconciling it
+        requires reworking set_mass's baseline handling).
         """
         return self._inertial_mass
 
