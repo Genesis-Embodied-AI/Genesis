@@ -31,6 +31,16 @@ class Rigid(Kinematic["RigidEntity"]):
         robots. Default is None.
     friction : float, optional
         Friction coefficient within the rigid solver. If None, a default of 1.0 may be used or parsed from file.
+    friction_torsional : float, optional
+        Torsional friction coefficient, resisting relative spin about the contact normal. Expressed in meters, as it
+        stands for the effective contact patch radius over which sliding friction acts. Only effective when torsional
+        friction is enabled at the scene level (see 'RigidOptions.enable_torsional_friction'). If None, parsed from
+        file when available (MJCF), otherwise 0.005. Default is None.
+    friction_rolling : float, optional
+        Rolling friction coefficient, resisting rolling about the two contact tangent axes. Expressed in meters, like
+        the torsional coefficient. Only effective when rolling friction is enabled at the scene level (see
+        'RigidOptions.enable_rolling_friction'). If None, parsed from file when available (MJCF), otherwise 0.0001.
+        Default is None.
     needs_coup : bool, optional
         Whether the material participates in coupling with other solvers. Default is True.
     coup_friction : float, optional
@@ -74,12 +84,33 @@ class Rigid(Kinematic["RigidEntity"]):
     contact_resistance : float or None, optional
         IPC coupling contact resistance/stiffness override for this entity. ``None`` means use
         ``IPCCouplerOptions.contact_resistance``. Default is None.
+    qipc_abd_kappa : float or None, optional
+        ABD shape stiffness for this entity. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.rigid_abd_kappa``. Default is None.
+    qipc_kappa_pivot : float or None, optional
+        Joint pivot penalty stiffness. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.joint_kappa_pivot``. Default is None.
+    qipc_kappa_axis : float or None, optional
+        Joint axis alignment penalty stiffness. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.joint_kappa_axis``. Default is None.
+    qipc_default_kp : float or None, optional
+        Fallback PD proportional gain (used when MJCF actuator gains are not available).
+        Only used by the QIPC coupler. ``None`` means use ``QIPCCouplerOptions.default_kp``.
+        Default is None.
+    qipc_default_kv : float, str, or None, optional
+        Fallback PD derivative gain. Only used by the QIPC coupler.
+        ``None`` means use ``QIPCCouplerOptions.default_kv``. Default is None.
+    qipc_home_qpos : list of float or None, optional
+        Initial joint configuration for FK. When set, ``theta=0`` in QIPC corresponds
+        to this pose. Only used by the QIPC coupler. Default is None.
     """
 
     use_visual_raycasting: StrictBool = False
 
     rho: ValidFloat | None = None
     friction: Annotated[ValidFloat, Field(ge=0.01, le=5.0)] | None = None
+    friction_torsional: Annotated[ValidFloat, Field(ge=0.0)] | None = None
+    friction_rolling: Annotated[ValidFloat, Field(ge=0.0)] | None = None
     needs_coup: StrictBool = True
     coup_friction: NonNegativeFloat = 0.1
     coup_softness: NonNegativeFloat = 0.002
@@ -93,6 +124,13 @@ class Rigid(Kinematic["RigidEntity"]):
     enable_coup_collision: StrictBool = True
     coup_collision_links: StrArrayType | None = None
     contact_resistance: PositiveFloat | None = None
+
+    qipc_abd_kappa: PositiveFloat | None = None
+    qipc_kappa_pivot: PositiveFloat | None = None
+    qipc_kappa_axis: PositiveFloat | None = None
+    qipc_default_kp: NonNegativeFloat | None = None
+    qipc_default_kv: float | str | None = None
+    qipc_home_qpos: tuple[float, ...] | list[float] | None = None
 
     @model_validator(mode="before")
     @classmethod

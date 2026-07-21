@@ -23,7 +23,7 @@ def test_frictionloss(gs_sim, mj_sim, tol):
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qvel=qvel, num_steps=2000, tol=tol)
 
     # Check that final velocity is almost zero
-    gs_qvel = gs_sim.rigid_solver.dofs_state.vel.to_numpy()
+    gs_qvel = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()
     assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
@@ -42,7 +42,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     assert_allclose(frictionloss, np.array([0.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
-    velocity_zero = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    velocity_zero = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
     robot.set_dofs_velocity(initial_velocity)
     robot.set_dofs_frictionloss(np.array([1.0, 0.0]))
@@ -50,7 +50,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     assert_allclose(frictionloss, np.array([1.0, 0.0]), atol=tol)
     for _ in range(10):
         gs_sim.step()
-    velocity_high = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    velocity_high = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
     np.testing.assert_array_less(velocity_high[0], velocity_zero[0])
     np.testing.assert_array_less(velocity_high[1], velocity_zero[1])
@@ -61,7 +61,7 @@ def test_set_dofs_frictionloss_physics(gs_sim, tol):
     assert_allclose(frictionloss, np.array([0.5]), atol=tol)
     for _ in range(10):
         gs_sim.step()
-    velocity_medium = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    velocity_medium = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
     np.testing.assert_array_less(velocity_high[0], velocity_medium[0])
     np.testing.assert_array_less(velocity_medium[0], velocity_zero[0])
@@ -214,8 +214,8 @@ def test_static_friction(mode, friction, n_boxes, solver, scale, mesh_boxes, sho
     rigid_solver = scene.sim.rigid_solver
     assert rigid_solver._use_contact_island == (n_boxes > 1)
     if gs.backend != gs.cpu:
-        assert rigid_solver._static_rigid_sim_config.enable_cooperative_constraint_kernels == (6 * n_boxes >= 16)
-        assert rigid_solver._static_rigid_sim_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
+        assert rigid_solver.rigid_config.enable_cooperative_constraint_kernels == (6 * n_boxes >= 16)
+        assert rigid_solver.rigid_config.prefer_decomposed_solver == (6 * n_boxes >= 16)
 
     # Force needed to hold the floating boxes static without slipping
     total_mass = sum(box.get_mass() for box in floating_boxes)
@@ -348,6 +348,172 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
     for _ in range(40):
         scene.step()
     assert (torch.linalg.norm(box.get_dofs_velocity(dofs_idx_local=[0, 1]), dim=1) < 5e-5).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("friction_cone", [gs.friction_cone.pyramidal, gs.friction_cone.elliptic])
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_torsional_friction_spin_down_rate(friction_cone, n_envs, show_viewer):
+    # I * dw/dt = -friction_torsional * m * g with I = 2/5 m r^2: the saturated spin-down rate is
+    # friction_torsional * g / (0.4 r^2), mass-independent. The elliptic cone tracks this exact Coulomb bound once
+    # fully slipping; the pyramidal cone's regularized friction decays below it, so only the rate ordering is
+    # asserted. The plane's zero coefficient is inert under the pair-by-maximum rule, and a zero-coefficient sphere
+    # keeps the weight-only contact force of a torsional-free scene.
+    GRAVITY = 9.81
+    DT = 0.01
+    RADIUS = 0.1
+    W0 = 3.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=friction_cone,
+            enable_torsional_friction=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.75, -1.8, 0.8),
+            camera_lookat=(0.75, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction_torsional=0.0,
+        ),
+    )
+    spheres_friction_torsional = (0.0, 0.0001, 0.002, 0.005)
+    spheres = []
+    for i_s, friction_torsional in enumerate(spheres_friction_torsional):
+        spheres.append(
+            scene.add_entity(
+                gs.morphs.Sphere(
+                    radius=RADIUS,
+                    pos=(0.5 * i_s, 0.0, RADIUS),
+                ),
+                material=gs.materials.Rigid(
+                    friction_torsional=friction_torsional,
+                ),
+            )
+        )
+    scene.build(n_envs=n_envs)
+
+    for _ in range(10):
+        scene.step()
+    for sphere in spheres:
+        sphere.set_dofs_velocity([0.0, 0.0, 0.0, 0.0, 0.0, W0])
+    # Let the contact reference dynamics settle into the fully slipping regime before measuring the rate.
+    for _ in range(5):
+        scene.step()
+    w_start = [sphere.get_dofs_velocity()[..., 5] for sphere in spheres]
+    for _ in range(10):
+        scene.step()
+    spin_downs = []
+    for sphere, friction_torsional, w_0 in zip(spheres, spheres_friction_torsional, w_start):
+        spin_down = w_0 - sphere.get_dofs_velocity()[..., 5]
+        spin_downs.append(spin_down)
+        if friction_cone == gs.friction_cone.elliptic or friction_torsional == 0.0:
+            spin_down_rate = friction_torsional * GRAVITY / (0.4 * RADIUS**2)
+            assert_allclose(spin_down, spin_down_rate * 10 * DT, rtol=0.05, atol=1e-3)
+    for spin_down_slow, spin_down_fast in zip(spin_downs[1:], spin_downs[2:]):
+        assert (spin_down_slow < spin_down_fast).all()
+    assert_allclose(
+        torch.linalg.norm(spheres[0].get_links_net_contact_force(), dim=-1).sum(dim=-1),
+        spheres[0].get_mass() * GRAVITY,
+        rtol=0.01,
+    )
+
+    # A runtime coefficient update takes effect immediately: the zero-coefficient sphere, still spinning at W0, now
+    # decays exactly like the sphere that carried the same coefficient from the start.
+    spheres[0].set_friction_torsional(spheres_friction_torsional[-1])
+    for _ in range(5):
+        scene.step()
+    w_runtime_start = spheres[0].get_dofs_velocity()[..., 5]
+    for _ in range(10):
+        scene.step()
+    assert_allclose(w_runtime_start - spheres[0].get_dofs_velocity()[..., 5], spin_downs[-1], rtol=0.05, atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("friction_cone", [gs.friction_cone.pyramidal, gs.friction_cone.elliptic])
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_rolling_friction_deceleration_rate(friction_cone, n_envs, show_viewer):
+    # A sphere rolling without slipping decelerates only through the rolling resistance torque friction_rolling *
+    # m * g: with the rolling constraint v = w * r and I = 2/5 m r^2, dv/dt = -(5/7) * friction_rolling * g / r,
+    # mass-independent. The elliptic cone tracks this exact Coulomb bound; the pyramidal cone decays below it, so
+    # only the rate ordering is asserted. The plane's zero coefficient is inert under the pair-by-maximum rule, and
+    # a zero-coefficient sphere keeps rolling freely with the weight-only contact force of a rolling-free scene.
+    GRAVITY = 9.81
+    DT = 0.01
+    RADIUS = 0.1
+    V0 = 0.5
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=friction_cone,
+            enable_torsional_friction=True,
+            enable_rolling_friction=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.75, -1.8, 0.8),
+            camera_lookat=(0.75, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction_torsional=0.0,
+            friction_rolling=0.0,
+        ),
+    )
+    spheres_friction_rolling = (0.0, 0.001, 0.004)
+    spheres = []
+    for i_s, friction_rolling in enumerate(spheres_friction_rolling):
+        spheres.append(
+            scene.add_entity(
+                gs.morphs.Sphere(
+                    radius=RADIUS,
+                    pos=(0.5 * i_s, 0.0, RADIUS),
+                ),
+                material=gs.materials.Rigid(
+                    friction_rolling=friction_rolling,
+                ),
+            )
+        )
+    scene.build(n_envs=n_envs)
+
+    for _ in range(10):
+        scene.step()
+    for sphere in spheres:
+        sphere.set_dofs_velocity([V0, 0.0, 0.0, 0.0, V0 / RADIUS, 0.0])
+    # Let the contact settle into steady rolling before measuring the deceleration.
+    for _ in range(5):
+        scene.step()
+    v_start = [sphere.get_dofs_velocity()[..., 0] for sphere in spheres]
+    for _ in range(10):
+        scene.step()
+    slow_downs = []
+    for sphere, friction_rolling, v_0 in zip(spheres, spheres_friction_rolling, v_start):
+        slow_down = v_0 - sphere.get_dofs_velocity()[..., 0]
+        slow_downs.append(slow_down)
+        if friction_cone == gs.friction_cone.elliptic or friction_rolling == 0.0:
+            deceleration = (5.0 / 7.0) * friction_rolling * GRAVITY / RADIUS
+            assert_allclose(slow_down, deceleration * 10 * DT, rtol=0.05, atol=1e-3)
+    for slow_down_slow, slow_down_fast in zip(slow_downs[:-1], slow_downs[1:]):
+        assert (slow_down_slow < slow_down_fast).all()
+    assert_allclose(
+        torch.linalg.norm(spheres[0].get_links_net_contact_force(), dim=-1).sum(dim=-1),
+        spheres[0].get_mass() * GRAVITY,
+        rtol=0.01,
+    )
 
 
 @pytest.mark.required

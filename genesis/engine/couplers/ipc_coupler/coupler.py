@@ -53,7 +53,9 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     from .utils import (
         build_ipc_scene_config,
         compute_link_to_link_transform,
+        default_coup_type,
         find_target_link_for_fixed_merge,
+        has_articulation_dofs,
         read_ipc_geometry_metadata,
         update_coupling_forces,
     )
@@ -208,11 +210,7 @@ class IPCCoupler(RBC):
                 continue
             coup_type = entity.material.coup_type
             if coup_type is None:
-                # Auto-select based on entity type
-                if entity.n_joints > 0:
-                    coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
-                else:
-                    coup_type = "ipc_only"
+                coup_type = default_coup_type(entity)
 
             self._coup_type_by_entity[entity] = coup_type = getattr(COUPLING_TYPE, coup_type.upper())
             if coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
@@ -220,9 +218,10 @@ class IPCCoupler(RBC):
                     gs.raise_exception(
                         f"Rigid entity {i_e} is not fixed. Coupling type 'external_articulation' is not supported."
                     )
-                if entity.n_joints == 0:
+                if not has_articulation_dofs(entity):
                     gs.raise_exception(
-                        f"Rigid entity {i_e} has no joint. Coupling type 'external_articulation' is not supported."
+                        f"Rigid entity {i_e} has no articulation DOFs. "
+                        f"Coupling type 'external_articulation' is not supported."
                     )
             gs.logger.debug(f"Rigid entity {i_e}: coupling type '{coup_type.name.lower()}'")
 
@@ -399,8 +398,8 @@ class IPCCoupler(RBC):
                 gs.logger.debug(f"Fixed-merge: link {link.idx} ({link.name}) -> {target_link.idx} ({target_link.name})")
 
         # ========== Process each environment ==========
-        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
-        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat, transpose=True)
+        links_pos = qd_to_numpy(self.rigid_solver.dyn_state.links.pos, transpose=True)
+        links_quat = qd_to_numpy(self.rigid_solver.dyn_state.links.quat, transpose=True)
 
         for env_idx in range(self.sim._B):
             for target_link, source_links in target_groups.items():
@@ -512,10 +511,7 @@ class IPCCoupler(RBC):
                         self._ipc_constitution_tabular.insert(self._ipc_stc)
 
                     constraint_strength = np.array(
-                        [
-                            self.options.constraint_strength_translation,
-                            self.options.constraint_strength_rotation,
-                        ],
+                        [self.options.constraint_strength_translation, self.options.constraint_strength_rotation],
                         dtype=np.float64,
                     )
                     self._ipc_stc.apply_to(rigid_link_geom, constraint_strength)
@@ -562,8 +558,8 @@ class IPCCoupler(RBC):
         self._ipc_eac = ExternalArticulationConstraint()
         self._ipc_constitution_tabular.insert(self._ipc_eac)
 
-        joints_xaxis = qd_to_numpy(self.rigid_solver.joints_state.xaxis, transpose=True)
-        joints_xanchor = qd_to_numpy(self.rigid_solver.joints_state.xanchor, transpose=True)
+        joints_xaxis = qd_to_numpy(self.rigid_solver.dyn_state.joints.xaxis, transpose=True)
+        joints_xanchor = qd_to_numpy(self.rigid_solver.dyn_state.joints.xanchor, transpose=True)
 
         # Process each rigid entity with external_articulation coupling type
         for i_e, entity in enumerate(cast(list["RigidEntity"], self.rigid_solver.entities)):
@@ -745,10 +741,7 @@ class IPCCoupler(RBC):
         )
         self._abd_data_by_link = {
             link: [
-                ABDLinkEntry(
-                    transform=np.eye(4, dtype=gs.np_float),
-                    velocity=np.zeros((4, 4), dtype=gs.np_float),
-                )
+                ABDLinkEntry(transform=np.eye(4, dtype=gs.np_float), velocity=np.zeros((4, 4), dtype=gs.np_float))
                 for _ in range(self.sim._B)
             ]
             for link in abd_links
@@ -1007,9 +1000,7 @@ class IPCCoupler(RBC):
             # FIXME: It is currently necessary to enforce zero velocity to avoid double time integration by Rigid solver
             # self._apply_base_link_velocity_from_ipc(entity)
             self.rigid_solver.set_dofs_velocity(
-                velocity=None,
-                dofs_idx=slice(entity.dof_start, entity.dof_start + 6),
-                skip_forward=True,
+                velocity=None, dofs_idx=slice(entity.dof_start, entity.dof_start + 6), skip_forward=True
             )
 
     def _retrieve_fem_states(self):
@@ -1099,8 +1090,8 @@ class IPCCoupler(RBC):
             articulation_data.qpos_stored[:] = entities_qpos[..., entity.q_start : entity.q_end]
 
         # Store transforms for all rigid links
-        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
-        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat, transpose=True)
+        links_pos = qd_to_numpy(self.rigid_solver.dyn_state.links.pos, transpose=True)
+        links_quat = qd_to_numpy(self.rigid_solver.dyn_state.links.quat, transpose=True)
         links_transform = cast(np.ndarray, gu.trans_quat_to_T(links_pos, links_quat))
         for link, transforms in self._abd_transforms_by_link.items():
             for env_idx in range(self.sim._B):

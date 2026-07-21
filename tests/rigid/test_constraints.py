@@ -164,7 +164,7 @@ def test_dynamic_weld_scene_reset():
     scene.build(n_envs=2)
 
     solver = scene.rigid_solver
-    n_eq_base = solver._rigid_global_info.n_equalities[None]
+    n_eq_base = solver.rigid_info.n_equalities[None]
 
     solver.add_weld_constraint(box1.base_link_idx, box2.base_link_idx)
     assert solver.constraint_solver.constraint_state.qd_n_equalities[0] == n_eq_base + 1
@@ -190,9 +190,9 @@ def test_urdf_mimic(show_viewer, tol):
     scene.build()
     assert scene.rigid_solver.n_equalities == 1
 
-    qvel = scene.rigid_solver.dofs_state.vel.to_numpy()
+    qvel = scene.rigid_solver.dyn_state.dofs.vel.to_numpy()
     qvel[-1] = 1
-    scene.rigid_solver.dofs_state.vel.from_numpy(qvel)
+    scene.rigid_solver.dyn_state.dofs.vel.from_numpy(qvel)
     for i in range(200):
         scene.step()
 

@@ -2185,6 +2185,14 @@ def default_friction():
     return 1.0
 
 
+def default_friction_torsional():
+    return 0.005
+
+
+def default_friction_rolling():
+    return 0.0001
+
+
 def default_dofs_kp(n=6):
     return np.full((n,), fill_value=100.0, dtype=gs.np_float)
 

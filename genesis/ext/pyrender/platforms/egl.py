@@ -281,12 +281,16 @@ class EGLPlatform(Platform):
         from OpenGL.EGL import eglDestroyContext, eglGetCurrentContext
 
         if self._egl_display is not None:
-            # The EGL current context is per-thread and shared across renderers. Only release it if it is ours;
-            # otherwise another renderer (possibly mid-render) is current and tearing down this context must not
-            # strand it with no current context.
-            if self._egl_context is not None and eglGetCurrentContext() == self._egl_context:
-                self.make_uncurrent()
             if self._egl_context is not None:
+                # The EGL current context is per-thread and shared across renderers. Only release it if it is
+                # ours; otherwise another renderer (possibly mid-render) is current and tearing down this context
+                # must not strand it with no current context. eglGetCurrentContext returns a fresh pointer object
+                # each call that never compares equal to the stored handle by identity, so compare the underlying
+                # addresses instead of the pointer objects.
+                current_addr = ctypes.cast(eglGetCurrentContext(), ctypes.c_void_p).value
+                own_addr = ctypes.cast(self._egl_context, ctypes.c_void_p).value
+                if current_addr == own_addr:
+                    self.make_uncurrent()
                 eglDestroyContext(self._egl_display, self._egl_context)
                 self._egl_context = None
             # NOTE: intentionally not calling eglTerminate here. The NVIDIA EGL

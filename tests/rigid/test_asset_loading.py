@@ -58,6 +58,48 @@ def test_mjcf_parsing_with_include():
     assert_allclose(robot1.get_qpos(), robot3.get_qpos(), tol=gs.EPS)
 
 
+@pytest.mark.required
+def test_mjcf_include_rewrites_asset_mesh_and_skips_default_mesh(mjcf_include_default_and_asset_mesh):
+    scene_path, extents = mjcf_include_default_and_asset_mesh
+
+    scene = gs.Scene()
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=scene_path,
+        )
+    )
+    scene.build()
+
+    (geom,) = entity.geoms
+    assert geom.type == gs.GEOM_TYPE.MESH
+    aabb = geom.get_AABB()
+    assert_allclose(aabb[1] - aabb[0], extents, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_ground_plane_preservation(box_plan):
+    mjcf = ET.tostring(box_plan, encoding="unicode")
+
+    scene = gs.Scene()
+    entity_with_ground = scene.add_entity(
+        gs.morphs.MJCF(
+            file=mjcf,
+            exclude_ground_plane=False,
+        )
+    )
+    entity_without_ground = scene.add_entity(
+        gs.morphs.MJCF(
+            file=mjcf,
+            exclude_ground_plane=True,
+        )
+    )
+    scene.build()
+
+    assert_equal(sum(geom.type == gs.GEOM_TYPE.PLANE for geom in entity_with_ground.geoms), 1)
+    assert_equal(sum(geom.type == gs.GEOM_TYPE.PLANE for geom in entity_without_ground.geoms), 0)
+    assert_equal(sum(geom.type == gs.GEOM_TYPE.BOX for geom in entity_without_ground.geoms), 1)
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_urdf_parsing(show_viewer, tol):
@@ -164,7 +206,7 @@ def test_urdf_parsing(show_viewer, tol):
         )
         door_pos_diff = torch.diff(torch.concatenate(door_pos_all))
         assert_allclose(door_pos_diff, 0, tol=5e-3)
-    assert_allclose(scene.rigid_solver.dofs_state.vel.to_numpy(), 0.0, tol=1e-3)
+    assert_allclose(scene.rigid_solver.dyn_state.dofs.vel.to_numpy(), 0.0, tol=1e-3)
     _check_entity_positions(POS_OFFSET, tol=2e-3)
 
 
@@ -398,8 +440,9 @@ def test_default_armature_freeflyer(xml_path):
     armature = robot.get_dofs_armature()
     assert_allclose(armature[:6], 0.0, tol=gs.EPS)
     assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
-    if xml_path.endswith(".mjcf"):
-        assert abs(armature[7]) > gs.EPS and abs(armature[7] - DEFAULT_ARMATURE) > gs.EPS
+    if xml_path.endswith(".xml"):
+        assert_allclose(armature[7], 42.0, tol=gs.EPS)
+        assert_allclose(armature[8], 0.0002, tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
@@ -563,7 +606,13 @@ def test_color_overwrite(overwrite, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.parametrize("xml_path", ["xml/franka_emika_panda/panda.xml", "urdf/go2/urdf/go2.urdf"])
+@pytest.mark.parametrize(
+    "xml_path",
+    [
+        pytest.param("xml/franka_emika_panda/panda.xml", marks=pytest.mark.slow),
+        "urdf/go2/urdf/go2.urdf",
+    ],
+)
 def test_robot_scale_and_dofs_armature(xml_path, tol):
     ROBOT_SCALES = (1.0, 0.2, 5.0)
 
@@ -652,7 +701,7 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
         robot.set_dofs_position(dofs_lower_bound)
     scene.step()
-    qf_passive = scene.rigid_solver.dofs_state.qf_passive.to_numpy()
+    qf_passive = scene.rigid_solver.dyn_state.dofs.qf_passive.to_numpy()
     assert_allclose(qf_passive, 0.0, tol=tol)
 
 
@@ -785,7 +834,7 @@ def test_align_mesh(show_viewer, tol):
         mango.get_links_pos(links_idx_local=[0], ref="link_origin", relative=False),
         tol=tol,
     )
-    geom_inertia_i = qd_to_numpy(scene.rigid_solver.links_state.cinr_inertial, transpose=True)[0, 1]
+    geom_inertia_i = qd_to_numpy(scene.rigid_solver.dyn_state.links.cinr_inertial, transpose=True)[0, 1]
     geom_quat = tensor_to_array(mango.get_quat(relative=False))
     assert_allclose(gu.R_to_xyz(gu.quat_to_R(geom_quat) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=tol)
 
@@ -911,7 +960,7 @@ def test_align_mixed_mass_raises():
             ),
             material=material,
         )
-        with pytest.raises(gs.GenesisException, match="mixes user-specified and geometry-estimated"):
+        with pytest.raises(gs.GenesisException, match="geometry-estimated link masses"):
             scene.build()
 
 
@@ -1289,7 +1338,7 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
 
     # Inertia matrix: variant B should match explicit URDF values
     links_idx = slice(het_obj.link_start, het_obj.link_end)
-    inertial_i = qd_to_numpy(scene.rigid_solver.links_info.inertial_i, None, links_idx, transpose=True)
+    inertial_i = qd_to_numpy(scene.rigid_solver.dyn_info.links.inertial_i, None, links_idx, transpose=True)
     # Variant A: diagonal inertia matches URDF
     assert_allclose(inertial_i[[0, 1], 0], np.eye(3) * sphere_base_inertia_diag, tol=tol)
     assert_allclose(inertial_i[[0, 1], 1], np.eye(3) * sphere_moving_inertia_diag, tol=tol)
@@ -1306,7 +1355,7 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     # mass; a prior bug summed the root's own gs.EPS placeholder into the composite, inflating it by one gs.EPS
     # (hence the sub-EPS tolerance below). Envs are dispatched as [A, A, B, B].
     wrapped_idx = slice(free_wrapped.link_start, free_wrapped.link_end)
-    wrapped_mass = qd_to_numpy(scene.rigid_solver.links_info.inertial_mass, None, wrapped_idx, transpose=True)
+    wrapped_mass = qd_to_numpy(scene.rigid_solver.dyn_info.links.inertial_mass, None, wrapped_idx, transpose=True)
     assert_allclose(wrapped_mass[[0, 1], 0], WRAP_MASS_A, atol=gs.EPS * 0.5)
     assert_allclose(wrapped_mass[[2, 3], 0], WRAP_MASS_B, atol=gs.EPS * 0.5)
     assert_allclose(wrapped_mass[:, 1], gs.EPS, atol=gs.EPS * 1e-3)
@@ -1344,7 +1393,7 @@ def test_align_heterogeneous_inertial(show_viewer, tol):
     assert_allclose(het_links_pos[..., 1, 1:], het_links_pos[..., 0, 1:], tol=5e-3)
 
     # Check that the acceleration is matching the analytical formula
-    links_mass = qd_to_numpy(scene.rigid_solver.links_info.inertial_mass, None, links_idx, transpose=True)
+    links_mass = qd_to_numpy(scene.rigid_solver.dyn_info.links.inertial_mass, None, links_idx, transpose=True)
     force = np.zeros((scene.n_envs, 2, 3))
     force[..., 2] = -links_mass * GRAVITY
     het_obj.set_pos((0, 0, 0.2))

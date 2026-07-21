@@ -512,11 +512,12 @@ class Mesh(RBC):
         )
 
     @classmethod
-    def from_morph_surface(cls, morph, surface=None) -> "list[gs.Mesh] | gs.Mesh":
+    def from_morph_surface(cls, morph, surface=None) -> "list[gs.Mesh]":
         """
-        Create a genesis.Mesh from morph and surface options.
+        Create genesis.Mesh objects from morph and surface options.
 
-        If the morph is a Mesh morph (morphs.Mesh), it could contain multiple sub-meshes, so we return a list.
+        A list is always returned: a Mesh morph (morphs.Mesh) may contain multiple sub-meshes, while primitive
+        morphs yield a single mesh.
         """
         if isinstance(morph, gs.options.morphs.Mesh):
             if morph.is_format(gs.options.morphs.MESH_FORMATS):
@@ -545,7 +546,7 @@ class Mesh(RBC):
         else:
             gs.raise_exception(f"Morph {morph} not supported by this method.")
 
-        return cls.from_trimesh(tmesh, surface=surface)
+        return [cls.from_trimesh(tmesh, surface=surface)]
 
     def set_color(self, color):
         """

@@ -54,6 +54,36 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.friction_torsional(True)
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "sphere_plane_spin",
+        pytest.param("sphere_plane_roll", marks=pytest.mark.friction_rolling(True)),
+    ],
+)
+@pytest.mark.parametrize(
+    "gs_solver, gs_integrator",
+    [
+        (gs.constraint_solver.Newton, gs.integrator.Euler),
+        pytest.param(
+            gs.constraint_solver.Newton,
+            gs.integrator.Euler,
+            marks=pytest.mark.friction_cone(gs.friction_cone.elliptic),
+            id="Newton-Euler-elliptic",
+        ),
+    ],
+)
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_torsional_and_rolling_friction(gs_sim, mj_sim, tol):
+    # Sliding while spinning and rolling couples every friction axis through slip, stick, and rest. The slight
+    # initial penetration makes the contact exist from the first step.
+    qpos = np.array([0.0, 0.0, 0.0999, 1.0, 0.0, 0.0, 0.0])
+    qvel = np.array([0.5, 0.0, 0.0, 0.0, 4.0, 3.0])
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=qpos, qvel=qvel, num_steps=60, tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.adjacent_collision(True)
 @pytest.mark.parametrize("model_name", ["chain_capsule_hinge_mesh"])  # FIXME: , "chain_capsule_hinge_capsule"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -161,7 +191,10 @@ def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     # FIXME: Because of very small numerical error, error could be this large even if there is no logical error.
     # Multi-contact perturbation introduces slightly larger errors due to GJK implementation differences.
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=2e-6)
+    # Both implementations agree to machine precision on most steps, but the capsule scene holds a grazing contact
+    # whose occasional hard solves amplify rounding-order differences into distinct CG iterate paths.
+    sim_tol = 5e-6 if gs_solver == gs.constraint_solver.CG else 2e-6
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=sim_tol)
 
 
 @pytest.mark.required
@@ -201,5 +234,5 @@ def test_stickman(gs_sim, mj_sim, tol):
 
     qpos = gs_robot.get_dofs_position()
     assert torch.linalg.norm(qpos[:2]) < 1.3
-    body_z = gs_sim.rigid_solver.links_state.pos.to_numpy()[:-1, 0, 2]
+    body_z = gs_sim.rigid_solver.dyn_state.links.pos.to_numpy()[:-1, 0, 2]
     np.testing.assert_array_less(0, body_z + gs.EPS)

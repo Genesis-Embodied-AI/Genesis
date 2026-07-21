@@ -36,7 +36,7 @@ class Raycaster:
         self.envs_idx = scene._envs_idx
         self.last_hit_env_idx: int | None = None
 
-        n_faces = self.solver.faces_info.geom_idx.shape[0]
+        n_faces = self.solver.dyn_info.faces.geom_idx.shape[0]
         if n_faces == 0:
             gs.logger.warning("No faces found in scene, viewer raycasting will not work.")
             self.aabb = None
@@ -64,25 +64,11 @@ class Raycaster:
             return
         from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs
 
-        kernel_update_verts_and_aabbs(
-            geoms_info=self.solver.geoms_info,
-            geoms_state=self.solver.geoms_state,
-            verts_info=self.solver.verts_info,
-            faces_info=self.solver.faces_info,
-            free_verts_state=self.solver.free_verts_state,
-            fixed_verts_state=self.solver.fixed_verts_state,
-            links_info=self.solver.links_info,
-            static_rigid_sim_config=self.solver._static_rigid_sim_config,
-            aabb_state=self.aabb,
-        )
+        kernel_update_verts_and_aabbs(self.solver.dyn_state, self.aabb, self.solver.dyn_info, self.solver.rigid_config)
         self.bvh.build()
 
     def cast(
-        self,
-        ray_origin: np.ndarray,
-        ray_direction: np.ndarray,
-        max_range: float = 1000.0,
-        envs_idx=None,
+        self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx=None
     ) -> RayHit | None:
         """
         Cast a single ray against the BVH of each env in parallel and return the closest hit across envs.
@@ -101,18 +87,16 @@ class Raycaster:
         from genesis.utils.raycast_qd import kernel_cast_ray
 
         kernel_cast_ray(
-            self.solver.fixed_verts_state,
-            self.solver.free_verts_state,
-            self.solver.verts_info,
-            self.solver.faces_info,
+            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
+            envs_idx if envs_idx is not None else self.envs_idx,
             self.bvh.nodes,
             self.bvh.morton_codes,
-            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
-            max_range,
-            envs_idx if envs_idx is not None else self.envs_idx,
-            self.solver._rigid_global_info,
+            self.solver.dyn_state,
             self.result,
+            self.solver.dyn_info,
+            self.solver.rigid_info,
+            max_range,
             gs.EPS,
         )
 

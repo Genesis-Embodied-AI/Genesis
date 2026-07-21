@@ -28,29 +28,29 @@ if TYPE_CHECKING:
 def test_link_velocity(gs_sim, tol):
     # Check the velocity for a few "easy" special cases
     init_simulators(gs_sim, qvel=np.array([0.0, 1.0]))
-    assert_allclose(gs_sim.rigid_solver.links_state.cd_vel.to_numpy(), 0, tol=tol)
+    assert_allclose(gs_sim.rigid_solver.dyn_state.links.cd_vel.to_numpy(), 0, tol=tol)
 
     init_simulators(gs_sim, qvel=np.array([1.0, 0.0]))
-    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
+    cvel_0, cvel_1 = gs_sim.rigid_solver.dyn_state.links.cd_vel.to_numpy()[:, 0]
     assert_allclose(cvel_0, np.array([0.0, 0.5, 0.0]), tol=tol)
     assert_allclose(cvel_1, np.array([0.0, 0.5, 0.0]), tol=tol)
 
     init_simulators(gs_sim, qpos=np.array([0.0, np.pi / 2.0]), qvel=np.array([0.0, 1.2]))
-    COM = gs_sim.rigid_solver.links_state.root_COM[0, 0]
+    COM = gs_sim.rigid_solver.dyn_state.links.root_COM[0, 0]
     assert_allclose(COM, np.array([0.375, 0.125, 0.0]), tol=tol)
-    xanchor = gs_sim.rigid_solver.joints_state.xanchor[1, 0]
+    xanchor = gs_sim.rigid_solver.dyn_state.joints.xanchor[1, 0]
     assert_allclose(xanchor, np.array([0.5, 0.0, 0.0]), tol=tol)
-    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
+    cvel_0, cvel_1 = gs_sim.rigid_solver.dyn_state.links.cd_vel.to_numpy()[:, 0]
     assert_allclose(cvel_0, 0, tol=tol)
     assert_allclose(cvel_1, np.array([-1.2 * (0.125 - 0.0), 1.2 * (0.375 - 0.5), 0.0]), tol=tol)
 
     # Check that the velocity is valid for a random configuration
     init_simulators(gs_sim, qpos=np.array([-0.7, 0.2]), qvel=np.array([3.0, 13.0]))
-    xanchor = gs_sim.rigid_solver.joints_state.xanchor[1, 0]
+    xanchor = gs_sim.rigid_solver.dyn_state.joints.xanchor[1, 0]
     theta_0, theta_1 = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
     assert_allclose(xanchor[0], 0.5 * np.cos(theta_0), tol=tol)
     assert_allclose(xanchor[1], 0.5 * np.sin(theta_0), tol=tol)
-    COM = gs_sim.rigid_solver.links_state.root_COM[0, 0]
+    COM = gs_sim.rigid_solver.dyn_state.links.root_COM[0, 0]
     COM_0 = np.array([0.25 * np.cos(theta_0), 0.25 * np.sin(theta_0), 0.0])
     COM_1 = np.array(
         [
@@ -66,8 +66,8 @@ def test_link_velocity(gs_sim, tol):
     assert_allclose(link_COM1, COM_1, tol=tol)
     assert_allclose(COM, 0.5 * (COM_0 + COM_1), tol=tol)
 
-    cvel_0, cvel_1 = gs_sim.rigid_solver.links_state.cd_vel.to_numpy()[:, 0]
-    omega_0, omega_1 = gs_sim.rigid_solver.links_state.cd_ang.to_numpy()[:, 0, 2]
+    cvel_0, cvel_1 = gs_sim.rigid_solver.dyn_state.links.cd_vel.to_numpy()[:, 0]
+    omega_0, omega_1 = gs_sim.rigid_solver.dyn_state.links.cd_ang.to_numpy()[:, 0, 2]
     assert_allclose(omega_0, 3.0, tol=tol)
     assert_allclose(omega_1 - omega_0, 13.0, tol=tol)
     cvel_0_ = omega_0 * np.array([-COM[1], COM[0], 0.0])
@@ -75,7 +75,7 @@ def test_link_velocity(gs_sim, tol):
     cvel_1_ = cvel_0 + (omega_1 - omega_0) * np.array([xanchor[1] - COM[1], COM[0] - xanchor[0], 0.0])
     assert_allclose(cvel_1, cvel_1_, tol=tol)
 
-    xpos_0, xpos_1 = gs_sim.rigid_solver.links_state.pos.to_numpy()[:, 0]
+    xpos_0, xpos_1 = gs_sim.rigid_solver.dyn_state.links.pos.to_numpy()[:, 0]
     assert_allclose(xpos_0, 0.0, tol=tol)
     assert_allclose(xpos_1, xanchor, tol=tol)
     xvel_0, xvel_1 = gs_sim.rigid_solver.get_links_vel()
@@ -108,7 +108,7 @@ def test_pendulum_links_acc(gs_sim, tol):
     for _ in range(100):
         # Backup state before integration
         theta = gs_sim.rigid_solver.qpos[0, 0]
-        theta_dot = gs_sim.rigid_solver.dofs_state.vel[0, 0]
+        theta_dot = gs_sim.rigid_solver.dyn_state.dofs.vel[0, 0]
 
         # Run one simulation step
         gs_sim.scene.step()
@@ -120,7 +120,7 @@ def test_pendulum_links_acc(gs_sim, tol):
         assert_allclose(acc_ang[2], np.array([-np.sin(theta) * g, 0.0, 0.0]), tol=tol)
         # Linear spatial acceleration:
         # * acc_spatial_lin_y = sin(theta) * g
-        acc_spatial_lin_world = gs_sim.rigid_solver.links_state.cacc_lin.to_numpy()
+        acc_spatial_lin_world = gs_sim.rigid_solver.dyn_state.links.cacc_lin.to_numpy()
         assert_allclose(acc_spatial_lin_world[0], 0, tol=tol)
         R = np.array(
             [
@@ -165,13 +165,13 @@ def test_double_pendulum_links_acc(gs_sim, tol):
     for _ in range(100):
         # Backup state before integration
         theta = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
-        theta_dot = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        theta_dot = gs_sim.rigid_solver.dyn_state.dofs.vel.to_numpy()[:, 0]
 
         # Run one simulation step
         gs_sim.scene.step()
 
         # Backup acceleration before integration
-        theta_ddot = gs_sim.rigid_solver.dofs_state.acc.to_numpy()[:, 0]
+        theta_ddot = gs_sim.rigid_solver.dyn_state.dofs.acc.to_numpy()[:, 0]
 
         # Angular acceleration
         acc_ang = tensor_to_array(gs_sim.rigid_solver.get_links_acc_ang())
@@ -180,9 +180,9 @@ def test_double_pendulum_links_acc(gs_sim, tol):
         assert_allclose(acc_ang[-1], [theta_ddot[0] + theta_ddot[1], 0.0, 0.0], tol=tol)
 
         # Linear spatial acceleration
-        cacc_spatial_lin_world = gs_sim.rigid_solver.links_state.cacc_lin.to_numpy()[[0, 2, 4], 0]
-        com = gs_sim.rigid_solver.links_state.root_COM.to_numpy()[-1, 0]
-        pos = gs_sim.rigid_solver.links_state.pos.to_numpy()[[0, 2, 4], 0]
+        cacc_spatial_lin_world = gs_sim.rigid_solver.dyn_state.links.cacc_lin.to_numpy()[[0, 2, 4], 0]
+        com = gs_sim.rigid_solver.dyn_state.links.root_COM.to_numpy()[-1, 0]
+        pos = gs_sim.rigid_solver.dyn_state.links.pos.to_numpy()[[0, 2, 4], 0]
         assert_allclose(cacc_spatial_lin_world[1], np.cross(acc_ang[2], com), tol=tol)
         acc_spatial_lin_world = cacc_spatial_lin_world + np.cross(acc_ang[[0, 2, 4]], pos - com)
         assert_allclose(acc_spatial_lin_world[0], 0, tol=tol)
@@ -233,7 +233,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     # Disable all constraints and actuation
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
-    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(int(gs.CTRL_MODE.FORCE))
+    gs_sim.rigid_solver.dyn_state.dofs.ctrl_mode.fill(int(gs.CTRL_MODE.FORCE))
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
@@ -243,7 +243,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
 
     (gs_robot,) = gs_sim.entities
-    dof_bounds = gs_sim.rigid_solver.dofs_info.limit.to_numpy()
+    dof_bounds = gs_sim.rigid_solver.dyn_info.dofs.limit.to_numpy()
     for _ in range(100):
         qpos = dof_bounds[:, 0] + (dof_bounds[:, 1] - dof_bounds[:, 0]) * np.random.rand(gs_robot.n_qs)
         init_simulators(gs_sim, mj_sim, qpos)
@@ -331,12 +331,12 @@ def test_joint_get_anchor_pos_and_axis(n_envs):
     joint = robot.joints[1]
     anchor_pos = joint.get_anchor_pos()
     assert anchor_pos.shape == (*batch_shape, 3)
-    expected_pos = scene.rigid_solver.joints_state.xanchor.to_numpy()
+    expected_pos = scene.rigid_solver.dyn_state.joints.xanchor.to_numpy()
     assert_allclose(anchor_pos, expected_pos[joint.idx], tol=gs.EPS)
 
     anchor_axis = joint.get_anchor_axis()
     assert anchor_axis.shape == (*batch_shape, 3)
-    expected_axis = scene.rigid_solver.joints_state.xaxis.to_numpy()
+    expected_axis = scene.rigid_solver.dyn_state.joints.xaxis.to_numpy()
     assert_allclose(anchor_axis, expected_axis[joint.idx], tol=gs.EPS)
 
 

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "1.2.2"
+version = "1.2.3"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "quadrants==1.1.1",
+    "quadrants==1.1.3",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
@@ -85,6 +85,9 @@ dev = [
     # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
     # "pytest-rerunfailures!=16.0",
+    # GPU queries for the test infrastructure (tests/gpu_info.py); non-macOS so the CUDA device check runs on
+    # Linux and Windows. AMD's 'amdsmi' ships with ROCm, not PyPI, so the AMD backend is import-gated instead.
+    "nvidia-ml-py; platform_system != 'Darwin'",
     "setproctitle", # allows renaming the test processes on the cluster
     "syrupy",
     "huggingface_hub[hf_xet]",
@@ -93,7 +96,9 @@ dev = [
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
     # * Mujoco 3.5.0 fixed computation of link invweight when degenerated.
-    "mujoco>=3.5.0,<3.7.0",
+    # * Mujoco 3.10.0 aligned the primal solvers with Genesis (Hager-Zhang CG update, shifted linesearch costs);
+    #   the step-by-step solver consistency tests only hold when both engines run the same algorithm.
+    "mujoco>=3.10.0,<3.11.0",
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",

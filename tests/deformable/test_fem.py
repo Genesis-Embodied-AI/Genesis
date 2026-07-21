@@ -14,8 +14,8 @@ from ..utils import assert_allclose, get_hf_dataset
 @pytest.mark.required
 def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, show_viewer):
     # A small maxvolume introduces internal vertices during tetrahedralization: all surface vertices must
-    # still lie exactly on the original quad faces, and the visualizer's mesh triangles must match the FEM
-    # entity's surface triangles.
+    # still lie exactly on the original quad faces, and the visualizer's mesh vertices must track the
+    # simulated vertices through the visual geom's sim_verts_idx.
     verts, faces = cube_verts_and_faces
 
     scene = gs.Scene(
@@ -84,39 +84,47 @@ def test_interior_tetrahedralized_vertex(cube_verts_and_faces, box_obj_path, sho
             f"Surface vertex index {idx} with coordinate {p} does not lie on any original face"
         )
 
-    # Verify whether surface faces in the visualizer mesh matches the surface faces of the FEM entity
-    static_nodes = scene.visualizer.context.static_nodes
-    fem_node_mesh = static_nodes[(0, fem.uid)].mesh
+    # The visualizer draws the input surface, whose vertices track the simulated vertices through the visual
+    # geom's sim_verts_idx, while surface_triangles reflects the refined tetrahedral boundary: the two meshes
+    # differ in granularity, so the invariant to check is per-vertex tracking.
+    (vgeom,) = fem.vgeoms
+    (fem_node_primitive,) = scene.visualizer.context.static_nodes[(0, vgeom.uid)].mesh.primitives
+    viz_verts = fem_node_primitive.positions
+    assert_allclose(viz_verts, vertices[vgeom.sim_verts_idx], tol=gs.EPS)
 
-    (fem_node_primitive,) = fem_node_mesh.primitives
-    fem_node_vertices = fem_node_primitive.positions
-    fem_node_faces = fem_node_primitive.indices
-    if fem_node_faces is None:
-        fem_node_faces = np.arange(fem_node_vertices.shape[0]).reshape(-1, 3)
 
-    def _make_triangle_set(verts, faces, tol=4):
-        """
-        Return a hashable, order-independent representation of a given set of triangle faces.
-
-        Rounds each vertex coordinate to the given tolerance, sorts vertices within each triangle,
-        and returns all triangles as a sorted tuple, eliminating any dependence on vertex or face order.
-        """
-        tri_set = set()
-        for tri in faces:
-            coords = [tuple(round(float(coord), tol) for coord in verts[i]) for i in tri]
-            tri_set.add(tuple(sorted(coords)))
-        return tuple(sorted(tri_set))
-
-    # Triangles of FEM entity
-    entity_tris = _make_triangle_set(vertices, fem.surface_triangles)
-
-    # Triangles of visualizer
-    viz_tris = _make_triangle_set(np.asarray(fem_node_vertices), np.asarray(fem_node_faces))
-
-    assert entity_tris == viz_tris, (
-        "FEM entity surface triangles and visualizer mesh triangles do not match.\n"
-        f"Differences: {set(entity_tris) ^ set(viz_tris)}"
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_multi_submesh_render_decoupling(n_envs, show_viewer):
+    # Cloth material keeps the entity out of the tetrahedralization path, exercising the welded surface as
+    # simulation elements. The GLB asset holds 2 sub-meshes (bag and channel) with distinct materials.
+    scene = gs.Scene(
+        show_viewer=show_viewer,
     )
+    fem = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/trashbag_rope.glb",
+            group_by_material=True,
+        ),
+        material=gs.materials.FEM.Cloth(),
+    )
+    scene.build(n_envs=n_envs)
+
+    assert len(fem.vgeoms) == 2
+    # The two sub-meshes share their boundary vertices, so welding strictly reduces the vertex count.
+    n_render_verts = sum(len(vgeom.vmesh.verts) for vgeom in fem.vgeoms)
+    assert fem.n_vertices < n_render_verts
+    vertices = tensor_to_array(fem.get_state().pos)
+    for vgeom in fem.vgeoms:
+        # Negative indices would wrap around silently.
+        assert vgeom.sim_verts_idx.min() >= 0
+        # Mapped simulated vertices must land on the render vertices they stand for, in every environment, up to
+        # the quantization of the float64 authored vertices to the simulation dtype.
+        assert_allclose(vertices[..., vgeom.sim_verts_idx, :], vgeom.vmesh.verts, tol=gs.EPS)
+
+    # The rasterizer must register one node per visual geom and environment.
+    static_nodes = scene.visualizer.context.static_nodes
+    assert all((i_b, vgeom.uid) in static_nodes for i_b in range(max(n_envs, 1)) for vgeom in fem.vgeoms)
 
 
 @pytest.mark.required

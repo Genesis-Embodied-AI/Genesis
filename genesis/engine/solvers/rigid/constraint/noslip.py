@@ -5,52 +5,47 @@ import genesis.utils.array_class as array_class
 
 
 @qd.func
-def func_solve_mass_block(
-    i_d0,
-    i_b,
-    vec: qd.Tensor,
-    rigid_global_info: array_class.RigidGlobalInfo,
-):
-    """LDL^T forward-backward substitution on vec, restricted to the mass-matrix block containing dof i_d0.
+def func_solve_mass_block(i_d0, i_b, vec: qd.Tensor, rigid_info: array_class.RigidInfo):
+    """LDL^T forward-backward substitution on vec, restricted to the mass block containing dof i_d0.
 
-    The factor is block-diagonal per kinematic tree, with constant block bounds shared by every member dof
-    (dofs_mass_block_start/end), so a block is solvable independently from any member dof.
+    The factor is block-diagonal per mass block (see dofs_mass_block_start in array_class.py), with constant block
+    bounds shared by every member dof, so a block is solvable independently from any member dof.
     """
-    block_start = rigid_global_info.dofs_mass_block_start[i_d0]
-    block_end = rigid_global_info.dofs_mass_block_end[i_d0]
+    block_start = rigid_info.dofs_mass_block_start[i_d0]
+    block_end = rigid_info.dofs_mass_block_end[i_d0]
 
     # Step 1: Solve w s.t. L^T @ w = y (backward substitution)
     for i_d_ in range(block_end - block_start):
         i_d = block_end - i_d_ - 1
         curr = vec[i_d, i_b]
         for j_d in range(i_d + 1, block_end):
-            curr = curr - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * vec[j_d, i_b]
+            curr = curr - rigid_info.mass_mat_L[j_d, i_d, i_b] * vec[j_d, i_b]
         vec[i_d, i_b] = curr
 
     # Step 2: z = D^{-1} @ w
     for i_d in range(block_start, block_end):
-        vec[i_d, i_b] = vec[i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+        vec[i_d, i_b] = vec[i_d, i_b] * rigid_info.mass_mat_D_inv[i_d, i_b]
 
     # Step 3: Solve x s.t. L @ x = z (forward substitution)
     for i_d in range(block_start, block_end):
         curr = vec[i_d, i_b]
         for j_d in range(block_start, i_d):
-            curr = curr - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * vec[j_d, i_b]
+            curr = curr - rigid_info.mass_mat_L[i_d, j_d, i_b] * vec[j_d, i_b]
         vec[i_d, i_b] = curr
 
 
 @qd.func
 def func_apply_Minv_rows(
     i_row_0,
-    coef_0,
     i_row_1,
-    coef_1,
     i_b,
+    jac_dofs_idx: qd.Tensor,
+    coef_0,
+    coef_1,
     vec: qd.Tensor,
     jac: qd.Tensor,
-    jac_dofs_idx: qd.Tensor,
     jac_n_dofs: qd.Tensor,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    rigid_info: array_class.RigidInfo,
 ):
     """Compute vec = M^{-1} (coef_0 * J[i_row_0]^T + coef_1 * J[i_row_1]^T) over the touched mass blocks.
 
@@ -60,55 +55,48 @@ def func_apply_Minv_rows(
     per pass. Working at block granularity (not entity granularity) keeps the touched dof range within the row's own
     island, which makes concurrent per-island sweeps of the same env race-free.
     """
-    block_start_prev = gs.qd_int(-1)
+    tree_start_prev = gs.qd_int(-1)
     for i_d_ in range(jac_n_dofs[i_row_0, i_b]):
         i_d = jac_dofs_idx[i_row_0, i_d_, i_b]
-        block_start = rigid_global_info.dofs_mass_block_start[i_d]
-        if block_start != block_start_prev:
-            for j_d in range(block_start, rigid_global_info.dofs_mass_block_end[i_d]):
+        block_start = rigid_info.dofs_mass_block_start[i_d]
+        if block_start != tree_start_prev:
+            for j_d in range(block_start, rigid_info.dofs_mass_block_end[i_d]):
                 vec[j_d, i_b] = gs.qd_float(0.0)
-            block_start_prev = block_start
+            tree_start_prev = block_start
         vec[i_d, i_b] = coef_0 * jac[i_row_0, i_d, i_b] + coef_1 * jac[i_row_1, i_d, i_b]
 
-    block_start_prev = gs.qd_int(-1)
+    tree_start_prev = gs.qd_int(-1)
     for i_d_ in range(jac_n_dofs[i_row_0, i_b]):
         i_d = jac_dofs_idx[i_row_0, i_d_, i_b]
-        block_start = rigid_global_info.dofs_mass_block_start[i_d]
-        if block_start != block_start_prev:
-            func_solve_mass_block(i_d, i_b, vec, rigid_global_info)
-            block_start_prev = block_start
+        block_start = rigid_info.dofs_mass_block_start[i_d]
+        if block_start != tree_start_prev:
+            func_solve_mass_block(i_d, i_b, vec, rigid_info)
+            tree_start_prev = block_start
 
 
 @qd.func
 def func_accumulate_row_blocks(
     i_row,
     i_b,
+    jac_dofs_idx: qd.Tensor,
     vec_src: qd.Tensor,
     vec_dst: qd.Tensor,
-    jac_dofs_idx: qd.Tensor,
     jac_n_dofs: qd.Tensor,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    rigid_info: array_class.RigidInfo,
 ):
     """Add vec_src to vec_dst over the mass blocks touched by constraint row i_row."""
-    block_start_prev = gs.qd_int(-1)
+    tree_start_prev = gs.qd_int(-1)
     for i_d_ in range(jac_n_dofs[i_row, i_b]):
         i_d = jac_dofs_idx[i_row, i_d_, i_b]
-        block_start = rigid_global_info.dofs_mass_block_start[i_d]
-        if block_start != block_start_prev:
-            for j_d in range(block_start, rigid_global_info.dofs_mass_block_end[i_d]):
+        block_start = rigid_info.dofs_mass_block_start[i_d]
+        if block_start != tree_start_prev:
+            for j_d in range(block_start, rigid_info.dofs_mass_block_end[i_d]):
                 vec_dst[j_d, i_b] = vec_dst[j_d, i_b] + vec_src[j_d, i_b]
-            block_start_prev = block_start
+            tree_start_prev = block_start
 
 
 @qd.func
-def func_dot_row(
-    i_row,
-    i_b,
-    vec: qd.Tensor,
-    jac: qd.Tensor,
-    jac_dofs_idx: qd.Tensor,
-    jac_n_dofs: qd.Tensor,
-):
+def func_dot_row(i_row, i_b, jac_dofs_idx: qd.Tensor, vec: qd.Tensor, jac: qd.Tensor, jac_n_dofs: qd.Tensor):
     """Sparse dot product J[i_row] * vec over the row dof support."""
     s = gs.qd_float(0.0)
     for i_d_ in range(jac_n_dofs[i_row, i_b]):
@@ -121,11 +109,10 @@ def func_dot_row(
 def func_refresh_qacc_batch(
     i_b,
     i_island,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
-    island_state: array_class.IslandState,
-    static_rigid_sim_config: qd.template(),
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """Recompute qacc = acc_smooth + M^{-1} J^T f from the current constraint forces, over one island.
 
@@ -139,23 +126,23 @@ def func_refresh_qacc_batch(
     n_rows = constraint_state.n_constraints[i_b]
     dof_start = gs.qd_int(0)
     row_start = gs.qd_int(0)
-    if qd.static(static_rigid_sim_config.enable_per_island_solve):
-        n_dofs = island_state.dof_slices.n[i_island, i_b]
-        n_rows = island_state.constraint_slices.n[i_island, i_b]
-        dof_start = island_state.dof_slices.start[i_island, i_b]
-        row_start = island_state.constraint_slices.start[i_island, i_b]
+    if qd.static(rigid_config.enable_per_island_solve):
+        n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
+        n_rows = constraint_state.island.constraint_slices.n[i_island, i_b]
+        dof_start = constraint_state.island.dof_slices.start[i_island, i_b]
+        row_start = constraint_state.island.constraint_slices.start[i_island, i_b]
 
     for i_d_ in range(n_dofs):
         i_d = i_d_
-        if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            i_d = island_state.dof_id[dof_start + i_d_, i_b]
+        if qd.static(rigid_config.enable_per_island_solve):
+            i_d = constraint_state.island.dof_id[dof_start + i_d_, i_b]
         constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
         constraint_state.qacc[i_d, i_b] = gs.qd_float(0.0)
 
     for i_c_ in range(n_rows):
         i_c = i_c_
-        if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            i_c = island_state.constraint_id[row_start + i_c_, i_b]
+        if qd.static(rigid_config.enable_per_island_solve):
+            i_c = constraint_state.island.constraint_id[row_start + i_c_, i_b]
         force = constraint_state.efc_force[i_c, i_b]
         for i_d_ in range(constraint_state.jac_n_dofs[i_c, i_b]):
             i_d = constraint_state.jac_dofs_idx[i_c, i_d_, i_b]
@@ -165,33 +152,32 @@ def func_refresh_qacc_batch(
 
     for i_d_ in range(n_dofs):
         i_d = i_d_
-        if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            i_d = island_state.dof_id[dof_start + i_d_, i_b]
+        if qd.static(rigid_config.enable_per_island_solve):
+            i_d = constraint_state.island.dof_id[dof_start + i_d_, i_b]
         # Solve each mass block once, when visiting its first dof (order-robust, unlike previous-block tracking,
         # since the island dof list may be permuted by the fill-reducing reorder).
-        if i_d == rigid_global_info.dofs_mass_block_start[i_d]:
+        if i_d == rigid_info.dofs_mass_block_start[i_d]:
             constraint_state.qacc[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-            for j_d in range(i_d + 1, rigid_global_info.dofs_mass_block_end[i_d]):
+            for j_d in range(i_d + 1, rigid_info.dofs_mass_block_end[i_d]):
                 constraint_state.qacc[j_d, i_b] = constraint_state.qfrc_constraint[j_d, i_b]
-            func_solve_mass_block(i_d, i_b, constraint_state.qacc, rigid_global_info)
+            func_solve_mass_block(i_d, i_b, constraint_state.qacc, rigid_info)
 
     for i_d_ in range(n_dofs):
         i_d = i_d_
-        if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            i_d = island_state.dof_id[dof_start + i_d_, i_b]
-        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dofs_state.acc_smooth[i_d, i_b]
+        if qd.static(rigid_config.enable_per_island_solve):
+            i_d = constraint_state.island.dof_id[dof_start + i_d_, i_b]
+        constraint_state.qacc[i_d, i_b] = constraint_state.qacc[i_d, i_b] + dyn_state.dofs.acc_smooth[i_d, i_b]
 
 
 @qd.func
 def func_noslip_batch(
     i_b,
     i_island,
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    island_state: array_class.IslandState,
-    static_rigid_sim_config: qd.template(),
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """Matrix-free noslip force-update sweep over one island (the whole env counts as one island when the per-island
     solve is off).
@@ -204,7 +190,7 @@ def func_noslip_batch(
     by island and the updates touch only the row's own mass blocks, so concurrent sweeps of different islands of the
     same env are race-free and equivalent to the env-wide sweep.
     """
-    EPS = rigid_global_info.EPS[None]
+    EPS = rigid_info.EPS[None]
 
     # temp variables
     res = qd.Vector.zero(gs.qd_float, 2)
@@ -216,21 +202,19 @@ def func_noslip_batch(
     ne = constraint_state.n_constraints_equality[i_b]
     nf = constraint_state.n_constraints_frictionloss[i_b]
     const_start = ne + nf
-    const_end = const_start + 4 * collider_state.n_contacts[i_b]
+    const_end = const_start + qd.static(rigid_config.rows_per_contact) * collider_state.n_contacts[i_b]
 
     n_rows = constraint_state.n_constraints[i_b]
     row_start = gs.qd_int(0)
-    if qd.static(static_rigid_sim_config.enable_per_island_solve):
-        n_dofs = island_state.dof_slices.n[i_island, i_b]
-        n_rows = island_state.constraint_slices.n[i_island, i_b]
-        row_start = island_state.constraint_slices.start[i_island, i_b]
+    if qd.static(rigid_config.enable_per_island_solve):
+        n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
+        n_rows = constraint_state.island.constraint_slices.n[i_island, i_b]
+        row_start = constraint_state.island.constraint_slices.start[i_island, i_b]
 
-    scale = 1.0 / (rigid_global_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
+    scale = 1.0 / (rigid_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
 
-    for i_iter in range(rigid_global_info.noslip_iterations[None]):
-        func_refresh_qacc_batch(
-            i_b, i_island, dofs_state, rigid_global_info, constraint_state, island_state, static_rigid_sim_config
-        )
+    for i_iter in range(rigid_info.noslip_iterations[None]):
+        func_refresh_qacc_batch(i_b, i_island, dyn_state, constraint_state, rigid_info, rigid_config)
 
         improvement = gs.qd_float(0.0)
 
@@ -240,8 +224,8 @@ def func_noslip_batch(
         # limit rows only contribute to the iter-0 improvement correction.
         for i_c_ in range(n_rows):
             i_c = i_c_
-            if qd.static(static_rigid_sim_config.enable_per_island_solve):
-                i_c = island_state.constraint_id[row_start + i_c_, i_b]
+            if qd.static(rigid_config.enable_per_island_solve):
+                i_c = constraint_state.island.constraint_id[row_start + i_c_, i_b]
 
             if i_iter == 0:
                 improvement += 0.5 * constraint_state.efc_force[i_c, i_b] ** 2 * constraint_state.diag[i_c, i_b]
@@ -258,32 +242,32 @@ def func_noslip_batch(
                     if i_phase == 0 or delta != 0.0:
                         func_apply_Minv_rows(
                             i_c,
-                            coef,
                             i_c,
-                            0.0,
                             i_b,
+                            constraint_state.jac_dofs_idx,
+                            coef,
+                            0.0,
                             constraint_state.Mgrad,
                             constraint_state.jac,
-                            constraint_state.jac_dofs_idx,
                             constraint_state.jac_n_dofs,
-                            rigid_global_info,
+                            rigid_info,
                         )
                         if i_phase == 0:
                             A_diag = func_dot_row(
                                 i_c,
                                 i_b,
+                                constraint_state.jac_dofs_idx,
                                 constraint_state.Mgrad,
                                 constraint_state.jac,
-                                constraint_state.jac_dofs_idx,
                                 constraint_state.jac_n_dofs,
                             )
                             res[0] = (
                                 func_dot_row(
                                     i_c,
                                     i_b,
+                                    constraint_state.jac_dofs_idx,
                                     constraint_state.qacc,
                                     constraint_state.jac,
-                                    constraint_state.jac_dofs_idx,
                                     constraint_state.jac_n_dofs,
                                 )
                                 - constraint_state.aref[i_c, i_b]
@@ -301,11 +285,11 @@ def func_noslip_batch(
                             func_accumulate_row_blocks(
                                 i_c,
                                 i_b,
+                                constraint_state.jac_dofs_idx,
                                 constraint_state.Mgrad,
                                 constraint_state.qacc,
-                                constraint_state.jac_dofs_idx,
                                 constraint_state.jac_n_dofs,
-                                rigid_global_info,
+                                rigid_info,
                             )
             elif i_c >= const_start and i_c < const_end and (i_c - const_start) % 2 == 0:
                 j_efc = i_c
@@ -329,25 +313,25 @@ def func_noslip_batch(
                     if i_phase < 2 or delta_0 != 0.0 or delta_1 != 0.0:
                         func_apply_Minv_rows(
                             j_efc,
-                            coef_0,
                             j_efc + 1,
-                            coef_1,
                             i_b,
+                            constraint_state.jac_dofs_idx,
+                            coef_0,
+                            coef_1,
                             constraint_state.Mgrad,
                             constraint_state.jac,
-                            constraint_state.jac_dofs_idx,
                             constraint_state.jac_n_dofs,
-                            rigid_global_info,
+                            rigid_info,
                         )
                         if i_phase == 2:
                             func_accumulate_row_blocks(
                                 j_efc,
                                 i_b,
+                                constraint_state.jac_dofs_idx,
                                 constraint_state.Mgrad,
                                 constraint_state.qacc,
-                                constraint_state.jac_dofs_idx,
                                 constraint_state.jac_n_dofs,
-                                rigid_global_info,
+                                rigid_info,
                             )
                         else:
                             for i2 in qd.static(range(2)):
@@ -355,9 +339,9 @@ def func_noslip_batch(
                                     s = func_dot_row(
                                         j_efc + i2,
                                         i_b,
+                                        constraint_state.jac_dofs_idx,
                                         constraint_state.Mgrad,
                                         constraint_state.jac,
-                                        constraint_state.jac_dofs_idx,
                                         constraint_state.jac_n_dofs,
                                     )
                                     if i_phase == 0:
@@ -372,9 +356,9 @@ def func_noslip_batch(
                                 func_dot_row(
                                     j_efc + i2,
                                     i_b,
+                                    constraint_state.jac_dofs_idx,
                                     constraint_state.qacc,
                                     constraint_state.jac,
-                                    constraint_state.jac_dofs_idx,
                                     constraint_state.jac_n_dofs,
                                 )
                                 - constraint_state.aref[j_efc + i2, i_b]
@@ -405,14 +389,7 @@ def func_noslip_batch(
                                 constraint_state.efc_force[j_efc, i_b] = mid + y
                                 constraint_state.efc_force[j_efc + 1, i_b] = mid - y
                         cost_change = func_cost_change(
-                            i_b=i_b,
-                            Ac=Ac,
-                            force=constraint_state.efc_force,
-                            force_start=j_efc,
-                            old_force=old_force,
-                            res=res,
-                            dim=2,
-                            eps=EPS,
+                            i_b, j_efc, Ac, old_force, res, EPS, constraint_state.efc_force, 2
                         )
 
                         improvement -= cost_change
@@ -422,7 +399,7 @@ def func_noslip_batch(
 
         improvement *= scale
 
-        if improvement < rigid_global_info.noslip_tolerance[None]:
+        if improvement < rigid_info.noslip_tolerance[None]:
             break
 
 
@@ -430,44 +407,40 @@ def func_noslip_batch(
 def func_dual_finish_batch(
     i_b,
     i_island,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    dyn_state: array_class.DynState,
     constraint_state: array_class.ConstraintState,
-    island_state: array_class.IslandState,
-    static_rigid_sim_config: qd.template(),
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """Map the final constraint forces back to joint space over one island.
 
     The refresh recomputes qfrc_constraint = J^T f and qacc = acc_smooth + M^{-1} J^T f exactly from the swept
     forces; the remaining work is copying them into the per-dof state.
     """
-    func_refresh_qacc_batch(
-        i_b, i_island, dofs_state, rigid_global_info, constraint_state, island_state, static_rigid_sim_config
-    )
+    func_refresh_qacc_batch(i_b, i_island, dyn_state, constraint_state, rigid_info, rigid_config)
 
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     dof_start = gs.qd_int(0)
-    if qd.static(static_rigid_sim_config.enable_per_island_solve):
-        n_dofs = island_state.dof_slices.n[i_island, i_b]
-        dof_start = island_state.dof_slices.start[i_island, i_b]
+    if qd.static(rigid_config.enable_per_island_solve):
+        n_dofs = constraint_state.island.dof_slices.n[i_island, i_b]
+        dof_start = constraint_state.island.dof_slices.start[i_island, i_b]
 
     for i_d_ in range(n_dofs):
         i_d = i_d_
-        if qd.static(static_rigid_sim_config.enable_per_island_solve):
-            i_d = island_state.dof_id[dof_start + i_d_, i_b]
-        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        if qd.static(rigid_config.enable_per_island_solve):
+            i_d = constraint_state.island.dof_id[dof_start + i_d_, i_b]
+        dyn_state.dofs.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dyn_state.dofs.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dyn_state.dofs.force[i_d, i_b] = dyn_state.dofs.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
 
 
 @qd.kernel(fastcache=True)
 def kernel_noslip(
+    dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
-    dofs_state: array_class.DofsState,
-    rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
-    island_state: array_class.IslandState,
-    static_rigid_sim_config: qd.template(),
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
 ):
     """Noslip pass: matrix-free force-update sweep followed by the dual finish, fused per island.
 
@@ -478,67 +451,32 @@ def kernel_noslip(
     """
     _B = constraint_state.jac.shape[2]
 
-    if qd.static(static_rigid_sim_config.enable_per_island_solve):
+    if qd.static(rigid_config.enable_per_island_solve):
         # max_islands bounds the per-env island count (at most one island per link); the guard skips the unused tail.
         # Iterate islands-major so that consecutive GPU lanes sweep the same island index across consecutive envs:
         # envs are replicas of one scene, so lanes execute identical control flow (island sizes match) and the
         # batch-contiguous field reads coalesce, instead of adjacent lanes diverging on different islands of one env.
-        max_islands = island_state.dof_slices.start.shape[0]
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        max_islands = constraint_state.island.dof_slices.start.shape[0]
+        qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_island, i_b in qd.ndrange(max_islands, _B):
-            if i_island < island_state.n_islands[i_b]:
+            if i_island < constraint_state.island.n_islands[i_b]:
                 run_island = True
-                if qd.static(static_rigid_sim_config.use_hibernation):
-                    run_island = not island_state.is_hibernated[i_island, i_b]
+                if qd.static(rigid_config.use_hibernation):
+                    run_island = not constraint_state.island.is_hibernated[i_island, i_b]
                 if run_island:
                     func_noslip_batch(
-                        i_b,
-                        i_island,
-                        collider_state,
-                        dofs_state,
-                        constraint_state,
-                        rigid_global_info,
-                        island_state,
-                        static_rigid_sim_config,
+                        i_b, i_island, dyn_state, collider_state, constraint_state, rigid_info, rigid_config
                     )
-                    func_dual_finish_batch(
-                        i_b,
-                        i_island,
-                        dofs_state,
-                        rigid_global_info,
-                        constraint_state,
-                        island_state,
-                        static_rigid_sim_config,
-                    )
+                    func_dual_finish_batch(i_b, i_island, dyn_state, constraint_state, rigid_info, rigid_config)
     else:
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
-            func_noslip_batch(
-                i_b,
-                0,
-                collider_state,
-                dofs_state,
-                constraint_state,
-                rigid_global_info,
-                island_state,
-                static_rigid_sim_config,
-            )
-            func_dual_finish_batch(
-                i_b, 0, dofs_state, rigid_global_info, constraint_state, island_state, static_rigid_sim_config
-            )
+            func_noslip_batch(i_b, 0, dyn_state, collider_state, constraint_state, rigid_info, rigid_config)
+            func_dual_finish_batch(i_b, 0, dyn_state, constraint_state, rigid_info, rigid_config)
 
 
 @qd.func
-def func_cost_change(
-    i_b: int,
-    Ac,
-    force: qd.Tensor,
-    force_start: int,
-    old_force,
-    res,
-    dim: int,
-    eps,
-):
+def func_cost_change(i_b: int, force_start: int, Ac, old_force, res, eps, force: qd.Tensor, dim: int):
     change = gs.qd_float(0.0)
     if dim == 1:
         delta = force[force_start, i_b] - old_force[0]

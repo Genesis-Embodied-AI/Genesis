@@ -18,18 +18,49 @@ def xml_path(request, tmp_path, model_name):
     return file_path
 
 
+def _build_plane_contact_model(model_name, condim, friction, plane_size):
+    """Generate the shared skeleton of the plane-contact MJCF models: one contact default applying to every geom and
+    a plane floor, with the free bodies appended by _add_free_body."""
+    mjcf = ET.Element("mujoco", model=model_name)
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim=condim, friction=friction)
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size=plane_size)
+    return mjcf
+
+
+def _add_free_body(mjcf, name, geom_type, geom_size, pos, rgba=None):
+    """Append a free-floating body with a single geom to a plane-contact MJCF model."""
+    body = ET.SubElement(mjcf.find("worldbody"), "body", name=name, pos=pos)
+    geom_kwargs = {} if rgba is None else {"rgba": rgba}
+    ET.SubElement(body, "geom", type=geom_type, size=geom_size, pos="0. 0. 0.", **geom_kwargs)
+    ET.SubElement(body, "joint", name=f"{name}_root", type="free")
+
+
 @pytest.fixture(scope="session")
 def box_plan():
     """Generate an MJCF model for a box on a plane."""
-    mjcf = ET.Element("mujoco", model="one_box")
-    ET.SubElement(mjcf, "option", timestep="0.01")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
-    box_body = ET.SubElement(worldbody, "body", name="box", pos="0. 0. 0.3")
-    ET.SubElement(box_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
-    ET.SubElement(box_body, "joint", name="root", type="free")
+    mjcf = _build_plane_contact_model("box_plan", condim="3", friction="1. 0.5 0.5", plane_size="40. 40. 40.")
+    _add_free_body(mjcf, name="box", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.3")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def sphere_plane_roll():
+    """Generate an MJCF model for a sphere rolling on a plane, with torsional and rolling friction (condim=6)."""
+    mjcf = _build_plane_contact_model(
+        "sphere_plane_roll", condim="6", friction="1. 0.005 0.002", plane_size="10. 10. 10."
+    )
+    _add_free_body(mjcf, name="sphere", geom_type="sphere", geom_size="0.1", pos="0. 0. 0.1")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def sphere_plane_spin():
+    """Generate an MJCF model for a sphere spinning in place on a plane, with torsional friction (condim=4)."""
+    mjcf = _build_plane_contact_model("sphere_plane_spin", condim="4", friction="1. 0.005 0.", plane_size="10. 10. 10.")
+    _add_free_body(mjcf, name="sphere", geom_type="sphere", geom_size="0.1", pos="0. 0. 0.1")
     return mjcf
 
 
@@ -53,19 +84,10 @@ def mimic_hinges():
 
 @pytest.fixture(scope="session")
 def box_box():
-    """Generate an MJCF model for two boxes."""
-    mjcf = ET.Element("mujoco", model="one_box")
-    ET.SubElement(mjcf, "option", timestep="0.01")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "geom", contype="1", conaffinity="1", condim="3", friction="1. 0.5 0.5")
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    ET.SubElement(worldbody, "geom", type="plane", name="floor", pos="0. 0. 0.", size="40. 40. 40.")
-    box1_body = ET.SubElement(worldbody, "body", name="box1", pos="0. 0. 0.2")
-    ET.SubElement(box1_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 1 0 0.4")
-    ET.SubElement(box1_body, "joint", name="root1", type="free")
-    box2_body = ET.SubElement(worldbody, "body", name="box2", pos="0. 0. 0.8")
-    ET.SubElement(box2_body, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.", rgba="0 0 1 0.4")
-    ET.SubElement(box2_body, "joint", name="root2", type="free")
+    """Generate an MJCF model for two boxes stacked on a plane."""
+    mjcf = _build_plane_contact_model("box_box", condim="3", friction="1. 0.5 0.5", plane_size="40. 40. 40.")
+    _add_free_body(mjcf, name="box1", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.2", rgba="0 1 0 0.4")
+    _add_free_body(mjcf, name="box2", geom_type="box", geom_size="0.2 0.2 0.2", pos="0. 0. 0.8", rgba="0 0 1 0.4")
     return mjcf
 
 
@@ -172,6 +194,32 @@ def decompose_fusion_groups(asset_tmp_path):
     ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0 -0.5 1", contype="16777216")
     ET.SubElement(worldbody, "geom", type="mesh", mesh="small_box", pos="0.15 -0.5 1", contype="16777217")
     return mjcf
+
+
+@pytest.fixture(scope="session")
+def mjcf_include_default_and_asset_mesh(asset_tmp_path):
+    """Scene MJCF that <include>s a subdirectory model mixing a file-less <default> mesh class with a real <asset>
+    mesh, so the include preprocessing must rewrite only the asset mesh path (relative to the included file). Returns
+    the scene file path and the authored box extents."""
+    extents = (0.2, 0.4, 0.6)
+    include_dir = asset_tmp_path / "mjcf_include"
+    include_dir.mkdir(exist_ok=True)
+    trimesh.creation.box(extents=extents).export(include_dir / "box.obj")
+
+    robot = ET.Element("mujoco", model="robot")
+    default = ET.SubElement(robot, "default")
+    ET.SubElement(default, "mesh", maxhullvert="64")
+    asset = ET.SubElement(robot, "asset")
+    ET.SubElement(asset, "mesh", name="box", file="box.obj")
+    worldbody = ET.SubElement(robot, "worldbody")
+    ET.SubElement(worldbody, "geom", type="mesh", mesh="box")
+    ET.ElementTree(robot).write(include_dir / "robot.xml", encoding="utf-8", xml_declaration=True)
+
+    scene_mjcf = ET.Element("mujoco", model="scene")
+    ET.SubElement(scene_mjcf, "include", file="mjcf_include/robot.xml")
+    scene_path = str(asset_tmp_path / "mjcf_include_scene.xml")
+    ET.ElementTree(scene_mjcf).write(scene_path, encoding="utf-8", xml_declaration=True)
+    return scene_path, extents
 
 
 @pytest.fixture(scope="session")
@@ -579,6 +627,9 @@ def box_freejoint_offset():
 @pytest.fixture(scope="session")
 def freeflyer_mjcf():
     mjcf = ET.Element("mujoco", model="freeflyer")
+    default = ET.SubElement(mjcf, "default")
+    default_authored = ET.SubElement(default, "default", {"class": "authored"})
+    ET.SubElement(default_authored, "joint", armature="0.0002")
     worldbody = ET.SubElement(mjcf, "worldbody")
     body = ET.SubElement(worldbody, "body", name="base", pos="0 0 1")
     ET.SubElement(body, "joint", type="free")
@@ -592,6 +643,10 @@ def freeflyer_mjcf():
     ET.SubElement(grandchild, "joint", type="slide", axis="1 0 0", armature="42.0")
     ET.SubElement(grandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
     ET.SubElement(grandchild, "geom", type="sphere", size="0.01")
+    greatgrandchild = ET.SubElement(grandchild, "body", name="greatgrandchild", pos="0 0 0.1")
+    ET.SubElement(greatgrandchild, "joint", {"type": "slide", "axis": "0 1 0", "class": "authored"})
+    ET.SubElement(greatgrandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
+    ET.SubElement(greatgrandchild, "geom", type="sphere", size="0.01")
     return mjcf
 
 
@@ -691,3 +746,105 @@ def xacro_robot(tmp_path):
     file_path = str(tmp_path / "two_link.urdf.xacro")
     ET.ElementTree(robot).write(file_path, encoding="utf-8", xml_declaration=True)
     return file_path
+
+
+@pytest.fixture(scope="session")
+def merged_arm_hand_models():
+    """MJCF models built from shared fragments so the merged entities are kinematically identical to the single
+    equivalent entity by construction: an arm (fixed base -> a1 -> a2 -> tip, hinges about z, links along +x so the
+    neutral tip frame is identity) and a branching hand (palm + 4 fingers x 3 hinges = 12 DOFs).
+
+    Returns (monolith, arm_only, arm_free_box_last, arm_free_box_first, hand_only): the monolith splices three hands
+    rigidly - one under the tip, one chained under the first hand's palm, and one under a2 (a second branch of the
+    same tree) - declared in that depth-first order so its DOF layout matches attaching three hand entities in the
+    same creation order, each with an identity offset (child morph pos 0 == coincident with the parent link). The
+    arm_free_box variants additionally declare a free body after or before the arm, making it a two-tree entity.
+    """
+
+    def _finger(parent, name, y):
+        b0 = ET.SubElement(parent, "body", name=f"{name}_0", pos=f"0.05 {y} 0")
+        ET.SubElement(b0, "joint", name=f"{name}_j0", type="hinge", axis="0 1 0", pos="0 0 0")
+        ET.SubElement(b0, "geom", type="box", size="0.02 0.008 0.008", mass="0.05")
+        b1 = ET.SubElement(b0, "body", name=f"{name}_1", pos="0.04 0 0")
+        ET.SubElement(b1, "joint", name=f"{name}_j1", type="hinge", axis="0 1 0", pos="0 0 0")
+        ET.SubElement(b1, "geom", type="box", size="0.02 0.008 0.008", mass="0.04")
+        b2 = ET.SubElement(b1, "body", name=f"{name}_2", pos="0.04 0 0")
+        ET.SubElement(b2, "joint", name=f"{name}_j2", type="hinge", axis="0 1 0", pos="0 0 0")
+        ET.SubElement(b2, "geom", type="box", size="0.02 0.008 0.008", mass="0.03")
+
+    def _palm(parent, is_root, prefix=""):
+        palm = ET.SubElement(parent, "body", name=f"{prefix}palm", pos="0 0 0")
+        if is_root:
+            ET.SubElement(palm, "freejoint")
+        ET.SubElement(palm, "geom", type="box", size="0.03 0.05 0.02", mass="0.2")
+        for i, y in enumerate((-0.03, -0.01, 0.01, 0.03)):
+            _finger(palm, f"{prefix}f{i}", y)
+        return palm
+
+    def _arm_tip(worldbody):
+        base = ET.SubElement(worldbody, "body", name="base", pos="0 0 0.5")
+        ET.SubElement(base, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.03", mass="1.0")
+        a2 = ET.SubElement(base, "body", name="a2", pos="0.2 0 0")
+        ET.SubElement(a2, "joint", name="a1", type="hinge", axis="0 0 1", pos="0 0 0")
+        ET.SubElement(a2, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.03", mass="1.0")
+        tip = ET.SubElement(a2, "body", name="tip", pos="0.2 0 0")
+        ET.SubElement(tip, "joint", name="a2", type="hinge", axis="0 0 1", pos="0 0 0")
+        ET.SubElement(tip, "geom", type="capsule", fromto="0 0 0 0.02 0 0", size="0.02", mass="0.2")
+        return a2, tip
+
+    def _free_box(worldbody):
+        box = ET.SubElement(worldbody, "body", name="freebox", pos="0 2 1")
+        ET.SubElement(box, "freejoint")
+        ET.SubElement(box, "geom", type="box", size="0.05 0.05 0.05", mass="0.2")
+
+    def _arm_model(free_box_position):
+        mjcf = ET.Element("mujoco")
+        wb = ET.SubElement(mjcf, "worldbody")
+        if free_box_position == "first":
+            _free_box(wb)
+        _arm_tip(wb)
+        if free_box_position == "last":
+            _free_box(wb)
+        return ET.tostring(mjcf, encoding="unicode")
+
+    mono_mjcf = ET.Element("mujoco")
+    mono_a2, mono_tip = _arm_tip(ET.SubElement(mono_mjcf, "worldbody"))
+    mono_h1_palm = _palm(mono_tip, is_root=False, prefix="h1_")
+    _palm(mono_h1_palm, is_root=False, prefix="h3_")
+    _palm(mono_a2, is_root=False, prefix="h2_")
+
+    hand_mjcf = ET.Element("mujoco")
+    _palm(ET.SubElement(hand_mjcf, "worldbody"), is_root=True)
+    return (
+        ET.tostring(mono_mjcf, encoding="unicode"),
+        _arm_model(free_box_position=None),
+        _arm_model(free_box_position="last"),
+        _arm_model(free_box_position="first"),
+        ET.tostring(hand_mjcf, encoding="unicode"),
+    )
+
+
+@pytest.fixture(scope="session")
+def merged_overlapping_models():
+    """An arm (fixed base -> a2 -> tip) and a floating-base hand whose palm geom, once attached to the tip, overlaps
+    the arm's a2 link (which is NOT adjacent to the palm) in the neutral configuration.
+
+    Returns (arm, hand). Used to check that self-collision / neutral-overlap masking spans the attach merge boundary.
+    """
+    arm = ET.Element("mujoco")
+    wb = ET.SubElement(arm, "worldbody")
+    base = ET.SubElement(wb, "body", name="base", pos="0 0 0.5")
+    ET.SubElement(base, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.03", mass="1.0")
+    a2 = ET.SubElement(base, "body", name="a2", pos="0.2 0 0")
+    ET.SubElement(a2, "joint", name="a1", type="hinge", axis="0 0 1")
+    ET.SubElement(a2, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.03", mass="1.0")
+    tip = ET.SubElement(a2, "body", name="tip", pos="0.2 0 0")
+    ET.SubElement(tip, "joint", name="a2", type="hinge", axis="0 0 1")
+    ET.SubElement(tip, "geom", type="capsule", fromto="0 0 0 0.02 0 0", size="0.02", mass="0.2")
+
+    hand = ET.Element("mujoco")
+    palm = ET.SubElement(ET.SubElement(hand, "worldbody"), "body", name="palm", pos="0 0 0")
+    ET.SubElement(palm, "freejoint")
+    # Long box reaching back from the tip over the (non-adjacent) a2 link.
+    ET.SubElement(palm, "geom", type="box", size="0.15 0.03 0.03", pos="-0.1 0 0", mass="0.2")
+    return ET.tostring(arm, encoding="unicode"), ET.tostring(hand, encoding="unicode")

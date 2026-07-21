@@ -43,6 +43,8 @@ class RigidGeom(RBC):
         mesh: "Mesh",
         type: gs.GEOM_TYPE,
         friction: float,
+        friction_torsional: float,
+        friction_rolling: float,
         sol_params,
         init_pos,
         init_quat,
@@ -62,6 +64,8 @@ class RigidGeom(RBC):
         self._idx = idx
         self._type: gs.GEOM_TYPE = type
         self._friction: float = friction
+        self._friction_torsional: float = friction_torsional
+        self._friction_rolling: float = friction_rolling
         self._sol_params = sol_params
         self._needs_coup: bool = needs_coup
         self._contype = int(contype)
@@ -165,12 +169,7 @@ class RigidGeom(RBC):
 
     def _preprocess(self):
         # compute file name via hashing for caching
-        self._gsd_path = mu.get_gsd_path(
-            self._init_verts,
-            self._init_faces,
-            self._sdf_res,
-            self._sdf_cell_size,
-        )
+        self._gsd_path = mu.get_gsd_path(self._init_verts, self._init_faces, self._sdf_res, self._sdf_cell_size)
 
         # loading pre-computed cache if available
         is_cached_loaded = False
@@ -357,6 +356,28 @@ class RigidGeom(RBC):
         if self._solver.is_built:
             self._solver.set_geom_friction(friction, self._idx)
 
+    def set_friction_torsional(self, friction_torsional):
+        """
+        Set the torsional friction coefficient of this geometry (see 'gs.materials.Rigid').
+        """
+        if friction_torsional < 0:
+            gs.raise_exception("`friction_torsional` must be non-negative.")
+        self._friction_torsional = friction_torsional
+
+        if self._solver.is_built:
+            self._solver.set_geom_friction_torsional(friction_torsional, self._idx)
+
+    def set_friction_rolling(self, friction_rolling):
+        """
+        Set the rolling friction coefficient of this geometry (see 'gs.materials.Rigid').
+        """
+        if friction_rolling < 0:
+            gs.raise_exception("`friction_rolling` must be non-negative.")
+        self._friction_rolling = friction_rolling
+
+        if self._solver.is_built:
+            self._solver.set_geom_friction_rolling(friction_rolling, self._idx)
+
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------
@@ -390,9 +411,9 @@ class RigidGeom(RBC):
 
         verts_idx = slice(self.verts_state_start, self.verts_state_end)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
+            tensor = qd_to_torch(self._solver.dyn_state.fixed_verts.pos, verts_idx, copy=True)
         else:
-            tensor = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
+            tensor = qd_to_torch(self._solver.dyn_state.free_verts.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor
@@ -454,6 +475,20 @@ class RigidGeom(RBC):
         Get the friction coefficient of the geom.
         """
         return self._friction
+
+    @property
+    def friction_torsional(self):
+        """
+        Get the torsional friction coefficient of the geom (see 'gs.materials.Rigid').
+        """
+        return self._friction_torsional
+
+    @property
+    def friction_rolling(self):
+        """
+        Get the rolling friction coefficient of the geom (see 'gs.materials.Rigid').
+        """
+        return self._friction_rolling
 
     @property
     def data(self):
@@ -836,16 +871,7 @@ class RigidVisGeom(RBC):
     A `RigidVisGeom` is a counterpart of `RigidGeom`, but for visualization purposes. This can be accessed via `link.vis_geoms`.
     """
 
-    def __init__(
-        self,
-        link,
-        idx,
-        vvert_start,
-        vface_start,
-        vmesh,
-        init_pos,
-        init_quat,
-    ):
+    def __init__(self, link, idx, vvert_start, vface_start, vmesh, init_pos, init_quat):
         self._link = link
         self._entity = link.entity
         self._material = link.entity.material
@@ -969,8 +995,8 @@ class RigidVisGeom(RBC):
             )
 
         self._solver.update_vgeoms()
-        vgeoms_pos = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, transpose=True, copy=None)
-        vgeoms_quat = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, transpose=True, copy=None)
+        vgeoms_pos = qd_to_torch(self._solver.dyn_state.vgeoms.pos, envs_idx, transpose=True, copy=None)
+        vgeoms_quat = qd_to_torch(self._solver.dyn_state.vgeoms.quat, envs_idx, transpose=True, copy=None)
         init = torch.as_tensor(self.init_vverts, dtype=gs.tc_float, device=gs.device)
         pos = vgeoms_pos[..., self.idx, :].unsqueeze(-2)
         quat = vgeoms_quat[..., self.idx, :].unsqueeze(-2)

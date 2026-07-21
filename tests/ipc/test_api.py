@@ -9,6 +9,7 @@ except ImportError:
 
 
 import genesis as gs
+from genesis.engine.couplers.ipc_coupler.data import COUPLING_TYPE
 
 from .utils import (
     get_ipc_rigid_links_idx,
@@ -32,6 +33,50 @@ def test_needs_coup():
     scene.build()
     assert scene.sim.coupler._coup_type_by_entity == {}
     assert not scene.sim.coupler.has_any_rigid_coupling
+
+
+@pytest.mark.required
+def test_auto_coup_type_from_dofs():
+    scene = gs.Scene(
+        coupler_options=gs.options.IPCCouplerOptions(
+            two_way_coupling=True,
+        ),
+        show_viewer=False,
+    )
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    fixed_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+    free_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.5, 0.0, 0.5),
+        ),
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/simple/two_cube_revolute.urdf",
+            pos=(0.0, 0.5, 0.2),
+            fixed=True,
+        ),
+    )
+    scene.build()
+
+    coupler = cast("IPCCoupler", scene.sim.coupler)
+    assert coupler._coup_type_by_entity[plane] == COUPLING_TYPE.IPC_ONLY
+    assert coupler._coup_type_by_entity[fixed_box] == COUPLING_TYPE.IPC_ONLY
+    assert coupler._coup_type_by_entity[free_box] == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT
+    assert coupler._coup_type_by_entity[robot] == COUPLING_TYPE.EXTERNAL_ARTICULATION
+    assert plane.n_joints == 1 and plane.n_dofs == 0
+    assert fixed_box.n_joints == 1 and fixed_box.n_dofs == 0
+    assert free_box.n_dofs > 0 and not free_box.base_link.is_fixed
+    assert robot.n_dofs > 0 and robot.base_link.is_fixed
 
 
 @pytest.mark.required

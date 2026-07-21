@@ -421,6 +421,10 @@ class SPHSolver(Solver):
                     factor = 0.0
                 self.particles_reordered[i_p, i_b].dfsph_factor = factor
 
+                # Reset the implicit pressure accumulated by the density solve (see
+                # _kernel_density_solve_iteration).
+                self.particles_reordered[i_p, i_b].p = 0.0
+
     @qd.func
     def _task_compute_density_time_derivative(self, i, j, ret: qd.template(), i_b):
         v_i = self.particles_reordered[i, i_b].vel
@@ -599,6 +603,15 @@ class SPHSolver(Solver):
                 )
                 self.particles_reordered[i_p, i_b].vel = self.particles_reordered[i_p, i_b].vel + ret.dv
 
+                # The stiffness k_i is the pressure this Jacobi iteration applies to cancel the current density
+                # error, up to the -1/rho0 scaling carried by dfsph_factor, so summing -k_i * rho0 over the
+                # iterations of the density solve yields the implicit pressure field that enforces
+                # incompressibility over the substep. This exposes in particles.p the same physical quantity
+                # that the equation of state provides under WCSPH. The field is zeroed once per substep in
+                # _kernel_compute_DFSPH_factor.
+                rho0 = self.particles_info_reordered[i_p, i_b].rho
+                self.particles_reordered[i_p, i_b].p = self.particles_reordered[i_p, i_b].p - k_i * rho0
+
     def _density_solve_iteration(self):
         self._kernel_density_solve_iteration()
         self._kernel_compute_density_star()
@@ -671,6 +684,28 @@ class SPHSolver(Solver):
                 res = 6.0 * k * q * (3.0 * q - 2.0) * grad_q
             else:
                 res = -6.0 * k * (1.0 - q) ** 2 * grad_q
+        return res
+
+    @qd.func
+    def cubic_kernel_plane_integral(self, dist):
+        """
+        Integral of the cubic spline smoothing kernel over the plane at distance dist from its center.
+
+        Closed form of 2 * pi * int_{|dist|}^{h} W(r) r dr. Its own integral along the plane normal equals
+        half the kernel normalization: int_{0}^{h} of this quantity over dist is exactly 1/2, which makes
+        forces weighted by it integrate to a per-unit-area magnitude over a covering layer of particles.
+        """
+        res = gs.qd_float(0.0)
+        h = self._support_radius
+        q = qd.abs(dist) / h
+        if q <= 1.0:
+            q2 = q**2
+            q3 = q2 * q
+            if q <= 0.5:
+                res = 0.0875 - (1.2 * q3 * q2 - 1.5 * q2**2 + 0.5 * q2)
+            else:
+                res = 0.1 - (q2 - 2.0 * q3 + 1.5 * q2**2 - 0.4 * q3 * q2)
+            res = res * 16.0 / h
         return res
 
     # ------------------------------------------------------------------------------------

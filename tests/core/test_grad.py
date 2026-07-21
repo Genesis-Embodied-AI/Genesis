@@ -149,8 +149,8 @@ def test_diff_contact():
 
     # Compute analytical gradients of the geoms position and quaternion
     collider.backward(dL_dposition, dL_dnormal, dL_dpenetration)
-    dL_dpos = qd_to_torch(solver.geoms_state.pos.grad)
-    dL_dquat = qd_to_torch(solver.geoms_state.quat.grad)
+    dL_dpos = qd_to_torch(solver.dyn_state.geoms.pos.grad)
+    dL_dquat = qd_to_torch(solver.dyn_state.geoms.quat.grad)
 
     ### Compute directional derivatives along random directions
     FD_EPS = 1e-5
@@ -340,24 +340,20 @@ def test_diff_solver(monkeypatch):
     # Monkeypatch the constraint resolve function to avoid overwriting the necessary information for computing gradients.
     def constraint_solver_resolve():
         func_solve_init(
-            dofs_info=rigid_solver.dofs_info,
-            dofs_state=rigid_solver.dofs_state,
-            entities_info=rigid_solver.entities_info,
-            constraint_state=constraint_solver.constraint_state,
-            rigid_global_info=rigid_solver._rigid_global_info,
-            island_state=constraint_solver.island_state,
-            static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
+            rigid_solver.rigid_config,
             is_decomposed=False,
         )
         func_solve_body(
-            entities_info=rigid_solver.entities_info,
-            dofs_info=rigid_solver.dofs_info,
-            dofs_state=rigid_solver.dofs_state,
-            constraint_state=constraint_solver.constraint_state,
-            rigid_global_info=rigid_solver._rigid_global_info,
-            static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-            _n_iterations=constraint_solver._n_iterations,
-            island_state=constraint_solver.island_state,
+            rigid_solver.dyn_state,
+            constraint_solver.constraint_state,
+            rigid_solver.dyn_info,
+            rigid_solver.rigid_info,
+            rigid_solver.rigid_config,
+            constraint_solver._n_iterations,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
@@ -365,19 +361,11 @@ def test_diff_solver(monkeypatch):
     # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
     kernel_step_1(
-        links_state=rigid_solver.links_state,
-        links_info=rigid_solver.links_info,
-        joints_state=rigid_solver.joints_state,
-        joints_info=rigid_solver.joints_info,
-        dofs_state=rigid_solver.dofs_state,
-        dofs_info=rigid_solver.dofs_info,
-        geoms_state=rigid_solver.geoms_state,
-        geoms_info=rigid_solver.geoms_info,
-        entities_state=rigid_solver.entities_state,
-        entities_info=rigid_solver.entities_info,
-        rigid_global_info=rigid_solver._rigid_global_info,
-        static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-        island_state=constraint_solver.island_state,
+        rigid_solver.dyn_state,
+        constraint_solver.constraint_state,
+        rigid_solver.dyn_info,
+        rigid_solver.rigid_info,
+        rigid_solver.rigid_config,
         is_forward_pos_updated=True,
         is_forward_vel_updated=True,
         is_backward=False,
@@ -389,25 +377,25 @@ def test_diff_solver(monkeypatch):
 
     # Loss function to compute gradients using finite difference method
     def compute_loss(input_mass, input_jac, input_aref, input_efc_D, input_force):
-        rigid_solver._rigid_global_info.mass_mat.from_numpy(input_mass)
+        rigid_solver.rigid_info.mass_mat.from_numpy(input_mass)
         constraint_solver.constraint_state.jac.from_numpy(input_jac)
         constraint_solver.constraint_state.aref.from_numpy(input_aref)
         constraint_solver.constraint_state.efc_D.from_numpy(input_efc_D)
-        rigid_solver.dofs_state.force.from_numpy(input_force)
+        rigid_solver.dyn_state.dofs.force.from_numpy(input_force)
 
         # Recompute acc_smooth from the updated input variables
         updated_acc_smooth = np.linalg.solve(input_mass[..., 0], input_force[..., 0])
-        rigid_solver.dofs_state.acc_smooth.from_numpy(updated_acc_smooth[..., None])
+        rigid_solver.dyn_state.dofs.acc_smooth.from_numpy(updated_acc_smooth[..., None])
         constraint_solver.resolve()
 
         output_qacc = qd_to_torch(constraint_solver.qacc)
         return ((output_qacc - target_qacc) ** 2).mean()
 
-    init_input_mass = qd_to_numpy(rigid_solver._rigid_global_info.mass_mat, copy=True)
+    init_input_mass = qd_to_numpy(rigid_solver.rigid_info.mass_mat, copy=True)
     init_input_jac = qd_to_numpy(constraint_solver.constraint_state.jac, copy=True)
     init_input_aref = qd_to_numpy(constraint_solver.constraint_state.aref, copy=True)
     init_input_efc_D = qd_to_numpy(constraint_solver.constraint_state.efc_D, copy=True)
-    init_input_force = qd_to_numpy(rigid_solver.dofs_state.force, copy=True)
+    init_input_force = qd_to_numpy(rigid_solver.dyn_state.dofs.force, copy=True)
 
     # Initial output of the constraint solver
     set_random_seed(0)
