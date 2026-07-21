@@ -2603,6 +2603,12 @@ def get_raycast_result(n_envs: int):
 # Capacity of the per-env start-config contact-exclusion lists (see PlannerEntityInfo); overflow raises through
 # the planner errno since it indicates a start configuration deeply entangled with the world.
 _PLANNER_N_EXCL_MAX = 64
+# Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) history depth and the smooth-noise knot count of the
+# MPPI basis; both bound in-kernel local arrays, so they are module constants rather than options.
+PLANNER_LBFGS_M = 8
+PLANNER_N_NOISE_KNOTS = 8
+PLANNER_MPPI_P_MAX = 32
+PLANNER_LS_TRIALS_MAX = 8
 
 
 @qd.data_oriented
@@ -2679,6 +2685,8 @@ class PlannerEntityInfo:
     ls_n_trials: qd.Tensor
     # Per-call deterministic noise key (counter-based hash RNG, see trajopt.py).
     seed_key: qd.Tensor
+    # Smooth MPPI noise basis: per-knot weights of the noise knots, zero rows at the clamped knots.
+    noise_basis: qd.Tensor
     # Start-config contact exclusions: pairs already violating the margin at qpos_start are allowed to keep their
     # start clearance (never get worse), so grasped-object starts (fingers squeezing, object still on the table)
     # optimize and certify. Sphere-vs-world entries pack (i_s, i_gw), self entries the self-pair index.
@@ -2730,6 +2738,7 @@ def get_planner_entity_info(planner_config, n_self_pairs, B):
         lbfgs_n_iters=V(dtype=gs.qd_int, shape=()),
         ls_n_trials=V(dtype=gs.qd_int, shape=()),
         seed_key=V(dtype=gs.qd_int, shape=()),
+        noise_basis=V(dtype=gs.qd_float, shape=(planner_config.n_knots, PLANNER_N_NOISE_KNOTS)),
         excl_world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
         excl_world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
         excl_world_count=V(dtype=gs.qd_int, shape=(B,)),
@@ -2791,6 +2800,15 @@ class PlannerState:
     eval_joints_xanchor: qd.Tensor
     eval_joints_xaxis: qd.Tensor
     eval_spheres_pos: qd.Tensor
+    # Trajectory-optimizer scratch: trial / particle trajectories, previous iterate and gradient, search
+    # direction, and the L-BFGS ring-buffer history.
+    trial_qpos: qd.Tensor
+    qpos_prev: qd.Tensor
+    grad_prev: qd.Tensor
+    dir_traj: qd.Tensor
+    lbfgs_s: qd.Tensor
+    lbfgs_y: qd.Tensor
+    lbfgs_rho: qd.Tensor
     # Per-column and per-candidate cost / validation outputs.
     cost_wp: qd.Tensor
     cost: qd.Tensor
@@ -2823,6 +2841,13 @@ def get_planner_state(planner_config, B):
         eval_joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
         eval_joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
         eval_spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+        trial_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+        qpos_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+        grad_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+        dir_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+        lbfgs_s=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
+        lbfgs_y=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
+        lbfgs_rho=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, C)),
         cost_wp=V(dtype=gs.qd_float, shape=(NF,)),
         cost=V(dtype=gs.qd_float, shape=(C,)),
         is_active=V(dtype=gs.qd_bool, shape=(C,)),
