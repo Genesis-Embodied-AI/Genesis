@@ -324,8 +324,10 @@ def qd_transform_by_quat(v, quat):
 def qd_transform_by_quat_grad_quat(v, quat, out_grad):
     """Adjoint of qd_transform_by_quat(v, quat) with respect to quat, with v held constant.
 
-    Differentiates the quaternion sandwich q v q* (the forward's numerator), which matches qd_transform_by_quat on
-    unit quaternions where its norm division equals one.
+    The forward is num(q) / |q|^2 where num is the quaternion sandwich q v q*. The full derivative applies the
+    quotient rule: d(num/D) = dnum/D - num * dD/D^2 with D = |q|^2 and dD/dq = 2 q. Keeping only the numerator term
+    (dnum) is correct only when q is a fixed unit quaternion; it is wrong whenever q is an optimization variable,
+    even at unit length (the radial dD term is nonzero), so the denominator term must be included.
     """
     q_w, q_x, q_y, q_z = quat
     v_x, v_y, v_z = v
@@ -357,7 +359,12 @@ def qd_transform_by_quat_grad_quat(v, quat, out_grad):
         ],
         dt=gs.qd_float,
     )
-    return out_grad[0] * d_out0_d_quat + out_grad[1] * d_out1_d_quat + out_grad[2] * d_out2_d_quat
+    d_num_d_quat = out_grad[0] * d_out0_d_quat + out_grad[1] * d_out1_d_quat + out_grad[2] * d_out2_d_quat
+
+    # Quotient-rule denominator term: out = num / D with D = |q|^2, so d(out)/dq = dnum/dq / D - out * (2 q) / D.
+    D = q_w * q_w + q_x * q_x + q_y * q_y + q_z * q_z
+    out = qd_transform_by_quat(v, quat)
+    return d_num_d_quat / D - (2.0 / D) * out_grad.dot(out) * quat
 
 
 @qd.func

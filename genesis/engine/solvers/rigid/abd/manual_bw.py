@@ -76,9 +76,25 @@ def kernel_manual_forward_kinematics_bw(
                         rigid_info.qpos.grad[q_start + j, i_b] = (
                             rigid_info.qpos.grad[q_start + j, i_b] + g_pos[j] + xanchor_grad[j]
                         )
+                    # The forward normalizes the raw qpos quaternion (quat_ = q / |q|) before writing the link
+                    # quaternion, so the gradient must pass through the Jacobian of q / |q|:
+                    # J^T g = (g - qhat (qhat . g)) / |q|. Copying g straight into the raw entries leaves a spurious
+                    # radial component that disagrees with finite differences even at unit length.
+                    q_raw = qd.Vector(
+                        [
+                            rigid_info.qpos[q_start + 3, i_b],
+                            rigid_info.qpos[q_start + 4, i_b],
+                            rigid_info.qpos[q_start + 5, i_b],
+                            rigid_info.qpos[q_start + 6, i_b],
+                        ],
+                        dt=gs.qd_float,
+                    )
+                    q_norm = q_raw.norm()
+                    qhat = q_raw / q_norm
+                    g_quat_raw = (g_quat - qhat * qhat.dot(g_quat)) / q_norm
                     for j in qd.static(range(4)):
                         rigid_info.qpos.grad[q_start + 3 + j, i_b] = (
-                            rigid_info.qpos.grad[q_start + 3 + j, i_b] + g_quat[j]
+                            rigid_info.qpos.grad[q_start + 3 + j, i_b] + g_quat_raw[j]
                         )
                     g_pos = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
                     g_quat = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
