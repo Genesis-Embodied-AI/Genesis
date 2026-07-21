@@ -381,8 +381,11 @@ class TestGroundContact:
         qa = float(robot_a.get_dofs_position()[0])
         qb = float(robot_b.get_dofs_position()[0])
 
+        # Verify global DOF index mapping: each robot received its own target,
+        # not the other's. If indices are crossed, qa would be negative or zero.
         assert qa > 0.1, f"robot_a should track positive target, got qa={qa}"
         assert qb < -0.1, f"robot_b should track negative target, got qb={qb}"
+        # Symmetric setup (same kp/kv/dt) -> symmetric response
         assert abs(qa + qb) < 0.2, f"robot_a and robot_b targets are symmetric, sum should be near zero: {qa + qb}"
 
 
