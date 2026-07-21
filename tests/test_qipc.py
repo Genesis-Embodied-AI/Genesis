@@ -204,19 +204,19 @@ class TestQIPCAlignment:
         coupler_scene = genesis.sim._coupler._scene
 
         assert coupler_scene.affine_body.q.shape == standalone.affine_body.q.shape
-        torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=1e-12, rtol=0)
+        torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=TOL_DOUBLE, rtol=0)
 
         rev_a = _get_constitution_data(coupler_scene, "AffineBodyRevoluteJoint")
         rev_b = _get_constitution_data(standalone, "AffineBodyRevoluteJoint")
         assert rev_a is not None and rev_b is not None
         for key in ("anchor_left", "anchor_right", "axis_left", "axis_right", "kappa_pivot", "kappa_axis"):
-            torch.testing.assert_close(rev_a[key], rev_b[key], atol=1e-12, rtol=0)
+            torch.testing.assert_close(rev_a[key], rev_b[key], atol=TOL_DOUBLE, rtol=0)
 
         torch.testing.assert_close(
-            coupler_scene.joint_system.kp, standalone.joint_system.kp, atol=1e-12, rtol=0
+            coupler_scene.joint_system.kp, standalone.joint_system.kp, atol=TOL_DOUBLE, rtol=0
         )
         torch.testing.assert_close(
-            coupler_scene.joint_system.kv, standalone.joint_system.kv, atol=1e-12, rtol=0
+            coupler_scene.joint_system.kv, standalone.joint_system.kv, atol=TOL_DOUBLE, rtol=0
         )
 
     def test_init_state_fixed_joint_merge(self, fixed_joint_dir):
@@ -227,7 +227,7 @@ class TestQIPCAlignment:
         coupler_scene = genesis.sim._coupler._scene
 
         assert coupler_scene.affine_body.q.shape[0] == standalone.affine_body.q.shape[0]
-        torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=1e-12, rtol=0)
+        torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=TOL_DOUBLE, rtol=0)
 
     def test_step_alignment(self, simple_revolute_dir):
         """After stepping under gravity with no control, ABD q and theta stay identical."""
@@ -243,9 +243,9 @@ class TestQIPCAlignment:
             coupler._substep_count = coupler._substeps_per_step - 1
             coupler.couple(0)
 
-        torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=1e-6, rtol=0)
+        torch.testing.assert_close(coupler_scene.affine_body.q, standalone.affine_body.q, atol=TOL_DOUBLE, rtol=0)
         torch.testing.assert_close(
-            coupler_scene.joint_system.theta, standalone.joint_system.theta, atol=1e-6, rtol=0,
+            coupler_scene.joint_system.theta, standalone.joint_system.theta, atol=TOL_DOUBLE, rtol=0,
         )
 
     def test_control_alignment(self, simple_revolute_dir):
@@ -266,7 +266,7 @@ class TestQIPCAlignment:
             coupler.couple(0)
 
         torch.testing.assert_close(
-            coupler._scene.joint_system.theta, standalone.joint_system.theta, atol=1e-6, rtol=0,
+            coupler._scene.joint_system.theta, standalone.joint_system.theta, atol=TOL_DOUBLE, rtol=0,
         )
 
 
