@@ -396,7 +396,10 @@ class TestGroundContact:
 
 
 def _build_two_cube_joint_mjcf(joint_type: str, joint_limits: tuple[float, float], *, fixed: bool = True) -> str:
-    """Build a two-cube MJCF with a revolute or prismatic joint."""
+    """Build a two-cube MJCF with a revolute or prismatic joint.
+
+    Ported from tests/ipc/test_rigid.py::build_two_cube_joint_mjcf (commit d9c147c).
+    """
     import xml.etree.ElementTree as ET
 
     mjcf = ET.Element("mujoco", model=f"two_cube_{joint_type}")
@@ -418,7 +421,12 @@ def _build_two_cube_joint_mjcf(joint_type: str, joint_limits: tuple[float, float
 
 
 class TestJointLimits:
-    """Joint position limits via bang-bang velocity control."""
+    """Joint position limits via bang-bang velocity control.
+
+    Ported from tests/ipc/test_rigid.py::test_joint_position_limits_bang_bang
+    (commit d9c147c, 51d3a84 by duburcqa). Parameters and tolerance (0.05) match
+    the IPC version; scene setup adapted for QIPCCoupler.
+    """
 
     @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
     def test_joint_position_limits_bang_bang(self, joint_type):
@@ -484,7 +492,13 @@ class TestJointLimits:
 
 
 class TestStackedFreeBodies:
-    """Multiple free-base entities stacking on ground with IPC contact."""
+    """Multiple free-base entities stacking on ground with IPC contact.
+
+    Ported from tests/ipc/test_rigid.py::test_stacked_revolute_pairs_collision
+    (commit d9c147c by duburcqa). The IPC version is xfail (external_articulation
+    does not support non-fixed base); QIPC passes because free-base is just a
+    free ABD body.
+    """
 
     def test_stacked_free_base_collision(self):
         """Free-base cubes stacked on ground maintain order and no penetration."""
