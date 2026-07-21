@@ -150,6 +150,7 @@ def _kernel_qipc_writeback(
     link_indices: qd.types.ndarray(),
     rel_transforms: qd.types.ndarray(),
     dofs_pos: qd.types.ndarray(),
+    dofs_vel: qd.types.ndarray(),
     dof_indices: qd.types.ndarray(),
     free_base_body_indices: qd.types.ndarray(),
     free_base_link_indices: qd.types.ndarray(),
@@ -200,7 +201,7 @@ def _kernel_qipc_writeback(
     for i in range(n_dofs):
         idx = dof_indices[i]
         dofs_state.pos[idx, 0] = dofs_pos[i]
-        dofs_state.vel[idx, 0] = 0.0
+        dofs_state.vel[idx, 0] = dofs_vel[i]
 
     for i in range(n_free):
         i_b = free_base_body_indices[i]
@@ -351,6 +352,12 @@ class QIPCCoupler(RBC):
         self._wb_dofs_pos: torch.Tensor = torch.zeros(
             n_controlled_dofs, dtype=gs.tc_float, device=gs.device
         )
+        self._wb_dofs_vel: torch.Tensor = torch.zeros(
+            n_controlled_dofs, dtype=gs.tc_float, device=gs.device
+        )
+        self._prev_theta: torch.Tensor = torch.zeros(
+            n_controlled_dofs, dtype=torch.float64, device="cuda"
+        )
 
         # Free-base tensors for unified kernel writeback
         fb_body_indices = [e.body_offset for e in free_base_entries]
@@ -385,6 +392,9 @@ class QIPCCoupler(RBC):
     # -------------------------------------------------------------------------
 
     def reset(self, envs_idx=None) -> None:
+        # At build time, Genesis calls reset() to initialize state. Since QIPC
+        # was just built from the same initial conditions, this is a no-op.
+        # Mid-simulation reset (restoring to a prior state) is not yet supported.
         pass
 
     def preprocess(self, f: int) -> None:
@@ -416,6 +426,9 @@ class QIPCCoupler(RBC):
         self._substep_count = 0
 
         if self._is_first_step:
+            # Genesis calls couple() once at the end of build() as part of its
+            # initialization sequence. QIPC must not step on this call because
+            # the scene was just initialized and no user control has been applied.
             self._is_first_step = False
             return
 
@@ -444,13 +457,17 @@ class QIPCCoupler(RBC):
         """Write QIPC state -> Genesis buffers in a single kernel launch.
 
         All state derives from ABD body transforms (first-class truth):
-        links_state.pos/quat, dofs_state.pos, and free-base qpos.
+        links_state.pos/quat, dofs_state.pos, dofs_state.vel, and free-base qpos.
+        Joint velocity is finite-differenced from theta.
         """
         abd_q: torch.Tensor = self._scene.affine_body.q
 
         if self._jc is not None:
             theta: torch.Tensor = self._jc.get_dofs_position()
             self._wb_dofs_pos[:] = theta.to(gs.tc_float)
+            # Finite-difference velocity: (theta - theta_prev) / dt
+            self._wb_dofs_vel[:] = ((theta - self._prev_theta) / self._sim.dt).to(gs.tc_float)
+            self._prev_theta[:] = theta
 
         _kernel_qipc_writeback(
             abd_q=abd_q,
@@ -458,6 +475,7 @@ class QIPCCoupler(RBC):
             link_indices=self._link_indices_t,
             rel_transforms=self._rel_transforms_t,
             dofs_pos=self._wb_dofs_pos,
+            dofs_vel=self._wb_dofs_vel,
             dof_indices=self._dof_indices_t,
             free_base_body_indices=self._free_base_body_indices_t,
             free_base_link_indices=self._free_base_link_indices_t,
