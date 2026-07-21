@@ -298,6 +298,9 @@ def test_morph_property_raises():
         morph=kinematic_morphs_heterogeneous,
         material=gs.materials.Kinematic(),
     )
+    tool = scene.add_entity(
+        morph=gs.morphs.Box(size=(0.05, 0.05, 0.05)),
+    )
 
     assert single_obj.morph is single_morph
     assert rigid_obj.main_morph is rigid_morphs_heterogeneous[0]
@@ -310,6 +313,12 @@ def test_morph_property_raises():
     assert list(kinematic_obj.morphs) == list(kinematic_morphs_heterogeneous)
     with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs"):
         _ = kinematic_obj.morph
+
+    # Attaching is unsupported both from a heterogeneous entity (as the reparented child) and onto one (as parent).
+    with pytest.raises(gs.GenesisException, match="[Hh]eterogeneous"):
+        rigid_obj.attach(single_obj)
+    with pytest.raises(gs.GenesisException, match="[Hh]eterogeneous"):
+        tool.attach(rigid_obj)
 
 
 @pytest.mark.required

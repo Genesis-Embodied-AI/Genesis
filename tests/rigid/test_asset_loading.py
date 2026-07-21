@@ -1479,6 +1479,8 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         monkeypatch.setenv("QD_NUM_THREADS", "3")
 
     EULER_OFFSET = (0, 0, 45)
+    TOOL_MOUNT_POS = (0.0, 0.0, 0.05)
+    TOOL_MOUNT_QUAT = (math.cos(math.pi / 8), math.sin(math.pi / 8), 0.0, 0.0)  # 45 deg about x
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1519,6 +1521,8 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     tool = scene.add_entity(
         gs.morphs.Sphere(
             radius=0.005,
+            # A conflicting morph pose: the explicit mounting transform below must override it.
+            pos=(1.0, -2.0, 3.0),
         ),
     )
     box = scene.add_entity(
@@ -1529,8 +1533,17 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     )
     with pytest.raises(gs.GenesisException):
         franka.attach(hand, "right_finger")
+    # Omitting the mounting transform keeps the child's morph pose acting as the mount.
     hand.attach(franka, "attachment")
-    tool.attach(hand, "right_finger")
+    # Malformed mounting transforms (wrong shape, or a zero-length quaternion) raise before any kinematic-tree
+    # mutation, leaving the entity attachable.
+    with pytest.raises(gs.GenesisException):
+        tool.attach(hand, "right_finger", pos=(0.0, 0.0))
+    with pytest.raises(gs.GenesisException):
+        tool.attach(hand, "right_finger", quat=(1.0, 0.0, 0.0))
+    with pytest.raises(gs.GenesisException):
+        tool.attach(hand, "right_finger", quat=(0.0, 0.0, 0.0, 0.0))
+    tool.attach(hand, "right_finger", pos=TOOL_MOUNT_POS, quat=TOOL_MOUNT_QUAT)
     scene.build()
     with pytest.raises(gs.GenesisException):
         box.attach(hand, "right_finger")
@@ -1566,72 +1579,14 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     if not merge_fixed_links:
         assert_allclose(torch.linalg.norm(hand.links[-1].get_pos() - attach_link.get_pos(), dim=-1), 0.105, tol=tol)
 
-    assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("is_fixed", [False, True])
-def test_attach_mounting_transform(is_fixed, show_viewer, tol):
-    """Explicit 'pos' / 'quat' passed to 'attach' mount the child at that transform in the parent link frame,
-    overriding the pose inherited from the child's morph."""
-    MOUNT_POS = (0.10, 0.20, 0.30)
-    MOUNT_QUAT = (math.cos(math.pi / 8), 0.0, math.sin(math.pi / 8), 0.0)  # 45 deg about y
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-        ),
-        show_viewer=show_viewer,
-    )
-    scene.add_entity(gs.morphs.Plane())
-    franka = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/panda_bullet/panda_nohand.urdf",
-            merge_fixed_links=False,
-            fixed=True,
-        ),
-    )
-    hand = scene.add_entity(
-        gs.morphs.URDF(
-            file="urdf/panda_bullet/hand.urdf",
-            # A conflicting morph pose: the explicit mounting transform must override it.
-            pos=(1.0, -2.0, 3.0),
-            euler=(0, 0, 45),
-            fixed=is_fixed,
-            batch_fixed_verts=is_fixed,
-        ),
-    )
-    tool = scene.add_entity(
-        gs.morphs.Sphere(radius=0.005),
-    )
-
-    with pytest.raises(gs.GenesisException):
-        hand.attach(franka, "attachment", pos=(0.0, 0.0))
-    with pytest.raises(gs.GenesisException):
-        hand.attach(franka, "attachment", quat=(1.0, 0.0, 0.0))
-
-    hand.attach(franka, "attachment", pos=MOUNT_POS, quat=MOUNT_QUAT)
-    # 'pos' only: 'quat' defaults to identity.
-    tool.attach(hand, "right_finger", pos=(0.0, 0.0, 0.05))
-    scene.build()
-
-    franka.control_dofs_position([-1, 0.8, 1, -2, 1, 0.5, -0.5])
-    for _ in range(10):
-        scene.step()
-
-    attach_link = franka.get_link("attachment")
-    expected_pos = attach_link.get_pos() + gu.transform_by_quat(
-        torch.tensor(MOUNT_POS, dtype=gs.tc_float, device=gs.device), attach_link.get_quat()
-    )
-    expected_quat = gu.transform_quat_by_quat(
-        torch.tensor(MOUNT_QUAT, dtype=gs.tc_float, device=gs.device), attach_link.get_quat()
-    )
-    assert_allclose(hand.links[0].get_pos(), expected_pos, tol=tol)
-    assert_allclose(hand.links[0].get_quat(), expected_quat, tol=tol)
-
+    # The tool's explicit mounting transform overrides its conflicting morph pose: it sits at (pos, quat) in the
+    # right-finger frame rather than at the finger origin.
     finger_link = hand.get_link("right_finger")
     expected_tool_pos = finger_link.get_pos() + gu.transform_by_quat(
-        torch.tensor((0.0, 0.0, 0.05), dtype=gs.tc_float, device=gs.device), finger_link.get_quat()
+        torch.tensor(TOOL_MOUNT_POS, dtype=gs.tc_float, device=gs.device), finger_link.get_quat()
+    )
+    expected_tool_quat = gu.transform_quat_by_quat(
+        torch.tensor(TOOL_MOUNT_QUAT, dtype=gs.tc_float, device=gs.device), finger_link.get_quat()
     )
     assert_allclose(tool.get_pos(), expected_tool_pos, tol=tol)
-    assert_allclose(tool.get_quat(), finger_link.get_quat(), tol=tol)
+    assert_allclose(tool.get_quat(), expected_tool_quat, tol=tol)
