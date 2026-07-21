@@ -1050,12 +1050,13 @@ class Scene(RBC):
         snapshot = self.get_state()
         # The sim unroll (self._backward) re-enters the torch graph from each step's queried states, so the graph
         # must survive the initial autograd pass.
-        kwargs.setdefault("retain_graph", True)
+        if kwargs.setdefault("retain_graph", True) is not True:
+            gs.raise_exception("'retain_graph' must be left unset: scene.backward requires the graph to survive.")
         # The functional torch.autograd.backward fills torch and queried-state grads while leaving the sim unroll to
         # the explicit self._backward call below, keeping gs.Tensor.backward's automatic scene._backward out of it.
         torch.autograd.backward(loss, *args, **kwargs)
         self._backward()
-        # keep_init=True preserves the registered initial state so a later bare reset() still rewinds to it.
+        # keep_init semantics: see _reset.
         self._reset(snapshot, keep_init=True)
         return snapshot
 

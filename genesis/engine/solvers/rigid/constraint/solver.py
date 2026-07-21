@@ -449,12 +449,10 @@ class ConstraintSolver:
         )
 
     def backward(self):
+        """Adjoint solve of the constraint force computation. The caller must pre-populate the upstream gradient
+        constraint_state.dL_dqacc (see RigidSolver._constraint_force_grad)."""
         if not self._solver._requires_grad:
             gs.raise_exception("Please set `requires_grad` to True in SimOptions to enable differentiable mode.")
-
-        # Upstream gradient dL_dqacc is expected to be pre-populated in
-        # constraint_state.dL_dqacc by the caller (see
-        # kernel_load_dL_dqacc_from_acc_grad).
 
         # 1. We first need to find a solution to A^T * u = g system.
         backward_constraint_solver.kernel_solve_adjoint_u(

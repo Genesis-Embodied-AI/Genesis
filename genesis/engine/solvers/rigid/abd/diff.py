@@ -271,8 +271,8 @@ def kernel_copy_next_to_curr_no_check(
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
 ):
-    # Unguarded copy of the _next slots to current, used in the backward substep right before the forward replay so
-    # the backward kernels see the post-integrate qpos / vel.
+    """Unguarded copy of the _next slots to current, used in the backward substep right before the forward replay so
+    the backward kernels see the post-integrate qpos / vel."""
     n_qs = rigid_info.qpos.shape[0]
     n_dofs = dyn_state.dofs.vel.shape[0]
     _B = dyn_state.dofs.vel.shape[1]

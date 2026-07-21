@@ -830,6 +830,29 @@ def func_differentiable_contact(
 
 
 @qd.func
+def func_plane_contact_frame(
+    i_b,
+    i_ga,
+    i_gb,
+    dyn_state: array_class.DynState,
+    dyn_info: array_class.DynInfo,
+):
+    """World contact normal and convex-side radius of a plane [i_ga] vs convex [i_gb] pair: normal =
+    -normalize(R(quat_plane) @ plane_local_dir), radius = data[0] for SPHERE / CAPSULE and 0 otherwise. Both the
+    forward witness capture and the differentiable reconstruction share this frame (and the convention
+    contact_pos = v - 0.5 * penetration * normal built on it)."""
+    plane_dir = gs.qd_vec3(dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2])
+    plane_dir = gu.qd_transform_by_quat(plane_dir, dyn_state.geoms.quat[i_ga, i_b])
+    normal = -plane_dir.normalized()
+
+    radius = gs.qd_float(0.0)
+    geom_type = dyn_info.geoms.type[i_gb]
+    if geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.CAPSULE:
+        radius = dyn_info.geoms.data[i_gb][0]
+    return normal, radius
+
+
+@qd.func
 def func_differentiable_plane_contact(
     i_ga,
     i_gb,
@@ -854,18 +877,10 @@ def func_differentiable_plane_contact(
     orientation gradient is zero, matching the rotation-invariant forward contact.
     """
     trans_plane = dyn_state.geoms.pos[i_ga, i_b]
-    quat_plane = dyn_state.geoms.quat[i_ga, i_b]
     trans_convex = dyn_state.geoms.pos[i_gb, i_b]
     quat_convex = dyn_state.geoms.quat[i_gb, i_b]
 
-    plane_dir = gs.qd_vec3(dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2])
-    plane_dir = gu.qd_transform_by_quat(plane_dir, quat_plane)
-    normal = -plane_dir.normalized()
-
-    radius = gs.qd_float(0.0)
-    geom_type = dyn_info.geoms.type[i_gb]
-    if geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.CAPSULE:
-        radius = dyn_info.geoms.data[i_gb][0]
+    normal, radius = func_plane_contact_frame(i_b, i_ga, i_gb, dyn_state, dyn_info)
 
     core_local = diff_contact_input.core_local[i_b, i_c]
     core_world = gu.qd_transform_by_trans_quat(core_local, trans_convex, quat_convex)

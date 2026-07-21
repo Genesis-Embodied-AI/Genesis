@@ -542,7 +542,7 @@ def func_contact_orthogonals(
 @qd.func
 def func_rotate_frame(
     pos: qd.types.vector(3), quat: qd.types.vector(4), contact_pos: qd.types.vector(3), qrot: qd.types.vector(4)
-) -> tuple[qd.types.vector(3, dtype=gs.qd_float), qd.types.vector(4, dtype=gs.qd_float)]:
+) -> tuple[qd.types.vector(3), qd.types.vector(4)]:
     """
     Instead of modifying geoms_state in place, this function takes thread-local
     pos/quat and returns the updated values.

@@ -103,7 +103,7 @@ def func_forward_dynamics(
     func_update_acc(dyn_state, dyn_info, rigid_info, rigid_config, update_cacc=False, is_backward=is_backward)
     func_update_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
     func_bias_force(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
-    func_compute_qacc(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
+    func_compute_qacc(dyn_state, dyn_info, rigid_info, rigid_config)
 
 
 @qd.kernel(fastcache=True)
@@ -1187,27 +1187,13 @@ def func_bias_force(
                     dyn_state.dofs.qf_smooth[i_d, i_b] = dyn_state.dofs.force[i_d, i_b]
 
 
-@qd.kernel
-def kernel_compute_qacc(
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    is_backward: qd.template(),
-):
-    func_compute_qacc(dyn_state, dyn_info, rigid_info, rigid_config, is_backward)
-
-
 @qd.func
 def func_compute_qacc(
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    is_backward: qd.template(),
 ):
-    BW = qd.static(is_backward)
-
     func_solve_mass(dyn_state.dofs.force, dyn_state.dofs.acc_smooth, dyn_info, rigid_info, rigid_config)
 
     # Assume this is the outermost loop
@@ -1581,10 +1567,7 @@ def func_implicit_damping(
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
-    is_backward: qd.template(),
 ):
-    BW = qd.static(is_backward)
-
     EPS = rigid_info.EPS[None]
 
     n_entities = dyn_info.entities.dof_start.shape[0]

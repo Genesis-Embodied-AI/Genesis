@@ -3098,20 +3098,10 @@ def kernel_fill_diff_contact_input_plane(
             i_ga = collider_state.contact_data.geom_a[i_c, i_b]
             i_gb = collider_state.contact_data.geom_b[i_c, i_b]
             if dyn_info.geoms.type[i_ga] == gs.GEOM_TYPE.PLANE:
-                quat_plane = dyn_state.geoms.quat[i_ga, i_b]
                 trans_convex = dyn_state.geoms.pos[i_gb, i_b]
                 quat_convex = dyn_state.geoms.quat[i_gb, i_b]
 
-                plane_dir = gs.qd_vec3(
-                    dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2]
-                )
-                plane_dir = gu.qd_transform_by_quat(plane_dir, quat_plane)
-                normal = -plane_dir.normalized()
-
-                radius = gs.qd_float(0.0)
-                geom_type = dyn_info.geoms.type[i_gb]
-                if geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.CAPSULE:
-                    radius = dyn_info.geoms.data[i_gb][0]
+                normal, radius = diff_gjk.func_plane_contact_frame(i_b, i_ga, i_gb, dyn_state, dyn_info)
 
                 penetration = collider_state.contact_data.penetration[i_c, i_b]
                 contact_pos = collider_state.contact_data.pos[i_c, i_b]

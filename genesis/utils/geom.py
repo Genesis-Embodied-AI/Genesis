@@ -137,8 +137,11 @@ def qd_rotvec_to_quat(rotvec, eps):
 def qd_rotvec_to_quat_grad_rotvec(rotvec, eps, out_grad):
     """Adjoint of qd_rotvec_to_quat(rotvec, eps) with respect to rotvec, given the upstream quaternion gradient.
 
-    With theta_reg = sqrt(|rotvec|^2 + eps^2), c = cos(theta_reg / 2) and sinc = sin(theta_reg / 2) / theta_reg, the
-    forward is quat = (c, sinc * rotvec). Chain rule through theta_reg gives, per component i:
+    Differentiates the eps-regularized surrogate quat = (c, sinc * rotvec) with theta_reg = sqrt(|rotvec|^2 + eps^2),
+    c = cos(theta_reg / 2) and sinc = sin(theta_reg / 2) / theta_reg. The surrogate deviates from the exact forward
+    (which branches at |rotvec| = eps and applies a first-order renormalization) by O(eps^2) in the main branch and
+    smooths over the constant-identity branch, trading exactness at the branch point for a gradient that stays
+    finite and continuous through rotvec = 0. Chain rule through theta_reg gives, per component i:
         d(quat[0])/d(rotvec[i])   = -0.5 * sin(theta_reg / 2) * rotvec[i] / theta_reg
         d(quat[1+j])/d(rotvec[i]) = delta(i, j) * sinc + rotvec[j] * (0.5 * c - sinc) / theta_reg^2 * rotvec[i]
     """
@@ -213,6 +216,93 @@ def qd_quat_to_xyz(quat, eps):
             yaw = qd.atan2(q_wz + q_xy, 1.0 - (q_xx + q_zz))
 
     return qd.Vector([roll, pitch, yaw], dt=gs.qd_float)
+
+
+@qd.func
+def qd_quat_to_xyz_grad_quat(quat, eps, out_grad):
+    """Adjoint of qd_quat_to_xyz(quat, eps) with respect to quat, given the upstream Euler-angle gradient.
+
+    Mirrors the forward branch structure: each angle is an atan2 of quadratic forms u = s * P(quat) with
+    s = 2 / |quat|^2, so du/dq = s * (dP/dq - 2 P q / |quat|^2) and datan2(y, x) = (x dy - y dx) / (x^2 + y^2).
+    The gradient is zero in the degenerate |quat|^2 <= eps branch (constant forward), and the roll / yaw terms
+    switch to the gimbal-lock forms when cosp <= eps, matching the forward exactly.
+    """
+    g_quat = qd.Vector.zero(gs.qd_float, 4)
+    quat_norm_sqr = quat.norm_sqr()
+    if quat_norm_sqr > eps:
+        s = 2.0 / quat_norm_sqr
+        q_w, q_x, q_y, q_z = quat
+
+        # u = s * P with dP/dq per quadratic form; du/dq folds the ds/dq = -2 s q / |quat|^2 term.
+        p_siny = q_w * q_z - q_x * q_y
+        p_cosy = q_y * q_y + q_z * q_z
+        p_pitch = q_x * q_z + q_w * q_y
+        p_roll_num = q_w * q_x - q_y * q_z
+        p_roll_den = q_x * q_x + q_y * q_y
+        p_gimbal_num = q_w * q_z + q_x * q_y
+        p_gimbal_den = q_x * q_x + q_z * q_z
+        u_siny = s * p_siny
+        u_cosy = 1.0 - s * p_cosy
+        u_pitch = s * p_pitch
+        u_roll_num = s * p_roll_num
+        u_roll_den = 1.0 - s * p_roll_den
+        cosp = qd.sqrt(u_cosy * u_cosy + u_siny * u_siny)
+
+        g_roll = out_grad[0]
+        g_pitch = out_grad[1]
+        g_yaw = out_grad[2]
+
+        # pitch = atan2(u_pitch, cosp) with cosp = |(u_siny, u_cosy)|.
+        denom_pitch = u_pitch * u_pitch + cosp * cosp
+        g_u_pitch = g_pitch * cosp / denom_pitch
+        g_cosp = -g_pitch * u_pitch / denom_pitch
+        g_u_siny = gs.qd_float(0.0)
+        g_u_cosy = gs.qd_float(0.0)
+        if cosp > eps:
+            g_u_siny = g_cosp * u_siny / cosp
+            g_u_cosy = g_cosp * u_cosy / cosp
+
+        g_u_roll_num = gs.qd_float(0.0)
+        g_u_roll_den = gs.qd_float(0.0)
+        g_u_gimbal_num = gs.qd_float(0.0)
+        g_u_gimbal_den = gs.qd_float(0.0)
+        if cosp > eps:
+            # roll = atan2(u_roll_num, u_roll_den); yaw = atan2(u_siny, u_cosy).
+            denom_roll = u_roll_num * u_roll_num + u_roll_den * u_roll_den
+            g_u_roll_num = g_roll * u_roll_den / denom_roll
+            g_u_roll_den = -g_roll * u_roll_num / denom_roll
+            denom_yaw = u_siny * u_siny + u_cosy * u_cosy
+            g_u_siny = g_u_siny + g_yaw * u_cosy / denom_yaw
+            g_u_cosy = g_u_cosy - g_yaw * u_siny / denom_yaw
+        else:
+            # Gimbal lock: roll = 0 and yaw = atan2(s * (wz + xy), 1 - s * (xx + zz)).
+            u_gimbal_num = s * p_gimbal_num
+            u_gimbal_den = 1.0 - s * p_gimbal_den
+            denom_gimbal = u_gimbal_num * u_gimbal_num + u_gimbal_den * u_gimbal_den
+            g_u_gimbal_num = g_yaw * u_gimbal_den / denom_gimbal
+            g_u_gimbal_den = -g_yaw * u_gimbal_num / denom_gimbal
+
+        # Fold each u = s * P (or 1 - s * P) back to quat: du/dq_k = +-s * (dP/dq_k - 2 P q_k / |quat|^2).
+        two_over_n = 2.0 / quat_norm_sqr
+        d_p_siny = qd.Vector([q_z, -q_y, -q_x, q_w], dt=gs.qd_float)
+        d_p_cosy = qd.Vector([0.0, 0.0, 2.0 * q_y, 2.0 * q_z], dt=gs.qd_float)
+        d_p_pitch = qd.Vector([q_y, q_z, q_w, q_x], dt=gs.qd_float)
+        d_p_roll_num = qd.Vector([q_x, q_w, -q_z, -q_y], dt=gs.qd_float)
+        d_p_roll_den = qd.Vector([0.0, 2.0 * q_x, 2.0 * q_y, 0.0], dt=gs.qd_float)
+        d_p_gimbal_num = qd.Vector([q_z, q_y, q_x, q_w], dt=gs.qd_float)
+        d_p_gimbal_den = qd.Vector([0.0, 2.0 * q_x, 0.0, 2.0 * q_z], dt=gs.qd_float)
+        for j in qd.static(range(4)):
+            q_j = quat[j]
+            g_quat[j] = (
+                g_u_siny * s * (d_p_siny[j] - p_siny * two_over_n * q_j)
+                - g_u_cosy * s * (d_p_cosy[j] - p_cosy * two_over_n * q_j)
+                + g_u_pitch * s * (d_p_pitch[j] - p_pitch * two_over_n * q_j)
+                + g_u_roll_num * s * (d_p_roll_num[j] - p_roll_num * two_over_n * q_j)
+                - g_u_roll_den * s * (d_p_roll_den[j] - p_roll_den * two_over_n * q_j)
+                + g_u_gimbal_num * s * (d_p_gimbal_num[j] - p_gimbal_num * two_over_n * q_j)
+                - g_u_gimbal_den * s * (d_p_gimbal_den[j] - p_gimbal_den * two_over_n * q_j)
+            )
+    return g_quat
 
 
 @qd.func
@@ -533,6 +623,39 @@ def imp_aref(params, neg_penetration, vel, pos):
     aref = -b * vel - k * imp * pos
 
     return imp, aref
+
+
+@qd.func
+def imp_aref_grad(params, neg_penetration):
+    """Replay of imp_aref's impedance together with its derivative w.r.t. the impedance driver.
+
+    Returns (imp, b, k, d_imp_d_x) with x = |neg_penetration| / width: the shared factors every manual constraint
+    reverse needs to chain gradients through imp_aref, whose outputs are aref = -b * vel - k * imp * pos and the
+    impedance imp feeding diag / efc_D. d_imp_d_x is zero outside the smooth band (imp_raw clamped at dmin / dmax or
+    x > 1), matching the piecewise-flat regions of the forward.
+    """
+    timeconst, dampratio, dmin, dmax, width, mid, power = params
+
+    imp_x = qd.abs(neg_penetration) / width
+    imp_a_coef = 1.0 / mid ** (power - 1.0)
+    imp_b_coef = 1.0 / (1.0 - mid) ** (power - 1.0)
+    imp_a = imp_a_coef * imp_x**power
+    imp_b = 1.0 - imp_b_coef * (1.0 - imp_x) ** power
+    imp_y = imp_a if imp_x < mid else imp_b
+    imp_raw = dmin + imp_y * (dmax - dmin)
+    imp = qd.math.clamp(imp_raw, dmin, dmax)
+    imp = dmax if imp_x > 1.0 else imp
+
+    b = 2.0 / (dmax * timeconst)
+    k = 1.0 / (dmax * dmax * timeconst * timeconst * dampratio * dampratio)
+
+    d_imp_y_d_x = power * imp_a_coef * imp_x ** (power - 1.0)
+    if imp_x >= mid:
+        d_imp_y_d_x = power * imp_b_coef * (1.0 - imp_x) ** (power - 1.0)
+    d_imp_d_x = gs.qd_float(0.0)
+    if imp_raw > dmin and imp_raw < dmax and imp_x <= 1.0:
+        d_imp_d_x = (dmax - dmin) * d_imp_y_d_x
+    return imp, b, k, d_imp_d_x
 
 
 # ------------------------------------------------------------------------------------

@@ -59,7 +59,12 @@ def tracked(fun):
             bound = sig.bind(self, *args, **kwargs)
             bound.apply_defaults()
             args_dict = dict(tuple(bound.arguments.items())[1:])
-            self._update_tgt(fun.__name__, args_dict)
+            # Key the slot by (method, dofs subset) so same-step calls on distinct subsets (e.g. arm and gripper
+            # force control) each keep their own entry and gradient path; keyed by method alone, the second call
+            # would evict the first from the tape.
+            dofs_idx_local = args_dict.get("dofs_idx_local")
+            subset = None if dofs_idx_local is None else tuple(np.asarray(dofs_idx_local).reshape(-1).tolist())
+            self._update_tgt((fun.__name__, subset), args_dict)
         return fun(self, *args, **kwargs)
 
     return wrapper
@@ -143,7 +148,7 @@ class KinematicEntity(Entity):
         self._load_model()
 
         # Initialize target variables and checkpoint
-        self._tgt_keys = ("pos", "quat", "qpos", "dofs_velocity", "control_dofs_force")
+        self._tgt_keys = ("set_pos", "set_quat", "set_dofs_velocity", "control_dofs_force")
         self._tgt = dict()
         self._tgt_buffer = list()
         self._ckpt = dict()
@@ -1426,6 +1431,8 @@ class KinematicEntity(Entity):
         """
         if self._is_attached:
             gs.raise_exception("Entity already attached.")
+        if self._solver._requires_grad:
+            gs.raise_exception("Attach is not supported yet when requires_grad is True.")
 
         is_mounting = pos is not None or quat is not None
         if is_mounting:
@@ -1570,7 +1577,7 @@ class KinematicEntity(Entity):
             # Do not update [tgt], as input information is finalized at this point
             self._update_tgt_while_set = False
 
-            match key:
+            match key[0]:
                 case "set_pos":
                     self.set_pos(**data_kwargs)
                 case "set_quat":
@@ -1580,7 +1587,7 @@ class KinematicEntity(Entity):
                 case "control_dofs_force":
                     self.control_dofs_force(**data_kwargs)
                 case _:
-                    gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
+                    gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
 
         self._tgt = dict()
         self._update_tgt_while_set = update_tgt_while_set
@@ -1590,35 +1597,37 @@ class KinematicEntity(Entity):
         for key in reversed(self._tgt_buffer[index].keys()):
             data_kwargs = self._tgt_buffer[index][key]
 
-            match key:
-                # We need to unpack the data_kwargs because [_backward_from_qd] only supports positional arguments
+            match key[0]:
+                # We need to unpack the data_kwargs because [_backward_from_qd] only supports positional arguments.
+                # Inputs are stored on the tape as passed by the user, so scalars and array-likes (valid setter
+                # inputs that cannot carry a gradient) are filtered out with the tensor check.
                 case "set_pos":
                     pos = data_kwargs.pop("pos")
-                    if pos.requires_grad:
+                    if isinstance(pos, torch.Tensor) and pos.requires_grad:
                         pos._backward_from_qd(self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_quat":
                     quat = data_kwargs.pop("quat")
-                    if quat.requires_grad:
+                    if isinstance(quat, torch.Tensor) and quat.requires_grad:
                         quat._backward_from_qd(self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_dofs_velocity":
                     velocity = data_kwargs.pop("velocity")
                     # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
-                    if velocity is not None and velocity.requires_grad:
+                    if isinstance(velocity, torch.Tensor) and velocity.requires_grad:
                         velocity._backward_from_qd(
                             self.set_dofs_velocity_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
                         )
 
                 case "control_dofs_force":
                     force = data_kwargs.pop("force")
-                    if force.requires_grad:
+                    if isinstance(force, torch.Tensor) and force.requires_grad:
                         force._backward_from_qd(
                             self.set_dofs_force_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
                         )
 
                 case _:
-                    gs.raise_exception(f"Invalid target key: {key} not in {self._tgt_keys}")
+                    gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
 
     def save_ckpt(self, ckpt_name):
         if ckpt_name not in self._ckpt:

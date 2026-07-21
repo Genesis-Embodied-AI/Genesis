@@ -805,6 +805,10 @@ def qd_zero_grad(value) -> None:
             if gs.use_zerocopy:
                 try:
                     qd_to_torch(grad, copy=False).zero_()
+                    # torch (MPS) and quadrants do not share a compute stream on Metal; flush the write before any
+                    # following quadrants kernel reads the buffer (see set_base_links_quat).
+                    if gs.backend == gs.metal:
+                        torch.mps.synchronize()
                 except ValueError:
                     # No zero-copy view for this buffer (e.g. a field past 2**31 bytes in its SNode tree); fill it in
                     # place through quadrants instead.
