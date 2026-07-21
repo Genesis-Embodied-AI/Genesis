@@ -59,7 +59,7 @@ jobs:
           ${{ github.workspace }}:/root/workspace,\
           ${HOME}/.cache/uv:/root/.cache/uv,\
           ${HOME}/.cache/genesis:/root/.cache/genesis,\
-          ${HOME}/.cache/genesis:/root/.cache/quadrants,\
+          ${HOME}/.cache/quadrants:/root/.cache/quadrants,\
           ${HOME}/.cache/huggingface:/root/.cache/huggingface \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
