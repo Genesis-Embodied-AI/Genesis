@@ -14,9 +14,19 @@ from ..utils import assert_allclose, assert_equal
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     SPHERE_RADIUS = 0.05
+    BOX_SIZE = 0.1
     DISTANCE = 0.15
     MAX_RANGE = 10.0
-    BOX_PROBE_POS = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.05)]
+    N_SETTLE = 5
+    # Overlap of the untracked distractor sphere into the box's +y face. With zero gravity the contact pushes the
+    # free box a few mm along -y over the settle steps, so the box-mounted probes move and the sensor is validated
+    # against the live box pose rather than a static analytic value.
+    DISTRACTOR_PENETRATION = 0.01
+    # The sensor measures to the tracked collision MESH, so its nearest point can sit up to this far inside the
+    # analytic sphere surface (icosphere faceting). Used only for the on-surface grounding check; the distance
+    # self-consistency check stays exact.
+    MESH_TOL = 5e-4
+    BOX_PROBE_POS = [(0.0, 0.0, 0.0), (0.0, 0.0, BOX_SIZE / 2.0)]
     SPHERE_PROBE_POS = [(0.0, 0.0, SPHERE_RADIUS)]
 
     scene = gs.Scene(
@@ -30,7 +40,7 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     )
     box = scene.add_entity(
         gs.morphs.Box(
-            size=(0.1, 0.1, 0.1),
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
             pos=(0.0, 0.0, 0.0),
         ),
     )
@@ -47,11 +57,13 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
             pos=(0.0, 0.0, DISTANCE * 2.0),
         ),
     )
-    # Not tracked objects
+    # Untracked distractor whose surface overlaps the box +y face by DISTRACTOR_PENETRATION (see above); the contact
+    # pushes the free box centrally, so it only translates (no torque). It is also closer to the probes than either
+    # tracked sphere, so a bug that ignored track_link_idx and measured every link would change the reading.
     sphere3 = scene.add_entity(
         gs.morphs.Sphere(
             radius=SPHERE_RADIUS,
-            pos=(0.0, DISTANCE / 2.0, 0.0),
+            pos=(0.0, BOX_SIZE / 2.0 + SPHERE_RADIUS - DISTRACTOR_PENETRATION, 0.0),
         ),
     )
 
@@ -77,45 +89,65 @@ def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     )
     scene.build(n_envs=n_envs)
 
-    scene.step()
+    for _ in range(N_SETTLE):
+        scene.step()
+
+    # The overlapping distractor should have pushed the box clear of the origin, exercising the moving-probe path.
+    assert (box.get_pos()[..., 1] < -MESH_TOL).all(), "the penetrating distractor should push the box along -y"
 
     box_prox_data = box_to_spheres_dist_sensor.read()
     sphere_prox_noisy_data = sphere_to_box_dist_sensor.read()
     sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
 
-    for i in range(len(BOX_PROBE_POS)):
-        assert_allclose(box_prox_data[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
-    assert_allclose(box_to_spheres_dist_sensor.nearest_points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
+    # Both box probes see sphere1, the nearest tracked sphere. Each probe's reported distance must equal the distance
+    # from its LIVE world position (box pose applied to the local probe) to the reported nearest point (exact), and
+    # that point must lie on sphere1's meshed surface -- validating the moving-probe path without an analytic value.
+    box_pos = box.get_pos()
+    box_quat = box.get_quat()
+    nearest = box_to_spheres_dist_sensor.nearest_points
+    sphere1_center = torch.as_tensor((0.0, 0.0, DISTANCE), dtype=box_pos.dtype, device=box_pos.device)
+    for i, probe_local in enumerate(BOX_PROBE_POS):
+        offset = torch.as_tensor(probe_local, dtype=box_pos.dtype, device=box_pos.device).broadcast_to(box_pos.shape)
+        probe_world = box_pos + gu.transform_by_quat(offset, box_quat)
+        assert_allclose(box_prox_data[..., i], torch.linalg.norm(nearest[..., i, :] - probe_world, dim=-1), tol=tol)
+        assert_allclose(torch.linalg.norm(nearest[..., i, :] - sphere1_center, dim=-1), SPHERE_RADIUS, tol=MESH_TOL)
+    # The box drifts only in y, so the box face directly under the sphere-mounted probe stays put and the gap holds.
     assert_allclose(sphere_prox_data, DISTANCE, tol=tol)
-
     with np.testing.assert_raises(AssertionError):
         assert_allclose(sphere_prox_noisy_data, sphere_prox_data, tol=tol)
 
+    # Move sphere1 out of reach; sphere2 becomes the nearest tracked sphere for the box probes.
     sphere1_pos = np.array((0.0, 0.0, DISTANCE * 3.0))
     sphere1.set_pos(sphere1_pos)
-
     scene.step()
 
+    box_pos = box.get_pos()
+    box_quat = box.get_quat()
     box_prox_data = box_to_spheres_dist_sensor.read()
-    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
+    nearest = box_to_spheres_dist_sensor.nearest_points
+    sphere2_center = torch.as_tensor((0.0, 0.0, DISTANCE * 2.0), dtype=box_pos.dtype, device=box_pos.device)
+    for i, probe_local in enumerate(BOX_PROBE_POS):
+        offset = torch.as_tensor(probe_local, dtype=box_pos.dtype, device=box_pos.device).broadcast_to(box_pos.shape)
+        probe_world = box_pos + gu.transform_by_quat(offset, box_quat)
+        assert_allclose(box_prox_data[..., i], torch.linalg.norm(nearest[..., i, :] - probe_world, dim=-1), tol=tol)
+        assert_allclose(torch.linalg.norm(nearest[..., i, :] - sphere2_center, dim=-1), SPHERE_RADIUS, tol=MESH_TOL)
+    assert_allclose(sphere_to_box_dist_sensor.read_ground_truth(), DISTANCE * 3.0, tol=tol)
 
-    assert_allclose(box_prox_data[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
-    assert_allclose(box_prox_data[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
-    assert_allclose(sphere_prox_data, DISTANCE * 3.0, tol=tol)
-
-    box_pos = np.array((0.0, 0.0, -MAX_RANGE))
-    box.set_pos(box_pos)
+    # Move the box far below everything: both sensors go out of range, reporting MAX_RANGE with the nearest point
+    # pinned to the probe's own world position.
+    box.set_pos((0.0, 0.0, -MAX_RANGE))
     scene.step()
 
-    box_prox_data = box_to_spheres_dist_sensor.read()
-    sphere_prox_data = sphere_to_box_dist_sensor.read_ground_truth()
-
-    assert_allclose(box_prox_data, MAX_RANGE, tol=tol)
-    assert_allclose(sphere_prox_data, MAX_RANGE, tol=tol)
-    for i in range(len(BOX_PROBE_POS)):
+    box_pos = box.get_pos()
+    box_quat = box.get_quat()
+    assert_allclose(box_to_spheres_dist_sensor.read_ground_truth(), MAX_RANGE, tol=tol)
+    assert_allclose(sphere_to_box_dist_sensor.read_ground_truth(), MAX_RANGE, tol=tol)
+    for i, probe_local in enumerate(BOX_PROBE_POS):
+        offset = torch.as_tensor(probe_local, dtype=box_pos.dtype, device=box_pos.device).broadcast_to(box_pos.shape)
+        probe_world = box_pos + gu.transform_by_quat(offset, box_quat)
         assert_allclose(
             box_to_spheres_dist_sensor.nearest_points[..., i, :],
-            np.array(BOX_PROBE_POS[i]) + box_pos,
+            probe_world,
             tol=tol,
             err_msg="When out of range, points should be the probe position in world frame",
         )
