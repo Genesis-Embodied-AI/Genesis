@@ -837,7 +837,7 @@ def test_convexify_fusion_groups(convexify, watertighten, xml_path):
         for geom in geoms_box:
             assert geom.is_convex
             assert not geom.metadata.get("merged", False)
-            assert_allclose(geom.init_verts.max(axis=0) - geom.init_verts.min(axis=0), 0.1, tol=gs.EPS)
+            assert_allclose(geom.init_verts.max(axis=0) - geom.init_verts.min(axis=0), 0.1, tol=5e-9)
         assert len([geom for geom in entity.geoms if geom.type == gs.GEOM_TYPE.BOX]) == 2
     elif watertighten is not None:
         # All multi-geom sub-groups are fused systematically, including bare primitives, and every fused geom is

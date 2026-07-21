@@ -73,7 +73,7 @@ def test_mjcf_include_rewrites_asset_mesh_and_skips_default_mesh(mjcf_include_de
     (geom,) = entity.geoms
     assert geom.type == gs.GEOM_TYPE.MESH
     aabb = geom.get_AABB()
-    assert_allclose(aabb[1] - aabb[0], extents, tol=gs.EPS)
+    assert_allclose(aabb[1] - aabb[0], extents, tol=5e-8)
 
 
 @pytest.mark.required

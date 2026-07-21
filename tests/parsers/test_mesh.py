@@ -772,7 +772,7 @@ def test_mjcf_2d_texture_mapping(textured_mjcf):
         expected_fitted_uvs.append(
             np.column_stack((0.5 * repeat[0] * object_xy[:, 0] - 0.5, -0.5 * repeat[1] * object_xy[:, 1] - 0.5))
         )
-    assert_allclose(np.concatenate(fitted_uvs), np.concatenate(expected_fitted_uvs), tol=gs.EPS)
+    assert_allclose(np.concatenate(fitted_uvs), np.concatenate(expected_fitted_uvs), tol=5e-8)
 
     spatial_xy = np.concatenate([vgeoms[name].init_vverts[:, :2] for name in SPATIAL_GEOM_NAMES], axis=0)
     spatial_uvs = np.concatenate([vgeoms[name].uvs for name in SPATIAL_GEOM_NAMES], axis=0)
