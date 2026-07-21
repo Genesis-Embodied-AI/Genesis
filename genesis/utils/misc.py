@@ -489,22 +489,6 @@ def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], t
     return field(default_factory=_default_factory)
 
 
-def append_filter_links_idx(filter_links_idx: torch.Tensor, filter_link_idx: Sequence[int]) -> torch.Tensor:
-    """Append one contact sensor's filter-link indices as a new row of the shared ``(n_sensors, max_filter_links)``
-    table, growing the column count to fit and back-filling unused slots (and empty filters) with ``-1``.
-
-    ``-1`` is a sentinel that never matches a real link index, so kernels can scan every column unconditionally. The
-    table keeps at least one column so that even an all-empty table stays a valid (non-zero-dim) kernel argument.
-    """
-    n_sensors, cur_max = filter_links_idx.shape
-    new_max = max(cur_max, len(filter_link_idx), 1)
-    out = torch.full((n_sensors + 1, new_max), -1, dtype=gs.tc_int, device=gs.device)
-    out[:n_sensors, :cur_max] = filter_links_idx
-    if len(filter_link_idx) > 0:
-        out[n_sensors, : len(filter_link_idx)] = torch.tensor(filter_link_idx, dtype=gs.tc_int, device=gs.device)
-    return out
-
-
 def try_get_display_size() -> tuple[int | None, int | None, float | None]:
     """
     Try to connect to display if it exists and get the screen size.
