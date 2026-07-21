@@ -352,7 +352,7 @@ class Planner:
         spheres_pos_local = tensor_to_array(qd_to_torch(context.plan_info.spheres_pos_local))
         spheres_radius = tensor_to_array(qd_to_torch(context.plan_info.spheres_radius))
         robot_spheres = links_pos[:, spheres_link_idx] + gu.transform_by_quat(
-            spheres_pos_local[None], links_quat[:, spheres_link_idx]
+            np.tile(spheres_pos_local, (links_pos.shape[0], 1, 1)), links_quat[:, spheres_link_idx]
         )
 
         attachments = []
@@ -374,7 +374,7 @@ class Planner:
             held_local = np.concatenate(held_local)
             held_radius = np.concatenate(held_radius)
             held_spheres = held_pos[:, None] + gu.transform_by_quat(
-                held_local[None], np.repeat(held_quat[:, None], len(held_local), axis=1)
+                np.tile(held_local, (held_pos.shape[0], 1, 1)), np.repeat(held_quat[:, None], len(held_local), axis=1)
             )
 
             # Per env: closest sphere pair per robot link, then the antipodal-squeeze test across links.
@@ -469,6 +469,10 @@ class Planner:
         if qpos_start_t.ndim == 1:
             qpos_start_t = qpos_start_t[None].expand(B_plan, n_dp)
         has_pose_goal = goal_pos is not None or goal_quat is not None
+        if goal_pos is not None:
+            goal_pos = torch.as_tensor(goal_pos, dtype=gs.tc_float, device=gs.device)
+        if goal_quat is not None:
+            goal_quat = torch.as_tensor(goal_quat, dtype=gs.tc_float, device=gs.device)
         if has_pose_goal:
             ik_kwargs = {}
             if goal_pos is not None:
@@ -489,13 +493,9 @@ class Planner:
         if has_pose_goal:
             qd_to_torch(plan_info.goal_link_idx, copy=False).fill_(goal_link.idx)
             if goal_pos is not None:
-                qd_to_torch(plan_info.goal_pos, copy=False)[envs_idx_np] = torch.as_tensor(
-                    goal_pos, dtype=gs.tc_float, device=gs.device
-                )
+                qd_to_torch(plan_info.goal_pos, copy=False)[envs_idx_np] = goal_pos
             if goal_quat is not None:
-                qd_to_torch(plan_info.goal_quat, copy=False)[envs_idx_np] = torch.as_tensor(
-                    goal_quat, dtype=gs.tc_float, device=gs.device
-                )
+                qd_to_torch(plan_info.goal_quat, copy=False)[envs_idx_np] = goal_quat
 
         # Cost weights and margins (coarse phase; the polish phase tightens them below).
         for name, value in (
@@ -512,9 +512,7 @@ class Planner:
             ("d_safe", float(safety_margin)),
         ):
             qd_to_torch(getattr(plan_info, name), copy=False).fill_(value)
-        qd_to_torch(plan_info.noise_basis, copy=False)[:] = torch.as_tensor(
-            build_noise_basis(W, has_clamped_end=not has_pose_goal), device=gs.device
-        )
+        qd_to_torch(plan_info.noise_basis, copy=False)[:] = torch.as_tensor(build_noise_basis(W), device=gs.device)
 
         # Attachments: explicit first, then auto-detected held entities.
         qd_to_torch(plan_info.dof_is_locked, copy=False).fill_(False)
@@ -634,14 +632,19 @@ class Planner:
             if not ignore_collision:
                 kernel_planner_mppi(*kernel_args, planner_config)
                 kernel_planner_lbfgs(*kernel_args, solver.collider._collider_static_config, planner_config)
-                # Polish: tighter activation band and harder collision weights sharpen the margin.
+                # Polish: tighter activation band, harder collision weights, and a pinning pose weight sharpen
+                # the margin and land the free end knot inside the goal tolerance.
                 qd_to_torch(plan_info.eps_act, copy=False).fill_(0.02)
                 qd_to_torch(plan_info.w_obs, copy=False).fill_(400.0)
                 qd_to_torch(plan_info.w_self, copy=False).fill_(400.0)
+                qd_to_torch(plan_info.w_pose_pos, copy=False).fill_(4e4)
+                qd_to_torch(plan_info.w_pose_rot, copy=False).fill_(1e4)
                 kernel_planner_lbfgs(*kernel_args, solver.collider._collider_static_config, planner_config)
                 qd_to_torch(plan_info.eps_act, copy=False).fill_(0.05)
                 qd_to_torch(plan_info.w_obs, copy=False).fill_(100.0)
                 qd_to_torch(plan_info.w_self, copy=False).fill_(100.0)
+                qd_to_torch(plan_info.w_pose_pos, copy=False).fill_(2e3)
+                qd_to_torch(plan_info.w_pose_rot, copy=False).fill_(5e2)
 
             cost_mod.kernel_planner_validate(*kernel_args, planner_config)
             is_seed_valid = self._seed_validity(flags_t, S, ignore_collision)
@@ -701,7 +704,7 @@ class Planner:
         alpha = torch.linspace(0.0, 1.0, W, dtype=gs.tc_float, device=gs.device)[None, :, None]
         line = start * (1 - alpha) + goal * alpha
         traj = line[:, None].repeat(1, S, 1, 1)
-        basis = torch.as_tensor(build_noise_basis(W, has_clamped_end=True), device=gs.device)
+        basis = torch.as_tensor(build_noise_basis(W), device=gs.device)
         noise = torch.randn((traj.shape[0], S - 1, basis.shape[1], n_dp), generator=gen, dtype=gs.tc_float).to(
             gs.device
         )
@@ -710,8 +713,7 @@ class Planner:
         traj = torch.where(locked[:, None, None, :], start[:, None], traj)
         traj = traj.clamp(qd_to_torch(plan_info.q_limit_lower), qd_to_torch(plan_info.q_limit_upper))
         traj[:, :, :2] = start[:, None]
-        if not bool(qd_to_torch(plan_info.has_pose_goal)):
-            traj[:, :, -2:] = goal[:, None]
+        traj[:, :, -2:] = goal[:, None]
 
         qd_to_torch(plan_state.qpos_traj, copy=False).T.reshape(-1, S, W, n_dp)[env_pending] = traj[env_pending]
         qd_to_torch(plan_state.is_active, copy=False).reshape(-1, S)[env_pending] = True

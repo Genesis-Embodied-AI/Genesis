@@ -13,11 +13,10 @@ _LS_LADDER = (1.0, 0.5, 0.2, 0.08, 0.03, 0.01, 0.003, 0.001)
 _MPPI_ANNEAL = 0.7
 
 
-def build_noise_basis(n_knots, has_clamped_end):
+def build_noise_basis(n_knots):
     """
     Smooth MPPI noise basis: Gaussian bumps over the knot axis, one column per noise knot, with zero rows at the
-    clamped knots (start pair always; goal pair for joint goals) so perturbations preserve the boundary
-    conditions. Deterministic pure numpy.
+    clamped boundary knots so perturbations preserve the boundary conditions. Deterministic pure numpy.
     """
     n_noise = array_class.PLANNER_N_NOISE_KNOTS
     t = np.linspace(0.0, 1.0, n_knots)
@@ -25,8 +24,7 @@ def build_noise_basis(n_knots, has_clamped_end):
     width = 1.0 / (n_noise + 1)
     basis = np.exp(-0.5 * ((t[:, None] - centers[None, :]) / width) ** 2)
     basis[:2] = 0.0
-    if has_clamped_end:
-        basis[-2:] = 0.0
+    basis[-2:] = 0.0
     # Unit peak response per knot so mppi_sigma is expressed in joint units.
     scale = basis.sum(axis=1).max()
     return (basis / scale).astype(gs.np_float)
@@ -237,12 +235,9 @@ def func_planner_candidate_cost_grad(
 
 @qd.func
 def func_planner_mask_clamped(i_c, i_w, i_b, plan_info: array_class.PlannerEntityInfo, planner_config: qd.template()):
-    """True when knot i_w is clamped: the start pair always, the goal pair for joint-space goals."""
-    n_knots = qd.static(planner_config.n_knots)
-    is_clamped = i_w <= 1
-    if not plan_info.has_pose_goal[None] and i_w >= n_knots - 2:
-        is_clamped = True
-    return is_clamped
+    """True when knot i_w is clamped: the start and goal pairs (Cartesian goals clamp to their inverse-kinematics
+    solution, whose residual is far below the goal tolerance)."""
+    return i_w <= 1 or i_w >= qd.static(planner_config.n_knots) - 2
 
 
 @qd.kernel

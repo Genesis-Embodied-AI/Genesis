@@ -543,7 +543,7 @@ def func_planner_knot_cost_grad(
                     if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
                         i_dp = dyn_info.joints.q_start[I_j] - q_offset
                         if not plan_info.dof_is_locked[i_dp, i_b]:
-                            plan_state.grad_traj[i_dp, i_cw] += (
+                            plan_state.grad_traj[i_dp, i_cw] -= (
                                 2.0
                                 * plan_info.w_pose_rot[None]
                                 * plan_state.joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_cw].dot(
