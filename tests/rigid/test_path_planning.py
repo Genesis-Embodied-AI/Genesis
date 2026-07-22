@@ -224,12 +224,12 @@ def test_plan_path_with_attached_entity(n_envs, show_viewer):
     assert_equal(held.get_pos(), held_pos_before)
     assert_equal(bystander.get_pos(), bystander_pos_before)
     context = scene.rigid_solver.planner._entity_contexts[franka.idx]
-    assert qd_to_torch(context.planner_info.attach_spheres_is_active).any()
+    assert qd_to_torch(context.planner_info.attach_spheres.is_active).any()
 
     # Auto-grasp off: nothing is attached, and the cube between the fingers becomes an obstacle whose start
     # contacts are excluded, so planning still succeeds away from it.
     franka.plan_path(qpos_goal, attach_held_entities=False, seed=3)
-    assert not qd_to_torch(context.planner_info.attach_spheres_is_active).any()
+    assert not qd_to_torch(context.planner_info.attach_spheres.is_active).any()
 
     # Planning toward a grasp, hands free: a pre-grasp pose with the open fingers straddling the bystander cube
     # is proxy-colliding by nature, and certifies through the goal-contact allowance.
@@ -302,7 +302,7 @@ def test_plan_path_clearance_and_narrow_passage(n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("n_envs", [0, 16])
 def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -335,10 +335,10 @@ def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer):
                     ),
                 )
             )
-    scene.add_entity(
+    free_box = scene.add_entity(
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
-            pos=(0.347, 0.127, 0.02),
+            pos=(0.35, 0.13, 0.02),
         ),
     )
     franka = scene.add_entity(
@@ -347,25 +347,64 @@ def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer):
         ),
     )
     scene.build(n_envs=n_envs)
+
+    # One challenging pre-grasp spot per env: the mid-gap corridors between the groups, the inner ring under the
+    # L corners, tight spots beside the radial arms, and the pocket mouths.
+    box_xy = [
+        (0.40, 0.00),
+        (0.00, 0.40),
+        (-0.40, 0.00),
+        (0.00, -0.40),
+        (0.22, 0.22),
+        (-0.22, 0.22),
+        (-0.22, -0.22),
+        (0.05, -0.30),
+        (0.52, 0.18),
+        (-0.18, 0.52),
+        (-0.52, -0.18),
+        (0.18, -0.52),
+        (0.35, 0.13),
+        (-0.13, 0.35),
+        (-0.35, -0.13),
+        (0.13, -0.35),
+    ][: max(n_envs, 1)]
+    box_pos = torch.tensor([[x, y, 0.02] for x, y in box_xy], dtype=gs.tc_float)
+    # Top-down pre-grasps with the wrist yaw facing each box's azimuth: the natural approach orientation, so
+    # every spot stays kinematically comfortable while the surroundings do the stressing.
+    goal_quat = torch.as_tensor(
+        np.stack(
+            [
+                gu.transform_quat_by_quat(
+                    np.array([0.0, 1.0, 0.0, 0.0]), gu.rotvec_to_quat(np.array([0.0, 0.0, np.arctan2(y, x)]))
+                )
+                for x, y in box_xy
+            ]
+        ),
+        dtype=gs.tc_float,
+    )
+    goal_pos = box_pos + torch.tensor([0.0, 0.0, 0.11], dtype=gs.tc_float)
+    if n_envs == 0:
+        box_pos, goal_pos, goal_quat = box_pos[0], goal_pos[0], goal_quat[0]
+    free_box.set_pos(box_pos)
     franka.set_qpos([0.0, -0.3, 0.0, -1.0, 0.0, 1.5, 0.785, 0.04, 0.04])
 
-    # The top-down pre-grasp right above the free box is contact-rich (fingers within proxy padding of the box
-    # and the floor), so this exercises the goal-contact allowance, the multi-restart goal resolution, and
-    # convergence through the corridors, without any retry.
+    # Every pre-grasp is contact-rich (fingers within proxy padding of the box and the floor), so this exercises
+    # the goal-contact allowance, the multi-restart goal resolution and its per-retry branch reconsideration,
+    # and convergence through the corridors, in every env at once.
     hand = franka.get_link("hand")
     for seed in (0, 1, 2):
         path = franka.plan_path(
-            max_retry=0,
+            max_retry=2,
             goal_link=hand,
-            goal_pos=[0.347, 0.127, 0.13],
-            goal_quat=[0.0, 1.0, 0.0, 0.0],
+            goal_pos=goal_pos,
+            goal_quat=goal_quat,
             seed=seed,
         )
         assert path.is_valid.all()
 
     # Ground truth on the last plan: the real collider reports no penetration of the fixed clutter anywhere
-    # along the returned path, and the final waypoint reaches the pre-grasp pose.
+    # along the returned path, and the final waypoint reaches the pre-grasp pose in every env.
     max_penetration = _max_true_penetration(scene, franka, path.qpos, obstacles, show_viewer)
     assert max_penetration < 5e-3
     franka.set_qpos(path.qpos[-1], zero_velocity=False)
-    assert_allclose(hand.get_pos(), [0.347, 0.127, 0.13], tol=6e-3)
+    assert_allclose(hand.get_pos(), goal_pos, tol=6e-3)
