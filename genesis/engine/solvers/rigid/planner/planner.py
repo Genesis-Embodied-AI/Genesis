@@ -600,82 +600,41 @@ class Planner:
             solver.rigid_config,
         )
         if has_pose_goal:
-            # The probe below validates raw hold-at-goal candidates, so the exclusion lists must not carry
-            # allowances from a previous plan; the boundary exclusions proper are collected once the goal is
-            # resolved.
-            qd_to_torch(planner_info.excl_world_count, copy=False).fill_(0)
-            qd_to_torch(planner_info.excl_self_count, copy=False).fill_(0)
-            # Certified multi-restart inverse kinematics: the pose usually has several joint-space solutions and
-            # an arbitrary one is often proxy-colliding, which would doom both the optimizer's clamped goal
-            # knots and the fallback's goal tree. Up to S restarts are validated in one launch (each candidate
-            # holds one solution) and the first certified solution per env becomes the goal.
-            ik_kwargs = {}
-            if goal_pos is not None:
-                ik_kwargs["pos"] = goal_pos
-            if goal_quat is not None:
-                ik_kwargs["quat"] = goal_quat
-            if solver.n_envs > 0:
-                ik_kwargs["envs_idx"] = envs_idx
-            lo = qd_to_torch(planner_info.q_limit_lower)
-            hi = qd_to_torch(planner_info.q_limit_upper)
-            solutions = []
-            for i_restart in range(S):
-                init_qpos = (
-                    qpos_start_t
-                    if i_restart == 0
-                    else lo + (hi - lo) * torch.rand((B_plan, n_dp), generator=gen, dtype=gs.tc_float).to(gs.device)
-                )
-                solution = entity.inverse_kinematics(
-                    goal_link, init_qpos=init_qpos, seed=(int(seed_key) + i_restart) & 0x7FFFFFFF, **ik_kwargs
-                )
-                if solution.ndim == 1:
-                    solution = solution[None]
-                solutions.append(solution)
-            traj_probe = qd_to_torch(planner_state.qpos_traj, copy=False).T.reshape(B, S, W, n_dp)
-            for i_restart, solution in enumerate(solutions):
-                traj_probe[envs_idx_np, i_restart] = solution[:, None, :]
-            qd_to_torch(planner_state.is_active, copy=False).reshape(B, S)[envs_idx_np] = True
-            # Goals are probed at the sampling-fallback margin: a goal whose immediate neighborhood is snugger
-            # than that would wall off its own goal tree even though the held configuration certifies.
-            qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.01)
-            cost_mod.kernel_planner_validate(*kernel_args, planner_config)
-            qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
-            probe_flags = qd_to_torch(planner_state.valid_flags).reshape(B, S)[envs_idx_np]
-            probe_clear = qd_to_torch(planner_state.min_clearance).reshape(B, S)[envs_idx_np]
-            # A collision-free converged solution is ideal; a converged solution whose only defect is a proxy
-            # collision within the excusable contact window remains acceptable, since its contacts become
-            # boundary allowances below (grasp and place poses are proxy-colliding by nature). Deeper branches
-            # (e.g. an elbow folded through an obstacle) are rejected outright.
-            is_goal_free = (probe_flags & (cost_mod.COLLISION | cost_mod.GOAL_TOL)) == 0
-            is_goal_excusable = probe_clear + float(safety_margin) + 0.01 > -cost_mod._EXCL_DEPTH_MAX
-            is_goal_converged = ((probe_flags & cost_mod.GOAL_TOL) == 0) & is_goal_excusable
-            if not bool(is_goal_converged.any(dim=-1).all()):
-                gs.logger.info("No converged inverse-kinematics solution found for some environments.")
-            # Among certified solutions, the one closest to the start wins: distant elbow-flipped branches make
-            # every downstream search harder.
-            all_solutions = torch.stack(solutions, dim=1)
-            distance = (all_solutions - qpos_start_t[:, None]).abs().sum(dim=-1)
-            distance_gated = torch.where(is_goal_converged, distance, torch.full_like(distance, torch.inf))
-            distance_gated = torch.where(is_goal_free, distance_gated, distance_gated + 1e6)
-            best_restart = distance_gated.argmin(dim=-1)
-            qpos_goal_t = all_solutions.gather(1, best_restart[:, None, None].expand(B_plan, 1, n_dp))[:, 0]
-            qd_to_torch(planner_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
-
-        # Boundary (start and goal) contact exclusions: pairs violating the margin at either boundary keep their
-        # worst boundary clearance for the whole plan, which is what makes grasp and place goals plannable.
-        cost_mod.kernel_planner_boundary_exclusions(
-            envs_idx_np,
-            planner_state,
-            planner_info,
-            planner_world,
-            solver.dyn_state,
-            solver.dyn_info,
-            solver.rigid_info,
-            sdf_info,
-            solver.rigid_config,
-            planner_config,
-            context.errno,
-        )
+            # The goal probes below judge hold-at-goal candidates with the start-side allowances active (the
+            # live configuration's own contacts, e.g. the base resting on the floor, would otherwise flag every
+            # candidate); the goal side is folded into the exclusions once a goal is resolved.
+            cost_mod.kernel_planner_boundary_exclusions(
+                envs_idx_np,
+                planner_state,
+                planner_info,
+                planner_world,
+                solver.dyn_state,
+                solver.dyn_info,
+                solver.rigid_info,
+                sdf_info,
+                solver.rigid_config,
+                planner_config,
+                include_goal=False,
+                errno=context.errno,
+            )
+        else:
+            # Boundary (start and goal) contact exclusions: pairs violating the margin at either boundary keep
+            # their worst boundary clearance for the whole plan, which is what makes grasp and place goals
+            # plannable.
+            cost_mod.kernel_planner_boundary_exclusions(
+                envs_idx_np,
+                planner_state,
+                planner_info,
+                planner_world,
+                solver.dyn_state,
+                solver.dyn_info,
+                solver.rigid_info,
+                sdf_info,
+                solver.rigid_config,
+                planner_config,
+                include_goal=True,
+                errno=context.errno,
+            )
         if bool((errno_t != 0).any()):
             gs.raise_exception(
                 "Too many boundary-configuration contacts for the planner exclusion lists; the start or goal "
@@ -693,6 +652,45 @@ class Planner:
             env_pending = env_pending_mask & ~env_solved
             if not bool(env_pending.any()):
                 break
+            if has_pose_goal:
+                # Every attempt reconsiders the goal branch of its pending envs: a fresh restart pool may land a
+                # branch whose neighborhood plans better, which no amount of trajectory re-seeding toward the
+                # previous branch could recover.
+                self._resolve_pose_goal(
+                    entity,
+                    context,
+                    kernel_args,
+                    goal_link,
+                    goal_pos,
+                    goal_quat,
+                    qpos_start_t,
+                    env_pending,
+                    envs_idx,
+                    envs_idx_np,
+                    gen,
+                    int(seed_key),
+                    i_attempt,
+                    safety_margin,
+                )
+                cost_mod.kernel_planner_boundary_exclusions(
+                    envs_idx_np,
+                    planner_state,
+                    planner_info,
+                    planner_world,
+                    solver.dyn_state,
+                    solver.dyn_info,
+                    solver.rigid_info,
+                    sdf_info,
+                    solver.rigid_config,
+                    planner_config,
+                    include_goal=True,
+                    errno=context.errno,
+                )
+                if bool((errno_t != 0).any()):
+                    gs.raise_exception(
+                        "Too many boundary-configuration contacts for the planner exclusion lists; the start or "
+                        "goal configuration is deeply entangled with the world."
+                    )
             if i_attempt == 0:
                 self._seed_trajectories(context, gen, env_pending)
             elif ignore_collision:
@@ -770,6 +768,93 @@ class Planner:
                 qpos=qpos_out[0], dofs_vel=vel_out[0], dofs_acc=acc_out[0], dt=dt_out[0], is_valid=is_valid_out[0]
             )
         return PlannerPath(qpos=qpos_out, dofs_vel=vel_out, dofs_acc=acc_out, dt=dt_out, is_valid=is_valid_out)
+
+    def _resolve_pose_goal(
+        self,
+        entity,
+        context,
+        kernel_args,
+        goal_link,
+        goal_pos,
+        goal_quat,
+        qpos_start_t,
+        env_pending,
+        envs_idx,
+        envs_idx_np,
+        gen,
+        seed_key,
+        i_attempt,
+        safety_margin,
+    ):
+        """
+        Certified multi-restart inverse kinematics for the pending envs: the pose usually has several joint-space
+        solutions and an arbitrary one is often proxy-colliding, which would doom both the optimizer's clamped
+        goal knots and the fallback's goal tree. Up to S restarts are validated in one launch (each candidate
+        holds one solution) and the best certified solution per pending env becomes its goal; later attempts draw
+        fresh restart pools, so a retry can leave a branch whose neighborhood turned out unplannable.
+        """
+        solver = self._solver
+        planner_config, planner_info, planner_state = (
+            context.planner_config,
+            context.planner_info,
+            context.planner_state,
+        )
+        W, S, n_dp = planner_config.n_knots, planner_config.n_seeds, planner_config.n_dp
+        B = max(solver.n_envs, 1)
+        B_plan = len(envs_idx_np)
+        rows_pending = tensor_to_array(env_pending[envs_idx_np], dtype=np.bool_)
+
+        ik_kwargs = {}
+        if goal_pos is not None:
+            ik_kwargs["pos"] = goal_pos
+        if goal_quat is not None:
+            ik_kwargs["quat"] = goal_quat
+        if solver.n_envs > 0:
+            ik_kwargs["envs_idx"] = envs_idx
+        lo = qd_to_torch(planner_info.q_limit_lower)
+        hi = qd_to_torch(planner_info.q_limit_upper)
+        solutions = []
+        for i_restart in range(S):
+            init_qpos = (
+                qpos_start_t
+                if i_restart == 0 and i_attempt == 0
+                else lo + (hi - lo) * torch.rand((B_plan, n_dp), generator=gen, dtype=gs.tc_float).to(gs.device)
+            )
+            solution = entity.inverse_kinematics(
+                goal_link, init_qpos=init_qpos, seed=(seed_key + i_attempt * S + i_restart) & 0x7FFFFFFF, **ik_kwargs
+            )
+            if solution.ndim == 1:
+                solution = solution[None]
+            solutions.append(solution)
+        traj_probe = qd_to_torch(planner_state.qpos_traj, copy=False).T.reshape(B, S, W, n_dp)
+        for i_restart, solution in enumerate(solutions):
+            traj_probe[envs_idx_np[rows_pending], i_restart] = solution[rows_pending][:, None, :]
+        qd_to_torch(planner_state.is_active, copy=False).reshape(B, S)[envs_idx_np[rows_pending]] = True
+        # Goals are probed at the sampling-fallback margin: a goal whose immediate neighborhood is snugger than
+        # that would wall off its own goal tree even though the held configuration certifies.
+        qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.01)
+        cost_mod.kernel_planner_validate(*kernel_args, planner_config)
+        qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
+        probe_flags = qd_to_torch(planner_state.valid_flags).reshape(B, S)[envs_idx_np]
+        probe_clear = qd_to_torch(planner_state.min_clearance).reshape(B, S)[envs_idx_np]
+        # A collision-free converged solution is ideal; a converged solution whose only defect is a proxy
+        # collision within the excusable contact window remains acceptable, since its contacts become boundary
+        # allowances (grasp and place poses are proxy-colliding by nature). Deeper branches (e.g. an elbow folded
+        # through an obstacle) are rejected outright.
+        is_goal_free = (probe_flags & (cost_mod.COLLISION | cost_mod.GOAL_TOL)) == 0
+        is_goal_excusable = probe_clear + float(safety_margin) + 0.01 > -cost_mod._EXCL_DEPTH_MAX
+        is_goal_converged = ((probe_flags & cost_mod.GOAL_TOL) == 0) & is_goal_excusable
+        if not bool(is_goal_converged[rows_pending].any(dim=-1).all()):
+            gs.logger.info("No converged inverse-kinematics solution found for some environments.")
+        # Among certified solutions, the one closest to the start wins: distant elbow-flipped branches make every
+        # downstream search harder.
+        all_solutions = torch.stack(solutions, dim=1)
+        distance = (all_solutions - qpos_start_t[:, None]).abs().sum(dim=-1)
+        distance_gated = torch.where(is_goal_converged, distance, torch.full_like(distance, torch.inf))
+        distance_gated = torch.where(is_goal_free, distance_gated, distance_gated + 1e6)
+        best_restart = distance_gated.argmin(dim=-1)
+        qpos_goal_t = all_solutions.gather(1, best_restart[:, None, None].expand(B_plan, 1, n_dp))[:, 0]
+        qd_to_torch(planner_info.qpos_goal, copy=False).T[envs_idx_np[rows_pending]] = qpos_goal_t[rows_pending]
 
     def _seed_validity(self, flags_t, S, ignore_collision):
         flags = flags_t.reshape(-1, S)

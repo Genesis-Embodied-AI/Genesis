@@ -178,8 +178,9 @@ def func_planner_collision_cost(
                     sd_eff = sd - radius - planner_info.d_safe[None] - swp
                     offset = func_planner_excl_world_offset(i_s, i_gw, i_b, planner_info)
                     if offset < 0.0:
-                        # Excluded pair: allowed to keep its start clearance, sweep-free (the allowance is exact
-                        # at the start sample, and sweep-inflating it would flag pairs pinned at constant depth).
+                        # Excluded pair: allowed to keep its boundary clearance, sweep-free (the allowance is
+                        # exact at the boundary sample, and sweep-inflating it would flag pairs pinned at
+                        # constant depth).
                         sd_eff = sd - radius - planner_info.d_safe[None] - offset + 1e-4
                     min_sd = qd.min(min_sd, sd_eff)
                     hinge, _ = func_planner_hinge(sd_eff, eps_act)
@@ -314,17 +315,19 @@ def kernel_planner_boundary_exclusions(
     sdf_info: array_class.SDFInfo,
     rigid_config: qd.template(),
     planner_config: qd.template(),
+    include_goal: qd.template(),
     errno: qd.Tensor,
 ):
-    """Collect the boundary-config (start and goal) contact exclusions per env (serial per env - the lists are
-    tiny)."""
+    """Collect the boundary-config contact exclusions per env (serial per env - the lists are tiny): always the
+    start, plus the goal when include_goal is set (a Cartesian goal is unknown until resolved, so its pass runs
+    on a second call)."""
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         planner_info.excl_world_count[i_b] = 0
         planner_info.excl_self_count[i_b] = 0
         is_overflow = gs.qd_int(0)
-        for i_bound in range(2):
+        for i_bound in range(qd.static(2 if include_goal else 1)):
             # FK of the boundary configuration through the eval scratch, one column per env.
             for i_dp in range(qd.static(planner_config.n_dp)):
                 if i_bound == 0:
