@@ -6,7 +6,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Sequence
-from functools import partial, cached_property
+from functools import cached_property, partial
 from typing import Any, Callable, TypeVar
 
 import numpy as np
@@ -18,10 +18,18 @@ import genesis.utils.geom as gu
 from genesis.options.recorders import (
     BasePlotterOptions,
     LinePlotterMixinOptions,
-    PyQtLinePlot as PyQtLinePlotterOptions,
-    MPLLinePlot as MPLLinePlotterOptions,
+)
+from genesis.options.recorders import (
     MPLImagePlot as MPLImagePlotterOptions,
+)
+from genesis.options.recorders import (
+    MPLLinePlot as MPLLinePlotterOptions,
+)
+from genesis.options.recorders import (
     MPLVectorFieldPlot as MPLVectorFieldPlotterOptions,
+)
+from genesis.options.recorders import (
+    PyQtLinePlot as PyQtLinePlotterOptions,
 )
 from genesis.utils import has_display, tensor_to_array
 
@@ -381,7 +389,7 @@ class BaseMPLPlotter(BasePlotter):
 
         self.fig: plt.Figure | None = None
         self.axes: list[plt.Axes] = []
-        self._backgrounds: list[Any] = []
+        self._background: Any = None
         self._lock = threading.Lock()
 
         # matplotlib figsize uses inches
@@ -413,12 +421,12 @@ class BaseMPLPlotter(BasePlotter):
         return self.axes
 
     def _cache_backgrounds(self):
-        """Draw the figure and cache each axis' background region for fast blitting."""
+        """Draw the figure and cache its full background region for fast blitting."""
         self.fig.canvas.draw()
-        self._backgrounds = [self.fig.canvas.copy_from_bbox(ax.bbox) for ax in self.axes]
+        self._background = self.fig.canvas.copy_from_bbox(self.fig.bbox)
 
     def on_resize(self, event=None):
-        """Re-cache the per-axis blit backgrounds after a resize."""
+        """Re-cache the blit background after a resize."""
         with self._lock:
             if self.fig is not None and self.axes:
                 self._cache_backgrounds()
@@ -772,6 +780,7 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
                     zorder=1,
                     scale_units="xy",
                     scale=1,
+                    pivot="mid" if self._twist_scale_factor is not None else "tail",
                 )
             )
             if self._twist_scale_factor is not None:
@@ -794,6 +803,13 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
                         scale=1,
                     )
                 )
+            for artist in (self._scatters[-1], self._quivers[-1], *self._twist_arcs[-1:], *self._twist_heads[-1:]):
+                artist.set_clip_box(ax.bbox)
+                artist.set_clip_on(True)
+            # The zero-length twist-head quiver renders as a dot per taxel; animate it (and the arcs) so it is not
+            # baked into the cached background and left ghosting behind the live scatter.
+            for artist in (*self._twist_arcs[-1:], *self._twist_heads[-1:]):
+                artist.set_animated(True)
         self.fig.colorbar(self._quivers[-1], ax=axes, label="Magnitude")
         if self._twist_scale_factor is not None:
             self.fig.colorbar(self._twist_arcs[-1], ax=axes, label="Twist")
@@ -813,14 +829,17 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         n = len(self._positions)
         if vectors_all.ndim != 3 or vectors_all.shape[1:] != (n, 3):
             return
-        if vectors_all.shape[0] != len(self.axes) or not self._backgrounds:
+        if vectors_all.shape[0] != len(self.axes) or self._background is None:
             return
         if is_twist and twist_all.shape != vectors_all.shape:
             return
 
         with self._lock:
-            for i_ax, (ax, scatter, quiver, background, vectors) in enumerate(
-                zip(self.axes, self._scatters, self._quivers, self._backgrounds, vectors_all)
+            # Blit the whole figure, not per-axes: a stroke clipped at an axes box can bleed a pixel past it, and a
+            # per-axes blit never restores that sliver, so it would accumulate as residue.
+            self.fig.canvas.restore_region(self._background)
+            for i_ax, (ax, scatter, quiver, vectors) in enumerate(
+                zip(self.axes, self._scatters, self._quivers, vectors_all)
             ):
                 magnitudes = np.linalg.norm(vectors, axis=-1)
                 xy, uv = _project_to_plane(self._normal, self._positions, vectors)
@@ -829,7 +848,6 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
                 quiver.set_offsets(xy)
                 quiver.set_UVC(*(uv * self._scale_factor).T)
                 quiver.set_array(magnitudes)
-                self.fig.canvas.restore_region(background)
                 ax.draw_artist(scatter)
                 ax.draw_artist(quiver)
                 if is_twist:
@@ -850,7 +868,7 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
                     )
                     ax.draw_artist(arcs)
                     ax.draw_artist(heads)
-                self.fig.canvas.blit(ax.bbox)
+            self.fig.canvas.blit(self.fig.bbox)
             self.fig.canvas.flush_events()
 
     def cleanup(self):

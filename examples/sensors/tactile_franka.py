@@ -10,6 +10,7 @@ import os
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -53,10 +54,10 @@ def _add_tactile_sensor(
                 track_link_idx=track_link_idx,
                 lambda_d=5000.0,
                 lambda_s=4000.0,
-                dilate_scale=0.1,
+                dilate_scale=1.0,
                 shear_scale=1.0,
                 n_sample_points=1000,
-                normal_exponent=1.5,
+                normal_exponent=1.0,
                 compressibility=0.8,
                 debug_point_cloud_radius=0.001,
                 **common,
@@ -89,17 +90,22 @@ def _add_tactile_sensor(
             gs.sensors.ProximityTaxel(
                 probe_local_pos=probe_local_pos,
                 track_link_idx=track_link_idx,
-                probe_radius=0.02,
-                n_sample_points=4000,
-                stiffness=30.0,
-                shear_coupling=10.0,
-                twist_scalar=0.05,
+                probe_radius=0.01,
+                n_sample_points=1000,
+                stiffness=150.0,
+                shear_coupling=1.0,
+                twist_scalar=1.0,
                 probe_local_normal=probe_normal,
                 **common,
             )
         )
 
     raise ValueError(sensor_type)
+
+
+def _force_torque_field(sensors: "tuple[Sensor, ...]") -> tuple[torch.Tensor, torch.Tensor]:
+    readings = [sensor.read() for sensor in sensors]
+    return torch.stack([r.force for r in readings]), torch.stack([r.torque for r in readings])
 
 
 def _plot_tactile_sensor(
@@ -113,45 +119,48 @@ def _plot_tactile_sensor(
         print("Matplotlib not available; skipping plot setup.")
         return
 
+    positions = sensors[0].probe_local_pos.reshape(-1, 3)
     if sensor_type == "elastomer":
-        for label, sensor in zip(labels, sensors):
-            sensor.start_recording(
-                gs.recorders.MPLVectorFieldPlot(
-                    title=f"({label}) ElastomerTaxel marker displacements",
-                    positions=sensor.probe_local_pos.reshape(-1, 3),
-                    normal=plot_normal,
-                    scale_factor=1.0,
-                    max_magnitude=0.01,
-                ),
-            )
+        # ElastomerTaxel read() is grid-shaped (ny, nx, 3); flatten each finger to (N, 3) before stacking.
+        scene.start_recording(
+            lambda: torch.stack([sensor.read().reshape(-1, 3) for sensor in sensors]),
+            gs.recorders.MPLVectorFieldPlot(
+                title="ElastomerTaxel marker displacements",
+                positions=positions,
+                normal=plot_normal,
+                scale_factor=0.1,
+                max_magnitude=0.08,
+                subplot_titles=labels,
+            ),
+        )
     elif sensor_type == "kinematic":
-        for label, sensor in zip(labels, sensors):
-            scene.start_recording(
-                lambda s=sensor: ((r := s.read()).force, r.torque),
-                gs.recorders.MPLVectorFieldPlot(
-                    title=f"({label}) KinematicTaxel force + twist",
-                    positions=sensor.probe_local_pos.reshape(-1, 3),
-                    normal=plot_normal,
-                    scale_factor=0.01,
-                    max_magnitude=1.0,
-                    twist_scale_factor=0.002,
-                    twist_max_magnitude=2.0,
-                ),
-            )
+        scene.start_recording(
+            lambda: _force_torque_field(sensors),
+            gs.recorders.MPLVectorFieldPlot(
+                title="KinematicTaxel force + twist",
+                positions=positions,
+                normal=plot_normal,
+                scale_factor=0.01,
+                max_magnitude=1.0,
+                twist_scale_factor=0.002,
+                twist_max_magnitude=2.0,
+                subplot_titles=labels,
+            ),
+        )
     elif sensor_type == "proximity":
-        for label, sensor in zip(labels, sensors):
-            scene.start_recording(
-                lambda s=sensor: ((r := s.read()).force, r.torque),
-                gs.recorders.MPLVectorFieldPlot(
-                    title=f"({label}) ProximityTaxel force + twist",
-                    positions=sensor.probe_local_pos.reshape(-1, 3),
-                    normal=plot_normal,
-                    scale_factor=0.5,
-                    max_magnitude=2.0,
-                    twist_scale_factor=0.001,
-                    twist_max_magnitude=1.0,
-                ),
-            )
+        scene.start_recording(
+            lambda: _force_torque_field(sensors),
+            gs.recorders.MPLVectorFieldPlot(
+                title="ProximityTaxel force + twist",
+                positions=positions,
+                normal=plot_normal,
+                scale_factor=10.0,
+                max_magnitude=1.0,
+                twist_scale_factor=0.001,
+                twist_max_magnitude=1.0,
+                subplot_titles=labels,
+            ),
+        )
     elif sensor_type == "depth":
         scene.start_recording(
             lambda: tuple(sensor.read().max() for sensor in sensors),
@@ -163,6 +172,31 @@ def _plot_tactile_sensor(
                 history_length=200,
             ),
         )
+
+
+def _print_sensor_reading(
+    sensor_type: str,
+    labels: tuple[str, ...],
+    sensors: "tuple[Sensor, ...]",
+    t: float,
+    plot_normal: tuple[float, float, float],
+) -> None:
+    for label, sensor in zip(labels, sensors):
+        data = sensor.read()
+        if sensor_type == "elastomer":
+            magnitude = data.norm(dim=-1)
+            if magnitude.max() > gs.EPS:
+                print(f"({label}) t={t:.2f}s  max|displacement|={magnitude.max():.5f}")
+        elif sensor_type == "depth":
+            max_depth = data.max()
+            if max_depth > gs.EPS:
+                print(f"({label}) t={t:.2f}s  max depth={max_depth:.4f}")
+        elif sensor_type in ("kinematic", "proximity"):
+            force_mag = data.force.norm(dim=-1).max()
+            # |twist| is the plotted torque about the view normal; print it to calibrate twist_scale_factor.
+            twist_mag = (data.torque @ data.torque.new_tensor(plot_normal)).abs().max()
+            if force_mag > gs.EPS:
+                print(f"({label}) t={t:.2f}s  max|F|={force_mag:.4f}  max|twist|={twist_mag:.5f}")
 
 
 def main() -> None:
@@ -349,13 +383,7 @@ def main() -> None:
 
             scene.step()
 
-            if args.sensor in ("kinematic", "proximity"):
-                for label, sensor in zip(("left", "right"), (left, right)):
-                    reading = sensor.read()
-                    force_mag = reading.force.norm(dim=-1).max()
-                    twist_mag = (reading.torque @ reading.torque.new_tensor(probe_normal)).abs().max()
-                    if force_mag > gs.EPS:
-                        print(f"({label}) max|F|={force_mag:.4f}  max|twist|={twist_mag:.5f}")
+            _print_sensor_reading(args.sensor, ("left", "right"), (left, right), scene.t * scene.dt, probe_normal)
 
             if "PYTEST_VERSION" in os.environ:
                 break
