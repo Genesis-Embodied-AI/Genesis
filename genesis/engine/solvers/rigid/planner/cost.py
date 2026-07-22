@@ -4,6 +4,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
 
+from ..collider.gjk import clear_cache, func_gjk, func_is_sphere_swept_geom
 from .kinematics import func_planner_fk, func_planner_spheres
 from .world import func_planner_world_aabb_skip, func_planner_world_sd, func_planner_world_sd_grad
 
@@ -30,6 +31,46 @@ _VALIDATE_REFINE = 16
 # run, they are proxy artifacts rather than real penetrations.
 _EXCL_DEPTH_MAX = 0.05
 _EXCL_CONTACT_BAND = 0.02
+# Workspace displacement from the anchor geometry within which a boundary-contact allowance applies at full
+# depth; beyond it the demand ramps back to the standard clearance at the Lipschitz rate (one meter of clearance
+# per meter of displacement). Displacement is measured exactly - the excused sphere's world motion since its
+# anchor (relative motion for self pairs) - so the excused depth is confined to the true approach neighborhood
+# of its anchoring boundary: real penetration along a certified path is bounded by the anchor's own physical
+# contact plus the plateau, which makes the plateau the certified leak budget. A straight approach keeps a
+# positive margin of min(distance-to-anchor, plateau) under this ramp at ANY plateau width, and curved
+# approaches that are genuinely clear certify through the exact rescue (see _EXACT_RESCUE_WINDOW), so the
+# certification plateau stays at the leak budget. The optimizer enforces the same ramp (cost and gradient) to
+# shape terminal approaches into the certified cone, but with a wide plateau: it has no rescue, its cone needs
+# no soundness, and a budget-narrow funnel stalls descent. A joint-space travel bound was measured
+# order-of-magnitude too conservative here (it walls off every contact-rich goal); the displacement must stay
+# exact.
+_EXCL_ANCHOR_SLACK_CERT = 0.02
+_EXCL_ANCHOR_SLACK_OPT = 0.02
+# Proxy deficit window within which a failing (robot sphere, world geom) pair is re-checked exactly
+# (certification paths only). The sphere proxy over-covers the mesh by up to a few centimeters, and demanding
+# proxy clearance outright walls off every corridor the real geometry clears - random sampling then cannot grow
+# trees through them. Against a convex world geom the re-check is the collider's GJK distance on the sphere's
+# own collision geom (see func_planner_gjk_clearance) - exact, so a clear pair reads its true clearance and a
+# sphere-swept pair its true shallow depth. The covering-sample sweep below remains the fallback for non-convex
+# world geoms (grid signed distance fields) and for depth when GJK only reports intersection: the whole surface
+# lies within _EXACT_SAMPLE_COV of some sample, so by the 1-Lipschitz world signed distance the true clearance
+# is at least the sample minimum less that covering radius; the rescued demand subtracts it, keeping the rescue
+# a strict lower bound of the true clearance (raw vertices alone are unsound: an obstacle edge can poke a face
+# interior deeper than any of its vertices). Deficits deeper than the window are genuine collisions and skip
+# the re-check, which bounds its cost. The sweep is two-level: the coarse covering decides the clear-cut cases
+# at a fraction of the samples - its minimum is an upper bound of the fine one (fewer points), so a coarse
+# sweep below the win threshold rules the rescue out, and a non-negative coarse covering bound certifies
+# positives whose sign no finer sweep could flip - and only the marginal band pays the fine sweep.
+_EXACT_RESCUE_WINDOW = 0.08
+_EXACT_SAMPLE_COV = 0.005
+_EXACT_SAMPLE_COV_COARSE = 0.02
+# Real penetration budget of an accepted Cartesian goal hold: with the exact rescue active in the probe, a
+# robot-world pair's exact reading is at least the real surface clearance minus _EXACT_SAMPLE_COV and the probe
+# headroom, so goal acceptance bounds the hold's true world penetration by this constant alone - it must NOT
+# track the anchor plateau, whose width is set by optimizer convergence, or widening the plateau silently
+# re-admits really-penetrating goals. It only applies to the exact minimum: self and attached-entity pairs read
+# raw proxy conservatism, which the acceptance gate bounds by boundary excusability instead (_EXCL_DEPTH_MAX).
+_GOAL_REAL_PEN_MAX = 0.002
 
 
 @qd.func
@@ -48,25 +89,139 @@ def func_planner_hinge(sd, eps):
 
 
 @qd.func
-def func_planner_excl_world_offset(i_s, i_gw, i_b, planner_info: array_class.PlannerEntityInfo):
-    """Boundary-contact allowance of a (sphere, world geom) pair: pairs violating the margin at qpos_start or
-    qpos_goal may keep their worst boundary clearance (never get worse than the boundary configurations, which
-    is what makes grasp and place goals plannable); everything else gets no allowance."""
+def func_planner_excl_world_offset(i_s, i_gw, i_bound, i_b, planner_info: array_class.PlannerEntityInfo):
+    """Boundary-contact allowance of a (sphere, world geom) pair anchored at boundary i_bound (0 = start,
+    1 = goal): pairs violating the margin at that boundary may keep their boundary clearance near it (never get
+    worse than the boundary configurations, which is what makes grasp and place goals plannable); everything
+    else gets no allowance."""
     offset = gs.qd_float(0.0)
-    for i_x in range(planner_info.excl_world_count[i_b]):
-        if planner_info.excl_world_pair[i_x, i_b][0] == i_s and planner_info.excl_world_pair[i_x, i_b][1] == i_gw:
-            offset = qd.min(planner_info.excl_world_sd[i_x, i_b], 0.0)
+    for i_x in range(planner_info.excl.world_count[i_b]):
+        if (
+            planner_info.excl.world_pair[i_x, i_b][0] == i_s
+            and planner_info.excl.world_pair[i_x, i_b][1] == i_gw
+            and planner_info.excl.world_bound[i_x, i_b] == i_bound
+        ):
+            offset = qd.min(planner_info.excl.world_sd[i_x, i_b], 0.0)
     return offset
 
 
 @qd.func
-def func_planner_excl_self_offset(i_p, i_b, planner_info: array_class.PlannerEntityInfo):
+def func_planner_excl_self_offset(i_p, i_bound, i_b, planner_info: array_class.PlannerEntityInfo):
     """Boundary-contact allowance of a self-collision sphere pair (see func_planner_excl_world_offset)."""
     offset = gs.qd_float(0.0)
-    for i_x in range(planner_info.excl_self_count[i_b]):
-        if planner_info.excl_self_pair[i_x, i_b] == i_p:
-            offset = qd.min(planner_info.excl_self_sd[i_x, i_b], 0.0)
+    for i_x in range(planner_info.excl.self_count[i_b]):
+        if planner_info.excl.self_pair[i_x, i_b] == i_p and planner_info.excl.self_bound[i_x, i_b] == i_bound:
+            offset = qd.min(planner_info.excl.self_sd[i_x, i_b], 0.0)
     return offset
+
+
+@qd.func
+def func_planner_excl_world_anchor(i_s, i_gw, i_bound, i_b, planner_info: array_class.PlannerEntityInfo):
+    """Anchor world position and link orientation of an excluded (sphere, world geom) pair (see
+    _EXCL_ANCHOR_SLACK_CERT); only meaningful for pairs whose offset is negative."""
+    anchor = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+    anchor_quat = qd.Vector([1.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
+    for i_x in range(planner_info.excl.world_count[i_b]):
+        if (
+            planner_info.excl.world_pair[i_x, i_b][0] == i_s
+            and planner_info.excl.world_pair[i_x, i_b][1] == i_gw
+            and planner_info.excl.world_bound[i_x, i_b] == i_bound
+        ):
+            anchor = planner_info.excl.world_anchor[i_x, i_b]
+            anchor_quat = planner_info.excl.world_anchor_quat[i_x, i_b]
+    return anchor, anchor_quat
+
+
+@qd.func
+def func_planner_excl_self_anchor(i_p, i_bound, i_b, planner_info: array_class.PlannerEntityInfo):
+    """Anchor relative offset of an excluded self-collision sphere pair (see func_planner_excl_world_anchor)."""
+    anchor = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+    for i_x in range(planner_info.excl.self_count[i_b]):
+        if planner_info.excl.self_pair[i_x, i_b] == i_p and planner_info.excl.self_bound[i_x, i_b] == i_bound:
+            anchor = planner_info.excl.self_anchor[i_x, i_b]
+    return anchor
+
+
+@qd.func
+def func_planner_sphere_exact_sd(
+    i_s,
+    i_gw,
+    i_col,
+    i_b,
+    sd_stop,
+    verts_pos: qd.Tensor,
+    verts_start: qd.Tensor,
+    links_pos: qd.Tensor,
+    links_quat: qd.Tensor,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_info: array_class.DynInfo,
+    sdf_info: array_class.SDFInfo,
+):
+    """Exact clearance bound of proxy sphere i_s against world geom i_gw at FK column i_col: minimum world
+    signed distance over the sphere's own covering surface samples of one level, verts_pos ranged by
+    verts_start (see _EXACT_RESCUE_WINDOW); the caller subtracts the level's covering radius to bound the
+    sampled surface. The sweep stops early once the minimum drops below sd_stop, where the rescue can no
+    longer win."""
+    i_l = planner_info.spheres.link_idx[i_s]
+    min_sd = gs.qd_float(qd.math.inf)
+    i_v = verts_start[i_s]
+    while i_v < verts_start[i_s + 1] and min_sd >= sd_stop:
+        p = links_pos[i_l, i_col] + gu.qd_transform_by_quat(verts_pos[i_v], links_quat[i_l, i_col])
+        min_sd = qd.min(min_sd, func_planner_world_sd(i_gw, i_b, p, planner_world, dyn_info, sdf_info))
+        i_v += 1
+    return min_sd
+
+
+@qd.func
+def func_planner_gjk_clearance(
+    i_ga,
+    i_gb,
+    i_col,
+    pos_a,
+    quat_a,
+    pos_b,
+    quat_b,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+):
+    """Exact signed clearance between two convex geoms at explicit poses, through the collider's GJK distance
+    query (func_gjk) on the planner-owned scratch column i_col. Sphere-swept geoms (sphere, capsule) shrink to
+    point / line supports, so their shallow penetrations read their exact negative depth; any other reading at
+    or below the collision epsilon returns 0 - intersecting, depth unresolved (the covering-sample sweep
+    supplies depth there, see _EXACT_RESCUE_WINDOW)."""
+    clear_cache(i_col, gjk_state)
+    is_swept_a = func_is_sphere_swept_geom(i_ga, dyn_info)
+    is_swept_b = func_is_sphere_swept_geom(i_gb, dyn_info)
+    shrink_sphere = is_swept_a or is_swept_b
+    dist = func_gjk(
+        i_ga,
+        i_gb,
+        i_col,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        shrink_sphere,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        collider_info,
+        rigid_config,
+        collider_static_config,
+    )
+    if dist <= collider_info.gjk.collision_eps[None]:
+        dist = 0.0
+    elif shrink_sphere:
+        if is_swept_a:
+            dist -= dyn_info.geoms.data[i_ga][0]
+        if is_swept_b:
+            dist -= dyn_info.geoms.data[i_gb][0]
+    return dist
 
 
 @qd.func
@@ -74,9 +229,9 @@ def func_planner_sphere_radius(i_s, i_b, planner_info: array_class.PlannerEntity
     """Radius of proxy sphere i_s, attached spheres included (inactive attached spheres read radius 0)."""
     radius = gs.qd_float(0.0)
     if i_s < qd.static(planner_config.n_spheres):
-        radius = planner_info.spheres_radius[i_s]
-    elif planner_info.attach_spheres_is_active[i_s - qd.static(planner_config.n_spheres), i_b]:
-        radius = planner_info.attach_spheres_radius[i_s - qd.static(planner_config.n_spheres)]
+        radius = planner_info.spheres.radius[i_s]
+    elif planner_info.attach_spheres.is_active[i_s - qd.static(planner_config.n_spheres), i_b]:
+        radius = planner_info.attach_spheres.radius[i_s - qd.static(planner_config.n_spheres)]
     return radius
 
 
@@ -85,9 +240,9 @@ def func_planner_sphere_link(i_s, planner_info: array_class.PlannerEntityInfo, p
     """Entity-local link carrying proxy sphere i_s (attach link for attached spheres)."""
     i_l = gs.qd_int(0)
     if i_s < qd.static(planner_config.n_spheres):
-        i_l = planner_info.spheres_link_idx[i_s]
+        i_l = planner_info.spheres.link_idx[i_s]
     else:
-        i_l = planner_info.attach_spheres_link_idx[i_s - qd.static(planner_config.n_spheres)]
+        i_l = planner_info.attach_spheres.link_idx[i_s - qd.static(planner_config.n_spheres)]
     return i_l
 
 
@@ -128,7 +283,7 @@ def func_planner_chain_grad(
                 joint_type = dyn_info.joints.type[I_j]
                 if joint_type != gs.JOINT_TYPE.FIXED:
                     i_dp = dyn_info.joints.q_start[I_j] - q_offset
-                    if not planner_info.dof_is_locked[i_dp, i_b]:
+                    if not planner_info.dofs.is_locked[i_dp, i_b]:
                         dq = gs.qd_float(0.0)
                         if joint_type == gs.JOINT_TYPE.REVOLUTE:
                             dq = (
@@ -148,61 +303,247 @@ def func_planner_collision_cost(
     i_b,
     swp,
     dq_inf,
+    links_pos: qd.Tensor,
+    links_quat: qd.Tensor,
     spheres_pos: qd.Tensor,
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
     sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
     planner_config: qd.template(),
+    use_exact: qd.template(),
 ):
     """
     Collision cost of one FK column (cost-only path): world hinge over every (sphere, obstacle geom) within band +
     self/attach hinge over the pair lists. The sweep allowance swp inflates every sphere so the cost covers the
-    whole inter-sample segment (SDF is 1-Lipschitz). Returns (cost, min signed clearance).
+    whole inter-sample segment (SDF is 1-Lipschitz); boundary-contact allowances ramp away from their anchor
+    (see _EXCL_ANCHOR_SLACK_CERT). Certification callers pass use_exact=True so borderline pairs are re-checked
+    exactly - robot world pairs and failing self link pairs through the collider's GJK, with the covering-sample
+    sweep as the world fallback (see _EXACT_RESCUE_WINDOW). Returns (cost, min_sd_exact, min_sd_proxy): the exact
+    minimum runs over robot-sphere world pairs, whose rescued reading is tied to the real surface clearance (see
+    _EXACT_SAMPLE_COV); the proxy minimum runs over self and attached-entity pairs, whose reading carries the raw
+    proxy conservatism except where the self rescue certifies an exact reading.
     """
     n_sph_tot = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
+    anchor_slack = qd.static(_EXCL_ANCHOR_SLACK_CERT if use_exact else _EXCL_ANCHOR_SLACK_OPT)
     cost = gs.qd_float(0.0)
-    min_sd = gs.qd_float(qd.math.inf)
+    min_sd_exact = gs.qd_float(qd.math.inf)
+    min_sd_proxy = gs.qd_float(qd.math.inf)
 
     for i_s in range(n_sph_tot):
         radius = func_planner_sphere_radius(i_s, i_b, planner_info, planner_config)
         if radius > 0.0:
             x = spheres_pos[i_s, i_col]
-            band = radius + planner_info.d_safe[None] + planner_info.eps_act[None] + swp
+            band = radius + planner_info.opt.d_safe[None] + planner_info.opt.eps_act[None] + swp
             for i_gw in range(planner_world.n_geoms[None]):
                 if planner_world.geoms_is_active[i_gw, i_b] and not func_planner_world_aabb_skip(
                     i_gw, i_b, x, band, planner_world
                 ):
-                    eps_act = qd.min(planner_info.eps_act[None], planner_world.geoms_max_band[i_gw])
+                    eps_act = qd.min(planner_info.opt.eps_act[None], planner_world.geoms_max_band[i_gw])
                     sd = func_planner_world_sd(i_gw, i_b, x, planner_world, dyn_info, sdf_info)
-                    sd_eff = sd - radius - planner_info.d_safe[None] - swp
-                    offset = func_planner_excl_world_offset(i_s, i_gw, i_b, planner_info)
-                    if offset < 0.0:
-                        # Excluded pair: allowed to keep its boundary clearance, sweep-free (the allowance is
-                        # exact at the boundary sample, and sweep-inflating it would flag pairs pinned at
-                        # constant depth).
-                        sd_eff = sd - radius - planner_info.d_safe[None] - offset + 1e-4
-                    min_sd = qd.min(min_sd, sd_eff)
+                    sd_eff = sd - radius - planner_info.opt.d_safe[None] - swp
+                    for i_bound in range(2):
+                        offset = func_planner_excl_world_offset(i_s, i_gw, i_bound, i_b, planner_info)
+                        if offset < 0.0:
+                            # Excluded pair: allowed to keep its anchoring boundary's clearance near it, ramped
+                            # away from the anchor (see _EXCL_ANCHOR_SLACK_CERT); sweep-free (the allowance is exact
+                            # at the boundary sample, and sweep-inflating it would flag pairs pinned at constant
+                            # depth).
+                            anchor, anchor_quat = func_planner_excl_world_anchor(i_s, i_gw, i_bound, i_b, planner_info)
+                            drift = (x - anchor).norm()
+                            if qd.static(use_exact):
+                                # Certification charges the link rotation too: the covered surface patch moves
+                                # with the link frame, so a matching sphere position under a rotated link is a
+                                # different contact (points within the sphere move at most radius * angle).
+                                i_l_s = func_planner_sphere_link(i_s, planner_info, planner_config)
+                                quat_dot = qd.abs(links_quat[i_l_s, i_col].dot(anchor_quat))
+                                drift += 2.0 * qd.acos(qd.min(quat_dot, 1.0)) * radius
+                            ramp = qd.max(0.0, drift - anchor_slack)
+                            sd_eff = qd.max(sd_eff, sd - radius - planner_info.opt.d_safe[None] - offset - ramp + 1e-4)
+                    if qd.static(use_exact):
+                        if (
+                            sd_eff < 0.0
+                            and sd_eff > -_EXACT_RESCUE_WINDOW
+                            and i_s < qd.static(planner_config.n_spheres)
+                        ):
+                            # Borderline robot pair: the exact clearance replaces the proxy one (it is never
+                            # smaller), which admits corridors the proxy conservatism walls off. Against a
+                            # convex world geom the collider's GJK reads it directly on the sphere's own
+                            # collision geom; a zero reading (intersecting, depth unresolved) and non-convex
+                            # world geoms fall through to the covering-sample sweep.
+                            is_exact_resolved = False
+                            if planner_world.geoms_is_convex[i_gw]:
+                                i_gr = planner_info.spheres.geom_idx[i_s]
+                                i_l_s = planner_info.spheres.link_idx[i_s]
+                                geom_pos = links_pos[i_l_s, i_col] + gu.qd_transform_by_quat(
+                                    planner_info.geoms.offset_pos[i_gr], links_quat[i_l_s, i_col]
+                                )
+                                geom_quat = gu.qd_transform_quat_by_quat(
+                                    planner_info.geoms.offset_quat[i_gr], links_quat[i_l_s, i_col]
+                                )
+                                d_exact = func_planner_gjk_clearance(
+                                    planner_info.geoms.geoms_idx[i_gr],
+                                    planner_world.geoms_idx[i_gw],
+                                    i_col,
+                                    geom_pos,
+                                    geom_quat,
+                                    planner_world.geoms_pos[i_gw, i_b],
+                                    planner_world.geoms_quat[i_gw, i_b],
+                                    collider_state=collider_state,
+                                    gjk_state=gjk_state,
+                                    dyn_info=dyn_info,
+                                    collider_info=collider_info,
+                                    rigid_config=rigid_config,
+                                    collider_static_config=collider_static_config,
+                                )
+                                if d_exact != 0.0:
+                                    sd_eff = qd.max(sd_eff, d_exact - planner_info.opt.d_safe[None] - swp)
+                                    is_exact_resolved = True
+                            if not is_exact_resolved:
+                                # Two-level covering sweep: the coarse screening level settles the clear-cut
+                                # cases; only its marginal band pays the fine sweep (see _EXACT_RESCUE_WINDOW).
+                                sd_stop = sd_eff + _EXACT_SAMPLE_COV + planner_info.opt.d_safe[None] + swp
+                                sd_coarse = func_planner_sphere_exact_sd(
+                                    i_s,
+                                    i_gw,
+                                    i_col,
+                                    i_b,
+                                    sd_stop,
+                                    verts_pos=planner_info.verts.coarse_pos_local,
+                                    verts_start=planner_info.verts.spheres_coarse_start,
+                                    links_pos=links_pos,
+                                    links_quat=links_quat,
+                                    planner_info=planner_info,
+                                    planner_world=planner_world,
+                                    dyn_info=dyn_info,
+                                    sdf_info=sdf_info,
+                                )
+                                if sd_coarse >= sd_stop:
+                                    bound_coarse = (
+                                        sd_coarse - _EXACT_SAMPLE_COV_COARSE - planner_info.opt.d_safe[None] - swp
+                                    )
+                                    if bound_coarse >= 0.0:
+                                        sd_eff = qd.max(sd_eff, bound_coarse)
+                                    else:
+                                        sd_fine = func_planner_sphere_exact_sd(
+                                            i_s,
+                                            i_gw,
+                                            i_col,
+                                            i_b,
+                                            sd_stop,
+                                            verts_pos=planner_info.verts.pos_local,
+                                            verts_start=planner_info.verts.spheres_start,
+                                            links_pos=links_pos,
+                                            links_quat=links_quat,
+                                            planner_info=planner_info,
+                                            planner_world=planner_world,
+                                            dyn_info=dyn_info,
+                                            sdf_info=sdf_info,
+                                        )
+                                        sd_eff = qd.max(
+                                            sd_eff, sd_fine - _EXACT_SAMPLE_COV - planner_info.opt.d_safe[None] - swp
+                                        )
+                    if i_s < qd.static(planner_config.n_spheres):
+                        min_sd_exact = qd.min(min_sd_exact, sd_eff)
+                    else:
+                        min_sd_proxy = qd.min(min_sd_proxy, sd_eff)
                     hinge, _ = func_planner_hinge(sd_eff, eps_act)
-                    cost += planner_info.w_obs[None] * hinge
+                    cost += planner_info.opt.w_obs[None] * hinge
 
-    for i_p in range(planner_info.self_pairs.shape[0]):
-        i_sa, i_sb = planner_info.self_pairs[i_p][0], planner_info.self_pairs[i_p][1]
-        radius_a = func_planner_sphere_radius(i_sa, i_b, planner_info, planner_config)
-        radius_b = func_planner_sphere_radius(i_sb, i_b, planner_info, planner_config)
-        if radius_a > 0.0 and radius_b > 0.0:
-            dist = (spheres_pos[i_sa, i_col] - spheres_pos[i_sb, i_col]).norm()
-            swp_pair = qd.min(0.5 * planner_info.self_pairs_reach[i_p] * dq_inf, planner_info.eps_act[None])
-            sd_eff = dist - radius_a - radius_b - planner_info.d_safe[None] - swp_pair
-            offset = func_planner_excl_self_offset(i_p, i_b, planner_info)
-            if offset < 0.0:
-                # See the world-pair exclusion above.
-                sd_eff = dist - radius_a - radius_b - planner_info.d_safe[None] - offset + 1e-4
-            min_sd = qd.min(min_sd, sd_eff)
-            hinge, _ = func_planner_hinge(sd_eff, planner_info.eps_self[None])
-            cost += planner_info.w_self[None] * hinge
+    for i_lp in range(planner_info.self_pairs.link_pairs_idx.shape[0]):
+        sd_pair = gs.qd_float(qd.math.inf)
+        swp_pair_max = gs.qd_float(0.0)
+        for i_p in range(
+            planner_info.self_pairs.link_pairs_start[i_lp], planner_info.self_pairs.link_pairs_start[i_lp + 1]
+        ):
+            i_sa, i_sb = planner_info.self_pairs.spheres_idx[i_p][0], planner_info.self_pairs.spheres_idx[i_p][1]
+            radius_a = func_planner_sphere_radius(i_sa, i_b, planner_info, planner_config)
+            radius_b = func_planner_sphere_radius(i_sb, i_b, planner_info, planner_config)
+            if radius_a > 0.0 and radius_b > 0.0:
+                delta = spheres_pos[i_sa, i_col] - spheres_pos[i_sb, i_col]
+                dist = delta.norm()
+                swp_pair = qd.min(0.5 * planner_info.self_pairs.reach[i_p] * dq_inf, planner_info.opt.eps_act[None])
+                sd_eff = dist - radius_a - radius_b - planner_info.opt.d_safe[None] - swp_pair
+                for i_bound in range(2):
+                    offset = func_planner_excl_self_offset(i_p, i_bound, i_b, planner_info)
+                    if offset < 0.0:
+                        # See the world-pair exclusion above.
+                        anchor = func_planner_excl_self_anchor(i_p, i_bound, i_b, planner_info)
+                        ramp = qd.max(0.0, (delta - anchor).norm() - anchor_slack)
+                        sd_eff = qd.max(
+                            sd_eff, dist - radius_a - radius_b - planner_info.opt.d_safe[None] - offset - ramp + 1e-4
+                        )
+                sd_pair = qd.min(sd_pair, sd_eff)
+                swp_pair_max = qd.max(swp_pair_max, swp_pair)
+                hinge, _ = func_planner_hinge(sd_eff, planner_info.opt.eps_self[None])
+                cost += planner_info.opt.w_self[None] * hinge
+        if qd.static(use_exact):
+            if sd_pair < 0.0:
+                # Failing self link pair: one exact GJK reading per geom pair replaces the proxy one when every
+                # geom pair resolves (bounding-sphere clearance settles the far pairs query-free). A zero
+                # reading leaves depth unresolved, so the proxy reading stands - self pairs have no sample
+                # sweep, and unresolved intersections must keep their conservative depth for the boundary
+                # allowances to stay sound.
+                i_la = planner_info.self_pairs.link_pairs_idx[i_lp][0]
+                i_lb = planner_info.self_pairs.link_pairs_idx[i_lp][1]
+                d_exact_pair = gs.qd_float(qd.math.inf)
+                is_unresolved = False
+                for i_ga in range(planner_info.geoms.links_start[i_la], planner_info.geoms.links_start[i_la + 1]):
+                    pos_ga = links_pos[i_la, i_col] + gu.qd_transform_by_quat(
+                        planner_info.geoms.offset_pos[i_ga], links_quat[i_la, i_col]
+                    )
+                    quat_ga = gu.qd_transform_quat_by_quat(
+                        planner_info.geoms.offset_quat[i_ga], links_quat[i_la, i_col]
+                    )
+                    center_a = links_pos[i_la, i_col] + gu.qd_transform_by_quat(
+                        planner_info.geoms.bound_center_local[i_ga], links_quat[i_la, i_col]
+                    )
+                    for i_gb in range(planner_info.geoms.links_start[i_lb], planner_info.geoms.links_start[i_lb + 1]):
+                        center_b = links_pos[i_lb, i_col] + gu.qd_transform_by_quat(
+                            planner_info.geoms.bound_center_local[i_gb], links_quat[i_lb, i_col]
+                        )
+                        bound = (
+                            (center_a - center_b).norm()
+                            - planner_info.geoms.bound_radius[i_ga]
+                            - planner_info.geoms.bound_radius[i_gb]
+                        )
+                        if bound >= planner_info.opt.d_safe[None] + swp_pair_max:
+                            d_exact_pair = qd.min(d_exact_pair, bound)
+                        else:
+                            pos_gb = links_pos[i_lb, i_col] + gu.qd_transform_by_quat(
+                                planner_info.geoms.offset_pos[i_gb], links_quat[i_lb, i_col]
+                            )
+                            quat_gb = gu.qd_transform_quat_by_quat(
+                                planner_info.geoms.offset_quat[i_gb], links_quat[i_lb, i_col]
+                            )
+                            d_exact = func_planner_gjk_clearance(
+                                planner_info.geoms.geoms_idx[i_ga],
+                                planner_info.geoms.geoms_idx[i_gb],
+                                i_col,
+                                pos_ga,
+                                quat_ga,
+                                pos_gb,
+                                quat_gb,
+                                collider_state=collider_state,
+                                gjk_state=gjk_state,
+                                dyn_info=dyn_info,
+                                collider_info=collider_info,
+                                rigid_config=rigid_config,
+                                collider_static_config=collider_static_config,
+                            )
+                            if d_exact == 0.0:
+                                is_unresolved = True
+                            d_exact_pair = qd.min(d_exact_pair, d_exact)
+                if not is_unresolved:
+                    sd_pair = qd.max(sd_pair, d_exact_pair - planner_info.opt.d_safe[None] - swp_pair_max)
+        min_sd_proxy = qd.min(min_sd_proxy, sd_pair)
 
-    return cost, min_sd
+    return cost, min_sd_exact, min_sd_proxy
 
 
 @qd.func
@@ -216,17 +557,22 @@ def func_planner_pose_cost(
     planner_config: qd.template(),
 ):
     """Terminal pose cost (position + rotation-vector geodesic) of the goal link for Cartesian goals."""
-    i_l = planner_info.goal_link_idx[None] - qd.static(planner_config.link_offset)
-    err_pos = links_pos[i_l, i_col] - planner_info.goal_pos[i_b]
-    quat_rel = gu.qd_transform_quat_by_quat(links_quat[i_l, i_col], gu.qd_inv_quat(planner_info.goal_quat[i_b]))
+    i_l = planner_info.boundary.goal_link_idx[None] - qd.static(planner_config.link_offset)
+    err_pos = links_pos[i_l, i_col] - planner_info.boundary.goal_pos[i_b]
+    quat_rel = gu.qd_transform_quat_by_quat(
+        links_quat[i_l, i_col], gu.qd_inv_quat(planner_info.boundary.goal_quat[i_b])
+    )
     err_rot = gu.qd_quat_to_rotvec(quat_rel, rigid_info.EPS[None])
-    return planner_info.w_pose_pos[None] * err_pos.norm_sqr() + planner_info.w_pose_rot[None] * err_rot.norm_sqr()
+    return (
+        planner_info.opt.w_pose_pos[None] * err_pos.norm_sqr() + planner_info.opt.w_pose_rot[None] * err_rot.norm_sqr()
+    )
 
 
 @qd.func
 def func_planner_merge_boundary_exclusions(
     i_b_,
     i_b,
+    i_bound,
     contact_band,
     depth_max,
     planner_state: array_class.PlannerState,
@@ -241,62 +587,76 @@ def func_planner_merge_boundary_exclusions(
     margin-free clearance lies in (-depth_max, contact_band) are excused (see _EXCL_DEPTH_MAX). Returns nonzero
     when a list overflows."""
     n_sph_tot = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
-    n_excl_max = planner_info.excl_world_pair.shape[0]
+    n_excl_max = planner_info.excl.world_pair.shape[0]
     is_overflow = gs.qd_int(0)
 
     for i_s in range(n_sph_tot):
         radius = func_planner_sphere_radius(i_s, i_b, planner_info, planner_config)
         if radius > 0.0:
-            x = planner_state.eval_spheres_pos[i_s, i_b_]
-            band = radius + planner_info.d_safe[None]
+            x = planner_state.eval.spheres_pos[i_s, i_b_]
+            band = radius + planner_info.opt.d_safe[None]
             for i_gw in range(planner_world.n_geoms[None]):
                 if planner_world.geoms_is_active[i_gw, i_b] and not func_planner_world_aabb_skip(
                     i_gw, i_b, x, band, planner_world
                 ):
                     sd = func_planner_world_sd(i_gw, i_b, x, planner_world, dyn_info, sdf_info)
                     raw = sd - radius
-                    sd_eff = raw - planner_info.d_safe[None]
+                    sd_eff = raw - planner_info.opt.d_safe[None]
                     if sd_eff < 0.0 and raw < contact_band and raw > -depth_max:
-                        n_world = planner_info.excl_world_count[i_b]
+                        link_quat = planner_state.eval.links_quat[
+                            func_planner_sphere_link(i_s, planner_info, planner_config), i_b_
+                        ]
+                        n_world = planner_info.excl.world_count[i_b]
                         is_listed = False
                         for i_x in range(n_world):
                             if (
-                                planner_info.excl_world_pair[i_x, i_b][0] == i_s
-                                and planner_info.excl_world_pair[i_x, i_b][1] == i_gw
+                                planner_info.excl.world_pair[i_x, i_b][0] == i_s
+                                and planner_info.excl.world_pair[i_x, i_b][1] == i_gw
+                                and planner_info.excl.world_bound[i_x, i_b] == i_bound
                             ):
-                                planner_info.excl_world_sd[i_x, i_b] = qd.min(
-                                    planner_info.excl_world_sd[i_x, i_b], sd_eff
-                                )
+                                if sd_eff < planner_info.excl.world_sd[i_x, i_b]:
+                                    planner_info.excl.world_sd[i_x, i_b] = sd_eff
+                                    planner_info.excl.world_anchor[i_x, i_b] = x
+                                    planner_info.excl.world_anchor_quat[i_x, i_b] = link_quat
                                 is_listed = True
                         if not is_listed:
                             if n_world < n_excl_max:
-                                planner_info.excl_world_pair[n_world, i_b] = qd.Vector([i_s, i_gw], dt=gs.qd_int)
-                                planner_info.excl_world_sd[n_world, i_b] = sd_eff
-                                planner_info.excl_world_count[i_b] = n_world + 1
+                                planner_info.excl.world_pair[n_world, i_b] = qd.Vector([i_s, i_gw], dt=gs.qd_int)
+                                planner_info.excl.world_sd[n_world, i_b] = sd_eff
+                                planner_info.excl.world_bound[n_world, i_b] = i_bound
+                                planner_info.excl.world_anchor[n_world, i_b] = x
+                                planner_info.excl.world_anchor_quat[n_world, i_b] = link_quat
+                                planner_info.excl.world_count[i_b] = n_world + 1
                             else:
                                 is_overflow = 1
 
-    for i_p in range(planner_info.self_pairs.shape[0]):
-        i_sa, i_sb = planner_info.self_pairs[i_p][0], planner_info.self_pairs[i_p][1]
+    for i_p in range(planner_info.self_pairs.spheres_idx.shape[0]):
+        i_sa, i_sb = planner_info.self_pairs.spheres_idx[i_p][0], planner_info.self_pairs.spheres_idx[i_p][1]
         radius_a = func_planner_sphere_radius(i_sa, i_b, planner_info, planner_config)
         radius_b = func_planner_sphere_radius(i_sb, i_b, planner_info, planner_config)
         if radius_a > 0.0 and radius_b > 0.0:
-            raw = (planner_state.eval_spheres_pos[i_sa, i_b_] - planner_state.eval_spheres_pos[i_sb, i_b_]).norm() - (
-                radius_a + radius_b
-            )
-            sd_eff = raw - planner_info.d_safe[None]
+            delta = planner_state.eval.spheres_pos[i_sa, i_b_] - planner_state.eval.spheres_pos[i_sb, i_b_]
+            raw = delta.norm() - (radius_a + radius_b)
+            sd_eff = raw - planner_info.opt.d_safe[None]
             if sd_eff < 0.0 and raw < contact_band and raw > -depth_max:
-                n_self = planner_info.excl_self_count[i_b]
+                n_self = planner_info.excl.self_count[i_b]
                 is_listed = False
                 for i_x in range(n_self):
-                    if planner_info.excl_self_pair[i_x, i_b] == i_p:
-                        planner_info.excl_self_sd[i_x, i_b] = qd.min(planner_info.excl_self_sd[i_x, i_b], sd_eff)
+                    if (
+                        planner_info.excl.self_pair[i_x, i_b] == i_p
+                        and planner_info.excl.self_bound[i_x, i_b] == i_bound
+                    ):
+                        if sd_eff < planner_info.excl.self_sd[i_x, i_b]:
+                            planner_info.excl.self_sd[i_x, i_b] = sd_eff
+                            planner_info.excl.self_anchor[i_x, i_b] = delta
                         is_listed = True
                 if not is_listed:
                     if n_self < n_excl_max:
-                        planner_info.excl_self_pair[n_self, i_b] = i_p
-                        planner_info.excl_self_sd[n_self, i_b] = sd_eff
-                        planner_info.excl_self_count[i_b] = n_self + 1
+                        planner_info.excl.self_pair[n_self, i_b] = i_p
+                        planner_info.excl.self_sd[n_self, i_b] = sd_eff
+                        planner_info.excl.self_bound[n_self, i_b] = i_bound
+                        planner_info.excl.self_anchor[n_self, i_b] = delta
+                        planner_info.excl.self_count[i_b] = n_self + 1
                     else:
                         is_overflow = 1
 
@@ -310,10 +670,14 @@ def kernel_planner_boundary_exclusions(
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
     sdf_info: array_class.SDFInfo,
     rigid_config: qd.template(),
+    collider_static_config: qd.template(),
     planner_config: qd.template(),
     include_goal: qd.template(),
     errno: qd.Tensor,
@@ -324,25 +688,25 @@ def kernel_planner_boundary_exclusions(
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        planner_info.excl_world_count[i_b] = 0
-        planner_info.excl_self_count[i_b] = 0
+        planner_info.excl.world_count[i_b] = 0
+        planner_info.excl.self_count[i_b] = 0
         is_overflow = gs.qd_int(0)
         for i_bound in range(qd.static(2 if include_goal else 1)):
             # FK of the boundary configuration through the eval scratch, one column per env.
             for i_dp in range(qd.static(planner_config.n_dp)):
                 if i_bound == 0:
-                    planner_state.eval_qpos[i_dp, i_b_] = planner_info.qpos_start[i_dp, i_b]
+                    planner_state.eval.qpos[i_dp, i_b_] = planner_info.boundary.qpos_start[i_dp, i_b]
                 else:
-                    planner_state.eval_qpos[i_dp, i_b_] = planner_info.qpos_goal[i_dp, i_b]
+                    planner_state.eval.qpos[i_dp, i_b_] = planner_info.boundary.qpos_goal[i_dp, i_b]
             func_planner_fk(
                 i_b_,
                 i_b_,
                 i_b,
-                qpos=planner_state.eval_qpos,
-                links_pos=planner_state.eval_links_pos,
-                links_quat=planner_state.eval_links_quat,
-                joints_xanchor=planner_state.eval_joints_xanchor,
-                joints_xaxis=planner_state.eval_joints_xaxis,
+                qpos=planner_state.eval.qpos,
+                links_pos=planner_state.eval.links_pos,
+                links_quat=planner_state.eval.links_quat,
+                joints_xanchor=planner_state.eval.joints_xanchor,
+                joints_xaxis=planner_state.eval.joints_xaxis,
                 dyn_state=dyn_state,
                 dyn_info=dyn_info,
                 rigid_info=rigid_info,
@@ -352,9 +716,9 @@ def kernel_planner_boundary_exclusions(
             func_planner_spheres(
                 i_b_,
                 i_b,
-                links_pos=planner_state.eval_links_pos,
-                links_quat=planner_state.eval_links_quat,
-                spheres_pos=planner_state.eval_spheres_pos,
+                links_pos=planner_state.eval.links_pos,
+                links_quat=planner_state.eval.links_quat,
+                spheres_pos=planner_state.eval.spheres_pos,
                 planner_info=planner_info,
                 planner_config=planner_config,
             )
@@ -363,6 +727,7 @@ def kernel_planner_boundary_exclusions(
             is_overflow |= func_planner_merge_boundary_exclusions(
                 i_b_,
                 i_b,
+                i_bound,
                 contact_band,
                 depth_max,
                 planner_state,
@@ -403,7 +768,7 @@ def func_planner_knot_cost_grad(
 
     cost = gs.qd_float(0.0)
     for i_dp in range(n_dp):
-        planner_state.grad_traj[i_dp, i_cw] = 0.0
+        planner_state.traj.grad[i_dp, i_cw] = 0.0
 
     # Sweep allowance: half the largest neighbor-knot travel of any sphere. Stop-gradient by design, so
     # its influence (and the induced gradient error) is clamped to the activation band; the validator
@@ -412,46 +777,61 @@ def func_planner_knot_cost_grad(
     for i_s in range(n_sph_tot):
         if i_w > 0:
             swp = qd.max(
-                swp, 0.5 * (planner_state.spheres_pos[i_s, i_cw] - planner_state.spheres_pos[i_s, i_cw - 1]).norm()
+                swp,
+                0.5 * (planner_state.fk.spheres_pos[i_s, i_cw] - planner_state.fk.spheres_pos[i_s, i_cw - 1]).norm(),
             )
         if i_w < n_knots - 1:
             swp = qd.max(
-                swp, 0.5 * (planner_state.spheres_pos[i_s, i_cw + 1] - planner_state.spheres_pos[i_s, i_cw]).norm()
+                swp,
+                0.5 * (planner_state.fk.spheres_pos[i_s, i_cw + 1] - planner_state.fk.spheres_pos[i_s, i_cw]).norm(),
             )
-    swp = qd.min(swp, planner_info.eps_act[None])
+    swp = qd.min(swp, planner_info.opt.eps_act[None])
 
     # L-inf joint travel toward the neighbor knots, for the per-pair self-collision sweep bound.
     dq_inf = gs.qd_float(0.0)
     for i_dp in range(n_dp):
         if i_w > 0:
             dq_inf = qd.max(
-                dq_inf, qd.abs(planner_state.qpos_traj[i_dp, i_cw] - planner_state.qpos_traj[i_dp, i_cw - 1])
+                dq_inf, qd.abs(planner_state.traj.qpos[i_dp, i_cw] - planner_state.traj.qpos[i_dp, i_cw - 1])
             )
         if i_w < n_knots - 1:
             dq_inf = qd.max(
-                dq_inf, qd.abs(planner_state.qpos_traj[i_dp, i_cw + 1] - planner_state.qpos_traj[i_dp, i_cw])
+                dq_inf, qd.abs(planner_state.traj.qpos[i_dp, i_cw + 1] - planner_state.traj.qpos[i_dp, i_cw])
             )
 
     # World collision, with gradient through the chain walk.
     for i_s in range(n_sph_tot):
         radius = func_planner_sphere_radius(i_s, i_b, planner_info, planner_config)
         if radius > 0.0:
-            x = planner_state.spheres_pos[i_s, i_cw]
-            band = radius + planner_info.d_safe[None] + planner_info.eps_act[None] + swp
+            x = planner_state.fk.spheres_pos[i_s, i_cw]
+            band = radius + planner_info.opt.d_safe[None] + planner_info.opt.eps_act[None] + swp
             for i_gw in range(planner_world.n_geoms[None]):
                 if planner_world.geoms_is_active[i_gw, i_b] and not func_planner_world_aabb_skip(
                     i_gw, i_b, x, band, planner_world
                 ):
-                    eps_act = qd.min(planner_info.eps_act[None], planner_world.geoms_max_band[i_gw])
+                    eps_act = qd.min(planner_info.opt.eps_act[None], planner_world.geoms_max_band[i_gw])
                     sd = func_planner_world_sd(i_gw, i_b, x, planner_world, dyn_info, sdf_info)
-                    sd_eff = sd - radius - planner_info.d_safe[None] - swp
-                    offset = func_planner_excl_world_offset(i_s, i_gw, i_b, planner_info)
-                    if offset < 0.0:
-                        # See the exclusion comment in func_planner_collision_cost.
-                        sd_eff = sd - radius - planner_info.d_safe[None] - offset + 1e-4
+                    sd_eff = sd - radius - planner_info.opt.d_safe[None] - swp
+                    ramp_dir = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+                    for i_bound in range(2):
+                        offset = func_planner_excl_world_offset(i_s, i_gw, i_bound, i_b, planner_info)
+                        if offset < 0.0:
+                            # See the exclusion comment in func_planner_collision_cost.
+                            anchor, _ = func_planner_excl_world_anchor(i_s, i_gw, i_bound, i_b, planner_info)
+                            drift = x - anchor
+                            drift_norm = drift.norm()
+                            ramp = qd.max(0.0, drift_norm - _EXCL_ANCHOR_SLACK_OPT)
+                            sd_excused = sd - radius - planner_info.opt.d_safe[None] - offset - ramp + 1e-4
+                            if sd_excused > sd_eff:
+                                sd_eff = sd_excused
+                                # The winning excused branch adds the ramp's own gradient - radially away from
+                                # the anchor - to the signed-distance normal.
+                                ramp_dir = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+                                if ramp > 0.0:
+                                    ramp_dir = drift / drift_norm
                     hinge, dhinge = func_planner_hinge(sd_eff, eps_act)
                     if hinge > 0.0:
-                        cost += planner_info.w_obs[None] * hinge
+                        cost += planner_info.opt.w_obs[None] * hinge
                         normal = func_planner_world_sd_grad(
                             i_gw, i_b, x, planner_world, dyn_info, rigid_info, sdf_info, collider_static_config
                         )
@@ -461,11 +841,11 @@ def func_planner_knot_cost_grad(
                             i_cw,
                             i_b,
                             x,
-                            normal,
-                            planner_info.w_obs[None] * dhinge,
-                            joints_xanchor=planner_state.joints_xanchor,
-                            joints_xaxis=planner_state.joints_xaxis,
-                            grad_traj=planner_state.grad_traj,
+                            normal - ramp_dir,
+                            planner_info.opt.w_obs[None] * dhinge,
+                            joints_xanchor=planner_state.fk.joints_xanchor,
+                            joints_xaxis=planner_state.fk.joints_xaxis,
+                            grad_traj=planner_state.traj.grad,
                             i_col_grad=i_cw,
                             planner_info=planner_info,
                             dyn_info=dyn_info,
@@ -474,34 +854,46 @@ def func_planner_knot_cost_grad(
                         )
 
     # Self / attach collision, gradient through both chains.
-    for i_p in range(planner_info.self_pairs.shape[0]):
-        i_sa, i_sb = planner_info.self_pairs[i_p][0], planner_info.self_pairs[i_p][1]
+    for i_p in range(planner_info.self_pairs.spheres_idx.shape[0]):
+        i_sa, i_sb = planner_info.self_pairs.spheres_idx[i_p][0], planner_info.self_pairs.spheres_idx[i_p][1]
         radius_a = func_planner_sphere_radius(i_sa, i_b, planner_info, planner_config)
         radius_b = func_planner_sphere_radius(i_sb, i_b, planner_info, planner_config)
         if radius_a > 0.0 and radius_b > 0.0:
-            delta = planner_state.spheres_pos[i_sa, i_cw] - planner_state.spheres_pos[i_sb, i_cw]
+            delta = planner_state.fk.spheres_pos[i_sa, i_cw] - planner_state.fk.spheres_pos[i_sb, i_cw]
             dist = delta.norm()
-            swp_pair = qd.min(0.5 * planner_info.self_pairs_reach[i_p] * dq_inf, planner_info.eps_act[None])
-            sd_eff = dist - radius_a - radius_b - planner_info.d_safe[None] - swp_pair
-            offset = func_planner_excl_self_offset(i_p, i_b, planner_info)
-            if offset < 0.0:
-                # See the exclusion comment in func_planner_collision_cost.
-                sd_eff = dist - radius_a - radius_b - planner_info.d_safe[None] - offset + 1e-4
-            hinge, dhinge = func_planner_hinge(sd_eff, planner_info.eps_self[None])
+            swp_pair = qd.min(0.5 * planner_info.self_pairs.reach[i_p] * dq_inf, planner_info.opt.eps_act[None])
+            sd_eff = dist - radius_a - radius_b - planner_info.opt.d_safe[None] - swp_pair
+            ramp_dir = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+            for i_bound in range(2):
+                offset = func_planner_excl_self_offset(i_p, i_bound, i_b, planner_info)
+                if offset < 0.0:
+                    # See the exclusion comment in func_planner_collision_cost.
+                    anchor = func_planner_excl_self_anchor(i_p, i_bound, i_b, planner_info)
+                    drift = delta - anchor
+                    drift_norm = drift.norm()
+                    ramp = qd.max(0.0, drift_norm - _EXCL_ANCHOR_SLACK_OPT)
+                    sd_excused = dist - radius_a - radius_b - planner_info.opt.d_safe[None] - offset - ramp + 1e-4
+                    if sd_excused > sd_eff:
+                        sd_eff = sd_excused
+                        # See the world-pair ramp gradient above; here the ramp acts on the relative offset.
+                        ramp_dir = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+                        if ramp > 0.0:
+                            ramp_dir = drift / drift_norm
+            hinge, dhinge = func_planner_hinge(sd_eff, planner_info.opt.eps_self[None])
             if hinge > 0.0 and dist > gs.EPS:
-                cost += planner_info.w_self[None] * hinge
+                cost += planner_info.opt.w_self[None] * hinge
                 normal = delta / dist
                 func_planner_chain_grad(
                     func_planner_sphere_link(i_sa, planner_info, planner_config),
                     i_c,
                     i_cw,
                     i_b,
-                    planner_state.spheres_pos[i_sa, i_cw],
-                    normal,
-                    planner_info.w_self[None] * dhinge,
-                    joints_xanchor=planner_state.joints_xanchor,
-                    joints_xaxis=planner_state.joints_xaxis,
-                    grad_traj=planner_state.grad_traj,
+                    planner_state.fk.spheres_pos[i_sa, i_cw],
+                    normal - ramp_dir,
+                    planner_info.opt.w_self[None] * dhinge,
+                    joints_xanchor=planner_state.fk.joints_xanchor,
+                    joints_xaxis=planner_state.fk.joints_xaxis,
+                    grad_traj=planner_state.traj.grad,
                     i_col_grad=i_cw,
                     planner_info=planner_info,
                     dyn_info=dyn_info,
@@ -513,12 +905,12 @@ def func_planner_knot_cost_grad(
                     i_c,
                     i_cw,
                     i_b,
-                    planner_state.spheres_pos[i_sb, i_cw],
-                    -normal,
-                    planner_info.w_self[None] * dhinge,
-                    joints_xanchor=planner_state.joints_xanchor,
-                    joints_xaxis=planner_state.joints_xaxis,
-                    grad_traj=planner_state.grad_traj,
+                    planner_state.fk.spheres_pos[i_sb, i_cw],
+                    ramp_dir - normal,
+                    planner_info.opt.w_self[None] * dhinge,
+                    joints_xanchor=planner_state.fk.joints_xanchor,
+                    joints_xaxis=planner_state.fk.joints_xaxis,
+                    grad_traj=planner_state.traj.grad,
                     i_col_grad=i_cw,
                     planner_info=planner_info,
                     dyn_info=dyn_info,
@@ -531,32 +923,32 @@ def func_planner_knot_cost_grad(
     # [i_c*n_knots, (i_c+1)*n_knots).
     i_w0 = i_c * n_knots
     for i_dp in range(n_dp):
-        if not planner_info.dof_is_locked[i_dp, i_b]:
-            q = planner_state.qpos_traj[i_dp, i_cw]
+        if not planner_info.dofs.is_locked[i_dp, i_b]:
+            q = planner_state.traj.qpos[i_dp, i_cw]
             # Acceleration stencil rows this knot participates in: cost = w_a * sum_w a_w^2 with
             # a_w = q_{w-1} - 2 q_w + q_{w+1}; d cost / d q_this = 2 w_a * sum_w a_w * c_w.
             for dw in qd.static(range(-1, 2)):
                 i_wc = i_w + dw
                 if 1 <= i_wc < n_knots - 1:
                     acc = (
-                        planner_state.qpos_traj[i_dp, i_w0 + i_wc - 1]
-                        - 2.0 * planner_state.qpos_traj[i_dp, i_w0 + i_wc]
-                        + planner_state.qpos_traj[i_dp, i_w0 + i_wc + 1]
+                        planner_state.traj.qpos[i_dp, i_w0 + i_wc - 1]
+                        - 2.0 * planner_state.traj.qpos[i_dp, i_w0 + i_wc]
+                        + planner_state.traj.qpos[i_dp, i_w0 + i_wc + 1]
                     )
                     coeff = gs.qd_float(-2.0 if dw == 0 else 1.0)
                     if dw == 0:
-                        cost += planner_info.w_acc[None] * acc**2
-                    planner_state.grad_traj[i_dp, i_cw] += 2.0 * planner_info.w_acc[None] * acc * coeff
+                        cost += planner_info.opt.w_acc[None] * acc**2
+                    planner_state.traj.grad[i_dp, i_cw] += 2.0 * planner_info.opt.w_acc[None] * acc * coeff
             # Jerk stencil: j_w = q_{w+2} - 3 q_{w+1} + 3 q_w - q_{w-1}; knot i_w is term (dw) of row
             # i_wc = i_w - dw for dw in {-1, 0, 1, 2}.
             for dw in qd.static(range(-1, 3)):
                 i_wc = i_w - dw
                 if 1 <= i_wc < n_knots - 2:
                     jerk = (
-                        planner_state.qpos_traj[i_dp, i_w0 + i_wc + 2]
-                        - 3.0 * planner_state.qpos_traj[i_dp, i_w0 + i_wc + 1]
-                        + 3.0 * planner_state.qpos_traj[i_dp, i_w0 + i_wc]
-                        - planner_state.qpos_traj[i_dp, i_w0 + i_wc - 1]
+                        planner_state.traj.qpos[i_dp, i_w0 + i_wc + 2]
+                        - 3.0 * planner_state.traj.qpos[i_dp, i_w0 + i_wc + 1]
+                        + 3.0 * planner_state.traj.qpos[i_dp, i_w0 + i_wc]
+                        - planner_state.traj.qpos[i_dp, i_w0 + i_wc - 1]
                     )
                     coeff = gs.qd_float(0.0)
                     if dw == 2:
@@ -568,46 +960,46 @@ def func_planner_knot_cost_grad(
                     else:
                         coeff = -1.0
                     if dw == 0:
-                        cost += planner_info.w_jerk[None] * jerk**2
-                    planner_state.grad_traj[i_dp, i_cw] += 2.0 * planner_info.w_jerk[None] * jerk * coeff
+                        cost += planner_info.opt.w_jerk[None] * jerk**2
+                    planner_state.traj.grad[i_dp, i_cw] += 2.0 * planner_info.opt.w_jerk[None] * jerk * coeff
             # Joint-limit quadratic hinge.
-            over = q - planner_info.q_limit_upper[i_dp]
-            under = planner_info.q_limit_lower[i_dp] - q
+            over = q - planner_info.dofs.q_limit_upper[i_dp]
+            under = planner_info.dofs.q_limit_lower[i_dp] - q
             if over > 0.0:
-                cost += planner_info.w_lim[None] * over**2
-                planner_state.grad_traj[i_dp, i_cw] += 2.0 * planner_info.w_lim[None] * over
+                cost += planner_info.opt.w_lim[None] * over**2
+                planner_state.traj.grad[i_dp, i_cw] += 2.0 * planner_info.opt.w_lim[None] * over
             if under > 0.0:
-                cost += planner_info.w_lim[None] * under**2
-                planner_state.grad_traj[i_dp, i_cw] -= 2.0 * planner_info.w_lim[None] * under
+                cost += planner_info.opt.w_lim[None] * under**2
+                planner_state.traj.grad[i_dp, i_cw] -= 2.0 * planner_info.opt.w_lim[None] * under
             # Posture regularizer toward the straight-line reference (kept tiny; resolves redundancy).
-            ref = planner_info.qpos_start[i_dp, i_b] + (
-                planner_info.qpos_goal[i_dp, i_b] - planner_info.qpos_start[i_dp, i_b]
+            ref = planner_info.boundary.qpos_start[i_dp, i_b] + (
+                planner_info.boundary.qpos_goal[i_dp, i_b] - planner_info.boundary.qpos_start[i_dp, i_b]
             ) * (qd.cast(i_w, gs.qd_float) / float(n_knots - 1))
-            cost += planner_info.w_posture[None] * (q - ref) ** 2
-            planner_state.grad_traj[i_dp, i_cw] += 2.0 * planner_info.w_posture[None] * (q - ref)
+            cost += planner_info.opt.w_posture[None] * (q - ref) ** 2
+            planner_state.traj.grad[i_dp, i_cw] += 2.0 * planner_info.opt.w_posture[None] * (q - ref)
 
     # Terminal pose cost for Cartesian goals (last knot only), gradient through the ee chain.
-    if planner_info.has_pose_goal[None] and i_w == n_knots - 1:
-        i_l = planner_info.goal_link_idx[None] - qd.static(planner_config.link_offset)
-        err_pos = planner_state.links_pos[i_l, i_cw] - planner_info.goal_pos[i_b]
+    if planner_info.boundary.has_pose_goal[None] and i_w == n_knots - 1:
+        i_l = planner_info.boundary.goal_link_idx[None] - qd.static(planner_config.link_offset)
+        err_pos = planner_state.fk.links_pos[i_l, i_cw] - planner_info.boundary.goal_pos[i_b]
         quat_rel = gu.qd_transform_quat_by_quat(
-            planner_state.links_quat[i_l, i_cw], gu.qd_inv_quat(planner_info.goal_quat[i_b])
+            planner_state.fk.links_quat[i_l, i_cw], gu.qd_inv_quat(planner_info.boundary.goal_quat[i_b])
         )
         err_rot = gu.qd_quat_to_rotvec(quat_rel, rigid_info.EPS[None])
-        cost += planner_info.w_pose_pos[None] * err_pos.norm_sqr()
-        cost += planner_info.w_pose_rot[None] * err_rot.norm_sqr()
+        cost += planner_info.opt.w_pose_pos[None] * err_pos.norm_sqr()
+        cost += planner_info.opt.w_pose_rot[None] * err_rot.norm_sqr()
         # Position term: gradient 2 w (x - x*) applied at the link origin.
         func_planner_chain_grad(
             i_l,
             i_c,
             i_cw,
             i_b,
-            planner_state.links_pos[i_l, i_cw],
+            planner_state.fk.links_pos[i_l, i_cw],
             err_pos,
-            2.0 * planner_info.w_pose_pos[None],
-            joints_xanchor=planner_state.joints_xanchor,
-            joints_xaxis=planner_state.joints_xaxis,
-            grad_traj=planner_state.grad_traj,
+            2.0 * planner_info.opt.w_pose_pos[None],
+            joints_xanchor=planner_state.fk.joints_xanchor,
+            joints_xaxis=planner_state.fk.joints_xaxis,
+            grad_traj=planner_state.traj.grad,
             i_col_grad=i_cw,
             planner_info=planner_info,
             dyn_info=dyn_info,
@@ -629,17 +1021,17 @@ def func_planner_knot_cost_grad(
                     I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
                     if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
                         i_dp = dyn_info.joints.q_start[I_j] - q_offset
-                        if not planner_info.dof_is_locked[i_dp, i_b]:
-                            planner_state.grad_traj[i_dp, i_cw] -= (
+                        if not planner_info.dofs.is_locked[i_dp, i_b]:
+                            planner_state.traj.grad[i_dp, i_cw] -= (
                                 2.0
-                                * planner_info.w_pose_rot[None]
-                                * planner_state.joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_cw].dot(
+                                * planner_info.opt.w_pose_rot[None]
+                                * planner_state.fk.joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_cw].dot(
                                     err_rot
                                 )
                             )
                 i_l_glob = dyn_info.links.parent_idx[I_l]
 
-    planner_state.cost_wp[i_cw] = cost
+    planner_state.candidates.cost_wp[i_cw] = cost
 
 
 @qd.func
@@ -652,22 +1044,27 @@ def func_planner_eval_clearance(
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
     sdf_info: array_class.SDFInfo,
     rigid_config: qd.template(),
+    collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """Signed clearance of the configuration held in eval scratch column i_e_col, sweep allowance included."""
+    """Signed clearance of the configuration held in eval scratch column i_e_col, sweep allowance included.
+    Returns (min_sd_exact, min_sd_proxy) - see func_planner_collision_cost."""
     func_planner_fk(
         i_e_col,
         i_e_col,
         i_b,
-        qpos=planner_state.eval_qpos,
-        links_pos=planner_state.eval_links_pos,
-        links_quat=planner_state.eval_links_quat,
-        joints_xanchor=planner_state.eval_joints_xanchor,
-        joints_xaxis=planner_state.eval_joints_xaxis,
+        qpos=planner_state.eval.qpos,
+        links_pos=planner_state.eval.links_pos,
+        links_quat=planner_state.eval.links_quat,
+        joints_xanchor=planner_state.eval.joints_xanchor,
+        joints_xaxis=planner_state.eval.joints_xaxis,
         dyn_state=dyn_state,
         dyn_info=dyn_info,
         rigid_info=rigid_info,
@@ -677,25 +1074,33 @@ def func_planner_eval_clearance(
     func_planner_spheres(
         i_e_col,
         i_b,
-        links_pos=planner_state.eval_links_pos,
-        links_quat=planner_state.eval_links_quat,
-        spheres_pos=planner_state.eval_spheres_pos,
+        links_pos=planner_state.eval.links_pos,
+        links_quat=planner_state.eval.links_quat,
+        spheres_pos=planner_state.eval.spheres_pos,
         planner_info=planner_info,
         planner_config=planner_config,
     )
-    _, min_sd = func_planner_collision_cost(
+    _, min_sd_exact, min_sd_proxy = func_planner_collision_cost(
         i_e_col,
         i_b,
         swp,
         dq_inf,
-        spheres_pos=planner_state.eval_spheres_pos,
+        links_pos=planner_state.eval.links_pos,
+        links_quat=planner_state.eval.links_quat,
+        spheres_pos=planner_state.eval.spheres_pos,
         planner_info=planner_info,
         planner_world=planner_world,
+        collider_state=collider_state,
+        gjk_state=gjk_state,
         dyn_info=dyn_info,
+        collider_info=collider_info,
         sdf_info=sdf_info,
+        rigid_config=rigid_config,
+        collider_static_config=collider_static_config,
         planner_config=planner_config,
+        use_exact=True,
     )
-    return min_sd
+    return min_sd_exact, min_sd_proxy
 
 
 @qd.kernel
@@ -705,11 +1110,16 @@ def kernel_planner_validate(
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
     sdf_info: array_class.SDFInfo,
     rigid_config: qd.template(),
+    collider_static_config: qd.template(),
     planner_config: qd.template(),
+    check_start: qd.template(),
 ):
     """
     Certify every active candidate independently of the optimizer costs: joint limits and collision clearance
@@ -717,7 +1127,8 @@ def kernel_planner_validate(
     Lipschitz reach bounds so the whole continuous path is covered, plus the goal tolerance. A sample failing
     only through the sweep allowance is re-certified at _VALIDATE_REFINE x local density before being flagged,
     so the bound's conservatism costs extra samples instead of false rejections. Writes the per-candidate flags
-    bitfield and min clearance; one thread per candidate, serial inside (deterministic).
+    bitfield and the exact / proxy min clearances (see func_planner_collision_cost); one thread per candidate,
+    serial inside (deterministic).
     """
     n_knots = qd.static(planner_config.n_knots)
     n_seeds = qd.static(planner_config.n_seeds)
@@ -732,7 +1143,8 @@ def kernel_planner_validate(
             i_b = envs_idx[i_c // n_seeds]
             i_e_col = i_c  # eval scratch column owned by this thread
             flags = gs.qd_int(0)
-            min_clearance = gs.qd_float(qd.math.inf)
+            min_clearance_exact = gs.qd_float(qd.math.inf)
+            min_clearance_proxy = gs.qd_float(qd.math.inf)
 
             for i_smp in range(n_samples):
                 # Linear interpolation between knots at the densified sample, and the per-segment sweep bound.
@@ -742,30 +1154,30 @@ def kernel_planner_validate(
                 swp = gs.qd_float(0.0)
                 dq_inf = gs.qd_float(0.0)
                 for i_dp in range(n_dp):
-                    q0 = planner_state.qpos_traj[i_dp, i_c * n_knots + i_w]
-                    q1 = planner_state.qpos_traj[i_dp, i_c * n_knots + i_w + 1]
+                    q0 = planner_state.traj.qpos[i_dp, i_c * n_knots + i_w]
+                    q1 = planner_state.traj.qpos[i_dp, i_c * n_knots + i_w + 1]
                     q = q0 + alpha * (q1 - q0)
-                    planner_state.eval_qpos[i_dp, i_e_col] = q
+                    planner_state.eval.qpos[i_dp, i_e_col] = q
                     # Half the inter-sample joint travel bounds the workspace motion of every sphere.
-                    swp += 0.5 * planner_info.dof_reach[i_dp] * qd.abs(q1 - q0) / float(_VALIDATE_UPSAMPLE)
+                    swp += 0.5 * planner_info.dofs.reach[i_dp] * qd.abs(q1 - q0) / float(_VALIDATE_UPSAMPLE)
                     dq_inf = qd.max(dq_inf, qd.abs(q1 - q0) / float(_VALIDATE_UPSAMPLE))
                     # A start (or goal) configuration supplied beyond a limit is a boundary condition, so a knot
                     # is only flagged when it exceeds the limit by more than the boundary conditions already do.
                     over_allow = qd.max(
-                        planner_info.qpos_start[i_dp, i_b] - planner_info.q_limit_upper[i_dp],
-                        planner_info.qpos_goal[i_dp, i_b] - planner_info.q_limit_upper[i_dp],
+                        planner_info.boundary.qpos_start[i_dp, i_b] - planner_info.dofs.q_limit_upper[i_dp],
+                        planner_info.boundary.qpos_goal[i_dp, i_b] - planner_info.dofs.q_limit_upper[i_dp],
                     )
                     under_allow = qd.max(
-                        planner_info.q_limit_lower[i_dp] - planner_info.qpos_start[i_dp, i_b],
-                        planner_info.q_limit_lower[i_dp] - planner_info.qpos_goal[i_dp, i_b],
+                        planner_info.dofs.q_limit_lower[i_dp] - planner_info.boundary.qpos_start[i_dp, i_b],
+                        planner_info.dofs.q_limit_lower[i_dp] - planner_info.boundary.qpos_goal[i_dp, i_b],
                     )
                     if (
-                        q > planner_info.q_limit_upper[i_dp] + qd.max(over_allow, 0.0) + 1e-5
-                        or q < planner_info.q_limit_lower[i_dp] - qd.max(under_allow, 0.0) - 1e-5
+                        q > planner_info.dofs.q_limit_upper[i_dp] + qd.max(over_allow, 0.0) + 1e-5
+                        or q < planner_info.dofs.q_limit_lower[i_dp] - qd.max(under_allow, 0.0) - 1e-5
                     ):
                         flags |= JOINT_LIMIT
 
-                min_sd = func_planner_eval_clearance(
+                min_sd_exact, min_sd_proxy = func_planner_eval_clearance(
                     i_e_col,
                     i_b,
                     swp,
@@ -774,17 +1186,23 @@ def kernel_planner_validate(
                     planner_info=planner_info,
                     planner_world=planner_world,
                     dyn_state=dyn_state,
+                    collider_state=collider_state,
+                    gjk_state=gjk_state,
                     dyn_info=dyn_info,
                     rigid_info=rigid_info,
+                    collider_info=collider_info,
                     sdf_info=sdf_info,
                     rigid_config=rigid_config,
+                    collider_static_config=collider_static_config,
                     planner_config=planner_config,
                 )
+                min_sd = qd.min(min_sd_exact, min_sd_proxy)
                 if min_sd < 0.0 and min_sd + swp > 0.0:
                     # Borderline: the raw clearance is positive and only the sweep allowance fails, so the
                     # covered interval [t - h, t + h] is re-certified by _VALIDATE_REFINE sub-samples whose
                     # allowance shrinks accordingly (see _VALIDATE_REFINE).
-                    min_sd = qd.math.inf
+                    min_sd_exact = qd.math.inf
+                    min_sd_proxy = qd.math.inf
                     h = 0.5 / float(_VALIDATE_UPSAMPLE)
                     for i_r in range(_VALIDATE_REFINE):
                         t_r = t + h * ((2.0 * qd.cast(i_r, gs.qd_float) + 1.0) / float(_VALIDATE_REFINE) - 1.0)
@@ -794,13 +1212,13 @@ def kernel_planner_validate(
                         swp_r = gs.qd_float(0.0)
                         dq_inf_r = gs.qd_float(0.0)
                         for i_dp in range(n_dp):
-                            q0r = planner_state.qpos_traj[i_dp, i_c * n_knots + i_w_r]
-                            q1r = planner_state.qpos_traj[i_dp, i_c * n_knots + i_w_r + 1]
-                            planner_state.eval_qpos[i_dp, i_e_col] = q0r + alpha_r * (q1r - q0r)
+                            q0r = planner_state.traj.qpos[i_dp, i_c * n_knots + i_w_r]
+                            q1r = planner_state.traj.qpos[i_dp, i_c * n_knots + i_w_r + 1]
+                            planner_state.eval.qpos[i_dp, i_e_col] = q0r + alpha_r * (q1r - q0r)
                             dq_r = qd.abs(q1r - q0r) / float(_VALIDATE_UPSAMPLE * _VALIDATE_REFINE)
-                            swp_r += 0.5 * planner_info.dof_reach[i_dp] * dq_r
+                            swp_r += 0.5 * planner_info.dofs.reach[i_dp] * dq_r
                             dq_inf_r = qd.max(dq_inf_r, dq_r)
-                        min_sd_r = func_planner_eval_clearance(
+                        min_sd_exact_r, min_sd_proxy_r = func_planner_eval_clearance(
                             i_e_col,
                             i_b,
                             swp_r,
@@ -809,51 +1227,68 @@ def kernel_planner_validate(
                             planner_info=planner_info,
                             planner_world=planner_world,
                             dyn_state=dyn_state,
+                            collider_state=collider_state,
+                            gjk_state=gjk_state,
                             dyn_info=dyn_info,
                             rigid_info=rigid_info,
+                            collider_info=collider_info,
                             sdf_info=sdf_info,
                             rigid_config=rigid_config,
+                            collider_static_config=collider_static_config,
                             planner_config=planner_config,
                         )
-                        min_sd = qd.min(min_sd, min_sd_r)
-                min_clearance = qd.min(min_clearance, min_sd)
-                if min_sd < 0.0:
+                        min_sd_exact = qd.min(min_sd_exact, min_sd_exact_r)
+                        min_sd_proxy = qd.min(min_sd_proxy, min_sd_proxy_r)
+                min_clearance_exact = qd.min(min_clearance_exact, min_sd_exact)
+                min_clearance_proxy = qd.min(min_clearance_proxy, min_sd_proxy)
+                if qd.min(min_sd_exact, min_sd_proxy) < 0.0:
                     flags |= COLLISION
 
-            # Goal reaching: joint goals must land on qpos_goal; Cartesian goals within the pose tolerance. The
-            # terminal knot is re-evaluated explicitly, since local refinement may have left another sample in
-            # the eval scratch.
-            if planner_info.has_pose_goal[None]:
+            # Boundary reaching: every candidate must depart from qpos_start, and land on qpos_goal (joint
+            # goals) or within the pose tolerance (Cartesian goals) - otherwise a trajectory holding inside its
+            # own boundary allowances (e.g. a probe hold-at-goal) would certify as a plan. The terminal knot is
+            # re-evaluated explicitly, since local refinement may have left another sample in the eval scratch.
+            if qd.static(check_start):
                 for i_dp in range(n_dp):
-                    planner_state.eval_qpos[i_dp, i_e_col] = planner_state.qpos_traj[i_dp, i_c * n_knots + n_knots - 1]
+                    if (
+                        qd.abs(
+                            planner_state.traj.qpos[i_dp, i_c * n_knots] - planner_info.boundary.qpos_start[i_dp, i_b]
+                        )
+                        > 1e-4
+                    ):
+                        flags |= GOAL_TOL
+            if planner_info.boundary.has_pose_goal[None]:
+                for i_dp in range(n_dp):
+                    planner_state.eval.qpos[i_dp, i_e_col] = planner_state.traj.qpos[i_dp, i_c * n_knots + n_knots - 1]
                 func_planner_fk(
                     i_e_col,
                     i_e_col,
                     i_b,
-                    qpos=planner_state.eval_qpos,
-                    links_pos=planner_state.eval_links_pos,
-                    links_quat=planner_state.eval_links_quat,
-                    joints_xanchor=planner_state.eval_joints_xanchor,
-                    joints_xaxis=planner_state.eval_joints_xaxis,
+                    qpos=planner_state.eval.qpos,
+                    links_pos=planner_state.eval.links_pos,
+                    links_quat=planner_state.eval.links_quat,
+                    joints_xanchor=planner_state.eval.joints_xanchor,
+                    joints_xaxis=planner_state.eval.joints_xaxis,
                     dyn_state=dyn_state,
                     dyn_info=dyn_info,
                     rigid_info=rigid_info,
                     rigid_config=rigid_config,
                     planner_config=planner_config,
                 )
-                i_l = planner_info.goal_link_idx[None] - qd.static(planner_config.link_offset)
-                err_pos = planner_state.eval_links_pos[i_l, i_e_col] - planner_info.goal_pos[i_b]
+                i_l = planner_info.boundary.goal_link_idx[None] - qd.static(planner_config.link_offset)
+                err_pos = planner_state.eval.links_pos[i_l, i_e_col] - planner_info.boundary.goal_pos[i_b]
                 quat_rel = gu.qd_transform_quat_by_quat(
-                    planner_state.eval_links_quat[i_l, i_e_col], gu.qd_inv_quat(planner_info.goal_quat[i_b])
+                    planner_state.eval.links_quat[i_l, i_e_col], gu.qd_inv_quat(planner_info.boundary.goal_quat[i_b])
                 )
                 err_rot = gu.qd_quat_to_rotvec(quat_rel, rigid_info.EPS[None])
                 if err_pos.norm() > 5e-3 or err_rot.norm() > 5e-2:
                     flags |= GOAL_TOL
             else:
                 for i_dp in range(n_dp):
-                    q_end = planner_state.qpos_traj[i_dp, i_c * n_knots + n_knots - 1]
-                    if qd.abs(q_end - planner_info.qpos_goal[i_dp, i_b]) > 1e-4:
+                    q_end = planner_state.traj.qpos[i_dp, i_c * n_knots + n_knots - 1]
+                    if qd.abs(q_end - planner_info.boundary.qpos_goal[i_dp, i_b]) > 1e-4:
                         flags |= GOAL_TOL
 
-            planner_state.valid_flags[i_c] = flags
-            planner_state.min_clearance[i_c] = min_clearance
+            planner_state.candidates.valid_flags[i_c] = flags
+            planner_state.candidates.min_clearance_exact[i_c] = min_clearance_exact
+            planner_state.candidates.min_clearance_proxy[i_c] = min_clearance_proxy

@@ -1406,6 +1406,52 @@ def merge_submeshes(verts_list, faces_list):
     return verts, faces, verts_maps
 
 
+def surface_sample_covering(verts, faces, r_cov):
+    """Deterministic surface point sample of a triangle mesh with covering radius r_cov: every point of the
+    surface lies within r_cov of some returned sample.
+
+    Faces are midpoint-subdivided (4-way) until each one is covered by its own vertices within r_cov - a
+    triangle is covered by its three vertices within longest_edge / sqrt(3) - and the unique vertices of the
+    subdivided mesh are returned, ordered by first occurrence.
+
+    Parameters
+    ----------
+    verts : np.ndarray
+        Vertex array with shape (n_verts, 3).
+    faces : np.ndarray
+        Triangle array with shape (n_faces, 3), indexing into verts.
+    r_cov : float
+        Target covering radius, in the mesh units.
+
+    Returns
+    -------
+    samples : np.ndarray
+        Sample positions with shape (n_samples, 3).
+    """
+    tris = np.asarray(verts)[np.asarray(faces)]
+    edge_max = math.sqrt(3.0) * r_cov
+    while True:
+        edges = np.linalg.norm(tris - np.roll(tris, -1, axis=1), axis=-1)
+        is_coarse = edges.max(axis=-1) > edge_max
+        if not is_coarse.any():
+            break
+        coarse = tris[is_coarse]
+        mids = 0.5 * (coarse + np.roll(coarse, -1, axis=1))
+        split = np.concatenate(
+            [
+                np.stack([coarse[:, 0], mids[:, 0], mids[:, 2]], axis=1),
+                np.stack([mids[:, 0], coarse[:, 1], mids[:, 1]], axis=1),
+                np.stack([mids[:, 2], mids[:, 1], coarse[:, 2]], axis=1),
+                mids,
+            ],
+            axis=0,
+        )
+        tris = np.concatenate([tris[~is_coarse], split], axis=0)
+    points = tris.reshape(-1, 3)
+    _, unique_idx = np.unique(np.round(points / VERT_WELD_QUANTIZE_FACTOR).astype(np.int64), axis=0, return_index=True)
+    return points[np.sort(unique_idx)]
+
+
 def tetrahedralize_mesh(mesh, tet_cfg):
     tet = tetgen.TetGen(mesh.vertices.astype(np.float64, copy=False), mesh.faces.astype(np.int32, copy=False))
 
