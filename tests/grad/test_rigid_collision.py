@@ -65,8 +65,11 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
     n_settle = 12
     n_steps = 2
     eps = 1e-2
-    # Contact force gradients are tiny (stiff contact barely moves); fp32 tolerates the coarser finite-difference floor.
-    fd_atol = 1e-10 if precision == "64" else 5e-7
+    # Contact force gradients are tiny (stiff contact barely moves): at fp32 the FD reference mostly rounds to
+    # zero, so the absolute tolerance carries the check; at fp64 the relative tolerance does and the absolute one
+    # only guards the degenerate-FD case.
+    fd_rtol = 1e-6 if precision == "64" else 2e-3
+    fd_atol = 1e-14 if precision == "64" else 1e-6
     base_force = np.array([0.0, 0.0, -8.0, 0.0, 0.0, 0.0])
     init_force = np.broadcast_to(base_force, (n_steps, 6)).copy()
 
@@ -110,7 +113,7 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
         minus = init_force.copy()
         minus[t, 2] -= eps
         fd_z = (loss_at(plus) - loss_at(minus)) / (2 * eps)
-        assert_allclose(ana[t, 2], fd_z, rtol=2e-3, atol=fd_atol, err_msg=f"contact force.grad mismatch at t={t}")
+        assert_allclose(ana[t, 2], fd_z, rtol=fd_rtol, atol=fd_atol, err_msg=f"contact force.grad mismatch at t={t}")
 
 
 @pytest.mark.required

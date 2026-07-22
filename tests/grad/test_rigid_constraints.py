@@ -111,12 +111,11 @@ def test_per_step_force_into_limit_grad_matches_fd(model_name, request, precisio
     # Per-step control-force adjoint driving a joint into its limit, across three topologies. A constant force over
     # the horizon pushes the tracked dof into the active band; the setup-sanity assert guards against a vacuous run.
     # (gravity, n_steps, per-step force, loss reads links_pos, sanity dof, sanity threshold, initial dof pose,
-    # fp32 tolerance). The fp32 floor depends on the topology: the slider limit is the noisiest, the hopper the
-    # cleanest; fp64 clears 5e-5 for all three (the cartpole limit kink sets that floor).
+    # fp32 tolerance).
     gravity, n_steps, per_step_force, is_links_loss, sanity_dof, sanity_thresh, init_pos, fp32_tol = {
-        "grad_slider_limit": ((0.0, 0.0, 0.0), 10, [500.0], False, 0, 3.5, None, 1e-3),
-        "grad_cartpole": ((0.0, 0.0, -9.81), 15, [2000.0, 0.0], False, 0, 3.5, [0.0, -math.pi], 5e-4),
-        "grad_hopper": ((0.0, 0.0, 0.0), 10, [0.0, 0.0, 0.0, 0.0, 0.0, 200.0], True, 5, 0.7, None, 2e-4),
+        "grad_slider_limit": ((0.0, 0.0, 0.0), 10, [500.0], False, 0, 3.5, None, 1e-4),
+        "grad_cartpole": ((0.0, 0.0, -9.81), 15, [2000.0, 0.0], False, 0, 3.5, [0.0, -math.pi], 2e-4),
+        "grad_hopper": ((0.0, 0.0, 0.0), 10, [0.0, 0.0, 0.0, 0.0, 0.0, 200.0], True, 5, 0.7, None, 5e-5),
     }[model_name]
 
     pair = make_diff_scene_pair(
@@ -152,8 +151,8 @@ def test_per_step_force_into_limit_grad_matches_fd(model_name, request, precisio
         lambda e, x: e.control_dofs_force(x),
         loss_fn,
         setup_fn=setup_fn,
-        rtol=5e-5 if precision == "64" else fp32_tol,
-        atol=5e-5 if precision == "64" else fp32_tol,
+        rtol=1e-10 if precision == "64" else fp32_tol,
+        atol=1e-10 if precision == "64" else fp32_tol,
         eps=3e-2,
     )
 
@@ -221,8 +220,8 @@ def test_equality_grad_matches_fd(model_name, n_rows, request, precision, show_v
             scene.rigid_solver.get_state().qpos[0, 0] ** 2 + 0.7 * scene.rigid_solver.get_state().qpos[0, 1] ** 2
         ),
         n_steps=10,
-        rtol=2e-9 if precision == "64" else 5e-5,
-        atol=2e-9 if precision == "64" else 5e-5,
+        rtol=1e-10 if precision == "64" else 5e-5,
+        atol=1e-10 if precision == "64" else 5e-5,
         eps=1e-3 if precision == "64" else 3e-2,
     )
 
@@ -258,7 +257,7 @@ def test_all_constraint_groups_grad_matches_fd(grad_all_eq_fric, precision, show
         lambda e, x: e.set_dofs_velocity(x),
         loss_fn,
         n_steps=10,
-        rtol=5e-10 if precision == "64" else 5e-5,
-        atol=5e-10 if precision == "64" else 5e-5,
+        rtol=1e-10 if precision == "64" else 5e-5,
+        atol=1e-10 if precision == "64" else 5e-5,
         eps=3e-4 if precision == "64" else 3e-3,
     )
