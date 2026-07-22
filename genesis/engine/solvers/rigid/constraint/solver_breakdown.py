@@ -435,7 +435,7 @@ def _func_decomp_linesearch_refine_and_apply(
 def _func_cg_only_save_prev_grad(constraint_state: array_class.ConstraintState, rigid_config: qd.template()):
     """Save prev_grad and prev_Mgrad (CG only)"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(name="cg_only_save_prev_grag", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(name="cg_only_save_prev_grad", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_save_prev_grad(i_b, constraint_state)
@@ -653,7 +653,7 @@ def _func_wrap_cone_hessian(
     """
     if qd.static(rigid_config.enable_elliptic_friction):
         _B = constraint_state.jac.shape[2]
-        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(name="wrap_cone_hessian", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_add_cone_hessian_block(i_b, constraint_state, rigid_config, scale)
@@ -673,7 +673,9 @@ def _func_newton_only_nt_hessian_and_cholesky(
     # post-pass before the factor reads nt_H, matching the monolith tiled path (this path rebuilds every improved env).
     if qd.static(rigid_config.enable_elliptic_friction):
         _B_envs = constraint_state.jac.shape[2]
-        qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(
+            name="add_cone_hessian_block", serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+        )
         for i_b in range(_B_envs):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_add_cone_hessian_block(i_b, constraint_state, rigid_config)
