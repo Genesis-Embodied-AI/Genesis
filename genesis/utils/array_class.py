@@ -2613,7 +2613,8 @@ PLANNER_LS_TRIALS_MAX = 8
 
 @qd.data_oriented
 class PlannerStaticConfig(metaclass=AutoInitMeta):
-    """Compile-time constants of a planning-entity context. Iteration budgets are runtime scalars in PlannerInfo."""
+    """Compile-time constants of a planning-entity context. Iteration budgets are runtime scalars in
+    PlannerEntityInfo."""
 
     para_level: int
     is_batched_arm: bool

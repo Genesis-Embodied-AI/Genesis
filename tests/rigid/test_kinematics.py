@@ -620,7 +620,7 @@ def test_plan_to_ee_pose_goal_avoids_obstacles(n_envs, show_viewer, tol):
         max_retry=2,
         seed=2,
     )
-    assert bool(path.is_valid.all())
+    assert path.is_valid.all()
 
     collider_state = scene.rigid_solver.collider._collider_state
     pillar_geoms = {geom.idx for link in pillar.links for geom in link.geoms}

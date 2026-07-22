@@ -61,8 +61,8 @@ class _EntityContext(NamedTuple):
     """Per-entity planner buffers, allocated once at the entity's first plan and reused forever."""
 
     planner_config: object
-    plan_info: object
-    plan_state: object
+    planner_info: object
+    planner_state: object
     spheres_link_idx: np.ndarray
     errno: object
 
@@ -83,7 +83,7 @@ class Planner:
         # The planner queries obstacle meshes through their signed distance field (SDF) grids, which the collider
         # only loads when its own narrowphase needs them.
         solver.collider._sdf.activate()
-        self._plan_world = array_class.get_planner_world_state(solver.n_geoms, max(solver.n_envs, 1))
+        self._planner_world = array_class.get_planner_world_state(solver.n_geoms, max(solver.n_envs, 1))
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- context assembly ----------------------------------
@@ -206,49 +206,53 @@ class Planner:
             n_rrt_trees=_N_RRT_TREES,
             n_rrt_nodes=_N_RRT_NODES,
         )
-        plan_info = array_class.get_planner_entity_info(planner_config, len(self_pairs), B)
-        plan_state = array_class.get_planner_state(planner_config, B)
+        planner_info = array_class.get_planner_entity_info(planner_config, len(self_pairs), B)
+        planner_state = array_class.get_planner_state(planner_config, B)
         errno = array_class.V(dtype=gs.qd_int, shape=(B,))
 
-        qd_to_torch(plan_info.spheres_link_idx, copy=False)[:] = torch.as_tensor(spheres_link_idx, device=gs.device)
-        qd_to_torch(plan_info.spheres_pos_local, copy=False)[:] = torch.as_tensor(spheres_pos_local, device=gs.device)
-        qd_to_torch(plan_info.spheres_radius, copy=False)[:] = torch.as_tensor(spheres_radius, device=gs.device)
+        qd_to_torch(planner_info.spheres_link_idx, copy=False)[:] = torch.as_tensor(spheres_link_idx, device=gs.device)
+        qd_to_torch(planner_info.spheres_pos_local, copy=False)[:] = torch.as_tensor(
+            spheres_pos_local, device=gs.device
+        )
+        qd_to_torch(planner_info.spheres_radius, copy=False)[:] = torch.as_tensor(spheres_radius, device=gs.device)
         if self_pairs:
-            qd_to_torch(plan_info.self_pairs, copy=False)[:] = torch.as_tensor(
+            qd_to_torch(planner_info.self_pairs, copy=False)[:] = torch.as_tensor(
                 np.array(self_pairs, dtype=gs.np_int), device=gs.device
             )
-            qd_to_torch(plan_info.self_pairs_reach, copy=False)[:] = torch.as_tensor(
+            qd_to_torch(planner_info.self_pairs_reach, copy=False)[:] = torch.as_tensor(
                 self._compute_self_pairs_reach(entity, spheres_link_idx, self_pairs, dof_reach_np), device=gs.device
             )
 
         # Joint-space box limits and derivative limits (model velocity limits, defaults when the asset has none).
         q_limit_lower, q_limit_upper = entity.q_limit
-        qd_to_torch(plan_info.q_limit_lower, copy=False)[:] = torch.as_tensor(
+        qd_to_torch(planner_info.q_limit_lower, copy=False)[:] = torch.as_tensor(
             q_limit_lower, dtype=gs.tc_float, device=gs.device
         )
-        qd_to_torch(plan_info.q_limit_upper, copy=False)[:] = torch.as_tensor(
+        qd_to_torch(planner_info.q_limit_upper, copy=False)[:] = torch.as_tensor(
             q_limit_upper, dtype=gs.tc_float, device=gs.device
         )
         vel_limit = entity.get_dofs_vel_limit()
         if vel_limit.ndim > 1:
             vel_limit = vel_limit[0]
-        qd_to_torch(plan_info.vel_limit, copy=False)[:] = torch.where(
+        qd_to_torch(planner_info.vel_limit, copy=False)[:] = torch.where(
             vel_limit.isfinite(), vel_limit, torch.full_like(vel_limit, _DEFAULT_VEL_LIMIT)
         )
-        qd_to_torch(plan_info.acc_limit, copy=False).fill_(_DEFAULT_ACC_LIMIT)
-        qd_to_torch(plan_info.jerk_limit, copy=False).fill_(_DEFAULT_JERK_LIMIT)
-        qd_to_torch(plan_info.dof_reach, copy=False)[:] = torch.as_tensor(dof_reach_np, device=gs.device)
+        qd_to_torch(planner_info.acc_limit, copy=False).fill_(_DEFAULT_ACC_LIMIT)
+        qd_to_torch(planner_info.jerk_limit, copy=False).fill_(_DEFAULT_JERK_LIMIT)
+        qd_to_torch(planner_info.dof_reach, copy=False)[:] = torch.as_tensor(dof_reach_np, device=gs.device)
 
         # MPPI exploration scale per DOF, capped for huge ranges.
         sigma = np.minimum(0.15 * (np.asarray(q_limit_upper) - np.asarray(q_limit_lower)), 0.5)
-        qd_to_torch(plan_info.mppi_sigma, copy=False)[:] = torch.as_tensor(sigma, dtype=gs.tc_float, device=gs.device)
+        qd_to_torch(planner_info.mppi_sigma, copy=False)[:] = torch.as_tensor(
+            sigma, dtype=gs.tc_float, device=gs.device
+        )
         for name, value in budgets.items():
-            qd_to_torch(getattr(plan_info, name), copy=False).fill_(value)
+            qd_to_torch(getattr(planner_info, name), copy=False).fill_(value)
 
         context = _EntityContext(
             planner_config=planner_config,
-            plan_info=plan_info,
-            plan_state=plan_state,
+            planner_info=planner_info,
+            planner_state=planner_state,
             spheres_link_idx=spheres_link_idx,
             errno=errno,
         )
@@ -349,14 +353,14 @@ class Planner:
         if links_pos.ndim == 2:
             links_pos, links_quat = links_pos[None], links_quat[None]
         spheres_link_idx = context.spheres_link_idx
-        spheres_pos_local = tensor_to_array(qd_to_torch(context.plan_info.spheres_pos_local))
-        spheres_radius = tensor_to_array(qd_to_torch(context.plan_info.spheres_radius))
+        spheres_pos_local = tensor_to_array(qd_to_torch(context.planner_info.spheres_pos_local))
+        spheres_radius = tensor_to_array(qd_to_torch(context.planner_info.spheres_radius))
         robot_spheres = links_pos[:, spheres_link_idx] + gu.transform_by_quat(
             np.tile(spheres_pos_local, (links_pos.shape[0], 1, 1)), links_quat[:, spheres_link_idx]
         )
 
         attachments = []
-        dof_locked = qd_to_torch(context.plan_info.dof_is_locked, copy=False)
+        dof_locked = qd_to_torch(context.planner_info.dof_is_locked, copy=False)
         for held in solver.entities:
             if held is entity or held in excluded_entities:
                 continue
@@ -444,8 +448,12 @@ class Planner:
     ):
         solver = self._solver
         context = self._get_entity_context(entity)
-        planner_config, plan_info, plan_state = context.planner_config, context.plan_info, context.plan_state
-        plan_world = self._plan_world
+        planner_config, planner_info, planner_state = (
+            context.planner_config,
+            context.planner_info,
+            context.planner_state,
+        )
+        planner_world = self._planner_world
         W, S, n_dp = planner_config.n_knots, planner_config.n_seeds, planner_config.n_dp
         B = max(solver.n_envs, 1)
         if solver.n_envs > 0:
@@ -458,7 +466,7 @@ class Planner:
         seed_key = seed if seed is not None else (gs.SEED if gs.SEED is not None else 0) + self._plan_counter
         gen = torch.Generator(device="cpu")
         gen.manual_seed(int(seed_key))
-        qd_to_torch(plan_info.seed_key, copy=False).fill_(int(seed_key) & 0x7FFFFFFF)
+        qd_to_torch(planner_info.seed_key, copy=False).fill_(int(seed_key) & 0x7FFFFFFF)
 
         # Start / goal configurations (entity-local q coordinates).
         qpos_start_t = (
@@ -484,16 +492,16 @@ class Planner:
             if qpos_goal_t.ndim == 1:
                 qpos_goal_t = qpos_goal_t[None].expand(B_plan, n_dp)
 
-        qd_to_torch(plan_info.qpos_start, copy=False).T[envs_idx_np] = qpos_start_t
+        qd_to_torch(planner_info.qpos_start, copy=False).T[envs_idx_np] = qpos_start_t
         if qpos_goal_t is not None:
-            qd_to_torch(plan_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
-        qd_to_torch(plan_info.has_pose_goal, copy=False).fill_(has_pose_goal)
+            qd_to_torch(planner_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
+        qd_to_torch(planner_info.has_pose_goal, copy=False).fill_(has_pose_goal)
         if has_pose_goal:
-            qd_to_torch(plan_info.goal_link_idx, copy=False).fill_(goal_link.idx)
+            qd_to_torch(planner_info.goal_link_idx, copy=False).fill_(goal_link.idx)
             if goal_pos is not None:
-                qd_to_torch(plan_info.goal_pos, copy=False)[envs_idx_np] = goal_pos
+                qd_to_torch(planner_info.goal_pos, copy=False)[envs_idx_np] = goal_pos
             if goal_quat is not None:
-                qd_to_torch(plan_info.goal_quat, copy=False)[envs_idx_np] = goal_quat
+                qd_to_torch(planner_info.goal_quat, copy=False)[envs_idx_np] = goal_quat
 
         # Cost weights and margins (coarse phase; the polish phase tightens them below).
         for name, value in (
@@ -511,11 +519,11 @@ class Planner:
             # covers the between-samples sweep, so paths must arrive with that much slack to certify.
             ("d_safe", float(safety_margin) + 0.02),
         ):
-            qd_to_torch(getattr(plan_info, name), copy=False).fill_(value)
-        qd_to_torch(plan_info.noise_basis, copy=False)[:] = torch.as_tensor(build_noise_basis(W), device=gs.device)
+            qd_to_torch(getattr(planner_info, name), copy=False).fill_(value)
+        qd_to_torch(planner_info.noise_basis, copy=False)[:] = torch.as_tensor(build_noise_basis(W), device=gs.device)
 
         # Attachments: explicit first, then auto-detected held entities.
-        qd_to_torch(plan_info.dof_is_locked, copy=False).fill_(False)
+        qd_to_torch(planner_info.dof_is_locked, copy=False).fill_(False)
         attachments = [
             self._capture_attachment(entity, held, attach_link, envs_idx) for held, attach_link in explicit_attachments
         ]
@@ -523,11 +531,11 @@ class Planner:
             excluded = [attachment.entity for attachment in attachments]
             attachments += self._detect_held_attachments(entity, context, envs_idx, excluded)
 
-        attach_active = qd_to_torch(plan_info.attach_spheres_is_active, copy=False)
+        attach_active = qd_to_torch(planner_info.attach_spheres_is_active, copy=False)
         attach_active.fill_(False)
-        attach_link_idx = qd_to_torch(plan_info.attach_spheres_link_idx, copy=False)
-        attach_pos = qd_to_torch(plan_info.attach_spheres_pos_local, copy=False)
-        attach_radius = qd_to_torch(plan_info.attach_spheres_radius, copy=False)
+        attach_link_idx = qd_to_torch(planner_info.attach_spheres_link_idx, copy=False)
+        attach_pos = qd_to_torch(planner_info.attach_spheres_pos_local, copy=False)
+        attach_radius = qd_to_torch(planner_info.attach_spheres_radius, copy=False)
         attached_geoms = []
         i_slot = 0
         for attachment in attachments:
@@ -558,10 +566,10 @@ class Planner:
             dtype=gs.np_int,
         )
         kernel_planner_snapshot_world(
-            envs_idx_np, obstacle_geoms_idx, plan_world, solver.dyn_state, solver.rigid_info, planner_config
+            envs_idx_np, obstacle_geoms_idx, planner_world, solver.dyn_state, solver.rigid_info, planner_config
         )
         # Grid signed distance fields answer metrically only within their padded box; analytic primitives always.
-        max_band = qd_to_torch(plan_world.geoms_max_band, copy=False)
+        max_band = qd_to_torch(planner_world.geoms_max_band, copy=False)
         analytic_types = (
             gs.GEOM_TYPE.SPHERE,
             gs.GEOM_TYPE.PLANE,
@@ -582,9 +590,9 @@ class Planner:
         errno_t.fill_(0)
         kernel_args = (
             envs_idx_np,
-            plan_state,
-            plan_info,
-            plan_world,
+            planner_state,
+            planner_info,
+            planner_world,
             solver.dyn_state,
             solver.dyn_info,
             solver.rigid_info,
@@ -595,8 +603,8 @@ class Planner:
             # The probe below validates raw hold-at-goal candidates, so the exclusion lists must not carry
             # allowances from a previous plan; the boundary exclusions proper are collected once the goal is
             # resolved.
-            qd_to_torch(plan_info.excl_world_count, copy=False).fill_(0)
-            qd_to_torch(plan_info.excl_self_count, copy=False).fill_(0)
+            qd_to_torch(planner_info.excl_world_count, copy=False).fill_(0)
+            qd_to_torch(planner_info.excl_self_count, copy=False).fill_(0)
             # Certified multi-restart inverse kinematics: the pose usually has several joint-space solutions and
             # an arbitrary one is often proxy-colliding, which would doom both the optimizer's clamped goal
             # knots and the fallback's goal tree. Up to S restarts are validated in one launch (each candidate
@@ -608,8 +616,8 @@ class Planner:
                 ik_kwargs["quat"] = goal_quat
             if solver.n_envs > 0:
                 ik_kwargs["envs_idx"] = envs_idx
-            lo = qd_to_torch(plan_info.q_limit_lower)
-            hi = qd_to_torch(plan_info.q_limit_upper)
+            lo = qd_to_torch(planner_info.q_limit_lower)
+            hi = qd_to_torch(planner_info.q_limit_upper)
             solutions = []
             for i_restart in range(S):
                 init_qpos = (
@@ -617,21 +625,23 @@ class Planner:
                     if i_restart == 0
                     else lo + (hi - lo) * torch.rand((B_plan, n_dp), generator=gen, dtype=gs.tc_float).to(gs.device)
                 )
-                solution = entity.inverse_kinematics(goal_link, init_qpos=init_qpos, **ik_kwargs)
+                solution = entity.inverse_kinematics(
+                    goal_link, init_qpos=init_qpos, seed=(int(seed_key) + i_restart) & 0x7FFFFFFF, **ik_kwargs
+                )
                 if solution.ndim == 1:
                     solution = solution[None]
                 solutions.append(solution)
-            traj_probe = qd_to_torch(plan_state.qpos_traj, copy=False).T.reshape(B, S, W, n_dp)
+            traj_probe = qd_to_torch(planner_state.qpos_traj, copy=False).T.reshape(B, S, W, n_dp)
             for i_restart, solution in enumerate(solutions):
                 traj_probe[envs_idx_np, i_restart] = solution[:, None, :]
-            qd_to_torch(plan_state.is_active, copy=False).reshape(B, S)[envs_idx_np] = True
+            qd_to_torch(planner_state.is_active, copy=False).reshape(B, S)[envs_idx_np] = True
             # Goals are probed at the sampling-fallback margin: a goal whose immediate neighborhood is snugger
             # than that would wall off its own goal tree even though the held configuration certifies.
-            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin) + 0.01)
+            qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.01)
             cost_mod.kernel_planner_validate(*kernel_args, planner_config)
-            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
-            probe_flags = qd_to_torch(plan_state.valid_flags).reshape(B, S)[envs_idx_np]
-            probe_clear = qd_to_torch(plan_state.min_clearance).reshape(B, S)[envs_idx_np]
+            qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
+            probe_flags = qd_to_torch(planner_state.valid_flags).reshape(B, S)[envs_idx_np]
+            probe_clear = qd_to_torch(planner_state.min_clearance).reshape(B, S)[envs_idx_np]
             # A collision-free converged solution is ideal; a converged solution whose only defect is a proxy
             # collision within the excusable contact window remains acceptable, since its contacts become
             # boundary allowances below (grasp and place poses are proxy-colliding by nature). Deeper branches
@@ -649,15 +659,15 @@ class Planner:
             distance_gated = torch.where(is_goal_free, distance_gated, distance_gated + 1e6)
             best_restart = distance_gated.argmin(dim=-1)
             qpos_goal_t = all_solutions.gather(1, best_restart[:, None, None].expand(B_plan, 1, n_dp))[:, 0]
-            qd_to_torch(plan_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
+            qd_to_torch(planner_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
 
         # Boundary (start and goal) contact exclusions: pairs violating the margin at either boundary keep their
         # worst boundary clearance for the whole plan, which is what makes grasp and place goals plannable.
         cost_mod.kernel_planner_boundary_exclusions(
             envs_idx_np,
-            plan_state,
-            plan_info,
-            plan_world,
+            planner_state,
+            planner_info,
+            planner_world,
             solver.dyn_state,
             solver.dyn_info,
             solver.rigid_info,
@@ -673,8 +683,8 @@ class Planner:
             )
 
         # Optimize, escalating on failed envs: fresh seeds first, RRT-Connect seeds from the second attempt on.
-        is_active_t = qd_to_torch(plan_state.is_active, copy=False)
-        flags_t = qd_to_torch(plan_state.valid_flags, copy=False)
+        is_active_t = qd_to_torch(planner_state.is_active, copy=False)
+        flags_t = qd_to_torch(planner_state.valid_flags, copy=False)
         env_solved = torch.zeros(B, dtype=torch.bool, device=gs.device)
         env_pending_mask = torch.zeros(B, dtype=torch.bool, device=gs.device)
         env_pending_mask[envs_idx_np] = True
@@ -691,9 +701,9 @@ class Planner:
                 # Escalate through the sampling fallback: it is probabilistically complete, so retries re-run it
                 # with fresh sampling streams instead of falling back to random seeds, and the collision weights
                 # harden so refinement cannot trade the found homotopy away for smoothness.
-                qd_to_torch(plan_info.seed_key, copy=False).fill_((int(seed_key) + i_attempt) & 0x7FFFFFFF)
-                qd_to_torch(plan_info.w_obs, copy=False).fill_(400.0)
-                qd_to_torch(plan_info.w_self, copy=False).fill_(400.0)
+                qd_to_torch(planner_info.seed_key, copy=False).fill_((int(seed_key) + i_attempt) & 0x7FFFFFFF)
+                qd_to_torch(planner_info.w_obs, copy=False).fill_(400.0)
+                qd_to_torch(planner_info.w_self, copy=False).fill_(400.0)
                 self._seed_from_rrt(context, envs_idx_np, env_pending, kernel_args)
 
             if not ignore_collision:
@@ -704,21 +714,21 @@ class Planner:
                 kernel_planner_lbfgs(*kernel_args, solver.collider._collider_static_config, planner_config)
                 # Polish: tighter activation band, harder collision weights, and a pinning pose weight sharpen
                 # the margin and land the free end knot inside the goal tolerance.
-                qd_to_torch(plan_info.eps_act, copy=False).fill_(0.02)
-                qd_to_torch(plan_info.w_obs, copy=False).fill_(400.0)
-                qd_to_torch(plan_info.w_self, copy=False).fill_(400.0)
-                qd_to_torch(plan_info.w_pose_pos, copy=False).fill_(4e4)
-                qd_to_torch(plan_info.w_pose_rot, copy=False).fill_(1e4)
+                qd_to_torch(planner_info.eps_act, copy=False).fill_(0.02)
+                qd_to_torch(planner_info.w_obs, copy=False).fill_(400.0)
+                qd_to_torch(planner_info.w_self, copy=False).fill_(400.0)
+                qd_to_torch(planner_info.w_pose_pos, copy=False).fill_(4e4)
+                qd_to_torch(planner_info.w_pose_rot, copy=False).fill_(1e4)
                 kernel_planner_lbfgs(*kernel_args, solver.collider._collider_static_config, planner_config)
-                qd_to_torch(plan_info.eps_act, copy=False).fill_(0.05)
-                qd_to_torch(plan_info.w_obs, copy=False).fill_(100.0)
-                qd_to_torch(plan_info.w_self, copy=False).fill_(100.0)
-                qd_to_torch(plan_info.w_pose_pos, copy=False).fill_(2e3)
-                qd_to_torch(plan_info.w_pose_rot, copy=False).fill_(5e2)
+                qd_to_torch(planner_info.eps_act, copy=False).fill_(0.05)
+                qd_to_torch(planner_info.w_obs, copy=False).fill_(100.0)
+                qd_to_torch(planner_info.w_self, copy=False).fill_(100.0)
+                qd_to_torch(planner_info.w_pose_pos, copy=False).fill_(2e3)
+                qd_to_torch(planner_info.w_pose_rot, copy=False).fill_(5e2)
 
-            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin))
+            qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin))
             cost_mod.kernel_planner_validate(*kernel_args, planner_config)
-            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
+            qd_to_torch(planner_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
             is_seed_valid = self._seed_validity(flags_t, S, ignore_collision)
             env_solved |= is_seed_valid.any(dim=-1) & env_pending_mask
             # Freeze the candidates of solved envs so later attempts cannot disturb them.
@@ -729,22 +739,22 @@ class Planner:
 
         # Per-env best certified seed (lowest cost, lowest index tie-break), start-hold for failed envs.
         is_seed_valid = self._seed_validity(flags_t, S, ignore_collision)
-        costs = qd_to_torch(plan_state.cost).reshape(B, S).nan_to_num(nan=1e30, posinf=1e30)
+        costs = qd_to_torch(planner_state.cost).reshape(B, S).nan_to_num(nan=1e30, posinf=1e30)
         costs_gated = torch.where(is_seed_valid, costs, torch.full_like(costs, torch.inf))
         best_seed = costs_gated.argmin(dim=-1)
         is_env_valid = is_seed_valid.gather(-1, best_seed[:, None])[:, 0]
 
-        knots = qd_to_torch(plan_state.qpos_traj).T.reshape(B, S, W, n_dp)
+        knots = qd_to_torch(planner_state.qpos_traj).T.reshape(B, S, W, n_dp)
         knots_best = knots.gather(1, best_seed[:, None, None, None].expand(B, 1, W, n_dp))[:, 0]
-        start_hold = qd_to_torch(plan_info.qpos_start).T[:, None, :].expand(B, W, n_dp)
+        start_hold = qd_to_torch(planner_info.qpos_start).T[:, None, :].expand(B, W, n_dp)
         knots_best = torch.where(is_env_valid[:, None, None], knots_best, start_hold)
 
         knots_plan = knots_best[envs_idx_np]
         dt_knot = retime_trajectory(
             knots_plan,
-            qd_to_torch(plan_info.vel_limit),
-            qd_to_torch(plan_info.acc_limit),
-            qd_to_torch(plan_info.jerk_limit),
+            qd_to_torch(planner_info.vel_limit),
+            qd_to_torch(planner_info.acc_limit),
+            qd_to_torch(planner_info.jerk_limit),
         )
         qpos_out, vel_out, acc_out, dt_out = resample_trajectory(
             knots_plan, dt_knot, num_waypoints, scene_dt=solver._scene.dt
@@ -769,10 +779,14 @@ class Planner:
 
     def _seed_trajectories(self, context, gen, env_pending):
         """Straight-line seed plus smooth-noise variants for every pending env (torch RNG, deterministic)."""
-        planner_config, plan_info, plan_state = context.planner_config, context.plan_info, context.plan_state
+        planner_config, planner_info, planner_state = (
+            context.planner_config,
+            context.planner_info,
+            context.planner_state,
+        )
         W, S, n_dp = planner_config.n_knots, planner_config.n_seeds, planner_config.n_dp
-        start = qd_to_torch(plan_info.qpos_start).T[:, None, :]
-        goal = qd_to_torch(plan_info.qpos_goal).T[:, None, :]
+        start = qd_to_torch(planner_info.qpos_start).T[:, None, :]
+        goal = qd_to_torch(planner_info.qpos_goal).T[:, None, :]
         alpha = torch.linspace(0.0, 1.0, W, dtype=gs.tc_float, device=gs.device)[None, :, None]
         line = start * (1 - alpha) + goal * alpha
         traj = line[:, None].repeat(1, S, 1, 1)
@@ -781,33 +795,37 @@ class Planner:
             gs.device
         )
         traj[:, 1:] += 0.5 * torch.einsum("wk,bskd->bswd", basis, noise)
-        locked = qd_to_torch(plan_info.dof_is_locked).T
+        locked = qd_to_torch(planner_info.dof_is_locked).T
         traj = torch.where(locked[:, None, None, :], start[:, None], traj)
-        traj = traj.clamp(qd_to_torch(plan_info.q_limit_lower), qd_to_torch(plan_info.q_limit_upper))
+        traj = traj.clamp(qd_to_torch(planner_info.q_limit_lower), qd_to_torch(planner_info.q_limit_upper))
         traj[:, :, :2] = start[:, None]
         traj[:, :, -2:] = goal[:, None]
 
-        qd_to_torch(plan_state.qpos_traj, copy=False).T.reshape(-1, S, W, n_dp)[env_pending] = traj[env_pending]
-        qd_to_torch(plan_state.is_active, copy=False).reshape(-1, S)[env_pending] = True
+        qd_to_torch(planner_state.qpos_traj, copy=False).T.reshape(-1, S, W, n_dp)[env_pending] = traj[env_pending]
+        qd_to_torch(planner_state.is_active, copy=False).reshape(-1, S)[env_pending] = True
 
     def _seed_from_rrt(self, context, envs_idx_np, env_pending, kernel_args):
         """RRT-Connect on the failed envs; a solved tree re-seeds every candidate of its env."""
-        planner_config, plan_info, plan_state = context.planner_config, context.plan_info, context.plan_state
+        planner_config, planner_info, planner_state = (
+            context.planner_config,
+            context.planner_info,
+            context.planner_state,
+        )
         W, S, n_dp = planner_config.n_knots, planner_config.n_seeds, planner_config.n_dp
         NT, NN = planner_config.n_rrt_trees, planner_config.n_rrt_nodes
 
         trees_is_active = np.repeat(tensor_to_array(env_pending[envs_idx_np], dtype=np.bool_), NT).astype(gs.np_int)
         # The fallback searches at a smaller headroom than the optimizer: goals are certified at the user margin,
         # and a goal snugger than the full headroom would wall off its own tree.
-        d_safe_opt = float(qd_to_torch(plan_info.d_safe))
-        qd_to_torch(plan_info.d_safe, copy=False).fill_(d_safe_opt - 0.01)
+        d_safe_opt = float(qd_to_torch(planner_info.d_safe))
+        qd_to_torch(planner_info.d_safe, copy=False).fill_(d_safe_opt - 0.01)
         kernel_planner_rrt_connect(kernel_args[0], trees_is_active, _N_RRT_ITERS, *kernel_args[1:], planner_config)
-        qd_to_torch(plan_info.d_safe, copy=False).fill_(d_safe_opt)
+        qd_to_torch(planner_info.d_safe, copy=False).fill_(d_safe_opt)
 
-        rrt_done = qd_to_torch(plan_state.rrt_is_done)
-        rrt_len = qd_to_torch(plan_state.rrt_path_len)
-        rrt_path = qd_to_torch(plan_state.rrt_path).T.reshape(-1, NN, n_dp)
-        traj_all = qd_to_torch(plan_state.qpos_traj, copy=False).T.reshape(-1, S, W, n_dp)
+        rrt_done = qd_to_torch(planner_state.rrt_is_done)
+        rrt_len = qd_to_torch(planner_state.rrt_path_len)
+        rrt_path = qd_to_torch(planner_state.rrt_path).T.reshape(-1, NN, n_dp)
+        traj_all = qd_to_torch(planner_state.qpos_traj, copy=False).T.reshape(-1, S, W, n_dp)
         for i_b_, i_b in enumerate(envs_idx_np):
             if not bool(env_pending[i_b]):
                 continue
@@ -824,10 +842,10 @@ class Planner:
                     u = ((s_tgt - s_cum[i_seg]) / seg_len)[:, None]
                     traj_all[i_b, :] = (path[i_seg] * (1 - u) + path[i_seg + 1] * u)[None]
                     break
-        is_active_seeds = qd_to_torch(plan_state.is_active, copy=False).reshape(-1, S)
+        is_active_seeds = qd_to_torch(planner_state.is_active, copy=False).reshape(-1, S)
         pending_np = tensor_to_array(env_pending, dtype=np.bool_)
         is_active_seeds[pending_np] = True
         # Seed 0 keeps the raw fallback path unrefined: refinement can then only add better candidates, never
         # lose the feasible one.
         is_active_seeds[pending_np, 0] = False
-        qd_to_torch(plan_state.cost, copy=False).reshape(-1, S)[pending_np, 0] = 1e30
+        qd_to_torch(planner_state.cost, copy=False).reshape(-1, S)[pending_np, 0] = 1e30

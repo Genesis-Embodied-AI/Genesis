@@ -10,23 +10,23 @@ from genesis.utils import sdf as sdf_utils
 def kernel_planner_snapshot_world(
     envs_idx: qd.types.ndarray(),
     obstacle_geoms_idx: qd.types.ndarray(),
-    plan_world: array_class.PlannerWorldState,
+    planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
     planner_config: qd.template(),
 ):
     """Freeze the obstacle geoms' world poses and axis-aligned bounding boxes (AABBs) for the whole plan."""
-    plan_world.n_geoms[None] = obstacle_geoms_idx.shape[0]
+    planner_world.n_geoms[None] = obstacle_geoms_idx.shape[0]
 
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
     for i_gw, i_b_ in qd.ndrange(obstacle_geoms_idx.shape[0], envs_idx.shape[0]):
         i_g = obstacle_geoms_idx[i_gw]
         i_b = envs_idx[i_b_]
-        plan_world.geoms_idx[i_gw] = i_g
+        planner_world.geoms_idx[i_gw] = i_g
         g_pos = dyn_state.geoms.pos[i_g, i_b]
         g_quat = dyn_state.geoms.quat[i_g, i_b]
-        plan_world.geoms_pos[i_gw, i_b] = g_pos
-        plan_world.geoms_quat[i_gw, i_b] = g_quat
+        planner_world.geoms_pos[i_gw, i_b] = g_pos
+        planner_world.geoms_quat[i_gw, i_b] = g_quat
 
         aabb_min = gu.qd_transform_by_trans_quat(rigid_info.geoms_init_AABB[i_g, 0], g_pos, g_quat)
         aabb_max = aabb_min
@@ -34,9 +34,9 @@ def kernel_planner_snapshot_world(
             corner = gu.qd_transform_by_trans_quat(rigid_info.geoms_init_AABB[i_g, i_corner], g_pos, g_quat)
             aabb_min = qd.min(aabb_min, corner)
             aabb_max = qd.max(aabb_max, corner)
-        plan_world.geoms_aabb_min[i_gw, i_b] = aabb_min
-        plan_world.geoms_aabb_max[i_gw, i_b] = aabb_max
-        plan_world.geoms_is_active[i_gw, i_b] = True
+        planner_world.geoms_aabb_min[i_gw, i_b] = aabb_min
+        planner_world.geoms_aabb_max[i_gw, i_b] = aabb_max
+        planner_world.geoms_is_active[i_gw, i_b] = True
 
 
 @qd.func
@@ -44,7 +44,7 @@ def func_planner_world_sd(
     i_gw,
     i_b,
     x,
-    plan_world: array_class.PlannerWorldState,
+    planner_world: array_class.PlannerWorldState,
     dyn_info: array_class.DynInfo,
     sdf_info: array_class.SDFInfo,
 ):
@@ -53,11 +53,11 @@ def func_planner_world_sd(
 
     Analytic for box / capsule / cylinder (and sphere / plane inside sdf_func_world_local); grid signed distance
     field (SDF) for meshes and terrains. Grid answers are metric only within the geom's grid band - consumers gate
-    their activation distance with plan_world.geoms_max_band.
+    their activation distance with planner_world.geoms_max_band.
     """
-    i_g = plan_world.geoms_idx[i_gw]
-    g_pos = plan_world.geoms_pos[i_gw, i_b]
-    g_quat = plan_world.geoms_quat[i_gw, i_b]
+    i_g = planner_world.geoms_idx[i_gw]
+    g_pos = planner_world.geoms_pos[i_gw, i_b]
+    g_quat = planner_world.geoms_quat[i_gw, i_b]
     geom_type = dyn_info.geoms.type[i_g]
 
     sd = gs.qd_float(0.0)
@@ -91,16 +91,16 @@ def func_planner_world_sd_grad(
     i_gw,
     i_b,
     x,
-    plan_world: array_class.PlannerWorldState,
+    planner_world: array_class.PlannerWorldState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     sdf_info: array_class.SDFInfo,
     collider_static_config: qd.template(),
 ):
     """World-frame gradient of func_planner_world_sd, unit-norm away from the geom."""
-    i_g = plan_world.geoms_idx[i_gw]
-    g_pos = plan_world.geoms_pos[i_gw, i_b]
-    g_quat = plan_world.geoms_quat[i_gw, i_b]
+    i_g = planner_world.geoms_idx[i_gw]
+    g_pos = planner_world.geoms_pos[i_gw, i_b]
+    g_quat = planner_world.geoms_quat[i_gw, i_b]
     geom_type = dyn_info.geoms.type[i_g]
 
     grad = gs.qd_vec3(0.0, 0.0, 1.0)
@@ -158,9 +158,9 @@ def func_planner_world_sd_grad(
 
 
 @qd.func
-def func_planner_world_aabb_skip(i_gw, i_b, x, band, plan_world: array_class.PlannerWorldState):
+def func_planner_world_aabb_skip(i_gw, i_b, x, band, planner_world: array_class.PlannerWorldState):
     """True when x is farther than band from the geom's snapshot AABB - its signed distance surely exceeds band."""
-    aabb_min = plan_world.geoms_aabb_min[i_gw, i_b]
-    aabb_max = plan_world.geoms_aabb_max[i_gw, i_b]
+    aabb_min = planner_world.geoms_aabb_min[i_gw, i_b]
+    aabb_max = planner_world.geoms_aabb_max[i_gw, i_b]
     delta = qd.max(qd.max(aabb_min - x, x - aabb_max), 0.0)
     return delta.norm_sqr() > band * band

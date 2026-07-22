@@ -91,64 +91,18 @@ def func_planner_spheres(
     links_pos: qd.Tensor,
     links_quat: qd.Tensor,
     spheres_pos: qd.Tensor,
-    plan_info: array_class.PlannerEntityInfo,
+    planner_info: array_class.PlannerEntityInfo,
     planner_config: qd.template(),
 ):
     """Place the collision-proxy spheres (robot + active attached) in world frame for one FK column."""
     for i_s in range(qd.static(planner_config.n_spheres)):
-        i_l = plan_info.spheres_link_idx[i_s]
+        i_l = planner_info.spheres_link_idx[i_s]
         spheres_pos[i_s, i_col] = links_pos[i_l, i_col] + gu.qd_transform_by_quat(
-            plan_info.spheres_pos_local[i_s], links_quat[i_l, i_col]
+            planner_info.spheres_pos_local[i_s], links_quat[i_l, i_col]
         )
     for i_s in range(qd.static(planner_config.n_attach_max)):
-        if plan_info.attach_spheres_is_active[i_s, i_b]:
-            i_l = plan_info.attach_spheres_link_idx[i_s]
+        if planner_info.attach_spheres_is_active[i_s, i_b]:
+            i_l = planner_info.attach_spheres_link_idx[i_s]
             spheres_pos[qd.static(planner_config.n_spheres) + i_s, i_col] = links_pos[
                 i_l, i_col
-            ] + gu.qd_transform_by_quat(plan_info.attach_spheres_pos_local[i_s, i_b], links_quat[i_l, i_col])
-
-
-@qd.kernel
-def kernel_planner_fk_cache(
-    envs_idx: qd.types.ndarray(),
-    plan_state: array_class.PlannerState,
-    plan_info: array_class.PlannerEntityInfo,
-    dyn_state: array_class.DynState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    rigid_config: qd.template(),
-    planner_config: qd.template(),
-):
-    """FK + sphere placement of every active (candidate, knot) column into the gradient-path cache."""
-    n_knots = qd.static(planner_config.n_knots)
-    n_seeds = qd.static(planner_config.n_seeds)
-
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_cw in range(envs_idx.shape[0] * n_seeds * n_knots):
-        i_c = i_cw // n_knots
-        if plan_state.is_active[i_c]:
-            i_b = envs_idx[i_c // n_seeds]
-            func_planner_fk(
-                i_cw,
-                i_cw,
-                i_b,
-                qpos=plan_state.qpos_traj,
-                links_pos=plan_state.links_pos,
-                links_quat=plan_state.links_quat,
-                joints_xanchor=plan_state.joints_xanchor,
-                joints_xaxis=plan_state.joints_xaxis,
-                dyn_state=dyn_state,
-                dyn_info=dyn_info,
-                rigid_info=rigid_info,
-                rigid_config=rigid_config,
-                planner_config=planner_config,
-            )
-            func_planner_spheres(
-                i_cw,
-                i_b,
-                links_pos=plan_state.links_pos,
-                links_quat=plan_state.links_quat,
-                spheres_pos=plan_state.spheres_pos,
-                plan_info=plan_info,
-                planner_config=planner_config,
-            )
+            ] + gu.qd_transform_by_quat(planner_info.attach_spheres_pos_local[i_s, i_b], links_quat[i_l, i_col])
