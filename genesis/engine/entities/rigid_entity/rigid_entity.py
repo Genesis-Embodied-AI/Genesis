@@ -21,7 +21,7 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
 from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.engine.states.entities import RigidEntityState
 
@@ -68,6 +68,8 @@ def tracked(fun):
                 subset = None
             elif isinstance(dofs_idx_local, slice):
                 subset = tuple(range(*dofs_idx_local.indices(self.n_dofs)))
+            elif isinstance(dofs_idx_local, torch.Tensor):
+                subset = tuple(tensor_to_array(dofs_idx_local).reshape(-1).tolist())
             else:
                 subset = tuple(np.asarray(dofs_idx_local).reshape(-1).tolist())
             self._update_tgt((fun.__name__, subset), args_dict)
