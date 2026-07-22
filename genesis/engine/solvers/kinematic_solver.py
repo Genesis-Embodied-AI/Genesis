@@ -644,6 +644,9 @@ class KinematicSolver(Solver):
             qd_zero_grad(self.dyn_state.dofs)
             qd_zero_grad(self.dyn_state.joints)
             qd_zero_grad(self.rigid_info)
+            # One flush for the zeroing batch; see qd_zero_grad in misc.py.
+            if gs.use_zerocopy and gs.backend == gs.metal:
+                torch.mps.synchronize()
         for entity in self._entities:
             entity.reset_grad()
         self._queried_states.clear()

@@ -794,7 +794,9 @@ def qd_zero_grad(value) -> None:
     Reverse-mode accumulation in Genesis writes through `qd.atomic_add`, so adjoint buffers must start at zero between
     consecutive `loss.backward()` calls. Solvers call this from `reset_grad` to clear all owned adjoint storage without
     enumerating fields by name. Zeroing goes through an in-place `zero_()` on the zero-copy torch view of each grad
-    buffer, a contiguous memset on the underlying device memory.
+    buffer, a contiguous memset on the underlying device memory. The writes are left unsynchronized so a caller can
+    batch many calls under a single flush: on Metal, call `torch.mps.synchronize()` after the batch and before the
+    next quadrants kernel reads the buffers (see set_base_links_quat).
     """
     if value is None:
         return
@@ -806,10 +808,6 @@ def qd_zero_grad(value) -> None:
                 try:
                     grad_view = qd_to_torch(grad, copy=False)
                     grad_view.zero_()
-                    # torch (MPS) and quadrants do not share a compute stream on Metal; flush the write before any
-                    # following quadrants kernel reads the buffer (see set_base_links_quat).
-                    if gs.backend == gs.metal:
-                        torch.mps.synchronize()
                 except ValueError:
                     # No zero-copy view for this buffer (e.g. a field past 2**31 bytes in its SNode tree); fill it in
                     # place through quadrants instead.

@@ -1385,6 +1385,9 @@ class RigidSolver(KinematicSolver):
             qd_zero_grad(collider_state.contact_data.pos)
             qd_zero_grad(collider_state.contact_data.normal)
             qd_zero_grad(collider_state.contact_data.penetration)
+            # One flush for the zeroing batch; see qd_zero_grad in misc.py.
+            if gs.use_zerocopy and gs.backend == gs.metal:
+                torch.mps.synchronize()
             kernel_manual_add_collision_constraints_bw(
                 self.dyn_state,
                 collider_state,
@@ -1563,6 +1566,9 @@ class RigidSolver(KinematicSolver):
             qd_zero_grad(self.dyn_state_adjoint_cache.joints)
             qd_zero_grad(self.dyn_state_adjoint_cache.geoms)
             qd_zero_grad(self._rigid_adjoint_cache)
+            # One flush for the zeroing batch; see qd_zero_grad in misc.py.
+            if gs.use_zerocopy and gs.backend == gs.metal:
+                torch.mps.synchronize()
 
     def _update_cartesian_grad(self, envs_idx):
         """Forward-replay the post-integrate cartesian-space update (FK -> COM -> geom poses -> velocity) under
