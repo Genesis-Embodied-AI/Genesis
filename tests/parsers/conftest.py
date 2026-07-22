@@ -1,7 +1,9 @@
+import io
 import os
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import pygltflib
 import pytest
 import trimesh
 from PIL import Image
@@ -484,6 +486,56 @@ def fixed():
 def usd_scene(request, model_name, scale, fixed):
     """Build a USD scene from the USD file provided by the fixture named 'model_name'."""
     return build_usd_scene(request.getfixturevalue(model_name), scale=scale, fixed=fixed)
+
+
+@pytest.fixture(scope="session")
+def emissive_material_variants_glb(asset_tmp_path):
+    """Path to a GLB with three materials, each on distinct base/emissive texCoord sets: a base-color atlas (red) on
+    texCoord 0 with an emissive atlas on texCoord 1, a flat base color with an emissive atlas on texCoord 1, and a
+    KHR_materials_unlit material whose red base atlas stands in for the unlit imagery. The red base atlas is index 0."""
+    images = []
+    for color in (np.array([220, 30, 30], np.uint8), np.array([30, 220, 30], np.uint8)):
+        buffer = io.BytesIO()
+        Image.fromarray(np.broadcast_to(color, (8, 8, 3)).copy()).save(buffer, format="PNG")
+        images.append(buffer.getvalue())
+
+    blob = b""
+    buffer_views = []
+    for data in images:
+        blob += b"\x00" * ((4 - len(blob) % 4) % 4)
+        buffer_views.append(pygltflib.BufferView(buffer=0, byteOffset=len(blob), byteLength=len(data)))
+        blob += data
+
+    gltf = pygltflib.GLTF2(
+        materials=[
+            pygltflib.Material(
+                pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(
+                    baseColorTexture=pygltflib.TextureInfo(index=0, texCoord=0)
+                ),
+                emissiveTexture=pygltflib.TextureInfo(index=1, texCoord=1),
+                emissiveFactor=[1.0, 1.0, 1.0],
+            ),
+            pygltflib.Material(
+                pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(baseColorFactor=[0.5, 0.5, 0.5, 1.0]),
+                emissiveTexture=pygltflib.TextureInfo(index=1, texCoord=1),
+                emissiveFactor=[1.0, 1.0, 1.0],
+            ),
+            pygltflib.Material(
+                pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(
+                    baseColorTexture=pygltflib.TextureInfo(index=0, texCoord=0)
+                ),
+                extensions={"KHR_materials_unlit": {}},
+            ),
+        ],
+        textures=[pygltflib.Texture(source=0), pygltflib.Texture(source=1)],
+        images=[pygltflib.Image(bufferView=i, mimeType="image/png") for i in range(2)],
+        bufferViews=buffer_views,
+        buffers=[pygltflib.Buffer(byteLength=len(blob))],
+    )
+    gltf.set_binary_blob(blob)
+    path = asset_tmp_path / "emissive_material_variants.glb"
+    gltf.save_binary(str(path))
+    return str(path)
 
 
 @pytest.fixture

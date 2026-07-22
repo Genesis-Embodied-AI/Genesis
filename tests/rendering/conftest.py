@@ -1,6 +1,9 @@
 import enum
 
+import numpy as np
 import pytest
+import trimesh
+from PIL import Image
 
 import genesis as gs
 
@@ -67,3 +70,20 @@ def skip_if_not_installed(renderer_type):
             import LuisaRenderPy
         except ImportError:
             pytest.skip(SKIP_NO_LUISA)
+
+
+@pytest.fixture(scope="session")
+def base_plus_emissive_glb(asset_tmp_path):
+    """Path to a GLB quad whose material pairs a red base-color atlas with a blue emissive atlas."""
+    base = Image.fromarray(np.broadcast_to(np.array([230, 20, 20], np.uint8), (16, 16, 3)).copy())
+    material = trimesh.visual.material.PBRMaterial(baseColorTexture=base, doubleSided=True)
+    material.emissiveTexture = Image.fromarray(np.broadcast_to(np.array([20, 20, 200], np.uint8), (16, 16, 3)).copy())
+    material.emissiveFactor = [1.0, 1.0, 1.0]
+    path = asset_tmp_path / "base_plus_emissive.glb"
+    trimesh.Trimesh(
+        vertices=[[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]],
+        faces=[[0, 1, 2], [0, 2, 3]],
+        visual=trimesh.visual.TextureVisuals(uv=[[0, 0], [1, 0], [1, 1], [0, 1]], material=material),
+        process=False,
+    ).export(path)
+    return str(path)

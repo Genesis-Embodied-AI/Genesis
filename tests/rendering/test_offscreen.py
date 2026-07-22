@@ -95,6 +95,87 @@ def test_render_api(show_viewer, renderer_type, renderer):
 
 
 @pytest.mark.required
+def test_emissive_composites_over_base_color_without_double_counting(base_plus_emissive_glb, show_viewer, renderer):
+    # The rasterizer must composite emissive on top of the base color under flat ambient light, checked on one scene
+    # whose entities are separated by segmentation:
+    #  - image_quad: a rigid GLB pairing a red base atlas with a blue emissive atlas keeps red dominant (the base is
+    #    neither dropped to black nor replaced by the emissive map) while blue is lifted well above the base's own blue.
+    #  - fem_quad: a deformable entity with a red base and a blue emissive behaves the same, exercising the non-rigid
+    #    render path (which builds its material identically through surface_uvs_to_trimesh_visual).
+    #  - base_green vs emissive_green: a plain green surface and a black-base surface whose green imagery lives in
+    #    emissive render at the same brightness. get_rgba already packs that emissive as the albedo, so adding it again
+    #    would double it; the two must match.
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=1e-3,
+        ),
+        fem_options=gs.options.FEMOptions(),
+        vis_options=gs.options.VisOptions(
+            ambient_light=(1.0, 1.0, 1.0),
+            shadow=False,
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    image_quad = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=base_plus_emissive_glb,
+            pos=(-4.5, 0.0, 0.0),
+            fixed=True,
+            collision=False,
+            file_meshes_are_zup=True,
+        ),
+    )
+    base_green = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2.0, 2.0, 0.1),
+            pos=(-1.5, 0.0, 0.0),
+            fixed=True,
+        ),
+        surface=gs.surfaces.BSDF(color=(0.0, 0.6, 0.0)),
+    )
+    emissive_green = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2.0, 2.0, 0.1),
+            pos=(1.5, 0.0, 0.0),
+            fixed=True,
+        ),
+        surface=gs.surfaces.BSDF(color=(0.0, 0.0, 0.0), emissive=(0.0, 0.6, 0.0)),
+    )
+    fem_quad = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2.0, 2.0, 0.5),
+            pos=(4.5, 0.0, 0.0),
+        ),
+        material=gs.materials.FEM.Elastic(),
+        surface=gs.surfaces.BSDF(color=(0.9, 0.0, 0.0), emissive=(0.0, 0.0, 0.6)),
+    )
+    camera = scene.add_camera(
+        pos=(0.0, 0.0, 16.0),
+        lookat=(0.0, 0.0, 0.0),
+        res=(256, 96),
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    rgb, _, segmentation, _ = camera.render(rgb=True, segmentation=True)
+    # Segmentation labels background 0 and each entity by its index plus one, giving exact per-entity pixel masks.
+    entities = (image_quad, base_green, emissive_green, fem_quad)
+    means = {e: rgb[segmentation == e.idx + 1].mean(axis=0) for e in entities}
+    assert all(np.isfinite(mean).all() for mean in means.values())
+
+    # Base color preserved and emissive added on top, on both a rigid and a deformable entity: red stays dominant
+    # (not replaced by the blue emissive) while blue is lifted well above the base's own blue (which renders near 40).
+    for e in (image_quad, fem_quad):
+        assert means[e][0] > means[e][2]
+        assert means[e][2] > 120.0
+    # The emissive that get_rgba already packed as albedo renders once, matching the plain green surface.
+    assert means[emissive_green][1] > 120.0
+    assert abs(means[emissive_green][1] - means[base_green][1]) < 30.0
+
+
+@pytest.mark.required
 @pytest.mark.parametrize(
     "renderer_type",
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],

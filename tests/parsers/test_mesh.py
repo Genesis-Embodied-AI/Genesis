@@ -471,6 +471,26 @@ def test_glb_shared_texture_not_duplicated(tmp_path):
 
 
 @pytest.mark.required
+def test_glb_uv_set_and_unlit_albedo_resolution(emissive_material_variants_glb):
+    # A single UV set is baked per mesh, following whichever texture actually samples it, and unlit imagery must not be
+    # hidden by the white base that a missing color installs. parse_glb_material returns the chosen texCoord and surface.
+    glb = pygltflib.GLTF2().load(emissive_material_variants_glb)
+    glb.convert_images(pygltflib.ImageFormat.DATAURI)
+
+    # A base-color atlas owns the UV set; an emissive on a different texCoord does not replace it.
+    _, base_atlas_uvs, _ = gltf_utils.parse_glb_material(glb, 0, gs.surfaces.Default())
+    assert base_atlas_uvs == 0
+    # A flat base color needs no UVs, so the emissive atlas' texCoord is baked instead of the unused base one.
+    _, factor_base_uvs, _ = gltf_utils.parse_glb_material(glb, 1, gs.surfaces.Default())
+    assert factor_base_uvs == 1
+    # An unlit material renders its imagery (mapped to emissive) as the albedo, not the default white base.
+    unlit_surface, _, _ = gltf_utils.parse_glb_material(glb, 2, gs.surfaces.Default())
+    assert_equal(
+        unlit_surface.get_rgba().image_array[..., :3], np.broadcast_to(np.array([220, 30, 30], np.uint8), (8, 8, 3))
+    )
+
+
+@pytest.mark.required
 def test_glb_multi_primitive_distinct_materials(tmp_path):
     # A single glTF mesh node may hold several primitives with distinct materials/textures. With the default
     # group_by_material=False, each primitive becomes its own visual mesh so all its textures render (merging them

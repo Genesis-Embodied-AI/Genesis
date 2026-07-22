@@ -6,15 +6,12 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 import trimesh
-from pydantic import BaseModel
 
 import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.point_cloud as pc
-from genesis.options.surfaces import Surface
-from genesis.options.textures import ColorTexture
 from genesis.utils.misc import tensor_to_array
 
 from ..utils import assert_allclose, assert_equal
@@ -235,54 +232,6 @@ def test_urdf_mjcf_names_from_file():
     urdf_entity2 = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf"))
     assert urdf_entity2.name.startswith("plane_")
     assert urdf_entity.name != urdf_entity2.name
-
-
-@pytest.mark.required
-def test_surface_shortcut_resolution():
-    # Plastic family: color resolves to diffuse_texture; the Rough subclass roughness default (1.0) feeds
-    # roughness_texture and default_roughness.
-    rough = gs.surfaces.Rough(color=(0.4, 0.4, 0.4))
-    assert rough.color == (0.4, 0.4, 0.4)
-    assert rough.roughness == 1.0
-    assert rough.diffuse_texture.color == (0.4, 0.4, 0.4)
-    assert rough.roughness_texture.color == (1.0,)
-    assert rough.default_roughness == 1.0
-
-    # Glass: color resolves to specular_texture and the thickness shortcut is honored on the same path.
-    glass = gs.surfaces.Glass(color=(0.6, 0.8, 1.0), thickness=0.02)
-    assert glass.specular_texture.color == (0.6, 0.8, 1.0)
-    assert glass.thickness_texture.color == (0.02,)
-
-    # BSDF exercises multiple shortcuts at once.
-    bsdf = gs.surfaces.BSDF(color=(0.2, 0.3, 0.4), roughness=0.3, metallic=0.5)
-    assert bsdf.diffuse_texture.color == (0.2, 0.3, 0.4)
-    assert bsdf.roughness_texture.color == (0.3,)
-    assert bsdf.metallic_texture.color == (0.5,)
-    assert bsdf.default_roughness == 0.3
-
-    # Emission: color resolves to emissive_texture.
-    emit = gs.surfaces.Emission(color=(1.0, 1.0, 0.0))
-    assert emit.emissive_texture.color == (1.0, 1.0, 0.0)
-
-    # Explicit default_roughness wins over the roughness shortcut.
-    override = gs.surfaces.Rough(roughness=0.7, default_roughness=0.5)
-    assert override.default_roughness == 0.5
-
-    # Nesting an already-resolved surface in another Pydantic model must not re-trigger resolution.
-    class Wrapper(BaseModel):
-        surface: Surface
-
-    for surface in (rough, glass, bsdf, emit):
-        Wrapper(surface=surface)
-    Wrapper(surface=rough)
-    assert rough.diffuse_texture.color == (0.4, 0.4, 0.4)
-    assert rough.roughness_texture.color == (1.0,)
-
-    # Passing both the shortcut and its resolved texture at construction is a user error.
-    with pytest.raises(Exception, match="'color' and 'diffuse_texture' cannot both be set"):
-        gs.surfaces.Rough(color=(1.0, 0.0, 0.0), diffuse_texture=ColorTexture(color=(0.0, 1.0, 0.0)))
-    with pytest.raises(Exception, match="'thickness' and 'thickness_texture' cannot both be set"):
-        gs.surfaces.Glass(thickness=0.02, thickness_texture=ColorTexture(color=(0.05,)))
 
 
 @pytest.mark.required

@@ -299,25 +299,59 @@ def compute_sdf_data(mesh, res):
 def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
     texture = surface.get_rgba()
 
-    if isinstance(texture, gs.textures.ImageTexture):
-        if uvs is not None:
-            uvs = uvs.copy()
-            uvs[:, 1] = 1.0 - uvs[:, 1]
-            assert texture.image_array.dtype == np.uint8
-            visual = trimesh.visual.TextureVisuals(
-                uv=uvs,
-                material=trimesh.visual.material.SimpleMaterial(
-                    image=Image.fromarray(texture.image_array), diffuse=(1.0, 1.0, 1.0, 1.0)
-                ),
+    # 'trimesh' uses uvs starting from the top-left corner, so flip them to Genesis' convention.
+    flipped_uvs = None
+    if uvs is not None:
+        flipped_uvs = uvs.copy()
+        flipped_uvs[:, 1] = 1.0 - flipped_uvs[:, 1]
+
+    # Composite emissive additively on top of the base color, but only when the base color is the packed albedo
+    # (present, nonblack, and distinct from the emissive). Otherwise get_rgba already returned the emissive as the
+    # albedo and re-adding it would double it. Baking it into the material makes every renderer path pick it up through
+    # from_trimesh (rigid and deformable alike), and forces a PBRMaterial since SimpleMaterial has no emissive channel.
+    # An image emissive samples UVs, so it is composited only when the mesh has them (else the shader references an
+    # undeclared uv_0); a flat emissive color needs none.
+    base = surface.texture
+    emission = surface.emission
+    emissive_kwargs = {}
+    if emission is not None and base is not None and base is not emission and not base.is_black:
+        if (
+            isinstance(emission, gs.textures.ImageTexture)
+            and emission.image_array is not None
+            and flipped_uvs is not None
+        ):
+            emissive_kwargs = dict(
+                emissiveTexture=Image.fromarray(emission.image_array), emissiveFactor=emission.image_color
             )
+        elif isinstance(emission, gs.textures.ColorTexture):
+            emissive_kwargs = dict(emissiveFactor=emission.color)
+
+    if isinstance(texture, gs.textures.ImageTexture):
+        if flipped_uvs is not None:
+            assert texture.image_array.dtype == np.uint8
+            image = Image.fromarray(texture.image_array)
+            if emissive_kwargs:
+                material = trimesh.visual.material.PBRMaterial(
+                    baseColorTexture=image, baseColorFactor=(255, 255, 255, 255), **emissive_kwargs
+                )
+            else:
+                material = trimesh.visual.material.SimpleMaterial(image=image, diffuse=(1.0, 1.0, 1.0, 1.0))
+            visual = trimesh.visual.TextureVisuals(uv=flipped_uvs, material=material)
         else:
             # fall back to color texture
             visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(texture.mean_color, [n_verts, 1]))
     elif isinstance(texture, gs.textures.ColorTexture):
         if n_verts is None:
             gs.raise_exception("n_verts is required for color texture.")
-        visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(np.array(texture.color), [n_verts, 1]))
-        assert visual.defined
+        if emissive_kwargs:
+            # The flat base color applies through a factor, but an image emissive still samples the UVs, so pass them.
+            material = trimesh.visual.material.PBRMaterial(
+                baseColorFactor=color_f32_to_u8(texture.color), **emissive_kwargs
+            )
+            visual = trimesh.visual.TextureVisuals(uv=flipped_uvs, material=material)
+        else:
+            visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(np.array(texture.color), [n_verts, 1]))
+            assert visual.defined
     else:
         gs.raise_exception("Cannot get texture when generating trimesh visual.")
 
