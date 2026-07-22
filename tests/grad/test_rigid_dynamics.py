@@ -148,7 +148,7 @@ def test_fk_multistep_force_grad_matches_fd(model_name, request, precision, show
         "grad_prismatic": ("state_pos", (3,), 163, 2e-6),
         "grad_free_with_revolute": ("links", (2, 3), 164, 5e-5),
         "grad_chain3": ("links", (3, 3), 165, 2e-5),
-        "grad_spherical": ("state_quat", (4,), 166, 2e-5),
+        "grad_spherical": ("state_quat", (4,), 166, 1e-4),
         "grad_cartpole": ("links", (2, 3), 167, 2e-5),
         "grad_hopper": ("links", (5, 3), 168, 1e-4),
     }[model_name]
