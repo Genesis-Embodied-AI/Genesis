@@ -569,7 +569,7 @@ class Planner:
         dof_reach_t[:] = torch.as_tensor(dof_reach_np, device=gs.device)
 
         # MPPI exploration scale per DOF, capped for huge ranges.
-        sigma = np.minimum(0.15 * (np.asarray(q_limit_upper) - np.asarray(q_limit_lower)), 0.5)
+        sigma = np.minimum(0.15 * (q_limit_upper - q_limit_lower), 0.5)
         mppi_sigma_t = qd_to_torch(planner_info.opt.mppi_sigma, copy=False)
         mppi_sigma_t[:] = torch.as_tensor(sigma, dtype=gs.tc_float, device=gs.device)
         for field, value in (
@@ -932,7 +932,7 @@ class Planner:
             if geom.type in analytic_types:
                 max_band[i_gw] = np.inf
             else:
-                verts = np.asarray(geom.init_verts)
+                verts = geom.init_verts
                 max_band[i_gw] = 0.1 * float((verts.max(axis=0) - verts.min(axis=0)).max())
             is_convex[i_gw] = (geom.type in analytic_types and geom.type != gs.GEOM_TYPE.PLANE) or (
                 geom.type == gs.GEOM_TYPE.MESH and geom.is_convex
