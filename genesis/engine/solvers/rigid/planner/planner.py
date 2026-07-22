@@ -109,7 +109,7 @@ class Planner:
             else:
                 n_seeds = min(max(4096 // B, 12), 64)
         if arm == gs.planner_arm.SERIAL:
-            budgets = dict(mppi_n_iters=6, mppi_n_particles=4, lbfgs_n_iters=48, ls_n_trials=8)
+            budgets = dict(mppi_n_iters=6, mppi_n_particles=4, lbfgs_n_iters=48, ls_n_trials=4)
         else:
             budgets = dict(mppi_n_iters=12, mppi_n_particles=8, lbfgs_n_iters=48, ls_n_trials=4)
         return arm, n_seeds, budgets
