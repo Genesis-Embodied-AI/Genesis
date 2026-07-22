@@ -207,15 +207,14 @@ class Recorder(Generic[T]):
             return
 
         global_time = global_step * self._manager._step_dt
-        data = self._data_func()
+        # Sanitize to CPU numpy once at the boundary: process() code never has to branch on torch vs numpy, and no
+        # GPU tensor is ever queued for cross-thread access in threaded mode.
+        data = _to_numpy(self._data_func())
 
         if not self.run_in_thread:
             # non-threaded mode: process data synchronously
             self.process(data, global_time)
             return
-
-        # threaded mode: move GPU tensors to CPU before queuing to avoid cross-thread GPU access
-        data = _to_numpy(data)
 
         # threaded mode: put data in queue
         try:

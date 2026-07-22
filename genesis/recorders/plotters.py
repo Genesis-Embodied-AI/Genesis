@@ -10,7 +10,6 @@ from functools import cached_property, partial
 from typing import Any, Callable, TypeVar
 
 import numpy as np
-import torch
 from PIL import Image
 
 import genesis as gs
@@ -31,9 +30,9 @@ from genesis.options.recorders import (
 from genesis.options.recorders import (
     PyQtLinePlot as PyQtLinePlotterOptions,
 )
-from genesis.utils import has_display, tensor_to_array
+from genesis.utils import has_display
 
-from .base_recorder import Recorder
+from .base_recorder import Recorder, _to_numpy
 from .recorder_manager import RecorderManager, register_recording
 
 IS_PYQTGRAPH_AVAILABLE = False
@@ -67,8 +66,6 @@ T = TypeVar("T")
 
 
 def _data_to_array(data: Sequence) -> np.ndarray:
-    if isinstance(data, torch.Tensor):
-        data = tensor_to_array(data)
     return np.atleast_1d(data)
 
 
@@ -319,7 +316,7 @@ class PyQtLinePlotter(BasePyQtPlotter):
     def build(self):
         super().build()
 
-        self.line_plot = LinePlotHelper(options=self._options, data=self._data_func())
+        self.line_plot = LinePlotHelper(options=self._options, data=_to_numpy(self._data_func()))
         self.curves: dict[str, list[pg.PlotCurveItem]] = {}
 
         # create plots for each subplot
@@ -511,7 +508,7 @@ class MPLLinePlotter(BaseMPLPlotter):
     def build(self):
         super().build()
 
-        self.line_plot = LinePlotHelper(options=self._options, data=self._data_func())
+        self.line_plot = LinePlotHelper(options=self._options, data=_to_numpy(self._data_func()))
 
         import matplotlib.pyplot as plt
 
@@ -663,10 +660,7 @@ class MPLImagePlotter(BaseMPLPlotter):
 
     def process(self, data, cur_time):
         """Process new image data and update display."""
-        if isinstance(data, torch.Tensor):
-            img_data = tensor_to_array(data)
-        else:
-            img_data = np.asarray(data)
+        img_data = np.asarray(data)
 
         vmin, vmax = np.min(img_data), np.max(img_data)
 
@@ -695,12 +689,6 @@ def _project_to_plane(normal: np.ndarray, *arrays: np.ndarray) -> tuple[np.ndarr
     """Project 3D arrays onto the plane perpendicular to normal."""
     uv = np.stack(gu.orthogonals(normal / np.linalg.norm(normal)), axis=1)
     return tuple(data @ uv for data in arrays)
-
-
-def _as_vector_field(data: "np.ndarray | torch.Tensor") -> np.ndarray:
-    """Coerce a vector payload to a (K, N, 3) stack, promoting a bare (N, 3) field to a single-subplot stack."""
-    field = tensor_to_array(data) if isinstance(data, torch.Tensor) else np.asarray(data, dtype=float)
-    return field[None] if field.ndim == 2 else field
 
 
 @register_recording(MPLVectorFieldPlotterOptions)
@@ -821,10 +809,16 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
     def process(self, data, cur_time):
         """Process new vector data and update each subplot's quiver (and the twist overlay when enabled)."""
         is_twist = self._twist_scale_factor is not None
+        vectors_data, twist_data = data if is_twist else (data, None)
+        # Promote a bare (N, 3) field to a single-subplot (K, N, 3) stack.
+        vectors_all = np.asarray(vectors_data)
+        if vectors_all.ndim == 2:
+            vectors_all = vectors_all[None]
+        twist_all = None
         if is_twist:
-            vectors_all, twist_all = (_as_vector_field(field) for field in data)
-        else:
-            vectors_all, twist_all = _as_vector_field(data), None
+            twist_all = np.asarray(twist_data)
+            if twist_all.ndim == 2:
+                twist_all = twist_all[None]
 
         n = len(self._positions)
         if vectors_all.ndim != 3 or vectors_all.shape[1:] != (n, 3):

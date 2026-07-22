@@ -7,7 +7,6 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-import torch
 
 import genesis as gs
 from genesis.options.recorders import (
@@ -15,7 +14,6 @@ from genesis.options.recorders import (
     CSVFile as CSVFileWriterOptions,
     NPZFile as NPZFileWriterOptions,
 )
-from genesis.utils import tensor_to_array
 
 from .base_recorder import Recorder
 from .recorder_manager import register_recording
@@ -124,12 +122,9 @@ class VideoFileWriter(BaseFileWriter):
         self.video_container.metadata["title"] = video_name
 
     def _initialize_data(self, data):
-        assert isinstance(data, (np.ndarray, torch.Tensor))
+        assert isinstance(data, np.ndarray)
         is_color = data.ndim == 3 and data.shape[-1] == 3
-        if isinstance(data, np.ndarray):
-            is_dtype_int = np.issubdtype(data.dtype, np.integer)
-        else:
-            is_dtype_int = not torch.is_floating_point(data)
+        is_dtype_int = np.issubdtype(data.dtype, np.integer)
         if data.ndim != 2 + is_color or not is_dtype_int:
             gs.raise_exception(f"[{type(self).__name__}] Data must be either grayscale [H, W] or color [H, W, RGB]")
         height, width, *_ = data.shape
@@ -191,8 +186,6 @@ class VideoFileWriter(BaseFileWriter):
         if self.video_buffer is None:
             self._initialize_data(data)
 
-        if isinstance(data, torch.Tensor):
-            data = tensor_to_array(data)
         data = data.astype(np.uint8)
 
         # Write frame
@@ -229,7 +222,7 @@ class CSVFileWriter(BaseFileWriter):
         self.csv_writer = csv.writer(self.file_handle)
 
     def _sanitize_to_list(self, value):
-        if isinstance(value, (torch.Tensor, np.ndarray)):
+        if isinstance(value, np.ndarray):
             return value.reshape((-1,)).tolist()
         elif isinstance(value, (int, float, bool)):
             return [value]
@@ -293,12 +286,10 @@ class NPZFileWriter(BaseFileWriter):
         self.all_data["timestamp"].append(cur_time)
         if isinstance(data, dict):
             for key, value in data.items():
-                if isinstance(value, torch.Tensor):
-                    value = tensor_to_array(value)
                 assert isinstance(value, (int, float, bool, list, tuple, np.ndarray))
                 self.all_data[key].append(value)
         else:
-            self.all_data["data"].append(tensor_to_array(data))
+            self.all_data["data"].append(np.asarray(data))
 
     def cleanup(self):
         filename = self._get_filename()

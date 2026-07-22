@@ -530,46 +530,46 @@ def _kernel_point_cloud_proximity_taxel_bvh(
         # about the sensor link origin.
         lever_world = probe_world - s_pos
 
-        f_w_gt = qd.Vector.zero(gs.qd_float, 3)
+        force_world_gt = qd.Vector.zero(gs.qd_float, 3)
         for j in qd.static(range(3)):
-            f_w_gt[j] = k_stiff * dens * sum_p_gt * a_w[j]
+            force_world_gt[j] = k_stiff * dens * sum_p_gt * a_w[j]
         if k_shear > eps:
             for j in qd.static(range(3)):
-                f_w_gt[j] = f_w_gt[j] + k_shear * dens * fv_gt[j]
+                force_world_gt[j] = force_world_gt[j] + k_shear * dens * fv_gt[j]
 
         # Torque is the moment of the full force about the sensor link origin, minus a spin term along the normal
         # driven by the relative twist rate.
-        t_w_gt = lever_world.cross(f_w_gt)
+        torque_world_gt = lever_world.cross(force_world_gt)
         for j in qd.static(range(3)):
-            t_w_gt[j] = t_w_gt[j] - a_w[j] * (k_twist * omega_n_gt)
+            torque_world_gt[j] = torque_world_gt[j] - a_w[j] * (k_twist * omega_n_gt)
 
-        f_l_gt = gu.qd_inv_transform_by_quat(f_w_gt, s_quat)
-        t_l_gt = gu.qd_inv_transform_by_quat(t_w_gt, s_quat)
+        force_link_gt = gu.qd_inv_transform_by_quat(force_world_gt, s_quat)
+        torque_link_gt = gu.qd_inv_transform_by_quat(torque_world_gt, s_quat)
 
-        f_w_m = qd.Vector.zero(gs.qd_float, 3)
+        force_world_measured = qd.Vector.zero(gs.qd_float, 3)
         for j in qd.static(range(3)):
-            f_w_m[j] = k_stiff * dens * sum_p_m * a_w[j]
+            force_world_measured[j] = k_stiff * dens * sum_p_m * a_w[j]
         if k_shear > eps:
             for j in qd.static(range(3)):
-                f_w_m[j] = f_w_m[j] + k_shear * dens * fv_m[j]
+                force_world_measured[j] = force_world_measured[j] + k_shear * dens * fv_m[j]
 
-        t_w_m = lever_world.cross(f_w_m)
+        torque_world_measured = lever_world.cross(force_world_measured)
         for j in qd.static(range(3)):
-            t_w_m[j] = t_w_m[j] - a_w[j] * (k_twist * omega_n_m)
+            torque_world_measured[j] = torque_world_measured[j] - a_w[j] * (k_twist * omega_n_m)
 
-        f_l_m = gu.qd_inv_transform_by_quat(f_w_m, s_quat)
-        t_l_m = gu.qd_inv_transform_by_quat(t_w_m, s_quat)
+        force_link_measured = gu.qd_inv_transform_by_quat(force_world_measured, s_quat)
+        torque_link_measured = gu.qd_inv_transform_by_quat(torque_world_measured, s_quat)
 
         force_start = cache_start + _i_p * 3
         torque_start = cache_start + n_probes * 3 + _i_p * 3
         for j in qd.static(range(3)):
-            output_gt[force_start + j, i_b] = f_l_gt[j]
+            output_gt[force_start + j, i_b] = force_link_gt[j]
         for j in qd.static(range(3)):
-            output_gt[torque_start + j, i_b] = t_l_gt[j]
+            output_gt[torque_start + j, i_b] = torque_link_gt[j]
         for j in qd.static(range(3)):
-            output_measured[force_start + j, i_b] = f_l_m[j]
+            output_measured[force_start + j, i_b] = force_link_measured[j]
         for j in qd.static(range(3)):
-            output_measured[torque_start + j, i_b] = t_l_m[j]
+            output_measured[torque_start + j, i_b] = torque_link_measured[j]
 
 
 @dataclass
