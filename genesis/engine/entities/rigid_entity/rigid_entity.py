@@ -14,6 +14,7 @@ import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
 from genesis.options.morphs import Morph
+from genesis.options.solvers import RigidOptions
 from genesis.options.surfaces import Surface
 from genesis.utils import array_class
 from genesis.utils import geom as gu
@@ -4627,7 +4628,10 @@ class RigidEntity(KinematicEntity):
         geom scaling (``set_scale``) or a heterogeneous entity. Keyed per entity (not solver-wide) so a mixed
         scene does not treat homogeneous entities as per-env.
         """
-        return self._solver._options.enable_geom_scaling or self._enable_heterogeneous
+        is_scaling_enabled = (
+            isinstance(self._solver._options, RigidOptions) and self._solver._options.enable_geom_scaling
+        )
+        return is_scaling_enabled or self._enable_heterogeneous
 
     @gs.assert_built
     def get_mass(self, envs_idx=None):

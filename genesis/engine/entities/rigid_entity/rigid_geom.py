@@ -11,6 +11,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
+from genesis.options.solvers import RigidOptions
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
@@ -941,7 +942,8 @@ class RigidVisGeom(RBC):
         """Scale rest-pose visual vertices by this vgeom's per-environment scale, matching the scaled render
         transform. Returns the vertices unchanged when runtime geom scaling is off, else a per-environment copy.
         """
-        if not self._solver._options.enable_geom_scaling:
+        # Geom scaling is a RigidSolver capability; the visualization-only KinematicSolver has no such option.
+        if not isinstance(self._solver._options, RigidOptions) or not self._solver._options.enable_geom_scaling:
             return rest_verts
         vgeoms_scale = qd_to_torch(self._solver.dyn_state.vgeoms.scale, envs_idx, transpose=True, copy=None)
         return rest_verts[None] * vgeoms_scale[..., self.idx, None, None]
