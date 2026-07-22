@@ -1572,10 +1572,11 @@ class RigidSolver(KinematicSolver):
 
     def _update_cartesian_grad(self, envs_idx):
         """Forward-replay the post-integrate cartesian-space update (FK -> COM -> geom poses -> velocity) under
-        is_backward=True, then reverse it stage by stage: velocity and forward kinematics are reversed manually
-        (kernel_manual_*_bw in manual_bw.py), while COM and the link->geom transform are reversed by Quadrants
-        autodiff (.grad). Shared by the post-integrate reverse and the first-substep initial-state reverse in
-        substep_pre_coupling_grad.
+        is_backward=True, then reverse it stage by stage.
+
+        Velocity and forward kinematics are reversed manually (kernel_manual_*_bw in manual_bw.py), while COM and
+        the link->geom transform are reversed by Quadrants autodiff (.grad). Shared by the post-integrate reverse
+        and the first-substep initial-state reverse in substep_pre_coupling_grad.
         """
         # Forward replay in dependency order (FK -> COM -> geoms -> velocity).
         kernel_forward_kinematics_replay(

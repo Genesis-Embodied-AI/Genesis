@@ -32,10 +32,11 @@ def make_diff_scene_pair(
     camera_lookat=(0.0, 0.0, 0.2),
 ):
     """Build a diff-mode scene (scene_ana, the only one backward() runs on) and a production-mode reference
-    (scene_fd, the one finite differences perturb) from the same MJCF with identical config. The two kernels
-    produce bit-identical forward states, so FD on scene_fd is a valid reference for scene_ana's analytical
-    gradient. `modes` selects which of the pair to build (True = diff-mode scene_ana, False = production scene_fd);
-    tests consuming only one side skip the other's kernel compilation."""
+    (scene_fd, the one finite differences perturb) from the same MJCF with identical config.
+
+    The two kernels produce bit-identical forward states, so FD on scene_fd is a valid reference for scene_ana's
+    analytical gradient. `modes` selects which of the pair to build (True = diff-mode scene_ana, False = production
+    scene_fd); tests consuming only one side skip the other's kernel compilation."""
     scenes = {}
     entities = {}
     for requires_grad in modes:
@@ -69,14 +70,15 @@ def make_diff_scene_pair(
 
 
 def assert_grad_matches_fd(pair, inputs, apply_fn, loss_fn, *, rtol, atol, eps, n_steps=None, setup_fn=None):
-    """Central finite-difference check of a tracked setter's reverse-mode gradient. `inputs` holds one array per
-    applied input; input i is applied via `apply_fn(entity, x)` before step i and must receive an independent
-    adjoint from the backward unroll. The scene runs `n_steps` steps (default len(inputs)); when it exceeds the
-    number of inputs the remaining steps run without re-applying (a single input driving an N-step rollout).
-    `setup_fn(scene, entity)` runs once after reset for untracked initialization (e.g. an initial pose). The FD
-    reference perturbs each entry of each input in turn and re-runs the full trajectory on the production-mode
-    scene, so the cost is O(n_steps * total input size). rtol / atol / eps are required and per-scenario: each
-    test pins them to its own measured finite-difference floor."""
+    """Central finite-difference check of a tracked setter's reverse-mode gradient.
+
+    `inputs` holds one array per applied input; input i is applied via `apply_fn(entity, x)` before step i and must
+    receive an independent adjoint from the backward unroll. The scene runs `n_steps` steps (default len(inputs));
+    when it exceeds the number of inputs the remaining steps run without re-applying (a single input driving an
+    N-step rollout). `setup_fn(scene, entity)` runs once after reset for untracked initialization (e.g. an initial
+    pose). The FD reference perturbs each entry of each input in turn and re-runs the full trajectory on the
+    production-mode scene, so the cost is O(n_steps * total input size). rtol / atol / eps are required and
+    per-scenario: each test pins them to its own measured finite-difference floor."""
     base = [np.array(inp, dtype=np.float64) for inp in inputs]
     total_steps = len(base) if n_steps is None else n_steps
 
