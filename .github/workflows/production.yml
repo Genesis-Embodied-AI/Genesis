@@ -19,7 +19,7 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_22"
+  GENESIS_IMAGE_VER: "1_24"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
   PY_COLORS: 1
