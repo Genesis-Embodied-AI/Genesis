@@ -121,16 +121,16 @@ def main():
             pos=np.array(arm_target_pos, gs.np_float),
             quat=np.array((0.0, 1.0, 0.0, 0.0), gs.np_float),
         )
-        arm_path_waypoints = arm.plan_path(qpos_goal=qpos, num_waypoints=steps)
+        arm_path = arm.plan_path(qpos_goal=qpos, num_waypoints=steps)
 
-        for waypoint in tqdm(arm_path_waypoints, total=len(arm_path_waypoints)):
+        for waypoint in tqdm(arm_path.qpos, total=len(arm_path.qpos)):
             arm.control_dofs_position(waypoint)
             scene.step()
 
         print("Now dropping the cube")
         cube.remove_vertex_constraints()
         for _ in tqdm(range(steps), total=steps):
-            arm.control_dofs_position(arm_path_waypoints[-1])
+            arm.control_dofs_position(arm_path.qpos[-1])
             scene.step()
 
     except KeyboardInterrupt:

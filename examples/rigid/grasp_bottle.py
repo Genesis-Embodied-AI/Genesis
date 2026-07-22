@@ -80,7 +80,7 @@ def main():
     qpos[..., -2:] = 0.04
 
     path = franka.plan_path(qpos)
-    for waypoint in path:
+    for waypoint in path.qpos:
         franka.control_dofs_position(waypoint)
         scene.step()
     for i in range(30):

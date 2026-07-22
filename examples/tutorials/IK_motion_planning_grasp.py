@@ -65,10 +65,10 @@ path = franka.plan_path(
     num_waypoints=200 if "PYTEST_VERSION" not in os.environ else 10,  # 2s duration
 )
 # draw the planned path
-path_debug = scene.draw_debug_path(path, franka)
+path_debug = scene.draw_debug_path(path.qpos, franka)
 
 # execute the planned path
-for waypoint in path:
+for waypoint in path.qpos:
     franka.control_dofs_position(waypoint)
     scene.step()
 

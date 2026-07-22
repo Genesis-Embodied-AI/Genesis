@@ -74,7 +74,7 @@ def main():
         num_waypoints=100,  # 1s duration
     )
     # execute the planned path
-    for waypoint in path:
+    for waypoint in path.qpos:
         franka.control_dofs_position(waypoint)
         franka.control_dofs_force(np.array([0.5, 0.5]), fingers_dof)
         scene.step()
