@@ -2765,7 +2765,7 @@ def func_island_tiled_factor_solve_all(
     MAX_DOFS = qd.static(rigid_config.tiled_n_island_dofs)
     T = qd.static(rigid_config.cholesky_tile_size)
     n_work = constraint_state.island.factor_worklist_size[0]
-    qd.loop_config(block_dim=T)
+    qd.loop_config(name="island_tiled_factor_solve", block_dim=T)
     for i in range(N_BLOCKS * T):
         blk = i // T
         tid = i % T
