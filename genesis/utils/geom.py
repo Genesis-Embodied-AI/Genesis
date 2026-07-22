@@ -233,7 +233,7 @@ def qd_quat_to_xyz_grad_quat(quat, eps, out_grad):
         s = 2.0 / quat_norm_sqr
         q_w, q_x, q_y, q_z = quat
 
-        # u = s * P with dP/dq per quadratic form; du/dq folds the ds/dq = -2 s q / |quat|^2 term.
+        # u = s * P with dP/dq per quadratic form; du/dq folds the ds/dq = -2 s q / |quat|^2 term
         p_siny = q_w * q_z - q_x * q_y
         p_cosy = q_y * q_y + q_z * q_z
         p_pitch = q_x * q_z + q_w * q_y
@@ -252,7 +252,7 @@ def qd_quat_to_xyz_grad_quat(quat, eps, out_grad):
         g_pitch = out_grad[1]
         g_yaw = out_grad[2]
 
-        # pitch = atan2(u_pitch, cosp) with cosp = |(u_siny, u_cosy)|.
+        # pitch = atan2(u_pitch, cosp) with cosp = |(u_siny, u_cosy)|
         denom_pitch = u_pitch * u_pitch + cosp * cosp
         g_u_pitch = g_pitch * cosp / denom_pitch
         g_cosp = -g_pitch * u_pitch / denom_pitch
@@ -267,7 +267,7 @@ def qd_quat_to_xyz_grad_quat(quat, eps, out_grad):
         g_u_gimbal_num = gs.qd_float(0.0)
         g_u_gimbal_den = gs.qd_float(0.0)
         if cosp > eps:
-            # roll = atan2(u_roll_num, u_roll_den); yaw = atan2(u_siny, u_cosy).
+            # roll = atan2(u_roll_num, u_roll_den); yaw = atan2(u_siny, u_cosy)
             denom_roll = u_roll_num * u_roll_num + u_roll_den * u_roll_den
             g_u_roll_num = g_roll * u_roll_den / denom_roll
             g_u_roll_den = -g_roll * u_roll_num / denom_roll
@@ -275,14 +275,14 @@ def qd_quat_to_xyz_grad_quat(quat, eps, out_grad):
             g_u_siny = g_u_siny + g_yaw * u_cosy / denom_yaw
             g_u_cosy = g_u_cosy - g_yaw * u_siny / denom_yaw
         else:
-            # Gimbal lock: roll = 0 and yaw = atan2(s * (wz + xy), 1 - s * (xx + zz)).
+            # Gimbal lock: roll = 0 and yaw = atan2(s * (wz + xy), 1 - s * (xx + zz))
             u_gimbal_num = s * p_gimbal_num
             u_gimbal_den = 1.0 - s * p_gimbal_den
             denom_gimbal = u_gimbal_num * u_gimbal_num + u_gimbal_den * u_gimbal_den
             g_u_gimbal_num = g_yaw * u_gimbal_den / denom_gimbal
             g_u_gimbal_den = -g_yaw * u_gimbal_num / denom_gimbal
 
-        # Fold each u = s * P (or 1 - s * P) back to quat: du/dq_k = +-s * (dP/dq_k - 2 P q_k / |quat|^2).
+        # Fold each u = s * P (or 1 - s * P) back to quat: du/dq_k = +-s * (dP/dq_k - 2 P q_k / |quat|^2)
         two_over_n = 2.0 / quat_norm_sqr
         d_p_siny = qd.Vector([q_z, -q_y, -q_x, q_w], dt=gs.qd_float)
         d_p_cosy = qd.Vector([0.0, 0.0, 2.0 * q_y, 2.0 * q_z], dt=gs.qd_float)

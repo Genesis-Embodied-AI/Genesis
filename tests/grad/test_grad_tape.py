@@ -82,7 +82,6 @@ def test_horizon_truncation_matches_independent_scenes(model_name, request, show
 def test_sim_vs_solver_state_grad_parity(show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.01,
             gravity=(0.0, 0.0, 0.0),
             requires_grad=True,
         ),
@@ -98,8 +97,7 @@ def test_sim_vs_solver_state_grad_parity(show_viewer):
     robot = scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
-            pos=(0, 0, 0),
-        )
+        ),
     )
     scene.build()
 

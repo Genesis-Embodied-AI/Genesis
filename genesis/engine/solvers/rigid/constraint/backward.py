@@ -456,7 +456,7 @@ def kernel_manual_add_joint_limit_constraints_bw(
                             d_diag_d_imp = -invweight / (imp * imp)
                         d_efc_D_d_imp = -d_diag_d_imp / (diag * diag)
 
-                        # d(imp_x)/d(pos_delta) = sign(pos_delta)/width, and pos_delta < 0 here.
+                        # d(imp_x)/d(pos_delta) = sign(pos_delta)/width, and pos_delta < 0 here
                         d_imp_d_pos_delta = d_imp_d_imp_x * (-1.0 / width)
 
                         # --- Combine ---
@@ -702,7 +702,7 @@ def kernel_manual_add_frictionloss_constraints_bw(
 
     qd.loop_config(
         name="kernel_manual_add_frictionloss_constraints_bw",
-        # Same serialize condition as the forward; see add_frictionloss_constraints in solver.py for the Metal gate.
+        # Same serialize condition as the forward; see add_frictionloss_constraints in solver.py for the Metal gate
         serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL and rigid_config.backend != gs.metal),
     )
     for i_b in range(_B):
@@ -763,17 +763,19 @@ def func_equality_jdotv_bw(
     rigid_config: qd.template(),
 ):
     """Reverse of func_equality_jdotv (see solver.py) for one chain, given the upstream gradient g_jdotv of its
-    linear Jdot @ qvel. Accumulates into the chain dofs' cdofd_ang / cdofd_vel / vel grads and the link's cd_ang /
-    cd_vel / root_COM grads, and returns the gradient w.r.t. the world anchor position (the caller owns the
-    anchor -> link pos / quat chain). Returns zero for the world (link == -1)."""
+    linear Jdot @ qvel.
+
+    Accumulates into the chain dofs' cdofd_ang / cdofd_vel / vel grads and the link's cd_ang / cd_vel / root_COM
+    grads, and returns the gradient w.r.t. the world anchor position (the caller owns the anchor -> link pos / quat
+    chain). Returns zero for the world (link == -1)."""
     g_anchor = gs.qd_vec3(0.0, 0.0, 0.0)
     if link > -1:
-        # Replay the chain contraction; only cddb_ang is consumed by the adjoint below.
+        # Replay the chain contraction; only cddb_ang is consumed by the adjoint below
         _jdotv, cddb_ang = solver.func_equality_jdotv(i_b, link, anchor_pos, dyn_state, dyn_info, rigid_config)
         offset = anchor_pos - dyn_state.links.root_COM[link, i_b]
         pvel = dyn_state.links.cd_vel[link, i_b] + dyn_state.links.cd_ang[link, i_b].cross(offset)
 
-        # jdotv = cddb_vel + cddb_ang x offset + cd_ang x pvel, using g_u = w x g and g_w = g x u for c = u x w.
+        # jdotv = cddb_vel + cddb_ang x offset + cd_ang x pvel, using g_u = w x g and g_w = g x u for c = u x w
         g_cddb_vel = g_jdotv
         g_cddb_ang = offset.cross(g_jdotv)
         g_offset = g_jdotv.cross(cddb_ang)
@@ -791,16 +793,15 @@ def func_equality_jdotv_bw(
         dyn_state.links.cd_ang.grad[link, i_b] += g_cd_ang
         dyn_state.links.cd_vel.grad[link, i_b] += g_cd_vel
 
-        # cddb_{ang,vel} = sum_d cdofd_{ang,vel}[d] * vel[d] over the ancestor chain.
+        # cddb_{ang,vel} = sum_d cdofd_{ang,vel}[d] * vel[d] over the ancestor chain
         i_l = link
         while i_l > -1:
             I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
             for i_d in range(dyn_info.links.dof_start[I_l], dyn_info.links.dof_end[I_l]):
                 dyn_state.dofs.cdofd_ang.grad[i_d, i_b] += g_cddb_ang * dyn_state.dofs.vel[i_d, i_b]
                 dyn_state.dofs.cdofd_vel.grad[i_d, i_b] += g_cddb_vel * dyn_state.dofs.vel[i_d, i_b]
-                dyn_state.dofs.vel.grad[i_d, i_b] += g_cddb_ang.dot(
-                    dyn_state.dofs.cdofd_ang[i_d, i_b]
-                ) + g_cddb_vel.dot(dyn_state.dofs.cdofd_vel[i_d, i_b])
+                dyn_state.dofs.vel.grad[i_d, i_b] += g_cddb_ang.dot(dyn_state.dofs.cdofd_ang[i_d, i_b])
+                dyn_state.dofs.vel.grad[i_d, i_b] += g_cddb_vel.dot(dyn_state.dofs.cdofd_vel[i_d, i_b])
             i_l = dyn_info.links.parent_idx[I_l]
     return g_anchor
 
@@ -1097,7 +1098,7 @@ def kernel_manual_add_equality_constraints_bw(
                     g_ga1 = g_ga1 + g_pos_diff + g_anchor1_row
                     g_ga2 = g_ga2 - g_pos_diff + g_anchor2_row
 
-                # Reverse the velocity-product bias jdotv = jdotv1 - jdotv2 through both chains.
+                # Reverse the velocity-product bias jdotv = jdotv1 - jdotv2 through both chains
                 g_ga1 = g_ga1 + func_equality_jdotv_bw(i_b, link1_idx, ga1, g_jdotv, dyn_state, dyn_info, rigid_config)
                 g_ga2 = g_ga2 + func_equality_jdotv_bw(i_b, link2_idx, ga2, -g_jdotv, dyn_state, dyn_info, rigid_config)
 
@@ -1293,7 +1294,7 @@ def kernel_manual_add_equality_constraints_bw(
                     g_ga1 = g_ga1 + g_anchor1_row
                     g_ga2 = g_ga2 + g_anchor2_row
 
-                # Reverse the velocity-product bias jdotv = jdotv1 - jdotv2 through both chains.
+                # Reverse the velocity-product bias jdotv = jdotv1 - jdotv2 through both chains
                 g_ga1 = g_ga1 + func_equality_jdotv_bw(i_b, link1_idx, ga1, g_jdotv, dyn_state, dyn_info, rigid_config)
                 g_ga2 = g_ga2 + func_equality_jdotv_bw(i_b, link2_idx, ga2, -g_jdotv, dyn_state, dyn_info, rigid_config)
 
@@ -1445,7 +1446,7 @@ def kernel_manual_add_equality_constraints_bw(
                 g_p_domega3 = gu.qd_quat_mul_grad_rhs(inv_q2, p_domega, g_m3)
                 for j in qd.static(range(3)):
                     g_domega[j] = g_domega[j] + g_p_domega3[j + 1]
-                # qdot0r = quat_mul(qdot_body1, relpose); relpose is a model param.
+                # qdot0r = quat_mul(qdot_body1, relpose); relpose is a model param
                 g_qdot_body1 = gu.qd_quat_mul_grad_lhs(qdot_body1, relpose, g_qdot0r)
                 # qdot_body1 = 0.5 * quat_mul([0, omega1], quat_body1)
                 g_p_omega1 = gu.qd_quat_mul_grad_lhs(p_omega1, quat_body1, 0.5 * g_qdot_body1)
@@ -1460,7 +1461,7 @@ def kernel_manual_add_equality_constraints_bw(
                 g_p_domega1 = gu.qd_quat_mul_grad_rhs(inv_qdot2, p_domega, g_m1)
                 for j in qd.static(range(3)):
                     g_domega[j] = g_domega[j] + g_p_domega1[j + 1]
-                # inv_quat flips the xyz signs of the incoming gradient.
+                # inv_quat flips the xyz signs of the incoming gradient
                 g_qdot_body2 = qd.Vector(
                     [g_inv_qdot2[0], -g_inv_qdot2[1], -g_inv_qdot2[2], -g_inv_qdot2[3]], dt=gs.qd_float
                 )

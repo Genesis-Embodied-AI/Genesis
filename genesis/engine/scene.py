@@ -1056,7 +1056,7 @@ class Scene(RBC):
         # the explicit self._backward call below, keeping gs.Tensor.backward's automatic scene._backward out of it.
         torch.autograd.backward(loss, *args, **kwargs)
         self._backward()
-        # keep_init semantics: see _reset.
+        # keep_init semantics: see _reset
         self._reset(snapshot, keep_init=True)
         return snapshot
 

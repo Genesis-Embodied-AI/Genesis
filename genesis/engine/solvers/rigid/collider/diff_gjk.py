@@ -838,8 +838,9 @@ def func_plane_contact_frame(
     dyn_info: array_class.DynInfo,
 ):
     """World contact normal and convex-side radius of a plane [i_ga] vs convex [i_gb] pair: normal =
-    -normalize(R(quat_plane) @ plane_local_dir), radius = data[0] for SPHERE / CAPSULE and 0 otherwise. Both the
-    forward witness capture and the differentiable reconstruction share this frame (and the convention
+    -normalize(R(quat_plane) @ plane_local_dir), radius = data[0] for SPHERE / CAPSULE and 0 otherwise.
+
+    Both the forward witness capture and the differentiable reconstruction share this frame (and the convention
     contact_pos = v - 0.5 * penetration * normal built on it)."""
     plane_dir = gs.qd_vec3(dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2])
     plane_dir = gu.qd_transform_by_quat(plane_dir, dyn_state.geoms.quat[i_ga, i_b])

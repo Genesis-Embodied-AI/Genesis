@@ -17,20 +17,11 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
     def _build_contact_scene(shape, mjcf_capsule, *, requires_grad, show_viewer=False):
         scene = gs.Scene(
             sim_options=gs.options.SimOptions(
-                dt=0.01,
                 substeps=2,
-                gravity=(0.0, 0.0, -9.81),
                 requires_grad=requires_grad,
             ),
             rigid_options=gs.options.RigidOptions(
-                enable_collision=True,
-                enable_self_collision=False,
-                enable_joint_limit=False,
-                disable_constraint=False,
-                use_hibernation=False,
-                use_contact_island=False,
-                box_box_detection=False,
-                # A non-neutral impratio makes the regularized cone coefficient observable to finite differences.
+                # A non-neutral impratio makes the regularized cone coefficient observable to finite differences
                 impratio=2.0,
             ),
             viewer_options=gs.options.ViewerOptions(
@@ -40,16 +31,47 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
             show_viewer=show_viewer,
         )
         if shape == "ground_box":
-            scene.add_entity(gs.morphs.Box(size=(2.0, 2.0, 0.2), pos=(0.0, 0.0, 0.1), fixed=True))
-            obj = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.4)))
+            scene.add_entity(
+                gs.morphs.Box(
+                    size=(2.0, 2.0, 0.2),
+                    pos=(0.0, 0.0, 0.1),
+                    fixed=True,
+                ),
+                vis_mode="collision",
+            )
+            obj = scene.add_entity(
+                gs.morphs.Box(
+                    size=(0.4, 0.4, 0.4),
+                    pos=(0.0, 0.0, 0.4),
+                ),
+                vis_mode="collision",
+            )
         else:
             scene.add_entity(gs.morphs.Plane())
             if shape == "box":
-                obj = scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.3)))
+                obj = scene.add_entity(
+                    gs.morphs.Box(
+                        size=(0.4, 0.4, 0.4),
+                        pos=(0.0, 0.0, 0.3),
+                    ),
+                    vis_mode="collision",
+                )
             elif shape == "sphere":
-                obj = scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.3)))
+                obj = scene.add_entity(
+                    gs.morphs.Sphere(
+                        radius=0.2,
+                        pos=(0.0, 0.0, 0.3),
+                    ),
+                    vis_mode="collision",
+                )
             elif shape == "capsule":
-                obj = scene.add_entity(gs.morphs.MJCF(file=mjcf_capsule, align=False))
+                obj = scene.add_entity(
+                    gs.morphs.MJCF(
+                        file=mjcf_capsule,
+                        align=False,
+                    ),
+                    vis_mode="collision",
+                )
             else:
                 raise ValueError(shape)
         scene.build(n_envs=0)
@@ -125,10 +147,6 @@ def test_contact_no_tunneling_forward(show_viewer):
         sim_options=gs.options.SimOptions(
             requires_grad=True,
         ),
-        rigid_options=gs.options.RigidOptions(
-            integrator=gs.integrator.approximate_implicitfast,
-            box_box_detection=False,
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -2.0, 1.2),
             camera_lookat=(0.0, 0.0, 0.4),
@@ -138,8 +156,23 @@ def test_contact_no_tunneling_forward(show_viewer):
     scene.add_entity(gs.morphs.Plane())
     tops = []
     for x in (0.8, -0.8):
-        scene.add_entity(gs.morphs.Box(size=(0.6, 0.6, 0.4), pos=(x, 0.0, 0.2), fixed=True))
-        tops.append(scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(x, 0.0, 0.6))))
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.6, 0.6, 0.4),
+                pos=(x, 0.0, 0.2),
+                fixed=True,
+            ),
+            vis_mode="collision",
+        )
+        tops.append(
+            scene.add_entity(
+                gs.morphs.Box(
+                    size=(0.4, 0.4, 0.4),
+                    pos=(x, 0.0, 0.6),
+                ),
+                vis_mode="collision",
+            )
+        )
     scene.build()
 
     for _ in range(20):
@@ -158,15 +191,26 @@ def test_diff_unsupported_configuration_raises():
         ),
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.2), fixed=True))
-    scene.add_entity(gs.morphs.Sphere(radius=0.2, pos=(0.0, 0.0, 0.5)))
+    scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.2,
+            pos=(0.0, 0.0, 0.2),
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.2,
+            pos=(0.0, 0.0, 0.5),
+        ),
+    )
 
     # A sphere/sphere pair has an everywhere-curved Minkowski boundary on which diff_gjk's EPA never converges, so
     # it would silently tunnel; the build must reject it instead.
     with pytest.raises(gs.GenesisException):
         scene.build()
 
-    # Torsional / rolling friction rows have no manual reverse; the build must reject them.
+    # Torsional / rolling friction rows have no manual reverse; the build must reject them
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             requires_grad=True,
@@ -176,19 +220,35 @@ def test_diff_unsupported_configuration_raises():
         ),
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5)))
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+        ),
+    )
     with pytest.raises(gs.GenesisException):
         scene.build()
 
-    # Attach merges kinematic trees across entities, which the per-entity backward kernels cannot reverse.
+    # Attach merges kinematic trees across entities, which the per-entity backward kernels cannot reverse
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             requires_grad=True,
         ),
         show_viewer=False,
     )
-    base = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.5), fixed=True))
-    child = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.8)))
+    base = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+    child = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.8),
+        ),
+    )
     with pytest.raises(gs.GenesisException):
         child.attach(base)
 
@@ -199,7 +259,6 @@ def test_diff_unsupported_configuration_raises():
 def test_contact_detection_jacobian_matches_fd():
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.01,
             requires_grad=True,
         ),
         show_viewer=False,
@@ -207,9 +266,17 @@ def test_contact_detection_jacobian_matches_fd():
     box_size = 0.25
     vec_one = np.array([1.0, 1.0, 1.0])
     box_pos_offset = (0.0, 0.0, 0.0) + 0.5 * box_size * vec_one
-    box0 = scene.add_entity(gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset))
+    box0 = scene.add_entity(
+        gs.morphs.Box(
+            size=box_size * vec_one,
+            pos=box_pos_offset,
+        ),
+    )
     box1 = scene.add_entity(
-        gs.morphs.Box(size=box_size * vec_one, pos=box_pos_offset + 0.8 * box_size * np.array([0, 0, 1]))
+        gs.morphs.Box(
+            size=box_size * vec_one,
+            pos=box_pos_offset + 0.8 * box_size * np.array([0, 0, 1]),
+        ),
     )
     scene.build()
     collider = scene.sim.rigid_solver.collider
@@ -270,14 +337,13 @@ def test_contact_detection_jacobian_matches_fd():
 @pytest.mark.precision("64")
 @pytest.mark.debug(False)
 def test_constraint_solver_backward_matches_fd(monkeypatch):
-    # Engine modules resolve gs dtypes at import time, which requires gs.init: import after initialization.
+    # Engine modules resolve gs dtypes at import time, which requires gs.init: import after initialization
     from genesis.engine.solvers.rigid.constraint.solver import func_solve_body, func_solve_init
     from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
 
-    # fp64 is required: the FD perturbation must be small enough for a reliable estimate, which fp32 cannot resolve.
+    # fp64 is required: the FD perturbation must be small enough for a reliable estimate, which fp32 cannot resolve
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.01,
             requires_grad=True,
         ),
         rigid_options=gs.options.RigidOptions(
@@ -285,9 +351,18 @@ def test_constraint_solver_backward_matches_fd(monkeypatch):
         ),
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Plane(pos=(0, 0, 0)))
-    scene.add_entity(gs.morphs.Box(size=(1, 1, 1), pos=(10, 10, 0.49)))
-    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(1, 1, 1),
+            pos=(10, 10, 0.49),
+        ),
+    )
+    franka = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+    )
     scene.build()
     rigid_solver = scene._sim.rigid_solver
     constraint_solver = rigid_solver.constraint_solver

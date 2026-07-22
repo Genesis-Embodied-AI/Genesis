@@ -341,7 +341,7 @@ def kernel_manual_forward_velocity_bw(
                 g_cd_vel_next = dyn_state.links.cd_vel_bw.grad[i_l, i_slot_next, i_b]
                 g_cd_ang_next = dyn_state.links.cd_ang_bw.grad[i_l, i_slot_next, i_b]
 
-                # --- Reverse the slot copy cd_*_bw[next] = cd_*_bw[curr].
+                # --- Reverse the slot copy cd_*_bw[next] = cd_*_bw[curr]
                 for k in qd.static(range(3)):
                     dyn_state.links.cd_vel_bw.grad[i_l, i_slot, i_b][k] = (
                         dyn_state.links.cd_vel_bw.grad[i_l, i_slot, i_b][k] + g_cd_vel_next[k]

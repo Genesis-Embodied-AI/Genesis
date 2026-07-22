@@ -48,10 +48,8 @@ def make_diff_scene_pair(
             ),
             rigid_options=gs.options.RigidOptions(
                 enable_collision=False,
-                enable_self_collision=False,
                 enable_joint_limit=enable_joint_limit,
                 disable_constraint=disable_constraint,
-                use_contact_island=False,
             ),
             viewer_options=gs.options.ViewerOptions(
                 camera_pos=camera_pos,
@@ -59,7 +57,11 @@ def make_diff_scene_pair(
             ),
             show_viewer=show_viewer and requires_grad,
         )
-        entity = scene.add_entity(gs.morphs.MJCF(file=mjcf))
+        entity = scene.add_entity(
+            gs.morphs.MJCF(
+                file=mjcf,
+            ),
+        )
         scene.build(n_envs=n_envs)
         scenes[requires_grad] = scene
         entities[requires_grad] = entity

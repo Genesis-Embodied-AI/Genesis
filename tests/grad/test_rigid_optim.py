@@ -108,7 +108,6 @@ def test_goal_pose_optimization_converges(show_viewer):
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
             disable_constraint=True,
-            use_contact_island=False,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, -0.15, 2.42),
