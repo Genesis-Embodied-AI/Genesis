@@ -228,6 +228,20 @@ def test_plan_path_with_attached_entity(n_envs, show_viewer, tol):
     franka.plan_path(qpos_goal, attach_held_entities=False, seed=3)
     assert not bool(qd_to_torch(context.plan_info.attach_spheres_is_active).any())
 
+    # Planning toward a grasp, hands free: a pre-grasp pose with the open fingers straddling the bystander cube
+    # is proxy-colliding by nature, and certifies through the goal-contact allowance.
+    path_pregrasp = franka.plan_path(
+        max_retry=2,
+        attach_held_entities=False,
+        goal_link=franka.get_link("hand"),
+        goal_pos=(bystander_pos_before + torch.tensor([0.0, 0.0, 0.1], dtype=gs.tc_float)).tolist(),
+        goal_quat=[0.0, 1.0, 0.0, 0.0],
+        seed=3,
+    )
+    assert bool(path_pregrasp.is_valid.all())
+    franka.set_qpos(path_pregrasp.qpos[-1], zero_velocity=False)
+    assert_allclose(hand.get_pos(), bystander_pos_before + torch.tensor([0.0, 0.0, 0.1], dtype=gs.tc_float), tol=6e-3)
+
 
 @pytest.mark.slow
 @pytest.mark.required
