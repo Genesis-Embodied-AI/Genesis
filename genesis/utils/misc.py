@@ -809,8 +809,9 @@ def qd_zero_grad(value) -> None:
                     grad_view = qd_to_torch(grad, copy=False)
                     grad_view.zero_()
                 except ValueError:
-                    # No zero-copy view for this buffer (e.g. a field past 2**31 bytes in its SNode tree); fill it in
-                    # place through quadrants instead.
+                    # No zero-copy view for this buffer (e.g. an interleaved AOS struct member, or a field whose
+                    # in-tree byte offset the installed torch cannot carry through DLPack); fill it in place through
+                    # quadrants instead.
                     grad.fill(0.0)
             else:
                 grad.fill(0.0)
