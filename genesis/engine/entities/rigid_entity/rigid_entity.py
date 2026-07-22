@@ -49,6 +49,23 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
 
 
+def _indices_key(indices, n):
+    """Canonicalize an index-like setter argument into a hashable tape-key component.
+
+    Slices key directly when hashable (Python 3.12 onward) and resolve against the dimension size [n] otherwise, so
+    an equivalent explicit index list keys identically on older interpreters.
+    """
+    if indices is None:
+        return None
+    if isinstance(indices, slice):
+        if isinstance(indices, Hashable):
+            return indices
+        return tuple(range(*indices.indices(n)))
+    if isinstance(indices, torch.Tensor):
+        return tuple(tensor_to_array(indices).reshape(-1).tolist())
+    return tuple(np.asarray(indices).reshape(-1).tolist())
+
+
 # Wrapper to track the arguments of a function and save them in the target buffer
 def tracked(fun):
     sig = inspect.signature(fun)
@@ -59,23 +76,15 @@ def tracked(fun):
             bound = sig.bind(self, *args, **kwargs)
             bound.apply_defaults()
             args_dict = dict(tuple(bound.arguments.items())[1:])
-            # Key the slot by (method, dofs subset) so same-step calls on distinct subsets (e.g. arm and gripper
-            # force control) each keep their own entry and gradient path; keyed by method alone, the second call
-            # would evict the first from the tape. Slices key directly when hashable (Python 3.12 onward) and
-            # resolve against the entity dof count otherwise.
-            dofs_idx_local = args_dict.get("dofs_idx_local")
-            if dofs_idx_local is None:
-                subset = None
-            elif isinstance(dofs_idx_local, slice):
-                if isinstance(dofs_idx_local, Hashable):
-                    subset = dofs_idx_local
-                else:
-                    subset = tuple(range(*dofs_idx_local.indices(self.n_dofs)))
-            elif isinstance(dofs_idx_local, torch.Tensor):
-                subset = tuple(tensor_to_array(dofs_idx_local).reshape(-1).tolist())
-            else:
-                subset = tuple(np.asarray(dofs_idx_local).reshape(-1).tolist())
-            self._update_tgt((fun.__name__, subset), args_dict)
+            # Key the slot by (method, dofs subset, envs subset) so same-step calls on distinct subsets (e.g. arm
+            # and gripper force control, or per-environment-group commands) each keep their own entry and gradient
+            # path; a coarser key would let the second call evict the first from the tape.
+            key = (
+                fun.__name__,
+                _indices_key(args_dict.get("dofs_idx_local"), self.n_dofs),
+                _indices_key(args_dict.get("envs_idx"), self._solver._B),
+            )
+            self._update_tgt(key, args_dict)
         return fun(self, *args, **kwargs)
 
     return wrapper
@@ -159,7 +168,15 @@ class KinematicEntity(Entity):
         self._load_model()
 
         # Initialize target variables and checkpoint
-        self._tgt_keys = ("set_pos", "set_quat", "set_dofs_velocity", "control_dofs_force")
+        self._tgt_keys = (
+            "set_pos",
+            "set_quat",
+            "set_dofs_velocity",
+            "control_dofs_force",
+            "control_dofs_velocity",
+            "control_dofs_position",
+            "control_dofs_position_velocity",
+        )
         self._tgt = dict()
         self._tgt_buffer = list()
         self._ckpt = dict()
@@ -1597,6 +1614,12 @@ class KinematicEntity(Entity):
                     self.set_dofs_velocity(**data_kwargs)
                 case "control_dofs_force":
                     self.control_dofs_force(**data_kwargs)
+                case "control_dofs_velocity":
+                    self.control_dofs_velocity(**data_kwargs)
+                case "control_dofs_position":
+                    self.control_dofs_position(**data_kwargs)
+                case "control_dofs_position_velocity":
+                    self.control_dofs_position_velocity(**data_kwargs)
                 case _:
                     gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
 
@@ -1636,6 +1659,15 @@ class KinematicEntity(Entity):
                         force._backward_from_qd(
                             self.set_dofs_force_grad, data_kwargs["dofs_idx_local"], data_kwargs["envs_idx"]
                         )
+
+                case "control_dofs_velocity" | "control_dofs_position" | "control_dofs_position_velocity":
+                    # PD control targets are replayed for primal correctness but have no input-gradient path.
+                    for target in (data_kwargs.get("position"), data_kwargs.get("velocity")):
+                        if isinstance(target, torch.Tensor) and target.requires_grad:
+                            gs.raise_exception(
+                                "Gradients with respect to PD control targets are not supported yet. Use "
+                                "'control_dofs_force' for differentiable control inputs."
+                            )
 
                 case _:
                     gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
@@ -4011,6 +4043,7 @@ class RigidEntity(KinematicEntity):
         self._solver.control_dofs_force(force, dofs_idx, envs_idx)
 
     @gs.assert_built
+    @tracked
     def control_dofs_velocity(self, velocity, dofs_idx_local=None, envs_idx=None):
         """
         Set the PD controller's target velocity for the entity's dofs. This is used for velocity control.
@@ -4033,6 +4066,7 @@ class RigidEntity(KinematicEntity):
         self._solver.control_dofs_velocity(velocity, dofs_idx, envs_idx)
 
     @gs.assert_built
+    @tracked
     def control_dofs_position(self, position, dofs_idx_local=None, envs_idx=None):
         """
         Set the position controller's target position for the entity's dofs. The controller is a proportional term
@@ -4056,6 +4090,7 @@ class RigidEntity(KinematicEntity):
         self._solver.control_dofs_position(position, dofs_idx, envs_idx)
 
     @gs.assert_built
+    @tracked
     def control_dofs_position_velocity(self, position, velocity, dofs_idx_local=None, envs_idx=None):
         """
         Set a PD controller's target position and velocity for the entity's dofs. This is used for position control.
