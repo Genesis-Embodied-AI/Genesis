@@ -1351,7 +1351,8 @@ class RigidSolver(KinematicSolver):
         # compute stream on Metal, so the writes are flushed before the next kernels (see set_base_links_quat).
         if gs.use_zerocopy:
             acc_grad = qd_to_torch(self.dyn_state.dofs.acc.grad, transpose=True, copy=False)
-            qd_to_torch(constraint_state.dL_dqacc, transpose=True, copy=False).copy_(acc_grad)
+            dL_dqacc = qd_to_torch(constraint_state.dL_dqacc, transpose=True, copy=False)
+            dL_dqacc.copy_(acc_grad)
             acc_grad.zero_()
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
@@ -1359,12 +1360,12 @@ class RigidSolver(KinematicSolver):
             kernel_load_dL_dqacc_from_acc_grad(self.dyn_state, constraint_state, self.rigid_config)
         self.constraint_solver.backward()
         if gs.use_zerocopy:
-            qd_to_torch(self.dyn_state.dofs.force.grad, transpose=True, copy=False).add_(
-                qd_to_torch(constraint_state.dL_dforce, transpose=True, copy=False)
-            )
-            qd_to_torch(self.rigid_info.mass_mat.grad, transpose=True, copy=False).add_(
-                qd_to_torch(constraint_state.dL_dM, transpose=True, copy=False)
-            )
+            force_grad = qd_to_torch(self.dyn_state.dofs.force.grad, transpose=True, copy=False)
+            dL_dforce = qd_to_torch(constraint_state.dL_dforce, transpose=True, copy=False)
+            force_grad.add_(dL_dforce)
+            mass_mat_grad = qd_to_torch(self.rigid_info.mass_mat.grad, transpose=True, copy=False)
+            dL_dM = qd_to_torch(constraint_state.dL_dM, transpose=True, copy=False)
+            mass_mat_grad.add_(dL_dM)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
         else:
