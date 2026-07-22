@@ -1346,44 +1346,34 @@ class RigidSolver(KinematicSolver):
         """Backward pass for the constraint solver: seed dL_dqacc from acc.grad, run the adjoint solve, fold its
         outputs back into the autodiff grad fields, then reverse the constraint-row assembly."""
         constraint_state = self.constraint_solver.constraint_state
-        # Pure grad shuffles: in-place through zero-copy views when available, kernel dispatch otherwise (see
-        # "Pure read-write data accessors on the hot path" in CLAUDE.md); a grad buffer may have no zero-copy view
-        # (see qd_zero_grad in misc.py), in which case the kernel path takes over. torch (MPS) and quadrants do not
-        # share a compute stream on Metal, so the writes are flushed before the next kernels (see
-        # set_base_links_quat).
-        dL_dqacc = None
+        # Pure grad shuffles: in-place through zero-copy views when supported, kernel dispatch otherwise (see
+        # "Pure read-write data accessors on the hot path" in CLAUDE.md). gs.use_zerocopy encodes every zero-copy
+        # availability condition for these buffers (standalone dense allocations with DLPack-supported dtypes; the
+        # platform gates live in gs.init). torch (MPS) and quadrants do not share a compute stream on Metal, so the
+        # writes are flushed before the next kernels (see set_base_links_quat).
         if gs.use_zerocopy:
-            try:
-                acc_grad = qd_to_torch(self.dyn_state.dofs.acc.grad, copy=False)
-                dL_dqacc = qd_to_torch(constraint_state.dL_dqacc, copy=False)
-            except ValueError:
-                dL_dqacc = None
-        if dL_dqacc is None:
-            kernel_load_dL_dqacc_from_acc_grad(self.dyn_state, constraint_state, self.rigid_config)
-        else:
+            acc_grad = qd_to_torch(self.dyn_state.dofs.acc.grad, copy=False)
+            dL_dqacc = qd_to_torch(constraint_state.dL_dqacc, copy=False)
             dL_dqacc.copy_(acc_grad)
             acc_grad.zero_()
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
-        self.constraint_solver.backward()
-        dL_dM = None
-        if gs.use_zerocopy:
-            try:
-                force_grad = qd_to_torch(self.dyn_state.dofs.force.grad, copy=False)
-                dL_dforce = qd_to_torch(constraint_state.dL_dforce, copy=False)
-                mass_mat_grad = qd_to_torch(self.rigid_info.mass_mat.grad, copy=False)
-                dL_dM = qd_to_torch(constraint_state.dL_dM, copy=False)
-            except ValueError:
-                dL_dM = None
-        if dL_dM is None:
-            kernel_accumulate_constraint_solver_grads(
-                self.dyn_state, constraint_state, self.rigid_info, self.rigid_config
-            )
         else:
+            kernel_load_dL_dqacc_from_acc_grad(self.dyn_state, constraint_state, self.rigid_config)
+        self.constraint_solver.backward()
+        if gs.use_zerocopy:
+            force_grad = qd_to_torch(self.dyn_state.dofs.force.grad, copy=False)
+            dL_dforce = qd_to_torch(constraint_state.dL_dforce, copy=False)
             force_grad.add_(dL_dforce)
+            mass_mat_grad = qd_to_torch(self.rigid_info.mass_mat.grad, copy=False)
+            dL_dM = qd_to_torch(constraint_state.dL_dM, copy=False)
             mass_mat_grad.add_(dL_dM)
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
+        else:
+            kernel_accumulate_constraint_solver_grads(
+                self.dyn_state, constraint_state, self.rigid_info, self.rigid_config
+            )
 
         kernel_manual_add_equality_constraints_bw(
             self.dyn_state, constraint_state, self.dyn_info, self.rigid_info, self.rigid_config
