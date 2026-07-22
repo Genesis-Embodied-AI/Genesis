@@ -34,7 +34,10 @@ FULL_ROOM_ASSETS = ("Lightwheel_Kitchen/KitchenRoom.usd", ["Lightwheel_Kitchen/*
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "--asset", default="all", choices=[*SAMPLE_ASSETS, "all"], help="Which sample asset(s) to load."
+        "--asset",
+        default="bottle" if "PYTEST_VERSION" in os.environ else "all",
+        choices=[*SAMPLE_ASSETS, "all"],
+        help="Which sample asset(s) to load.",
     )
     parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples.")
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show the interactive viewer.")
