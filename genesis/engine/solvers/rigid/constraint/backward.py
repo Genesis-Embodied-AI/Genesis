@@ -71,36 +71,43 @@ def func_solve_adjoint_u_cg_batch(
     n_dofs = constraint_state.bw_u.shape[0]
 
     # r = g - A*0 = g ; p = r ; u = 0
+    num = gs.qd_float(0.0)
     for i_d in range(n_dofs):
         constraint_state.bw_u[i_d, i_b] = 0.0
         constraint_state.bw_r[i_d, i_b] = constraint_state.dL_dqacc[i_d, i_b]
         constraint_state.bw_p[i_d, i_b] = constraint_state.bw_r[i_d, i_b]
+        num += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
 
-    for it in range(rigid_info.iterations[None]):
+    # The stopping target is relative to the seed |g|^2: an absolute threshold either exits at a huge relative
+    # residual when g is small (each backward substep shrinks the upstream gradient by roughly the loss scale) or,
+    # past convergence, lets the clamped alpha / beta denominators inject garbage steps that corrupt u. The
+    # denominator break exits once p collapses to the round-off floor, where p^T A p underflows for a positive
+    # semi-definite (PSD) A; alpha and beta then never need clamping.
+    num_target = num * rigid_info.EPS[None] * rigid_info.EPS[None]
+    for _ in range(rigid_info.iterations[None]):
+        if num <= num_target:
+            break
         func_matvec_Ap(i_b, constraint_state, dyn_info, rigid_info, rigid_config)
 
         # alpha = (r,r)/(p,Ap)
-        num = gs.qd_float(0.0)
         den = gs.qd_float(0.0)
         for i_d in range(n_dofs):
-            num += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
             den += constraint_state.bw_p[i_d, i_b] * constraint_state.bw_Ap[i_d, i_b]
-        alpha = num / qd.max(den, rigid_info.EPS[None])
+        if den <= 0.0:
+            break
+        alpha = num / den
 
         # u += alpha p ; r -= alpha Ap
         for i_d in range(n_dofs):
             constraint_state.bw_u[i_d, i_b] += alpha * constraint_state.bw_p[i_d, i_b]
             constraint_state.bw_r[i_d, i_b] -= alpha * constraint_state.bw_Ap[i_d, i_b]
 
-        # TODO: Might need lower tolerance?
-        if num < rigid_info.EPS[None]:
-            break
-
         # beta = (r_new,r_new)/(r_old,r_old) ; p = r + beta p
         num_new = gs.qd_float(0.0)
         for i_d in range(n_dofs):
             num_new += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
-        beta = num_new / qd.max(num, rigid_info.EPS[None])
+        beta = num_new / num
+        num = num_new
         for i_d in range(n_dofs):
             constraint_state.bw_p[i_d, i_b] = constraint_state.bw_r[i_d, i_b] + beta * constraint_state.bw_p[i_d, i_b]
 
