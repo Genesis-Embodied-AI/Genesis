@@ -350,7 +350,9 @@ def test_constraint_solver_backward_matches_fd(monkeypatch):
     from genesis.engine.solvers.rigid.constraint.solver import func_solve_body, func_solve_init
     from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
 
-    # fp64 is required: the FD perturbation must be small enough for a reliable estimate, which fp32 cannot resolve
+    # fp64 is required: the loss carries a large constant offset, so at fp32 the parameter-side finite-difference
+    # deltas (aref, efc_D, jac, mass) drown in the loss resolution floor regardless of the step size
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             requires_grad=True,
@@ -422,7 +424,9 @@ def test_constraint_solver_backward_matches_fd(monkeypatch):
         updated_acc_smooth = np.linalg.solve(input_mass[..., 0], input_force[..., 0])
         rigid_solver.dyn_state.dofs.acc_smooth.from_numpy(updated_acc_smooth[..., None])
         constraint_solver.resolve()
-        return ((qd_to_torch(constraint_solver.qacc) - target_qacc) ** 2).mean()
+        # Collapse to a Python scalar right away: the reduction reads a zero-copy view of qacc, and a deferred
+        # evaluation (MPS is lazy) would otherwise run only after the next call overwrites the buffer in place.
+        return float(((qd_to_torch(constraint_solver.qacc) - target_qacc) ** 2).mean())
 
     init_input_mass = qd_to_numpy(rigid_solver.rigid_info.mass_mat, copy=True)
     init_input_jac = qd_to_numpy(constraint_solver.constraint_state.jac, copy=True)
@@ -484,5 +488,5 @@ def test_constraint_solver_backward_matches_fd(monkeypatch):
             loss_p = compute_loss(**{**inputs, key: init_x + rand_dx * fd_eps})
             loss_m = compute_loss(**{**inputs, key: init_x - rand_dx * fd_eps})
             dL_fd = (loss_p - loss_m) / (2 * fd_eps)
-            error += (dL - dL_fd).abs() / max(abs(dL), abs(dL_fd), gs.EPS)
+            error += abs(dL - dL_fd) / max(abs(dL), abs(dL_fd), gs.EPS)
         assert_allclose(error / trials, 0.0, atol=1e-4)

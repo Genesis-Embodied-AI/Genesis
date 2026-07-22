@@ -220,9 +220,9 @@ def test_per_step_pd_target_grad_matches_fd(control_mode, grad_revolute, precisi
 
     def step_fn(entity, i_step):
         if control_mode == "position":
-            entity.control_dofs_position(gs.tensor([targets[i_step]], dtype=gs.tc_float))
+            entity.control_dofs_position(targets[i_step])
         else:
-            entity.control_dofs_velocity(gs.tensor([targets[i_step]], dtype=gs.tc_float))
+            entity.control_dofs_velocity(targets[i_step])
 
     assert_grad_matches_fd(
         pair,

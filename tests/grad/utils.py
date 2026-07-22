@@ -74,15 +74,12 @@ def assert_grad_matches_fd(
 ):
     """Central finite-difference check of a tracked setter's reverse-mode gradient.
 
-    `inputs` holds one array per applied input; input i is applied via `apply_fn(entity, x)` before step i and must
-    receive an independent adjoint from the backward unroll. The scene runs `n_steps` steps (default len(inputs));
-    when it exceeds the number of inputs the remaining steps run without re-applying (a single input driving an
-    N-step rollout). `setup_fn(scene, entity)` runs once after reset for untracked initialization (e.g. an initial
-    pose); `step_fn(entity, i_step)` runs before every step on both scenes for per-step scenario commands that are
-    not differentiated (e.g. PD control targets). The FD reference perturbs each entry of each input in turn and
-    re-runs the full trajectory on the production-mode scene, so the cost is O(n_steps * total input size).
-    rtol / atol / eps are required and per-scenario: each test pins them to its own measured finite-difference
-    floor."""
+    Input i of `inputs` is applied via `apply_fn(entity, x)` before step i and receives its own adjoint. The scene
+    runs `n_steps` steps (default len(inputs)); extra steps run without re-applying. `setup_fn(scene, entity)` runs
+    once after reset for untracked initialization; `step_fn(entity, i_step)` runs before every step on both scenes
+    for undifferentiated per-step scenario commands (e.g. PD targets). The FD reference perturbs each input entry in
+    turn, so the cost is O(n_steps * total input size). rtol / atol / eps are per-scenario, pinned to the measured
+    finite-difference floor."""
     base = [np.array(inp, dtype=np.float64) for inp in inputs]
     total_steps = len(base) if n_steps is None else n_steps
 
@@ -122,7 +119,7 @@ def assert_grad_matches_fd(
                         inp = base[i_step].copy()
                         if i_step == i_input:
                             inp.reshape(-1)[i_entry] += sign * eps
-                        apply_fn(pair.entity_fd, gs.tensor(inp, dtype=gs.tc_float))
+                        apply_fn(pair.entity_fd, inp)
                     if step_fn is not None:
                         step_fn(pair.entity_fd, i_step)
                     pair.scene_fd.step()

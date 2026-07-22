@@ -42,13 +42,13 @@ def test_reference_trajectory_recovery_converges(control_target, grad_cartpole, 
     scene_ref.reset()
     if control_target == "init_vel":
         target_ctrl = rng.normal(size=(B, N_DOFS)) * 0.5
-        robot_ref.set_dofs_velocity(gs.tensor(target_ctrl, dtype=gs.tc_float))
+        robot_ref.set_dofs_velocity(target_ctrl)
         for _ in range(N_STEPS):
             scene_ref.step()
     else:
         target_ctrl = rng.normal(size=(N_STEPS, B, N_DOFS)) * 0.2
         for t in range(N_STEPS):
-            robot_ref.control_dofs_force(gs.tensor(target_ctrl[t], dtype=gs.tc_float))
+            robot_ref.control_dofs_force(target_ctrl[t])
             scene_ref.step()
     ref_state = scene_ref.rigid_solver.get_state()
     target_qpos = ref_state.qpos.detach().clone()
