@@ -46,7 +46,7 @@
 - **Always pass `transpose=True`** to `qd_to_numpy` / `qd_to_torch` to move the batch dimension to front (`[B, n, dim]`), aligning with public getter conventions.
 - **Hoist conversions before loops.** Call `qd_to_numpy` / `qd_to_torch` once, then index the local array.
 - **`qd_to_numpy` with `copy=False` fails on CUDA.** GPU data always requires a copy to numpy.
-- **Store `qd_to_torch(..., copy=False)` views in named locals**, one local per view; never chain the in-place op on the call expression. Drop `transpose=True` for element-wise in-place ops between two field views.
+- **A `qd_to_torch` / `qd_to_numpy` view that gets WRITTEN binds to a named local first** (`flags_t = qd_to_torch(..., copy=False)` then `flags_t[mask] = ...`); never mutate through an anonymous chain. Read-only use is the opposite: chain as many operations as needed inline (`qd_to_torch(f).T.reshape(...).gather(...)`) — a named temporary a one-line read does not need is noise. When the chain overflows the line, split it at a natural intermediate into named single-line statements (`knots = qd_to_torch(f).T.reshape(...)` then `knots_best = knots.gather(...)`), never into a parenthesized multi-line chain.
 - **Metal stream sync is the caller's job**: after a batch of torch zero-copy writes, call `torch.mps.synchronize()` once before the next quadrants kernel reads the buffers. Helpers performing such writes (e.g. `qd_zero_grad`) never sync internally.
 - **Branch zero-copy paths on `gs.use_zerocopy` alone; no try/except probing.**
 - **Do not pass `copy=` at all** to `qd_to_torch` / `qd_to_numpy` when the value returned to the caller is fresh arithmetic (nothing internal aliases out) — let it zero-copy or copy only as needed. Reserve `copy=True` for when a raw field view would otherwise escape and could be mutated.
@@ -145,6 +145,9 @@
 - Pattern for git + run: `ssh genesis-coreweave 'bash -lc "cd /mnt/home/duburcqa/workspace/src/genesis && git pull && gs-srun --partition=rtx-high --nodes=1 --gpus=1 bash -ilc \"cd /mnt/home/duburcqa/workspace/src/genesis && pytest -n 10 tests/ipc -v --no-header 2>&1\""'`
 - Example tests need `-m examples` to override the default marker filter in `pyproject.toml`.
 - Copy local files to cluster: `scp <local_path> genesis-coreweave:<remote_path>`. Then run with `gs-srun`.
+- **The compute container mounts `/mnt/home`, not the login node's `/tmp`.** A script, patch, or output dir placed under `/tmp` on the login node is invisible under `gs-srun`; stage everything under `/mnt/home/duburcqa`.
+- **The interactive login shell (`bash -ilc`) sets `noclobber`:** `cmd > file` aborts with "cannot overwrite existing file" when `file` already exists, silently producing no output for that run. `rm -f file` first (or redirect with `>| file`) whenever re-generating a log at a fixed path.
+- **Run a staged script with `bash -ilc "source script.sh"`, never `bash -l script.sh`.** The container's Python env only initializes in an *interactive* login shell; a non-interactive `bash -l script.sh` under `gs-srun` runs without the venv (`ModuleNotFoundError: genesis`). Stage the script under `/mnt/home` and source it, e.g. `gs-srun ... bash -ilc "source /mnt/home/duburcqa/run.sh"` — this also sidesteps nested-quoting breakage from long inline commands.
 
 ## Reproducing Apple Software Renderer Failures Locally
 

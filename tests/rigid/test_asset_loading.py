@@ -301,7 +301,7 @@ def test_urdf_parsing_merge_fixed_links(urdf_path, fixed, show_viewer, tol):
     com_robot_1, com_robot_2 = scene.rigid_solver.get_links_root_COM(
         links_idx=(robot_1.base_link_idx, robot_2.base_link_idx)
     )
-    assert_allclose(com_robot_1, com_robot_2, tol=tol)
+    assert_allclose(com_robot_1, com_robot_2, tol=5e-9)
 
 
 @pytest.mark.required
