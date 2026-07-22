@@ -1,3 +1,4 @@
+import math
 import sys
 
 import numpy as np
@@ -94,10 +95,15 @@ def test_fk_grad_matches_fd(model_name, request, precision, show_viewer):
         else:
             step_input = rng.standard_normal((B, n_dofs))
 
+        def apply_vel_per_env(e, x):
+            # Same-step per-environment commands: each call must keep its own tape slot and gradient path.
+            e.set_dofs_velocity(x[:1], envs_idx=[0])
+            e.set_dofs_velocity(x[1:], envs_idx=[1])
+
         apply_fn = {
             "pos": lambda e, x: e.set_pos(x),
             "quat": lambda e, x: e.set_quat(x),
-            "vel": lambda e, x: e.set_dofs_velocity(x),
+            "vel": apply_vel_per_env,
             "force": lambda e, x: e.control_dofs_force(x),
         }[setter]
 
@@ -193,5 +199,39 @@ def test_fk_multistep_force_grad_matches_fd(model_name, request, precision, show
         loss_fn,
         rtol=fp64_tol if precision == "64" else fp32_tol,
         atol=fp64_tol if precision == "64" else fp32_tol,
+        eps=3e-5 if precision == "64" else 3e-2,
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("control_mode", ["position", "velocity"])
+def test_per_step_pd_target_grad_matches_fd(control_mode, grad_revolute, precision, show_viewer):
+    # Per-step-varying PD targets are scenario commands, replayed by the backward unroll; the gradient of a tracked
+    # initial velocity through the controlled rollout must match finite differences.
+    pair = make_diff_scene_pair(
+        grad_revolute,
+        substeps=4,
+        show_viewer=show_viewer,
+    )
+    for entity in (pair.entity_ana, pair.entity_fd):
+        entity.set_dofs_kp(4.0)
+        entity.set_dofs_kv(0.8)
+    targets = [0.3 * math.sin(0.7 * t) for t in range(10)]
+
+    def step_fn(entity, i_step):
+        if control_mode == "position":
+            entity.control_dofs_position(gs.tensor([targets[i_step]], dtype=gs.tc_float))
+        else:
+            entity.control_dofs_velocity(gs.tensor([targets[i_step]], dtype=gs.tc_float))
+
+    assert_grad_matches_fd(
+        pair,
+        [np.array([1.5])],
+        lambda e, x: e.set_dofs_velocity(x),
+        lambda scene, entity: scene.rigid_solver.get_state().qpos[0, 0] ** 2,
+        n_steps=10,
+        step_fn=step_fn,
+        rtol=1e-10 if precision == "64" else 5e-5,
+        atol=1e-10 if precision == "64" else 5e-5,
         eps=3e-5 if precision == "64" else 3e-2,
     )

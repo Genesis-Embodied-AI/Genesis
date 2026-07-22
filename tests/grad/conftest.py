@@ -3,10 +3,12 @@ import xml.etree.ElementTree as ET
 import pytest
 
 
-def _add_hinge_arm(parent, body_name, pos, axis="0 1 0", **joint_kwargs):
+def _add_hinge_arm(parent, body_name, pos, axis="0 1 0", joint_pos=None, **joint_kwargs):
     """Add a 1-DOF hinge arm link (y-axis hinge by default, capsule geom, explicit inertia) and return its body
     element."""
     body = ET.SubElement(parent, "body", name=body_name, pos=pos)
+    if joint_pos is not None:
+        joint_kwargs["pos"] = joint_pos
     ET.SubElement(body, "joint", type="hinge", axis=axis, **joint_kwargs)
     ET.SubElement(body, "inertial", mass="0.5", pos="0.1 0 0", diaginertia="0.01 0.01 0.01")
     ET.SubElement(body, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", contype="0", conaffinity="0")
@@ -170,12 +172,14 @@ def grad_weld_pair():
     arm1 = _add_hinge_arm(worldbody, "arm1", "0 0 0", name="j1")
     _add_hinge_arm(arm1, "arm2", "0.2 0 0", name="j2", axis="1 0 0")
     equality = ET.SubElement(mjcf, "equality")
+    # relpose is the pose of body2 in body1's frame at the welded configuration; a wrong sign leaves the weld
+    # violated at rest and turns the scenario into a violent snap instead of a hold.
     ET.SubElement(
         equality,
         "weld",
         body1="arm2",
         body2="arm1",
-        relpose="0.2 0 0 1 0 0 0",
+        relpose="-0.2 0 0 1 0 0 0",
         solimp="0.95 0.99 0.001",
         solref="0.005 1",
     )
@@ -185,13 +189,20 @@ def grad_weld_pair():
 @pytest.fixture(scope="session")
 def grad_all_eq_fric():
     # Integration scene exercising every differentiated constraint group: frictionloss on j1, equality JOINT between
-    # j1 and j2, equality CONNECT between arm3 and arm4, equality WELD between arm5 and arm6. Each group acts on a
-    # disjoint pair of links so the constraint solver faces a well-posed system within every pair.
+    # j1 and j2, equality CONNECT between arm3 and arm4, equality WELD between arm6's nested child and arm5. Each
+    # group acts on a disjoint pair of links so the constraint solver faces a well-posed system within every pair.
+    # The weld chain nests a skew-axis hinge (see grad_weld_pair) so its rotation rows carry a nonzero velocity bias
+    # across two separate trees.
     mjcf = ET.Element("mujoco", model="all_eq_fric")
     worldbody = ET.SubElement(mjcf, "worldbody")
     _add_hinge_arm(worldbody, "arm1", "0 0 0", name="j1", frictionloss="0.5")
     for i_arm in range(2, 7):
-        _add_hinge_arm(worldbody, f"arm{i_arm}", f"0 {0.2 * (i_arm - 1):.1f} 0", name=f"j{i_arm}")
+        arm = _add_hinge_arm(worldbody, f"arm{i_arm}", f"0 {0.2 * (i_arm - 1):.1f} 0", name=f"j{i_arm}")
+        if i_arm == 6:
+            # Skew axis for a nonzero rotation-row velocity bias; the joint position offset keeps the hinge axis
+            # off the welded point so the weld position rows engage (an axis through it leaves the spin resisted
+            # only by the weak rotation rows and the chain winds up).
+            _add_hinge_arm(arm, "arm6b", "0.2 0 0", name="j6b", axis="1 0 0", joint_pos="0.05 0.02 0.06")
     equality = ET.SubElement(mjcf, "equality")
     ET.SubElement(
         equality, "joint", joint1="j1", joint2="j2", polycoef="0 1 0 0 0", solimp="0.95 0.99 0.001", solref="0.005 1"
@@ -199,14 +210,16 @@ def grad_all_eq_fric():
     ET.SubElement(
         equality, "connect", body1="arm3", body2="arm4", anchor="0.2 0 0", solimp="0.95 0.99 0.001", solref="0.005 1"
     )
+    # The softer solref keeps the 6-row weld on this three-dof chain clear of the stabilization stability
+    # boundary (the shared 0.005 timeconst is clamped to 2 * substep_dt, which is marginal here).
     ET.SubElement(
         equality,
         "weld",
-        body1="arm5",
-        body2="arm6",
-        relpose="0 -0.2 0 1 0 0 0",
+        body1="arm6b",
+        body2="arm5",
+        relpose="-0.2 -0.2 0 1 0 0 0",
         solimp="0.95 0.99 0.001",
-        solref="0.005 1",
+        solref="0.02 1",
     )
     return ET.tostring(mjcf, encoding="unicode")
 

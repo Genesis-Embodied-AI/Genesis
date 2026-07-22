@@ -16,6 +16,7 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
     # Forward: the slider limit must actually bound the cart (it drifts freely when the constraint is off).
     off = make_diff_scene_pair(
         grad_slider_limit,
+        n_envs=2,
         substeps=4,
         dt=1.0 / 60.0,
         gravity=(0.0, 0.0, 0.0),
@@ -24,13 +25,14 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
         modes=(False,),
     )
     off.scene_fd.reset()
-    off.entity_fd.set_dofs_velocity(gs.tensor([100.0], dtype=gs.tc_float))
+    off.entity_fd.set_dofs_velocity(gs.tensor([[100.0], [100.0]], dtype=gs.tc_float))
     for _ in range(60):
         off.scene_fd.step()
-    assert abs(off.scene_fd.rigid_solver.get_state().qpos[0, 0]) > 50.0
+    assert (off.scene_fd.rigid_solver.get_state().qpos[:, 0].abs() > 50.0).all()
 
     on = make_diff_scene_pair(
         grad_slider_limit,
+        n_envs=2,
         substeps=4,
         dt=1.0 / 60.0,
         gravity=(0.0, 0.0, 0.0),
@@ -39,38 +41,27 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
         show_viewer=show_viewer,
     )
     on.scene_fd.reset()
-    on.entity_fd.set_dofs_velocity(gs.tensor([100.0], dtype=gs.tc_float))
+    on.entity_fd.set_dofs_velocity(gs.tensor([[100.0], [100.0]], dtype=gs.tc_float))
     for _ in range(60):
         on.scene_fd.step()
-    assert abs(on.scene_fd.rigid_solver.get_state().qpos[0, 0]) <= 4.5
+    assert (on.scene_fd.rigid_solver.get_state().qpos[:, 0].abs() <= 4.5).all()
 
-    # Backward: a rollout that drives the cart into the active |x|=4 limit, so the gradient flows through the
-    # constraint correction. Sanity-check that the cart actually reaches the band first.
+    # Backward, with mixed per-environment activity: env 0 drives into the active |x|=4 limit while env 1 stays well
+    # inside it, so the adjoint solve faces different constraint counts in the same batch. Sanity-check the split.
     on.scene_fd.reset()
-    on.entity_fd.set_dofs_velocity(gs.tensor([100.0], dtype=gs.tc_float))
+    on.entity_fd.set_dofs_velocity(gs.tensor([[100.0], [2.0]], dtype=gs.tc_float))
     for _ in range(5):
         on.scene_fd.step()
-    assert abs(on.scene_fd.rigid_solver.get_state().qpos[0, 0]) > 3.5
+    qpos_end = on.scene_fd.rigid_solver.get_state().qpos
+    assert abs(qpos_end[0, 0]) > 3.5
+    assert abs(qpos_end[1, 0]) < 1.0
 
     assert_grad_matches_fd(
         on,
-        [np.array([100.0])],
+        [np.array([[100.0], [2.0]])],
         lambda e, x: e.set_dofs_velocity(x),
-        lambda scene, entity: scene.rigid_solver.get_state().qpos[0, 0] ** 2,
+        lambda scene, entity: (scene.rigid_solver.get_state().qpos[:, 0] ** 2).sum(),
         n_steps=5,
-        rtol=1e-10 if precision == "64" else 5e-4,
-        atol=1e-10 if precision == "64" else 5e-4,
-        eps=3e-4 if precision == "64" else 3e-2,
-    )
-
-    # Inside-limit single step: the cart stays well inside the range so the limit is present but inactive; the
-    # constraint-inclusive forward+backward chain must still satisfy central FD (a smoother path than the crossing).
-    assert_grad_matches_fd(
-        on,
-        [np.array([2.0])],
-        lambda e, x: e.set_dofs_velocity(x),
-        lambda scene, entity: scene.rigid_solver.get_state().qpos[0, 0] ** 2,
-        n_steps=1,
         rtol=1e-10 if precision == "64" else 5e-4,
         atol=1e-10 if precision == "64" else 5e-4,
         eps=3e-4 if precision == "64" else 3e-2,
@@ -80,6 +71,7 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
     # inactive constraint branch must inject no spurious gradient.
     off_solver = make_diff_scene_pair(
         grad_slider_limit,
+        n_envs=2,
         substeps=4,
         dt=1.0 / 60.0,
         gravity=(0.0, 0.0, 0.0),
@@ -90,10 +82,10 @@ def test_joint_limit_grad_matches_fd(grad_slider_limit, precision, show_viewer):
     grads = {}
     for pair, key in ((off_solver, "off"), (on, "on")):
         pair.scene_ana.reset()
-        v = gs.tensor([0.5], dtype=gs.tc_float, requires_grad=True)
+        v = gs.tensor([[0.5], [0.3]], dtype=gs.tc_float, requires_grad=True)
         pair.entity_ana.set_dofs_velocity(v)
         pair.scene_ana.step()
-        loss = pair.scene_ana.rigid_solver.get_state().qpos[0, 0] ** 2
+        loss = (pair.scene_ana.rigid_solver.get_state().qpos[:, 0] ** 2).sum()
         loss.backward()
         grads[key] = tensor_to_array(v.grad)
     assert_allclose(
@@ -161,6 +153,7 @@ def test_per_step_force_into_limit_grad_matches_fd(model_name, request, precisio
 def test_frictionloss_grad_matches_fd(grad_revolute_frictionloss, precision, show_viewer):
     pair = make_diff_scene_pair(
         grad_revolute_frictionloss,
+        n_envs=2,
         substeps=4,
         dt=1.0 / 60.0,
         gravity=(0.0, 0.0, 0.0),
@@ -171,13 +164,13 @@ def test_frictionloss_grad_matches_fd(grad_revolute_frictionloss, precision, sho
     pair.scene_fd.reset()
     pair.scene_fd.step()
     cs = pair.scene_fd.rigid_solver.constraint_solver.constraint_state
-    assert qd_to_torch(cs.n_constraints_frictionloss)[0] == 1
+    assert (qd_to_torch(cs.n_constraints_frictionloss) == 1).all()
 
     assert_grad_matches_fd(
         pair,
-        [np.array([2.0])],
+        [np.array([[2.0], [1.2]])],
         lambda e, x: e.set_dofs_velocity(x),
-        lambda scene, entity: scene.rigid_solver.get_state().qpos[0, 0] ** 2,
+        lambda scene, entity: (scene.rigid_solver.get_state().qpos[:, 0] ** 2).sum(),
         n_steps=10,
         rtol=1e-10 if precision == "64" else 5e-5,
         atol=1e-10 if precision == "64" else 5e-5,
@@ -198,6 +191,7 @@ def test_frictionloss_grad_matches_fd(grad_revolute_frictionloss, precision, sho
 def test_equality_grad_matches_fd(model_name, n_rows, request, precision, show_viewer):
     pair = make_diff_scene_pair(
         request.getfixturevalue(model_name),
+        n_envs=2,
         substeps=4,
         dt=1.0 / 60.0,
         gravity=(0.0, 0.0, 0.0),
@@ -208,17 +202,19 @@ def test_equality_grad_matches_fd(model_name, n_rows, request, precision, show_v
     pair.scene_fd.reset()
     pair.scene_fd.step()
     cs = pair.scene_fd.rigid_solver.constraint_solver.constraint_state
-    assert qd_to_torch(cs.n_constraints_equality)[0] == n_rows
+    assert (qd_to_torch(cs.n_constraints_equality) == n_rows).all()
 
     # Large initial velocities: the anchor velocity-product bias entering aref is quadratic in velocity, so its
     # adjoint contribution only clears the fp64 tolerance band when the joints spin fast.
+    def loss_fn(scene, entity):
+        qpos = scene.rigid_solver.get_state().qpos
+        return (qpos[:, 0] ** 2 + 0.7 * qpos[:, 1] ** 2).sum()
+
     assert_grad_matches_fd(
         pair,
-        [np.array([4.0, -2.5])],
+        [np.array([[4.0, -2.5], [-3.0, 2.0]])],
         lambda e, x: e.set_dofs_velocity(x),
-        lambda scene, entity: (
-            scene.rigid_solver.get_state().qpos[0, 0] ** 2 + 0.7 * scene.rigid_solver.get_state().qpos[0, 1] ** 2
-        ),
+        loss_fn,
         n_steps=10,
         rtol=1e-10 if precision == "64" else 5e-5,
         atol=1e-10 if precision == "64" else 5e-5,
@@ -245,15 +241,15 @@ def test_all_constraint_groups_grad_matches_fd(grad_all_eq_fric, precision, show
     assert qd_to_torch(cs.n_constraints_equality)[0] == 10
     assert qd_to_torch(cs.n_constraints_frictionloss)[0] == 1
 
-    weights = np.array([1.0, 0.7, 1.3, 0.5, 0.9, 1.1])
+    weights = np.array([1.0, 0.7, 1.3, 0.5, 0.9, 1.1, 0.6])
 
     def loss_fn(scene, entity):
         qpos = scene.rigid_solver.get_state().qpos[0]
-        return sum(weights[d] * qpos[d] ** 2 for d in range(6))
+        return sum(weights[d] * qpos[d] ** 2 for d in range(7))
 
     assert_grad_matches_fd(
         pair,
-        [np.array([0.8, -0.3, 0.5, -0.2, 0.4, -0.6])],
+        [np.array([0.8, -0.3, 0.5, -0.2, 0.2, -0.3, 0.4])],
         lambda e, x: e.set_dofs_velocity(x),
         loss_fn,
         n_steps=10,

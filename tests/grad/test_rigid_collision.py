@@ -92,13 +92,17 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
     # only guards the degenerate-FD case.
     fd_rtol = 1e-6 if precision == "64" else 2e-3
     fd_atol = 1e-14 if precision == "64" else 1e-6
-    base_force = np.array([0.0, 0.0, -8.0, 0.0, 0.0, 0.0])
+    # The small tangential preload keeps the contact manifold away from a gain / loss transition, which the
+    # tangential finite-difference perturbation would otherwise cross (the in-test contact-count guard trips).
+    base_force = np.array([0.5, 0.0, -8.0, 0.0, 0.0, 0.0])
     init_force = np.broadcast_to(base_force, (n_steps, 6)).copy()
 
     def settle(scene, obj):
+        # Settling under the same base force as the grad window keeps the contact manifold in its loaded
+        # configuration throughout, so the in-window contact-count guards hold.
         obj.set_dofs_position(gs.tensor(rest_dofs, dtype=gs.tc_float).sceneless())
         for _ in range(n_settle):
-            obj.control_dofs_force(0.0)
+            obj.control_dofs_force(gs.tensor(base_force, dtype=gs.tc_float))
             scene.step()
 
     scene_ana, obj_ana = _build_contact_scene(shape, grad_capsule, requires_grad=True, show_viewer=show_viewer)
@@ -129,13 +133,18 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
             assert _n_contacts(scene_fd) == nc, "contact set changed under FD perturbation"
         return float((scene_fd.rigid_solver.get_state().qpos[0, :3] ** 2).sum().detach())
 
+    # Both the normal (z) and a tangential (x) force component: the tangential adjoint flows through the friction
+    # rows and their contact-frame chains, which the normal component alone leaves untested.
     for t in range(n_steps):
-        plus = init_force.copy()
-        plus[t, 2] += eps
-        minus = init_force.copy()
-        minus[t, 2] -= eps
-        fd_z = (loss_at(plus) - loss_at(minus)) / (2 * eps)
-        assert_allclose(ana[t, 2], fd_z, rtol=fd_rtol, atol=fd_atol, err_msg=f"contact force.grad mismatch at t={t}")
+        for i_d in (2, 0):
+            plus = init_force.copy()
+            plus[t, i_d] += eps
+            minus = init_force.copy()
+            minus[t, i_d] -= eps
+            fd = (loss_at(plus) - loss_at(minus)) / (2 * eps)
+            assert_allclose(
+                ana[t, i_d], fd, rtol=fd_rtol, atol=fd_atol, err_msg=f"contact force.grad mismatch at t={t} dof={i_d}"
+            )
 
 
 @pytest.mark.required
