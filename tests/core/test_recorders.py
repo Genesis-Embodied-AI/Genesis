@@ -60,10 +60,33 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
         ),
     )
 
+    twist_signs = np.array([1.0, -1.0, 1.0, -1.0])[:, None]
+    expected_twist = np.linspace(-0.5, 0.5, n_probes)[None, :] * twist_signs
+
+    def twist_data():
+        vectors = grid_data()
+        twist = np.zeros_like(vectors)
+        # normal is +z, so the twist about the view axis is the z component of twist_vectors.
+        twist[..., 2] = expected_twist
+        return vectors, twist
+
+    twist_plotter = scene.start_recording(
+        data_func=twist_data,
+        rec_options=gs.recorders.MPLVectorFieldPlot(
+            title="twist",
+            positions=positions,
+            normal=(0.0, 0.0, 1.0),
+            subplot_titles=titles,
+            twist_scale_factor=1.0,
+            twist_max_magnitude=0.5,
+            show_window=False,
+        ),
+    )
+
     scene.build()
     # The plotter overwrites the quiver data in place each call, so a single step already exercises process().
     scene.step()
-    for plotter in (grid_plotter, single_plotter):
+    for plotter in (grid_plotter, single_plotter, twist_plotter):
         if plotter.run_in_thread:
             plotter.sync()
 
@@ -73,6 +96,13 @@ def test_vector_field_plotter_subplots(mpl_agg_backend, png_snapshot):
     assert len(single_plotter._quivers) == 1  # no subplot_titles -> a single quiver
     for plotter in (grid_plotter, single_plotter):
         assert rgb_array_to_png_bytes(plotter.get_image_array()) == png_snapshot
+
+    # Twist overlay: one curved-arrow collection per subplot, each colored by the signed twist fed to it.
+    assert len(twist_plotter._twist_arcs) == len(titles)
+    assert len(twist_plotter._twist_heads) == len(titles)
+    for i_ax, arcs in enumerate(twist_plotter._twist_arcs):
+        assert len(arcs.get_segments()) == n_probes
+        assert_allclose(arcs.get_array(), expected_twist[i_ax], tol=gs.EPS)
 
 
 @pytest.mark.required

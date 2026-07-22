@@ -689,6 +689,12 @@ def _project_to_plane(normal: np.ndarray, *arrays: np.ndarray) -> tuple[np.ndarr
     return tuple(data @ uv for data in arrays)
 
 
+def _as_vector_field(data: "np.ndarray | torch.Tensor") -> np.ndarray:
+    """Coerce a vector payload to a (K, N, 3) stack, promoting a bare (N, 3) field to a single-subplot stack."""
+    field = tensor_to_array(data) if isinstance(data, torch.Tensor) else np.asarray(data, dtype=float)
+    return field[None] if field.ndim == 2 else field
+
+
 @register_recording(MPLVectorFieldPlotterOptions)
 class MPLVectorFieldPlotter(BaseMPLPlotter):
     """
@@ -697,10 +703,17 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
     The data_func returns an array of shape (N, 3) with the 3D vector at each position. When ``subplot_titles`` is
     set (K titles), the figure holds K subplots sharing the same positions, and the data_func instead returns shape
     (K, N, 3) -- one vector field per subplot (e.g. one per environment).
+
+    When ``twist_scale_factor`` is set, a curved rotation arrow is overlaid at each position for the twist about the
+    view normal (the ``twist_vectors . normal`` component), and the data_func instead returns a pair
+    ``(vectors, twist_vectors)`` with each entry shaped as above. Positive twist (right-hand rule about ``normal``)
+    sweeps counter-clockwise; the arc is colored by signed twist on a diverging colorbar centered at zero.
     """
 
     def build(self):
         super().build()
+
+        from matplotlib.collections import LineCollection
 
         opts = self._options
         positions = np.array(opts.positions, dtype=float)
@@ -723,9 +736,20 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         self._normal = normal
         self._scale_factor = opts.scale_factor
         self._max_magnitude = opts.max_magnitude
+        self._twist_scale_factor = opts.twist_scale_factor
+        self._twist_max_magnitude = opts.twist_max_magnitude
         self._scatters = []
         self._quivers = []
+        self._twist_arcs = []
+        self._twist_heads = []
         n = len(xy)
+
+        # Sign that maps positive twist (right-hand rule about normal) to a counter-clockwise sweep in the projected
+        # basis, independent of the handedness of the orthogonals() basis.
+        u, v = gu.orthogonals(normal)
+        s_hand = np.sign(np.dot(np.cross(u, v), normal))
+        self._twist_sign = s_hand if s_hand != 0.0 else 1.0
+
         for ax in axes:
             ax.set_xlim(x_min - margin, x_max + margin)
             ax.set_ylim(y_min - margin, y_max + margin)
@@ -750,25 +774,53 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
                     scale=1,
                 )
             )
+            if self._twist_scale_factor is not None:
+                arcs = LineCollection([], cmap="coolwarm", zorder=2)
+                arcs.set_clim(-self._twist_max_magnitude, self._twist_max_magnitude)
+                arcs.set_array(np.zeros(n))
+                ax.add_collection(arcs)
+                self._twist_arcs.append(arcs)
+                self._twist_heads.append(
+                    ax.quiver(
+                        xy[:, 0],
+                        xy[:, 1],
+                        np.zeros(n),
+                        np.zeros(n),
+                        np.zeros(n),
+                        cmap="coolwarm",
+                        clim=(-self._twist_max_magnitude, self._twist_max_magnitude),
+                        zorder=3,
+                        scale_units="xy",
+                        scale=1,
+                    )
+                )
         self.fig.colorbar(self._quivers[-1], ax=axes, label="Magnitude")
+        if self._twist_scale_factor is not None:
+            self.fig.colorbar(self._twist_arcs[-1], ax=axes, label="Twist")
         self._cache_backgrounds()
         self._show_fig()
 
         self.fig.canvas.mpl_connect("resize_event", self.on_resize)
 
     def process(self, data, cur_time):
-        """Process new vector data and update each subplot's quiver."""
-        vectors_all = tensor_to_array(data) if isinstance(data, torch.Tensor) else np.asarray(data, dtype=float)
-        if vectors_all.ndim == 2:  # single field -> treat as a 1-subplot stack
-            vectors_all = vectors_all[None]
-        if vectors_all.ndim != 3 or vectors_all.shape[1:] != (len(self._positions), 3):
+        """Process new vector data and update each subplot's quiver (and the twist overlay when enabled)."""
+        is_twist = self._twist_scale_factor is not None
+        if is_twist:
+            vectors_all, twist_all = (_as_vector_field(field) for field in data)
+        else:
+            vectors_all, twist_all = _as_vector_field(data), None
+
+        n = len(self._positions)
+        if vectors_all.ndim != 3 or vectors_all.shape[1:] != (n, 3):
             return
         if vectors_all.shape[0] != len(self.axes) or not self._backgrounds:
             return
+        if is_twist and twist_all.shape != vectors_all.shape:
+            return
 
         with self._lock:
-            for ax, scatter, quiver, background, vectors in zip(
-                self.axes, self._scatters, self._quivers, self._backgrounds, vectors_all
+            for i_ax, (ax, scatter, quiver, background, vectors) in enumerate(
+                zip(self.axes, self._scatters, self._quivers, self._backgrounds, vectors_all)
             ):
                 magnitudes = np.linalg.norm(vectors, axis=-1)
                 xy, uv = _project_to_plane(self._normal, self._positions, vectors)
@@ -780,6 +832,24 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
                 self.fig.canvas.restore_region(background)
                 ax.draw_artist(scatter)
                 ax.draw_artist(quiver)
+                if is_twist:
+                    arcs, heads = self._twist_arcs[i_ax], self._twist_heads[i_ax]
+                    twist = twist_all[i_ax] @ self._normal
+                    radius = self._twist_scale_factor * np.abs(twist)
+                    direction = self._twist_sign * np.sign(twist)
+                    # 270-degree arc per taxel; the open quarter marks the rotation and leaves room for the head.
+                    ang = direction[:, None] * np.linspace(0.0, 1.5 * np.pi, 16)[None, :]
+                    xs = xy[:, 0][:, None] + radius[:, None] * np.cos(ang)
+                    ys = xy[:, 1][:, None] + radius[:, None] * np.sin(ang)
+                    segments = np.stack((xs, ys), axis=-1)
+                    arcs.set_segments(list(segments))
+                    arcs.set_array(twist)
+                    heads.set_offsets(segments[:, -2])
+                    heads.set_UVC(
+                        segments[:, -1, 0] - segments[:, -2, 0], segments[:, -1, 1] - segments[:, -2, 1], twist
+                    )
+                    ax.draw_artist(arcs)
+                    ax.draw_artist(heads)
                 self.fig.canvas.blit(ax.bbox)
             self.fig.canvas.flush_events()
 
@@ -787,7 +857,12 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         super().cleanup()
         self._scatters = None
         self._quivers = None
+        self._twist_arcs = None
+        self._twist_heads = None
         self._positions = None
         self._normal = None
         self._scale_factor = None
         self._max_magnitude = None
+        self._twist_scale_factor = None
+        self._twist_max_magnitude = None
+        self._twist_sign = None

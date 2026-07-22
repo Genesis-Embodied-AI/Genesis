@@ -1153,6 +1153,79 @@ def test_proximity_taxel_crosstalk(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_proximity_taxel_twist_torque(show_viewer, tol, n_envs):
+    PAD_SIZE = 0.2
+    PAD_TOP = PAD_SIZE
+    OBJ_SIZE = 0.06
+    PROBE_RADIUS = 0.04
+    PENETRATION = 0.004
+    WZ = 4.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    pad = scene.add_entity(
+        gs.morphs.Box(
+            size=(PAD_SIZE, PAD_SIZE, PAD_SIZE),
+            pos=(0.0, 0.0, PAD_SIZE / 2),
+            fixed=True,
+        )
+    )
+    # A free object: the twist term is driven by relative angular velocity, so the tracked body must actually spin.
+    obj = scene.add_entity(
+        gs.morphs.Box(
+            size=(OBJ_SIZE, OBJ_SIZE, OBJ_SIZE),
+        )
+    )
+    grid = gu.generate_grid_points_on_plane(
+        lo=(-PAD_SIZE / 2, -PAD_SIZE / 2, PAD_SIZE / 2),
+        hi=(PAD_SIZE / 2, PAD_SIZE / 2, PAD_SIZE / 2),
+        normal=(0.0, 0.0, 1.0),
+        nx=8,
+        ny=8,
+    )
+    common = dict(
+        entity_idx=pad.idx,
+        probe_local_pos=grid,
+        probe_local_normal=(0.0, 0.0, 1.0),
+        probe_radius=PROBE_RADIUS,
+        track_link_idx=(obj.base_link_idx,),
+        n_sample_points=3000,
+        stiffness=100.0,
+        shear_coupling=0.0,  # isolate the spin term from shear-field-curl torsion
+        draw_debug=show_viewer,
+    )
+    twist1 = scene.add_sensor(gs.sensors.ProximityTaxel(twist_scalar=1.0, **common))
+    twist2 = scene.add_sensor(gs.sensors.ProximityTaxel(twist_scalar=2.0, **common))
+    twist0 = scene.add_sensor(gs.sensors.ProximityTaxel(twist_scalar=0.0, **common))
+
+    scene.build(n_envs=n_envs)
+
+    obj_center_z = PAD_TOP + OBJ_SIZE / 2 - PENETRATION
+    for _ in range(4):
+        obj.set_pos((0.0, 0.0, obj_center_z))
+        obj.set_dofs_velocity((0.0, 0.0, WZ), dofs_idx_local=slice(3, None))
+        scene.step()
+
+    normal = torch.tensor((0.0, 0.0, 1.0), dtype=gs.tc_float, device=gs.device)
+
+    def max_twist(sensor):
+        return (sensor.read().torque @ normal).abs().max()
+
+    # With shear disabled, the spin term is the sole source of torque about the normal: present for twist_scalar>0,
+    # exactly linear in twist_scalar, and identically zero without it.
+    assert max_twist(twist1) > tol
+    assert_allclose(max_twist(twist2), 2.0 * max_twist(twist1), tol=tol)
+    assert_allclose(max_twist(twist0), 0.0, tol=tol)
+    # A torque reading still exists without the spin term: the lever arm yields in-plane tilting moments.
+    assert torch.linalg.norm(twist0.read().torque, dim=-1).max() > tol
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
     BOX_SIZE = 0.2
     PENETRATION = 0.01

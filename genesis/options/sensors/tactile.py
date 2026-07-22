@@ -541,6 +541,11 @@ class ProximityTaxel(
     shear_coupling : float
         Scales penetration-weighted tangential slip ``sum_i P_i * v_{t,i}`` into a shear force contribution (see
         sensor documentation). Set to ``0.0`` to disable shear and use only the normal channel.
+    twist_scalar : float
+        Scales the relative angular velocity about the contact normal into a torsional (spin) torque
+        ``-twist_scalar * dot(relative_angular_velocity, n) * n``. This is the only source of torque *about* the normal;
+        all remaining torque is in-plane tilting moment. Keep it positive to sense twisting slip, or set to ``0.0`` to
+        report those tilting moments alone.
     density_scalar : int
         Reference point count for normalizing summed penetrations against tracked cloud size
         (scale is ``density_scalar / max(N_pc, 1)`` for this sensor's tracked samples).
@@ -552,4 +557,5 @@ class ProximityTaxel(
 
     stiffness: NonNegativeFloat = 100.0
     shear_coupling: NonNegativeFloat = 0.0
+    twist_scalar: NonNegativeFloat = 1.0
     density_scalar: PositiveInt = 100

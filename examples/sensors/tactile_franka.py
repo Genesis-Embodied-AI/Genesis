@@ -51,6 +51,10 @@ def _add_tactile_sensor(
                 track_link_idx=track_link_idx,
                 dilate_scale=10.0,
                 shear_scale=100.0,
+                n_sample_points=1000,
+                normal_exponent=1.1,
+                compressibility=0.8,
+                debug_point_cloud_radius=0.001,
                 **common,
             )
         )
@@ -119,13 +123,15 @@ def _plot_tactile_sensor(
     elif sensor_type == "kinematic":
         for label, sensor in zip(labels, sensors):
             scene.start_recording(
-                lambda: sensor.read().force,
+                lambda s=sensor: ((r := s.read()).force, r.torque),
                 gs.recorders.MPLVectorFieldPlot(
-                    title=f"({label}) KinematicTaxel force",
+                    title=f"({label}) KinematicTaxel force + twist",
                     positions=sensor.probe_local_pos.reshape(-1, 3),
                     normal=plot_normal,
                     scale_factor=0.01,
                     max_magnitude=1.0,
+                    twist_scale_factor=0.05,
+                    twist_max_magnitude=0.1,
                 ),
             )
         scene.start_recording(
@@ -141,13 +147,15 @@ def _plot_tactile_sensor(
     elif sensor_type == "proximity":
         for label, sensor in zip(labels, sensors):
             scene.start_recording(
-                lambda: sensor.read().force,
+                lambda s=sensor: ((r := s.read()).force, r.torque),
                 gs.recorders.MPLVectorFieldPlot(
-                    title=f"({label}) ProximityTaxel force",
+                    title=f"({label}) ProximityTaxel force + twist",
                     positions=sensor.probe_local_pos.reshape(-1, 3),
                     normal=plot_normal,
                     scale_factor=0.2,
                     max_magnitude=1.0,
+                    twist_scale_factor=0.2,
+                    twist_max_magnitude=0.1,
                 ),
             )
     elif sensor_type == "depth":
@@ -182,10 +190,11 @@ def main() -> None:
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            substeps=4,
+            substeps=2,
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=True,
+            friction_cone=gs.friction_cone.elliptic,
             constraint_timeconst=0.01,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -318,6 +327,15 @@ def main() -> None:
             franka.control_dofs_position(qpos[motor_dofs_idx], motor_dofs_idx)
 
             scene.step()
+
+            if args.sensor in ("kinematic", "proximity"):
+                for label, sensor in zip(("left", "right"), (left, right)):
+                    reading = sensor.read()
+                    force_mag = reading.force.norm(dim=-1).max()
+                    # |twist| is the plotted torque about the view normal; print it to calibrate twist_scale_factor.
+                    twist_mag = (reading.torque @ reading.torque.new_tensor(probe_normal)).abs().max()
+                    if force_mag > gs.EPS:
+                        print(f"({label}) max|F|={force_mag:.4f}  max|twist|={twist_mag:.5f}")
 
             if "PYTEST_VERSION" in os.environ:
                 break

@@ -59,9 +59,6 @@ def _add_tactile_sensor(
         contact_depth_query=contact_depth_query,
     )
     if noise:
-        # Sensor imperfections shared by every tactile sensor type: viscoelastic hysteresis on the measured
-        # branch, a noised sensing radius, and a per-taxel measured-branch depth gain. Grid-capable taxel sensors
-        # additionally get spatial crosstalk (see ``grid_crosstalk_kwargs`` below).
         common.update(
             hysteresis_strength=0.5,
             hysteresis_tau=0.1,  # seconds
@@ -74,10 +71,14 @@ def _add_tactile_sensor(
                 probe_local_pos=probe_local_pos,
                 probe_local_normal=probe_normal,
                 track_link_idx=track_link_idx,
-                n_sample_points=2000,
-                dilate_scale=1.0,
-                shear_scale=2.0,
-                normal_exponent=1.0,
+                n_sample_points=1000,
+                lambda_d=5000.0,
+                lambda_s=4000.0,
+                dilate_scale=0.1,
+                shear_scale=1.0,
+                normal_exponent=1.5,
+                compressibility=0.8,
+                debug_point_cloud_radius=0.001,
                 **common,
             )
         )
@@ -85,8 +86,7 @@ def _add_tactile_sensor(
     grid_local_pos = probe_local_pos  # (ny, nx, 3) for the plane grid; flattened below for the non-grid sensors
     is_grid = probe_local_pos.ndim == 3
     probe_local_pos = probe_local_pos.reshape(-1, 3)
-    # Spatial crosstalk needs a regular grid layout, so enable it under --noise only for the grid-capable taxel
-    # sensors (and only the plane grid, not the dome). The 3x3 kernel sums to 1, so it conserves total force.
+    # Spatial crosstalk needs a regular grid layout
     grid_crosstalk_kwargs = (
         dict(
             probe_local_pos=grid_local_pos,
@@ -103,8 +103,6 @@ def _add_tactile_sensor(
             )
         )
     if sensor_type == "contact":
-        # Schmitt-trigger thresholds (contact depth in meters): a taxel latches on above contact_threshold and
-        # only releases once the depth drops back below the lower release_threshold.
         return scene.add_sensor(
             gs.sensors.ContactProbe(
                 probe_local_pos=probe_local_pos,
@@ -119,7 +117,7 @@ def _add_tactile_sensor(
                 normal_stiffness=500.0,
                 normal_damping=1.0,
                 shear_scalar=4.0,
-                twist_scalar=4.0,
+                twist_scalar=1.0,
                 normal_exponent=1.5,
                 **grid_crosstalk_kwargs,
                 **common,
@@ -136,6 +134,7 @@ def _add_tactile_sensor(
                 shear_coupling=10.0,
                 probe_local_normal=probe_normal,
                 debug_point_cloud_radius=0.0005,
+                debug_probe_sphere_opacity=0.0,
                 debug_probe_color=(0.2, 0.6, 1.0),
                 debug_contact_color=(1.0, 0.2, 0.2),
                 **grid_crosstalk_kwargs,
@@ -143,6 +142,13 @@ def _add_tactile_sensor(
             )
         )
     raise ValueError(sensor_type)
+
+
+def _force_torque_field(sensor: "Sensor", n_envs: int) -> tuple[np.ndarray, np.ndarray]:
+    reading = sensor.read()
+    force = tensor_to_array(reading.force).reshape(n_envs, -1, 3)
+    torque = tensor_to_array(reading.torque).reshape(n_envs, -1, 3)
+    return force, torque
 
 
 def _plot_tactile_sensor(
@@ -160,22 +166,48 @@ def _plot_tactile_sensor(
 
     env_titles = OBJ_PER_ENV_LABELS[:n_envs]
 
-    # data_func returns (n_envs, N, 3).
+    # read_field returns (n_envs, N, 3) for the force/displacement field. The two taxel sensors that also estimate a
+    # torque return a (force, torque) pair, which overlays a curved twist arrow (twist_scale_factor set).
     vector_field_setup = {
-        "elastomer": ("ElastomerTaxel marker displacements", 0.1, 0.1, lambda: sensor.read()),
-        "kinematic": ("KinematicTaxel force", 0.01, 1.0, lambda: sensor.read().force),
-        "proximity": ("ProximityTaxel force", 0.1, 1.0, lambda: sensor.read().force),
+        "elastomer": (
+            "ElastomerTaxel marker displacements",
+            1.0,
+            0.01,
+            None,
+            1.0,
+            lambda: tensor_to_array(sensor.read()).reshape(n_envs, -1, 3),
+        ),
+        "kinematic": (
+            "KinematicTaxel force + twist",
+            0.01,
+            1.0,
+            0.002,
+            2.0,
+            lambda: _force_torque_field(sensor, n_envs),
+        ),
+        "proximity": (
+            "ProximityTaxel force + twist",
+            0.5,
+            2.0,
+            0.001,
+            1.0,
+            lambda: _force_torque_field(sensor, n_envs),
+        ),
     }
     if sensor_type in vector_field_setup:
-        title, scale_factor, max_magnitude, read_field = vector_field_setup[sensor_type]
+        title, scale_factor, max_magnitude, twist_scale_factor, twist_max_magnitude, read_field = vector_field_setup[
+            sensor_type
+        ]
         scene.start_recording(
-            lambda: tensor_to_array(read_field()).reshape(n_envs, -1, 3),
+            read_field,
             gs.recorders.MPLVectorFieldPlot(
                 title=title,
                 positions=sensor.probe_local_pos.reshape(-1, 3),
                 normal=plot_normal,
                 scale_factor=scale_factor,
                 max_magnitude=max_magnitude,
+                twist_scale_factor=twist_scale_factor,
+                twist_max_magnitude=twist_max_magnitude,
                 subplot_titles=env_titles,
             ),
         )
@@ -198,7 +230,9 @@ def _plot_tactile_sensor(
     )
 
 
-def _print_sensor_reading(sensor_type: str, sensor: "Sensor", t: float) -> None:
+def _print_sensor_reading(
+    sensor_type: str, sensor: "Sensor", t: float, plot_normal: tuple[float, float, float]
+) -> None:
     data = sensor.read()
     if sensor_type == "elastomer":
         magnitude = torch.linalg.norm(data, dim=-1)
@@ -212,14 +246,12 @@ def _print_sensor_reading(sensor_type: str, sensor: "Sensor", t: float) -> None:
         n_contact = int(data.sum())
         if n_contact > 0:
             print(f"t={t:.2f}s  taxels in contact={n_contact}")
-    elif sensor_type == "kinematic":
-        magnitude = torch.linalg.norm(data.force, axis=-1).max()
-        if magnitude > gs.EPS:
-            print(f"t={t:.2f}s  max|F|={magnitude:.4f}")
-    elif sensor_type == "proximity":
-        magnitude = torch.linalg.norm(data.force, dim=-1)
-        if magnitude.max() > gs.EPS:
-            print(f"t={t:.2f}s  mean|F|={magnitude.mean():.5f}  max|F|={magnitude.max():.5f}")
+    elif sensor_type in ("kinematic", "proximity"):
+        # |twist| is the plotted torque about the view normal (the twist_scalar spin term); print it to calibrate.
+        force_mag = torch.linalg.norm(data.force, dim=-1).max()
+        twist_mag = (data.torque @ data.torque.new_tensor(plot_normal)).abs().max()
+        if force_mag > gs.EPS:
+            print(f"t={t:.2f}s  max|F|={force_mag:.4f}  max|twist|={twist_mag:.5f}")
 
 
 def main() -> None:
@@ -263,7 +295,7 @@ def main() -> None:
             substeps=4,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-0.7, 0.2, 1.0),
+            camera_pos=(0.5, -0.2, 0.5),
             camera_lookat=(0.0, 0.0, SENSOR_OBJ_Z),
         ),
         profiling_options=gs.options.ProfilingOptions(
@@ -395,9 +427,6 @@ def main() -> None:
             nonlocal obj_target_pos
             delta = (-1 if is_negative else 1) * KEY_DPOS
             obj_target_pos[..., index] += delta
-            # obj_target_pos[..., 2] = np.maximum(
-            #     obj_target_pos[..., 2], obj_init_pos[..., 2] - OBJECT_INITIAL_CLEARANCE - OBJECT_MAX_PENETRATION
-            # )
 
         def rotate(axis_idx: int, is_negative: bool):
             nonlocal obj_target_euler, obj_target_quat
@@ -406,10 +435,10 @@ def main() -> None:
             obj_target_quat = gu.euler_to_quat(obj_target_euler)
 
         scene.viewer.register_keybinds(
-            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, False)),
-            Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, True)),
-            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, True)),
-            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, False)),
+            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, True)),
+            Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, False)),
+            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, False)),
+            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, True)),
             Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
             Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
             Keybind("rotate_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(2, True)),
@@ -449,7 +478,7 @@ def main() -> None:
                 else:
                     obj.control_dofs_position(gu.quat_to_xyz(obj_target_quat), dofs_idx_local=slice(3, 6))
                     obj.control_dofs_position(obj_target_pos, dofs_idx_local=slice(0, 3))
-            _print_sensor_reading(args.sensor, sensor, t)
+            _print_sensor_reading(args.sensor, sensor, t, probe_normal_axis)
 
             scene.step()
 
