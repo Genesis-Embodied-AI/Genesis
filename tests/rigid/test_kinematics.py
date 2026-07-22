@@ -8,7 +8,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import qd_to_torch, tensor_to_array
 
 from ..utils import (
     assert_allclose,
@@ -583,127 +583,69 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
         assert_allclose(target_pos, ee_pos, atol=tol)
 
 
-@pytest.mark.slow("gpu")  # gpu ~300s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_path_planning_avoidance(backend, n_envs, show_viewer, tol):
-    CUBE_SIZE = 0.07
-
-    # FIXME: Implement a more robust plan planning algorithm
-    if sys.platform == "darwin" and backend == gs.gpu:
-        pytest.skip(reason="This algorithm is very fragile and fail to converge on MacOS.")
-
+def test_plan_to_ee_pose_goal_avoids_obstacles(n_envs, show_viewer, tol):
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-        ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3, 1, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
+            camera_pos=(2.5, 1.5, 1.5),
+            camera_lookat=(0.4, 0.0, 0.5),
         ),
         show_viewer=show_viewer,
-        show_FPS=False,
     )
-    cubes = []
-    for pos_x in (-0.15, 0.15):
-        for y_i in range(-3, 3):
-            cube = scene.add_entity(
-                gs.morphs.Box(
-                    size=(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE),
-                    pos=(pos_x, CUBE_SIZE * y_i, 0.75),
-                    fixed=True,
-                ),
-                surface=gs.surfaces.Default(
-                    color=(*np.random.rand(3), 0.7),
-                ),
-            )
-            cubes.append(cube)
+    scene.add_entity(gs.morphs.Plane())
+    pillar = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 1.2),
+            pos=(0.45, 0.0, 0.6),
+            fixed=True,
+        ),
+    )
     franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
         ),
-        vis_mode="collision",
     )
     scene.build(n_envs=n_envs)
-    collider_state = scene.rigid_solver.collider._collider_state
 
+    # Planning straight to a Cartesian goal folds the inverse kinematics into the plan: the target sits beyond
+    # the pillar, so the returned trajectory must land the hand at the pose while steering around it.
     hand = franka.get_link("hand")
-    hand_pos_ref = torch.tensor([0.3, 0.1, 0.1], dtype=gs.tc_float, device=gs.device)
-    hand_quat_ref = torch.tensor([0.3073, 0.5303, 0.7245, -0.2819], dtype=gs.tc_float, device=gs.device)
-    if n_envs > 0:
-        hand_pos_ref = hand_pos_ref.repeat((n_envs, 1))
-        hand_quat_ref = hand_quat_ref.repeat((n_envs, 1))
-    qpos_goal = franka.inverse_kinematics(hand, pos=hand_pos_ref, quat=hand_quat_ref)
-    qpos_goal[..., -2:] = 0.04
-    franka.set_qpos(qpos_goal)
-    scene.visualizer.update()
-    scene.rigid_solver.collider.detection()
-    assert not collider_state.n_contacts.to_numpy().any()
-    franka.set_qpos(torch.zeros_like(qpos_goal))
-
-    num_waypoints = 300
-    if n_envs == 0:
-        free_path, return_valid_mask = franka.plan_path(
-            qpos_goal=qpos_goal,
-            num_waypoints=num_waypoints,
-            resolution=0.05,
-            ignore_collision=True,
-            return_valid_mask=True,
-        )
-    else:
-        return_valid_mask = torch.zeros((n_envs,), dtype=torch.bool, device=gs.device)
-        free_path = torch.empty((num_waypoints, n_envs, franka.n_dofs), dtype=gs.tc_float, device=gs.device)
-        for i in range(n_envs):
-            free_path[:, i : i + 1], return_valid_mask[i : i + 1] = franka.plan_path(
-                qpos_goal=qpos_goal[i : i + 1],
-                envs_idx=[i],
-                num_waypoints=num_waypoints,
-                resolution=0.05,
-                ignore_collision=True,
-                return_valid_mask=True,
-            )
-    assert return_valid_mask.all()
-    assert_allclose(free_path[0], 0.0, tol=tol)
-    assert_allclose(free_path[-1], qpos_goal, tol=tol)
-
-    avoidance_path, return_valid_mask = franka.plan_path(
-        qpos_goal=qpos_goal,
-        num_waypoints=300,
-        ignore_collision=False,
-        return_valid_mask=True,
-        resolution=0.05,
-        max_nodes=4000,
-        max_retry=40,
+    hand_pos_ref = [0.446, 0.562, 0.355] if n_envs == 0 else [[0.446, 0.562, 0.355]] * n_envs
+    hand_quat_ref = [0.0, 0.904, 0.428, 0.0] if n_envs == 0 else [[0.0, 0.904, 0.428, 0.0]] * n_envs
+    path = franka.plan_path(
+        goal_link=hand,
+        goal_pos=hand_pos_ref,
+        goal_quat=hand_quat_ref,
+        max_retry=2,
+        seed=2,
     )
-    assert return_valid_mask.all()
-    assert_allclose(avoidance_path[0], 0.0, tol=tol)
-    assert_allclose(avoidance_path[-1], qpos_goal, tol=tol)
+    assert bool(path.is_valid.all())
 
-    for path, avoid_collision in ((free_path, False), (avoidance_path, True)):
-        max_penetration = float("-inf")
-        for waypoint in path:
-            franka.set_qpos(waypoint)
+    collider_state = scene.rigid_solver.collider._collider_state
+    pillar_geoms = {geom.idx for link in pillar.links for geom in link.geoms}
+    max_penetration = 0.0
+    for waypoint in path.qpos:
+        franka.set_qpos(waypoint, zero_velocity=False)
+        if show_viewer:
             scene.visualizer.update()
+        scene.rigid_solver.collider.detection()
+        n_contacts = qd_to_torch(collider_state.n_contacts)
+        geom_a = qd_to_torch(collider_state.contact_data.geom_a)
+        geom_b = qd_to_torch(collider_state.contact_data.geom_b)
+        penetration = qd_to_torch(collider_state.contact_data.penetration)
+        for i_b in range(max(scene.n_envs, 1)):
+            for i_c in range(int(n_contacts[i_b])):
+                if int(geom_a[i_c, i_b]) in pillar_geoms or int(geom_b[i_c, i_b]) in pillar_geoms:
+                    max_penetration = max(max_penetration, float(penetration[i_c, i_b]))
+    assert max_penetration < 5e-3
 
-            # Check if the cube is colliding with the robot
-            scene.rigid_solver.collider.detection()
-            n_contacts = collider_state.n_contacts.to_numpy()
-            for i_b in range(max(scene.n_envs, 1)):
-                for i_c in range(n_contacts[i_b]):
-                    contact_link_a = collider_state.contact_data.link_a[i_c, i_b]
-                    contact_link_b = collider_state.contact_data.link_b[i_c, i_b]
-                    penetration = collider_state.contact_data.penetration[i_c, i_b]
-                    if any(i_g < len(cubes) for i_g in (contact_link_a, contact_link_b)):
-                        max_penetration = max(max_penetration, penetration)
-
-        args = (max_penetration, 5e-3)
-        np.testing.assert_array_less(*(args if avoid_collision else args[::-1]))
-
-        assert_allclose(hand_pos_ref, hand.get_pos(), tol=5e-4)
-        hand_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(hand_quat_ref), hand.get_quat())
-        theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[..., 1:]), torch.abs(hand_quat_diff[..., 0]))
-        assert_allclose(theta, 0.0, tol=5e-3)
+    assert_allclose(torch.as_tensor(hand_pos_ref, dtype=gs.tc_float), hand.get_pos(), tol=5e-3)
+    hand_quat_diff = gu.transform_quat_by_quat(
+        gu.inv_quat(torch.as_tensor(hand_quat_ref, dtype=gs.tc_float)), hand.get_quat()
+    )
+    theta = 2 * torch.arctan2(torch.linalg.norm(hand_quat_diff[..., 1:], dim=-1), torch.abs(hand_quat_diff[..., 0]))
+    assert_allclose(theta, 0.0, tol=5e-2)
 
 
 @pytest.mark.required

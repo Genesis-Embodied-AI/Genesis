@@ -636,9 +636,11 @@ def kernel_planner_validate(
     n_dp = qd.static(planner_config.n_dp)
     n_samples = qd.static(_VALIDATE_UPSAMPLE * (planner_config.n_knots - 1) + 1)
 
+    # Every candidate is validated, frozen ones included: the raw sampling-fallback path is deliberately kept
+    # unrefined as an insurance candidate, and re-validating already-solved candidates is idempotent.
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
     for i_c in range(envs_idx.shape[0] * n_seeds):
-        if plan_state.is_active[i_c]:
+        if True:
             i_b = envs_idx[i_c // n_seeds]
             i_e_col = i_c  # eval scratch column owned by this thread
             flags = gs.qd_int(0)

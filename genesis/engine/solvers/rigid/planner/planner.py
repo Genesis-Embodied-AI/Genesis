@@ -471,24 +471,22 @@ class Planner:
         has_pose_goal = goal_pos is not None or goal_quat is not None
         if goal_pos is not None:
             goal_pos = torch.as_tensor(goal_pos, dtype=gs.tc_float, device=gs.device)
+            if goal_pos.ndim == 1 and solver.n_envs > 0:
+                goal_pos = goal_pos[None].expand(B_plan, 3)
         if goal_quat is not None:
             goal_quat = torch.as_tensor(goal_quat, dtype=gs.tc_float, device=gs.device)
+            if goal_quat.ndim == 1 and solver.n_envs > 0:
+                goal_quat = goal_quat[None].expand(B_plan, 4)
         if has_pose_goal:
-            ik_kwargs = {}
-            if goal_pos is not None:
-                ik_kwargs["pos"] = goal_pos
-            if goal_quat is not None:
-                ik_kwargs["quat"] = goal_quat
-            if solver.n_envs > 0:
-                ik_kwargs["envs_idx"] = envs_idx
-            qpos_goal_t = entity.inverse_kinematics(goal_link, **ik_kwargs)
+            qpos_goal_t = None  # resolved below by the certified multi-restart inverse kinematics
         else:
             qpos_goal_t = torch.as_tensor(qpos_goal, dtype=gs.tc_float, device=gs.device)
-        if qpos_goal_t.ndim == 1:
-            qpos_goal_t = qpos_goal_t[None].expand(B_plan, n_dp)
+            if qpos_goal_t.ndim == 1:
+                qpos_goal_t = qpos_goal_t[None].expand(B_plan, n_dp)
 
         qd_to_torch(plan_info.qpos_start, copy=False).T[envs_idx_np] = qpos_start_t
-        qd_to_torch(plan_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
+        if qpos_goal_t is not None:
+            qd_to_torch(plan_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
         qd_to_torch(plan_info.has_pose_goal, copy=False).fill_(has_pose_goal)
         if has_pose_goal:
             qd_to_torch(plan_info.goal_link_idx, copy=False).fill_(goal_link.idx)
@@ -509,7 +507,9 @@ class Planner:
             ("w_pose_rot", 5e2),
             ("eps_act", 0.05),
             ("eps_self", 0.02),
-            ("d_safe", float(safety_margin)),
+            # The optimizer plans with a headroom over the requested clearance: the certificate additionally
+            # covers the between-samples sweep, so paths must arrive with that much slack to certify.
+            ("d_safe", float(safety_margin) + 0.02),
         ):
             qd_to_torch(getattr(plan_info, name), copy=False).fill_(value)
         qd_to_torch(plan_info.noise_basis, copy=False)[:] = torch.as_tensor(build_noise_basis(W), device=gs.device)
@@ -610,6 +610,55 @@ class Planner:
                 "entangled with the world."
             )
 
+        if has_pose_goal:
+            # Certified multi-restart inverse kinematics: the pose usually has several joint-space solutions and
+            # an arbitrary one is often proxy-colliding, which would doom both the optimizer's clamped goal
+            # knots and the fallback's goal tree. Up to S restarts are validated in one launch (each candidate
+            # holds one solution) and the first certified solution per env becomes the goal.
+            ik_kwargs = {}
+            if goal_pos is not None:
+                ik_kwargs["pos"] = goal_pos
+            if goal_quat is not None:
+                ik_kwargs["quat"] = goal_quat
+            if solver.n_envs > 0:
+                ik_kwargs["envs_idx"] = envs_idx
+            lo = qd_to_torch(plan_info.q_limit_lower)
+            hi = qd_to_torch(plan_info.q_limit_upper)
+            solutions = []
+            for i_restart in range(S):
+                init_qpos = (
+                    qpos_start_t
+                    if i_restart == 0
+                    else lo + (hi - lo) * torch.rand((B_plan, n_dp), generator=gen, dtype=gs.tc_float).to(gs.device)
+                )
+                solution = entity.inverse_kinematics(goal_link, init_qpos=init_qpos, **ik_kwargs)
+                if solution.ndim == 1:
+                    solution = solution[None]
+                solutions.append(solution)
+            traj_probe = qd_to_torch(plan_state.qpos_traj, copy=False).T.reshape(B, S, W, n_dp)
+            for i_restart, solution in enumerate(solutions):
+                traj_probe[envs_idx_np, i_restart] = solution[:, None, :]
+            qd_to_torch(plan_state.is_active, copy=False).reshape(B, S)[envs_idx_np] = True
+            # Goals are probed at the sampling-fallback margin: a goal whose immediate neighborhood is snugger
+            # than that would wall off its own goal tree even though the held configuration certifies.
+            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin) + 0.01)
+            cost_mod.kernel_planner_validate(*kernel_args, planner_config)
+            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
+            probe_flags = qd_to_torch(plan_state.valid_flags).reshape(B, S)[envs_idx_np]
+            # The held solution must clear the world AND satisfy the pose tolerance - the hold validation is
+            # exactly an inverse-kinematics convergence check.
+            is_goal_free = (probe_flags & (cost_mod.COLLISION | cost_mod.GOAL_TOL)) == 0
+            if not bool(is_goal_free.any(dim=-1).all()):
+                gs.logger.info("No collision-free inverse-kinematics solution found for some environments.")
+            # Among certified solutions, the one closest to the start wins: distant elbow-flipped branches make
+            # every downstream search harder.
+            all_solutions = torch.stack(solutions, dim=1)
+            distance = (all_solutions - qpos_start_t[:, None]).abs().sum(dim=-1)
+            distance_gated = torch.where(is_goal_free, distance, torch.full_like(distance, torch.inf))
+            best_restart = distance_gated.argmin(dim=-1)
+            qpos_goal_t = all_solutions.gather(1, best_restart[:, None, None].expand(B_plan, 1, n_dp))[:, 0]
+            qd_to_torch(plan_info.qpos_goal, copy=False).T[envs_idx_np] = qpos_goal_t
+
         # Optimize, escalating on failed envs: fresh seeds first, RRT-Connect seeds from the second attempt on.
         is_active_t = qd_to_torch(plan_state.is_active, copy=False)
         flags_t = qd_to_torch(plan_state.valid_flags, copy=False)
@@ -623,14 +672,22 @@ class Planner:
                 break
             if i_attempt == 0:
                 self._seed_trajectories(context, gen, env_pending)
-            elif i_attempt == 1 and not ignore_collision:
-                self._seed_from_rrt(context, envs_idx_np, env_pending, kernel_args)
+            elif ignore_collision:
+                break
             else:
+                # Escalate through the sampling fallback: it is probabilistically complete, so retries re-run it
+                # with fresh sampling streams instead of falling back to random seeds, and the collision weights
+                # harden so refinement cannot trade the found homotopy away for smoothness.
                 qd_to_torch(plan_info.seed_key, copy=False).fill_((int(seed_key) + i_attempt) & 0x7FFFFFFF)
-                self._seed_trajectories(context, gen, env_pending)
+                qd_to_torch(plan_info.w_obs, copy=False).fill_(400.0)
+                qd_to_torch(plan_info.w_self, copy=False).fill_(400.0)
+                self._seed_from_rrt(context, envs_idx_np, env_pending, kernel_args)
 
             if not ignore_collision:
-                kernel_planner_mppi(*kernel_args, planner_config)
+                # Graph seeds are already feasible: exploration noise could only kick them out of their homotopy
+                # class, so they go straight to the gradient refiner.
+                if i_attempt != 1:
+                    kernel_planner_mppi(*kernel_args, planner_config)
                 kernel_planner_lbfgs(*kernel_args, solver.collider._collider_static_config, planner_config)
                 # Polish: tighter activation band, harder collision weights, and a pinning pose weight sharpen
                 # the margin and land the free end knot inside the goal tolerance.
@@ -646,7 +703,9 @@ class Planner:
                 qd_to_torch(plan_info.w_pose_pos, copy=False).fill_(2e3)
                 qd_to_torch(plan_info.w_pose_rot, copy=False).fill_(5e2)
 
+            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin))
             cost_mod.kernel_planner_validate(*kernel_args, planner_config)
+            qd_to_torch(plan_info.d_safe, copy=False).fill_(float(safety_margin) + 0.02)
             is_seed_valid = self._seed_validity(flags_t, S, ignore_collision)
             env_solved |= is_seed_valid.any(dim=-1) & env_pending_mask
             # Freeze the candidates of solved envs so later attempts cannot disturb them.
@@ -657,7 +716,7 @@ class Planner:
 
         # Per-env best certified seed (lowest cost, lowest index tie-break), start-hold for failed envs.
         is_seed_valid = self._seed_validity(flags_t, S, ignore_collision)
-        costs = qd_to_torch(plan_state.cost).reshape(B, S)
+        costs = qd_to_torch(plan_state.cost).reshape(B, S).nan_to_num(nan=1e30, posinf=1e30)
         costs_gated = torch.where(is_seed_valid, costs, torch.full_like(costs, torch.inf))
         best_seed = costs_gated.argmin(dim=-1)
         is_env_valid = is_seed_valid.gather(-1, best_seed[:, None])[:, 0]
@@ -725,7 +784,12 @@ class Planner:
         NT, NN = planner_config.n_rrt_trees, planner_config.n_rrt_nodes
 
         trees_is_active = np.repeat(tensor_to_array(env_pending[envs_idx_np], dtype=np.bool_), NT).astype(gs.np_int)
+        # The fallback searches at a smaller headroom than the optimizer: goals are certified at the user margin,
+        # and a goal snugger than the full headroom would wall off its own tree.
+        d_safe_opt = float(qd_to_torch(plan_info.d_safe))
+        qd_to_torch(plan_info.d_safe, copy=False).fill_(d_safe_opt - 0.01)
         kernel_planner_rrt_connect(kernel_args[0], trees_is_active, _N_RRT_ITERS, *kernel_args[1:], planner_config)
+        qd_to_torch(plan_info.d_safe, copy=False).fill_(d_safe_opt)
 
         rrt_done = qd_to_torch(plan_state.rrt_is_done)
         rrt_len = qd_to_torch(plan_state.rrt_path_len)
@@ -747,6 +811,10 @@ class Planner:
                     u = ((s_tgt - s_cum[i_seg]) / seg_len)[:, None]
                     traj_all[i_b, :] = (path[i_seg] * (1 - u) + path[i_seg + 1] * u)[None]
                     break
-        qd_to_torch(plan_state.is_active, copy=False).reshape(-1, S)[tensor_to_array(env_pending, dtype=np.bool_)] = (
-            True
-        )
+        is_active_seeds = qd_to_torch(plan_state.is_active, copy=False).reshape(-1, S)
+        pending_np = tensor_to_array(env_pending, dtype=np.bool_)
+        is_active_seeds[pending_np] = True
+        # Seed 0 keeps the raw fallback path unrefined: refinement can then only add better candidates, never
+        # lose the feasible one.
+        is_active_seeds[pending_np, 0] = False
+        qd_to_torch(plan_state.cost, copy=False).reshape(-1, S)[pending_np, 0] = 1e30

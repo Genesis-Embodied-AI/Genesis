@@ -7,9 +7,11 @@ from .cost import func_planner_collision_cost
 from .kinematics import func_planner_fk, func_planner_spheres
 from .trajopt import func_planner_hash01
 
-# Joint-space steer step (L-inf, radians) and the goal-bias probability of extending straight at the other tree.
+# Joint-space steer step (L-inf, radians), the goal-bias probability of extending straight at the other tree,
+# and the number of shortcut splices applied to an extracted path.
 _RRT_STEER_STEP = 0.2
 _RRT_GOAL_BIAS = 0.2
+_RRT_N_SHORTCUT = 64
 
 
 @qd.func
@@ -299,4 +301,40 @@ def kernel_planner_rrt_connect(
                         plan_state.rrt_path[i_dp, col0 + n_path] = plan_state.rrt_qpos[i_dp, col0 + node]
                     n_path += 1
                     node = plan_state.rrt_parent[col0 + node]
+
+                # Shortcut pass: splice certified straight edges over random sub-chains. Downstream the path is
+                # arclength-resampled to the knot count, and resampled chords cut the corners of the raw
+                # polyline - straightening it first is what keeps the resampled trajectory certifiable. The tree
+                # storage is disposable now, so its first two columns serve as edge-check scratch.
+                for i_cut in range(_RRT_N_SHORTCUT):
+                    if n_path > 3:
+                        u0 = func_planner_hash01(plan_info.seed_key[None], i_t, i_cut, 555)
+                        u1 = func_planner_hash01(plan_info.seed_key[None], i_t, i_cut, 556)
+                        i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
+                        i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
+                        for i_dp in range(n_dp):
+                            plan_state.rrt_qpos[i_dp, col0] = plan_state.rrt_path[i_dp, col0 + i_from]
+                            plan_state.rrt_qpos[i_dp, col0 + 1] = plan_state.rrt_path[i_dp, col0 + i_to]
+                        if func_planner_rrt_edge_is_free(
+                            i_t,
+                            i_b,
+                            col0,
+                            col0 + 1,
+                            plan_state=plan_state,
+                            plan_info=plan_info,
+                            plan_world=plan_world,
+                            dyn_state=dyn_state,
+                            dyn_info=dyn_info,
+                            rigid_info=rigid_info,
+                            sdf_info=sdf_info,
+                            rigid_config=rigid_config,
+                            planner_config=planner_config,
+                        ):
+                            n_cut = i_to - i_from - 1
+                            for i_n in range(i_from + 1, n_path - n_cut):
+                                for i_dp in range(n_dp):
+                                    plan_state.rrt_path[i_dp, col0 + i_n] = plan_state.rrt_path[
+                                        i_dp, col0 + i_n + n_cut
+                                    ]
+                            n_path -= n_cut
                 plan_state.rrt_path_len[i_t] = n_path
