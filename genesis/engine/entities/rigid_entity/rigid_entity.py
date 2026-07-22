@@ -2,7 +2,7 @@ import inspect
 import math
 import os
 from itertools import chain
-from typing import TYPE_CHECKING, Literal, Any
+from typing import TYPE_CHECKING, Literal, Any, Hashable
 from functools import wraps
 
 import quadrants as qd
@@ -61,13 +61,16 @@ def tracked(fun):
             args_dict = dict(tuple(bound.arguments.items())[1:])
             # Key the slot by (method, dofs subset) so same-step calls on distinct subsets (e.g. arm and gripper
             # force control) each keep their own entry and gradient path; keyed by method alone, the second call
-            # would evict the first from the tape. Slices resolve against the entity dof count so an equivalent
-            # explicit index list keys identically (and slices are only hashable from Python 3.12).
+            # would evict the first from the tape. Slices key directly when hashable (Python 3.12 onward) and
+            # resolve against the entity dof count otherwise.
             dofs_idx_local = args_dict.get("dofs_idx_local")
             if dofs_idx_local is None:
                 subset = None
             elif isinstance(dofs_idx_local, slice):
-                subset = tuple(range(*dofs_idx_local.indices(self.n_dofs)))
+                if isinstance(dofs_idx_local, Hashable):
+                    subset = dofs_idx_local
+                else:
+                    subset = tuple(range(*dofs_idx_local.indices(self.n_dofs)))
             elif isinstance(dofs_idx_local, torch.Tensor):
                 subset = tuple(tensor_to_array(dofs_idx_local).reshape(-1).tolist())
             else:
