@@ -2,8 +2,8 @@
 #
 # On main, #2857 already applies hydrostatic pressure through LegacyCoupler (always on for
 # non-fixed links). Akinci is a separate, default-off WCSPH boundary-particle path. Tests here
-# assert the flag builds boundary particles and contributes measurable extra force — they do
-# NOT claim that flag-off sinks (that was true only before #2857).
+# assert boundary construction, coexistence with #2857, and depth-invariant combined behavior.
+# They do not claim isolated Akinci force magnitude or that flag-off sinks.
 
 import math
 
@@ -144,7 +144,6 @@ def test_akinci_boundary_coexists_with_stock_buoyancy(show_viewer):
     assert np.isfinite(z_heavy_on), f"Akinci on heavy non-finite z={z_heavy_on}"
 
 
-
 def _rpy(q):
     w, x, y, z = q
     return np.array(
@@ -186,6 +185,7 @@ def _deep_water_scene(show_viewer, rho_body):
     return scene, box
 
 
+@pytest.mark.slow("cpu")  # Two 14,000-step SPH scenes exceed the 20-minute CPU timeout; ~2 minutes on GPU.
 @pytest.mark.required
 def test_akinci_boundary_depth_invariant(show_viewer):
     """Fully submerged hold-force at two depths should agree (ratio ~1) with Akinci on.
@@ -221,6 +221,8 @@ def test_akinci_boundary_depth_invariant(show_viewer):
 
     f_shallow = hold_force(0.18)
     f_deep = hold_force(0.10)
+    assert np.isfinite((f_shallow, f_deep)).all(), f"non-finite forces: shallow={f_shallow} deep={f_deep}"
+    assert abs(f_shallow) > 1e-6, f"shallow reference force is too small for a stable ratio: {f_shallow}"
     ratio = f_deep / f_shallow
     assert 0.85 < ratio < 1.15, (
         f"buoyancy not depth-invariant: shallow={f_shallow:.2f} deep={f_deep:.2f} ratio={ratio:.3f}"

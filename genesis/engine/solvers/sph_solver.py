@@ -261,7 +261,9 @@ class SPHSolver(Solver):
             else:
                 samples = self._sample_akinci_mesh_surface(geom)
             if samples.size == 0:
-                gs.logger.warning(f"Akinci SPH boundary: no surface samples for geom {geom.idx} type {geom.type}; skipping.")
+                gs.logger.warning(
+                    f"Akinci SPH boundary: no surface samples for geom {geom.idx} type {geom.type}; skipping."
+                )
                 continue
             local_pos.append(samples)
             geom_idx.append(np.full(samples.shape[0], geom.idx, dtype=gs.np_int))

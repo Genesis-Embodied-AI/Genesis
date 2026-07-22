@@ -31,13 +31,13 @@ scene = gs.Scene(
 )
 ```
 
-## Install (from patch or this branch)
+## Install from this branch
 
 ```bash
-# From clean official main:
-git clone --branch main https://github.com/Genesis-Embodied-AI/genesis-world.git
+# The branch is maintained on the project fork until it is accepted upstream.
+git clone https://github.com/robotlearning123/genesis-world.git
 cd genesis-world
-git apply owl-akinci-boundary.patch   # product patch from the release
+git switch release/akinci-boundary-upstream-20260721
 
 # Env (Python 3.10–3.13, NVIDIA GPU)
 uv venv .venv && source .venv/bin/activate
@@ -56,7 +56,7 @@ python -m pytest \
   tests/coupling/test_sph_akinci_boundary.py \
   tests/coupling/test_sph_rigid.py -m "required and not slow" \
   --backend gpu -n0 -v
-# expect: 9 passed
+# GPU gate: expect 9 passed
 ```
 
 Demo:

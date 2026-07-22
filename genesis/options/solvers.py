@@ -100,7 +100,8 @@ class LegacyCouplerOptions(BaseCouplerOptions):
     fem_sph : bool, optional
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
     sph_akinci_boundary : bool, optional
-        Enable Akinci et al. 2012 SPH boundary particles for rigid-SPH WCSPH coupling. Defaults to False.
+        Enable Akinci et al. 2012 boundary particles for rigid-SPH WCSPH research and demos. This adds sampling,
+        neighbor-search, and force costs, and its forces add to the stock rigid-SPH buoyancy path. Defaults to False.
     """
 
     rigid_mpm: StrictBool = True
