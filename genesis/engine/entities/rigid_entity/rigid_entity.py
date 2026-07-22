@@ -61,9 +61,15 @@ def tracked(fun):
             args_dict = dict(tuple(bound.arguments.items())[1:])
             # Key the slot by (method, dofs subset) so same-step calls on distinct subsets (e.g. arm and gripper
             # force control) each keep their own entry and gradient path; keyed by method alone, the second call
-            # would evict the first from the tape.
+            # would evict the first from the tape. Slices resolve against the entity dof count so an equivalent
+            # explicit index list keys identically (and slices are only hashable from Python 3.12).
             dofs_idx_local = args_dict.get("dofs_idx_local")
-            subset = None if dofs_idx_local is None else tuple(np.asarray(dofs_idx_local).reshape(-1).tolist())
+            if dofs_idx_local is None:
+                subset = None
+            elif isinstance(dofs_idx_local, slice):
+                subset = tuple(range(*dofs_idx_local.indices(self.n_dofs)))
+            else:
+                subset = tuple(np.asarray(dofs_idx_local).reshape(-1).tolist())
             self._update_tgt((fun.__name__, subset), args_dict)
         return fun(self, *args, **kwargs)
 
