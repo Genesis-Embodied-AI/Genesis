@@ -102,7 +102,7 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
         # configuration throughout, so the in-window contact-count guards hold.
         obj.set_dofs_position(gs.tensor(rest_dofs, dtype=gs.tc_float).sceneless())
         for _ in range(n_settle):
-            obj.control_dofs_force(gs.tensor(base_force, dtype=gs.tc_float))
+            obj.control_dofs_force(base_force)
             scene.step()
 
     scene_ana, obj_ana = _build_contact_scene(shape, grad_capsule, requires_grad=True, show_viewer=show_viewer)
@@ -128,7 +128,7 @@ def test_contact_per_step_force_grad_matches_fd(shape, grad_capsule, precision, 
         scene_fd.reset()
         settle(scene_fd, obj_fd)
         for t in range(n_steps):
-            obj_fd.control_dofs_force(gs.tensor(perturbed[t], dtype=gs.tc_float))
+            obj_fd.control_dofs_force(perturbed[t])
             scene_fd.step()
             assert _n_contacts(scene_fd) == nc, "contact set changed under FD perturbation"
         return float((scene_fd.rigid_solver.get_state().qpos[0, :3] ** 2).sum().detach())
