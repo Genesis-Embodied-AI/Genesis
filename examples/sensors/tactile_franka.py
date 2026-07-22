@@ -1,6 +1,8 @@
 """
 Interactive demo of tactile sensors attached to Franka Panda grippers and matplotlib visualization.
-Sensor types: ContactDepthProbe, ElastomerTaxel, KinematicTaxel, ProximityTaxel.
+Sensor types: ContactDepthProbe, ContactProbe, ElastomerTaxel, KinematicTaxel, ProximityTaxel.
+
+Note that the sensor readings here have not been calibrated to any units, and is purely for visualization purposes.
 """
 
 import argparse
@@ -20,12 +22,12 @@ if TYPE_CHECKING:
 
 OBJ_DENSITY = 300
 OBJ_SIZE = 0.04
-CUBE_INIT_XY = (0.3, 0.1)
-SPHERE_INIT_XY = (0.3, -0.1)
+CUBE_INIT_XY = (0.5, 0.1)
+SPHERE_INIT_XY = (0.5, -0.1)
 ROBOT_INIT_HEIGHT = 0.18
 
-DPOS = 0.005
-DROT = 0.04
+DPOS = 0.004
+DROT = 0.02
 
 
 def _add_tactile_sensor(
@@ -49,10 +51,12 @@ def _add_tactile_sensor(
                 probe_local_normal=probe_normal,
                 probe_radius=0.002,
                 track_link_idx=track_link_idx,
-                dilate_scale=10.0,
-                shear_scale=100.0,
+                lambda_d=5000.0,
+                lambda_s=4000.0,
+                dilate_scale=0.1,
+                shear_scale=1.0,
                 n_sample_points=1000,
-                normal_exponent=1.1,
+                normal_exponent=1.5,
                 compressibility=0.8,
                 debug_point_cloud_radius=0.001,
                 **common,
@@ -72,7 +76,7 @@ def _add_tactile_sensor(
             gs.sensors.KinematicTaxel(
                 probe_local_pos=probe_local_pos,
                 probe_radius=0.002,
-                normal_stiffness=5000.0,
+                normal_stiffness=2000.0,
                 normal_damping=1.0,
                 normal_exponent=1.5,
                 shear_scalar=1.0,
@@ -86,11 +90,11 @@ def _add_tactile_sensor(
                 probe_local_pos=probe_local_pos,
                 track_link_idx=track_link_idx,
                 probe_radius=0.02,
-                n_sample_points=500,
-                stiffness=10.0,
-                shear_coupling=1.0,
+                n_sample_points=4000,
+                stiffness=30.0,
+                shear_coupling=10.0,
+                twist_scalar=0.05,
                 probe_local_normal=probe_normal,
-                probe_radius_noise=0.005,
                 **common,
             )
         )
@@ -117,7 +121,7 @@ def _plot_tactile_sensor(
                     positions=sensor.probe_local_pos.reshape(-1, 3),
                     normal=plot_normal,
                     scale_factor=1.0,
-                    max_magnitude=0.005,
+                    max_magnitude=0.01,
                 ),
             )
     elif sensor_type == "kinematic":
@@ -130,20 +134,10 @@ def _plot_tactile_sensor(
                     normal=plot_normal,
                     scale_factor=0.01,
                     max_magnitude=1.0,
-                    twist_scale_factor=0.05,
-                    twist_max_magnitude=0.1,
+                    twist_scale_factor=0.002,
+                    twist_max_magnitude=2.0,
                 ),
             )
-        scene.start_recording(
-            lambda: tuple(sensor.read().force.norm(dim=-1).max() for sensor in sensors),
-            gs.recorders.MPLLinePlot(
-                title="KinematicTaxel max force magnitude",
-                labels=labels,
-                x_label="step",
-                y_label="|F|",
-                history_length=200,
-            ),
-        )
     elif sensor_type == "proximity":
         for label, sensor in zip(labels, sensors):
             scene.start_recording(
@@ -152,10 +146,10 @@ def _plot_tactile_sensor(
                     title=f"({label}) ProximityTaxel force + twist",
                     positions=sensor.probe_local_pos.reshape(-1, 3),
                     normal=plot_normal,
-                    scale_factor=0.2,
-                    max_magnitude=1.0,
-                    twist_scale_factor=0.2,
-                    twist_max_magnitude=0.1,
+                    scale_factor=0.5,
+                    max_magnitude=2.0,
+                    twist_scale_factor=0.001,
+                    twist_max_magnitude=1.0,
                 ),
             )
     elif sensor_type == "depth":
@@ -173,6 +167,7 @@ def _plot_tactile_sensor(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Franka fingertip tactile with selectable sensor type")
+    parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument(
         "--sensor",
         choices=("elastomer", "depth", "kinematic", "proximity"),
@@ -180,6 +175,7 @@ def main() -> None:
         help="Tactile sensor implementation",
     )
     parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("--seconds", "-t", type=float, default=4.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
     gs.init(
@@ -190,11 +186,10 @@ def main() -> None:
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            substeps=2,
+            substeps=4,
         ),
         rigid_options=gs.options.RigidOptions(
             box_box_detection=True,
-            friction_cone=gs.friction_cone.elliptic,
             constraint_timeconst=0.01,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -204,7 +199,7 @@ def main() -> None:
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=True,
         ),
-        show_viewer=True,
+        show_viewer=args.vis,
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -247,7 +242,8 @@ def main() -> None:
     right = _add_tactile_sensor(
         scene, franka, franka.get_link("right_finger").idx_local, args.sensor, probe_local_pos, probe_normal, track_idx
     )
-    _plot_tactile_sensor(scene, args.sensor, ("left", "right"), (left, right), plot_normal=probe_normal)
+    if args.vis and "PYTEST_VERSION" not in os.environ:
+        _plot_tactile_sensor(scene, args.sensor, ("left", "right"), (left, right), plot_normal=probe_normal)
 
     scene.build()
 
@@ -258,24 +254,22 @@ def main() -> None:
     franka.set_dofs_kv([10.0, 10.0], fingers_dof)
     ee_link = franka.get_link("hand")
 
-    target_init_pos = np.array((*SPHERE_INIT_XY, ROBOT_INIT_HEIGHT), dtype=gs.np_float)
+    # Headless starts the arm right above the cube it will grasp; the GUI starts it over the sphere so both objects
+    # are within easy teleoperation reach.
+    init_xy = CUBE_INIT_XY if not args.vis else SPHERE_INIT_XY
+    target_init_pos = np.array((*init_xy, ROBOT_INIT_HEIGHT), dtype=gs.np_float)
     target_init_quat = gu.euler_to_quat((0.0, 180.0, 0.0))
     target_pos, target_quat = target_init_pos.copy(), target_init_quat.copy()
 
-    target_ik = scene.draw_debug_frame(
-        T=gu.trans_quat_to_T(target_pos, target_quat),
-        axis_length=0.15,
-        origin_size=0.01,
-        axis_radius=0.007,
-    )
-    scene.viewer.update(force=True)
-
-    def move(dpos_xyz: tuple[float, float, float]):
-        target_pos[:] += dpos_xyz
-
-    def rotate(drot: float):
-        drot_quat = gu.xyz_to_quat(np.array([0, 0, drot]))
-        target_quat[:] = gu.transform_quat_by_quat(target_quat, drot_quat)
+    target_ik = None
+    if args.vis:
+        target_ik = scene.draw_debug_frame(
+            T=gu.trans_quat_to_T(target_pos, target_quat),
+            axis_length=0.15,
+            origin_size=0.01,
+            axis_radius=0.007,
+        )
+        scene.viewer.update(force=True)
 
     def toggle_gripper(close: bool):
         pos = -0.03 if close else 0.04
@@ -283,8 +277,8 @@ def main() -> None:
 
     def reset_robot():
         target_pos[:], target_quat[:] = target_init_pos, target_init_quat
-        pose = gu.trans_quat_to_T(target_pos, target_quat)
-        scene.update_debug_objects((target_ik,), (pose,))
+        if target_ik is not None:
+            scene.update_debug_objects((target_ik,), (gu.trans_quat_to_T(target_pos, target_quat),))
 
         qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
         franka.set_qpos(qpos[motor_dofs_idx], motor_dofs_idx)
@@ -297,29 +291,56 @@ def main() -> None:
 
     is_running = True
 
-    def stop():
-        nonlocal is_running
-        is_running = False
+    if args.vis:
 
-    scene.viewer.register_keybinds(
-        Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((-DPOS, 0, 0),)),
-        Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((DPOS, 0, 0),)),
-        Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -DPOS, 0),)),
-        Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, DPOS, 0),)),
-        Keybind("move_up", Key.K, KeyAction.HOLD, callback=move, args=((0, 0, DPOS),)),
-        Keybind("move_down", Key.J, KeyAction.HOLD, callback=move, args=((0, 0, -DPOS),)),
-        Keybind("rotate_ccw", Key.N, KeyAction.HOLD, callback=rotate, args=(DROT,)),
-        Keybind("rotate_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(-DROT,)),
-        Keybind("reset_scene", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_robot),
-        Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=toggle_gripper, args=(True,)),
-        Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=toggle_gripper, args=(False,)),
-        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
-    )
+        def move(dpos_xyz: tuple[float, float, float]):
+            target_pos[:] += dpos_xyz
+
+        def rotate(drot: float):
+            drot_quat = gu.xyz_to_quat(np.array([0, 0, drot]))
+            target_quat[:] = gu.transform_quat_by_quat(target_quat, drot_quat)
+
+        def stop():
+            nonlocal is_running
+            is_running = False
+
+        scene.viewer.register_keybinds(
+            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((-DPOS, 0, 0),)),
+            Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((DPOS, 0, 0),)),
+            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -DPOS, 0),)),
+            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, DPOS, 0),)),
+            Keybind("move_up", Key.K, KeyAction.HOLD, callback=move, args=((0, 0, DPOS),)),
+            Keybind("move_down", Key.J, KeyAction.HOLD, callback=move, args=((0, 0, -DPOS),)),
+            Keybind("rotate_ccw", Key.N, KeyAction.HOLD, callback=rotate, args=(DROT,)),
+            Keybind("rotate_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(-DROT,)),
+            Keybind("reset_scene", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_robot),
+            Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=toggle_gripper, args=(True,)),
+            Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=toggle_gripper, args=(False,)),
+            Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
+        )
+
+    grasp_pos = np.array((*CUBE_INIT_XY, 0.125), dtype=gs.np_float)
+    lift_pos = np.array((*CUBE_INIT_XY, 0.30), dtype=gs.np_float)
 
     try:
         while is_running:
-            pose = gu.trans_quat_to_T(target_pos, target_quat)
-            scene.update_debug_objects((target_ik,), (pose,))
+            if not args.vis:
+                # Automatic pickup: hover over the cube, descend around it, squeeze, then lift.
+                if scene.t < 40:
+                    target_pos[:] = target_init_pos
+                    toggle_gripper(close=False)
+                elif scene.t < 100:
+                    target_pos[:] = grasp_pos
+                    toggle_gripper(close=False)
+                elif scene.t < 150:
+                    target_pos[:] = grasp_pos
+                    toggle_gripper(close=True)
+                else:
+                    target_pos[:] = lift_pos
+                    toggle_gripper(close=True)
+
+            if target_ik is not None:
+                scene.update_debug_objects((target_ik,), (gu.trans_quat_to_T(target_pos, target_quat),))
 
             qpos = franka.inverse_kinematics(
                 link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx
@@ -332,12 +353,13 @@ def main() -> None:
                 for label, sensor in zip(("left", "right"), (left, right)):
                     reading = sensor.read()
                     force_mag = reading.force.norm(dim=-1).max()
-                    # |twist| is the plotted torque about the view normal; print it to calibrate twist_scale_factor.
                     twist_mag = (reading.torque @ reading.torque.new_tensor(probe_normal)).abs().max()
                     if force_mag > gs.EPS:
                         print(f"({label}) max|F|={force_mag:.4f}  max|twist|={twist_mag:.5f}")
 
             if "PYTEST_VERSION" in os.environ:
+                break
+            if not args.vis and scene.t * scene.dt >= args.seconds:
                 break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
