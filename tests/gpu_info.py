@@ -86,7 +86,10 @@ class NvidiaBackend(GpuBackend):
         usage: dict[int, int] = {}
         for handle in self._handles:
             # Genesis test workers use the GPU both for compute (Quadrants) and for rendering (EGL/OpenGL), which
-            # the driver reports as separate process lists.
+            # the driver reports as two separate process lists. usedGpuMemory is the process' total memory on the
+            # device in either list, so a process doing both appears in both with the same footprint: take it once
+            # per device (max), then sum across devices for genuine multi-GPU use.
+            per_device: dict[int, int] = {}
             for get_processes in (
                 self._pynvml.nvmlDeviceGetComputeRunningProcesses,
                 self._pynvml.nvmlDeviceGetGraphicsRunningProcesses,
@@ -94,7 +97,9 @@ class NvidiaBackend(GpuBackend):
                 for proc in get_processes(handle):
                     # usedGpuMemory is None when the driver cannot attribute memory to the process.
                     if proc.usedGpuMemory is not None:
-                        usage[proc.pid] = usage.get(proc.pid, 0) + (proc.usedGpuMemory >> 20)
+                        per_device[proc.pid] = max(per_device.get(proc.pid, 0), proc.usedGpuMemory >> 20)
+            for pid, mem in per_device.items():
+                usage[pid] = usage.get(pid, 0) + mem
         return usage
 
 
