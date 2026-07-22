@@ -49,23 +49,6 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
 
 
-def _indices_key(indices, n):
-    """Canonicalize an index-like setter argument into a hashable tape-key component.
-
-    Slices key directly when hashable (Python 3.12 onward) and resolve against the dimension size [n] otherwise, so
-    an equivalent explicit index list keys identically on older interpreters.
-    """
-    if indices is None:
-        return None
-    if isinstance(indices, slice):
-        if isinstance(indices, Hashable):
-            return indices
-        return tuple(range(*indices.indices(n)))
-    if isinstance(indices, torch.Tensor):
-        return tuple(tensor_to_array(indices).reshape(-1).tolist())
-    return tuple(np.asarray(indices).reshape(-1).tolist())
-
-
 # Wrapper to track the arguments of a function and save them in the target buffer
 def tracked(fun):
     sig = inspect.signature(fun)
@@ -78,13 +61,23 @@ def tracked(fun):
             args_dict = dict(tuple(bound.arguments.items())[1:])
             # Key the slot by (method, dofs subset, envs subset) so same-step calls on distinct subsets (e.g. arm
             # and gripper force control, or per-environment-group commands) each keep their own entry and gradient
-            # path; a coarser key would let the second call evict the first from the tape.
-            key = (
-                fun.__name__,
-                _indices_key(args_dict.get("dofs_idx_local"), self.n_dofs),
-                _indices_key(args_dict.get("envs_idx"), self._solver._B),
-            )
-            self._update_tgt(key, args_dict)
+            # path; a coarser key would let the second call evict the first from the tape. Slices key directly when
+            # hashable (Python 3.12 onward) and resolve against their dimension size otherwise.
+            key = [fun.__name__]
+            for indices, n in (
+                (args_dict.get("dofs_idx_local"), self.n_dofs),
+                (args_dict.get("envs_idx"), self._solver._B),
+            ):
+                if indices is None:
+                    subset = None
+                elif isinstance(indices, slice):
+                    subset = indices if isinstance(indices, Hashable) else tuple(range(*indices.indices(n)))
+                elif isinstance(indices, torch.Tensor):
+                    subset = tuple(tensor_to_array(indices).reshape(-1).tolist())
+                else:
+                    subset = tuple(np.asarray(indices).reshape(-1).tolist())
+                key.append(subset)
+            self._update_tgt(tuple(key), args_dict)
         return fun(self, *args, **kwargs)
 
     return wrapper
@@ -1605,23 +1598,11 @@ class KinematicEntity(Entity):
             # Do not update [tgt], as input information is finalized at this point
             self._update_tgt_while_set = False
 
-            match key[0]:
-                case "set_pos":
-                    self.set_pos(**data_kwargs)
-                case "set_quat":
-                    self.set_quat(**data_kwargs)
-                case "set_dofs_velocity":
-                    self.set_dofs_velocity(**data_kwargs)
-                case "control_dofs_force":
-                    self.control_dofs_force(**data_kwargs)
-                case "control_dofs_velocity":
-                    self.control_dofs_velocity(**data_kwargs)
-                case "control_dofs_position":
-                    self.control_dofs_position(**data_kwargs)
-                case "control_dofs_position_velocity":
-                    self.control_dofs_position_velocity(**data_kwargs)
-                case _:
-                    gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
+            # Every tracked setter replays uniformly from its taped kwargs, so dispatch by name (a rare legitimate
+            # use of getattr, on our own vetted key set).
+            if key[0] not in self._tgt_keys:
+                gs.raise_exception(f"Invalid target key: {key[0]} not in {self._tgt_keys}")
+            getattr(self, key[0])(**data_kwargs)
 
         self._tgt = dict()
         self._update_tgt_while_set = update_tgt_while_set
