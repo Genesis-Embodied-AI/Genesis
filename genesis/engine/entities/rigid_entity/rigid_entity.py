@@ -3022,6 +3022,7 @@ class RigidEntity(KinematicEntity):
         pos_mask=[True, True, True],
         rot_mask=[True, True, True],
         max_step_size=0.5,
+        seed=None,
         dofs_idx_local=None,
         return_error=False,
         envs_idx=None,
@@ -3064,6 +3065,10 @@ class RigidEntity(KinematicEntity):
             Mask for rotation axis alignment. Defaults to [True, True, True]. E.g.: If you only want the link's Z-axis to be aligned with the Z-axis in the given quat, you can set it to [False, False, True].
         max_step_size : float, optional
             Maximum step size in q space for each IK solver step. Defaults to 0.5.
+        seed : None | int, optional
+            Seed of the joint-limit resampling that escapes unreachable local branches. Repeated calls with the
+            same seed and inputs return the same solution; vary it to explore different branches. Defaults to
+            None (a fixed internal seed).
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
@@ -3103,6 +3108,7 @@ class RigidEntity(KinematicEntity):
             pos_mask=pos_mask,
             rot_mask=rot_mask,
             max_step_size=max_step_size,
+            seed=seed,
             dofs_idx_local=dofs_idx_local,
             return_error=return_error,
             envs_idx=envs_idx,
@@ -3130,6 +3136,7 @@ class RigidEntity(KinematicEntity):
         pos_mask=[True, True, True],
         rot_mask=[True, True, True],
         max_step_size=0.5,
+        seed=None,
         dofs_idx_local=None,
         return_error=False,
         envs_idx=None,
@@ -3170,6 +3177,10 @@ class RigidEntity(KinematicEntity):
             Mask for rotation axis alignment. Defaults to [True, True, True]. E.g.: If you only want the link's Z-axis to be aligned with the Z-axis in the given quat, you can set it to [False, False, True].
         max_step_size : float, optional
             Maximum step size in q space for each IK solver step. Defaults to 0.5.
+        seed : None | int, optional
+            Seed of the joint-limit resampling that escapes unreachable local branches. Repeated calls with the
+            same seed and inputs return the same solution; vary it to explore different branches. Defaults to
+            None (a fixed internal seed).
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None. This is used to specify which dofs the IK is applied to.
         return_error : bool, optional
@@ -3304,6 +3315,7 @@ class RigidEntity(KinematicEntity):
             pos_tol,
             rot_tol,
             max_step_size,
+            seed if seed is not None else 0,
             respect_joint_limit,
         )
 

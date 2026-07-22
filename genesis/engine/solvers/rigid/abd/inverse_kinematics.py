@@ -39,6 +39,7 @@ def kernel_rigid_entity_inverse_kinematics(
     pos_tol: qd.f32,
     rot_tol: qd.f32,
     max_step_size: qd.f32,
+    seed: qd.i32,
     respect_joint_limit: qd.i32,
 ):
     EPS = rigid_info.EPS[None]
@@ -276,9 +277,12 @@ def kernel_rigid_entity_inverse_kinematics(
                                 or dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC
                             ) and not (qd.math.isinf(dof_limit[0]) or qd.math.isinf(dof_limit[1])):
                                 q_start = dyn_info.joints.q_start[I_j]
-                                rigid_info.qpos[q_start, i_b] = dof_limit[0] + qd.random() * (
-                                    dof_limit[1] - dof_limit[0]
-                                )
+                                # Counter-based draw: qd.random() per-thread stream ordering depends on the
+                                # parallel schedule, which would make the resampled solutions - and therefore
+                                # the returned configuration - nondeterministic across runs.
+                                rigid_info.qpos[q_start, i_b] = dof_limit[0] + gu.qd_hash01(
+                                    seed, i_b, i_sample, q_start
+                                ) * (dof_limit[1] - dof_limit[0])
                 else:
                     pass  # When respect_joint_limit=False, we can simply continue from the last solution
 
