@@ -22,9 +22,9 @@ from genesis.options.recorders import (
     MPLVectorFieldPlot as MPLVectorFieldPlotterOptions,
     PyQtLinePlot as PyQtLinePlotterOptions,
 )
-from genesis.utils import has_display
+from genesis.utils import data_to_array, has_display
 
-from .base_recorder import Recorder, _to_numpy
+from .base_recorder import Recorder
 from .recorder_manager import RecorderManager, register_recording
 
 IS_PYQTGRAPH_AVAILABLE = False
@@ -55,10 +55,6 @@ COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y"))
 
 
 T = TypeVar("T")
-
-
-def _data_to_array(data: Sequence) -> np.ndarray:
-    return np.atleast_1d(data)
 
 
 class BasePlotter(Recorder):
@@ -156,7 +152,7 @@ class LinePlotHelper:
                 )
 
                 for key in data.keys():
-                    data_values = _data_to_array(data[key])
+                    data_values = np.atleast_1d(data[key])
                     label_values = options.labels[key]
                     assert len(label_values) == len(data_values), (
                         f"[{type(self).__name__}] Label count must match data count for key '{key}'"
@@ -165,11 +161,11 @@ class LinePlotHelper:
             else:
                 self._subplot_structure = {}
                 for key, values in data.items():
-                    values = _data_to_array(values)
+                    values = np.atleast_1d(values)
                     self._subplot_structure[key] = tuple(f"{key}_{i}" for i in range(len(values)))
         else:
             self._is_dict_data = False
-            data = _data_to_array(data)
+            data = np.atleast_1d(data)
 
             if options.labels is not None:
                 labels = options.labels if isinstance(options.labels, Sequence) else (options.labels,)
@@ -192,10 +188,10 @@ class LinePlotHelper:
             for key, values in data.items():
                 if key not in self._subplot_structure:
                     continue  # skip keys not included in subplot structure
-                values = _data_to_array(values)
+                values = np.atleast_1d(values)
                 processed_data[key] = values
         else:
-            data = _data_to_array(data)
+            data = np.atleast_1d(data)
             processed_data = {"main": data}
 
         # Update time data
@@ -308,7 +304,7 @@ class PyQtLinePlotter(BasePyQtPlotter):
     def build(self):
         super().build()
 
-        self.line_plot = LinePlotHelper(options=self._options, data=_to_numpy(self._data_func()))
+        self.line_plot = LinePlotHelper(options=self._options, data=data_to_array(self._data_func()))
         self.curves: dict[str, list[pg.PlotCurveItem]] = {}
 
         # create plots for each subplot
@@ -392,7 +388,7 @@ class BaseMPLPlotter(BasePlotter):
 
         Unused cells in the grid are hidden, the figure title is set from ``options.title``, and each axis gets the
         matching entry of ``titles`` when provided. Subclasses fill the returned axes and then call
-        ``_cache_backgrounds()``.
+        ``_cache_background()``.
         """
         import matplotlib.pyplot as plt
 
@@ -409,7 +405,7 @@ class BaseMPLPlotter(BasePlotter):
         self.fig.suptitle(self._options.title)
         return self.axes
 
-    def _cache_backgrounds(self):
+    def _cache_background(self):
         """Draw the figure and cache its full background region for fast blitting."""
         self.fig.canvas.draw()
         self._background = self.fig.canvas.copy_from_bbox(self.fig.bbox)
@@ -418,7 +414,7 @@ class BaseMPLPlotter(BasePlotter):
         """Re-cache the blit background after a resize."""
         with self._lock:
             if self.fig is not None and self.axes:
-                self._cache_backgrounds()
+                self._cache_background()
 
     def _show_fig(self):
         if self._options.show_window:
@@ -500,7 +496,7 @@ class MPLLinePlotter(BaseMPLPlotter):
     def build(self):
         super().build()
 
-        self.line_plot = LinePlotHelper(options=self._options, data=_to_numpy(self._data_func()))
+        self.line_plot = LinePlotHelper(options=self._options, data=data_to_array(self._data_func()))
 
         import matplotlib.pyplot as plt
 
@@ -735,8 +731,7 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         # Sign that maps positive twist (right-hand rule about normal) to a counter-clockwise sweep in the projected
         # basis, independent of the handedness of the orthogonals() basis.
         u, v = gu.orthogonals(normal)
-        s_hand = np.sign(np.dot(np.cross(u, v), normal))
-        self._twist_sign = s_hand if s_hand != 0.0 else 1.0
+        self._twist_sign = 1.0 if np.dot(np.cross(u, v), normal) > 0.0 else -1.0
 
         for ax in axes:
             ax.set_xlim(x_min - margin, x_max + margin)
@@ -793,7 +788,7 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         self.fig.colorbar(self._quivers[-1], ax=axes, label="Magnitude")
         if self._twist_scale_factor is not None:
             self.fig.colorbar(self._twist_arcs[-1], ax=axes, label="Twist")
-        self._cache_backgrounds()
+        self._cache_background()
         self._show_fig()
 
         self.fig.canvas.mpl_connect("resize_event", self.on_resize)

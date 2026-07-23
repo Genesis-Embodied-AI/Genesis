@@ -86,7 +86,8 @@ def _add_tactile_sensor(
     grid_local_pos = probe_local_pos  # (ny, nx, 3) for the plane grid; flattened below for the non-grid sensors
     is_grid = probe_local_pos.ndim == 3
     probe_local_pos = probe_local_pos.reshape(-1, 3)
-    # Spatial crosstalk needs a regular grid layout
+    # Spatial crosstalk needs a regular grid layout, so enable it under --noise only for the grid-capable taxel
+    # sensors (and only the plane grid, not the dome). The 3x3 kernel sums to 1, so it conserves total force.
     grid_crosstalk_kwargs = (
         dict(
             probe_local_pos=grid_local_pos,
@@ -104,6 +105,8 @@ def _add_tactile_sensor(
         )
     if sensor_type == "contact":
         return scene.add_sensor(
+            # Schmitt-trigger thresholds (contact depth in meters): a taxel latches on above contact_threshold and
+            # only releases once the depth drops back below the lower release_threshold.
             gs.sensors.ContactProbe(
                 probe_local_pos=probe_local_pos,
                 contact_threshold=0.004,

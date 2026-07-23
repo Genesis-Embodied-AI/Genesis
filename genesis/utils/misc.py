@@ -9,7 +9,7 @@ import os
 import random
 import sys
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import field
 from importlib import import_module
 from itertools import combinations
@@ -24,6 +24,7 @@ import torch
 
 
 import genesis as gs
+from genesis.typing import is_sequence
 
 
 LOGGER = logging.getLogger(__name__)
@@ -410,6 +411,19 @@ def tensor_to_cpu(x):
 
 def tensor_to_array(x: torch.Tensor, dtype: type[np.generic] | None = None) -> np.ndarray:
     return np.asarray(tensor_to_cpu(x), dtype=dtype)
+
+
+def data_to_array(data):
+    """Recursively move any GPU tensor nested in ``data`` to a CPU numpy array, preserving container structure."""
+    if isinstance(data, torch.Tensor):
+        return tensor_to_array(data)
+    if isinstance(data, np.ndarray):
+        return data
+    if isinstance(data, Mapping):
+        return {k: data_to_array(v) for k, v in data.items()}
+    if is_sequence(data):
+        return type(data)(data_to_array(v) for v in data)
+    return data
 
 
 def is_approx_multiple(a, b, tol=1e-7):
