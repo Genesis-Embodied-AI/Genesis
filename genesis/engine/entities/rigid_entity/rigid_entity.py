@@ -2721,9 +2721,11 @@ class RigidEntity(KinematicEntity):
         self._IK_n_tgts = self._solver._options.IK_max_targets
         self._IK_error_dim = self._IK_n_tgts * 6
 
-        # The Jacobian and IK scratch fields are allocated lazily on first use; None marks them as not yet created.
+        # The Jacobian and the forward-kinematics qpos save/restore buffer are allocated lazily on first use; None
+        # marks them as not yet created. The inverse-kinematics scratch is allocated per call, not stored here, so
+        # the quadrants template mapper never walks a not-yet-populated dataclass on entity-template kernels.
         self._jacobian = None
-        self._IK_mat = None
+        self._fk_qpos_cache = None
 
     def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
         if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
@@ -2891,119 +2893,33 @@ class RigidEntity(KinematicEntity):
         if self._jacobian is None:
             self._jacobian = qd.field(dtype=gs.qd_float, shape=(6, self.n_dofs, self._solver._B))
 
+        from genesis.engine.solvers.rigid.abd.inverse_kinematics import kernel_get_jacobian, kernel_get_jacobian_zero
+
+        sol = self._solver
         if local_point is None:
-            sol = self._solver
-            self._kernel_get_jacobian_zero(link.idx, sol.dyn_state, sol.dyn_info)
+            kernel_get_jacobian_zero(
+                link.idx, self._dof_start, self._jacobian, sol.dyn_state, sol.dyn_info, sol.rigid_config, sol._B
+            )
         else:
             p_local = torch.as_tensor(local_point, dtype=gs.tc_float, device=gs.device)
             if p_local.shape != (3,):
                 gs.raise_exception("Must be a vector of length 3")
-            sol = self._solver
-            self._kernel_get_jacobian(link.idx, p_local, sol.dyn_state, sol.dyn_info)
+            kernel_get_jacobian(
+                link.idx,
+                self._dof_start,
+                p_local,
+                self._jacobian,
+                sol.dyn_state,
+                sol.dyn_info,
+                sol.rigid_config,
+                sol._B,
+            )
 
         jacobian = qd_to_torch(self._jacobian, transpose=True, copy=True)
         if self._solver.n_envs == 0:
             jacobian = jacobian[0]
 
         return jacobian
-
-    @qd.func
-    def _impl_get_jacobian(
-        self, tgt_link_idx, i_b, p_vec, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
-    ):
-        self._func_get_jacobian(
-            tgt_link_idx, i_b, p_vec, qd.Vector.one(gs.qd_int, 3), qd.Vector.one(gs.qd_int, 3), dyn_state, dyn_info
-        )
-
-    @qd.kernel
-    def _kernel_get_jacobian(
-        self,
-        tgt_link_idx: qd.i32,
-        p_local: qd.types.ndarray(),
-        dyn_state: array_class.DynState,
-        dyn_info: array_class.DynInfo,
-    ):
-        p_vec = qd.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.qd_float)
-        for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, p_vec, dyn_state, dyn_info)
-
-    @qd.kernel
-    def _kernel_get_jacobian_zero(
-        self, tgt_link_idx: qd.i32, dyn_state: array_class.DynState, dyn_info: array_class.DynInfo
-    ):
-        for i_b in range(self._solver._B):
-            self._impl_get_jacobian(tgt_link_idx, i_b, qd.Vector.zero(gs.qd_float, 3), dyn_state, dyn_info)
-
-    @qd.func
-    def _func_get_jacobian(
-        self,
-        tgt_link_idx,
-        i_b,
-        p_local,
-        pos_mask,
-        rot_mask,
-        dyn_state: array_class.DynState,
-        dyn_info: array_class.DynInfo,
-    ):
-        for i_row, i_d in qd.ndrange(6, self.n_dofs):
-            self._jacobian[i_row, i_d, i_b] = 0.0
-
-        tgt_link_pos = dyn_state.links.pos[tgt_link_idx, i_b] + gu.qd_transform_by_quat(
-            p_local, dyn_state.links.quat[tgt_link_idx, i_b]
-        )
-        i_l = tgt_link_idx
-        while i_l > -1:
-            I_l = [i_l, i_b] if qd.static(self.solver._options.batch_links_info) else i_l
-
-            for i_j in range(dyn_info.links.joint_start[I_l], dyn_info.links.joint_end[I_l]):
-                I_j = [i_j, i_b] if qd.static(self.solver._options.batch_joints_info) else i_j
-
-                if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.FIXED:
-                    pass
-
-                elif dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
-                    i_d_jac = dyn_info.joints.dof_start[I_j] - self._dof_start
-                    rotation = dyn_state.joints.xaxis[i_j, i_b]
-                    translation = rotation.cross(tgt_link_pos - dyn_state.joints.xanchor[i_j, i_b])
-
-                    self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
-                    self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
-                    self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
-                    self._jacobian[3, i_d_jac, i_b] = rotation[0] * rot_mask[0]
-                    self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
-                    self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
-
-                elif dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
-                    i_d_jac = dyn_info.joints.dof_start[I_j] - self._dof_start
-                    translation = dyn_state.joints.xaxis[i_j, i_b]
-
-                    self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
-                    self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
-                    self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
-
-                elif dyn_info.joints.type[I_j] == gs.JOINT_TYPE.FREE:
-                    # translation
-                    for i_d_ in qd.static(range(3)):
-                        i_d_jac = dyn_info.joints.dof_start[I_j] + i_d_ - self._dof_start
-
-                        self._jacobian[i_d_, i_d_jac, i_b] = 1.0 * pos_mask[i_d_]
-
-                    # rotation
-                    for i_d_ in qd.static(range(3)):
-                        i_d = dyn_info.joints.dof_start[I_j] + i_d_ + 3
-                        i_d_jac = i_d - self._dof_start
-                        I_d = [i_d, i_b] if qd.static(self.solver._options.batch_dofs_info) else i_d
-                        rotation = dyn_info.dofs.motion_ang[I_d]
-                        translation = rotation.cross(tgt_link_pos - dyn_state.links.pos[i_l, i_b])
-
-                        self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
-                        self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
-                        self._jacobian[2, i_d_jac, i_b] = translation[2] * pos_mask[2]
-                        self._jacobian[3, i_d_jac, i_b] = rotation[0] * rot_mask[0]
-                        self._jacobian[4, i_d_jac, i_b] = rotation[1] * rot_mask[1]
-                        self._jacobian[5, i_d_jac, i_b] = rotation[2] * rot_mask[2]
-
-            i_l = dyn_info.links.parent_idx[I_l]
 
     @gs.assert_built
     def inverse_kinematics(
@@ -3195,7 +3111,10 @@ class RigidEntity(KinematicEntity):
         (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
-        from genesis.engine.solvers.rigid.abd.inverse_kinematics import kernel_rigid_entity_inverse_kinematics
+        from genesis.engine.solvers.rigid.abd.inverse_kinematics import (
+            kernel_rigid_entity_inverse_kinematics,
+            kernel_set_ik_targets,
+        )
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
@@ -3207,24 +3126,8 @@ class RigidEntity(KinematicEntity):
         if self.n_dofs == 0:
             gs.raise_exception("Entity has zero dofs.")
 
-        # Lazily allocate the Jacobian and IK scratch fields on first use.
-        if self._jacobian is None:
-            self._jacobian = qd.field(dtype=gs.qd_float, shape=(6, self.n_dofs, self._solver._B))
-        if self._IK_mat is None:
-            # for storing intermediate results
-            self._IK_mat = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-            self._IK_inv = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-            self._IK_L = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-            self._IK_U = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-            self._IK_y = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-            self._IK_qpos_orig = qd.field(dtype=gs.qd_float, shape=(self.n_qs, self._solver._B))
-            self._IK_qpos_best = qd.field(dtype=gs.qd_float, shape=(self.n_qs, self._solver._B))
-            self._IK_delta_qpos = qd.field(dtype=gs.qd_float, shape=(self.n_dofs, self._solver._B))
-            self._IK_vec = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._solver._B))
-            self._IK_err_pose = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._solver._B))
-            self._IK_err_pose_best = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._solver._B))
-            self._IK_jacobian = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self.n_dofs, self._solver._B))
-            self._IK_jacobian_T = qd.field(dtype=gs.qd_float, shape=(self.n_dofs, self._IK_error_dim, self._solver._B))
+        # Allocate the inverse-kinematics scratch for this call (see __init__ for why it is not cached on self).
+        ik_state = array_class.get_ik_state(self.n_qs, self.n_dofs, self._IK_error_dim, self._solver._B)
 
         n_links = len(links)
         if n_links == 0:
@@ -3291,23 +3194,55 @@ class RigidEntity(KinematicEntity):
 
         links_idx = torch.tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
 
+        # Marshal the targets into the solver-side struct so the fastcache IK kernel sees only quadrants tensors,
+        # writing through zero-copy views when available and falling back to a setter kernel otherwise (see set_qpos).
+        targets = array_class.get_ik_targets(n_links, n_dofs, self.n_qs, len(envs_idx))
+        if gs.use_zerocopy:
+            for member, data in (
+                (targets.links_idx, links_idx),
+                (targets.dofs_idx, dofs_idx),
+                (targets.envs_idx, envs_idx),
+                (targets.pos, poss),
+                (targets.quat, quats),
+                (targets.local_point, local_points),
+                (targets.init_qpos, init_qpos),
+                (targets.pos_mask, pos_mask),
+                (targets.rot_mask, rot_mask),
+                (targets.link_pos_mask, link_pos_mask),
+                (targets.link_rot_mask, link_rot_mask),
+            ):
+                member_t = qd_to_torch(member, copy=False)
+                member_t[:] = data
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+        else:
+            kernel_set_ik_targets(
+                links_idx,
+                dofs_idx,
+                envs_idx,
+                poss,
+                quats,
+                local_points,
+                init_qpos,
+                pos_mask,
+                rot_mask,
+                link_pos_mask,
+                link_rot_mask,
+                targets,
+            )
+
         kernel_rigid_entity_inverse_kinematics(
-            links_idx,
-            dofs_idx,
-            envs_idx,
-            self,
-            poss,
-            quats,
-            local_points,
-            init_qpos,
-            pos_mask,
-            rot_mask,
-            link_pos_mask,
-            link_rot_mask,
+            self._idx_in_solver,
+            self._q_start,
+            self._dof_start,
+            targets,
+            ik_state,
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,
             self._solver.rigid_config,
+            self.n_qs,
+            self.n_dofs,
             custom_init_qpos,
             max_samples,
             max_solver_iters,
@@ -3319,11 +3254,11 @@ class RigidEntity(KinematicEntity):
             respect_joint_limit,
         )
 
-        qpos = qd_to_torch(self._IK_qpos_best, transpose=True, copy=True)
+        qpos = qd_to_torch(ik_state.qpos_best, transpose=True, copy=True)
         qpos = qpos[0] if self._solver.n_envs == 0 else qpos[envs_idx]
 
         if return_error:
-            error_pose = qd_to_torch(self._IK_err_pose_best, transpose=True, copy=True).reshape(
+            error_pose = qd_to_torch(ik_state.err_pose_best, transpose=True, copy=True).reshape(
                 (-1, self._IK_n_tgts, 6)
             )[:, :n_links]
             error_pose = error_pose[0] if self._solver.n_envs == 0 else error_pose[envs_idx]
@@ -3367,6 +3302,9 @@ class RigidEntity(KinematicEntity):
         links_pos = torch.empty((len(envs_idx), len(links_idx), 3), dtype=gs.tc_float, device=gs.device)
         links_quat = torch.empty((len(envs_idx), len(links_idx), 4), dtype=gs.tc_float, device=gs.device)
 
+        if self._fk_qpos_cache is None:
+            self._fk_qpos_cache = qd.field(dtype=gs.qd_float, shape=(self.n_qs, self._solver._B))
+
         self._kernel_forward_kinematics(
             self._get_global_idx(qs_idx_local, self.n_qs, self._q_start),
             links_idx,
@@ -3401,9 +3339,8 @@ class RigidEntity(KinematicEntity):
     ):
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in qd.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
-            # save original qpos
-            # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
-            self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = rigid_info.qpos[qs_idx[i_q_], envs_idx[i_b_]]
+            # Save the live qpos so it can be restored after evaluating forward kinematics at the queried qpos.
+            self._fk_qpos_cache[qs_idx[i_q_], envs_idx[i_b_]] = rigid_info.qpos[qs_idx[i_q_], envs_idx[i_b_]]
             # set new qpos
             rigid_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
 
@@ -3424,7 +3361,7 @@ class RigidEntity(KinematicEntity):
         # restore original qpos
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
         for i_q_, i_b_ in qd.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
-            rigid_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
+            rigid_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._fk_qpos_cache[qs_idx[i_q_], envs_idx[i_b_]]
 
         # run FK
         qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)

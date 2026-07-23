@@ -410,6 +410,97 @@ def get_island_state(solver, collider):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class IKState:
+    """Damped-least-squares inverse-kinematics scratch, one column per parallel solve.
+
+    A column is an environment for the entity API or a candidate restart for the planner; error_dim = 6 * n_targets
+    stacks the per-target pose residuals.
+    """
+
+    # Single-target spatial Jacobian (6 x n_dofs), rebuilt per target link and copied into the stacked block.
+    jacobian: qd.Tensor
+    # Stacked multi-target Jacobian and its transpose, feeding the damped normal-equations solve.
+    jacobian_stacked: qd.Tensor
+    jacobian_stacked_t: qd.Tensor
+    # Damped normal matrix J J^T + damping^2 I, its lower / upper LU factors and forward-substitution scratch, and
+    # its inverse.
+    mat: qd.Tensor
+    lu_lower: qd.Tensor
+    lu_upper: qd.Tensor
+    lu_y: qd.Tensor
+    inv: qd.Tensor
+    # Stacked pose residual, the best residual seen across restarts, and inv @ residual.
+    err_pose: qd.Tensor
+    err_pose_best: qd.Tensor
+    vec: qd.Tensor
+    # Joint-space step, the saved initial configuration, and the best configuration found across restarts.
+    delta_qpos: qd.Tensor
+    qpos_orig: qd.Tensor
+    qpos_best: qd.Tensor
+
+
+def get_ik_state(n_qs, n_dofs, error_dim, n_cols):
+    return IKState(
+        jacobian=V(dtype=gs.qd_float, shape=(6, n_dofs, n_cols)),
+        jacobian_stacked=V(dtype=gs.qd_float, shape=(error_dim, n_dofs, n_cols)),
+        jacobian_stacked_t=V(dtype=gs.qd_float, shape=(n_dofs, error_dim, n_cols)),
+        mat=V(dtype=gs.qd_float, shape=(error_dim, error_dim, n_cols)),
+        lu_lower=V(dtype=gs.qd_float, shape=(error_dim, error_dim, n_cols)),
+        lu_upper=V(dtype=gs.qd_float, shape=(error_dim, error_dim, n_cols)),
+        lu_y=V(dtype=gs.qd_float, shape=(error_dim, error_dim, n_cols)),
+        inv=V(dtype=gs.qd_float, shape=(error_dim, error_dim, n_cols)),
+        err_pose=V(dtype=gs.qd_float, shape=(error_dim, n_cols)),
+        err_pose_best=V(dtype=gs.qd_float, shape=(error_dim, n_cols)),
+        vec=V(dtype=gs.qd_float, shape=(error_dim, n_cols)),
+        delta_qpos=V(dtype=gs.qd_float, shape=(n_dofs, n_cols)),
+        qpos_orig=V(dtype=gs.qd_float, shape=(n_qs, n_cols)),
+        qpos_best=V(dtype=gs.qd_float, shape=(n_qs, n_cols)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class IKTargets:
+    """Inverse-kinematics targets and DOF selection for one solve batch, one column per parallel solve.
+
+    A column is an environment for the entity API or a candidate restart for the planner. Positions and
+    orientations are vec-typed so the solver reads a target pose per (link, column) directly; the host populates
+    every field before the solve.
+    """
+
+    # Global indices of the target links, the effective DOFs to move, and the columns (solver envs) to solve.
+    links_idx: qd.Tensor
+    dofs_idx: qd.Tensor
+    envs_idx: qd.Tensor
+    # Target pose per (link, column) and the link-local point whose pose is driven, in the world frame.
+    pos: qd.Tensor
+    quat: qd.Tensor
+    local_point: qd.Tensor
+    # Optional custom initial configuration per (column, q); used only when custom_init_qpos is set.
+    init_qpos: qd.Tensor
+    # Which position / rotation axes to solve (shared across links), and per-link position / rotation enables.
+    pos_mask: qd.Tensor
+    rot_mask: qd.Tensor
+    link_pos_mask: qd.Tensor
+    link_rot_mask: qd.Tensor
+
+
+def get_ik_targets(n_links, n_dofs, n_qs, n_cols):
+    return IKTargets(
+        links_idx=V(dtype=gs.qd_int, shape=(n_links,)),
+        dofs_idx=V(dtype=gs.qd_int, shape=(n_dofs,)),
+        envs_idx=V(dtype=gs.qd_int, shape=(n_cols,)),
+        pos=V_VEC(3, dtype=gs.qd_float, shape=(n_links, n_cols)),
+        quat=V_VEC(4, dtype=gs.qd_float, shape=(n_links, n_cols)),
+        local_point=V_VEC(3, dtype=gs.qd_float, shape=(n_links,)),
+        init_qpos=V(dtype=gs.qd_float, shape=(n_cols, n_qs)),
+        pos_mask=V(dtype=gs.qd_float, shape=(3,)),
+        rot_mask=V(dtype=gs.qd_float, shape=(3,)),
+        link_pos_mask=V(dtype=gs.qd_int, shape=(n_links,)),
+        link_rot_mask=V(dtype=gs.qd_int, shape=(n_links,)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class ConstraintState:
     # Union-find partition of links into contact islands, read by the per-island Newton solve and hibernation.
     island: IslandState
