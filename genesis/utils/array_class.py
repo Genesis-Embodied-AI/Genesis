@@ -2653,67 +2653,98 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerFKInfo:
-    """Forward-kinematics model of the planned entity.
+class PlannerDofsInfo:
+    """Joint-space box and derivative limits of the planned DOFs, with their reach bound and lock mask."""
 
-    Holds the DOF limits, the robot collision-proxy spheres and their covering surface samples, the collision
-    geoms for the exact rescue, the self-collision pairs, and the attached-object spheres. Every field is stored
-    flat (prefixed dof_ / sphere_ / geom_ / vert_ / self_pair_ / attach_) so the single graph kernel binds each
-    leaf member at two nesting levels, the depth graph=True + fastcache supports.
-    """
-
-    # Joint-space box and derivative limits of the planned DOFs, with their reach bound and lock mask.
-    dof_q_limit_lower: qd.Tensor
-    dof_q_limit_upper: qd.Tensor
-    dof_vel_limit: qd.Tensor
-    dof_acc_limit: qd.Tensor
+    q_limit_lower: qd.Tensor
+    q_limit_upper: qd.Tensor
+    vel_limit: qd.Tensor
+    acc_limit: qd.Tensor
     # Per-DOF workspace reach bound: config-independent Lipschitz constant of the FK map used by the
     # swept-collision cover and the certified edge checks (sum of distal chain segment lengths + max sphere
     # offset + radius).
-    dof_reach: qd.Tensor
+    reach: qd.Tensor
     # Per-(dof, env) lock mask: locked DOFs hold their start value (auto-grasp freezes gripper chains).
-    dof_is_locked: qd.Tensor
-    # Robot collision proxy: spheres in link-local frames, sorted by link (see sphere_proxy.py). Each sphere
-    # keeps the robot collision geom it proxies (sphere_geom_idx into the geom_* fields), so the exact rescue
-    # re-checks precisely that geom.
-    sphere_link_idx: qd.Tensor
-    sphere_geom_idx: qd.Tensor
-    sphere_pos_local: qd.Tensor
-    sphere_radius: qd.Tensor
-    # Robot collision geoms for the exact convex rescue: the global geom index plus the link-frame offset pose,
-    # so certification paths can pose each geom at hypothetical forward-kinematics poses and query the collider's
-    # GJK distance (see func_planner_gjk_clearance in cost.py); geom_links_start ranges the geoms per
-    # entity-local link (geoms sorted by link). Each geom carries the link-frame bounding sphere of its collision
-    # mesh for a query-free skip bound.
+    is_locked: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerSpheresInfo:
+    """Robot collision proxy: spheres in link-local frames, sorted by link (see sphere_proxy.py). Each sphere
+    keeps the robot collision geom it proxies (geom_idx into PlannerGeomsInfo), so the exact rescue re-checks
+    precisely that geom."""
+
+    link_idx: qd.Tensor
     geom_idx: qd.Tensor
-    geom_links_start: qd.Tensor
-    geom_offset_pos: qd.Tensor
-    geom_offset_quat: qd.Tensor
-    geom_bound_center_local: qd.Tensor
-    geom_bound_radius: qd.Tensor
-    # Covering surface samples of the robot collision meshes in link-local frames, partitioned per proxy sphere
-    # through the compressed *_start ranges: the certification paths re-check a proxy-failing (sphere, world
-    # geom) pair against the sphere's own samples, deciding on the small coarse covering whenever its bound is
-    # conclusive and sweeping the fine one only in the marginal band (see _EXACT_RESCUE_WINDOW in cost.py).
-    vert_pos_local: qd.Tensor
-    vert_spheres_start: qd.Tensor
-    vert_coarse_pos_local: qd.Tensor
-    vert_spheres_coarse_start: qd.Tensor
-    # Flat robot self-collision sphere-index pairs (link-pair filter expanded to spheres), with the per-pair
-    # relative reach bound: how far the pair's spheres can approach per radian of L-inf joint motion, from the
-    # DOFs on the kinematic path between their links (absolute reach would double-count common ancestors).
-    # Sphere pairs are sorted by link pair: self_pair_link_pairs_idx / self_pair_link_pairs_start range them per
-    # link pair, so the certification rescue runs one exact hull check per failing link pair instead of one per
-    # sphere pair.
-    self_pair_spheres_idx: qd.Tensor
-    self_pair_reach: qd.Tensor
-    self_pair_link_pairs_idx: qd.Tensor
-    self_pair_link_pairs_start: qd.Tensor
-    # Attached-object spheres, composed into their attach link frame per env (grasps differ across envs).
-    attach_link_idx: qd.Tensor
-    attach_pos_local: qd.Tensor
-    attach_radius: qd.Tensor
-    attach_is_active: qd.Tensor
+    pos_local: qd.Tensor
+    radius: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerGeomsInfo:
+    """Robot collision geoms for the exact convex rescue: the global geom index plus the link-frame offset pose,
+    so certification paths can pose each geom at hypothetical forward-kinematics poses and query the collider's
+    GJK distance (see func_planner_gjk_clearance in cost.py); links_start ranges the geoms per entity-local link
+    (geoms sorted by link). Each geom carries the link-frame bounding sphere of its collision mesh for a
+    query-free skip bound."""
+
+    geoms_idx: qd.Tensor
+    links_start: qd.Tensor
+    offset_pos: qd.Tensor
+    offset_quat: qd.Tensor
+    bound_center_local: qd.Tensor
+    bound_radius: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerVertsInfo:
+    """Covering surface samples of the robot collision meshes in link-local frames, partitioned per proxy sphere
+    through the compressed *_start ranges: the certification paths re-check a proxy-failing (sphere, world geom)
+    pair against the sphere's own samples, deciding on the small coarse covering whenever its bound is conclusive
+    and sweeping the fine one only in the marginal band (see _EXACT_RESCUE_WINDOW in cost.py)."""
+
+    pos_local: qd.Tensor
+    spheres_start: qd.Tensor
+    coarse_pos_local: qd.Tensor
+    spheres_coarse_start: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerSelfPairsInfo:
+    """Flat robot self-collision sphere-index pairs (link-pair filter expanded to spheres), with the per-pair
+    relative reach bound: how far the pair's spheres can approach per radian of L-inf joint motion, from the DOFs
+    on the kinematic path between their links (absolute reach would double-count common ancestors). Sphere pairs
+    are sorted by link pair: link_pairs_idx / link_pairs_start range them per link pair, so the certification
+    rescue runs one exact hull check per failing link pair instead of one per sphere pair."""
+
+    spheres_idx: qd.Tensor
+    reach: qd.Tensor
+    link_pairs_idx: qd.Tensor
+    link_pairs_start: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerAttachSpheresInfo:
+    """Attached-object spheres, composed into their attach link frame per env (grasps differ across envs)."""
+
+    link_idx: qd.Tensor
+    pos_local: qd.Tensor
+    radius: qd.Tensor
+    is_active: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerFKInfo:
+    """Forward-kinematics model of the planned entity: the DOF limits, the robot collision-proxy spheres and
+    their covering surface samples, the collision geoms for the exact rescue, the self-collision pairs, and the
+    attached-object spheres."""
+
+    dofs: PlannerDofsInfo
+    spheres: PlannerSpheresInfo
+    geoms: PlannerGeomsInfo
+    verts: PlannerVertsInfo
+    self_pairs: PlannerSelfPairsInfo
+    attach: PlannerAttachSpheresInfo
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2755,6 +2786,19 @@ class PlannerRRTInfo:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerBoundaryInfo:
+    """Plan boundary inputs: start / goal configurations (entity-local q) and the optional Cartesian goal on the
+    ee link."""
+
+    qpos_start: qd.Tensor
+    qpos_goal: qd.Tensor
+    goal_link_idx: qd.Tensor
+    goal_pos: qd.Tensor
+    goal_quat: qd.Tensor
+    has_pose_goal: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerCostInfo:
     """Cost weights, activation distances, and required clearance of the trajectory objective, plus the plan
     boundary inputs (start / goal configurations and the optional Cartesian goal) - runtime scalars so tuning
@@ -2771,14 +2815,31 @@ class PlannerCostInfo:
     eps_act: qd.Tensor
     eps_self: qd.Tensor
     d_safe: qd.Tensor
-    # Plan boundary inputs: start / goal configurations (entity-local q) and the optional Cartesian goal on the
-    # ee link.
-    boundary_qpos_start: qd.Tensor
-    boundary_qpos_goal: qd.Tensor
-    boundary_goal_link_idx: qd.Tensor
-    boundary_goal_pos: qd.Tensor
-    boundary_goal_quat: qd.Tensor
-    boundary_has_pose_goal: qd.Tensor
+    boundary: PlannerBoundaryInfo
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerExclInfo:
+    """Boundary-config contact exclusions: pairs already violating the margin at qpos_start or qpos_goal are
+    allowed to keep their anchoring boundary's clearance (never get worse), so grasped-object starts and
+    contact-rich goals optimize and certify. Sphere-vs-world entries pack (i_s, i_gw), self entries the
+    self-pair index; every entry carries its anchoring boundary (0 = start, 1 = goal) and the anchor geometry
+    the certification ramp measures displacement from (see _EXCL_ANCHOR_SLACK_CERT in cost.py): the sphere
+    world position plus the owning link's orientation for world entries (the covered surface patch moves with
+    the link frame, so a matching position with a rotated link is a different contact), the sphere-pair
+    relative offset for self entries."""
+
+    world_pair: qd.Tensor
+    world_sd: qd.Tensor
+    world_bound: qd.Tensor
+    world_anchor: qd.Tensor
+    world_anchor_quat: qd.Tensor
+    world_count: qd.Tensor
+    self_pair: qd.Tensor
+    self_sd: qd.Tensor
+    self_bound: qd.Tensor
+    self_anchor: qd.Tensor
+    self_count: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2787,29 +2848,10 @@ class PlannerCertInfo:
 
     The floats bound the exact-rescue window and its covering radii, the excusable goal-contact band and depth,
     the anchor-slack ramps of the certification and optimizer paths, and the accepted-goal real penetration
-    budget (see cost.py for each). The exclusions are stored flat (prefixed excl_) so the single graph kernel
-    binds each member at two nesting levels, the depth graph=True + fastcache supports.
+    budget (see cost.py for each).
     """
 
-    # Boundary-config contact exclusions: pairs already violating the margin at qpos_start or qpos_goal are
-    # allowed to keep their anchoring boundary's clearance (never get worse), so grasped-object starts and
-    # contact-rich goals optimize and certify. Sphere-vs-world entries pack (i_s, i_gw), self entries the
-    # self-pair index; every entry carries its anchoring boundary (0 = start, 1 = goal) and the anchor geometry
-    # the certification ramp measures displacement from (see _EXCL_ANCHOR_SLACK_CERT in cost.py): the sphere
-    # world position plus the owning link's orientation for world entries (the covered surface patch moves with
-    # the link frame, so a matching position with a rotated link is a different contact), the sphere-pair
-    # relative offset for self entries.
-    excl_world_pair: qd.Tensor
-    excl_world_sd: qd.Tensor
-    excl_world_bound: qd.Tensor
-    excl_world_anchor: qd.Tensor
-    excl_world_anchor_quat: qd.Tensor
-    excl_world_count: qd.Tensor
-    excl_self_pair: qd.Tensor
-    excl_self_sd: qd.Tensor
-    excl_self_bound: qd.Tensor
-    excl_self_anchor: qd.Tensor
-    excl_self_count: qd.Tensor
+    excl: PlannerExclInfo
     excl_depth_max: qd.Tensor
     excl_contact_band: qd.Tensor
     excl_anchor_slack_cert: qd.Tensor
@@ -2836,34 +2878,46 @@ class PlannerEntityInfo:
 def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts, n_coarse_verts, n_robot_geoms, B):
     return PlannerEntityInfo(
         fk=PlannerFKInfo(
-            dof_q_limit_lower=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            dof_q_limit_upper=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            dof_vel_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            dof_acc_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            dof_reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            dof_is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
-            sphere_link_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
-            sphere_geom_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
-            sphere_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
-            sphere_radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
-            geom_idx=V(dtype=gs.qd_int, shape=(max(n_robot_geoms, 1),)),
-            geom_links_start=V(dtype=gs.qd_int, shape=(planner_config.n_links + 1,)),
-            geom_offset_pos=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            geom_offset_quat=V_VEC(4, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            geom_bound_center_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            geom_bound_radius=V(dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            vert_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_verts, 1),)),
-            vert_spheres_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
-            vert_coarse_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_coarse_verts, 1),)),
-            vert_spheres_coarse_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
-            self_pair_spheres_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
-            self_pair_reach=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1),)),
-            self_pair_link_pairs_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_link_pairs, 1),)),
-            self_pair_link_pairs_start=V(dtype=gs.qd_int, shape=(max(n_link_pairs, 1) + 1,)),
-            attach_link_idx=V(dtype=gs.qd_int, shape=(max(planner_config.n_attach_max, 1),)),
-            attach_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1), B)),
-            attach_radius=V(dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1),)),
-            attach_is_active=V(dtype=gs.qd_bool, shape=(max(planner_config.n_attach_max, 1), B)),
+            dofs=PlannerDofsInfo(
+                q_limit_lower=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                q_limit_upper=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                vel_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                acc_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
+            ),
+            spheres=PlannerSpheresInfo(
+                link_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
+                geom_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
+                pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+                radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+            ),
+            geoms=PlannerGeomsInfo(
+                geoms_idx=V(dtype=gs.qd_int, shape=(max(n_robot_geoms, 1),)),
+                links_start=V(dtype=gs.qd_int, shape=(planner_config.n_links + 1,)),
+                offset_pos=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                offset_quat=V_VEC(4, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                bound_center_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                bound_radius=V(dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+            ),
+            verts=PlannerVertsInfo(
+                pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_verts, 1),)),
+                spheres_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
+                coarse_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_coarse_verts, 1),)),
+                spheres_coarse_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
+            ),
+            self_pairs=PlannerSelfPairsInfo(
+                spheres_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
+                reach=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1),)),
+                link_pairs_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_link_pairs, 1),)),
+                link_pairs_start=V(dtype=gs.qd_int, shape=(max(n_link_pairs, 1) + 1,)),
+            ),
+            attach=PlannerAttachSpheresInfo(
+                link_idx=V(dtype=gs.qd_int, shape=(max(planner_config.n_attach_max, 1),)),
+                pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1), B)),
+                radius=V(dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1),)),
+                is_active=V(dtype=gs.qd_bool, shape=(max(planner_config.n_attach_max, 1), B)),
+            ),
         ),
         mppi=PlannerMPPIInfo(
             n_iters=V(dtype=gs.qd_int, shape=()),
@@ -2897,25 +2951,29 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
             eps_act=V(dtype=gs.qd_float, shape=()),
             eps_self=V(dtype=gs.qd_float, shape=()),
             d_safe=V(dtype=gs.qd_float, shape=()),
-            boundary_qpos_start=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
-            boundary_qpos_goal=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
-            boundary_goal_link_idx=V(dtype=gs.qd_int, shape=()),
-            boundary_goal_pos=V_VEC(3, dtype=gs.qd_float, shape=(B,)),
-            boundary_goal_quat=V_VEC(4, dtype=gs.qd_float, shape=(B,)),
-            boundary_has_pose_goal=V(dtype=gs.qd_bool, shape=()),
+            boundary=PlannerBoundaryInfo(
+                qpos_start=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
+                qpos_goal=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
+                goal_link_idx=V(dtype=gs.qd_int, shape=()),
+                goal_pos=V_VEC(3, dtype=gs.qd_float, shape=(B,)),
+                goal_quat=V_VEC(4, dtype=gs.qd_float, shape=(B,)),
+                has_pose_goal=V(dtype=gs.qd_bool, shape=()),
+            ),
         ),
         cert=PlannerCertInfo(
-            excl_world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_world_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_world_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_world_count=V(dtype=gs.qd_int, shape=(B,)),
-            excl_self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_self_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_self_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_self_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            excl_self_count=V(dtype=gs.qd_int, shape=(B,)),
+            excl=PlannerExclInfo(
+                world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_count=V(dtype=gs.qd_int, shape=(B,)),
+                self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_count=V(dtype=gs.qd_int, shape=(B,)),
+            ),
             excl_depth_max=V(dtype=gs.qd_float, shape=()),
             excl_contact_band=V(dtype=gs.qd_float, shape=()),
             excl_anchor_slack_cert=V(dtype=gs.qd_float, shape=()),
@@ -2964,25 +3022,28 @@ def get_planner_world_state(n_geoms, B):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerFKState:
-    """Forward kinematics (FK) cache of the gradient path, one column per (candidate, knot).
+class PlannerEvalState:
+    """Cost-only evaluation scratch, one column per in-flight rollout / line-search trial (serial over knots)."""
 
-    Also holds the cost-only evaluation scratch (prefixed eval_): one column per in-flight rollout /
-    line-search trial, serial over knots. Every field is stored flat so the single graph kernel binds each
-    leaf member at two nesting levels, the depth graph=True + fastcache supports.
-    """
+    qpos: qd.Tensor
+    links_pos: qd.Tensor
+    links_quat: qd.Tensor
+    joints_xanchor: qd.Tensor
+    joints_xaxis: qd.Tensor
+    spheres_pos: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerFKState:
+    """Forward kinematics (FK) cache of the gradient path, one column per (candidate, knot), plus the cost-only
+    evaluation scratch (see PlannerEvalState)."""
 
     links_pos: qd.Tensor
     links_quat: qd.Tensor
     joints_xanchor: qd.Tensor
     joints_xaxis: qd.Tensor
     spheres_pos: qd.Tensor
-    eval_qpos: qd.Tensor
-    eval_links_pos: qd.Tensor
-    eval_links_quat: qd.Tensor
-    eval_joints_xanchor: qd.Tensor
-    eval_joints_xaxis: qd.Tensor
-    eval_spheres_pos: qd.Tensor
+    eval: PlannerEvalState
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -3089,12 +3150,14 @@ def get_planner_state(planner_config, B):
             joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
             joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
             spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, NF)),
-            eval_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, E)),
-            eval_links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
-            eval_links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
-            eval_joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
-            eval_joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
-            eval_spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+            eval=PlannerEvalState(
+                qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, E)),
+                links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
+                links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
+                joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
+                joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
+                spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+            ),
         ),
         mppi=PlannerMPPIState(),
         lbfgs=PlannerLBFGSState(

@@ -44,11 +44,11 @@ def func_planner_rrt_config_is_free(
         i_t,
         i_t,
         i_b,
-        qpos=planner_state.fk.eval_qpos,
-        links_pos=planner_state.fk.eval_links_pos,
-        links_quat=planner_state.fk.eval_links_quat,
-        joints_xanchor=planner_state.fk.eval_joints_xanchor,
-        joints_xaxis=planner_state.fk.eval_joints_xaxis,
+        qpos=planner_state.fk.eval.qpos,
+        links_pos=planner_state.fk.eval.links_pos,
+        links_quat=planner_state.fk.eval.links_quat,
+        joints_xanchor=planner_state.fk.eval.joints_xanchor,
+        joints_xaxis=planner_state.fk.eval.joints_xaxis,
         dyn_state=dyn_state,
         dyn_info=dyn_info,
         rigid_info=rigid_info,
@@ -58,9 +58,9 @@ def func_planner_rrt_config_is_free(
     func_planner_spheres(
         i_t,
         i_b,
-        links_pos=planner_state.fk.eval_links_pos,
-        links_quat=planner_state.fk.eval_links_quat,
-        spheres_pos=planner_state.fk.eval_spheres_pos,
+        links_pos=planner_state.fk.eval.links_pos,
+        links_quat=planner_state.fk.eval.links_quat,
+        spheres_pos=planner_state.fk.eval.spheres_pos,
         planner_info=planner_info,
         planner_config=planner_config,
     )
@@ -69,9 +69,9 @@ def func_planner_rrt_config_is_free(
         i_b,
         swp,
         dq_inf,
-        links_pos=planner_state.fk.eval_links_pos,
-        links_quat=planner_state.fk.eval_links_quat,
-        spheres_pos=planner_state.fk.eval_spheres_pos,
+        links_pos=planner_state.fk.eval.links_pos,
+        links_quat=planner_state.fk.eval.links_quat,
+        spheres_pos=planner_state.fk.eval.spheres_pos,
         planner_info=planner_info,
         planner_world=planner_world,
         collider_state=collider_state,
@@ -115,7 +115,7 @@ def func_planner_rrt_edge_is_free(
     n_dp = qd.static(planner_config.n_dp)
     reach = gs.qd_float(0.0)
     for i_dp in range(n_dp):
-        reach += planner_info.fk.dof_reach[i_dp] * qd.abs(
+        reach += planner_info.fk.dofs.reach[i_dp] * qd.abs(
             planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
         )
     # Quarter-band granularity: each sample's sweep allowance stays ~eps_act/8, so edges certify while only
@@ -136,7 +136,7 @@ def func_planner_rrt_edge_is_free(
     while is_free and i_sub <= n_sub:
         alpha = qd.cast(i_sub, gs.qd_float) / qd.cast(n_sub, gs.qd_float)
         for i_dp in range(n_dp):
-            planner_state.fk.eval_qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
+            planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
                 planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
             )
         is_free = func_planner_rrt_config_is_free(
@@ -202,8 +202,8 @@ def func_planner_rrt_connect(
 
             # Roots: node 0 = start, node n_half = goal.
             for i_dp in range(n_dp):
-                planner_state.rrt.qpos[i_dp, col0] = planner_info.cost.boundary_qpos_start[i_dp, i_b]
-                planner_state.rrt.qpos[i_dp, col0 + n_half] = planner_info.cost.boundary_qpos_goal[i_dp, i_b]
+                planner_state.rrt.qpos[i_dp, col0] = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                planner_state.rrt.qpos[i_dp, col0 + n_half] = planner_info.cost.boundary.qpos_goal[i_dp, i_b]
             planner_state.rrt.parent[col0] = -1
             planner_state.rrt.parent[col0 + n_half] = -1
             planner_state.rrt.n_nodes[2 * i_t] = 1
@@ -227,16 +227,16 @@ def func_planner_rrt_connect(
                 if gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, 777) < planner_info.rrt.goal_bias[None]:
                     newest = other + planner_state.rrt.n_nodes[2 * i_t + 1 - side] - 1
                     for i_dp in range(n_dp):
-                        planner_state.fk.eval_qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
+                        planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
                 else:
                     for i_dp in range(n_dp):
                         u = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, i_dp)
-                        q = planner_info.fk.dof_q_limit_lower[i_dp] + u * (
-                            planner_info.fk.dof_q_limit_upper[i_dp] - planner_info.fk.dof_q_limit_lower[i_dp]
+                        q = planner_info.fk.dofs.q_limit_lower[i_dp] + u * (
+                            planner_info.fk.dofs.q_limit_upper[i_dp] - planner_info.fk.dofs.q_limit_lower[i_dp]
                         )
-                        if planner_info.fk.dof_is_locked[i_dp, i_b]:
-                            q = planner_info.cost.boundary_qpos_start[i_dp, i_b]
-                        planner_state.fk.eval_qpos[i_dp, i_t] = q
+                        if planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                            q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                        planner_state.fk.eval.qpos[i_dp, i_t] = q
 
                 # Nearest node of the growing side (deterministic lowest-index tie-break).
                 i_near = 0
@@ -245,7 +245,7 @@ def func_planner_rrt_connect(
                     d = gs.qd_float(0.0)
                     for i_dp in range(n_dp):
                         d += (
-                            planner_state.fk.eval_qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n]
+                            planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n]
                         ) ** 2
                     if d < d_near:
                         d_near = d
@@ -257,7 +257,7 @@ def func_planner_rrt_connect(
                     d_inf = qd.max(
                         d_inf,
                         qd.abs(
-                            planner_state.fk.eval_qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_near]
+                            planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_near]
                         ),
                     )
                 scale = qd.min(1.0, planner_info.rrt.steer_step[None] / qd.max(d_inf, 1e-9))
@@ -267,7 +267,7 @@ def func_planner_rrt_connect(
                     for i_dp in range(n_dp):
                         q_near = planner_state.rrt.qpos[i_dp, col0 + base + i_near]
                         planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
-                            planner_state.fk.eval_qpos[i_dp, i_t] - q_near
+                            planner_state.fk.eval.qpos[i_dp, i_t] - q_near
                         )
                     if func_planner_rrt_edge_is_free(
                         i_t,

@@ -158,8 +158,8 @@ def kernel_planner_set_plan_scalars(
     errno: qd.Tensor,
 ):
     """Kernel fallback of _set_plan_scalars (see there)."""
-    planner_info.cost.boundary_goal_link_idx[None] = goal_link_idx
-    planner_info.cost.boundary_has_pose_goal[None] = has_pose_goal
+    planner_info.cost.boundary.goal_link_idx[None] = goal_link_idx
+    planner_info.cost.boundary.has_pose_goal[None] = has_pose_goal
     planner_info.mppi.seed_key[None] = seed_key
     planner_info.cost.w_obs[None] = w_obs
     planner_info.cost.w_self[None] = w_self
@@ -172,10 +172,10 @@ def kernel_planner_set_plan_scalars(
     planner_info.cost.eps_act[None] = eps_act
     planner_info.cost.eps_self[None] = eps_self
     planner_info.cost.d_safe[None] = d_safe
-    for i_dp, i_b in qd.ndrange(planner_info.fk.dof_is_locked.shape[0], planner_info.fk.dof_is_locked.shape[1]):
-        planner_info.fk.dof_is_locked[i_dp, i_b] = False
-    for i_s, i_b in qd.ndrange(planner_info.fk.attach_is_active.shape[0], planner_info.fk.attach_is_active.shape[1]):
-        planner_info.fk.attach_is_active[i_s, i_b] = False
+    for i_dp, i_b in qd.ndrange(planner_info.fk.dofs.is_locked.shape[0], planner_info.fk.dofs.is_locked.shape[1]):
+        planner_info.fk.dofs.is_locked[i_dp, i_b] = False
+    for i_s, i_b in qd.ndrange(planner_info.fk.attach.is_active.shape[0], planner_info.fk.attach.is_active.shape[1]):
+        planner_info.fk.attach.is_active[i_s, i_b] = False
     for i_b in range(errno.shape[0]):
         errno[i_b] = 0
 
@@ -235,8 +235,8 @@ def _set_plan_scalars(
     a single kernel launch otherwise."""
     if gs.use_zerocopy:
         for field, value in (
-            (planner_info.cost.boundary_goal_link_idx, goal_link_idx),
-            (planner_info.cost.boundary_has_pose_goal, has_pose_goal),
+            (planner_info.cost.boundary.goal_link_idx, goal_link_idx),
+            (planner_info.cost.boundary.has_pose_goal, has_pose_goal),
             (planner_info.mppi.seed_key, seed_key),
             (planner_info.cost.w_obs, w_obs),
             (planner_info.cost.w_self, w_self),
@@ -249,8 +249,8 @@ def _set_plan_scalars(
             (planner_info.cost.eps_act, eps_act),
             (planner_info.cost.eps_self, eps_self),
             (planner_info.cost.d_safe, d_safe),
-            (planner_info.fk.dof_is_locked, False),
-            (planner_info.fk.attach_is_active, False),
+            (planner_info.fk.dofs.is_locked, False),
+            (planner_info.fk.attach.is_active, False),
             (errno, 0),
         ):
             field_t = qd_to_torch(field, copy=False)
@@ -656,62 +656,62 @@ class Planner:
         gjk_state = array_class.get_gjk_state_contact_only(B * n_seeds * planner_config.n_eval_per_candidate)
         errno = array_class.V(dtype=gs.qd_int, shape=(B,))
 
-        spheres_link_idx_t = qd_to_torch(planner_info.fk.sphere_link_idx, copy=False)
+        spheres_link_idx_t = qd_to_torch(planner_info.fk.spheres.link_idx, copy=False)
         spheres_link_idx_t[:] = torch.as_tensor(spheres_link_idx, device=gs.device)
-        spheres_geom_idx_t = qd_to_torch(planner_info.fk.sphere_geom_idx, copy=False)
+        spheres_geom_idx_t = qd_to_torch(planner_info.fk.spheres.geom_idx, copy=False)
         spheres_geom_idx_t[:] = torch.as_tensor(spheres_geom_idx, device=gs.device)
-        spheres_pos_local_t = qd_to_torch(planner_info.fk.sphere_pos_local, copy=False)
+        spheres_pos_local_t = qd_to_torch(planner_info.fk.spheres.pos_local, copy=False)
         spheres_pos_local_t[:] = torch.as_tensor(spheres_pos_local, device=gs.device)
-        spheres_radius_t = qd_to_torch(planner_info.fk.sphere_radius, copy=False)
+        spheres_radius_t = qd_to_torch(planner_info.fk.spheres.radius, copy=False)
         spheres_radius_t[:] = torch.as_tensor(spheres_radius, device=gs.device)
-        rgeoms_idx_t = qd_to_torch(planner_info.fk.geom_idx, copy=False)
+        rgeoms_idx_t = qd_to_torch(planner_info.fk.geoms.geoms_idx, copy=False)
         rgeoms_idx_t[:] = torch.as_tensor(np.array(rgeoms_idx, dtype=gs.np_int), device=gs.device)
-        rgeoms_links_start_t = qd_to_torch(planner_info.fk.geom_links_start, copy=False)
+        rgeoms_links_start_t = qd_to_torch(planner_info.fk.geoms.links_start, copy=False)
         rgeoms_links_start_t[:] = torch.as_tensor(np.array(rgeoms_links_start, dtype=gs.np_int), device=gs.device)
-        rgeoms_offset_pos_t = qd_to_torch(planner_info.fk.geom_offset_pos, copy=False)
+        rgeoms_offset_pos_t = qd_to_torch(planner_info.fk.geoms.offset_pos, copy=False)
         rgeoms_offset_pos_t[:] = torch.as_tensor(np.array(rgeoms_offset_pos, dtype=gs.np_float), device=gs.device)
-        rgeoms_offset_quat_t = qd_to_torch(planner_info.fk.geom_offset_quat, copy=False)
+        rgeoms_offset_quat_t = qd_to_torch(planner_info.fk.geoms.offset_quat, copy=False)
         rgeoms_offset_quat_t[:] = torch.as_tensor(np.array(rgeoms_offset_quat, dtype=gs.np_float), device=gs.device)
-        rgeoms_bound_center_t = qd_to_torch(planner_info.fk.geom_bound_center_local, copy=False)
+        rgeoms_bound_center_t = qd_to_torch(planner_info.fk.geoms.bound_center_local, copy=False)
         rgeoms_bound_center_t[:] = torch.as_tensor(np.array(rgeoms_bound_center, dtype=gs.np_float), device=gs.device)
-        rgeoms_bound_radius_t = qd_to_torch(planner_info.fk.geom_bound_radius, copy=False)
+        rgeoms_bound_radius_t = qd_to_torch(planner_info.fk.geoms.bound_radius, copy=False)
         rgeoms_bound_radius_t[:] = torch.as_tensor(np.array(rgeoms_bound_radius, dtype=gs.np_float), device=gs.device)
         if len(verts_pos_local) > 0:
-            verts_pos_local_t = qd_to_torch(planner_info.fk.vert_pos_local, copy=False)
+            verts_pos_local_t = qd_to_torch(planner_info.fk.verts.pos_local, copy=False)
             verts_pos_local_t[:] = torch.as_tensor(verts_pos_local, device=gs.device)
-        spheres_vert_start_t = qd_to_torch(planner_info.fk.vert_spheres_start, copy=False)
+        spheres_vert_start_t = qd_to_torch(planner_info.fk.verts.spheres_start, copy=False)
         spheres_vert_start_t[:] = torch.as_tensor(spheres_vert_start, device=gs.device)
         if len(coarse_pos_local) > 0:
-            coarse_pos_local_t = qd_to_torch(planner_info.fk.vert_coarse_pos_local, copy=False)
+            coarse_pos_local_t = qd_to_torch(planner_info.fk.verts.coarse_pos_local, copy=False)
             coarse_pos_local_t[:] = torch.as_tensor(coarse_pos_local, device=gs.device)
-        spheres_coarse_start_t = qd_to_torch(planner_info.fk.vert_spheres_coarse_start, copy=False)
+        spheres_coarse_start_t = qd_to_torch(planner_info.fk.verts.spheres_coarse_start, copy=False)
         spheres_coarse_start_t[:] = torch.as_tensor(spheres_coarse_start, device=gs.device)
         if self_pairs:
-            self_pairs_idx_t = qd_to_torch(planner_info.fk.self_pair_spheres_idx, copy=False)
+            self_pairs_idx_t = qd_to_torch(planner_info.fk.self_pairs.spheres_idx, copy=False)
             self_pairs_idx_t[:] = torch.as_tensor(np.array(self_pairs, dtype=gs.np_int), device=gs.device)
-            self_pairs_reach_t = qd_to_torch(planner_info.fk.self_pair_reach, copy=False)
+            self_pairs_reach_t = qd_to_torch(planner_info.fk.self_pairs.reach, copy=False)
             self_pairs_reach_t[:] = torch.as_tensor(
                 self._compute_self_pairs_reach(entity, spheres_link_idx, self_pairs, dof_reach_np), device=gs.device
             )
-            link_pairs_idx_t = qd_to_torch(planner_info.fk.self_pair_link_pairs_idx, copy=False)
+            link_pairs_idx_t = qd_to_torch(planner_info.fk.self_pairs.link_pairs_idx, copy=False)
             link_pairs_idx_t[:] = torch.as_tensor(np.array(self_link_pairs, dtype=gs.np_int), device=gs.device)
-            link_pairs_start_t = qd_to_torch(planner_info.fk.self_pair_link_pairs_start, copy=False)
+            link_pairs_start_t = qd_to_torch(planner_info.fk.self_pairs.link_pairs_start, copy=False)
             link_pairs_start_t[:] = torch.as_tensor(self_link_pairs_start, device=gs.device)
 
         # Joint-space box limits and derivative limits (model velocity limits, defaults when the asset has none).
         q_limit_lower, q_limit_upper = entity.q_limit
-        q_limit_lower_t = qd_to_torch(planner_info.fk.dof_q_limit_lower, copy=False)
+        q_limit_lower_t = qd_to_torch(planner_info.fk.dofs.q_limit_lower, copy=False)
         q_limit_lower_t[:] = torch.as_tensor(q_limit_lower, dtype=gs.tc_float, device=gs.device)
-        q_limit_upper_t = qd_to_torch(planner_info.fk.dof_q_limit_upper, copy=False)
+        q_limit_upper_t = qd_to_torch(planner_info.fk.dofs.q_limit_upper, copy=False)
         q_limit_upper_t[:] = torch.as_tensor(q_limit_upper, dtype=gs.tc_float, device=gs.device)
         vel_limit = entity.get_dofs_vel_limit()
         if vel_limit.ndim > 1:
             vel_limit = vel_limit[0]
-        vel_limit_t = qd_to_torch(planner_info.fk.dof_vel_limit, copy=False)
+        vel_limit_t = qd_to_torch(planner_info.fk.dofs.vel_limit, copy=False)
         vel_limit_t[:] = torch.where(vel_limit.isfinite(), vel_limit, torch.full_like(vel_limit, _DEFAULT_VEL_LIMIT))
-        acc_limit_t = qd_to_torch(planner_info.fk.dof_acc_limit, copy=False)
+        acc_limit_t = qd_to_torch(planner_info.fk.dofs.acc_limit, copy=False)
         acc_limit_t.fill_(_DEFAULT_ACC_LIMIT)
-        dof_reach_t = qd_to_torch(planner_info.fk.dof_reach, copy=False)
+        dof_reach_t = qd_to_torch(planner_info.fk.dofs.reach, copy=False)
         dof_reach_t[:] = torch.as_tensor(dof_reach_np, device=gs.device)
 
         # MPPI exploration scale per DOF, capped for huge ranges.
@@ -854,14 +854,14 @@ class Planner:
         if links_pos.ndim == 2:
             links_pos, links_quat = links_pos[None], links_quat[None]
         spheres_link_idx = context.spheres_link_idx
-        spheres_pos_local = tensor_to_array(qd_to_torch(context.planner_info.fk.sphere_pos_local))
-        spheres_radius = tensor_to_array(qd_to_torch(context.planner_info.fk.sphere_radius))
+        spheres_pos_local = tensor_to_array(qd_to_torch(context.planner_info.fk.spheres.pos_local))
+        spheres_radius = tensor_to_array(qd_to_torch(context.planner_info.fk.spheres.radius))
         robot_spheres = links_pos[:, spheres_link_idx] + gu.transform_by_quat(
             np.tile(spheres_pos_local, (links_pos.shape[0], 1, 1)), links_quat[:, spheres_link_idx]
         )
 
         attachments = []
-        dof_locked = qd_to_torch(context.planner_info.fk.dof_is_locked, copy=False)
+        dof_locked = qd_to_torch(context.planner_info.fk.dofs.is_locked, copy=False)
         for held in solver.entities:
             if held is entity or held in excluded_entities:
                 continue
@@ -992,9 +992,9 @@ class Planner:
             if qpos_goal_t.ndim == 1:
                 qpos_goal_t = qpos_goal_t[None].expand(B_plan, n_dp)
 
-        boundary_qpos_start_t = qd_to_torch(planner_info.cost.boundary_qpos_start, copy=False).T
+        boundary_qpos_start_t = qd_to_torch(planner_info.cost.boundary.qpos_start, copy=False).T
         boundary_qpos_start_t[envs_idx_np] = qpos_start_t
-        boundary_qpos_goal_t = qd_to_torch(planner_info.cost.boundary_qpos_goal, copy=False).T
+        boundary_qpos_goal_t = qd_to_torch(planner_info.cost.boundary.qpos_goal, copy=False).T
         if qpos_goal_t is not None:
             boundary_qpos_goal_t[envs_idx_np] = qpos_goal_t
         else:
@@ -1005,10 +1005,10 @@ class Planner:
             boundary_qpos_goal_t[envs_idx_np] = qpos_start_t
         if has_pose_goal:
             if goal_pos is not None:
-                goal_pos_t = qd_to_torch(planner_info.cost.boundary_goal_pos, copy=False)
+                goal_pos_t = qd_to_torch(planner_info.cost.boundary.goal_pos, copy=False)
                 goal_pos_t[envs_idx_np] = goal_pos
             if goal_quat is not None:
-                goal_quat_t = qd_to_torch(planner_info.cost.boundary_goal_quat, copy=False)
+                goal_quat_t = qd_to_torch(planner_info.cost.boundary.goal_quat, copy=False)
                 goal_quat_t[envs_idx_np] = goal_quat
 
         # Per-plan runtime scalars: goal designation, noise key, coarse cost weights and margins (the polish
@@ -1044,10 +1044,10 @@ class Planner:
             excluded = [attachment.entity for attachment in attachments]
             attachments += self._detect_held_attachments(entity, context, envs_idx, excluded)
 
-        attach_active = qd_to_torch(planner_info.fk.attach_is_active, copy=False)
-        attach_link_idx = qd_to_torch(planner_info.fk.attach_link_idx, copy=False)
-        attach_pos = qd_to_torch(planner_info.fk.attach_pos_local, copy=False)
-        attach_radius = qd_to_torch(planner_info.fk.attach_radius, copy=False)
+        attach_active = qd_to_torch(planner_info.fk.attach.is_active, copy=False)
+        attach_link_idx = qd_to_torch(planner_info.fk.attach.link_idx, copy=False)
+        attach_pos = qd_to_torch(planner_info.fk.attach.pos_local, copy=False)
+        attach_radius = qd_to_torch(planner_info.fk.attach.radius, copy=False)
         attached_geoms = []
         i_slot = 0
         for attachment in attachments:
@@ -1375,7 +1375,7 @@ class Planner:
             for radius in _STRAIGHTEN_RADII:
                 if not bool(env_rough.any()):
                     break
-                knots_straight = _straighten_knots(knots_best, qd_to_torch(planner_info.fk.dof_reach), radius)
+                knots_straight = _straighten_knots(knots_best, qd_to_torch(planner_info.fk.dofs.reach), radius)
                 traj_t[env_rough, best_seed[env_rough]] = knots_straight[env_rough]
                 cost_mod.kernel_planner_validate(*kernel_args, planner_config, check_start=True)
                 is_env_straight = (
@@ -1384,15 +1384,15 @@ class Planner:
                 knots_best = torch.where(is_env_straight[:, None, None], knots_straight, knots_best)
                 env_rough &= ~is_env_straight
             _set_clearance(planner_info, float(safety_margin) + 0.02)
-        start_hold = qd_to_torch(planner_info.cost.boundary_qpos_start).T[:, None, :].expand(B, W, n_dp)
+        start_hold = qd_to_torch(planner_info.cost.boundary.qpos_start).T[:, None, :].expand(B, W, n_dp)
         knots_best = torch.where(is_env_valid[:, None, None], knots_best, start_hold)
 
         knots_plan = knots_best[envs_idx_np]
         qpos_out, vel_out, acc_out, dt_out = retime_trajectory(
             knots_plan,
-            qd_to_torch(planner_info.fk.dof_vel_limit),
-            qd_to_torch(planner_info.fk.dof_acc_limit),
-            qd_to_torch(planner_info.fk.dof_reach),
+            qd_to_torch(planner_info.fk.dofs.vel_limit),
+            qd_to_torch(planner_info.fk.dofs.acc_limit),
+            qd_to_torch(planner_info.fk.dofs.reach),
             num_waypoints,
             scene_dt=solver._scene.dt,
         )
@@ -1454,14 +1454,14 @@ class Planner:
             ik_kwargs["quat"] = goal_quat
         if solver.n_envs > 0:
             ik_kwargs["envs_idx"] = envs_idx
-        lo = qd_to_torch(planner_info.fk.dof_q_limit_lower)
-        hi = qd_to_torch(planner_info.fk.dof_q_limit_upper)
+        lo = qd_to_torch(planner_info.fk.dofs.q_limit_lower)
+        hi = qd_to_torch(planner_info.fk.dofs.q_limit_upper)
         traj_probe = qd_to_torch(planner_state.cost.qpos, copy=False).T.reshape(B, S, W, n_dp)
         is_active_t = qd_to_torch(planner_state.cert.is_active, copy=False).reshape(B, S)
         flags_t = qd_to_torch(planner_state.cert.valid_flags, copy=False).reshape(B, S)
         min_clear_exact_t = qd_to_torch(planner_state.cert.min_clearance_exact, copy=False).reshape(B, S)
         min_clear_proxy_t = qd_to_torch(planner_state.cert.min_clearance_proxy, copy=False).reshape(B, S)
-        boundary_qpos_goal_t = qd_to_torch(planner_info.cost.boundary_qpos_goal, copy=False).T
+        boundary_qpos_goal_t = qd_to_torch(planner_info.cost.boundary.qpos_goal, copy=False).T
         is_goal_resolved = torch.zeros(env_pending.shape[0], dtype=torch.bool, device=gs.device)
         # Envs whose pool yields no acceptable branch re-roll fresh pools immediately (resolution is cheap next
         # to planning): a pool failure says nothing about the goal, and deferring the re-roll to the next ladder
@@ -1567,8 +1567,8 @@ class Planner:
             context.planner_state,
         )
         W, S, n_dp = planner_config.n_knots, planner_config.n_seeds, planner_config.n_dp
-        start = qd_to_torch(planner_info.cost.boundary_qpos_start).T[:, None, :]
-        goal = qd_to_torch(planner_info.cost.boundary_qpos_goal).T[:, None, :]
+        start = qd_to_torch(planner_info.cost.boundary.qpos_start).T[:, None, :]
+        goal = qd_to_torch(planner_info.cost.boundary.qpos_goal).T[:, None, :]
         alpha = torch.linspace(0.0, 1.0, W, dtype=gs.tc_float, device=gs.device)[None, :, None]
         line = start * (1 - alpha) + goal * alpha
         traj = line[:, None].repeat(1, S, 1, 1)
@@ -1577,10 +1577,10 @@ class Planner:
             (traj.shape[0], S - 1, basis.shape[1], n_dp), generator=gen, dtype=gs.tc_float, device="cpu"
         ).to(gs.device)
         traj[:, 1:] += 0.5 * torch.einsum("wk,bskd->bswd", basis, noise)
-        locked = qd_to_torch(planner_info.fk.dof_is_locked).T
+        locked = qd_to_torch(planner_info.fk.dofs.is_locked).T
         traj = torch.where(locked[:, None, None, :], start[:, None], traj)
         traj = traj.clamp(
-            qd_to_torch(planner_info.fk.dof_q_limit_lower), qd_to_torch(planner_info.fk.dof_q_limit_upper)
+            qd_to_torch(planner_info.fk.dofs.q_limit_lower), qd_to_torch(planner_info.fk.dofs.q_limit_upper)
         )
         traj[:, :, :2] = start[:, None]
         traj[:, :, -2:] = goal[:, None]
