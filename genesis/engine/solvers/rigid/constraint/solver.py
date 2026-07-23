@@ -1291,8 +1291,10 @@ def func_equality_connect(
         constraint_state.aref[n_con, i_b] = aref - jdotv[i_3]
         constraint_state.efc_D[n_con, i_b] = 1.0 / diag
         if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+            # The impedance driver is the aggregate anchor error (like imp_aref above), so the three rows share one
+            # effective mass; the per-row component only feeds the force's positional reference.
             constraint_state.efc_dist[n_con, i_b] = pos_diff[i_3]
-            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos_diff[i_3], invweight, EPS)
+            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, -penetration, invweight, EPS)
 
 
 @qd.func
@@ -1689,8 +1691,9 @@ def func_equality_weld(
         constraint_state.aref[n_con, i_b] = aref - jdotv[i]
         constraint_state.efc_D[n_con, i_b] = 1.0 / diag
         if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+            # Aggregate 6D weld error drives the impedance (like imp_aref above): see func_equality_connect.
             constraint_state.efc_dist[n_con, i_b] = pos_error[i]
-            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, pos_error[i], invweight[0], EPS)
+            constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(sol_params, -pos_imp, invweight[0], EPS)
 
     # --- Orientation part (next 3 constraints) ---
     n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 3)
@@ -1773,10 +1776,9 @@ def func_equality_weld(
         )
         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
         if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
+            # Aggregate 6D weld error drives the impedance (like imp_aref above): see func_equality_connect.
             constraint_state.efc_dist[i_con, i_b] = rot_error[i_con_]
-            constraint_state.efc_mass[i_con, i_b] = gu.comfree_efc_mass(
-                sol_params, rot_error[i_con_], invweight[1], EPS
-            )
+            constraint_state.efc_mass[i_con, i_b] = gu.comfree_efc_mass(sol_params, -pos_imp, invweight[1], EPS)
 
 
 @qd.func
