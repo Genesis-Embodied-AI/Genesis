@@ -177,6 +177,24 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if not sys.platform.startswith("linux"):
         config.option.forked = False
 
+    # Snapshot regeneration must run serially in a single process. syrupy writes
+    # updated snapshots at session end in the main process, while the png_snapshot
+    # fixture deletes the stale files during setup; under xdist ('-n' > 0) or
+    # pytest-forked the deletions happen in workers/forks but the rewrites never
+    # reach disk, so the snapshots get wiped instead of regenerated.
+    if config.getoption("--snapshot-update", False):
+        if config.option.forked:
+            raise pytest.UsageError("'--snapshot-update' is incompatible with '--forked'; drop '--forked'.")
+        n_workers = config.option.numprocesses
+        specified_n = any(
+            arg == "-n" or arg.startswith("-n") or arg.startswith("--numprocesses")
+            for arg in config.invocation_params.args
+        )
+        if specified_n and (n_workers == "auto" or (isinstance(n_workers, int) and n_workers > 0)):
+            raise pytest.UsageError("'--snapshot-update' is incompatible with parallel execution; use '-n 0'.")
+        # Not explicitly parallel (e.g. the default '-n auto' from addopts): force serial.
+        config.option.numprocesses = 0
+
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
     if show_viewer:
