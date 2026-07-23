@@ -11,8 +11,10 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
 from genesis.engine.bvh import STACK_SIZE as _BVH_STACK_SIZE
-from genesis.options.sensors import ElastomerTaxel as ElastomerTaxelSensorOptions
-from genesis.options.sensors import ProximityTaxel as ProximityTaxelOptions
+from genesis.options.sensors import (
+    ElastomerTaxel as ElastomerTaxelSensorOptions,
+    ProximityTaxel as ProximityTaxelOptions,
+)
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.point_cloud import sample_mesh_point_cloud
 from genesis.utils.raycast_qd import closest_point_on_triangle, get_triangle_vertices, triangle_face_normal
@@ -417,8 +419,6 @@ def _kernel_point_cloud_proximity_taxel_bvh(
 
         sum_p_gt = gs.qd_float(0.0)
         fv_gt = qd.Vector.zero(gs.qd_float, 3)
-        # Penetration-weighted relative twist-rate (about the normal); divided by sum_p after the loop to get the
-        # contact-averaged omega_n consumed by the spin torque term.
         omega_w_gt = gs.qd_float(0.0)
         sum_p_m = gs.qd_float(0.0)
         fv_m = qd.Vector.zero(gs.qd_float, 3)
@@ -434,9 +434,7 @@ def _kernel_point_cloud_proximity_taxel_bvh(
             rcom_o = dyn_state.links.root_COM[track_link_idx, i_b]
             cdv_o = dyn_state.links.cd_vel[track_link_idx, i_b]
             cda_o = dyn_state.links.cd_ang[track_link_idx, i_b]
-            # Relative angular velocity of this tracked link about the normal (constant across its samples), the
-            # scalar spin rate feeding the twist torque term.
-            omega_c = (cda_o - s_ang).dot(a_w)
+            omega_c = (cda_o - s_ang).dot(a_w)  # Relative spin rate of the tracked link about the normal
             # BVH nodes live in tracked-link local frame: bring the probe sphere center over.
             probe_link = gu.qd_inv_transform_by_trans_quat(probe_world, track_pos, track_quat)
 
@@ -467,9 +465,8 @@ def _kernel_point_cloud_proximity_taxel_bvh(
                         hit_gt = dsq <= R_gt_sq and dist > eps
                         hit_m = use_noised_radius and dsq <= R_m_sq and dist > eps
                         if hit_gt or hit_m:
-                            # Same-frame conversion: dvec_world = R_track * d_link, and the world
-                            # point pw is reachable via probe_world + dvec_world (equivalent to
-                            # track_pos + R_track * pos_l, up to float order).
+                            # d_link is the probe->point offset in the tracked-link frame; rotating it to world
+                            # and adding to probe_world yields the point's world position without a second transform.
                             d_world = gu.qd_transform_by_quat(d_link, track_quat)
                             pw = probe_world + d_world
                             v_pc = cdv_o + cda_o.cross(pw - rcom_o)
@@ -508,8 +505,8 @@ def _kernel_point_cloud_proximity_taxel_bvh(
             for j in qd.static(range(3)):
                 fv_m[j] = fv_gt[j]
 
-        # Contact-averaged relative twist rate about the normal (penetration-weighted), gated on contact. The gain
-        # cancels in the ratio, so it is taken from the pre-gain accumulators.
+        # Penetration-weighted average of the spin rate over contacts; the per-probe gain cancels in the ratio, so
+        # this uses the pre-gain accumulators.
         omega_n_gt = gs.qd_float(0.0)
         if sum_p_gt > eps:
             omega_n_gt = omega_w_gt / sum_p_gt
@@ -517,8 +514,7 @@ def _kernel_point_cloud_proximity_taxel_bvh(
         if sum_p_m > eps:
             omega_n_m = omega_w_m / sum_p_m
 
-        # Per-(env, probe) gain on the measured-branch accumulated penetration. Force computed from these
-        # accumulators scales linearly with gain because it is proportional to ``sum_p``.
+        # Apply the per-(env, probe) gain to the measured accumulators; force is linear in them, so this scales it.
         gain_m = probe_gains[i_b, i_p]
         sum_p_m = sum_p_m * gain_m
         for j in qd.static(range(3)):
@@ -526,8 +522,7 @@ def _kernel_point_cloud_proximity_taxel_bvh(
 
         taxel_signal_buf[i_p, i_b] = sum_p_m
 
-        # Lever from the sensor link origin to the taxel, in world; crossing the full force below gives the moment
-        # about the sensor link origin.
+        # Lever arm from the sensor link origin to the taxel, in world frame.
         lever_world = probe_world - s_pos
 
         force_world_gt = qd.Vector.zero(gs.qd_float, 3)
