@@ -1,7 +1,7 @@
 """ComFree (complementarity-free) constraint solver.
 
-Computes every constraint force analytically in a single pass (arXiv:2603.12185) instead of iterating a
-complementarity solve to convergence. It shares the whole constraint-assembly pipeline (Jacobians, contact,
+Computes every constraint force analytically in a single pass (https://arxiv.org/abs/2603.12185) instead of
+iterating a complementarity solve to convergence. It shares the whole constraint-assembly pipeline (Jacobians, contact,
 equality, joint-limit, and frictionloss rows) with the iterative solvers and only replaces the resolution.
 """
 
@@ -131,12 +131,4 @@ def kernel_comfree_resolve(
             dyn_state.dofs.force[i_d, i_b] = dyn_state.dofs.qf_smooth[i_d, i_b] + qfrc
 
     # qacc = M^-1 @ force through the pre-factored mass matrix.
-    func_solve_mass(
-        dyn_state.dofs.force,
-        constraint_state.qacc,
-        out_bw=None,
-        dyn_info=dyn_info,
-        rigid_info=rigid_info,
-        rigid_config=rigid_config,
-        is_backward=False,
-    )
+    func_solve_mass(dyn_state.dofs.force, constraint_state.qacc, dyn_info, rigid_info, rigid_config)

@@ -442,11 +442,11 @@ class RigidOptions(Options):
     constraint_solver : gs.constraint_solver, optional
         Constraint solver type. 'gs.constraint_solver.CG' (conjugate gradient) and 'gs.constraint_solver.Newton'
         (Newton's method) solve the constraint problem iteratively to convergence: accurate and robust, with Newton
-        converging in fewer, costlier iterations. 'gs.constraint_solver.ComFree' (complementarity-free,
-        arXiv:2603.12185) instead computes every constraint force analytically in a single pass: much faster on
-        contact-dense scenes and large batches, but compliant - contacts and equality constraints behave like stiff
-        spring-dampers governed by 'comfree_stiffness' and 'comfree_damping', so accuracy depends on tuning them for
-        the scene and timestep. It supports the pyramidal friction cone only. Defaults to 'Newton'.
+        converging in fewer, costlier iterations. 'gs.constraint_solver.ComFree' (complementarity-free) instead
+        computes every constraint force analytically in a single pass: much faster on contact-dense scenes and large
+        batches, but compliant - contacts and equality constraints behave like stiff spring-dampers governed by
+        'comfree_stiffness' and 'comfree_damping', so accuracy depends on tuning them for the scene and timestep. It
+        supports the pyramidal friction cone only. Defaults to 'Newton'.
     comfree_stiffness : float, optional
         Stiffness of the ComFree analytical constraint force, per unit of timestep. Higher values resolve penetration
         and equality violation faster but overshoot and jitter once too stiff for the timestep; lower values leave
@@ -615,13 +615,17 @@ class RigidOptions(Options):
         if self.enable_rolling_friction and not self.enable_torsional_friction:
             gs.raise_exception("'enable_rolling_friction' requires 'enable_torsional_friction'.")
         if self.constraint_solver == gs.constraint_solver.ComFree:
-            # The analytical per-row force realizes the friction pyramid facet-by-facet; the coupled cone rows of
-            # the elliptic model have no per-row admissible set, and the noslip post-solve reads the iterative
-            # solver's state.
+            # The analytical single-pass force realizes the friction pyramid facet-by-facet, so it has no per-row
+            # admissible set for the coupled elliptic cone, no iterative state for the noslip post-solve to read, and
+            # its compliant approximation cannot reproduce the reference dynamics mujoco-compatibility mode certifies.
             if self.friction_cone == gs.friction_cone.elliptic:
                 gs.raise_exception("The ComFree constraint solver only supports the pyramidal friction cone.")
             if self.noslip_iterations > 0:
                 gs.raise_exception("The ComFree constraint solver is not supported with the noslip solver.")
+            if self.enable_mujoco_compatibility:
+                gs.raise_exception(
+                    "The ComFree constraint solver is not compatible with 'enable_mujoco_compatibility'."
+                )
 
 
 class MPMOptions(Options):

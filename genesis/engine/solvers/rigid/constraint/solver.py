@@ -833,7 +833,18 @@ def _add_friction_constraint(
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1 / diag
     if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
-        constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
+        # A zeroed torsional/rolling pyramid pair has a fully-zero jacobian (see _func_contact_row_direction),
+        # so its positional reference must be dropped too: otherwise the analytical force efc_mass * stiffness *
+        # penetration is a phantom normal push that leaks into the reported contact force (mirrors the aref=0
+        # treatment above for the iterative solvers).
+        efc_dist = -contact_data_penetration
+        if qd.static(rigid_config.enable_torsional_friction):
+            if i_friction >= 4 and i_friction < 6 and contact_data_friction_torsional <= 0.0:
+                efc_dist = gs.qd_float(0.0)
+        if qd.static(rigid_config.enable_rolling_friction):
+            if i_friction >= 6 and contact_data_friction_rolling <= 0.0:
+                efc_dist = gs.qd_float(0.0)
+        constraint_state.efc_dist[n_con, i_b] = efc_dist
         constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
             contact_data_sol_params, -contact_data_penetration, invweight, EPS
         )
@@ -1074,7 +1085,16 @@ def _add_collision_constraints_per_contact(
                 constraint_state.aref[n_con, i_b] = aref
                 constraint_state.efc_D[n_con, i_b] = 1 / diag
                 if qd.static(rigid_config.solver_type == gs.constraint_solver.ComFree):
-                    constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
+                    # Drop the positional reference of a zeroed torsional/rolling pair so its zero-jacobian row
+                    # carries no phantom force: see the matching block in _add_friction_constraint.
+                    efc_dist = -contact_data_penetration
+                    if qd.static(rigid_config.enable_torsional_friction):
+                        if i_friction >= 4 and i_friction < 6 and contact_data_friction_torsional <= 0.0:
+                            efc_dist = gs.qd_float(0.0)
+                    if qd.static(rigid_config.enable_rolling_friction):
+                        if i_friction >= 6 and contact_data_friction_rolling <= 0.0:
+                            efc_dist = gs.qd_float(0.0)
+                    constraint_state.efc_dist[n_con, i_b] = efc_dist
                     constraint_state.efc_mass[n_con, i_b] = gu.comfree_efc_mass(
                         contact_data_sol_params, -contact_data_penetration, invweight, EPS
                     )

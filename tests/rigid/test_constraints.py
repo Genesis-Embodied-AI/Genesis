@@ -1,3 +1,5 @@
+import xml.etree.ElementTree as ET
+
 import mujoco
 import numpy as np
 import pytest
@@ -282,6 +284,11 @@ def test_comfree_incompatible_options():
             constraint_solver=gs.constraint_solver.ComFree,
             noslip_iterations=1,
         )
+    with pytest.raises(gs.GenesisException):
+        gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.ComFree,
+            enable_mujoco_compatibility=True,
+        )
 
 
 @pytest.mark.required
@@ -290,6 +297,10 @@ def test_comfree_solver(n_envs, comfree_rig, show_viewer):
     DT = 0.01
     GRAVITY = 9.81
     scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.0, -5.0, 2.5),
+            camera_lookat=(2.5, 0.0, 0.7),
+        ),
         sim_options=gs.options.SimOptions(
             dt=DT,
             gravity=(0.0, 0.0, -GRAVITY),
@@ -301,18 +312,21 @@ def test_comfree_solver(n_envs, comfree_rig, show_viewer):
     )
     scene.add_entity(
         gs.morphs.Plane(),
+        vis_mode="collision",
     )
     resting_box = scene.add_entity(
         gs.morphs.Box(
             size=(0.2, 0.2, 0.2),
             pos=(0.0, 0.0, 0.11),
         ),
+        vis_mode="collision",
     )
     falling_box = scene.add_entity(
         gs.morphs.Box(
             size=(0.2, 0.2, 0.2),
             pos=(1.0, 0.0, 2.0),
         ),
+        vis_mode="collision",
     )
     rig = scene.add_entity(
         gs.morphs.MJCF(
@@ -363,3 +377,54 @@ def test_comfree_solver(n_envs, comfree_rig, show_viewer):
     if n_envs > 0:
         boxes_pos = tensor_to_array(falling_box.get_pos())
         assert_allclose(boxes_pos, boxes_pos[0], tol=1e-7)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["sphere_plane_spin", "sphere_plane_roll"])
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_comfree_torsional_rolling_friction(model_name, n_envs, request, show_viewer):
+    GRAVITY = 9.81
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, -1.5, 1.0),
+            camera_lookat=(0.0, 0.0, 0.1),
+        ),
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.ComFree,
+            enable_torsional_friction=True,
+            enable_rolling_friction=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    entity = scene.add_entity(
+        gs.morphs.MJCF(file=ET.tostring(request.getfixturevalue(model_name), encoding="unicode")),
+        vis_mode="collision",
+    )
+    scene.build(n_envs=n_envs)
+
+    # Slight initial penetration so the contact exists from the first step; spin about the vertical axis and roll
+    # about the horizontal axes. sphere_plane_spin has a zero rolling coefficient, so with enable_rolling_friction
+    # its rolling rows take the zeroed-coefficient path whose positional reference must be dropped.
+    entity.set_qpos([0.0, 0.0, 0.0999, 1.0, 0.0, 0.0, 0.0])
+    entity.set_dofs_velocity([0.5, 0.0, 0.0, 0.0, 4.0, 3.0])
+    spin_z_init = np.abs(np.atleast_2d(tensor_to_array(entity.get_dofs_velocity()))[..., 5])
+
+    for _ in range(60):
+        scene.step()
+
+    sphere_z = np.atleast_1d(tensor_to_array(entity.get_link("sphere").get_pos())[..., 2])
+    assert ((0.09 < sphere_z) & (sphere_z < 0.105)).all()
+
+    # Torsional friction damps the vertical spin.
+    spin_z = np.abs(np.atleast_2d(tensor_to_array(entity.get_dofs_velocity()))[..., 5])
+    assert (spin_z < spin_z_init).all()
+
+    # A zeroed friction coefficient must not inflate the reported normal force: it stays balancing gravity, whereas
+    # a phantom push from the zero-jacobian rows would report several times the weight.
+    weight = entity.get_mass() * GRAVITY
+    peak_fz = np.abs(tensor_to_array(entity.get_links_net_contact_force())[..., 2]).max(axis=-1)
+    assert ((0.6 * weight < peak_fz) & (peak_fz < 1.6 * weight)).all()

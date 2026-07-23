@@ -606,12 +606,11 @@ def qd_orthogonals(a):
 
 @qd.func
 def constraint_imp(params, pos, width):
-    """Constraint impedance curve: interpolates from solimp's dmin to dmax as the violation pos crosses width.
+    """Constraint impedance curve: interpolates from sol_params' dmin to dmax as the violation pos crosses width.
 
-    The width is a dedicated parameter rather than read from params, so that callers can override solimp's
-    width (see comfree_efc_mass).
+    The width is a separate parameter so a caller can override the sol_params width (see comfree_efc_mass).
     """
-    timeconst, dampratio, dmin, dmax, _, mid, power = params
+    _, _, dmin, dmax, _, mid, power = params
 
     imp_x = qd.abs(pos) / width
     imp_a = (1.0 / mid ** (power - 1)) * imp_x**power
@@ -625,7 +624,7 @@ def constraint_imp(params, pos, width):
 
 @qd.func
 def imp_aref(params, neg_penetration, vel, pos):
-    timeconst, dampratio, dmin, dmax, width, mid, power = params
+    timeconst, dampratio, _, dmax, width, _, _ = params
 
     imp = constraint_imp(params, neg_penetration, width)
 
@@ -674,10 +673,10 @@ def imp_aref_grad(params, neg_penetration):
 def comfree_efc_mass(params, pos, invweight, eps):
     """Constraint-space effective mass of one constraint row for the ComFree solver.
 
-    Computed as 1 / max(invweight * (1 - imp) / imp, eps), with the impedance width pinned to 0.01 instead of
-    solimp's width so the effective mass stays smooth when the violation is large (e.g. deep initial
-    penetration). The analytical row force realizes the friction pyramid facet-by-facet, so the inverse mass
-    is the plain invweight.
+    Computed as 1 / max(invweight * (1 - imp) / imp, eps), with the impedance width pinned to a constant 0.01
+    so the effective mass stays smooth when the violation is large (e.g. deep initial penetration). The
+    analytical row force realizes the friction pyramid facet-by-facet, so the inverse mass is the plain
+    invweight.
     """
     imp = constraint_imp(params, pos, 0.01)
     return 1.0 / qd.max(invweight * (1.0 - imp) / imp, eps)
