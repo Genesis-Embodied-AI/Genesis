@@ -234,8 +234,8 @@ def func_planner_mask_clamped(
     return i_w <= 1 or i_w >= qd.static(planner_config.n_knots) - 2
 
 
-@qd.kernel
-def kernel_planner_mppi(
+@qd.func
+def func_planner_mppi(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
@@ -354,7 +354,42 @@ def kernel_planner_mppi(
 
 
 @qd.kernel
-def kernel_planner_lbfgs(
+def kernel_planner_mppi(
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+):
+    func_planner_mppi(
+        envs_idx,
+        planner_state,
+        planner_info,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+    )
+
+
+@qd.func
+def func_planner_lbfgs(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
@@ -581,3 +616,38 @@ def kernel_planner_lbfgs(
                 it += 1
 
             planner_state.candidates.cost[i_c] = cost
+
+
+@qd.kernel
+def kernel_planner_lbfgs(
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+):
+    func_planner_lbfgs(
+        envs_idx,
+        planner_state,
+        planner_info,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+    )

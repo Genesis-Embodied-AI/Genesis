@@ -663,8 +663,8 @@ def func_planner_merge_boundary_exclusions(
     return is_overflow
 
 
-@qd.kernel
-def kernel_planner_boundary_exclusions(
+@qd.func
+def func_planner_boundary_exclusions(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
@@ -739,6 +739,45 @@ def kernel_planner_boundary_exclusions(
             )
         if is_overflow != 0:
             errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_PLANNER_EXCLUSIONS
+
+
+@qd.kernel
+def kernel_planner_boundary_exclusions(
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+    include_goal: qd.template(),
+    errno: qd.Tensor,
+):
+    func_planner_boundary_exclusions(
+        envs_idx,
+        planner_state,
+        planner_info,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+        include_goal=include_goal,
+        errno=errno,
+    )
 
 
 @qd.func
@@ -1103,8 +1142,8 @@ def func_planner_eval_clearance(
     return min_sd_exact, min_sd_proxy
 
 
-@qd.kernel
-def kernel_planner_validate(
+@qd.func
+def func_planner_validate(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
@@ -1292,3 +1331,40 @@ def kernel_planner_validate(
             planner_state.candidates.valid_flags[i_c] = flags
             planner_state.candidates.min_clearance_exact[i_c] = min_clearance_exact
             planner_state.candidates.min_clearance_proxy[i_c] = min_clearance_proxy
+
+
+@qd.kernel
+def kernel_planner_validate(
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+    check_start: qd.template(),
+):
+    func_planner_validate(
+        envs_idx,
+        planner_state,
+        planner_info,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+        check_start=check_start,
+    )

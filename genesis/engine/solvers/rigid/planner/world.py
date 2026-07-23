@@ -6,8 +6,8 @@ from genesis.utils import array_class
 from genesis.utils import sdf as sdf_utils
 
 
-@qd.kernel
-def kernel_planner_snapshot_world(
+@qd.func
+def func_planner_snapshot_world(
     envs_idx: qd.types.ndarray(),
     obstacle_geoms_idx: qd.types.ndarray(),
     planner_world: array_class.PlannerWorldState,
@@ -37,6 +37,18 @@ def kernel_planner_snapshot_world(
         planner_world.geoms_aabb_min[i_gw, i_b] = aabb_min
         planner_world.geoms_aabb_max[i_gw, i_b] = aabb_max
         planner_world.geoms_is_active[i_gw, i_b] = True
+
+
+@qd.kernel
+def kernel_planner_snapshot_world(
+    envs_idx: qd.types.ndarray(),
+    obstacle_geoms_idx: qd.types.ndarray(),
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    rigid_info: array_class.RigidInfo,
+    planner_config: qd.template(),
+):
+    func_planner_snapshot_world(envs_idx, obstacle_geoms_idx, planner_world, dyn_state, rigid_info, planner_config)
 
 
 @qd.func

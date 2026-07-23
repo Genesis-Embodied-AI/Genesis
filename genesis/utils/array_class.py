@@ -2999,6 +2999,19 @@ class PlannerCandidatesState:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerLadderState:
+    """Attempt-ladder control for the single graph kernel. graph_counter drives the device-side graph_do_while:
+    the host sets it to 2 + max_retry, the fold decrements it each pass and zeroes it once every env is solved.
+    early_exit_flag is the per-pass reduction scratch; env_solved / env_seeded carry per-env progress (solved,
+    already-seeded) across attempts so finished envs skip the phase bodies (see kernel_planner_plan)."""
+
+    graph_counter: qd.types.ndarray()
+    early_exit_flag: qd.Tensor
+    env_solved: qd.Tensor
+    env_seeded: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerState:
     """Planner-owned scratch, one leaf struct per concern. The candidate axis C = B*S folds env x seed; NF = C*W
     adds the knot axis."""
@@ -3009,6 +3022,7 @@ class PlannerState:
     opt: PlannerOptState
     rrt: PlannerRRTState
     candidates: PlannerCandidatesState
+    ladder: PlannerLadderState
 
 
 def get_planner_state(planner_config, B):
@@ -3064,6 +3078,12 @@ def get_planner_state(planner_config, B):
             valid_flags=V(dtype=gs.qd_int, shape=(C,)),
             min_clearance_exact=V(dtype=gs.qd_float, shape=(C,)),
             min_clearance_proxy=V(dtype=gs.qd_float, shape=(C,)),
+        ),
+        ladder=PlannerLadderState(
+            graph_counter=qd.ndarray(qd.i32, shape=()),
+            early_exit_flag=V(dtype=qd.i32, shape=()),
+            env_solved=V(dtype=gs.qd_bool, shape=(B,)),
+            env_seeded=V(dtype=gs.qd_bool, shape=(B,)),
         ),
     )
 

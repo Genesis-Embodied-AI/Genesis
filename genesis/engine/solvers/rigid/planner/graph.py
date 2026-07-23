@@ -162,8 +162,8 @@ def func_planner_rrt_edge_is_free(
     return is_free
 
 
-@qd.kernel
-def kernel_planner_rrt_connect(
+@qd.func
+def func_planner_rrt_connect(
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
     n_iters: int,
@@ -390,3 +390,42 @@ def kernel_planner_rrt_connect(
                                     ]
                             n_path -= n_cut
                 planner_state.rrt.path_len[i_t] = n_path
+
+
+@qd.kernel
+def kernel_planner_rrt_connect(
+    envs_idx: qd.types.ndarray(),
+    trees_is_active: qd.types.ndarray(),
+    n_iters: int,
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+):
+    func_planner_rrt_connect(
+        envs_idx,
+        trees_is_active,
+        n_iters,
+        planner_state,
+        planner_info,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+    )
