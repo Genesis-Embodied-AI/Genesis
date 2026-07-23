@@ -85,6 +85,51 @@ def func_planner_fk(
 
 
 @qd.func
+def func_planner_ik_jacobian(
+    i_col,
+    i_b,
+    ee_link,
+    ee_pos,
+    jacobian: qd.Tensor,
+    joints_xanchor: qd.Tensor,
+    joints_xaxis: qd.Tensor,
+    dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
+    planner_config: qd.template(),
+):
+    """Spatial Jacobian (6 x n_dp) of the goal point at column i_col, from the per-column planner FK joint frames.
+
+    Walks the kinematic path from the target link to the entity root, filling each REVOLUTE / PRISMATIC joint's
+    column from its world axis and anchor (already placed by func_planner_fk into joints_xaxis / joints_xanchor).
+    Unmasked, matching func_get_jacobian; planning rejects FREE / SPHERICAL joints so only these two contribute.
+    """
+    i_e = qd.static(planner_config.entity_idx)
+    joint_offset = qd.static(planner_config.joint_offset)
+    dof_offset = dyn_info.entities.dof_start[i_e]
+    for i_row, i_d in qd.ndrange(6, qd.static(planner_config.n_dp)):
+        jacobian[i_row, i_d, i_col] = 0.0
+
+    i_l = ee_link
+    while i_l != -1:
+        I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+        for i_j_ in range(dyn_info.links.joint_start[I_l], dyn_info.links.joint_end[I_l]):
+            i_j = gs.qd_int(i_j_)
+            I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
+            i_d_jac = dyn_info.joints.dof_start[I_j] - dof_offset
+            if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
+                rotation = joints_xaxis[i_j - joint_offset, i_col]
+                translation = rotation.cross(ee_pos - joints_xanchor[i_j - joint_offset, i_col])
+                for i in qd.static(range(3)):
+                    jacobian[i, i_d_jac, i_col] = translation[i]
+                    jacobian[i + 3, i_d_jac, i_col] = rotation[i]
+            elif dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
+                translation = joints_xaxis[i_j - joint_offset, i_col]
+                for i in qd.static(range(3)):
+                    jacobian[i, i_d_jac, i_col] = translation[i]
+        i_l = dyn_info.links.parent_idx[I_l]
+
+
+@qd.func
 def func_planner_spheres(
     i_col,
     i_b,

@@ -2741,6 +2741,13 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     flag_joint_limit: int
     flag_goal_tol: int
     flag_goal_in_collision: int
+    # Cartesian-goal inverse-kinematics budgets (fixed): Gauss-Newton iterations, damped-least-squares damping,
+    # position / rotation convergence tolerances, and the per-step joint cap.
+    goal_ik_iters: int
+    goal_ik_damping: float
+    goal_ik_pos_tol: float
+    goal_ik_rot_tol: float
+    goal_ik_max_step: float
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -3221,6 +3228,9 @@ class PlannerState:
     rrt: PlannerRRTState
     cost: PlannerCostState
     cert: PlannerCertState
+    # Damped-least-squares scratch for the in-kernel Cartesian-goal solve, one column per candidate (C = B*S
+    # restarts run in parallel); a single 6-dof pose target, so error_dim = 6.
+    ik: IKState
     graph_counter: qd.types.ndarray()
     early_exit_flag: qd.Tensor
     is_env_solved: qd.Tensor
@@ -3281,6 +3291,7 @@ def get_planner_state(planner_config, B):
             min_clearance_exact=V(dtype=gs.qd_float, shape=(C,)),
             min_clearance_proxy=V(dtype=gs.qd_float, shape=(C,)),
         ),
+        ik=get_ik_state(planner_config.n_dp, planner_config.n_dp, 6, C),
         graph_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
         is_env_solved=V(dtype=gs.qd_bool, shape=(B,)),

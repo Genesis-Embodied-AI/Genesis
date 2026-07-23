@@ -2,10 +2,11 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.linalg as lu
 from genesis.utils import array_class
 
 from ..collider.gjk import clear_cache, func_gjk, func_is_sphere_swept_geom
-from .kinematics import func_planner_fk, func_planner_spheres
+from .kinematics import func_planner_fk, func_planner_ik_jacobian, func_planner_spheres
 from .world import func_planner_world_aabb_skip, func_planner_world_sd, func_planner_world_sd_grad
 
 # Validator flag bits (returned per candidate; 0 = certified feasible).
@@ -71,6 +72,15 @@ _EXACT_SAMPLE_COV_COARSE = 0.02
 # re-admits really-penetrating goals. It only applies to the exact minimum: self and attached-entity pairs read
 # raw proxy conservatism, which the acceptance gate bounds by boundary excusability instead (_EXCL_DEPTH_MAX).
 _GOAL_REAL_PEN_MAX = 0.002
+
+# Damped-least-squares budgets for the in-kernel Cartesian-goal solve (one Gauss-Newton solve per restart column):
+# more iterations trade compute for reaching tighter poses, the damping trades step aggressiveness for robustness
+# near singularities, and the step cap keeps a single update from overshooting. Tuned to the entity IK defaults.
+_GOAL_IK_ITERS = 20
+_GOAL_IK_DAMPING = 0.01
+_GOAL_IK_POS_TOL = 5e-4
+_GOAL_IK_ROT_TOL = 5e-3
+_GOAL_IK_MAX_STEP = 0.5
 
 
 @qd.func
@@ -1391,3 +1401,191 @@ def kernel_planner_validate(
         planner_config,
         check_start=check_start,
     )
+
+
+@qd.func
+def func_planner_resolve_goal(
+    graph_counter: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+):
+    """Resolve the Cartesian goal of each unsolved env by parallel multi-restart inverse kinematics.
+
+    Every candidate column is one restart (seed 0 warm-starts from the plan start, the rest sample uniformly in
+    the joint limits keyed by the attempt), solved independently by damped least squares on the per-column planner
+    forward kinematics. Each restart's converged configuration is validated as a hold-at-goal candidate, and the
+    closest-to-start certified restart per env - preferring collision-free over excusably-contacting - becomes that
+    env's goal configuration. Envs with no acceptable restart keep their previous goal.
+    """
+    EPS = rigid_info.EPS[None]
+    n_seeds = qd.static(planner_config.n_seeds)
+    n_knots = qd.static(planner_config.n_knots)
+    n_dp = qd.static(planner_config.n_dp)
+    link_offset = qd.static(planner_config.link_offset)
+    goal_link = planner_info.cost.boundary.goal_link_idx[None]
+    attempt = graph_counter[()]
+    margin = planner_info.cost.d_safe[None]
+
+    # One damped-least-squares solve per restart column - all restarts of all envs run in parallel.
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_c in range(envs_idx.shape[0] * n_seeds):
+        i_b = envs_idx[i_c // n_seeds]
+        if not planner_state.is_env_solved[i_b]:
+            i_r = i_c % n_seeds
+            for i_dp in range(n_dp):
+                q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                if i_r > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                    lo = planner_info.fk.dofs.q_limit_lower[i_dp]
+                    hi = planner_info.fk.dofs.q_limit_upper[i_dp]
+                    q = lo + gu.qd_hash01(planner_info.mppi.seed_key[None], i_c, i_dp, attempt) * (hi - lo)
+                planner_state.fk.eval.qpos[i_dp, i_c] = q
+
+            for _ in range(qd.static(planner_config.goal_ik_iters)):
+                func_planner_fk(
+                    i_c,
+                    i_c,
+                    i_b,
+                    planner_state.fk.eval.qpos,
+                    planner_state.fk.eval.links_pos,
+                    planner_state.fk.eval.links_quat,
+                    planner_state.fk.eval.joints_xanchor,
+                    planner_state.fk.eval.joints_xaxis,
+                    dyn_state,
+                    dyn_info,
+                    rigid_info,
+                    rigid_config,
+                    planner_config,
+                )
+                ee_pos = planner_state.fk.eval.links_pos[goal_link - link_offset, i_c]
+                ee_quat = planner_state.fk.eval.links_quat[goal_link - link_offset, i_c]
+                err_pos = planner_info.cost.boundary.goal_pos[i_b] - ee_pos
+                err_rot = gu.qd_quat_to_rotvec(
+                    gu.qd_transform_quat_by_quat(gu.qd_inv_quat(ee_quat), planner_info.cost.boundary.goal_quat[i_b]),
+                    EPS,
+                )
+                for k in qd.static(range(3)):
+                    planner_state.ik.err_pose[k, i_c] = err_pos[k]
+                    planner_state.ik.err_pose[k + 3, i_c] = err_rot[k]
+                if (
+                    err_pos.norm() <= planner_config.goal_ik_pos_tol
+                    and err_rot.norm() <= planner_config.goal_ik_rot_tol
+                ):
+                    break
+
+                func_planner_ik_jacobian(
+                    i_c,
+                    i_b,
+                    goal_link,
+                    ee_pos,
+                    planner_state.ik.jacobian_stacked,
+                    planner_state.fk.eval.joints_xanchor,
+                    planner_state.fk.eval.joints_xaxis,
+                    dyn_info,
+                    rigid_config,
+                    planner_config,
+                )
+                lu.mat_transpose(planner_state.ik.jacobian_stacked, planner_state.ik.jacobian_stacked_t, 6, n_dp, i_c)
+                lu.mat_mul(
+                    planner_state.ik.jacobian_stacked,
+                    planner_state.ik.jacobian_stacked_t,
+                    planner_state.ik.mat,
+                    6,
+                    n_dp,
+                    6,
+                    i_c,
+                )
+                lu.mat_add_eye(planner_state.ik.mat, planner_config.goal_ik_damping**2, 6, i_c)
+                lu.mat_inverse(
+                    planner_state.ik.mat,
+                    planner_state.ik.lu_lower,
+                    planner_state.ik.lu_upper,
+                    planner_state.ik.lu_y,
+                    planner_state.ik.inv,
+                    6,
+                    i_c,
+                )
+                lu.mat_mul_vec(planner_state.ik.inv, planner_state.ik.err_pose, planner_state.ik.vec, 6, 6, i_c)
+                for i_dp in range(n_dp):
+                    if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                        dq = gs.qd_float(0.0)
+                        for j in range(6):
+                            dq += planner_state.ik.jacobian_stacked_t[i_dp, j, i_c] * planner_state.ik.vec[j, i_c]
+                        planner_state.fk.eval.qpos[i_dp, i_c] = qd.math.clamp(
+                            planner_state.fk.eval.qpos[i_dp, i_c]
+                            + qd.math.clamp(dq, -planner_config.goal_ik_max_step, planner_config.goal_ik_max_step),
+                            planner_info.fk.dofs.q_limit_lower[i_dp],
+                            planner_info.fk.dofs.q_limit_upper[i_dp],
+                        )
+
+            # Store the restart's solution and lay it down as a hold-at-goal candidate for the shared validator.
+            col_base = i_c * n_knots
+            for i_dp in range(n_dp):
+                planner_state.ik.qpos_best[i_dp, i_c] = planner_state.fk.eval.qpos[i_dp, i_c]
+                for i_w in range(n_knots):
+                    planner_state.cost.qpos[i_dp, col_base + i_w] = planner_state.fk.eval.qpos[i_dp, i_c]
+            planner_state.cert.is_active[i_c] = True
+
+    func_planner_validate(
+        envs_idx,
+        planner_state,
+        planner_info,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+        check_start=False,
+    )
+
+    # Adopt each env's goal: the closest-to-start certified restart, preferring collision-free over excusable.
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        if not planner_state.is_env_solved[i_b]:
+            best_c = gs.qd_int(-1)
+            best_score = gs.qd_float(1e30)
+            for i_r in range(n_seeds):
+                i_c = i_b_ * n_seeds + i_r
+                flags = planner_state.cert.valid_flags[i_c]
+                is_acceptable = (flags & planner_config.flag_goal_tol) == 0
+                if is_acceptable:
+                    is_acceptable = planner_state.cert.min_clearance_exact[i_c] + margin + 0.01 > -(
+                        planner_info.cert.exact_sample_cov[None] + planner_info.cert.goal_real_pen_max[None]
+                    )
+                if is_acceptable:
+                    is_acceptable = (
+                        planner_state.cert.min_clearance_proxy[i_c] + margin + 0.01
+                        > -planner_info.cert.excl_depth_max[None]
+                    )
+                if is_acceptable:
+                    dist = gs.qd_float(0.0)
+                    for i_dp in range(n_dp):
+                        dist += qd.abs(
+                            planner_state.ik.qpos_best[i_dp, i_c] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                        )
+                    if (flags & planner_config.flag_collision) != 0:
+                        dist += 1e6
+                    if dist < best_score:
+                        best_score = dist
+                        best_c = i_c
+            if best_c != -1:
+                for i_dp in range(n_dp):
+                    planner_info.cost.boundary.qpos_goal[i_dp, i_b] = planner_state.ik.qpos_best[i_dp, best_c]

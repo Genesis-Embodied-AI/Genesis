@@ -363,6 +363,7 @@ def kernel_planner_plan(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     planner_config: qd.template(),
+    has_pose_goal_static: qd.template(),
 ):
     """Run the joint-space attempt ladder for every planned env in a single graph-captured launch.
 
@@ -376,6 +377,24 @@ def kernel_planner_plan(
         planner_state.is_env_solved[envs_idx[i_b_]] = False
 
     while qd.graph_do_while(graph_counter):
+        if qd.static(has_pose_goal_static):
+            cost_mod.func_planner_resolve_goal(
+                graph_counter,
+                envs_idx,
+                planner_state,
+                planner_info,
+                planner_world,
+                dyn_state,
+                collider_state,
+                gjk_state,
+                dyn_info,
+                rigid_info,
+                collider_info,
+                sdf_info,
+                rigid_config,
+                collider_static_config,
+                planner_config,
+            )
         func_planner_seed(graph_counter, envs_idx, planner_state, planner_info, planner_config)
         func_planner_mppi(
             envs_idx,
@@ -639,6 +658,11 @@ class Planner:
             flag_joint_limit=cost_mod.JOINT_LIMIT,
             flag_goal_tol=cost_mod.GOAL_TOL,
             flag_goal_in_collision=cost_mod.GOAL_IN_COLLISION,
+            goal_ik_iters=cost_mod._GOAL_IK_ITERS,
+            goal_ik_damping=cost_mod._GOAL_IK_DAMPING,
+            goal_ik_pos_tol=cost_mod._GOAL_IK_POS_TOL,
+            goal_ik_rot_tol=cost_mod._GOAL_IK_ROT_TOL,
+            goal_ik_max_step=cost_mod._GOAL_IK_MAX_STEP,
         )
         planner_info = array_class.get_planner_entity_info(
             planner_config,
@@ -1143,11 +1167,11 @@ class Planner:
         env_goal_resolved = torch.zeros(B, dtype=torch.bool, device=gs.device)
         env_seeded = torch.zeros(B, dtype=torch.bool, device=gs.device)
 
-        # A simple joint goal runs its whole attempt ladder in one graph-captured launch; the host ladder below
-        # then only works the envs it leaves unsolved. Cartesian goals, held attachments, and collision-free
-        # requests stay on the host ladder, which owns goal resolution, attach spheres, and the straight-line
-        # shortcut the graph kernel does not cover.
-        if not has_pose_goal and not ignore_collision and len(attachments) == 0:
+        # Joint and Cartesian goals run their whole attempt ladder - Cartesian goals additionally resolving the
+        # goal by in-kernel multi-restart inverse kinematics - in one graph-captured launch; the host ladder below
+        # then only works the envs it leaves unsolved. Held attachments and collision-free requests stay on the
+        # host ladder, which owns attach spheres and the straight-line shortcut the graph kernel does not cover.
+        if not ignore_collision and len(attachments) == 0:
             planner_state.graph_counter.from_numpy(np.array(2 + max_retry, dtype=np.int32))
             kernel_planner_plan(
                 planner_state.graph_counter,
@@ -1165,6 +1189,7 @@ class Planner:
                 solver.rigid_config,
                 solver.collider._collider_static_config,
                 planner_config,
+                has_pose_goal,
             )
             env_solved |= qd_to_torch(planner_state.is_env_solved) & env_pending_mask
 
