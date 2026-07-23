@@ -96,13 +96,13 @@ def func_planner_spheres(
 ):
     """Place the collision-proxy spheres (robot + active attached) in world frame for one FK column."""
     for i_s in range(qd.static(planner_config.n_spheres)):
-        i_l = planner_info.fk.spheres.link_idx[i_s]
+        i_l = planner_info.fk.sphere_link_idx[i_s]
         spheres_pos[i_s, i_col] = links_pos[i_l, i_col] + gu.qd_transform_by_quat(
-            planner_info.fk.spheres.pos_local[i_s], links_quat[i_l, i_col]
+            planner_info.fk.sphere_pos_local[i_s], links_quat[i_l, i_col]
         )
     for i_s in range(qd.static(planner_config.n_attach_max)):
-        if planner_info.fk.attach.is_active[i_s, i_b]:
-            i_l = planner_info.fk.attach.link_idx[i_s]
+        if planner_info.fk.attach_is_active[i_s, i_b]:
+            i_l = planner_info.fk.attach_link_idx[i_s]
             spheres_pos[qd.static(planner_config.n_spheres) + i_s, i_col] = links_pos[
                 i_l, i_col
-            ] + gu.qd_transform_by_quat(planner_info.fk.attach.pos_local[i_s, i_b], links_quat[i_l, i_col])
+            ] + gu.qd_transform_by_quat(planner_info.fk.attach_pos_local[i_s, i_b], links_quat[i_l, i_col])

@@ -67,15 +67,15 @@ def func_planner_traj_cost(
         dq_inf = gs.qd_float(0.0)
         for i_dp in range(n_dp):
             q = qpos_cols[i_dp, col_base + i_w]
-            planner_state.fk.eval.qpos[i_dp, i_e_col] = q
+            planner_state.fk.eval_qpos[i_dp, i_e_col] = q
             if i_w > 0:
                 swp = qd.max(
-                    swp, 0.5 * planner_info.fk.dofs.reach[i_dp] * qd.abs(q - qpos_cols[i_dp, col_base + i_w - 1])
+                    swp, 0.5 * planner_info.fk.dof_reach[i_dp] * qd.abs(q - qpos_cols[i_dp, col_base + i_w - 1])
                 )
                 dq_inf = qd.max(dq_inf, qd.abs(q - qpos_cols[i_dp, col_base + i_w - 1]))
             if i_w < n_knots - 1:
                 swp = qd.max(
-                    swp, 0.5 * planner_info.fk.dofs.reach[i_dp] * qd.abs(qpos_cols[i_dp, col_base + i_w + 1] - q)
+                    swp, 0.5 * planner_info.fk.dof_reach[i_dp] * qd.abs(qpos_cols[i_dp, col_base + i_w + 1] - q)
                 )
                 dq_inf = qd.max(dq_inf, qd.abs(qpos_cols[i_dp, col_base + i_w + 1] - q))
         swp = qd.min(swp, planner_info.cost.eps_act[None])
@@ -84,11 +84,11 @@ def func_planner_traj_cost(
             i_e_col,
             i_e_col,
             i_b,
-            qpos=planner_state.fk.eval.qpos,
-            links_pos=planner_state.fk.eval.links_pos,
-            links_quat=planner_state.fk.eval.links_quat,
-            joints_xanchor=planner_state.fk.eval.joints_xanchor,
-            joints_xaxis=planner_state.fk.eval.joints_xaxis,
+            qpos=planner_state.fk.eval_qpos,
+            links_pos=planner_state.fk.eval_links_pos,
+            links_quat=planner_state.fk.eval_links_quat,
+            joints_xanchor=planner_state.fk.eval_joints_xanchor,
+            joints_xaxis=planner_state.fk.eval_joints_xaxis,
             dyn_state=dyn_state,
             dyn_info=dyn_info,
             rigid_info=rigid_info,
@@ -98,9 +98,9 @@ def func_planner_traj_cost(
         func_planner_spheres(
             i_e_col,
             i_b,
-            links_pos=planner_state.fk.eval.links_pos,
-            links_quat=planner_state.fk.eval.links_quat,
-            spheres_pos=planner_state.fk.eval.spheres_pos,
+            links_pos=planner_state.fk.eval_links_pos,
+            links_quat=planner_state.fk.eval_links_quat,
+            spheres_pos=planner_state.fk.eval_spheres_pos,
             planner_info=planner_info,
             planner_config=planner_config,
         )
@@ -109,9 +109,9 @@ def func_planner_traj_cost(
             i_b,
             swp,
             dq_inf,
-            links_pos=planner_state.fk.eval.links_pos,
-            links_quat=planner_state.fk.eval.links_quat,
-            spheres_pos=planner_state.fk.eval.spheres_pos,
+            links_pos=planner_state.fk.eval_links_pos,
+            links_quat=planner_state.fk.eval_links_quat,
+            spheres_pos=planner_state.fk.eval_spheres_pos,
             planner_info=planner_info,
             planner_world=planner_world,
             collider_state=collider_state,
@@ -140,23 +140,23 @@ def func_planner_traj_cost(
                     - qpos_cols[i_dp, col_base + i_w - 1]
                 )
                 cost += planner_info.cost.w_jerk[None] * jerk**2
-            over = q - planner_info.fk.dofs.q_limit_upper[i_dp]
-            under = planner_info.fk.dofs.q_limit_lower[i_dp] - q
+            over = q - planner_info.fk.dof_q_limit_upper[i_dp]
+            under = planner_info.fk.dof_q_limit_lower[i_dp] - q
             if over > 0.0:
                 cost += planner_info.cost.w_lim[None] * over**2
             if under > 0.0:
                 cost += planner_info.cost.w_lim[None] * under**2
-            ref = planner_info.cost.boundary.qpos_start[i_dp, i_b] + (
-                planner_info.cost.boundary.qpos_goal[i_dp, i_b] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
+            ref = planner_info.cost.boundary_qpos_start[i_dp, i_b] + (
+                planner_info.cost.boundary_qpos_goal[i_dp, i_b] - planner_info.cost.boundary_qpos_start[i_dp, i_b]
             ) * (qd.cast(i_w, gs.qd_float) / float(n_knots - 1))
             cost += planner_info.cost.w_posture[None] * (q - ref) ** 2
 
-        if planner_info.cost.boundary.has_pose_goal[None] and i_w == n_knots - 1:
+        if planner_info.cost.boundary_has_pose_goal[None] and i_w == n_knots - 1:
             cost += func_planner_pose_cost(
                 i_e_col,
                 i_b,
-                links_pos=planner_state.fk.eval.links_pos,
-                links_quat=planner_state.fk.eval.links_quat,
+                links_pos=planner_state.fk.eval_links_pos,
+                links_quat=planner_state.fk.eval_links_quat,
                 planner_info=planner_info,
                 rigid_info=rigid_info,
                 planner_config=planner_config,
@@ -239,6 +239,58 @@ def func_planner_mask_clamped(
 
 
 @qd.func
+def func_planner_seed(
+    graph_counter: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_info: array_class.PlannerEntityInfo,
+    planner_config: qd.template(),
+):
+    """Seed each unsolved env's candidate trajectories for the current attempt.
+
+    Seed 0 is the straight start-to-goal line; the others add smooth basis-weighted noise drawn from the
+    counter-based hash keyed by the attempt (the ladder counter), so retries explore fresh basins. Locked DOFs
+    hold the start value, interior knots clamp to the joint limits, and the two boundary knot pairs pin to start
+    and goal.
+    """
+    n_knots = qd.static(planner_config.n_knots)
+    n_seeds = qd.static(planner_config.n_seeds)
+    n_dp = qd.static(planner_config.n_dp)
+    n_noise = qd.static(planner_config.n_noise_knots)
+    attempt = graph_counter[()]
+
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_c in range(envs_idx.shape[0] * n_seeds):
+        i_b = envs_idx[i_c // n_seeds]
+        if not planner_state.is_env_solved[i_b]:
+            i_s = i_c % n_seeds
+            col_base = i_c * n_knots
+            for i_w in range(n_knots):
+                alpha = qd.cast(i_w, gs.qd_float) / (n_knots - 1)
+                for i_dp in range(n_dp):
+                    q_start = planner_info.cost.boundary_qpos_start[i_dp, i_b]
+                    q_goal = planner_info.cost.boundary_qpos_goal[i_dp, i_b]
+                    q = q_start
+                    if i_w >= n_knots - 2:
+                        q = q_goal
+                    elif i_w > 1:
+                        q = q_start * (1.0 - alpha) + q_goal * alpha
+                        if i_s > 0 and not planner_info.fk.dof_is_locked[i_dp, i_b]:
+                            delta = gs.qd_float(0.0)
+                            for i_k in range(n_noise):
+                                key = i_k * n_dp + i_dp
+                                delta += planner_info.mppi.noise_basis[i_w, i_k] * gu.qd_hash_gauss(
+                                    planner_info.mppi.seed_key[None], i_c, key, attempt
+                                )
+                            q += 0.5 * delta
+                        q = qd.math.clamp(
+                            q, planner_info.fk.dof_q_limit_lower[i_dp], planner_info.fk.dof_q_limit_upper[i_dp]
+                        )
+                    planner_state.cost.qpos[i_dp, col_base + i_w] = q
+            planner_state.cert.is_active[i_c] = True
+
+
+@qd.func
 def func_planner_mppi(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
@@ -286,7 +338,7 @@ def func_planner_mppi(
                             q = planner_state.cost.qpos[i_dp, col_base + i_w]
                             if not is_clamped:
                                 delta = gs.qd_float(0.0)
-                                if i_p > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                                if i_p > 0 and not planner_info.fk.dof_is_locked[i_dp, i_b]:
                                     for i_k in range(n_noise):
                                         key = ((it * n_particles_max + i_p) * n_noise + i_k) * n_dp + i_dp
                                         delta += planner_info.mppi.noise_basis[i_w, i_k] * gu.qd_hash_gauss(
@@ -295,8 +347,8 @@ def func_planner_mppi(
                                     delta *= anneal * planner_info.mppi.sigma[i_dp]
                                 q = qd.math.clamp(
                                     q + delta,
-                                    planner_info.fk.dofs.q_limit_lower[i_dp],
-                                    planner_info.fk.dofs.q_limit_upper[i_dp],
+                                    planner_info.fk.dof_q_limit_lower[i_dp],
+                                    planner_info.fk.dof_q_limit_upper[i_dp],
                                 )
                             planner_state.lbfgs.trial_qpos[i_dp, col_base + i_w] = q
                     costs[i_p] = func_planner_traj_cost(
@@ -336,7 +388,7 @@ def func_planner_mppi(
                 for i_w in range(n_knots):
                     if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                         for i_dp in range(n_dp):
-                            if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                            if not planner_info.fk.dof_is_locked[i_dp, i_b]:
                                 delta_mean = gs.qd_float(0.0)
                                 for i_p in range(1, n_particles):
                                     weight = qd.exp(-(costs[i_p] - cost_min) / beta) / weight_sum
@@ -349,8 +401,8 @@ def func_planner_mppi(
                                     delta_mean += weight * delta * anneal * planner_info.mppi.sigma[i_dp]
                                 planner_state.cost.qpos[i_dp, col_base + i_w] = qd.math.clamp(
                                     planner_state.cost.qpos[i_dp, col_base + i_w] + delta_mean,
-                                    planner_info.fk.dofs.q_limit_lower[i_dp],
-                                    planner_info.fk.dofs.q_limit_upper[i_dp],
+                                    planner_info.fk.dof_q_limit_lower[i_dp],
+                                    planner_info.fk.dof_q_limit_upper[i_dp],
                                 )
 
 
@@ -528,8 +580,8 @@ def func_planner_lbfgs(
                             if not is_clamped:
                                 q = qd.math.clamp(
                                     q - alpha * planner_state.lbfgs.dir_traj[i_dp, col_base + i_w],
-                                    planner_info.fk.dofs.q_limit_lower[i_dp],
-                                    planner_info.fk.dofs.q_limit_upper[i_dp],
+                                    planner_info.fk.dof_q_limit_lower[i_dp],
+                                    planner_info.fk.dof_q_limit_upper[i_dp],
                                 )
                             planner_state.lbfgs.trial_qpos[i_dp, col_base + i_w] = q
                     cost_trial = func_planner_traj_cost(
@@ -574,8 +626,8 @@ def func_planner_lbfgs(
                             if not is_clamped:
                                 planner_state.cost.qpos[i_dp, col_base + i_w] = qd.math.clamp(
                                     q_old - alpha_best * planner_state.lbfgs.dir_traj[i_dp, col_base + i_w],
-                                    planner_info.fk.dofs.q_limit_lower[i_dp],
-                                    planner_info.fk.dofs.q_limit_upper[i_dp],
+                                    planner_info.fk.dof_q_limit_lower[i_dp],
+                                    planner_info.fk.dof_q_limit_upper[i_dp],
                                 )
                     cost = func_planner_candidate_cost_grad(
                         i_c,
