@@ -785,7 +785,12 @@ def test_contact_depth_query_sdf_vs_raycast_parity(show_viewer):
         )
 
         common = dict(entity_idx=pad.idx, probe_local_pos=(CENTER_PROBE,), probe_radius=PROBE_R)
-        depth = scene.add_sensor(gs.sensors.ContactDepthProbe(contact_depth_query=mode, **common))
+        depth = scene.add_sensor(
+            gs.sensors.ContactDepthProbe(
+                contact_depth_query=mode,
+                **common,
+            )
+        )
         # Filtering the ball (the only counterpart) must zero the depth on both backends: the SDF path drops it from
         # the per-sensor geom list, the raycast path drops it from the candidate-geom mask.
         depth_filtered = scene.add_sensor(
@@ -958,7 +963,12 @@ def test_kinematic_taxel_crosstalk(show_viewer):
         shear_scalar=0.0,
         twist_scalar=0.0,
     )
-    plain = scene.add_sensor(gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.tolist(), **common))
+    plain = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.tolist(),
+            **common,
+        )
+    )
     crosstalk = scene.add_sensor(
         gs.sensors.KinematicTaxel(
             probe_local_pos=grid_positions.tolist(),
@@ -977,7 +987,12 @@ def test_kinematic_taxel_crosstalk(show_viewer):
         )
     )
     # Same probes laid out flat: per-probe GT must match the grid layout.
-    flat = scene.add_sensor(gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.reshape(-1, 3).tolist(), **common))
+    flat = scene.add_sensor(
+        gs.sensors.KinematicTaxel(
+            probe_local_pos=grid_positions.reshape(-1, 3).tolist(),
+            **common,
+        )
+    )
     ck_id = scene.add_sensor(
         gs.sensors.KinematicTaxel(probe_local_pos=grid_positions.tolist(), crosstalk_kernel=IDENTITY_KERNEL, **common)
     )
@@ -1125,7 +1140,11 @@ def test_proximity_taxel_crosstalk(show_viewer):
         stiffness=100.0,
         shear_coupling=0.0,
     )
-    plain = scene.add_sensor(gs.sensors.ProximityTaxel(**common))
+    plain = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            **common,
+        )
+    )
     crosstalk = scene.add_sensor(
         gs.sensors.ProximityTaxel(
             crosstalk_kernel=[[0.03, 0.07, 0.03], [0.07, 0.60, 0.07], [0.03, 0.07, 0.03]],
@@ -1198,9 +1217,24 @@ def test_proximity_taxel_twist_torque(show_viewer, tol, n_envs):
         shear_coupling=0.0,  # isolate the spin term from shear-field-curl torsion
         draw_debug=show_viewer,
     )
-    twist1 = scene.add_sensor(gs.sensors.ProximityTaxel(twist_scalar=1.0, **common))
-    twist2 = scene.add_sensor(gs.sensors.ProximityTaxel(twist_scalar=2.0, **common))
-    twist0 = scene.add_sensor(gs.sensors.ProximityTaxel(twist_scalar=0.0, **common))
+    twist1 = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            twist_scalar=1.0,
+            **common,
+        )
+    )
+    twist2 = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            twist_scalar=2.0,
+            **common,
+        )
+    )
+    twist0 = scene.add_sensor(
+        gs.sensors.ProximityTaxel(
+            twist_scalar=0.0,
+            **common,
+        )
+    )
 
     scene.build(n_envs=n_envs)
 
@@ -1703,7 +1737,11 @@ def test_heterogeneous_object(show_viewer, tol):
             **common,
         )
     )
-    depth_probe = scene.add_sensor(gs.sensors.ContactDepthProbe(**common))
+    depth_probe = scene.add_sensor(
+        gs.sensors.ContactDepthProbe(
+            **common,
+        )
+    )
     kinematic_taxel = scene.add_sensor(
         gs.sensors.KinematicTaxel(
             normal_stiffness=100.0,
