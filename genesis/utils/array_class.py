@@ -2636,6 +2636,20 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     # Sampling-fallback extents: independent RRT-Connect tree pairs per env and the node capacity per tree pair.
     n_rrt_trees: int
     n_rrt_nodes: int
+    # In-kernel local-array bounds - the MPPI smooth-noise knot count, particle-count cap, L-BFGS history depth,
+    # and line-search trial cap - plus the validator densification factors, compile-time so kernels size their
+    # locals and unroll their sweeps.
+    n_noise_knots: int
+    n_mppi_particles_max: int
+    n_lbfgs_hist: int
+    n_ls_trials_max: int
+    n_upsample: int
+    n_refine: int
+    # Validator flag bits (see COLLISION / JOINT_LIMIT / GOAL_TOL / GOAL_IN_COLLISION in cost.py).
+    flag_collision: int
+    flag_joint_limit: int
+    flag_goal_tol: int
+    flag_goal_in_collision: int
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2734,33 +2748,6 @@ class PlannerBoundaryInfo:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerOptInfo:
-    """Cost weights, activation distances, required clearance, and iteration budgets - runtime scalars so tuning
-    never recompiles."""
-
-    w_obs: qd.Tensor
-    w_self: qd.Tensor
-    w_lim: qd.Tensor
-    w_acc: qd.Tensor
-    w_jerk: qd.Tensor
-    w_pose_pos: qd.Tensor
-    w_pose_rot: qd.Tensor
-    w_posture: qd.Tensor
-    eps_act: qd.Tensor
-    eps_self: qd.Tensor
-    d_safe: qd.Tensor
-    mppi_n_iters: qd.Tensor
-    mppi_n_particles: qd.Tensor
-    mppi_sigma: qd.Tensor
-    lbfgs_n_iters: qd.Tensor
-    ls_n_trials: qd.Tensor
-    # Per-call deterministic noise key (counter-based hash RNG, see trajopt.py).
-    seed_key: qd.Tensor
-    # Smooth MPPI noise basis: per-knot weights of the noise knots, zero rows at the clamped knots.
-    noise_basis: qd.Tensor
-
-
-@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerExclInfo:
     """Boundary-config contact exclusions: pairs already violating the margin at qpos_start or qpos_goal are
     allowed to keep their anchoring boundary's clearance (never get worse), so grasped-object starts and
@@ -2785,72 +2772,175 @@ class PlannerExclInfo:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerEntityInfo:
-    """Build-time model description and runtime tuning of a planning-entity context, one leaf struct per
-    concern."""
+class PlannerFKInfo:
+    """Forward-kinematics model of the planned entity: the DOF limits, the robot collision-proxy spheres and
+    their covering surface samples, the collision geoms for the exact rescue, the self-collision pairs, and the
+    attached-object spheres."""
 
-    spheres: PlannerSpheresInfo
-    verts: PlannerVertsInfo
-    geoms: PlannerGeomsInfo
-    self_pairs: PlannerSelfPairsInfo
-    attach_spheres: PlannerAttachSpheresInfo
     dofs: PlannerDofsInfo
+    spheres: PlannerSpheresInfo
+    geoms: PlannerGeomsInfo
+    verts: PlannerVertsInfo
+    self_pairs: PlannerSelfPairsInfo
+    attach: PlannerAttachSpheresInfo
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerMPPIInfo:
+    """Model-predictive path-integral (MPPI) warmup budgets, smooth noise basis, deterministic noise key, and
+    per-iteration annealing factor - runtime scalars so tuning never recompiles.
+
+    The noise basis holds the per-knot weights of the noise knots, with zero rows at the clamped knots.
+    """
+
+    n_iters: qd.Tensor
+    n_particles: qd.Tensor
+    sigma: qd.Tensor
+    noise_basis: qd.Tensor
+    seed_key: qd.Tensor
+    anneal: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerLBFGSInfo:
+    """Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) refinement budgets and the fixed step-size ladder
+    of the noisy line search - runtime scalars so tuning never recompiles."""
+
+    n_iters: qd.Tensor
+    n_ls_trials: qd.Tensor
+    ls_ladder: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerRRTInfo:
+    """Rapidly-exploring random tree (RRT)-Connect fallback budgets and steering scalars - runtime so tuning never
+    recompiles (the compile-time tree / node capacities live in PlannerStaticConfig)."""
+
+    n_iters: qd.Tensor
+    n_shortcut: qd.Tensor
+    n_stall_iters: qd.Tensor
+    steer_step: qd.Tensor
+    goal_bias: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerCostInfo:
+    """Cost weights, activation distances, and required clearance of the trajectory objective, plus the plan
+    boundary inputs (start / goal configurations and the optional Cartesian goal) - runtime scalars so tuning
+    never recompiles."""
+
+    w_obs: qd.Tensor
+    w_self: qd.Tensor
+    w_lim: qd.Tensor
+    w_acc: qd.Tensor
+    w_jerk: qd.Tensor
+    w_pose_pos: qd.Tensor
+    w_pose_rot: qd.Tensor
+    w_posture: qd.Tensor
+    eps_act: qd.Tensor
+    eps_self: qd.Tensor
+    d_safe: qd.Tensor
     boundary: PlannerBoundaryInfo
-    opt: PlannerOptInfo
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerCertInfo:
+    """Certification thresholds and the boundary-config contact exclusions - runtime scalars so tuning never recompiles.
+
+    The floats bound the exact-rescue window and its covering radii, the excusable goal-contact band and depth,
+    the anchor-slack ramps of the certification and optimizer paths, and the accepted-goal real penetration
+    budget (see cost.py for each).
+    """
+
     excl: PlannerExclInfo
+    excl_depth_max: qd.Tensor
+    excl_contact_band: qd.Tensor
+    excl_anchor_slack_cert: qd.Tensor
+    excl_anchor_slack_opt: qd.Tensor
+    exact_rescue_window: qd.Tensor
+    exact_sample_cov: qd.Tensor
+    exact_sample_cov_coarse: qd.Tensor
+    goal_real_pen_max: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerEntityInfo:
+    """Build-time model description and runtime tuning of a planning-entity context, six symmetric per-algorithm
+    leaves shared with PlannerState (fk, mppi, lbfgs, rrt, cost, cert)."""
+
+    fk: PlannerFKInfo
+    mppi: PlannerMPPIInfo
+    lbfgs: PlannerLBFGSInfo
+    rrt: PlannerRRTInfo
+    cost: PlannerCostInfo
+    cert: PlannerCertInfo
 
 
 def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts, n_coarse_verts, n_robot_geoms, B):
     return PlannerEntityInfo(
-        spheres=PlannerSpheresInfo(
-            link_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
-            geom_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
-            pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
-            radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+        fk=PlannerFKInfo(
+            dofs=PlannerDofsInfo(
+                q_limit_lower=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                q_limit_upper=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                vel_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                acc_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+                is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
+            ),
+            spheres=PlannerSpheresInfo(
+                link_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
+                geom_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
+                pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+                radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+            ),
+            geoms=PlannerGeomsInfo(
+                geoms_idx=V(dtype=gs.qd_int, shape=(max(n_robot_geoms, 1),)),
+                links_start=V(dtype=gs.qd_int, shape=(planner_config.n_links + 1,)),
+                offset_pos=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                offset_quat=V_VEC(4, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                bound_center_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                bound_radius=V(dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+            ),
+            verts=PlannerVertsInfo(
+                pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_verts, 1),)),
+                spheres_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
+                coarse_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_coarse_verts, 1),)),
+                spheres_coarse_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
+            ),
+            self_pairs=PlannerSelfPairsInfo(
+                spheres_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
+                reach=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1),)),
+                link_pairs_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_link_pairs, 1),)),
+                link_pairs_start=V(dtype=gs.qd_int, shape=(max(n_link_pairs, 1) + 1,)),
+            ),
+            attach=PlannerAttachSpheresInfo(
+                link_idx=V(dtype=gs.qd_int, shape=(max(planner_config.n_attach_max, 1),)),
+                pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1), B)),
+                radius=V(dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1),)),
+                is_active=V(dtype=gs.qd_bool, shape=(max(planner_config.n_attach_max, 1), B)),
+            ),
         ),
-        verts=PlannerVertsInfo(
-            pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_verts, 1),)),
-            spheres_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
-            coarse_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_coarse_verts, 1),)),
-            spheres_coarse_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
+        mppi=PlannerMPPIInfo(
+            n_iters=V(dtype=gs.qd_int, shape=()),
+            n_particles=V(dtype=gs.qd_int, shape=()),
+            sigma=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
+            noise_basis=V(dtype=gs.qd_float, shape=(planner_config.n_knots, PLANNER_N_NOISE_KNOTS)),
+            seed_key=V(dtype=gs.qd_int, shape=()),
+            anneal=V(dtype=gs.qd_float, shape=()),
         ),
-        geoms=PlannerGeomsInfo(
-            geoms_idx=V(dtype=gs.qd_int, shape=(max(n_robot_geoms, 1),)),
-            links_start=V(dtype=gs.qd_int, shape=(planner_config.n_links + 1,)),
-            offset_pos=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            offset_quat=V_VEC(4, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            bound_center_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
-            bound_radius=V(dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+        lbfgs=PlannerLBFGSInfo(
+            n_iters=V(dtype=gs.qd_int, shape=()),
+            n_ls_trials=V(dtype=gs.qd_int, shape=()),
+            ls_ladder=V(dtype=gs.qd_float, shape=(planner_config.n_ls_trials_max,)),
         ),
-        self_pairs=PlannerSelfPairsInfo(
-            spheres_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
-            reach=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1),)),
-            link_pairs_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_link_pairs, 1),)),
-            link_pairs_start=V(dtype=gs.qd_int, shape=(max(n_link_pairs, 1) + 1,)),
+        rrt=PlannerRRTInfo(
+            n_iters=V(dtype=gs.qd_int, shape=()),
+            n_shortcut=V(dtype=gs.qd_int, shape=()),
+            n_stall_iters=V(dtype=gs.qd_int, shape=()),
+            steer_step=V(dtype=gs.qd_float, shape=()),
+            goal_bias=V(dtype=gs.qd_float, shape=()),
         ),
-        attach_spheres=PlannerAttachSpheresInfo(
-            link_idx=V(dtype=gs.qd_int, shape=(max(planner_config.n_attach_max, 1),)),
-            pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1), B)),
-            radius=V(dtype=gs.qd_float, shape=(max(planner_config.n_attach_max, 1),)),
-            is_active=V(dtype=gs.qd_bool, shape=(max(planner_config.n_attach_max, 1), B)),
-        ),
-        dofs=PlannerDofsInfo(
-            q_limit_lower=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            q_limit_upper=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            vel_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            acc_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
-        ),
-        boundary=PlannerBoundaryInfo(
-            qpos_start=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
-            qpos_goal=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
-            goal_link_idx=V(dtype=gs.qd_int, shape=()),
-            goal_pos=V_VEC(3, dtype=gs.qd_float, shape=(B,)),
-            goal_quat=V_VEC(4, dtype=gs.qd_float, shape=(B,)),
-            has_pose_goal=V(dtype=gs.qd_bool, shape=()),
-        ),
-        opt=PlannerOptInfo(
+        cost=PlannerCostInfo(
             w_obs=V(dtype=gs.qd_float, shape=()),
             w_self=V(dtype=gs.qd_float, shape=()),
             w_lim=V(dtype=gs.qd_float, shape=()),
@@ -2862,26 +2952,37 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
             eps_act=V(dtype=gs.qd_float, shape=()),
             eps_self=V(dtype=gs.qd_float, shape=()),
             d_safe=V(dtype=gs.qd_float, shape=()),
-            mppi_n_iters=V(dtype=gs.qd_int, shape=()),
-            mppi_n_particles=V(dtype=gs.qd_int, shape=()),
-            mppi_sigma=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-            lbfgs_n_iters=V(dtype=gs.qd_int, shape=()),
-            ls_n_trials=V(dtype=gs.qd_int, shape=()),
-            seed_key=V(dtype=gs.qd_int, shape=()),
-            noise_basis=V(dtype=gs.qd_float, shape=(planner_config.n_knots, PLANNER_N_NOISE_KNOTS)),
+            boundary=PlannerBoundaryInfo(
+                qpos_start=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
+                qpos_goal=V(dtype=gs.qd_float, shape=(planner_config.n_dp, B)),
+                goal_link_idx=V(dtype=gs.qd_int, shape=()),
+                goal_pos=V_VEC(3, dtype=gs.qd_float, shape=(B,)),
+                goal_quat=V_VEC(4, dtype=gs.qd_float, shape=(B,)),
+                has_pose_goal=V(dtype=gs.qd_bool, shape=()),
+            ),
         ),
-        excl=PlannerExclInfo(
-            world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            world_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            world_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            world_count=V(dtype=gs.qd_int, shape=(B,)),
-            self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            self_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            self_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
-            self_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-            self_count=V(dtype=gs.qd_int, shape=(B,)),
+        cert=PlannerCertInfo(
+            excl=PlannerExclInfo(
+                world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_count=V(dtype=gs.qd_int, shape=(B,)),
+                self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_count=V(dtype=gs.qd_int, shape=(B,)),
+            ),
+            excl_depth_max=V(dtype=gs.qd_float, shape=()),
+            excl_contact_band=V(dtype=gs.qd_float, shape=()),
+            excl_anchor_slack_cert=V(dtype=gs.qd_float, shape=()),
+            excl_anchor_slack_opt=V(dtype=gs.qd_float, shape=()),
+            exact_rescue_window=V(dtype=gs.qd_float, shape=()),
+            exact_sample_cov=V(dtype=gs.qd_float, shape=()),
+            exact_sample_cov_coarse=V(dtype=gs.qd_float, shape=()),
+            goal_real_pen_max=V(dtype=gs.qd_float, shape=()),
         ),
     )
 
@@ -2922,26 +3023,6 @@ def get_planner_world_state(n_geoms, B):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerTrajState:
-    """Knot trajectories under optimization and their gradient, entity-local q coordinates. Column i_cw = i_c *
-    n_knots + i_w so the same 2D (n_dp, column) layout serves the optimizer and the FK column convention."""
-
-    qpos: qd.Tensor
-    grad: qd.Tensor
-
-
-@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerFKState:
-    """Forward kinematics (FK) cache of the gradient path, one column per (candidate, knot)."""
-
-    links_pos: qd.Tensor
-    links_quat: qd.Tensor
-    joints_xanchor: qd.Tensor
-    joints_xaxis: qd.Tensor
-    spheres_pos: qd.Tensor
-
-
-@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerEvalState:
     """Cost-only evaluation scratch, one column per in-flight rollout / line-search trial (serial over knots)."""
 
@@ -2954,17 +3035,40 @@ class PlannerEvalState:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerOptState:
-    """Trajectory-optimizer scratch: trial / particle trajectories, previous iterate and gradient, search
-    direction, and the L-BFGS ring-buffer history."""
+class PlannerFKState:
+    """Forward kinematics (FK) cache of the gradient path, one column per (candidate, knot), plus the cost-only
+    evaluation scratch (see PlannerEvalState)."""
+
+    links_pos: qd.Tensor
+    links_quat: qd.Tensor
+    joints_xanchor: qd.Tensor
+    joints_xaxis: qd.Tensor
+    spheres_pos: qd.Tensor
+    eval: PlannerEvalState
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerMPPIState:
+    """Model-predictive path-integral warmup keeps no scratch: its seeds live in cost.qpos and particle noise is
+    regenerated on demand, so this leaf exists only for Info / State leaf symmetry."""
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerLBFGSState:
+    """L-BFGS refinement scratch for each candidate.
+
+    Holds the trial / particle trajectory, the previous iterate and gradient, the search-direction trajectory,
+    and the limited-memory history of the two-loop recursion: dqpos_hist and dgrad_hist are the iterate and
+    gradient differences of the last m steps, rho_hist their 1 / (dgrad . dqpos) curvatures.
+    """
 
     trial_qpos: qd.Tensor
     qpos_prev: qd.Tensor
     grad_prev: qd.Tensor
     dir_traj: qd.Tensor
-    lbfgs_s: qd.Tensor
-    lbfgs_y: qd.Tensor
-    lbfgs_rho: qd.Tensor
+    dqpos_hist: qd.Tensor
+    dgrad_hist: qd.Tensor
+    rho_hist: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2985,44 +3089,51 @@ class PlannerRRTState:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerCandidatesState:
-    """Per-candidate optimization mask and cost / validation outputs (cost_wp is per (candidate, knot) column)."""
+class PlannerCostState:
+    """Knot trajectories under optimization, their gradient, and the per-candidate cost outputs.
 
-    cost_wp: qd.Tensor
+    cost_wp is per (candidate, knot) column; column i_cw = i_c * n_knots + i_w so the same 2D (n_dp, column)
+    layout serves the optimizer and the FK column convention.
+    """
+
+    qpos: qd.Tensor
+    grad: qd.Tensor
     cost: qd.Tensor
-    is_active: qd.Tensor
+    cost_wp: qd.Tensor
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class PlannerCertState:
+    """Per-candidate certification outputs: the validity-flags bitfield, the optimization mask, and the min
+    clearances split by reading fidelity - exact = robot-sphere world pairs (rescue-bounded), proxy = self and
+    attached-entity pairs (raw proxy conservatism), see func_planner_collision_cost."""
+
     valid_flags: qd.Tensor
-    # Validator min clearances, split by reading fidelity: exact = robot-sphere world pairs (rescue-bounded),
-    # proxy = self and attached-entity pairs (raw proxy conservatism) - see func_planner_collision_cost.
+    is_active: qd.Tensor
     min_clearance_exact: qd.Tensor
     min_clearance_proxy: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerLadderState:
-    """Attempt-ladder control for the single graph kernel. graph_counter drives the device-side graph_do_while:
-    the host sets it to 2 + max_retry, the fold decrements it each pass and zeroes it once every env is solved.
-    early_exit_flag is the per-pass reduction scratch; env_solved / env_seeded carry per-env progress (solved,
-    already-seeded) across attempts so finished envs skip the phase bodies (see kernel_planner_plan)."""
+class PlannerState:
+    """Planner-owned scratch, six symmetric per-algorithm leaves shared with PlannerEntityInfo (fk, mppi, lbfgs,
+    rrt, cost, cert), plus the top-level attempt-ladder orchestration. The candidate axis C = B*S folds env x
+    seed; NF = C*W adds the knot axis.
 
+    graph_counter drives the device-side graph_do_while of the single graph kernel: the host sets it to
+    2 + max_retry, the fold decrements it each pass and zeroes it once every env is solved. early_exit_flag is
+    the per-pass reduction scratch; is_env_solved carries per-env progress across attempts so finished envs skip
+    the phase bodies."""
+
+    fk: PlannerFKState
+    mppi: PlannerMPPIState
+    lbfgs: PlannerLBFGSState
+    rrt: PlannerRRTState
+    cost: PlannerCostState
+    cert: PlannerCertState
     graph_counter: qd.types.ndarray()
     early_exit_flag: qd.Tensor
-    env_solved: qd.Tensor
-    env_seeded: qd.Tensor
-
-
-@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class PlannerState:
-    """Planner-owned scratch, one leaf struct per concern. The candidate axis C = B*S folds env x seed; NF = C*W
-    adds the knot axis."""
-
-    traj: PlannerTrajState
-    fk: PlannerFKState
-    eval: PlannerEvalState
-    opt: PlannerOptState
-    rrt: PlannerRRTState
-    candidates: PlannerCandidatesState
-    ladder: PlannerLadderState
+    is_env_solved: qd.Tensor
 
 
 def get_planner_state(planner_config, B):
@@ -3034,33 +3145,30 @@ def get_planner_state(planner_config, B):
     n_rrt_cols = NT * planner_config.n_rrt_nodes
 
     return PlannerState(
-        traj=PlannerTrajState(
-            qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            grad=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-        ),
         fk=PlannerFKState(
             links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, NF)),
             links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, NF)),
             joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
             joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
             spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, NF)),
+            eval=PlannerEvalState(
+                qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, E)),
+                links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
+                links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
+                joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
+                joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
+                spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+            ),
         ),
-        eval=PlannerEvalState(
-            qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, E)),
-            links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
-            links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
-            joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
-            joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
-            spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
-        ),
-        opt=PlannerOptState(
+        mppi=PlannerMPPIState(),
+        lbfgs=PlannerLBFGSState(
             trial_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
             qpos_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
             grad_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
             dir_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            lbfgs_s=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
-            lbfgs_y=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
-            lbfgs_rho=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, C)),
+            dqpos_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
+            dgrad_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
+            rho_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, C)),
         ),
         rrt=PlannerRRTState(
             qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
@@ -3071,20 +3179,21 @@ def get_planner_state(planner_config, B):
             path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
             path_len=V(dtype=gs.qd_int, shape=(max(NT, 1),)),
         ),
-        candidates=PlannerCandidatesState(
-            cost_wp=V(dtype=gs.qd_float, shape=(NF,)),
+        cost=PlannerCostState(
+            qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+            grad=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
             cost=V(dtype=gs.qd_float, shape=(C,)),
-            is_active=V(dtype=gs.qd_bool, shape=(C,)),
+            cost_wp=V(dtype=gs.qd_float, shape=(NF,)),
+        ),
+        cert=PlannerCertState(
             valid_flags=V(dtype=gs.qd_int, shape=(C,)),
+            is_active=V(dtype=gs.qd_bool, shape=(C,)),
             min_clearance_exact=V(dtype=gs.qd_float, shape=(C,)),
             min_clearance_proxy=V(dtype=gs.qd_float, shape=(C,)),
         ),
-        ladder=PlannerLadderState(
-            graph_counter=qd.ndarray(qd.i32, shape=()),
-            early_exit_flag=V(dtype=qd.i32, shape=()),
-            env_solved=V(dtype=gs.qd_bool, shape=(B,)),
-            env_seeded=V(dtype=gs.qd_bool, shape=(B,)),
-        ),
+        graph_counter=qd.ndarray(qd.i32, shape=()),
+        early_exit_flag=V(dtype=qd.i32, shape=()),
+        is_env_solved=V(dtype=gs.qd_bool, shape=(B,)),
     )
 
 

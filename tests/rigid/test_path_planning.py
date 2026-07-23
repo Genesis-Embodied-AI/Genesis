@@ -224,12 +224,12 @@ def test_plan_path_with_attached_entity(n_envs, show_viewer):
     assert_equal(held.get_pos(), held_pos_before)
     assert_equal(bystander.get_pos(), bystander_pos_before)
     context = scene.rigid_solver.planner._entity_contexts[franka.idx]
-    assert qd_to_torch(context.planner_info.attach_spheres.is_active).any()
+    assert qd_to_torch(context.planner_info.fk.attach.is_active).any()
 
     # Auto-grasp off: nothing is attached, and the cube between the fingers becomes an obstacle whose start
     # contacts are excluded, so planning still succeeds away from it.
     franka.plan_path(qpos_goal, attach_held_entities=False, seed=3)
-    assert not qd_to_torch(context.planner_info.attach_spheres.is_active).any()
+    assert not qd_to_torch(context.planner_info.fk.attach.is_active).any()
 
     # Planning toward a grasp, hands free: a pre-grasp pose with the open fingers straddling the bystander cube
     # is proxy-colliding by nature, and certifies through the goal-contact allowance.

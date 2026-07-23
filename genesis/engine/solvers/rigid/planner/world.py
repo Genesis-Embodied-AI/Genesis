@@ -118,7 +118,7 @@ def func_planner_world_sd_grad(
     grad = gs.qd_vec3(0.0, 0.0, 1.0)
     if geom_type == gs.GEOM_TYPE.SPHERE:
         delta = x - g_pos
-        if delta.norm() > gs.EPS:
+        if delta.norm() > rigid_info.EPS[None]:
             grad = delta / delta.norm()
     elif geom_type == gs.GEOM_TYPE.BOX:
         x_local = gu.qd_inv_transform_by_trans_quat(x, g_pos, g_quat)
@@ -130,7 +130,7 @@ def func_planner_world_sd_grad(
         if qd.max(q[0], qd.max(q[1], q[2])) > 0.0:
             # Outside: gradient follows the positive-part vector.
             q_out = qd.max(q, 0.0)
-            grad_local = q_out / qd.max(q_out.norm(), gs.EPS)
+            grad_local = q_out / qd.max(q_out.norm(), rigid_info.EPS[None])
         else:
             # Inside: gradient points across the closest face.
             i_face = 0
@@ -147,7 +147,7 @@ def func_planner_world_sd_grad(
         x_local = gu.qd_inv_transform_by_trans_quat(x, g_pos, g_quat)
         halflength = 0.5 * dyn_info.geoms.data[i_g][1]
         x_local[2] = x_local[2] - qd.math.clamp(x_local[2], -halflength, halflength)
-        if x_local.norm() > gs.EPS:
+        if x_local.norm() > rigid_info.EPS[None]:
             grad = gu.qd_transform_by_quat(x_local / x_local.norm(), g_quat)
     elif geom_type == gs.GEOM_TYPE.CYLINDER:
         x_local = gu.qd_inv_transform_by_trans_quat(x, g_pos, g_quat)
@@ -157,14 +157,14 @@ def func_planner_world_sd_grad(
         d_radial = r_norm - radius
         d_axial = qd.abs(x_local[2]) - halflength
         grad_local = gs.qd_vec3(0.0, 0.0, 1.0 if x_local[2] > 0.0 else -1.0)
-        if d_radial > qd.max(d_axial, 0.0) and r_norm > gs.EPS:
+        if d_radial > qd.max(d_axial, 0.0) and r_norm > rigid_info.EPS[None]:
             grad_local = gs.qd_vec3(x_local[0] / r_norm, x_local[1] / r_norm, 0.0)
         grad = gu.qd_transform_by_quat(grad_local, g_quat)
     else:
         grad = sdf_utils.sdf_func_grad_world_local(
             i_g, x, g_pos, g_quat, dyn_info.geoms, rigid_info, sdf_info, collider_static_config
         )
-        if grad.norm() > gs.EPS:
+        if grad.norm() > rigid_info.EPS[None]:
             grad = grad / grad.norm()
     return grad
 

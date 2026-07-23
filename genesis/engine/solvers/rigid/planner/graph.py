@@ -44,11 +44,11 @@ def func_planner_rrt_config_is_free(
         i_t,
         i_t,
         i_b,
-        qpos=planner_state.eval.qpos,
-        links_pos=planner_state.eval.links_pos,
-        links_quat=planner_state.eval.links_quat,
-        joints_xanchor=planner_state.eval.joints_xanchor,
-        joints_xaxis=planner_state.eval.joints_xaxis,
+        qpos=planner_state.fk.eval.qpos,
+        links_pos=planner_state.fk.eval.links_pos,
+        links_quat=planner_state.fk.eval.links_quat,
+        joints_xanchor=planner_state.fk.eval.joints_xanchor,
+        joints_xaxis=planner_state.fk.eval.joints_xaxis,
         dyn_state=dyn_state,
         dyn_info=dyn_info,
         rigid_info=rigid_info,
@@ -58,9 +58,9 @@ def func_planner_rrt_config_is_free(
     func_planner_spheres(
         i_t,
         i_b,
-        links_pos=planner_state.eval.links_pos,
-        links_quat=planner_state.eval.links_quat,
-        spheres_pos=planner_state.eval.spheres_pos,
+        links_pos=planner_state.fk.eval.links_pos,
+        links_quat=planner_state.fk.eval.links_quat,
+        spheres_pos=planner_state.fk.eval.spheres_pos,
         planner_info=planner_info,
         planner_config=planner_config,
     )
@@ -69,9 +69,9 @@ def func_planner_rrt_config_is_free(
         i_b,
         swp,
         dq_inf,
-        links_pos=planner_state.eval.links_pos,
-        links_quat=planner_state.eval.links_quat,
-        spheres_pos=planner_state.eval.spheres_pos,
+        links_pos=planner_state.fk.eval.links_pos,
+        links_quat=planner_state.fk.eval.links_quat,
+        spheres_pos=planner_state.fk.eval.spheres_pos,
         planner_info=planner_info,
         planner_world=planner_world,
         collider_state=collider_state,
@@ -115,13 +115,13 @@ def func_planner_rrt_edge_is_free(
     n_dp = qd.static(planner_config.n_dp)
     reach = gs.qd_float(0.0)
     for i_dp in range(n_dp):
-        reach += planner_info.dofs.reach[i_dp] * qd.abs(
+        reach += planner_info.fk.dofs.reach[i_dp] * qd.abs(
             planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
         )
     # Quarter-band granularity: each sample's sweep allowance stays ~eps_act/8, so edges certify while only
     # requiring modest true clearance (the demand IS the allowance - coarser sampling would reject any edge
     # whose clearance is below half the activation band).
-    n_sub = gs.qd_int(qd.ceil(4.0 * reach / qd.max(planner_info.opt.eps_act[None], 1e-3))) + 1
+    n_sub = gs.qd_int(qd.ceil(4.0 * reach / qd.max(planner_info.cost.eps_act[None], 1e-3))) + 1
     swp = 0.5 * reach / qd.cast(n_sub, gs.qd_float)
     dq_inf = gs.qd_float(0.0)
     for i_dp in range(n_dp):
@@ -136,7 +136,7 @@ def func_planner_rrt_edge_is_free(
     while is_free and i_sub <= n_sub:
         alpha = qd.cast(i_sub, gs.qd_float) / qd.cast(n_sub, gs.qd_float)
         for i_dp in range(n_dp):
-            planner_state.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
+            planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
                 planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
             )
         is_free = func_planner_rrt_config_is_free(
@@ -166,7 +166,6 @@ def func_planner_rrt_edge_is_free(
 def func_planner_rrt_connect(
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
-    n_iters: int,
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
@@ -203,8 +202,8 @@ def func_planner_rrt_connect(
 
             # Roots: node 0 = start, node n_half = goal.
             for i_dp in range(n_dp):
-                planner_state.rrt.qpos[i_dp, col0] = planner_info.boundary.qpos_start[i_dp, i_b]
-                planner_state.rrt.qpos[i_dp, col0 + n_half] = planner_info.boundary.qpos_goal[i_dp, i_b]
+                planner_state.rrt.qpos[i_dp, col0] = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                planner_state.rrt.qpos[i_dp, col0 + n_half] = planner_info.cost.boundary.qpos_goal[i_dp, i_b]
             planner_state.rrt.parent[col0] = -1
             planner_state.rrt.parent[col0 + n_half] = -1
             planner_state.rrt.n_nodes[2 * i_t] = 1
@@ -215,25 +214,29 @@ def func_planner_rrt_connect(
             side = 0
             it = 0
             n_stall = 0
-            while it < n_iters and n_stall < _RRT_STALL_ITERS and not planner_state.rrt.is_done[i_t]:
+            while (
+                it < planner_info.rrt.n_iters[None]
+                and n_stall < planner_info.rrt.n_stall_iters[None]
+                and not planner_state.rrt.is_done[i_t]
+            ):
                 base = side * n_half
                 other = (1 - side) * n_half
 
                 # Sample a target: goal-biased toward the other tree's newest node, else uniform in limits
                 # (locked DOFs pinned to the start value).
-                if gu.qd_hash01(planner_info.opt.seed_key[None], i_t, it, 777) < _RRT_GOAL_BIAS:
+                if gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, 777) < planner_info.rrt.goal_bias[None]:
                     newest = other + planner_state.rrt.n_nodes[2 * i_t + 1 - side] - 1
                     for i_dp in range(n_dp):
-                        planner_state.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
+                        planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
                 else:
                     for i_dp in range(n_dp):
-                        u = gu.qd_hash01(planner_info.opt.seed_key[None], i_t, it, i_dp)
-                        q = planner_info.dofs.q_limit_lower[i_dp] + u * (
-                            planner_info.dofs.q_limit_upper[i_dp] - planner_info.dofs.q_limit_lower[i_dp]
+                        u = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, i_dp)
+                        q = planner_info.fk.dofs.q_limit_lower[i_dp] + u * (
+                            planner_info.fk.dofs.q_limit_upper[i_dp] - planner_info.fk.dofs.q_limit_lower[i_dp]
                         )
-                        if planner_info.dofs.is_locked[i_dp, i_b]:
-                            q = planner_info.boundary.qpos_start[i_dp, i_b]
-                        planner_state.eval.qpos[i_dp, i_t] = q
+                        if planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                            q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                        planner_state.fk.eval.qpos[i_dp, i_t] = q
 
                 # Nearest node of the growing side (deterministic lowest-index tie-break).
                 i_near = 0
@@ -241,7 +244,9 @@ def func_planner_rrt_connect(
                 for i_n in range(planner_state.rrt.n_nodes[2 * i_t + side]):
                     d = gs.qd_float(0.0)
                     for i_dp in range(n_dp):
-                        d += (planner_state.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n]) ** 2
+                        d += (
+                            planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n]
+                        ) ** 2
                     if d < d_near:
                         d_near = d
                         i_near = i_n
@@ -251,16 +256,18 @@ def func_planner_rrt_connect(
                 for i_dp in range(n_dp):
                     d_inf = qd.max(
                         d_inf,
-                        qd.abs(planner_state.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_near]),
+                        qd.abs(
+                            planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_near]
+                        ),
                     )
-                scale = qd.min(1.0, _RRT_STEER_STEP / qd.max(d_inf, 1e-9))
+                scale = qd.min(1.0, planner_info.rrt.steer_step[None] / qd.max(d_inf, 1e-9))
                 i_new = planner_state.rrt.n_nodes[2 * i_t + side]
                 if i_new < n_half:
                     col_new = col0 + base + i_new
                     for i_dp in range(n_dp):
                         q_near = planner_state.rrt.qpos[i_dp, col0 + base + i_near]
                         planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
-                            planner_state.eval.qpos[i_dp, i_t] - q_near
+                            planner_state.fk.eval.qpos[i_dp, i_t] - q_near
                         )
                     if func_planner_rrt_edge_is_free(
                         i_t,
@@ -354,10 +361,10 @@ def func_planner_rrt_connect(
                 # arclength-resampled to the knot count, and resampled chords cut the corners of the raw
                 # polyline - straightening it first is what keeps the resampled trajectory certifiable. The tree
                 # storage is disposable now, so its first two columns serve as edge-check scratch.
-                for i_cut in range(_RRT_N_SHORTCUT):
+                for i_cut in range(planner_info.rrt.n_shortcut[None]):
                     if n_path > 3:
-                        u0 = gu.qd_hash01(planner_info.opt.seed_key[None], i_t, i_cut, 555)
-                        u1 = gu.qd_hash01(planner_info.opt.seed_key[None], i_t, i_cut, 556)
+                        u0 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 555)
+                        u1 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 556)
                         i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
                         i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
                         for i_dp in range(n_dp):
@@ -396,7 +403,6 @@ def func_planner_rrt_connect(
 def kernel_planner_rrt_connect(
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
-    n_iters: int,
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
@@ -414,7 +420,6 @@ def kernel_planner_rrt_connect(
     func_planner_rrt_connect(
         envs_idx,
         trees_is_active,
-        n_iters,
         planner_state,
         planner_info,
         planner_world,
