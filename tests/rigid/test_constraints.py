@@ -289,6 +289,15 @@ def test_comfree_incompatible_options():
             constraint_solver=gs.constraint_solver.ComFree,
             enable_mujoco_compatibility=True,
         )
+    with pytest.raises(gs.GenesisException):
+        gs.Scene(
+            sim_options=gs.options.SimOptions(
+                requires_grad=True,
+            ),
+            rigid_options=gs.options.RigidOptions(
+                constraint_solver=gs.constraint_solver.ComFree,
+            ),
+        )
 
 
 @pytest.mark.required
@@ -335,9 +344,13 @@ def test_comfree_solver(n_envs, comfree_rig, show_viewer):
     )
     scene.build(n_envs=n_envs)
 
-    rig.set_dofs_velocity([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, -2.0, 0.0])
-    # Start the pendulum close to its 30 deg limit so it engages the limit gently.
+    # Start the pendulum close to its 30 deg limit so it engages the limit gently. Positions go first:
+    # set_dofs_position zeroes the velocities by default.
     rig.set_dofs_position(np.radians(25.0), dofs_idx_local=[8])
+    # Spin the frictionloss hinges in opposite directions, kick one mimic hinge only so the pair starts
+    # asymmetric and staying equal proves the joint equality acts, and tumble the welded body so only working
+    # weld rotation rows can arrest it.
+    rig.set_dofs_velocity([2.0, -2.0, 1.0, 1.0], dofs_idx_local=[6, 7, 12, 15])
 
     # Constraint-free flight must match the smooth dynamics: semi-implicit Euler under gravity in closed form.
     n_flight_steps = 30
@@ -350,18 +363,30 @@ def test_comfree_solver(n_envs, comfree_rig, show_viewer):
     pendulum_qpos = []
     for _ in range(120):
         scene.step()
-        pendulum_qpos.append(tensor_to_array(rig.get_qpos())[..., -1])
+        pendulum_qpos.append(tensor_to_array(rig.get_qpos())[..., 9])
     pendulum_qpos = np.stack(pendulum_qpos)
 
-    # Both boxes rest on the plane, within the compliant penetration of the analytical contact force.
-    for box in (resting_box, falling_box):
+    # Both boxes rest on the plane, within the compliant penetration of the analytical contact force. The resting
+    # box pins the static equilibrium depth, which the predicted-velocity term of the force law shifts by ~1.2mm.
+    # FIXME: replace the hardcoded equilibrium with the analytical force balance of the pyramid rows.
+    for box, z_ref, z_tol in ((resting_box, 0.09819, 5e-4), (falling_box, 0.0985, 3.5e-3)):
         boxes_z = np.atleast_1d(tensor_to_array(box.get_pos()))[..., 2]
-        assert ((0.095 < boxes_z) & (boxes_z < 0.102)).all()
+        assert_allclose(boxes_z, z_ref, tol=z_tol)
         assert_allclose(box.get_vel(), 0.0, tol=1e-4)
 
     # The connect equality holds the hung body: its rows must pull as well as push.
     hung_z = np.atleast_1d(tensor_to_array(rig.get_link("hung").get_pos()))[..., 2]
     assert ((0.62 < hung_z) & (hung_z < 0.71)).all()
+
+    # The weld holds the offset body against gravity through both its position and rotation rows: the lever arm
+    # torques the weld, so a broken rotation row lets the body pitch and sink.
+    welded_pos = np.atleast_2d(tensor_to_array(rig.get_link("welded").get_pos()))
+    assert_allclose(welded_pos, (6.0, 0.3, 1.0), tol=0.05)
+    assert_allclose(gu.quat_to_rotvec(tensor_to_array(rig.get_link("welded").get_quat())), 0.0, tol=0.05)
+
+    # The joint equality keeps the mimic hinges equal after one is kicked.
+    mimic_qpos = tensor_to_array(rig.get_qpos())[..., 17:19]
+    assert_allclose(mimic_qpos[..., 0], mimic_qpos[..., 1], tol=1e-2)
 
     # Frictionloss decelerates both spin directions symmetrically.
     spins_vel = tensor_to_array(rig.get_dofs_velocity())[..., 6:8]
@@ -423,8 +448,8 @@ def test_comfree_torsional_rolling_friction(model_name, n_envs, request, show_vi
     spin_z = np.abs(np.atleast_2d(tensor_to_array(entity.get_dofs_velocity()))[..., 5])
     assert (spin_z < spin_z_init).all()
 
-    # A zeroed friction coefficient must not inflate the reported normal force: it stays balancing gravity, whereas
-    # a phantom push from the zero-jacobian rows would report several times the weight.
+    # At steady contact the reported normal force balances gravity exactly; a zeroed friction coefficient must
+    # not inflate it (each phantom zero-jacobian row would add its share of the weight on top).
     weight = entity.get_mass() * GRAVITY
     peak_fz = np.abs(tensor_to_array(entity.get_links_net_contact_force())[..., 2]).max(axis=-1)
-    assert ((0.6 * weight < peak_fz) & (peak_fz < 1.6 * weight)).all()
+    assert_allclose(peak_fz / weight, 1.0, tol=0.02)

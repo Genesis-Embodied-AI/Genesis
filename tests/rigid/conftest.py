@@ -852,9 +852,10 @@ def merged_overlapping_models():
 
 @pytest.fixture(scope="session")
 def comfree_rig():
-    """A non-colliding rig exercising every ComFree row projection: a connect-hung free body (two-sided
-    equality), two frictionloss hinges spun in opposite directions (box-bounded rows), and a range-limited
-    pendulum (one-sided rows)."""
+    """A non-colliding rig exercising every ComFree row projection and equality type: a connect-hung free body
+    and a weld-held free body with a gravity lever arm (two-sided equality rows, position and rotation), two
+    frictionloss hinges spun in opposite directions (box-bounded rows), a range-limited pendulum (one-sided
+    rows), and a mimic hinge pair (joint-equality rows)."""
     mjcf = ET.Element("mujoco", model="comfree_rig")
     ET.SubElement(mjcf, "compiler", angle="degree")
     default = ET.SubElement(mjcf, "default")
@@ -874,6 +875,22 @@ def comfree_rig():
     pendulum = ET.SubElement(worldbody, "body", name="pendulum", pos="5 0 1")
     ET.SubElement(pendulum, "joint", name="pendulum", type="hinge", axis="0 1 0", range="-30 30")
     ET.SubElement(pendulum, "geom", type="capsule", fromto="0 0 0 0.3 0 0", size="0.02", mass="0.5")
+    weld_post = ET.SubElement(worldbody, "body", name="weld_post", pos="6 0 1")
+    ET.SubElement(weld_post, "geom", type="box", size="0.05 0.05 0.05")
+    # Offset from the post so gravity torques the weld: its rotation rows carry load, and the position rows.
+    welded = ET.SubElement(worldbody, "body", name="welded", pos="6 0.3 1")
+    ET.SubElement(welded, "freejoint")
+    ET.SubElement(welded, "geom", type="box", size="0.05 0.05 0.05", mass="1")
+    mimic = ET.SubElement(worldbody, "body", name="mimic", pos="7 0 1")
+    ET.SubElement(mimic, "geom", type="box", size="0.05 0.05 0.05")
+    mimic1 = ET.SubElement(mimic, "body", name="mimic1", pos="0.2 0 0")
+    ET.SubElement(mimic1, "joint", name="mimic1", type="hinge", axis="0 1 0")
+    ET.SubElement(mimic1, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", mass="0.5")
+    mimic2 = ET.SubElement(mimic, "body", name="mimic2", pos="0 0.2 0")
+    ET.SubElement(mimic2, "joint", name="mimic2", type="hinge", axis="0 1 0")
+    ET.SubElement(mimic2, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", mass="0.5")
     equality = ET.SubElement(mjcf, "equality")
     ET.SubElement(equality, "connect", body1="anchor", body2="hung", anchor="0 0 -0.3")
+    ET.SubElement(equality, "weld", body1="weld_post", body2="welded")
+    ET.SubElement(equality, "joint", joint1="mimic1", joint2="mimic2")
     return ET.tostring(mjcf, encoding="unicode")
