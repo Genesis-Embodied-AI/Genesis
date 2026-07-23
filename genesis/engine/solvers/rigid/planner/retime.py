@@ -34,7 +34,7 @@ def retime_trajectory(qpos_knots, vel_limit, acc_limit, dofs_reach, num_waypoint
     vel_limit, acc_limit : torch.Tensor
         Per-DOF limits [n_dp] (infinite entries are ignored).
     dofs_reach : torch.Tensor
-        Per-DOF workspace reach bounds [n_dp] (see PlannerDofsInfo), weighting joint deviation into workspace.
+        Per-DOF workspace reach bounds [n_dp] (see fk.dof_reach), weighting joint deviation into workspace.
     num_waypoints : int | None
         Output waypoint count, or None for scene_dt spacing.
     scene_dt : float
