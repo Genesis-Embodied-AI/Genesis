@@ -17,17 +17,9 @@ import genesis.utils.geom as gu
 from genesis.options.recorders import (
     BasePlotterOptions,
     LinePlotterMixinOptions,
-)
-from genesis.options.recorders import (
     MPLImagePlot as MPLImagePlotterOptions,
-)
-from genesis.options.recorders import (
     MPLLinePlot as MPLLinePlotterOptions,
-)
-from genesis.options.recorders import (
     MPLVectorFieldPlot as MPLVectorFieldPlotterOptions,
-)
-from genesis.options.recorders import (
     PyQtLinePlot as PyQtLinePlotterOptions,
 )
 from genesis.utils import has_display

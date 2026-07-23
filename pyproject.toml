@@ -180,6 +180,9 @@ ignore = [
     "E712", # true-false-comparison
 ]
 
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
 [tool.pytest.ini_options]
 addopts = [
     "--verbose",
