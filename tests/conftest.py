@@ -177,6 +177,16 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if not sys.platform.startswith("linux"):
         config.option.forked = False
 
+    # Snapshot regeneration must run serially: syrupy writes updated snapshots at session end in the main process, so
+    # it is incompatible with xdist and pytest-forked. Coerce the default '-n auto' to serial like the viewer does,
+    # but reject an explicitly parallel or forked run.
+    if config.getoption("--snapshot-update", False):
+        if config.option.forked or (isinstance(config.option.numprocesses, int) and config.option.numprocesses > 0):
+            raise pytest.UsageError(
+                "'--snapshot-update' requires serial execution; run with '-n 0' and without '--forked'."
+            )
+        config.option.numprocesses = 0
+
     # Force disabling distributed framework if interactive viewer is enabled
     show_viewer = config.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
     if show_viewer:
