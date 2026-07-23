@@ -192,6 +192,15 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
     assert cam_move_dist_offset_T > 1e-2
     assert_allclose(cam_move_dist_offset_T, cam_move_dist, atol=1e-2)
 
+    sphere.set_pos(pos=(0.0, 1.0, 2.0))
+    reset_state = scene.get_state()
+    scene.reset()
+    initial_frame = raster_cam0.read().rgb.clone()
+    scene.reset(state=reset_state)
+    reset_frame = raster_cam0.read().rgb
+
+    assert (reset_frame != initial_frame).any()
+
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
