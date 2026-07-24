@@ -8,15 +8,16 @@ import pytest
 EXAMPLES_DIR = Path(__file__).parents[1] / "examples"
 
 ALLOW_PATTERNS = {
-    "*.py",
     "collision/**/*.py",
     "coupling/**/*.py",
+    "deformable/**/*.py",
     "drone/interactive_drone.py",
     "drone/fly_route.py",
-    "IPC_Solver/**/*.py",
+    "fluid/**/*.py",
+    "ipc/**/*.py",
     "kinematic/**/*.py",
+    "rendering/render_async.py",
     "rigid/**/*.py",
-    "render_async/**/*.py",
     "sap_coupling/**/*.py",
     "sensors/**/*.py",
     "tutorials/**/*.py",
@@ -30,7 +31,6 @@ IGNORE_SCRIPT_NAMES = {
     "single_franka_batch_render.py",  # FIXME: segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit (corrupted double-linked list)
     "differentiable_push.py",
-    "hibernation.py",
 }
 if sys.platform != "linux":
     IGNORE_SCRIPT_NAMES |= {
@@ -41,7 +41,7 @@ if sys.platform != "linux":
 # Directory keys apply recursively to all scripts within that directory.
 EXAMPLE_DEPENDENCIES = {
     "usd": ["pxr"],  # USD examples require the usd-core package (provides pxr module)
-    "IPC_Solver": ["uipc"],  # Requires pyuipc package (provides uipc module)
+    "ipc": ["uipc"],  # Requires pyuipc package (provides uipc module)
 }
 
 TIMEOUT = 600

@@ -61,11 +61,7 @@ def main():
         choices=["rl", "bc"],
         help="Model type: 'rl' for reinforcement learning, 'bc' for behavior cloning",
     )
-    parser.add_argument(
-        "--record",
-        action="store_true",
-        help="Record stereo images as video during evaluation",
-    )
+    parser.add_argument("-r", "--record", action="store_true", help="Record stereo images as video during evaluation")
     parser.add_argument(
         "--video_path",
         type=str,

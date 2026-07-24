@@ -1,6 +1,6 @@
 # Examples Reference
 
-Location: `examples/` (105 files total)
+Location: `examples/`, one folder per feature area. Every script lives in a folder; nothing sits at the root.
 
 ## Running Examples
 
@@ -9,22 +9,53 @@ uv run examples/tutorials/hello_genesis.py
 uv run examples/rigid/single_franka.py
 ```
 
-## Categories
+## Command-line convention
 
-| Directory | Files | Description |
-|-----------|-------|-------------|
-| `tutorials/` | 18 | Getting started guides |
-| `rigid/` | 29 | Rigid body and robot examples |
-| `coupling/` | 11 | Multi-physics coupling |
-| `drone/` | 7 | Quadcopter simulations |
-| `IPC_Solver/` | 5 | IPC contact examples |
-| `locomotion/` | 4 | Quadruped training |
-| `manipulation/` | 4 | Grasping and manipulation |
-| `rendering/` | 4 | Rendering demos |
-| `sensors/` | 4 | Sensor examples |
-| `sap_coupling/` | 4 | SAP coupling examples |
-| `collision/` | 3 | Collision demos |
-| `speed_benchmark/` | 3 | Performance benchmarks |
+Every example parses its arguments the same way, so learning one script's CLI teaches all of them.
+
+**Short flags are a closed, reserved set.** Each letter means exactly one thing across the whole tree. A flag
+that is not in this table gets no short form.
+
+| Short | Long | Type | Default |
+|-------|------|------|---------|
+| `-v` | `--vis` | `store_true` | off |
+| `-c` | `--cpu` | `store_true` | off (GPU) |
+| `-b` | `--num_envs` | `int` | per script |
+| `-s` | `--steps` | `int` | per script |
+| `-t` | `--seconds` | `float` | per script |
+| `-e` | `--exp_name` | `str` | per script |
+| `-r` | `--record` | `store_true` | off |
+| `-o` | `--output_dir` | `str` | per script |
+| `-d` | `--debug` | `store_true` | off |
+
+Rules:
+
+1. Short flag first, then long: `parser.add_argument("-v", "--vis", ...)`.
+2. Long names use underscores, so the flag matches the `args` attribute without a `dest=`.
+3. Single-dash flags are one character.
+4. Booleans are `store_true` and default off, which makes `default=False` redundant. Where the negative form
+   reads better, a single `store_true` negative flag covers it (`--no_ipc`, `--no_force`).
+5. Use `--steps` when the script's natural unit is iterations, `-t/--seconds` when it reasons in simulated
+   time (that is, it also exposes `--dt` or compares against `scene.t`).
+6. `--dt` is the only spelling for the timestep; it matches `SimOptions(dt=...)`.
+7. Every flag carries a `help=`. Keyword order is `action=` / `type=`, then `default=`, then `help=`.
+8. The parser is named `parser`, built as the first statements of `main()`, with
+   `if __name__ == "__main__": main()` at the bottom.
+
+A script whose physics only works on one backend hardcodes it and says why in a comment, rather than
+exposing a flag with a single usable value (see `rigid/hibernation.py`).
+
+Long-running scripts cut their horizon under `"PYTEST_VERSION" in os.environ` so the examples CI stays cheap.
+
+## Style
+
+Examples are read as reference code, so they are held to `CODING_GUIDELINES.md` like the rest of the tree.
+Beyond it, two things matter most here:
+
+- **Keep a script linear.** A helper function is warranted when it is called more than once, or is passed as
+  a callback or thread target. A one-shot linear script reads top to bottom inside `main()`.
+- **Model the sanctioned data access.** Reach for the public entity and solver getters first, and
+  `qd_to_numpy` / `qd_to_torch` from `genesis.utils.misc` when no getter exists.
 
 ## Key Examples
 

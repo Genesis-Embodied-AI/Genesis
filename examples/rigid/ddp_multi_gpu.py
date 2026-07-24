@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""
-Multi-node / multi-GPU Genesis x PyTorch DDP demo
-=================================================
+"""Data-parallel training across GPUs with PyTorch DistributedDataParallel.
+
+Each rank owns a full scene with its own batch of environments, so the effective batch is the per-rank
+``--num_envs`` times the number of ranks: adding GPUs lowers gradient noise rather than changing any scene.
 
 Single machine, 2 GPUs:
-    torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/ddp_multi_gpu.py
-
-Expectation:
-    - In nvidia-smi, you will see multiple GPUs are being used.
-    - As you increase the number of GPUs, the gradient will be less noisy and the loss decreases faster.
+    torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/rigid/ddp_multi_gpu.py
 """
 
 import os

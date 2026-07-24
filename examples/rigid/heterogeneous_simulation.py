@@ -25,9 +25,9 @@ Variant Assignment Rules:
        - Variants 2 and 3 are unused
 
 Usage:
-    python heterogeneous_simulation.py -v -n 4  # 4 environments (matches 4 variants)
-    python heterogeneous_simulation.py -v -n 8  # 8 environments (2 per variant)
-    python heterogeneous_simulation.py -v -n 2  # 2 environments (only first 2 variants used)
+    python heterogeneous_simulation.py -v -b 4  # 4 environments (matches 4 variants)
+    python heterogeneous_simulation.py -v -b 8  # 8 environments (2 per variant)
+    python heterogeneous_simulation.py -v -b 2  # 2 environments (only first 2 variants used)
 """
 
 import argparse
