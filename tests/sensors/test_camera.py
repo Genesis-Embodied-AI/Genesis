@@ -39,8 +39,13 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
         show_viewer=show_viewer,
     )
 
+    # Finite plane sized and placed to sit fully inside raster_cam0's frustum: the Apple Software Renderer misrasterizes
+    # any geometry with vertices outside the view, which would break the exact post-reset frame comparison below.
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            pos=(-1.75, 0.0, 0.0),
+            plane_size=(6.5, 6.0),
+        ),
         surface=gs.surfaces.Rough(
             color=(0.4, 0.4, 0.4),
         ),
@@ -82,7 +87,7 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
     raster_cam0 = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(512, 512),
-            pos=(3.0, 0.0, 2.0),
+            pos=(6.0, 0.0, 4.0),
             lookat=(0.0, 0.0, 1.0),
             up=(0.0, 0.0, 1.0),
             fov=60.0,
@@ -192,14 +197,23 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
     assert cam_move_dist_offset_T > 1e-2
     assert_allclose(cam_move_dist_offset_T, cam_move_dist, atol=1e-2)
 
-    sphere.set_pos(pos=(0.0, 1.0, 2.0))
-    reset_state = scene.get_state()
+    # A reset restores state but rewinds the timestep, which the frame cache keys on; the cached frame must follow the
+    # restored state, not the timestep. Render two visibly-distinct states, each fresh after a reset, then confirm that
+    # resetting back to either one reproduces its frame exactly rather than returning the other cached frame. Both
+    # resets pass an explicit state because reset with a state argument also overwrites the registered initial state.
     scene.reset()
-    initial_frame = raster_cam0.read().rgb.clone()
-    scene.reset(state=reset_state)
-    reset_frame = raster_cam0.read().rgb
+    default_state = scene.get_state()
+    default_frame = raster_cam0.read().rgb.clone()
+    sphere.set_pos(pos=(0.0, 1.0, 2.0))
+    shifted_state = scene.get_state()
+    scene.reset(state=shifted_state)
+    shifted_frame = raster_cam0.read().rgb.clone()
+    assert (shifted_frame != default_frame).any()
 
-    assert (reset_frame != initial_frame).any()
+    scene.reset(state=default_state)
+    assert_equal(raster_cam0.read().rgb, default_frame)
+    scene.reset(state=shifted_state)
+    assert_equal(raster_cam0.read().rgb, shifted_frame)
 
 
 @pytest.mark.slow  # ~200s
