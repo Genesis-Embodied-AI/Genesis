@@ -17,7 +17,7 @@ def main():
     gs.init(backend=gs.cpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     scene = gs.Scene(

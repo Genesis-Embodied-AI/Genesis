@@ -98,13 +98,13 @@ def run_worker(args: argparse.Namespace) -> None:
     gs.destroy()
 
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--steps", type=int, default=1000, help="simulation / training steps")
-    p.add_argument("--vis", action="store_true", help="open viewer on rank-0")
-    p.add_argument("-b", "--num_envs", type=int, default=2048, help="number of environments")
-    return p.parse_args()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--vis", action="store_true", help="Open the viewer on rank 0")
+    parser.add_argument("-b", "--num_envs", type=int, default=2048, help="Number of parallel environments")
+    parser.add_argument("-s", "--steps", type=int, default=1000, help="Number of training steps")
+    run_worker(parser.parse_args())
 
 
 if __name__ == "__main__":
-    run_worker(parse_args())
+    main()

@@ -13,8 +13,8 @@ COMB = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--comb", type=str, default="urdf2urdf", choices=COMB)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("--comb", type=str, default="urdf2urdf", choices=COMB, help="Entities to merge")
     args = parser.parse_args()
 
     gs.init()

@@ -259,12 +259,12 @@ def _print_sensor_reading(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Interactive tactile sandbox with selectable sensor type")
-    parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument(
-        "--set-pos", action="store_true", help="Set object position directly instead of using control force."
+        "--set_pos", action="store_true", help="Set object position directly instead of using control force."
     )
-    parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     parser.add_argument("--dome", action="store_true", help="Change the sensor object to a dome instead of a box")
     parser.add_argument(
         "--sensor",
@@ -273,7 +273,7 @@ def main() -> None:
         help="Type of tactile sensor to use.",
     )
     parser.add_argument(
-        "--contact-depth-query",
+        "--contact_depth_query",
         choices=("sdf", "raycast"),
         default=None,
         help="Contact-depth backend for the tactile sensor (default: sensor's own default, currently sdf).",
@@ -287,7 +287,7 @@ def main() -> None:
     args = parser.parse_args()
 
     gs.init(
-        backend=gs.gpu if args.gpu else gs.cpu,
+        backend=gs.cpu if args.cpu else gs.gpu,
         precision="32",
         logging_level="info",
     )

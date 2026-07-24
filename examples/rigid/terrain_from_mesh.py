@@ -8,8 +8,8 @@ from genesis.utils.terrain import mesh_to_heightfield
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)

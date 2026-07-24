@@ -27,7 +27,7 @@ RECORDING_FPS = 30
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--scene", choices=("ducks", "dominos"), default="ducks", help="Which showcase to run.")
+    parser.add_argument("--scene", choices=("ducks", "dominos"), default="ducks", help="Which showcase to run.")
     parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer.")
     parser.add_argument("-r", "--record", action="store_true", help="Record the scene and step-rate plot to video.")
     args = parser.parse_args()

@@ -7,8 +7,14 @@ from huggingface_hub import snapshot_download
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--cpu", action="store_true", default=(sys.platform == "darwin"))
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "-c",
+        "--cpu",
+        action="store_true",
+        default=(sys.platform == "darwin"),
+        help="Run on CPU instead of GPU (default on macOS)",
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     n_steps = 200 if "PYTEST_VERSION" not in os.environ else 2

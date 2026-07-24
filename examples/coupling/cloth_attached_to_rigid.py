@@ -9,10 +9,16 @@ import genesis.utils.geom as gu
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument("--horizon", type=int, default=100 if "PYTEST_VERSION" not in os.environ else 25)
-    parser.add_argument("--num_teleports", type=int, default=5)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument(
+        "-s",
+        "--steps",
+        type=int,
+        default=100 if "PYTEST_VERSION" not in os.environ else 25,
+        help="Number of simulation steps",
+    )
+    parser.add_argument("--num_teleports", type=int, default=5, help="Number of times the attachment is teleported")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
@@ -65,7 +71,7 @@ def main():
 
     box.set_dofs_velocity([-0.0, 1.0, 0.0], dofs_idx_local=[0, 1, 2])
 
-    for i in range(args.horizon):
+    for i in range(args.steps):
         scene.step()
 
     for j in range(args.num_teleports):
@@ -77,7 +83,7 @@ def main():
         box.set_pos(new_pos)
         box.set_quat(new_rot)
 
-        for _ in range(args.horizon):
+        for _ in range(args.steps):
             scene.step()
 
 

@@ -157,12 +157,14 @@ def load_teacher_policy(env, rl_train_cfg, exp_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="grasp")
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-b", "--num_envs", type=int, default=2048)
-    parser.add_argument("--max_iterations", type=int, default=300)
-    parser.add_argument("--stage", type=str, default="rl")
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "-e", "--exp_name", type=str, default="grasp", help="Experiment name; also the log directory under logs/"
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-b", "--num_envs", type=int, default=2048, help="Number of parallel environments")
+    parser.add_argument("--max_iterations", type=int, default=300, help="Number of learning iterations")
+    parser.add_argument("--stage", type=str, default="rl", choices=("rl", "bc"), help="Training stage")
+    parser.add_argument("--seed", type=int, default=1, help="Random seed")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=args.seed, performance_mode=True)

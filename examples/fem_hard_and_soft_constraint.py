@@ -15,11 +15,10 @@ def main():
     parser.add_argument(
         "--solver", choices=["explicit", "implicit"], default="implicit", help="FEM solver type (default: implicit)"
     )
-    parser.add_argument("--dt", type=float)
-    parser.add_argument("--substeps", type=int)
-    parser.add_argument("--seconds", type=float, default=5)
-    parser.add_argument("--vis", "-v", action="store_true", default=False)
-
+    parser.add_argument("--dt", type=float, help="Simulation time step")
+    parser.add_argument("--substeps", type=int, help="Number of solver substeps per step")
+    parser.add_argument("-t", "--seconds", type=float, default=5, help="Seconds to simulate")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
     args.seconds = 0.01 if "PYTEST_VERSION" in os.environ else args.seconds
 

@@ -38,8 +38,8 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-b", "--num_envs", type=int, default=4)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-b", "--num_envs", type=int, default=4, help="Number of parallel environments")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu, precision="32")

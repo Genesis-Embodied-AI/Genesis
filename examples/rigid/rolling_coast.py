@@ -45,7 +45,7 @@ def checkered_ball_mjcf():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)

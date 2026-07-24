@@ -8,13 +8,14 @@ def main():
     gs.init(backend=gs.cpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--no-ipc", action="store_true", default=False)
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("--no_ipc", action="store_true", help="Disable the IPC coupler")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     parser.add_argument(
         "--coup_type",
         type=str,
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
+        help="How the articulated robot is coupled to the IPC solver",
     )
     args = parser.parse_args()
 

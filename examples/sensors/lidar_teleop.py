@@ -21,8 +21,8 @@ BOX_RING_RADIUS = 5.0
 def main():
     parser = argparse.ArgumentParser(description="Genesis LiDAR/Depth Camera Visualization with Keyboard Teleop")
     parser.add_argument("-b", "--num_envs", type=int, default=0, help="Number of environments to replicate")
-    parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
-    parser.add_argument("--use-box", action="store_true", help="Use Box as robot instead of Go2")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("--use_box", action="store_true", help="Use Box as robot instead of Go2")
     parser.add_argument(
         "--pattern", type=str, default="spherical", choices=("spherical", "depth", "grid"), help="Sensor pattern type"
     )

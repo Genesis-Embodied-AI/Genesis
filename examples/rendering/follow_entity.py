@@ -5,7 +5,7 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-f", "--fix", action="store_true", default=False)
+    parser.add_argument("--fix", action="store_true", help="Keep the camera orientation fixed while following")
     args = parser.parse_args()
 
     gs.init()

@@ -5,12 +5,12 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument("-s", "--sep", action="store_true", default=False)
-    parser.add_argument("-r", "--record", action="store_true", default=False)
-    parser.add_argument("-b", "--num_envs", type=int, default=1)
-    parser.add_argument("--horizon", type=int, default=100)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("--sep", action="store_true", help="Simulate each environment as a separate island")
+    parser.add_argument("-r", "--record", action="store_true", help="Record the scene to video")
+    parser.add_argument("-b", "--num_envs", type=int, default=1, help="Number of parallel environments")
+    parser.add_argument("-s", "--steps", type=int, default=100, help="Number of simulation steps")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
@@ -52,7 +52,7 @@ def main():
     if args.record:
         cam_0.start_recording(save_to_filename="video.mp4")
 
-    for i in range(args.horizon):
+    for i in range(args.steps):
         scene.step()
 
         color, depth, seg, normal = cam_0.render(

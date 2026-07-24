@@ -5,11 +5,23 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pile_type", type=str, default="falling", choices=("static", "falling"))
-    parser.add_argument("--num_cubes", type=int, default=5, choices=(5, 6, 7, 8, 9, 10))
-    parser.add_argument("--cpu", action="store_true", help="Use CPU backend instead of GPU", default=True)
-    parser.add_argument("--steps", type=int, default=150)
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "--pile_type",
+        type=str,
+        default="falling",
+        choices=("static", "falling"),
+        help="Whether the pile starts settled or falls into place",
+    )
+    parser.add_argument(
+        "--num_cubes",
+        type=int,
+        default=5,
+        choices=(5, 6, 7, 8, 9, 10),
+        help="Number of cubes along the base of the pyramid",
+    )
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-s", "--steps", type=int, default=150, help="Number of simulation steps")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32")

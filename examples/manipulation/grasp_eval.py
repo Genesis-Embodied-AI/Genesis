@@ -51,7 +51,9 @@ def load_bc_policy(env, bc_cfg, log_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="grasp")
+    parser.add_argument(
+        "-e", "--exp_name", type=str, default="grasp", help="Experiment name; also the log directory under logs/"
+    )
     parser.add_argument(
         "--stage",
         type=str,

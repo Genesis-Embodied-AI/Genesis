@@ -12,11 +12,9 @@ config = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument(
-        "-r", "--robot", choices=["panda", "ur5e"], default="ur5e", help="Select robot model (panda or ur5e)"
-    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("--robot", choices=["panda", "ur5e"], default="ur5e", help="Select robot model (panda or ur5e)")
     args = parser.parse_args()
 
     backend = gs.cpu if args.cpu else gs.gpu

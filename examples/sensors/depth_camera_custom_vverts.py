@@ -15,14 +15,14 @@ from genesis.utils.misc import tensor_to_array
 def main():
     parser = argparse.ArgumentParser(description="Multi-solver depth camera demo")
     parser.add_argument("-v", "--vis", action="store_true", help="Open Genesis 3D viewer")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Force CPU backend")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("-b", "--num_envs", type=int, default=0, help="Number of parallel envs (0 = unbatched)")
-    parser.add_argument("--steps", type=int, default=300, help="Number of simulation steps")
-    parser.add_argument("--save-every", type=int, default=10, help="Save depth PNG every N steps")
-    parser.add_argument("--out-dir", default="/tmp/depth_out", help="Directory for saved depth PNGs")
+    parser.add_argument("-s", "--steps", type=int, default=300, help="Number of simulation steps")
+    parser.add_argument("--save_every", type=int, default=10, help="Save depth PNG every N steps")
+    parser.add_argument("-o", "--output_dir", type=str, default="/tmp/depth_out", help="Directory for saved depth PNGs")
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir).resolve()
+    out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("depth_*.png"):
         old.unlink()

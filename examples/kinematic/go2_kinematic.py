@@ -20,8 +20,7 @@ FREQ = 2.0
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=True)
-    parser.add_argument("-nv", "--no-vis", action="store_false", dest="vis")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init()

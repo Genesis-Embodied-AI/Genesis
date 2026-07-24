@@ -8,16 +8,18 @@ from genesis.utils.image_exporter import FrameImageExporter
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument("-b", "--num_envs", type=int, default=3)
-    parser.add_argument("-s", "--n_steps", type=int, default=2)
-    parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
-    parser.add_argument("-o", "--output_dir", type=str, default="data/test")
-    parser.add_argument("-u", "--use_rasterizer", action="store_true", default=False)
-    parser.add_argument("-f", "--use_fisheye", action="store_true", default=False)
-    parser.add_argument("-d", "--debug", action="store_true", default=False)
-    parser.add_argument("-l", "--seg_level", type=str, default="link")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-b", "--num_envs", type=int, default=3, help="Number of parallel environments")
+    parser.add_argument("-s", "--steps", type=int, default=2, help="Number of simulation steps")
+    parser.add_argument("--render_all_cameras", action="store_true", help="Render every camera each step")
+    parser.add_argument("-o", "--output_dir", type=str, default="data/test", help="Directory for rendered frames")
+    parser.add_argument(
+        "--use_rasterizer", action="store_true", help="Use the rasterizer instead of the batch renderer"
+    )
+    parser.add_argument("--use_fisheye", action="store_true", help="Use a fisheye camera model")
+    parser.add_argument("-d", "--debug", action="store_true", help="Dump per-camera debug images")
+    parser.add_argument("--seg_level", type=str, default="link", help="Granularity of the segmentation mask")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
@@ -100,7 +102,7 @@ def main():
 
     if args.debug:
         debug_cam.start_recording(save_to_filename="debug_cam.mp4")
-    for i in range(args.n_steps):
+    for i in range(args.steps):
         scene.step()
         if args.render_all_cameras:
             color, depth, seg, normal = scene.render_all_cameras(

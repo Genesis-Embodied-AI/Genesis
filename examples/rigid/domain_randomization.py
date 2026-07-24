@@ -8,7 +8,7 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(precision="32", logging_level="info")
@@ -45,12 +45,10 @@ def main():
 
     # set mass of a single link
     link = robot.get_link("RR_thigh")
-    rigid = scene.sim.rigid_solver
-    ori_mass = rigid.dyn_info.links.inertial_mass.to_numpy()
+    ori_mass = robot.get_links_inertial_mass()
     print("original mass", link.get_mass(), ori_mass)
     link.set_mass(1)
-    new_mass = rigid.dyn_info.links.inertial_mass.to_numpy()
-    print("diff mass", new_mass - ori_mass)
+    print("diff mass", robot.get_links_inertial_mass() - ori_mass)
 
     robot.set_mass_shift(
         mass_shift=-0.5 + torch.rand(scene.n_envs, robot.n_links),

@@ -72,10 +72,10 @@ def run_simulation(use_hibernation: bool, n_boxes: int, n_steps: int, show_viewe
 
 def main():
     parser = argparse.ArgumentParser(description="Hibernation performance comparison")
-    parser.add_argument("-v", "--vis", action="store_true", default=False, help="Enable visualization")
-    parser.add_argument("-c", "--cpu", action="store_true", default=False, help="Use CPU backend")
-    parser.add_argument("-n", "--n-boxes", type=int, default=20, help="Number of boxes (default: 20)")
-    parser.add_argument("-s", "--steps", type=int, default=500, help="Number of timed steps (default: 500)")
+    parser.add_argument("-v", "--vis", action="store_true", help="Enable visualization")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("--n_boxes", type=int, default=20, help="Number of boxes to drop")
+    parser.add_argument("-s", "--steps", type=int, default=500, help="Number of simulation steps")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, performance_mode=True)

@@ -6,8 +6,14 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--cpu", action="store_true", default=(sys.platform == "darwin"))
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "-c",
+        "--cpu",
+        action="store_true",
+        default=(sys.platform == "darwin"),
+        help="Run on CPU instead of GPU (default on macOS)",
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="64")

@@ -10,10 +10,9 @@ from genesis.recorders.plotters import IS_MATPLOTLIB_AVAILABLE, IS_PYQTGRAPH_AVA
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-dt", "--timestep", type=float, default=1e-2, help="Simulation time step")
-    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI", default=True)
-    parser.add_argument("-nv", "--no-vis", action="store_false", dest="vis", help="Disable visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Use CPU instead of GPU")
+    parser.add_argument("--dt", type=float, default=1e-2, help="Simulation time step")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("-t", "--seconds", type=float, default=3, help="Number of seconds to simulate")
     args = parser.parse_args()
 
@@ -21,7 +20,7 @@ def main():
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=args.timestep,
+            dt=args.dt,
         ),
         vis_options=gs.options.VisOptions(
             show_world_frame=False,
@@ -113,7 +112,7 @@ def main():
     rate = np.deg2rad(2.0)
 
     try:
-        steps = int(args.seconds / args.timestep) if "PYTEST_VERSION" not in os.environ else 5
+        steps = int(args.seconds / args.dt) if "PYTEST_VERSION" not in os.environ else 5
         for i in tqdm(range(steps)):
             scene.step()
 

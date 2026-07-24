@@ -10,14 +10,17 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--solver", choices=["explicit", "implicit"], default="implicit", help="FEM solver type (default: explicit)"
+        "--solver",
+        choices=["explicit", "implicit"],
+        default="implicit",
+        help="Finite element solver to integrate the deformable with",
     )
     parser.add_argument("--dt", type=float, help="Time step (auto-selected based on solver if not specified)")
     parser.add_argument(
         "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
     )
-    parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", default="PYTEST_VERSION" in os.environ)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)

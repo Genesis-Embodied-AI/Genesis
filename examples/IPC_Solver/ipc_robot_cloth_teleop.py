@@ -37,6 +37,7 @@ def main():
         type=str,
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
+        help="How the articulated robot is coupled to the IPC solver",
     )
     args = parser.parse_args()
 
