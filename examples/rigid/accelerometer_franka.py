@@ -7,10 +7,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu)
     sim_dt = 0.01
-    ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(0, -3.5, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
@@ -25,15 +23,12 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
-        # material=gs.materials.Rigid(gravity_compensation=0.),
     )
-    ########################## build ##########################
     scene.build()
 
     joints_name = (
@@ -66,7 +61,6 @@ def main():
         for i in range(links_acc.shape[0]):
             link_pos = links_pos[i]
             link_acc = links_acc[i]
-            # link_acc = link_acc / link_acc.norm() * 0.1
 
             scene.draw_debug_arrow(
                 pos=link_pos.tolist(),

@@ -25,17 +25,14 @@ def main_equality_connect(args):
 
 
 def main_equality_weld(args):
-    ########################## init ##########################
     gs.init(backend=gs.cpu)
     scene = gs.Scene(
         show_viewer=args.vis,
     )
-    ########################## entities ##########################
     robot1 = scene.add_entity(
         gs.morphs.MJCF(file="xml/four_bar_linkage_weld.xml"),
     )
 
-    ########################## build ##########################
     scene.build()
 
     rigid = scene.sim.rigid_solver

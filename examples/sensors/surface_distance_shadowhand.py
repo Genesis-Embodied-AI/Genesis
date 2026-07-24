@@ -149,7 +149,7 @@ def main():
     print("\n=== SurfaceDistanceProbe with Shadow Hand ===")
     print("Surface distance probes on hand palm and fingertips, tracking duck and box links")
     if args.vis:
-        print("Keyboard: [↑/↓/←/→] move hand XY, [n/m] up/down, [\\] reset, [ESC] quit")
+        print("Keyboard: [Up/Down/Left/Right] move hand XY, [n/m] up/down, [\\] reset, [ESC] quit")
     else:
         print(f"Running headless for {args.seconds}s ...")
     print()

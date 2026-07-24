@@ -12,13 +12,11 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     # get current gpu
     gpu_id = torch.cuda.current_device()
     print("gpu_id:", gpu_id)
     gs.init(backend=gs.gpu, logger_verbose_time=True)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
@@ -29,7 +27,6 @@ def main():
         show_FPS=False,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -38,7 +35,6 @@ def main():
         visualize_contact=True,
     )
 
-    ########################## build ##########################
     scene.build()
     for i in range(1000):
         scene.step()

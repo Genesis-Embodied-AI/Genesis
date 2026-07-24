@@ -10,10 +10,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu)
-
-    ########################## create a scene ##########################
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -36,7 +33,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -56,7 +52,6 @@ def main():
         material=gs.materials.Rigid(coup_friction=1.0),
     )
 
-    ########################## build ##########################
     scene.build()
 
     motors_dof = np.arange(7)

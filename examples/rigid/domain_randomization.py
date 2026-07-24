@@ -11,10 +11,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(precision="32", logging_level="info")
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.0, -2, 1.5),
@@ -28,7 +26,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -38,11 +35,9 @@ def main():
             pos=(0, 0, 0.4),
         ),
     )
-    ########################## build ##########################
     n_envs = 8
     scene.build(n_envs=n_envs)
 
-    ########################## domain randomization ##########################
     robot.set_friction_ratio(
         friction_ratio=0.5 + torch.rand(scene.n_envs, robot.n_links),
         links_idx_local=np.arange(0, robot.n_links),

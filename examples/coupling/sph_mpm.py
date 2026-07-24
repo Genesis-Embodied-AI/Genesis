@@ -9,11 +9,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
-
     gs.init(precision="32", logging_level="info")
-
-    ########################## create a scene ##########################
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -41,8 +37,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
-
     water = scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.4, 0.5, 0.25),
@@ -67,8 +61,6 @@ def main():
             vis_mode="particle",
         ),
     )
-
-    ########################## build ##########################
 
     scene.build(n_envs=0)
 

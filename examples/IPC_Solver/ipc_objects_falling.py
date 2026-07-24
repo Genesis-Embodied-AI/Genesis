@@ -58,7 +58,7 @@ def main():
         material=gs.materials.FEM.Cloth(
             E=1e5,  # Young's modulus (Pa) - soft cloth (100 kPa)
             nu=0.499,  # Poisson's ratio - nearly incompressible
-            rho=200,  # Density (kg/m³)
+            rho=200,  # Density (kg/m^3)
             thickness=0.001,  # Shell thickness (m) - 1mm
             bending_stiffness=50.0,  # Bending resistance
         ),

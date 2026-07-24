@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Multi-node / multi-GPU Genesis ✕ PyTorch DDP demo
+Multi-node / multi-GPU Genesis x PyTorch DDP demo
 =================================================
 
 Single machine, 2 GPUs:

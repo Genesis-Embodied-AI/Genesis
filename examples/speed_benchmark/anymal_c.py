@@ -2,10 +2,8 @@ import numpy as np
 
 import genesis as gs
 
-########################## init ##########################
 gs.init(backend=gs.gpu, performance_mode=True)
 
-########################## create a scene ##########################
 
 scene = gs.Scene(
     show_viewer=False,
@@ -15,7 +13,6 @@ scene = gs.Scene(
     ),
 )
 
-########################## entities ##########################
 scene.add_entity(
     gs.morphs.Plane(),
 )
@@ -25,7 +22,6 @@ robot = scene.add_entity(
         pos=(0, 0, 0.8),
     ),
 )
-########################## build ##########################
 n_envs = 30000
 scene.build(n_envs=n_envs)
 

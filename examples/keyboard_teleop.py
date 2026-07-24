@@ -1,9 +1,9 @@
 """
 Keyboard Controls:
-↑	- Move Forward (North)
-↓	- Move Backward (South)
-←	- Move Left (West)
-→	- Move Right (East)
+Up	- Move Forward (North)
+Down	- Move Backward (South)
+Left	- Move Left (West)
+Right	- Move Right (East)
 n	- Move Up
 m	- Move Down
 j	- Rotate Counterclockwise
@@ -25,11 +25,9 @@ import genesis.utils.geom as gu
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 if __name__ == "__main__":
-    ########################## init ##########################
     gs.init(precision="32", logging_level="info", backend=gs.cpu)
     np.set_printoptions(precision=7, suppress=True)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             substeps=4,
@@ -52,7 +50,6 @@ if __name__ == "__main__":
         show_viewer=True,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -83,7 +80,6 @@ if __name__ == "__main__":
         surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
     )
 
-    ########################## build ##########################
     scene.build()
 
     # Initialize robot control state
@@ -155,7 +151,6 @@ if __name__ == "__main__":
         Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
     )
 
-    ########################## run simulation ##########################
     try:
         while is_running:
             # Update target entity visualization

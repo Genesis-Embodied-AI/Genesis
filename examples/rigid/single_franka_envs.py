@@ -13,10 +13,8 @@ def main():
     parser.add_argument("--horizon", type=int, default=100)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             plane_reflection=True,
@@ -30,13 +28,10 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            # constraint_solver=gs.constraint_solver.Newton,
-        ),
+        rigid_options=gs.options.RigidOptions(),
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -45,7 +40,6 @@ def main():
         visualize_contact=True,
     )
 
-    ########################## cameras ##########################
     cam_0 = scene.add_camera(
         res=(1280, 960),
         pos=(3.5, 0.0, 2.5),
@@ -53,7 +47,6 @@ def main():
         fov=30,
         GUI=args.vis,
     )
-    ########################## build ##########################
     scene.build(n_envs=args.num_envs, env_spacing=(0.5, 0.5))
 
     if args.record:

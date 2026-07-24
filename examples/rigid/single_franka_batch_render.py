@@ -20,10 +20,8 @@ def main():
     parser.add_argument("-l", "--seg_level", type=str, default="link")
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             segmentation_level=args.seg_level,
@@ -33,7 +31,6 @@ def main():
         ),
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
         surface=gs.surfaces.Default(
@@ -45,7 +42,6 @@ def main():
         visualize_contact=True,
     )
 
-    ########################## cameras ##########################
     debug_cam = scene.add_camera(
         res=(720, 1280),
         pos=(1.5, -0.5, 1.0),
@@ -97,7 +93,6 @@ def main():
         attenuation=0.1,
     )
 
-    ########################## build ##########################
     scene.build(n_envs=args.num_envs)
 
     # Create an image exporter

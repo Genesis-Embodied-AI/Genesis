@@ -16,10 +16,8 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3.5, 2.5),
@@ -33,7 +31,6 @@ def main():
         show_FPS=True,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -42,7 +39,6 @@ def main():
             file="xml/franka_emika_panda/panda.xml",
         ),
     )
-    ########################## build ##########################
     scene.build()
 
     joints_name = (
@@ -58,7 +54,7 @@ def main():
     )
     motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-    ############ Optional: set control gains ############
+    # Optional: set control gains.
     # set positional gains
     franka.set_dofs_kp(
         kp=[4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100],

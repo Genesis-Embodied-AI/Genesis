@@ -19,11 +19,9 @@ def main():
     )
     args = parser.parse_args()
 
-    ########################## init ##########################
     backend = gs.cpu if args.cpu else gs.gpu
     gs.init(backend=backend)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.0, -2, 1.5),
@@ -38,8 +36,6 @@ def main():
         show_viewer=args.vis,
         show_FPS=False,
     )
-
-    ########################## entities ##########################
 
     plane = scene.add_entity(
         gs.morphs.Plane(),
@@ -60,7 +56,6 @@ def main():
         ),
         surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
     )
-    ########################## build ##########################
     scene.build()
 
     target_quat = np.array([0, 1, 0, 0])

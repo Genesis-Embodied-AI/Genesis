@@ -8,10 +8,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu)
 
-    ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(0, -3.5, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
@@ -22,7 +20,6 @@ def main():
         viewer_options=viewer_options,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
-            # gravity=(0, 0, 0),
         ),
         vis_options=gs.options.VisOptions(
             show_link_frame=False,
@@ -30,7 +27,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         morph=gs.morphs.Plane(),
     )
@@ -41,7 +37,6 @@ def main():
             pos=(0, 0, 1.0),
         ),
     )
-    ########################## build ##########################
     scene.build()
     dofs_idx = duck.base_joint.dofs_idx
 

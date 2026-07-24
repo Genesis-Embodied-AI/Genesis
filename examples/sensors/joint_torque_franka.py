@@ -33,10 +33,8 @@ def main():
 
     steps = int(args.seconds / args.timestep) if "PYTEST_VERSION" not in os.environ else 5
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=args.timestep,
@@ -55,7 +53,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     scene.add_entity(gs.morphs.Plane())
     franka = scene.add_entity(
         gs.morphs.MJCF(
@@ -75,7 +72,6 @@ def main():
     end_effector = franka.get_link("hand")
     motors_dof = (0, 1, 2, 3, 4, 5, 6)
 
-    ########################## sensor ##########################
     joint_torque = scene.add_sensor(
         gs.sensors.JointTorque(
             entity_idx=franka.idx,
@@ -83,7 +79,6 @@ def main():
         )
     )
 
-    ########################## recording ##########################
     # One subplot per representative joint (J0, J1, J2), each showing control torque / sensor torque / difference.
     plotted_joints = range(3)
     channel_labels = ("tau_ctrl", "tau_sensor", "difference")
@@ -109,7 +104,6 @@ def main():
         else:
             print("matplotlib or pyqtgraph not found, skipping real-time plotting.")
 
-    ########################## build ##########################
     scene.build()
 
     franka.set_dofs_armature(1.0)
@@ -127,7 +121,6 @@ def main():
 
     qpos_push = franka.inverse_kinematics(link=end_effector, pos=[0.70, 0.0, 0.50], quat=[0.0, 1.0, 0.0, 0.0])
 
-    ########################## simulate ##########################
     try:
         contact_step = steps // 2
         for i in tqdm(range(steps)):

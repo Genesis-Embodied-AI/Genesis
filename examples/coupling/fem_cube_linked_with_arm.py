@@ -87,7 +87,6 @@ def main():
         joint_names = [j.name for j in arm.joints]
         dofs_idx_local = []
         for j in arm.joints:
-            # print("joint name:", j.name, "dofs_idx_local:", j.dofs_idx_local)
             dofs_idx_local += j.dofs_idx_local
         end_joint = arm.get_joint(joint_names[-1])
 

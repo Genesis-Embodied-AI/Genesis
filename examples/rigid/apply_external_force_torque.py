@@ -7,10 +7,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3.5, 2.5),
@@ -24,7 +22,6 @@ def main():
         show_FPS=False,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -34,7 +31,6 @@ def main():
             size=(0.2, 0.2, 0.2),
         ),
     )
-    ########################## build ##########################
     scene.build(n_envs=1)
 
     link_idx = [1]

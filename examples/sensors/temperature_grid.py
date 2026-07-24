@@ -208,11 +208,11 @@ def main():
         )
 
     print("\n=== Interactive TemperatureGrid ===")
-    print(f"Platform {SANDBOX_SIZE}m × {SANDBOX_SIZE}m with grid {GRID_SIZE}")
+    print(f"Platform {SANDBOX_SIZE}m x {SANDBOX_SIZE}m with grid {GRID_SIZE}")
     if args.vis:
         print()
         print("Keyboard Controls:")
-        print("  [↑/↓/←/→]  Move pusher (hot) in XY")
+        print("  [Up/Down/Left/Right]  Move pusher (hot) in XY")
         print("  [j / k]     Lower / raise pusher")
         print("  [SPACE]     Drop an object at pusher location")
         print("  [\\]         Reset pusher position")
@@ -234,7 +234,7 @@ def main():
 
             data = temperature_sensor.read()
             t_min, t_max = float(data.min()), float(data.max())
-            print(f"time={scene.t:.2f}s: Temperature range [{t_min:.1f}, {t_max:.1f}] °C")
+            print(f"time={scene.t:.2f}s: Temperature range [{t_min:.1f}, {t_max:.1f}] degC")
             if args.simulate_all_links:
                 print(f"Link temperatures: {temperature_sensor.link_temperatures}")
 

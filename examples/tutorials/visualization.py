@@ -19,7 +19,6 @@ scene = gs.Scene(
         plane_reflection=True,
         ambient_light=(0.1, 0.1, 0.1),
     ),
-    # renderer=gs.renderers.RayTracer(),
     renderer=gs.renderers.Rasterizer(),
     show_viewer=True,
 )

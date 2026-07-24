@@ -8,10 +8,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init()
-
-    ########################## create a scene ##########################
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -22,14 +19,12 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
-    ########################## cameras ##########################
     cam_0 = scene.add_camera(
         res=(1280, 960),
         pos=(3.5, 0.0, 2.5),
@@ -37,7 +32,6 @@ def main():
         fov=30,
         GUI=True,
     )
-    ########################## build ##########################
     scene.build()
 
     for i in range(1000):
@@ -45,8 +39,6 @@ def main():
         cam_0.set_pose(pos=(i / 100, 0, 2.5))
         cam_0.render(
             rgb=True,
-            # depth        = True,
-            # segmentation = True,
         )
 
 

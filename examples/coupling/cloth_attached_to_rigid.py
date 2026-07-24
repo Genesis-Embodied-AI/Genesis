@@ -15,7 +15,6 @@ def main():
     parser.add_argument("--num_teleports", type=int, default=5)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
     dt: float = 2e-2
@@ -40,7 +39,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     rigid_material = gs.materials.Rigid(needs_coup=True, coup_friction=0.0)
 
     # create ground plane
@@ -58,7 +56,6 @@ def main():
     cloth_surface = gs.surfaces.Default(color=(0.2, 0.4, 0.8, 1.0))  # , vis_mode="particle")
     cloth = scene.add_entity(cloth_morph, cloth_material, cloth_surface)
 
-    ########################## build ##########################
     scene.build(n_envs=0)
 
     particles_idx = [0, 1, 2, 3, 4, 5, 6, 7]

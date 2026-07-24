@@ -166,7 +166,7 @@ def main():
 
     # Print controls
     print("Keyboard Controls:")
-    print("[↑/↓/←/→]: Move XY")
+    print("[Up/Down/Left/Right]: Move XY")
     print("[j/k]: Down/Up")
     print("[n/m]: Roll CCW/CW")
     print("[,/.]: Pitch Up/Down")

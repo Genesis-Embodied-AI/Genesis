@@ -12,10 +12,8 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -50, 0),

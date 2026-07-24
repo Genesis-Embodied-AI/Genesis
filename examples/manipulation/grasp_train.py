@@ -165,18 +165,14 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
 
-    # === init ===
     gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=args.seed, performance_mode=True)
 
-    # === task cfgs and trainning algos cfgs ===
     env_cfg, reward_scales, robot_cfg = get_task_cfgs()
     rl_train_cfg, bc_train_cfg = get_train_cfg(args.exp_name)
 
-    # === log dir ===
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # === env ===
     # BC only needs a small number of envs, e.g., 10
     env_cfg["num_envs"] = args.num_envs if args.stage == "rl" else 10
 
@@ -189,7 +185,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    # === runner ===
     if args.stage == "bc":
         teacher_policy = load_teacher_policy(env, rl_train_cfg, args.exp_name)
         runner = BehaviorCloning(env, bc_train_cfg, teacher_policy, device=gs.device)

@@ -11,10 +11,8 @@ def main():
     parser.add_argument("-b", "--num_envs", type=int, default=49)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu)
 
-    ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(3, -1, 1.5),
         camera_lookat=(0.0, 0.0, 0.0),
@@ -29,7 +27,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True),
     )
@@ -41,13 +38,11 @@ def main():
             pos=(0.65, 0.0, 0.036),
             euler=(0, 90, 0),
         ),
-        # visualize_contact=True,
     )
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
-    ########################## build ##########################
     scene.build(n_envs=args.num_envs, env_spacing=(1, 1))
 
     motors_dof = np.arange(7)

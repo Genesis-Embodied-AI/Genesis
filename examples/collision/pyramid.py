@@ -39,7 +39,6 @@ def main():
                     size=[box_size, box_size, box_size],
                     pos=box_pos_offset + box_spacing * np.array([i + 0.5 * j, 0, j]),
                 ),
-                # visualize_contact=True,
             )
 
     scene.build()

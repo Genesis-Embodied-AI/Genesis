@@ -49,10 +49,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.9, -0.9, 0.6),
@@ -65,7 +63,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     # Two fixed plates pinch the ball with a slight interpenetration that supplies the grip normal force.
     for i_side in range(2):
         scene.add_entity(
@@ -88,7 +85,6 @@ def main():
         ),
     )
 
-    ########################## build ##########################
     scene.build()
 
     # Let the pinch settle, then spin the ball about the pinch axis.

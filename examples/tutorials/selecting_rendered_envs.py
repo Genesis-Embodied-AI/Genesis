@@ -13,7 +13,6 @@ scene = gs.Scene(
     ),
     vis_options=gs.options.VisOptions(
         rendered_envs_idx=list(range(10, 15)),  # render the 11th to 15th environments
-        # rendered_envs_idx=list(range(5)), # render the first 5 environments
     ),
 )
 

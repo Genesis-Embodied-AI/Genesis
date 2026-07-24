@@ -245,7 +245,7 @@ class HoverEnv:
         self._update_observation()
         return self.get_observations()
 
-    # ------------ reward functions----------------
+    # Reward functions.
     def _reward_target(self):
         target_rew = torch.sum(torch.square(self.last_rel_pos), dim=1) - torch.sum(torch.square(self.rel_pos), dim=1)
         return target_rew

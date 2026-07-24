@@ -10,7 +10,6 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
@@ -32,7 +31,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     frictionless_rigid = gs.materials.Rigid(
         needs_coup=True,
         coup_friction=0.0,
@@ -65,7 +63,6 @@ def main():
         ),
     )
 
-    ########################## build ##########################
     scene.build(n_envs=0)
 
     horizon = 500 if "PYTEST_VERSION" not in os.environ else 5

@@ -9,10 +9,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(precision="32", logging_level="info")
-
-    ########################## create a scene ##########################
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

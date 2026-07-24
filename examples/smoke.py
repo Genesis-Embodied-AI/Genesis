@@ -84,7 +84,6 @@ def main():
     res = 32 if "PYTEST_VERSION" in os.environ else 384
     args.cpu = True if "PYTEST_VERSION" in os.environ else args.cpu
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="info")
 
     video_path = Path(__file__).parent / "video"
@@ -125,8 +124,6 @@ def main():
         for orbit_init_degree in np.linspace(0, 360, 3, endpoint=False)
     ]
     scene.sim.solvers[-1].set_jets(jets)
-
-    ########################## entities ##########################
 
     scene.build()
 

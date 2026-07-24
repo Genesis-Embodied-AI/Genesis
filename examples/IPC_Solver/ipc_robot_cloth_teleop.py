@@ -1,9 +1,9 @@
 """
 Keyboard Controls:
-↑	- Move Forward (North)
-↓	- Move Backward (South)
-←	- Move Left (West)
-→	- Move Right (East)
+Up	- Move Forward (North)
+Down	- Move Backward (South)
+Left	- Move Left (West)
+Right	- Move Right (East)
 n	- Move Up
 m	- Move Down
 j/k	- Yaw Left/Right (Rotate around Z axis)
@@ -81,7 +81,6 @@ def main():
             pos=(0.0, 0.0, 0.005),
         ),
         material=gs.materials.Rigid(**franka_material_kwargs),
-        # vis_mode="collision",
     )
 
     # Add cloths
@@ -171,7 +170,6 @@ def main():
 
     # Setting initial configuration is not supported by coupling mode "external_articulation"
     if args.coup_type != "external_articulation":
-        # qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
         qpos = (2.2116, -1.5328, -0.7347, -1.7235, -1.3377, 0.7519, -1.4410, 0.04, 0.04)
         franka.set_qpos(qpos)
         franka.control_dofs_position(qpos)

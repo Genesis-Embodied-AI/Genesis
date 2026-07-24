@@ -10,11 +10,9 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(precision="32", logging_level="info")
     np.set_printoptions(precision=7, suppress=True)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.0, -2, 1.5),
@@ -29,7 +27,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -45,7 +42,6 @@ def main():
         surface=gs.surfaces.Default(color=(1, 0.5, 0.5, 1)),
     )
 
-    ########################## build ##########################
     n_envs = 64
     scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
 

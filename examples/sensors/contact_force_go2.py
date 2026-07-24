@@ -19,10 +19,8 @@ def main():
 
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)
 
-    ########################## scene setup ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=args.timestep,

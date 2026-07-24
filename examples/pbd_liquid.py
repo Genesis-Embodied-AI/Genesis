@@ -10,7 +10,6 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(precision="32", logging_level="info")
 
     scene = gs.Scene(
@@ -30,8 +29,6 @@ def main():
         ),
         show_viewer=args.vis,
     )
-
-    ########################## entities ##########################
 
     liquid = scene.add_entity(
         material=gs.materials.PBD.Liquid(

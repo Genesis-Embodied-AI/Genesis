@@ -11,10 +11,7 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level="info")
-
-    ########################## create a scene ##########################
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -29,10 +26,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## materials ##########################
     mat_elastic = gs.materials.PBD.Elastic()
-
-    ########################## entities ##########################
 
     bunny = scene.add_entity(
         material=mat_elastic,
@@ -41,11 +35,8 @@ def main():
             scale=0.003,
             pos=(0, 0, 0.8),
         ),
-        surface=gs.surfaces.Default(
-            # vis_mode='recon',
-        ),
+        surface=gs.surfaces.Default(),
     )
-    ########################## build ##########################
     scene.build()
 
     horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5

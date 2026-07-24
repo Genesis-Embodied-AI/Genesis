@@ -17,10 +17,8 @@ def main():
     parser.add_argument("-t", "--seconds", type=float, default=3, help="Number of seconds to simulate")
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=args.timestep,
@@ -39,7 +37,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     scene.add_entity(gs.morphs.Plane())
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
@@ -47,7 +44,6 @@ def main():
     end_effector = franka.get_link("hand")
     motors_dof = (0, 1, 2, 3, 4, 5, 6)
 
-    ########################## record sensor data ##########################
     imu = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=franka.idx,
@@ -99,7 +95,6 @@ def main():
         rec_options=gs.recorders.NPZFile(filename="imu_data.npz"),
     )
 
-    ########################## build ##########################
     scene.build()
 
     franka.set_dofs_kp(

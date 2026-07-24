@@ -42,9 +42,7 @@ def main():
     parser.add_argument("-b", "--num_envs", type=int, default=4)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.gpu, precision="32")
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -53,7 +51,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -71,7 +68,6 @@ def main():
     grasping_object = scene.add_entity(
         morph=morphs_heterogeneous,
     )
-    ########################## build ##########################
     scene.build(n_envs=args.num_envs, env_spacing=(1, 1))
 
     motors_dof = np.arange(7)

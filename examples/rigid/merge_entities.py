@@ -17,10 +17,8 @@ def main():
     parser.add_argument("-c", "--comb", type=str, default="urdf2urdf", choices=COMB)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init()
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -33,7 +31,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -46,7 +43,6 @@ def main():
                 merge_fixed_links=False,
                 fixed=True,
             ),
-            # vis_mode="collision",
         )
     else:
         gs.logger.info("loading MJCF panda arm")
@@ -63,7 +59,6 @@ def main():
                 file="urdf/panda_bullet/hand.urdf",
                 merge_fixed_links=False,
             ),
-            # vis_mode="collision",
         )
     else:
         gs.logger.info("loading MJCF panda hand")
@@ -77,7 +72,6 @@ def main():
     print([link.name for link in hand.links])
     hand.attach(franka, "attachment")
 
-    ########################## build ##########################
     scene.build()
 
     arm_joints_name = (

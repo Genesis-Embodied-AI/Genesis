@@ -10,10 +10,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(precision="32", logging_level="info")
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
@@ -50,7 +48,6 @@ def main():
         ),
         surface=gs.surfaces.Default(color=(0.5, 0.5, 1.0, 1)),
     )
-    ########################## entities ##########################
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             scale=1.0,
@@ -59,7 +56,6 @@ def main():
         surface=gs.surfaces.Reflective(color=(0.4, 0.4, 0.4)),
     )
 
-    ########################## build ##########################
     scene.build()
     scene.reset()
 

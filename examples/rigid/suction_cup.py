@@ -9,10 +9,8 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
     args = parser.parse_args()
 
-    ########################## init ##########################
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,

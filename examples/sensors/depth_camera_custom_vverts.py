@@ -42,9 +42,7 @@ def main():
         show_viewer=args.vis,
     )
 
-    # =====================================================================
     # Rigid entities (RigidSolver)
-    # =====================================================================
     plane = scene.add_entity(gs.morphs.Plane())
 
     go2 = scene.add_entity(
@@ -54,9 +52,7 @@ def main():
         ),
     )
 
-    # =====================================================================
     # Kinematic entities (KinematicSolver)
-    # =====================================================================
 
     # 1) Deforming sphere - vertices are pushed every frame via set_vverts. Pre-translated to the robot's right so the
     # mesh sits at the desired world pose with morph.pos at the origin (the morph applies its own offset on top).
@@ -89,9 +85,7 @@ def main():
         surface=gs.surfaces.Default(color=(1.0, 0.3, 0.3)),
     )
 
-    # =====================================================================
     # Depth camera sensors - on different solvers
-    # =====================================================================
     max_range = 5.0
     cam_res = (96, 72)
 
@@ -128,9 +122,6 @@ def main():
         ),
     }
 
-    # =====================================================================
-    # Build
-    # =====================================================================
     if args.num_envs > 0:
         scene.build(n_envs=args.num_envs)
     else:
