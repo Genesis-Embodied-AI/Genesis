@@ -2742,8 +2742,12 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     flag_goal_tol: int
     flag_goal_in_collision: int
     # Cartesian-goal inverse-kinematics budgets (fixed): Gauss-Newton iterations, damped-least-squares damping,
-    # position / rotation convergence tolerances, and the per-step joint cap.
+    # position / rotation convergence tolerances, and the per-step joint cap. goal_ik_batches decouples the goal
+    # resolution restart depth from the trajectory candidate count: each pass draws goal_ik_batches sub-batches of
+    # n_seeds restarts (reusing the candidate columns), so a rare collision-free goal branch is sampled reliably
+    # without inflating the far more expensive trajectory-candidate pipeline.
     goal_ik_iters: int
+    goal_ik_batches: int
     goal_ik_damping: float
     goal_ik_pos_tol: float
     goal_ik_rot_tol: float
@@ -3237,6 +3241,10 @@ class PlannerState:
     # Per-env flag: an env is seeded with straight-line candidates on its first ladder pass, then escalates to
     # RRT-Connect seeds on later passes (mirrors the host env_fresh / env_escalate split).
     is_env_seeded: qd.Tensor
+    # Per-env best goal-resolution score within the current pass (reset each pass): collision-free branches score
+    # below colliding ones, so the pass keeps the best branch across its restart sub-batches before overwriting
+    # the goal. Reset per pass, so a failed pass still hands the next pass fresh restarts (the adaptive retry).
+    goal_resolve_score: qd.Tensor
 
 
 def get_planner_state(planner_config, B):
@@ -3299,6 +3307,7 @@ def get_planner_state(planner_config, B):
         early_exit_flag=V(dtype=qd.i32, shape=()),
         is_env_solved=V(dtype=gs.qd_bool, shape=(B,)),
         is_env_seeded=V(dtype=gs.qd_bool, shape=(B,)),
+        goal_resolve_score=V(dtype=gs.qd_float, shape=(B,)),
     )
 
 

@@ -751,6 +751,7 @@ class Planner:
             flag_goal_tol=cost_mod.GOAL_TOL,
             flag_goal_in_collision=cost_mod.GOAL_IN_COLLISION,
             goal_ik_iters=cost_mod._GOAL_IK_ITERS,
+            goal_ik_batches=cost_mod._GOAL_IK_BATCHES,
             goal_ik_damping=cost_mod._GOAL_IK_DAMPING,
             goal_ik_pos_tol=cost_mod._GOAL_IK_POS_TOL,
             goal_ik_rot_tol=cost_mod._GOAL_IK_ROT_TOL,
