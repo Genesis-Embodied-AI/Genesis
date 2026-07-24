@@ -364,6 +364,7 @@ def kernel_planner_plan(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
     has_pose_goal_static: qd.template(),
+    errno: qd.Tensor,
 ):
     """Run the joint-space attempt ladder for every planned env in a single graph-captured launch.
 
@@ -378,6 +379,28 @@ def kernel_planner_plan(
 
     while qd.graph_do_while(graph_counter):
         if qd.static(has_pose_goal_static):
+            # Judge each hold-at-goal restart with the start-side allowances only: a previously resolved branch's
+            # allowances would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the
+            # goal side is stripped before the probe and folded back in once the goals are resolved (the ladder
+            # validator below then excuses the resolved goal's own contacts). See the host ladder for the rationale.
+            cost_mod.func_planner_boundary_exclusions(
+                envs_idx,
+                planner_state,
+                planner_info,
+                planner_world,
+                dyn_state,
+                collider_state,
+                gjk_state,
+                dyn_info,
+                rigid_info,
+                collider_info,
+                sdf_info,
+                rigid_config,
+                collider_static_config,
+                planner_config,
+                include_goal=False,
+                errno=errno,
+            )
             cost_mod.func_planner_resolve_goal(
                 graph_counter,
                 envs_idx,
@@ -394,6 +417,24 @@ def kernel_planner_plan(
                 rigid_config,
                 collider_static_config,
                 planner_config,
+            )
+            cost_mod.func_planner_boundary_exclusions(
+                envs_idx,
+                planner_state,
+                planner_info,
+                planner_world,
+                dyn_state,
+                collider_state,
+                gjk_state,
+                dyn_info,
+                rigid_info,
+                collider_info,
+                sdf_info,
+                rigid_config,
+                collider_static_config,
+                planner_config,
+                include_goal=True,
+                errno=errno,
             )
         func_planner_seed(graph_counter, envs_idx, planner_state, planner_info, planner_config)
         func_planner_mppi(
@@ -1190,8 +1231,20 @@ class Planner:
                 solver.collider._collider_static_config,
                 planner_config,
                 has_pose_goal,
+                context.errno,
             )
+            errno_t = qd_to_torch(context.errno)
+            if bool((errno_t != 0).any()):
+                gs.raise_exception(
+                    "Too many boundary-configuration contacts for the planner exclusion lists; the start or goal "
+                    "configuration is deeply entangled with the world."
+                )
             env_solved |= qd_to_torch(planner_state.is_env_solved) & env_pending_mask
+            # A graph-solved env certified a plan to its resolved goal in-kernel, so its goal is resolved by
+            # construction; without this the host-only goal-resolved bookkeeping would stay clear for those envs
+            # and the post-ladder unreachable-goal stamp below would flag them GOAL_IN_COLLISION, corrupting the
+            # very verdicts the graph kernel just certified.
+            env_goal_resolved |= env_solved
 
         for i_attempt in range(2 + max_retry):
             env_retry = env_pending_mask & ~env_solved
