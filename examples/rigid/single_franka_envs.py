@@ -9,7 +9,7 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--sep", action="store_true", help="Simulate each environment as a separate island")
     parser.add_argument("-r", "--record", action="store_true", help="Record the scene to video")
-    parser.add_argument("-b", "--num_envs", type=int, default=1, help="Number of parallel environments")
+    parser.add_argument("-b", "--num-envs", type=int, default=1, help="Number of parallel environments")
     parser.add_argument("-s", "--steps", type=int, default=100, help="Number of simulation steps")
     args = parser.parse_args()
 

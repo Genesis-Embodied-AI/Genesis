@@ -20,21 +20,22 @@ that is not in this table gets no short form.
 |-------|------|------|---------|
 | `-v` | `--vis` | `store_true` | off |
 | `-c` | `--cpu` | `store_true` | off (GPU) |
-| `-b` | `--num_envs` | `int` | per script |
+| `-b` | `--num-envs` | `int` | per script |
 | `-s` | `--steps` | `int` | per script |
 | `-t` | `--seconds` | `float` | per script |
-| `-e` | `--exp_name` | `str` | per script |
+| `-e` | `--exp-name` | `str` | per script |
 | `-r` | `--record` | `store_true` | off |
-| `-o` | `--output_dir` | `str` | per script |
+| `-o` | `--output-dir` | `str` | per script |
 | `-d` | `--debug` | `store_true` | off |
 
 Rules:
 
 1. Short flag first, then long: `parser.add_argument("-v", "--vis", ...)`.
-2. Long names use underscores, so the flag matches the `args` attribute without a `dest=`.
+2. Long names use dashes between words (`--num-envs`); argparse exposes them as the underscored
+   `args.num_envs`, so no `dest=` is needed.
 3. Single-dash flags are one character.
 4. Booleans are `store_true` and default off, which makes `default=False` redundant. Where the negative form
-   reads better, a single `store_true` negative flag covers it (`--no_ipc`, `--no_force`).
+   reads better, a single `store_true` negative flag covers it (`--no-ipc`, `--no-force`).
 5. Use `--steps` when the script's natural unit is iterations, `-t/--seconds` when it reasons in simulated
    time (that is, it also exposes `--dt` or compares against `scene.t`).
 6. `--dt` is the only spelling for the timestep; it matches `SimOptions(dt=...)`.

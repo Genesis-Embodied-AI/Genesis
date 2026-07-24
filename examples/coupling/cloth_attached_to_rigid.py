@@ -18,7 +18,7 @@ def main():
         default=100 if "PYTEST_VERSION" not in os.environ else 25,
         help="Number of simulation steps",
     )
-    parser.add_argument("--num_teleports", type=int, default=5, help="Number of times the attachment is teleported")
+    parser.add_argument("--num-teleports", type=int, default=5, help="Number of times the attachment is teleported")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")

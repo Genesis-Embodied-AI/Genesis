@@ -38,7 +38,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
-    parser.add_argument("--simulate_all_links", action="store_true", help="Simulate all link temperatures")
+    parser.add_argument("--simulate-all-links", action="store_true", help="Simulate all link temperatures")
     args = parser.parse_args()
 
     gs.init(

@@ -21,7 +21,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-e",
-        "--exp_name",
+        "--exp-name",
         type=str,
         default="drone-hovering",
         help="Experiment name; also the log directory under logs/",

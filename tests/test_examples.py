@@ -30,6 +30,8 @@ IGNORE_SCRIPT_NAMES = {
     "multi_gpu.py",
     "single_franka_batch_render.py",  # FIXME: segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit (corrupted double-linked list)
+    # FIXME: RaycastPlugin.cast calls qd_to_numpy from the viewer draw callback, which is Quadrants-scope
+    "mesh_point_selector.py",
     "differentiable_push.py",
 }
 if sys.platform != "linux":

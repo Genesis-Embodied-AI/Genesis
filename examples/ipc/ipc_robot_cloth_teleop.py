@@ -33,7 +33,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--coup_type",
+        "--coup-type",
         type=str,
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],

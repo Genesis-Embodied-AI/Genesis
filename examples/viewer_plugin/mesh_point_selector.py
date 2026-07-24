@@ -232,7 +232,7 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mesh point selector viewer plugin example.")
     parser.add_argument(
-        "--use_visual_geom", action="store_true", help="Select points on the visual mesh instead of the collision one"
+        "--use-visual-geom", action="store_true", help="Select points on the visual mesh instead of the collision one"
     )
     args = parser.parse_args()
 
@@ -256,7 +256,7 @@ if __name__ == "__main__":
         show_viewer=True,
     )
 
-    # Only entities opting into visual raycasting can be selected with --use_visual_geom.
+    # Only entities opting into visual raycasting can be selected with --use-visual-geom.
     raycastable = gs.materials.Rigid(
         use_visual_raycasting=True,
     )

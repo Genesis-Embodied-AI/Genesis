@@ -8,13 +8,13 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 def main():
     parser = argparse.ArgumentParser(description="Mouse interaction viewer plugin example.")
-    parser.add_argument("--use_force", action="store_true", help="Apply spring forces instead of setting position")
+    parser.add_argument("--use-force", action="store_true", help="Apply spring forces instead of setting position")
     parser.add_argument(
-        "--use_visual_geom",
+        "--use-visual-geom",
         action="store_true",
         help="Grab entities by their visual mesh instead of their collision one",
     )
-    parser.add_argument("-b", "--num_envs", type=int, default=1, help="Number of parallel environments")
+    parser.add_argument("-b", "--num-envs", type=int, default=1, help="Number of parallel environments")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
@@ -32,7 +32,7 @@ def main():
         gs.morphs.Plane(),
     )
 
-    # Only entities opting into visual raycasting can be grabbed with --use_visual_geom.
+    # Only entities opting into visual raycasting can be grabbed with --use-visual-geom.
     raycastable = gs.materials.Rigid(
         use_visual_raycasting=True,
     )

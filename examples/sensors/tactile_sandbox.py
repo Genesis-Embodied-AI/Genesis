@@ -262,7 +262,7 @@ def main() -> None:
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument(
-        "--set_pos", action="store_true", help="Set object position directly instead of using control force."
+        "--set-pos", action="store_true", help="Set object position directly instead of using control force."
     )
     parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     parser.add_argument("--dome", action="store_true", help="Change the sensor object to a dome instead of a box")
@@ -273,7 +273,7 @@ def main() -> None:
         help="Type of tactile sensor to use.",
     )
     parser.add_argument(
-        "--contact_depth_query",
+        "--contact-depth-query",
         choices=("sdf", "raycast"),
         default=None,
         help="Contact-depth backend for the tactile sensor (default: sensor's own default, currently sdf).",

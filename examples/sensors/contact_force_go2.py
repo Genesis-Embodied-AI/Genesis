@@ -14,7 +14,7 @@ def main():
     parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("-t", "--seconds", type=float, default=2.0, help="Number of seconds to simulate")
     parser.add_argument(
-        "--no_force", action="store_true", help="Report boolean contact instead of the xyz contact force"
+        "--no-force", action="store_true", help="Report boolean contact instead of the xyz contact force"
     )
 
     args = parser.parse_args()

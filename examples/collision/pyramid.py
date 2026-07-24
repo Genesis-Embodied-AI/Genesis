@@ -6,14 +6,14 @@ import argparse
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--pile_type",
+        "--pile-type",
         type=str,
         default="falling",
         choices=("static", "falling"),
         help="Whether the pile starts settled or falls into place",
     )
     parser.add_argument(
-        "--num_cubes",
+        "--num-cubes",
         type=int,
         default=5,
         choices=(5, 6, 7, 8, 9, 10),

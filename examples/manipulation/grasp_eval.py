@@ -52,7 +52,7 @@ def load_bc_policy(env, bc_cfg, log_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-e", "--exp_name", type=str, default="grasp", help="Experiment name; also the log directory under logs/"
+        "-e", "--exp-name", type=str, default="grasp", help="Experiment name; also the log directory under logs/"
     )
     parser.add_argument(
         "--stage",
@@ -63,7 +63,7 @@ def main():
     )
     parser.add_argument("-r", "--record", action="store_true", help="Record stereo images as video during evaluation")
     parser.add_argument(
-        "--video_path",
+        "--video-path",
         type=str,
         default=None,
         help="Path to save the video file (default: auto-generated)",

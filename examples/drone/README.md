@@ -53,13 +53,13 @@ Train the drone hovering policy using the `HoverEnv` environment.
 Run with:
 
 ```bash
-python hover_train.py -e drone-hovering -b 8192 --max_iterations 301
+python hover_train.py -e drone-hovering -b 8192 --max-iterations 301
 ```
 
 Train with visualization:
 
 ```bash
-python hover_train.py -e drone-hovering -b 8192 --max_iterations 301 -v
+python hover_train.py -e drone-hovering -b 8192 --max-iterations 301 -v
 ```
 
 #### 3.2 Evaluation

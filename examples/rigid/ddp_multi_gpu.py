@@ -2,7 +2,7 @@
 """Data-parallel training across GPUs with PyTorch DistributedDataParallel.
 
 Each rank owns a full scene with its own batch of environments, so the effective batch is the per-rank
-``--num_envs`` times the number of ranks: adding GPUs lowers gradient noise rather than changing any scene.
+``--num-envs`` times the number of ranks: adding GPUs lowers gradient noise rather than changing any scene.
 
 Single machine, 2 GPUs:
     torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/rigid/ddp_multi_gpu.py
@@ -98,7 +98,7 @@ def run_worker(args: argparse.Namespace) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", help="Open the viewer on rank 0")
-    parser.add_argument("-b", "--num_envs", type=int, default=2048, help="Number of parallel environments")
+    parser.add_argument("-b", "--num-envs", type=int, default=2048, help="Number of parallel environments")
     parser.add_argument("-s", "--steps", type=int, default=1000, help="Number of training steps")
     run_worker(parser.parse_args())
 
