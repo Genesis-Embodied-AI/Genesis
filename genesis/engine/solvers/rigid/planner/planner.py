@@ -1260,10 +1260,12 @@ class Planner:
         env_seeded = torch.zeros(B, dtype=torch.bool, device=gs.device)
 
         # Joint and Cartesian goals run their whole attempt ladder - Cartesian goals additionally resolving the
-        # goal by in-kernel multi-restart inverse kinematics - in one graph-captured launch; the host ladder below
-        # then only works the envs it leaves unsolved. Held attachments and collision-free requests stay on the
-        # host ladder, which owns attach spheres and the straight-line shortcut the graph kernel does not cover.
-        if not ignore_collision and len(attachments) == 0:
+        # goal by in-kernel multi-restart inverse kinematics - in one graph-captured launch, held attachments
+        # included (the attach spheres are placed in state before the launch and the in-kernel forward kinematics,
+        # collision cost, and validator already carry them). The host ladder below then only works the envs it
+        # leaves unsolved. Collision-free requests stay on the host ladder, which owns the straight-line shortcut
+        # the graph kernel does not cover.
+        if not ignore_collision:
             planner_state.graph_counter.from_numpy(np.array(2 + max_retry, dtype=np.int32))
             # Per-pass RRT tree-activity scratch (one entry per planned env's tree pair); the kernel rewrites it
             # each escalation pass.
