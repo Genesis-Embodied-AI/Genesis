@@ -194,7 +194,7 @@ def func_planner_rrt_connect(
 
     # One thread per tree pair: trees write disjoint node columns and draw counter-hashed streams, so tree
     # parallelism preserves determinism (a hard-serial loop runs the whole batch on a single GPU thread).
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_t in range(envs_idx.shape[0] * n_trees):
         if trees_is_active[i_t] == 1:
             i_b = envs_idx[i_t // n_trees]

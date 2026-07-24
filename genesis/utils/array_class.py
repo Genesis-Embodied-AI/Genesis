@@ -2732,6 +2732,9 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     """Compile-time constants of a planning-entity context. Iteration budgets are runtime scalars in
     PlannerEntityInfo."""
 
+    # Scene parallelism level (see PARA_LEVEL). The planner's loops run over candidate columns, tree pairs, and
+    # obstacle geoms, none of which vanish in a non-batched scene, so they parallelize on GPU at PARTIAL as well as
+    # ALL and serialize only on CPU.
     para_level: int
     is_batched_arm: bool
     # Planned-entity extents; the planner works in entity-local link / joint / q coordinates.

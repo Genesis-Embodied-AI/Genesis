@@ -261,7 +261,7 @@ def func_planner_seed(
     n_noise = qd.static(planner_config.n_noise_knots)
     attempt = graph_counter[()]
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_c in range(envs_idx.shape[0] * n_seeds):
         i_b = envs_idx[i_c // n_seeds]
         if not planner_state.is_env_solved[i_b] and not planner_state.is_env_seeded[i_b]:
@@ -313,7 +313,7 @@ def func_planner_seed_from_rrt(
     n_trees = qd.static(planner_config.n_rrt_trees)
     n_nodes = qd.static(planner_config.n_rrt_nodes)
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         if not planner_state.is_env_solved[i_b] and planner_state.is_env_seeded[i_b]:
@@ -463,7 +463,7 @@ def func_planner_mppi(
     n_noise = qd.static(planner_config.n_noise_knots)
     n_particles_max = qd.static(planner_config.n_mppi_particles_max)
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_c in range(envs_idx.shape[0] * n_seeds):
         if planner_state.cert.is_active[i_c]:
             i_b = envs_idx[i_c // n_seeds]
@@ -611,7 +611,7 @@ def func_planner_lbfgs(
     n_dp = qd.static(planner_config.n_dp)
     m_hist = qd.static(planner_config.n_lbfgs_hist)
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_c in range(envs_idx.shape[0] * n_seeds):
         if planner_state.cert.is_active[i_c]:
             i_b = envs_idx[i_c // n_seeds]

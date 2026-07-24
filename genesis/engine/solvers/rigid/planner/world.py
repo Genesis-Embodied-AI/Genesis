@@ -18,7 +18,7 @@ def func_planner_snapshot_world(
     """Freeze the obstacle geoms' world poses and axis-aligned bounding boxes (AABBs) for the whole plan."""
     planner_world.n_geoms[None] = obstacle_geoms_idx.shape[0]
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_gw, i_b_ in qd.ndrange(obstacle_geoms_idx.shape[0], envs_idx.shape[0]):
         i_g = obstacle_geoms_idx[i_gw]
         i_b = envs_idx[i_b_]

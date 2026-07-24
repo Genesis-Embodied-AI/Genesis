@@ -716,7 +716,7 @@ def func_planner_boundary_exclusions(
     """Collect the boundary-config contact exclusions per env (serial per env - the lists are tiny): always the
     start, plus the goal when include_goal is set (a Cartesian goal is unknown until resolved, so its pass runs
     on a second call)."""
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         planner_info.cert.excl.world_count[i_b] = 0
@@ -1209,7 +1209,7 @@ def func_planner_validate(
 
     # Every candidate is validated, frozen ones included: the raw sampling-fallback path is deliberately kept
     # unrefined as an insurance candidate, and re-validating already-solved candidates is idempotent.
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_c in range(envs_idx.shape[0] * n_seeds):
         if True:
             i_b = envs_idx[i_c // n_seeds]
@@ -1458,7 +1458,7 @@ def func_planner_resolve_goal(
     for i_batch in range(qd.static(planner_config.goal_ik_batches)):
         attempt_key = attempt * qd.static(planner_config.goal_ik_batches) + i_batch
         # One damped-least-squares solve per restart column - all restarts of all envs run in parallel.
-        qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_c in range(envs_idx.shape[0] * n_seeds):
             i_b = envs_idx[i_c // n_seeds]
             if not planner_state.is_env_solved[i_b]:
@@ -1579,7 +1579,7 @@ def func_planner_resolve_goal(
         )
 
         # Adopt each env's goal: the closest-to-start certified restart, preferring collision-free over excusable.
-        qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+        qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             if not planner_state.is_env_solved[i_b]:

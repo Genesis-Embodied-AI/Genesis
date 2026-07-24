@@ -333,7 +333,7 @@ def func_planner_fold_and_check_exit(
         graph_counter[()] = graph_counter[()] - 1
         planner_state.early_exit_flag[()] = 0
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         if not planner_state.is_env_solved[i_b]:
