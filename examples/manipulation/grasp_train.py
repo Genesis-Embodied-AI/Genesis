@@ -159,7 +159,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-e", "--exp_name", type=str, default="grasp")
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-B", "--num_envs", type=int, default=2048)
+    parser.add_argument("-b", "--num_envs", type=int, default=2048)
     parser.add_argument("--max_iterations", type=int, default=300)
     parser.add_argument("--stage", type=str, default="rl")
     parser.add_argument("--seed", type=int, default=1)

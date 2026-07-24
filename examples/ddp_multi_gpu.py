@@ -58,7 +58,7 @@ def run_worker(args: argparse.Namespace) -> None:
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         visualize_contact=True,
     )
-    scene.build(n_envs=args.n_envs)
+    scene.build(n_envs=args.num_envs)
 
     # model
     gpu_id = 0
@@ -102,7 +102,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--steps", type=int, default=1000, help="simulation / training steps")
     p.add_argument("--vis", action="store_true", help="open viewer on rank-0")
-    p.add_argument("--n_envs", type=int, default=2048, help="number of environments")
+    p.add_argument("-b", "--num_envs", type=int, default=2048, help="number of environments")
     return p.parse_args()
 
 

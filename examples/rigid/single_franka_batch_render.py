@@ -10,7 +10,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument("-b", "--n_envs", type=int, default=3)
+    parser.add_argument("-b", "--num_envs", type=int, default=3)
     parser.add_argument("-s", "--n_steps", type=int, default=2)
     parser.add_argument("-r", "--render_all_cameras", action="store_true", default=False)
     parser.add_argument("-o", "--output_dir", type=str, default="data/test")
@@ -98,7 +98,7 @@ def main():
     )
 
     ########################## build ##########################
-    scene.build(n_envs=args.n_envs)
+    scene.build(n_envs=args.num_envs)
 
     # Create an image exporter
     exporter = FrameImageExporter(args.output_dir)

@@ -15,7 +15,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Grab entities by their visual mesh instead of their collision one",
     )
-    parser.add_argument("--num_envs", "-b", type=int, default=1, help="Number of environments to create")
+    parser.add_argument("-b", "--num_envs", type=int, default=1, help="Number of environments to create")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
