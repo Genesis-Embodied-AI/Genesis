@@ -144,7 +144,7 @@ class _EntityContext(NamedTuple):
 def kernel_planner_set_plan_scalars(
     goal_link_idx: int,
     seed_key: int,
-    has_pose_goal: bool,
+    has_pose_goal: int,
     w_obs: float,
     w_self: float,
     w_lim: float,
@@ -261,7 +261,7 @@ def _set_plan_scalars(
         kernel_planner_set_plan_scalars(
             goal_link_idx,
             seed_key,
-            has_pose_goal,
+            int(has_pose_goal),
             w_obs,
             w_self,
             w_lim,
@@ -1306,7 +1306,7 @@ class Planner:
                 "Too many boundary-configuration contacts for the planner exclusion lists; the start or goal "
                 "configuration is deeply entangled with the world."
             )
-        env_solved |= qd_to_torch(planner_state.is_env_solved) & env_pending_mask
+        env_solved |= (qd_to_torch(planner_state.is_env_solved) != 0) & env_pending_mask
         # A graph-solved env certified a plan to its resolved goal in-kernel, so its goal is resolved by
         # construction; without this the host-only goal-resolved bookkeeping would stay clear for those envs
         # and the post-ladder unreachable-goal stamp below would flag them GOAL_IN_COLLISION, corrupting the
