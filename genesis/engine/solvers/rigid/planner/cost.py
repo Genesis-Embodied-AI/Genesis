@@ -1424,6 +1424,7 @@ def func_planner_resolve_goal(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     planner_config: qd.template(),
+    ignore_collision: qd.template(),
 ):
     """Resolve the Cartesian goal of each unsolved env by parallel multi-restart inverse kinematics.
 
@@ -1588,22 +1589,25 @@ def func_planner_resolve_goal(
                     i_c = i_b_ * n_seeds + i_r
                     flags = planner_state.cert.valid_flags[i_c]
                     is_acceptable = (flags & planner_config.flag_goal_tol) == 0
-                    if is_acceptable:
-                        is_acceptable = planner_state.cert.min_clearance_exact[i_c] + margin + 0.01 > -(
-                            planner_info.cert.exact_sample_cov[None] + planner_info.cert.goal_real_pen_max[None]
-                        )
-                    if is_acceptable:
-                        is_acceptable = (
-                            planner_state.cert.min_clearance_proxy[i_c] + margin + 0.01
-                            > -planner_info.cert.excl_depth_max[None]
-                        )
+                    # With collision checking disabled, a converged restart is accepted regardless of clearance;
+                    # otherwise a converged solution is acceptable only if collision-free or excusably contacting.
+                    if qd.static(not ignore_collision):
+                        if is_acceptable:
+                            is_acceptable = planner_state.cert.min_clearance_exact[i_c] + margin + 0.01 > -(
+                                planner_info.cert.exact_sample_cov[None] + planner_info.cert.goal_real_pen_max[None]
+                            )
+                        if is_acceptable:
+                            is_acceptable = (
+                                planner_state.cert.min_clearance_proxy[i_c] + margin + 0.01
+                                > -planner_info.cert.excl_depth_max[None]
+                            )
                     if is_acceptable:
                         dist = gs.qd_float(0.0)
                         for i_dp in range(n_dp):
                             dist += qd.abs(
                                 planner_state.ik.qpos_best[i_dp, i_c] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
                             )
-                        if (flags & planner_config.flag_collision) != 0:
+                        if qd.static(not ignore_collision) and (flags & planner_config.flag_collision) != 0:
                             dist += 1e6
                         if dist < best_score:
                             best_score = dist
