@@ -475,19 +475,23 @@ def func_planner_mppi(
                 anneal = planner_info.mppi.anneal[None] ** it
                 # Pass 1: score every particle (particle 0 is the unperturbed mean).
                 for i_p in range(n_particles):
-                    for i_w in range(n_knots):
-                        is_clamped = func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config)
-                        for i_dp in range(n_dp):
+                    for i_dp in range(n_dp):
+                        # A particle's noise coefficients are keyed by DOF and basis knot, never by trajectory
+                        # knot: the perturbation of the whole trajectory is one draw per DOF projected through the
+                        # basis. Drawing them per DOF instead of per knot is what keeps the Box-Muller transcen-
+                        # dentals off the knot loop, which otherwise redraws identical values for every knot.
+                        coeffs = qd.Vector.zero(gs.qd_float, n_noise)
+                        if i_p > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                            for i_k in range(n_noise):
+                                key = ((it * n_particles_max + i_p) * n_noise + i_k) * n_dp + i_dp
+                                coeffs[i_k] = gu.qd_hash_gauss(planner_info.mppi.seed_key[None], i_c, key, 0)
+                        for i_w in range(n_knots):
                             q = planner_state.cost.qpos[i_dp, col_base + i_w]
-                            if not is_clamped:
+                            if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                 delta = gs.qd_float(0.0)
-                                if i_p > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
-                                    for i_k in range(n_noise):
-                                        key = ((it * n_particles_max + i_p) * n_noise + i_k) * n_dp + i_dp
-                                        delta += planner_info.mppi.noise_basis[i_w, i_k] * gu.qd_hash_gauss(
-                                            planner_info.mppi.seed_key[None], i_c, key, 0
-                                        )
-                                    delta *= anneal * planner_info.mppi.sigma[i_dp]
+                                for i_k in range(n_noise):
+                                    delta += planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k]
+                                delta *= anneal * planner_info.mppi.sigma[i_dp]
                                 q = qd.math.clamp(
                                     q + delta,
                                     planner_info.fk.dofs.q_limit_lower[i_dp],
@@ -524,26 +528,33 @@ def func_planner_mppi(
                 cost_mean /= qd.cast(n_particles, gs.qd_float)
                 beta = 0.5 * (cost_mean - cost_min) + 1e-6
                 weight_sum = gs.qd_float(0.0)
+                exps = qd.Vector.zero(gs.qd_float, n_particles_max)
                 for i_p in range(n_particles):
-                    weight_sum += qd.exp(-(costs[i_p] - cost_min) / beta)
+                    exps[i_p] = qd.exp(-(costs[i_p] - cost_min) / beta)
+                    weight_sum += exps[i_p]
 
-                # Pass 2: rebuild the weighted noise mixture and fold it into the mean.
-                for i_w in range(n_knots):
-                    if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
-                        for i_dp in range(n_dp):
-                            if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
-                                delta_mean = gs.qd_float(0.0)
-                                for i_p in range(1, n_particles):
-                                    weight = qd.exp(-(costs[i_p] - cost_min) / beta) / weight_sum
+                # Pass 2: rebuild the weighted noise mixture and fold it into the mean. The mixture accumulates
+                # per knot so the DOF and its particles stay the outer loops, sharing one draw of the coefficients
+                # (see pass 1) and one weight evaluation across the trajectory.
+                for i_dp in range(n_dp):
+                    if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                        delta_mean = qd.Vector.zero(gs.qd_float, n_knots)
+                        for i_p in range(1, n_particles):
+                            weight = exps[i_p] / weight_sum
+                            coeffs = qd.Vector.zero(gs.qd_float, n_noise)
+                            for i_k in range(n_noise):
+                                key = ((it * n_particles_max + i_p) * n_noise + i_k) * n_dp + i_dp
+                                coeffs[i_k] = gu.qd_hash_gauss(planner_info.mppi.seed_key[None], i_c, key, 0)
+                            for i_w in range(n_knots):
+                                if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                     delta = gs.qd_float(0.0)
                                     for i_k in range(n_noise):
-                                        key = ((it * n_particles_max + i_p) * n_noise + i_k) * n_dp + i_dp
-                                        delta += planner_info.mppi.noise_basis[i_w, i_k] * gu.qd_hash_gauss(
-                                            planner_info.mppi.seed_key[None], i_c, key, 0
-                                        )
-                                    delta_mean += weight * delta * anneal * planner_info.mppi.sigma[i_dp]
+                                        delta += planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k]
+                                    delta_mean[i_w] += weight * delta * anneal * planner_info.mppi.sigma[i_dp]
+                        for i_w in range(n_knots):
+                            if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                 planner_state.cost.qpos[i_dp, col_base + i_w] = qd.math.clamp(
-                                    planner_state.cost.qpos[i_dp, col_base + i_w] + delta_mean,
+                                    planner_state.cost.qpos[i_dp, col_base + i_w] + delta_mean[i_w],
                                     planner_info.fk.dofs.q_limit_lower[i_dp],
                                     planner_info.fk.dofs.q_limit_upper[i_dp],
                                 )
