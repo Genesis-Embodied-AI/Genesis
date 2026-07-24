@@ -17,6 +17,7 @@ from .graph import (
     _RRT_N_SHORTCUT,
     _RRT_STALL_ITERS,
     _RRT_STEER_STEP,
+    func_planner_rrt_connect,
     kernel_planner_rrt_connect,
 )
 from .retime import retime_trajectory
@@ -28,6 +29,7 @@ from .trajopt import (
     func_planner_lbfgs,
     func_planner_mppi,
     func_planner_seed,
+    func_planner_seed_from_rrt,
     kernel_planner_lbfgs,
     kernel_planner_mppi,
 )
@@ -350,6 +352,7 @@ def func_planner_fold_and_check_exit(
 def kernel_planner_plan(
     graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
+    trees_is_active: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
@@ -369,13 +372,17 @@ def kernel_planner_plan(
     """Run the joint-space attempt ladder for every planned env in a single graph-captured launch.
 
     The ladder - seed the unsolved envs, refine, certify, fold the verdicts - repeats device-side until every
-    planned env certifies or graph_counter, the caller-set attempt budget, reaches zero. The world snapshot and
-    boundary exclusions the ladder reads must already be in planner state; the launch then fills the per-candidate
-    trajectories and validity flags, from which the caller selects the best seed per env and retimes it.
+    planned env certifies or graph_counter, the caller-set attempt budget, reaches zero. Each env seeds from
+    straight lines on its first pass and escalates to RRT-Connect on later passes; trees_is_active is per-pass
+    scratch the kernel rewrites. The world snapshot and boundary exclusions the ladder reads must already be in
+    planner state; the launch then fills the per-candidate trajectories and validity flags, from which the caller
+    selects the best seed per env and retimes it.
     """
+    n_rrt_trees = qd.static(planner_config.n_rrt_trees)
     qd.loop_config(name="planner_plan_init_solved")
     for i_b_ in range(envs_idx.shape[0]):
         planner_state.is_env_solved[envs_idx[i_b_]] = False
+        planner_state.is_env_seeded[envs_idx[i_b_]] = False
 
     while qd.graph_do_while(graph_counter):
         if qd.static(has_pose_goal_static):
@@ -436,7 +443,43 @@ def kernel_planner_plan(
                 include_goal=True,
                 errno=errno,
             )
+        # Escalate the still-unsolved envs already seeded on an earlier pass to RRT-Connect: activate their tree
+        # pairs, search at a smaller headroom than the optimizer (a goal snugger than the full headroom would wall
+        # off its own tree), then transplant the certified polylines into the candidate columns. Fresh envs (not
+        # yet seeded) instead take straight-line seeds; every unsolved env is then marked seeded so its next pass
+        # escalates. On the first pass no env is seeded, so RRT runs on no tree and only the straight-line seed fires.
+        qd.loop_config(name="planner_plan_rrt_active")
+        for i_t in range(envs_idx.shape[0] * n_rrt_trees):
+            i_b = envs_idx[i_t // n_rrt_trees]
+            trees_is_active[i_t] = 0
+            if not planner_state.is_env_solved[i_b] and planner_state.is_env_seeded[i_b]:
+                trees_is_active[i_t] = 1
+        d_safe_opt = planner_info.cost.d_safe[None]
+        planner_info.cost.d_safe[None] = d_safe_opt - 0.01
+        func_planner_rrt_connect(
+            envs_idx,
+            trees_is_active,
+            planner_state,
+            planner_info,
+            planner_world,
+            dyn_state,
+            collider_state,
+            gjk_state,
+            dyn_info,
+            rigid_info,
+            collider_info,
+            sdf_info,
+            rigid_config,
+            collider_static_config,
+            planner_config,
+        )
+        planner_info.cost.d_safe[None] = d_safe_opt
+        func_planner_seed_from_rrt(envs_idx, planner_state, planner_config)
         func_planner_seed(graph_counter, envs_idx, planner_state, planner_info, planner_config)
+        qd.loop_config(name="planner_plan_mark_seeded")
+        for i_b_ in range(envs_idx.shape[0]):
+            if not planner_state.is_env_solved[envs_idx[i_b_]]:
+                planner_state.is_env_seeded[envs_idx[i_b_]] = True
         func_planner_mppi(
             envs_idx,
             planner_state,
@@ -469,6 +512,13 @@ def kernel_planner_plan(
             collider_static_config,
             planner_config,
         )
+        # Certify at the user clearance, not the optimizer headroom: the optimizer plans with an extra headroom so
+        # refined paths arrive with slack, but an env is solved once its trajectory clears the requested margin
+        # (the validator adds the swept Lipschitz allowance on top, so this still covers the continuous path). A
+        # tight fallback corridor is feasible at the margin yet not at the headroom, so folding at the headroom
+        # would leave every cluttered env for the host ladder.
+        d_safe_opt = planner_info.cost.d_safe[None]
+        planner_info.cost.d_safe[None] = d_safe_opt - 0.02
         cost_mod.func_planner_validate(
             envs_idx,
             planner_state,
@@ -486,6 +536,7 @@ def kernel_planner_plan(
             planner_config,
             check_start=True,
         )
+        planner_info.cost.d_safe[None] = d_safe_opt
         func_planner_fold_and_check_exit(graph_counter, envs_idx, planner_state, planner_config)
 
 
@@ -1214,9 +1265,13 @@ class Planner:
         # host ladder, which owns attach spheres and the straight-line shortcut the graph kernel does not cover.
         if not ignore_collision and len(attachments) == 0:
             planner_state.graph_counter.from_numpy(np.array(2 + max_retry, dtype=np.int32))
+            # Per-pass RRT tree-activity scratch (one entry per planned env's tree pair); the kernel rewrites it
+            # each escalation pass.
+            trees_is_active = np.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.np_int)
             kernel_planner_plan(
                 planner_state.graph_counter,
                 envs_idx_np,
+                trees_is_active,
                 planner_state,
                 planner_info,
                 planner_world,

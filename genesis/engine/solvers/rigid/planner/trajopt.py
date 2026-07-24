@@ -246,12 +246,14 @@ def func_planner_seed(
     planner_info: array_class.PlannerEntityInfo,
     planner_config: qd.template(),
 ):
-    """Seed each unsolved env's candidate trajectories for the current attempt.
+    """Seed each not-yet-seeded env's candidate trajectories with straight start-to-goal lines.
 
     Seed 0 is the straight start-to-goal line; the others add smooth basis-weighted noise drawn from the
-    counter-based hash keyed by the attempt (the ladder counter), so retries explore fresh basins. Locked DOFs
-    hold the start value, interior knots clamp to the joint limits, and the two boundary knot pairs pin to start
-    and goal.
+    counter-based hash keyed by the attempt (the ladder counter), so distinct candidates explore distinct basins.
+    Locked DOFs hold the start value, interior knots clamp to the joint limits, and the two boundary knot pairs
+    pin to start and goal. Only envs the ladder has not seeded yet are touched: an env is seeded once from
+    straight lines, then escalates to RRT-Connect seeds on later passes, so this leaves already-escalated envs
+    untouched.
     """
     n_knots = qd.static(planner_config.n_knots)
     n_seeds = qd.static(planner_config.n_seeds)
@@ -262,7 +264,7 @@ def func_planner_seed(
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
     for i_c in range(envs_idx.shape[0] * n_seeds):
         i_b = envs_idx[i_c // n_seeds]
-        if not planner_state.is_env_solved[i_b]:
+        if not planner_state.is_env_solved[i_b] and not planner_state.is_env_seeded[i_b]:
             i_s = i_c % n_seeds
             col_base = i_c * n_knots
             for i_w in range(n_knots):
@@ -288,6 +290,147 @@ def func_planner_seed(
                         )
                     planner_state.cost.qpos[i_dp, col_base + i_w] = q
             planner_state.cert.is_active[i_c] = True
+
+
+@qd.func
+def func_planner_seed_from_rrt(
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_config: qd.template(),
+):
+    """Seed each escalating env's candidates from its connected RRT-Connect trees.
+
+    Every connected tree's certified polyline seeds its own candidate column (cycling when fewer trees than
+    columns), so distinct corridors seed distinct candidates. A polyline with no more vertices than knots keeps
+    every vertex as a knot and holds the goal on the trailing knots, so consecutive knots stay on the certified
+    polyline; a longer polyline falls back to an arclength resample, whose corner cutting the refiner repairs.
+    Seed 0 stays unrefined as an insurance candidate the certifier still checks. Envs with no connected tree keep
+    their previous candidates untouched.
+    """
+    n_knots = qd.static(planner_config.n_knots)
+    n_seeds = qd.static(planner_config.n_seeds)
+    n_dp = qd.static(planner_config.n_dp)
+    n_trees = qd.static(planner_config.n_rrt_trees)
+    n_nodes = qd.static(planner_config.n_rrt_nodes)
+
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.ALL))
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        if not planner_state.is_env_solved[i_b] and planner_state.is_env_seeded[i_b]:
+            n_conn = 0
+            for i_t_ in range(n_trees):
+                i_t = i_b_ * n_trees + i_t_
+                if planner_state.rrt.is_done[i_t] and planner_state.rrt.path_len[i_t] >= 2:
+                    n_conn += 1
+            if n_conn > 0:
+                for i_s in range(n_seeds):
+                    # The (i_s mod n_conn)-th connected tree seeds column i_s.
+                    target = i_s % n_conn
+                    i_t_sel = i_b_ * n_trees
+                    seen = 0
+                    for i_t_ in range(n_trees):
+                        i_t = i_b_ * n_trees + i_t_
+                        if planner_state.rrt.is_done[i_t] and planner_state.rrt.path_len[i_t] >= 2:
+                            if seen == target:
+                                i_t_sel = i_t
+                            seen += 1
+                    n_path = planner_state.rrt.path_len[i_t_sel]
+                    rrt_col0 = i_t_sel * n_nodes
+                    col_base = (i_b_ * n_seeds + i_s) * n_knots
+                    if n_path <= n_knots:
+                        # Vertex-preserving subdivision: every vertex is a knot and the leftover knots subdivide
+                        # the segments proportionally to their length, so consecutive knots stay on the certified
+                        # polyline AND no segment stays long enough for the validator's swept allowance to reject
+                        # it. Counts are placed by a running proportional accumulator (no per-segment scratch);
+                        # the last segment absorbs the rounding remainder so exactly n_knots knots are written.
+                        total = gs.qd_float(0.0)
+                        for i_seg in range(n_path - 1):
+                            d = gs.qd_float(0.0)
+                            for i_dp in range(n_dp):
+                                diff = (
+                                    planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                    - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                )
+                                d += diff * diff
+                            total += qd.sqrt(d)
+                        extra = n_knots - n_path
+                        for i_dp in range(n_dp):
+                            planner_state.cost.qpos[i_dp, col_base] = planner_state.rrt.path[i_dp, rrt_col0]
+                        i_w = 1
+                        placed = 0
+                        acc = gs.qd_float(0.0)
+                        for i_seg in range(n_path - 1):
+                            d = gs.qd_float(0.0)
+                            for i_dp in range(n_dp):
+                                diff = (
+                                    planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                    - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                )
+                                d += diff * diff
+                            acc += qd.sqrt(d) * qd.cast(extra, gs.qd_float) / qd.max(total, 1e-9)
+                            n_sub = gs.qd_int(qd.floor(acc)) - placed
+                            if i_seg == n_path - 2:
+                                n_sub = extra - placed
+                            placed += n_sub
+                            for k in range(n_sub):
+                                u = qd.cast(k + 1, gs.qd_float) / qd.cast(n_sub + 1, gs.qd_float)
+                                for i_dp in range(n_dp):
+                                    q_a = planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                    q_b = planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                    planner_state.cost.qpos[i_dp, col_base + i_w] = q_a * (1.0 - u) + q_b * u
+                                i_w += 1
+                            for i_dp in range(n_dp):
+                                planner_state.cost.qpos[i_dp, col_base + i_w] = planner_state.rrt.path[
+                                    i_dp, rrt_col0 + i_seg + 1
+                                ]
+                            i_w += 1
+                    else:
+                        # Arclength resample: total polyline length in one pass, then a single walk placing the
+                        # interior knots; the endpoints pin to the polyline start and goal.
+                        total = gs.qd_float(0.0)
+                        for i_seg in range(n_path - 1):
+                            d = gs.qd_float(0.0)
+                            for i_dp in range(n_dp):
+                                diff = (
+                                    planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                    - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                )
+                                d += diff * diff
+                            total += qd.sqrt(d)
+                        for i_dp in range(n_dp):
+                            planner_state.cost.qpos[i_dp, col_base] = planner_state.rrt.path[i_dp, rrt_col0]
+                            planner_state.cost.qpos[i_dp, col_base + n_knots - 1] = planner_state.rrt.path[
+                                i_dp, rrt_col0 + n_path - 1
+                            ]
+                        i_seg = 0
+                        s_cum = gs.qd_float(0.0)
+                        seg_len = gs.qd_float(0.0)
+                        for i_w in range(1, n_knots - 1):
+                            s_tgt = total * qd.cast(i_w, gs.qd_float) / (n_knots - 1)
+                            advancing = True
+                            while advancing:
+                                seg_len = gs.qd_float(0.0)
+                                for i_dp in range(n_dp):
+                                    diff = (
+                                        planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                        - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                    )
+                                    seg_len += diff * diff
+                                seg_len = qd.sqrt(seg_len)
+                                if i_seg < n_path - 2 and s_cum + seg_len < s_tgt:
+                                    s_cum += seg_len
+                                    i_seg += 1
+                                else:
+                                    advancing = False
+                            u = (s_tgt - s_cum) / qd.max(seg_len, 1e-9)
+                            for i_dp in range(n_dp):
+                                q_a = planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                q_b = planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                planner_state.cost.qpos[i_dp, col_base + i_w] = q_a * (1.0 - u) + q_b * u
+                    planner_state.cert.is_active[i_b_ * n_seeds + i_s] = True
+                # Seed 0 keeps the raw fallback polyline unrefined, so refinement can only add better candidates.
+                planner_state.cert.is_active[i_b_ * n_seeds] = False
+                planner_state.cost.cost[i_b_ * n_seeds] = 1e30
 
 
 @qd.func
