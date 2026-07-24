@@ -433,9 +433,8 @@ class IKState:
     err_pose: qd.Tensor
     err_pose_best: qd.Tensor
     vec: qd.Tensor
-    # Joint-space step, the saved initial configuration, and the best configuration found across restarts.
+    # Joint-space step and the best configuration found across restarts.
     delta_qpos: qd.Tensor
-    qpos_orig: qd.Tensor
     qpos_best: qd.Tensor
 
 
@@ -453,8 +452,34 @@ def get_ik_state(n_qs, n_dofs, error_dim, n_cols):
         err_pose_best=V(dtype=gs.qd_float, shape=(error_dim, n_cols)),
         vec=V(dtype=gs.qd_float, shape=(error_dim, n_cols)),
         delta_qpos=V(dtype=gs.qd_float, shape=(n_dofs, n_cols)),
-        qpos_orig=V(dtype=gs.qd_float, shape=(n_qs, n_cols)),
         qpos_best=V(dtype=gs.qd_float, shape=(n_qs, n_cols)),
+    )
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class IKScratchFK:
+    """Per-column forward-kinematics scratch for the entity inverse-kinematics solve.
+
+    Holds the working configuration and the link / joint frames it produces, so each Gauss-Newton step evaluates
+    and integrates poses on caller-owned buffers without mutating live solver state. A column is an environment.
+    """
+
+    # Entity-local working configuration iterated by the solve.
+    qpos: qd.Tensor
+    # Link poses and joint frames placed by func_forward_kinematics_scratch, feeding the error and the Jacobian.
+    links_pos: qd.Tensor
+    links_quat: qd.Tensor
+    joints_xanchor: qd.Tensor
+    joints_xaxis: qd.Tensor
+
+
+def get_ik_scratch_fk(n_qs, n_links, n_joints, n_cols):
+    return IKScratchFK(
+        qpos=V(dtype=gs.qd_float, shape=(n_qs, n_cols)),
+        links_pos=V(dtype=gs.qd_vec3, shape=(n_links, n_cols)),
+        links_quat=V(dtype=gs.qd_vec4, shape=(n_links, n_cols)),
+        joints_xanchor=V(dtype=gs.qd_vec3, shape=(n_joints, n_cols)),
+        joints_xaxis=V(dtype=gs.qd_vec3, shape=(n_joints, n_cols)),
     )
 
 

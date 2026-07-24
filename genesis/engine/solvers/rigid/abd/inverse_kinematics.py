@@ -14,7 +14,7 @@ import genesis.utils.array_class as array_class
 
 
 @qd.func
-def func_ik_fk(
+def func_forward_kinematics_scratch(
     i_col_out,
     i_col_q,
     i_b,
@@ -36,8 +36,8 @@ def func_ik_fk(
 
     Reads the configuration from qpos[:, i_col_q] (entity-local q coordinates keyed by q_offset) and writes link
     poses and joint frames at column i_col_out of the given tensors; the live solver state is only read (model
-    info and the fixed root pose). REVOLUTE / PRISMATIC / FIXED joints only - callers rejecting FREE / SPHERICAL
-    joints (like the planner) can use this scratch forward kinematics without mutating solver state.
+    info and the fixed root pose). Handles every joint type, so callers get correct kinematics without mutating
+    solver state.
     """
     for i_l_ in range(dyn_info.entities.link_start[entity_idx], dyn_info.entities.link_end[entity_idx]):
         i_l = gs.qd_int(i_l_)
@@ -59,7 +59,47 @@ def func_ik_fk(
             dof_start = dyn_info.joints.dof_start[I_j]
             I_d = [dof_start, i_b] if qd.static(rigid_config.batch_dofs_info) else dof_start
 
-            if joint_type != gs.JOINT_TYPE.FIXED:
+            q_loc = q_start - q_offset
+            if joint_type == gs.JOINT_TYPE.FREE:
+                # Six-DOF root: the configuration carries the base position (3) then orientation quaternion (4).
+                base_pos = qd.Vector(
+                    [qpos[q_loc, i_col_q], qpos[q_loc + 1, i_col_q], qpos[q_loc + 2, i_col_q]], dt=gs.qd_float
+                )
+                joints_xanchor[i_j - joint_offset, i_col_out] = base_pos
+                joints_xaxis[i_j - joint_offset, i_col_out] = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+                base_quat = qd.Vector(
+                    [
+                        qpos[q_loc + 3, i_col_q],
+                        qpos[q_loc + 4, i_col_q],
+                        qpos[q_loc + 5, i_col_q],
+                        qpos[q_loc + 6, i_col_q],
+                    ],
+                    dt=gs.qd_float,
+                )
+                pos = base_pos
+                quat = base_quat / base_quat.norm()
+            elif joint_type == gs.JOINT_TYPE.SPHERICAL:
+                # Three-DOF ball joint: the configuration carries a local orientation quaternion (4).
+                q_loc_quat = qd.Vector(
+                    [
+                        qpos[q_loc, i_col_q],
+                        qpos[q_loc + 1, i_col_q],
+                        qpos[q_loc + 2, i_col_q],
+                        qpos[q_loc + 3, i_col_q],
+                    ],
+                    dt=gs.qd_float,
+                )
+                joints_xanchor[i_j - joint_offset, i_col_out] = (
+                    gu.qd_transform_by_quat(dyn_info.joints.pos[I_j], quat) + pos
+                )
+                joints_xaxis[i_j - joint_offset, i_col_out] = gu.qd_transform_by_quat(
+                    qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float), quat
+                )
+                quat = gu.qd_transform_quat_by_quat(q_loc_quat, quat)
+                pos = joints_xanchor[i_j - joint_offset, i_col_out] - gu.qd_transform_by_quat(
+                    dyn_info.joints.pos[I_j], quat
+                )
+            elif joint_type != gs.JOINT_TYPE.FIXED:
                 axis = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
                 if joint_type == gs.JOINT_TYPE.REVOLUTE:
                     axis = dyn_info.dofs.motion_ang[I_d]
@@ -70,7 +110,7 @@ def func_ik_fk(
                 )
                 joints_xaxis[i_j - joint_offset, i_col_out] = gu.qd_transform_by_quat(axis, quat)
 
-                q_delta = qpos[q_start - q_offset, i_col_q] - rigid_info.qpos0[q_start, i_b]
+                q_delta = qpos[q_loc, i_col_q] - rigid_info.qpos0[q_start, i_b]
                 if joint_type == gs.JOINT_TYPE.REVOLUTE:
                     qloc = gu.qd_rotvec_to_quat(axis * q_delta, rigid_info.EPS[None])
                     quat = gu.qd_transform_quat_by_quat(qloc, quat)
@@ -89,7 +129,7 @@ def func_ik_fk(
 
 
 @qd.func
-def func_ik_jacobian(
+def func_jacobian_scratch(
     i_col,
     i_b,
     entity_idx,
@@ -101,16 +141,15 @@ def func_ik_jacobian(
     joints_xaxis: qd.Tensor,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
-    n_dp: qd.template(),
 ):
-    """Spatial Jacobian (6 x n_dp) of the goal point at column i_col, from the per-column scratch FK joint frames.
+    """Spatial Jacobian (6 x n_dofs) of the goal point at column i_col, from the per-column scratch FK joint frames.
 
-    Walks the kinematic path from the target link to the entity root, filling each REVOLUTE / PRISMATIC joint's
-    column from its world axis and anchor (already placed by func_ik_fk into joints_xaxis / joints_xanchor).
-    Unmasked; callers rejecting FREE / SPHERICAL joints leave only these two contributing.
+    Walks the kinematic path from the target link to the entity root, filling each joint's columns from its world
+    axis and anchor (already placed by func_forward_kinematics_scratch into joints_xaxis / joints_xanchor). A
+    SPHERICAL joint contributes nothing, matching the solver-state Jacobian. Unmasked.
     """
     dof_offset = dyn_info.entities.dof_start[entity_idx]
-    for i_row, i_d in qd.ndrange(6, qd.static(n_dp)):
+    for i_row, i_d in qd.ndrange(6, jacobian.shape[1]):
         jacobian[i_row, i_d, i_col] = 0.0
 
     i_l = ee_link
@@ -130,6 +169,20 @@ def func_ik_jacobian(
                 translation = joints_xaxis[i_j - joint_offset, i_col]
                 for i in qd.static(range(3)):
                     jacobian[i, i_d_jac, i_col] = translation[i]
+            elif dyn_info.joints.type[I_j] == gs.JOINT_TYPE.FREE:
+                # Base translation moves the goal point directly; base rotation contributes a lever-arm term about
+                # the root position (the FREE joint's scratch anchor, placed by func_forward_kinematics_scratch).
+                base_pos = joints_xanchor[i_j - joint_offset, i_col]
+                for i_d_ in qd.static(range(3)):
+                    jacobian[i_d_, dyn_info.joints.dof_start[I_j] + i_d_ - dof_offset, i_col] = 1.0
+                for i_d_ in qd.static(range(3)):
+                    i_d = dyn_info.joints.dof_start[I_j] + i_d_ + 3
+                    I_d = [i_d, i_b] if qd.static(rigid_config.batch_dofs_info) else i_d
+                    rotation = dyn_info.dofs.motion_ang[I_d]
+                    translation = rotation.cross(ee_pos - base_pos)
+                    for i in qd.static(range(3)):
+                        jacobian[i, i_d - dof_offset, i_col] = translation[i]
+                        jacobian[i + 3, i_d - dof_offset, i_col] = rotation[i]
         i_l = dyn_info.links.parent_idx[I_l]
 
 
@@ -236,12 +289,78 @@ def kernel_get_jacobian_zero(
 
 
 @qd.func
+def func_integrate_dq_scratch(
+    i_col,
+    i_b,
+    entity_idx,
+    q_offset,
+    dq: qd.Tensor,
+    qpos: qd.Tensor,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    rigid_config: qd.template(),
+    respect_joint_limit,
+):
+    """Integrate a joint-space step into the entity-local scratch configuration column, mirroring the solver-state
+    integrator (func_integrate_dq_entity) on caller-owned qpos so the live solver state is untouched.
+
+    dq is indexed by entity-local DOF; a FREE root advances its position additively and its orientation by a
+    world-frame delta rotation, and a REVOLUTE / PRISMATIC DOF advances additively with optional limit clamping.
+    """
+    EPS = rigid_info.EPS[None]
+
+    for i_l in range(dyn_info.entities.link_start[entity_idx], dyn_info.entities.link_end[entity_idx]):
+        I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+        if dyn_info.links.n_dofs[I_l] == 0:
+            continue
+
+        i_j = dyn_info.links.joint_start[I_l]
+        I_j = [i_j, i_b] if qd.static(rigid_config.batch_joints_info) else i_j
+        joint_type = dyn_info.joints.type[I_j]
+
+        q_loc = dyn_info.links.q_start[I_l] - q_offset
+        dof_start = dyn_info.links.dof_start[I_l]
+        dq_start = dof_start - dyn_info.entities.dof_start[entity_idx]
+
+        if joint_type == gs.JOINT_TYPE.FREE:
+            pos = qd.Vector([qpos[q_loc, i_col], qpos[q_loc + 1, i_col], qpos[q_loc + 2, i_col]])
+            pos = pos + qd.Vector([dq[dq_start, i_col], dq[dq_start + 1, i_col], dq[dq_start + 2, i_col]])
+            quat = qd.Vector(
+                [qpos[q_loc + 3, i_col], qpos[q_loc + 4, i_col], qpos[q_loc + 5, i_col], qpos[q_loc + 6, i_col]]
+            )
+            dquat = gu.qd_rotvec_to_quat(
+                qd.Vector([dq[dq_start + 3, i_col], dq[dq_start + 4, i_col], dq[dq_start + 5, i_col]], dt=gs.qd_float),
+                EPS,
+            )
+            # World-frame delta rotation composes on the left, unlike a velocity integration in the body frame.
+            quat = gu.qd_transform_quat_by_quat(quat, dquat)
+            for j in qd.static(range(3)):
+                qpos[q_loc + j, i_col] = pos[j]
+            for j in qd.static(range(4)):
+                qpos[q_loc + j + 3, i_col] = quat[j]
+
+        elif joint_type == gs.JOINT_TYPE.FIXED:
+            pass
+
+        else:
+            for i_d_ in range(dyn_info.links.n_dofs[I_l]):
+                qpos[q_loc + i_d_, i_col] = qpos[q_loc + i_d_, i_col] + dq[dq_start + i_d_, i_col]
+                if respect_joint_limit:
+                    I_d = [dof_start + i_d_, i_b] if qd.static(rigid_config.batch_dofs_info) else dof_start + i_d_
+                    qpos[q_loc + i_d_, i_col] = qd.math.clamp(
+                        qpos[q_loc + i_d_, i_col], dyn_info.dofs.limit[I_d][0], dyn_info.dofs.limit[I_d][1]
+                    )
+
+
+@qd.func
 def func_inverse_kinematics(
-    idx_in_solver,
-    entity_q_start,
-    dof_start,
+    entity_idx,
+    q_offset,
+    link_offset,
+    joint_offset,
     targets: array_class.IKTargets,
     ik_state: array_class.IKState,
+    fk: array_class.IKScratchFK,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -261,10 +380,10 @@ def func_inverse_kinematics(
     """Damped-least-squares inverse kinematics for the target links, writing the best configuration per column
     into ik_state.qpos_best.
 
-    Runs up to max_samples restarts of at most max_solver_iters Gauss-Newton steps against the stacked
-    multi-target pose error, keeping the least-error configuration. The solver qpos serves as working state and is
-    restored on return; unconverged restarts resample joint-limited DOFs with a counter-based draw so the result is
-    deterministic across parallel schedules.
+    Runs up to max_samples restarts of at most max_solver_iters Gauss-Newton steps against the stacked multi-target
+    pose error, keeping the least-error configuration. Every evaluation and integration happens on the caller-owned
+    forward-kinematics scratch (fk), so the live solver state is only read; unconverged restarts resample
+    joint-limited DOFs with a counter-based draw so the result is deterministic across parallel schedules.
     """
     EPS = rigid_info.EPS[None]
 
@@ -275,13 +394,12 @@ def func_inverse_kinematics(
     for i_b_ in range(targets.envs_idx.shape[0]):
         i_b = targets.envs_idx[i_b_]
 
-        # save original qpos
+        # Seed the working configuration from the requested initial guess or the live solver configuration.
         for i_q in range(n_qs):
-            ik_state.qpos_orig[i_q, i_b] = rigid_info.qpos[i_q + entity_q_start, i_b]
-
-        if custom_init_qpos:
-            for i_q in range(n_qs):
-                rigid_info.qpos[i_q + entity_q_start, i_b] = targets.init_qpos[i_b_, i_q]
+            if custom_init_qpos:
+                fk.qpos[i_q, i_b] = targets.init_qpos[i_b_, i_q]
+            else:
+                fk.qpos[i_q, i_b] = rigid_info.qpos[i_q + q_offset, i_b]
 
         for i_error in range(n_error_dims):
             ik_state.err_pose_best[i_error, i_b] = 1e4
@@ -289,36 +407,47 @@ def func_inverse_kinematics(
         solved = False
         for i_sample in range(max_samples):
             for _ in range(max_solver_iters):
-                # run FK to update link states using current q
-                gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-                    idx_in_solver, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+                func_forward_kinematics_scratch(
+                    i_b,
+                    i_b,
+                    i_b,
+                    entity_idx,
+                    link_offset,
+                    joint_offset,
+                    q_offset,
+                    fk.qpos,
+                    fk.links_pos,
+                    fk.links_quat,
+                    fk.joints_xanchor,
+                    fk.joints_xaxis,
+                    dyn_state,
+                    dyn_info,
+                    rigid_info,
+                    rigid_config,
                 )
-                # compute error
+
                 solved = True
                 for i_ee in range(n_links):
                     i_l_ee = targets.links_idx[i_ee]
-
-                    tgt_pos_i = targets.pos[i_ee, i_b_]
-                    local_point_i = targets.local_point[i_ee]
-                    pos_curr_i = dyn_state.links.pos[i_l_ee, i_b] + gu.qd_transform_by_quat(
-                        local_point_i, dyn_state.links.quat[i_l_ee, i_b]
+                    ee_quat = fk.links_quat[i_l_ee - link_offset, i_b]
+                    ee_pos = fk.links_pos[i_l_ee - link_offset, i_b] + gu.qd_transform_by_quat(
+                        targets.local_point[i_ee], ee_quat
                     )
-                    err_pos_i = tgt_pos_i - pos_curr_i
+
+                    err_pos_i = targets.pos[i_ee, i_b_] - ee_pos
                     for k in range(3):
                         err_pos_i[k] *= targets.pos_mask[k] * targets.link_pos_mask[i_ee]
                     if err_pos_i.norm() > pos_tol:
                         solved = False
 
-                    tgt_quat_i = targets.quat[i_ee, i_b_]
                     err_rot_i = gu.qd_quat_to_rotvec(
-                        gu.qd_transform_quat_by_quat(gu.qd_inv_quat(dyn_state.links.quat[i_l_ee, i_b]), tgt_quat_i), EPS
+                        gu.qd_transform_quat_by_quat(gu.qd_inv_quat(ee_quat), targets.quat[i_ee, i_b_]), EPS
                     )
                     for k in range(3):
                         err_rot_i[k] *= targets.rot_mask[k] * targets.link_rot_mask[i_ee]
                     if err_rot_i.norm() > rot_tol:
                         solved = False
 
-                    # put into multi-link error array
                     for k in range(3):
                         ik_state.err_pose[i_ee * 6 + k, i_b] = err_pos_i[k]
                         ik_state.err_pose[i_ee * 6 + k + 3, i_b] = err_rot_i[k]
@@ -326,26 +455,27 @@ def func_inverse_kinematics(
                 if solved:
                     break
 
-                # compute multi-link jacobian
                 for i_ee in range(n_links):
-                    # update jacobian for ee link
                     i_l_ee = targets.links_idx[i_ee]
-                    local_point_i = targets.local_point[i_ee]
-                    # NOTE: the jacobian covers all entity dofs, as we haven't found a clean way to restrict it.
-                    func_get_jacobian(
-                        i_l_ee,
+                    ee_quat = fk.links_quat[i_l_ee - link_offset, i_b]
+                    ee_pos = fk.links_pos[i_l_ee - link_offset, i_b] + gu.qd_transform_by_quat(
+                        targets.local_point[i_ee], ee_quat
+                    )
+                    # Full single-link Jacobian over the entity DOFs; axis masking is applied while stacking below.
+                    func_jacobian_scratch(
                         i_b,
-                        dof_start,
-                        local_point_i,
+                        i_b,
+                        entity_idx,
+                        joint_offset,
+                        i_l_ee,
+                        ee_pos,
                         ik_state.jacobian,
-                        dyn_state,
+                        fk.joints_xanchor,
+                        fk.joints_xaxis,
                         dyn_info,
                         rigid_config,
                     )
 
-                    # Copy the full single-link Jacobian into the stacked multi-link block for the effective DOFs,
-                    # masking the position rows by pos_mask and the rotation rows by rot_mask (the maskless
-                    # func_get_jacobian leaves axis selection to here).
                     for i_d_ in range(n_dofs):
                         i_d = targets.dofs_idx[i_d_]
                         for i_error in qd.static(range(3)):
@@ -356,7 +486,6 @@ def func_inverse_kinematics(
                                 ik_state.jacobian[i_error + 3, i_d, i_b] * targets.rot_mask[i_error]
                             )
 
-                # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
                 lu.mat_transpose(ik_state.jacobian_stacked, ik_state.jacobian_stacked_t, n_error_dims, n_dofs, i_b)
                 lu.mat_mul(
                     ik_state.jacobian_stacked,
@@ -377,21 +506,13 @@ def func_inverse_kinematics(
                     n_error_dims,
                     i_b,
                 )
-                lu.mat_mul_vec(
-                    ik_state.inv,
-                    ik_state.err_pose,
-                    ik_state.vec,
-                    n_error_dims,
-                    n_error_dims,
-                    i_b,
-                )
+                lu.mat_mul_vec(ik_state.inv, ik_state.err_pose, ik_state.vec, n_error_dims, n_error_dims, i_b)
 
-                for i_d_ in range(entity_n_dofs):  # IK_delta_qpos = IK_jacobian_T @ IK_vec
+                for i_d_ in range(entity_n_dofs):
                     ik_state.delta_qpos[i_d_, i_b] = 0
                 for i_d_ in range(n_dofs):
                     i_d = targets.dofs_idx[i_d_]
                     for j in range(n_error_dims):
-                        # NOTE: IK_delta_qpos uses the original indexing instead of the effective n_dofs
                         ik_state.delta_qpos[i_d, i_b] += (
                             ik_state.jacobian_stacked_t[i_d_, j, i_b] * ik_state.vec[j, i_b]
                         )
@@ -401,11 +522,13 @@ def func_inverse_kinematics(
                         ik_state.delta_qpos[i_d_, i_b], -max_step_size, max_step_size
                     )
 
-                # update q
-                gs.engine.solvers.rigid.rigid_solver.func_integrate_dq_entity(
-                    idx_in_solver,
+                func_integrate_dq_scratch(
                     i_b,
+                    i_b,
+                    entity_idx,
+                    q_offset,
                     ik_state.delta_qpos,
+                    fk.qpos,
                     dyn_info,
                     rigid_info,
                     rigid_config,
@@ -413,48 +536,58 @@ def func_inverse_kinematics(
                 )
 
             if not solved:
-                # re-compute final error if exited not due to solved
-                gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-                    idx_in_solver, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
+                # Recompute the residual for the final configuration when the iteration budget ran out.
+                func_forward_kinematics_scratch(
+                    i_b,
+                    i_b,
+                    i_b,
+                    entity_idx,
+                    link_offset,
+                    joint_offset,
+                    q_offset,
+                    fk.qpos,
+                    fk.links_pos,
+                    fk.links_quat,
+                    fk.joints_xanchor,
+                    fk.joints_xaxis,
+                    dyn_state,
+                    dyn_info,
+                    rigid_info,
+                    rigid_config,
                 )
                 solved = True
                 for i_ee in range(n_links):
                     i_l_ee = targets.links_idx[i_ee]
-
-                    tgt_pos_i = targets.pos[i_ee, i_b_]
-                    local_point_i = targets.local_point[i_ee]
-                    pos_curr_i = dyn_state.links.pos[i_l_ee, i_b] + gu.qd_transform_by_quat(
-                        local_point_i, dyn_state.links.quat[i_l_ee, i_b]
+                    ee_quat = fk.links_quat[i_l_ee - link_offset, i_b]
+                    ee_pos = fk.links_pos[i_l_ee - link_offset, i_b] + gu.qd_transform_by_quat(
+                        targets.local_point[i_ee], ee_quat
                     )
-                    err_pos_i = tgt_pos_i - pos_curr_i
+                    err_pos_i = targets.pos[i_ee, i_b_] - ee_pos
                     for k in range(3):
                         err_pos_i[k] *= targets.pos_mask[k] * targets.link_pos_mask[i_ee]
                     if err_pos_i.norm() > pos_tol:
                         solved = False
 
-                    tgt_quat_i = targets.quat[i_ee, i_b_]
                     err_rot_i = gu.qd_quat_to_rotvec(
-                        gu.qd_transform_quat_by_quat(gu.qd_inv_quat(dyn_state.links.quat[i_l_ee, i_b]), tgt_quat_i), EPS
+                        gu.qd_transform_quat_by_quat(gu.qd_inv_quat(ee_quat), targets.quat[i_ee, i_b_]), EPS
                     )
                     for k in range(3):
                         err_rot_i[k] *= targets.rot_mask[k] * targets.link_rot_mask[i_ee]
                     if err_rot_i.norm() > rot_tol:
                         solved = False
 
-                    # put into multi-link error array
                     for k in range(3):
                         ik_state.err_pose[i_ee * 6 + k, i_b] = err_pos_i[k]
                         ik_state.err_pose[i_ee * 6 + k + 3, i_b] = err_rot_i[k]
 
             if solved:
                 for i_q in range(n_qs):
-                    ik_state.qpos_best[i_q, i_b] = rigid_info.qpos[i_q + entity_q_start, i_b]
+                    ik_state.qpos_best[i_q, i_b] = fk.qpos[i_q, i_b]
                 for i_error in range(n_error_dims):
                     ik_state.err_pose_best[i_error, i_b] = ik_state.err_pose[i_error, i_b]
                 break
 
             else:
-                # copy to _IK_qpos if this sample is better
                 improved = True
                 for i_ee in range(n_links):
                     error_pos_i = qd.Vector([ik_state.err_pose[i_ee * 6 + i_error, i_b] for i_error in range(3)])
@@ -471,15 +604,13 @@ def func_inverse_kinematics(
 
                 if improved:
                     for i_q in range(n_qs):
-                        ik_state.qpos_best[i_q, i_b] = rigid_info.qpos[i_q + entity_q_start, i_b]
+                        ik_state.qpos_best[i_q, i_b] = fk.qpos[i_q, i_b]
                     for i_error in range(n_error_dims):
                         ik_state.err_pose_best[i_error, i_b] = ik_state.err_pose[i_error, i_b]
 
-                # Resample init q
                 if respect_joint_limit and i_sample < max_samples - 1:
-                    i_e = idx_in_solver
-                    entity_dof_start = dyn_info.entities.dof_start[i_e]
-                    for i_l in range(dyn_info.entities.link_start[i_e], dyn_info.entities.link_end[i_e]):
+                    entity_dof_start = dyn_info.entities.dof_start[entity_idx]
+                    for i_l in range(dyn_info.entities.link_start[entity_idx], dyn_info.entities.link_end[entity_idx]):
                         I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
 
                         must_resample = False
@@ -504,30 +635,23 @@ def func_inverse_kinematics(
                                 or dyn_info.joints.type[I_j] == gs.JOINT_TYPE.PRISMATIC
                             ) and not (qd.math.isinf(dof_limit[0]) or qd.math.isinf(dof_limit[1])):
                                 q_start = dyn_info.joints.q_start[I_j]
-                                # Counter-based draw: qd.random() per-thread stream ordering depends on the
-                                # parallel schedule, which would make the resampled solutions - and therefore
-                                # the returned configuration - nondeterministic across runs.
-                                rigid_info.qpos[q_start, i_b] = dof_limit[0] + gu.qd_hash01(
+                                # Counter-based draw keyed on (env, restart, DOF): a qd.random() per-thread stream
+                                # would order by the parallel schedule, making the resampled - and returned -
+                                # configuration nondeterministic across runs.
+                                fk.qpos[q_start - q_offset, i_b] = dof_limit[0] + gu.qd_hash01(
                                     seed, i_b, i_sample, q_start
                                 ) * (dof_limit[1] - dof_limit[0])
-                else:
-                    pass  # When respect_joint_limit=False, we can simply continue from the last solution
-
-        # restore original qpos and link state
-        for i_q in range(n_qs):
-            rigid_info.qpos[i_q + entity_q_start, i_b] = ik_state.qpos_orig[i_q, i_b]
-        gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
-            idx_in_solver, i_b, dyn_state, dyn_info, rigid_info, rigid_config, is_backward=False
-        )
 
 
 @qd.kernel(fastcache=True)
 def kernel_rigid_entity_inverse_kinematics(
-    idx_in_solver: int,
-    entity_q_start: int,
-    dof_start: int,
+    entity_idx: int,
+    q_offset: int,
+    link_offset: int,
+    joint_offset: int,
     targets: array_class.IKTargets,
     ik_state: array_class.IKState,
+    fk: array_class.IKScratchFK,
     dyn_state: array_class.DynState,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
@@ -546,11 +670,13 @@ def kernel_rigid_entity_inverse_kinematics(
 ):
     """Entity-facing launch wrapper forwarding the IK scratch and model scalars to func_inverse_kinematics."""
     func_inverse_kinematics(
-        idx_in_solver,
-        entity_q_start,
-        dof_start,
+        entity_idx,
+        q_offset,
+        link_offset,
+        joint_offset,
         targets,
         ik_state,
+        fk,
         dyn_state,
         dyn_info,
         rigid_info,

@@ -3128,6 +3128,7 @@ class RigidEntity(KinematicEntity):
 
         # Allocate the inverse-kinematics scratch for this call (see __init__ for why it is not cached on self).
         ik_state = array_class.get_ik_state(self.n_qs, self.n_dofs, self._IK_error_dim, self._solver._B)
+        ik_fk = array_class.get_ik_scratch_fk(self.n_qs, self.n_links, self.n_joints, self._solver._B)
 
         n_links = len(links)
         if n_links == 0:
@@ -3234,9 +3235,11 @@ class RigidEntity(KinematicEntity):
         kernel_rigid_entity_inverse_kinematics(
             self._idx_in_solver,
             self._q_start,
-            self._dof_start,
+            self._link_start,
+            self._joint_start,
             targets,
             ik_state,
+            ik_fk,
             self._solver.dyn_state,
             self._solver.dyn_info,
             self._solver.rigid_info,

@@ -401,7 +401,8 @@ def test_inverse_kinematics_multilink(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
-    # local_point positions an offset point of the link at the target instead of the link origin.
+    # local_point positions an offset point of the link at the target instead of the link origin. The floating-base
+    # go2 also exercises the FREE root joint (base translation and orientation DOFs) at a non-zero entity offset.
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
@@ -411,6 +412,12 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     )
     robot = scene.add_entity(
         morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    floating = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+            pos=(0.0, 1.5, 0.42),
+        ),
     )
     scene.build(n_envs=n_envs)
 
@@ -479,6 +486,42 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     fk_world_offset = gu.transform_by_quat(local_offset, fk_link_quat)
     fk_actual_point_pos = fk_link_pos + fk_world_offset
     assert_allclose(fk_actual_point_pos, target_pos, tol=tol)
+
+    # Floating-base IK: place an offset point of the go2 trunk (its FREE root link) at a target pose. The solution
+    # is reached purely through the FREE joint's translation and orientation DOFs.
+    base = floating.base_link
+    base_offset = torch.tensor([0.1, 0.05, 0.0], dtype=gs.tc_float, device=gs.device)
+    base_pos_all = torch.tensor(
+        [[0.1, 1.5, 0.6], [0.05, 1.45, 0.55], [0.15, 1.55, 0.5]], dtype=gs.tc_float, device=gs.device
+    )[:num_envs]
+    base_quat_all = torch.tensor(
+        [[0.9239, 0.0, 0.0, 0.3827], [1.0, 0.0, 0.0, 0.0], [0.9239, 0.0, 0.0, -0.3827]],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )[:num_envs]
+    base_pos = base_pos_all if n_envs > 0 else base_pos_all[0]
+    base_quat = base_quat_all if n_envs > 0 else base_quat_all[0]
+
+    base_qpos, base_err = floating.inverse_kinematics(
+        link=base,
+        pos=base_pos,
+        quat=base_quat,
+        local_point=base_offset,
+        pos_tol=tol,
+        rot_tol=tol,
+        max_solver_iters=100,
+        return_error=True,
+    )
+    assert_allclose(base_err, 0.0, atol=tol)
+
+    floating.set_qpos(base_qpos)
+    base_actual_point = base.get_pos() + gu.transform_by_quat(base_offset, base.get_quat())
+    assert_allclose(base_actual_point, base_pos, tol=tol)
+    base_quat_diff = gu.transform_quat_by_quat(gu.inv_quat(base_quat), base.get_quat())
+    base_theta = 2 * torch.arctan2(
+        torch.linalg.norm(base_quat_diff[..., 1:], dim=-1), torch.abs(base_quat_diff[..., 0])
+    )
+    assert_allclose(base_theta, 0.0, atol=tol)
 
     if show_viewer:
         scene.visualizer.update()

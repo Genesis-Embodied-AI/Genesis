@@ -3,7 +3,7 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
-from genesis.engine.solvers.rigid.abd.inverse_kinematics import func_ik_fk, func_ik_jacobian
+from genesis.engine.solvers.rigid.abd.inverse_kinematics import func_forward_kinematics_scratch, func_jacobian_scratch
 
 
 @qd.func
@@ -23,8 +23,8 @@ def func_planner_fk(
     planner_config: qd.template(),
 ):
     """Forward kinematics of the planned entity on planner-owned buffers, binding the planner offsets to the
-    shared scratch forward kinematics (see func_ik_fk)."""
-    func_ik_fk(
+    shared scratch forward kinematics (see func_forward_kinematics_scratch)."""
+    func_forward_kinematics_scratch(
         i_col_out,
         i_col_q,
         i_b,
@@ -58,8 +58,8 @@ def func_planner_ik_jacobian(
     planner_config: qd.template(),
 ):
     """Spatial Jacobian of the goal point from the per-column planner FK frames, binding the planner offsets to
-    the shared scratch Jacobian (see func_ik_jacobian)."""
-    func_ik_jacobian(
+    the shared scratch Jacobian (see func_jacobian_scratch)."""
+    func_jacobian_scratch(
         i_col,
         i_b,
         planner_config.entity_idx,
@@ -71,7 +71,6 @@ def func_planner_ik_jacobian(
         joints_xaxis,
         dyn_info,
         rigid_config,
-        planner_config.n_dp,
     )
 
 
