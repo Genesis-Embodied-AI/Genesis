@@ -1276,12 +1276,15 @@ class Planner:
         # leaves unsolved. Collision-free requests stay on the host ladder, which owns the straight-line shortcut
         # the graph kernel does not cover.
         planner_state.graph_counter.from_numpy(np.array(2 + max_retry, dtype=np.int32))
-        # Per-pass RRT tree-activity scratch (one entry per planned env's tree pair); the kernel rewrites it
-        # each escalation pass.
-        trees_is_active = np.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.np_int)
+        # Per-pass RRT tree-activity scratch (one entry per planned env's tree pair); the kernel rewrites it each
+        # escalation pass. The graph-kernel ndarray arguments must be device-resident: the sm90+ device-side graph
+        # loop rejects host ndarrays outright. The pre-sm90 host fallback would tolerate host arrays, but the fast
+        # path is the one that matters, so both the env index and the tree-activity scratch live on device.
+        envs_idx_dev = torch.as_tensor(envs_idx_np, dtype=gs.tc_int, device=gs.device)
+        trees_is_active = torch.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.tc_int, device=gs.device)
         kernel_planner_plan(
             planner_state.graph_counter,
-            envs_idx_np,
+            envs_idx_dev,
             trees_is_active,
             planner_state,
             planner_info,
