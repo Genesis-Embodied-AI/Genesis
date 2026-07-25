@@ -7,7 +7,7 @@ from genesis.utils import sdf as sdf_utils
 
 
 @qd.func
-def func_planner_snapshot_world(
+def func_snapshot_world(
     envs_idx: qd.types.ndarray(),
     obstacle_geoms_idx: qd.types.ndarray(),
     planner_world: array_class.PlannerWorldState,
@@ -40,7 +40,7 @@ def func_planner_snapshot_world(
 
 
 @qd.kernel
-def kernel_planner_snapshot_world(
+def kernel_snapshot_world(
     envs_idx: qd.types.ndarray(),
     obstacle_geoms_idx: qd.types.ndarray(),
     planner_world: array_class.PlannerWorldState,
@@ -48,11 +48,11 @@ def kernel_planner_snapshot_world(
     rigid_info: array_class.RigidInfo,
     planner_config: qd.template(),
 ):
-    func_planner_snapshot_world(envs_idx, obstacle_geoms_idx, planner_world, dyn_state, rigid_info, planner_config)
+    func_snapshot_world(envs_idx, obstacle_geoms_idx, planner_world, dyn_state, rigid_info, planner_config)
 
 
 @qd.func
-def func_planner_world_sd(
+def func_world_sd(
     i_gw,
     i_b,
     x,
@@ -60,8 +60,7 @@ def func_planner_world_sd(
     dyn_info: array_class.DynInfo,
     sdf_info: array_class.SDFInfo,
 ):
-    """
-    Signed distance from a world point to one snapshot obstacle geom.
+    """Signed distance from a world point to one snapshot obstacle geom.
 
     Analytic for box / capsule / cylinder (and sphere / plane inside sdf_func_world_local); grid signed distance
     field (SDF) for meshes and terrains. Grid answers are metric only within the geom's grid band - consumers gate
@@ -99,7 +98,7 @@ def func_planner_world_sd(
 
 
 @qd.func
-def func_planner_world_sd_grad(
+def func_world_sd_grad(
     i_gw,
     i_b,
     x,
@@ -109,7 +108,7 @@ def func_planner_world_sd_grad(
     sdf_info: array_class.SDFInfo,
     collider_static_config: qd.template(),
 ):
-    """World-frame gradient of func_planner_world_sd, unit-norm away from the geom."""
+    """World-frame gradient of func_world_sd, unit-norm away from the geom."""
     i_g = planner_world.geoms_idx[i_gw]
     g_pos = planner_world.geoms_pos[i_gw, i_b]
     g_quat = planner_world.geoms_quat[i_gw, i_b]
@@ -170,7 +169,7 @@ def func_planner_world_sd_grad(
 
 
 @qd.func
-def func_planner_world_aabb_skip(i_gw, i_b, x, band, planner_world: array_class.PlannerWorldState):
+def func_world_aabb_skip(i_gw, i_b, x, band, planner_world: array_class.PlannerWorldState):
     """True when x is farther than band from the geom's snapshot AABB - its signed distance surely exceeds band."""
     aabb_min = planner_world.geoms_aabb_min[i_gw, i_b]
     aabb_max = planner_world.geoms_aabb_max[i_gw, i_b]

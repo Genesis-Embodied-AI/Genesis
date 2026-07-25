@@ -5,8 +5,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
 
-from .cost import func_planner_collision_cost, func_planner_knot_cost_grad, func_planner_pose_cost
-from .kinematics import func_planner_fk, func_planner_spheres
+from .cost import func_collision_cost, func_knot_cost_grad, func_pose_cost
+from .kinematics import func_fk, func_spheres
 
 # Fixed step-size ladder of the parallel noisy line search (jittered per candidate and iteration).
 _LS_LADDER = (1.0, 0.5, 0.2, 0.08, 0.03, 0.01, 0.003, 0.001)
@@ -15,9 +15,10 @@ _MPPI_ANNEAL = 0.7
 
 
 def build_noise_basis(n_knots):
-    """
-    Smooth MPPI noise basis: Gaussian bumps over the knot axis, one column per noise knot, with zero rows at the
-    clamped boundary knots so perturbations preserve the boundary conditions. Deterministic pure numpy.
+    """Smooth MPPI noise basis: Gaussian bumps over the knot axis, one column per noise knot.
+
+    Zero rows at the clamped boundary knots keep perturbations inside the boundary conditions. Deterministic pure
+    numpy.
     """
     n_noise = array_class.PLANNER_N_NOISE_KNOTS
     t = np.linspace(0.0, 1.0, n_knots)
@@ -32,18 +33,18 @@ def build_noise_basis(n_knots):
 
 
 @qd.func
-def func_planner_traj_cost(
+def func_traj_cost(
     i_c,
     i_b,
     i_e_col,
     col_base,
     qpos_cols: qd.Tensor,
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -52,9 +53,10 @@ def func_planner_traj_cost(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """
-    Total cost of one full trajectory read from qpos_cols[:, col_base + w] - the cost-only evaluator of MPPI
-    rollouts and line-search trials. Serial over knots through the thread's private eval column; the sweep
+    """Total cost of one full trajectory read from qpos_cols.
+
+    This is the cost-only evaluator of MPPI rollouts and line-search trials. Serial over knots through the thread's
+    private eval column; the sweep
     allowance uses the joint-space Lipschitz reach bound (no neighbor FK needed), clamped like the gradient path.
     """
     n_knots = qd.static(planner_config.n_knots)
@@ -80,7 +82,7 @@ def func_planner_traj_cost(
                 dq_inf = qd.max(dq_inf, qd.abs(qpos_cols[i_dp, col_base + i_w + 1] - q))
         swp = qd.min(swp, planner_info.cost.eps_act[None])
 
-        func_planner_fk(
+        func_fk(
             i_e_col,
             i_e_col,
             i_b,
@@ -95,7 +97,7 @@ def func_planner_traj_cost(
             rigid_config=rigid_config,
             planner_config=planner_config,
         )
-        func_planner_spheres(
+        func_spheres(
             i_e_col,
             i_b,
             links_pos=planner_state.fk.eval.links_pos,
@@ -104,7 +106,7 @@ def func_planner_traj_cost(
             planner_info=planner_info,
             planner_config=planner_config,
         )
-        coll_cost, _, _ = func_planner_collision_cost(
+        coll_cost, _, _ = func_collision_cost(
             i_e_col,
             i_b,
             swp,
@@ -112,10 +114,10 @@ def func_planner_traj_cost(
             links_pos=planner_state.fk.eval.links_pos,
             links_quat=planner_state.fk.eval.links_quat,
             spheres_pos=planner_state.fk.eval.spheres_pos,
-            planner_info=planner_info,
             planner_world=planner_world,
             collider_state=collider_state,
             gjk_state=gjk_state,
+            planner_info=planner_info,
             dyn_info=dyn_info,
             collider_info=collider_info,
             sdf_info=sdf_info,
@@ -126,7 +128,7 @@ def func_planner_traj_cost(
         )
         cost += coll_cost
 
-        # Smoothness / limit / posture terms, identical to the gradient path (see func_planner_knot_cost_grad).
+        # Smoothness / limit / posture terms, identical to the gradient path (see func_knot_cost_grad).
         for i_dp in range(n_dp):
             q = qpos_cols[i_dp, col_base + i_w]
             if 1 <= i_w < n_knots - 1:
@@ -152,7 +154,7 @@ def func_planner_traj_cost(
             cost += planner_info.cost.w_posture[None] * (q - ref) ** 2
 
         if planner_info.cost.boundary.has_pose_goal[None] and i_w == n_knots - 1:
-            cost += func_planner_pose_cost(
+            cost += func_pose_cost(
                 i_e_col,
                 i_b,
                 links_pos=planner_state.fk.eval.links_pos,
@@ -165,13 +167,13 @@ def func_planner_traj_cost(
 
 
 @qd.func
-def func_planner_candidate_cost_grad(
+def func_candidate_cost_grad(
     i_c,
     i_b,
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     sdf_info: array_class.SDFInfo,
@@ -183,7 +185,7 @@ def func_planner_candidate_cost_grad(
     n_knots = qd.static(planner_config.n_knots)
     for i_w in range(n_knots):
         i_cw = i_c * n_knots + i_w
-        func_planner_fk(
+        func_fk(
             i_cw,
             i_cw,
             i_b,
@@ -198,7 +200,7 @@ def func_planner_candidate_cost_grad(
             rigid_config=rigid_config,
             planner_config=planner_config,
         )
-        func_planner_spheres(
+        func_spheres(
             i_cw,
             i_b,
             links_pos=planner_state.fk.links_pos,
@@ -210,14 +212,14 @@ def func_planner_candidate_cost_grad(
     cost = gs.qd_float(0.0)
     for i_w in range(n_knots):
         i_cw = i_c * n_knots + i_w
-        func_planner_knot_cost_grad(
+        func_knot_cost_grad(
             i_c,
             i_w,
             i_cw,
             i_b,
             planner_state=planner_state,
-            planner_info=planner_info,
             planner_world=planner_world,
+            planner_info=planner_info,
             dyn_info=dyn_info,
             rigid_info=rigid_info,
             sdf_info=sdf_info,
@@ -230,16 +232,16 @@ def func_planner_candidate_cost_grad(
 
 
 @qd.func
-def func_planner_mask_clamped(
-    i_c, i_w, i_b, planner_info: array_class.PlannerEntityInfo, planner_config: qd.template()
-):
-    """True when knot i_w is clamped: the start and goal pairs (Cartesian goals clamp to their inverse-kinematics
-    solution, whose residual is far below the goal tolerance)."""
+def func_mask_clamped(i_c, i_w, i_b, planner_info: array_class.PlannerEntityInfo, planner_config: qd.template()):
+    """True when knot i_w is clamped, which the start and goal knot pairs are.
+
+    A Cartesian goal clamps to its inverse-kinematics solution, whose residual is far below the goal tolerance.
+    """
     return i_w <= 1 or i_w >= qd.static(planner_config.n_knots) - 2
 
 
 @qd.func
-def func_planner_seed(
+def func_seed(
     graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
@@ -293,7 +295,7 @@ def func_planner_seed(
 
 
 @qd.func
-def func_planner_seed_from_rrt(
+def func_seed_from_rrt(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_config: qd.template(),
@@ -434,14 +436,14 @@ def func_planner_seed_from_rrt(
 
 
 @qd.func
-def func_planner_mppi(
+def func_mppi(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -450,12 +452,12 @@ def func_planner_mppi(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """
-    Iteration-resident MPPI warmup: every candidate refines its mean trajectory through annealed smooth-noise
-    particle rollouts and softmax-weighted updates, entirely inside its own thread (one kernel launch per phase,
-    deterministic per backend - all randomness comes from the counter-based hash keyed by content indices).
-    Particle noise is regenerated on demand instead of stored: pass one scores the particles, pass two rebuilds
-    the winning mixture.
+    """Iteration-resident MPPI warmup: every candidate refines its mean trajectory inside its own thread.
+
+    A candidate advances through annealed smooth-noise particle rollouts and softmax-weighted updates in one kernel
+    launch per phase, deterministic per backend since all randomness comes from the counter-based hash keyed by
+    content indices. Particle noise is regenerated on demand instead of stored: pass one scores the particles, pass
+    two rebuilds the winning mixture.
     """
     n_knots = qd.static(planner_config.n_knots)
     n_seeds = qd.static(planner_config.n_seeds)
@@ -487,7 +489,7 @@ def func_planner_mppi(
                                 coeffs[i_k] = gu.qd_hash_gauss(planner_info.mppi.seed_key[None], i_c, key, 0)
                         for i_w in range(n_knots):
                             q = planner_state.cost.qpos[i_dp, col_base + i_w]
-                            if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
+                            if not func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                 delta = gs.qd_float(0.0)
                                 for i_k in range(n_noise):
                                     delta += planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k]
@@ -498,18 +500,18 @@ def func_planner_mppi(
                                     planner_info.fk.dofs.q_limit_upper[i_dp],
                                 )
                             planner_state.lbfgs.trial_qpos[i_dp, col_base + i_w] = q
-                    costs[i_p] = func_planner_traj_cost(
+                    costs[i_p] = func_traj_cost(
                         i_c,
                         i_b,
                         i_c,
                         col_base,
                         qpos_cols=planner_state.lbfgs.trial_qpos,
                         planner_state=planner_state,
-                        planner_info=planner_info,
                         planner_world=planner_world,
                         dyn_state=dyn_state,
                         collider_state=collider_state,
                         gjk_state=gjk_state,
+                        planner_info=planner_info,
                         dyn_info=dyn_info,
                         rigid_info=rigid_info,
                         collider_info=collider_info,
@@ -546,13 +548,13 @@ def func_planner_mppi(
                                 key = ((it * n_particles_max + i_p) * n_noise + i_k) * n_dp + i_dp
                                 coeffs[i_k] = gu.qd_hash_gauss(planner_info.mppi.seed_key[None], i_c, key, 0)
                             for i_w in range(n_knots):
-                                if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
+                                if not func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                     delta = gs.qd_float(0.0)
                                     for i_k in range(n_noise):
                                         delta += planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k]
                                     delta_mean[i_w] += weight * delta * anneal * planner_info.mppi.sigma[i_dp]
                         for i_w in range(n_knots):
-                            if not func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
+                            if not func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                 planner_state.cost.qpos[i_dp, col_base + i_w] = qd.math.clamp(
                                     planner_state.cost.qpos[i_dp, col_base + i_w] + delta_mean[i_w],
                                     planner_info.fk.dofs.q_limit_lower[i_dp],
@@ -560,50 +562,15 @@ def func_planner_mppi(
                                 )
 
 
-@qd.kernel
-def kernel_planner_mppi(
-    envs_idx: qd.types.ndarray(),
-    planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
-    planner_world: array_class.PlannerWorldState,
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    gjk_state: array_class.GJKState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
-    sdf_info: array_class.SDFInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-    planner_config: qd.template(),
-):
-    func_planner_mppi(
-        envs_idx,
-        planner_state,
-        planner_info,
-        planner_world,
-        dyn_state,
-        collider_state,
-        gjk_state,
-        dyn_info,
-        rigid_info,
-        collider_info,
-        sdf_info,
-        rigid_config,
-        collider_static_config,
-        planner_config,
-    )
-
-
 @qd.func
-def func_planner_lbfgs(
+def func_lbfgs(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -612,10 +579,10 @@ def func_planner_lbfgs(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """
-    Iteration-resident limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) refinement: the whole two-loop
-    recursion + step-ladder line search runs inside each candidate's thread. Everything is serial per candidate
-    (deterministic); clamped knots and locked DOFs never move (their gradient entries are zeroed).
+    """Iteration-resident limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) refinement of every candidate.
+
+    The whole two-loop recursion and step-ladder line search runs inside the candidate's own thread, serial and so
+    deterministic. Clamped knots and locked DOFs never move, their gradient entries being zeroed.
     """
     n_knots = qd.static(planner_config.n_knots)
     n_seeds = qd.static(planner_config.n_seeds)
@@ -628,13 +595,13 @@ def func_planner_lbfgs(
             i_b = envs_idx[i_c // n_seeds]
             col_base = i_c * n_knots
 
-            cost = func_planner_candidate_cost_grad(
+            cost = func_candidate_cost_grad(
                 i_c,
                 i_b,
                 planner_state=planner_state,
-                planner_info=planner_info,
                 planner_world=planner_world,
                 dyn_state=dyn_state,
+                planner_info=planner_info,
                 dyn_info=dyn_info,
                 rigid_info=rigid_info,
                 sdf_info=sdf_info,
@@ -644,7 +611,7 @@ def func_planner_lbfgs(
             )
             # Zero the gradient of clamped knots so the whole optimizer sees the reduced problem.
             for i_w in range(n_knots):
-                if func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
+                if func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                     for i_dp in range(n_dp):
                         planner_state.cost.grad[i_dp, i_c, i_w] = 0.0
 
@@ -726,7 +693,7 @@ def func_planner_lbfgs(
                 ):
                     alpha = planner_info.lbfgs.ls_ladder[i_t] * jitter
                     for i_w in range(n_knots):
-                        is_clamped = func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config)
+                        is_clamped = func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config)
                         for i_dp in range(n_dp):
                             q = planner_state.cost.qpos[i_dp, col_base + i_w]
                             if not is_clamped:
@@ -736,18 +703,18 @@ def func_planner_lbfgs(
                                     planner_info.fk.dofs.q_limit_upper[i_dp],
                                 )
                             planner_state.lbfgs.trial_qpos[i_dp, col_base + i_w] = q
-                    cost_trial = func_planner_traj_cost(
+                    cost_trial = func_traj_cost(
                         i_c,
                         i_b,
                         i_c,
                         col_base,
                         qpos_cols=planner_state.lbfgs.trial_qpos,
                         planner_state=planner_state,
-                        planner_info=planner_info,
                         planner_world=planner_world,
                         dyn_state=dyn_state,
                         collider_state=collider_state,
                         gjk_state=gjk_state,
+                        planner_info=planner_info,
                         dyn_info=dyn_info,
                         rigid_info=rigid_info,
                         collider_info=collider_info,
@@ -768,7 +735,7 @@ def func_planner_lbfgs(
                     n_stall = 0
                     # Accept the step; stage s = x_new - x_old into the history slot.
                     for i_w in range(n_knots):
-                        is_clamped = func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config)
+                        is_clamped = func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config)
                         for i_dp in range(n_dp):
                             q_old = planner_state.cost.qpos[i_dp, col_base + i_w]
                             planner_state.lbfgs.qpos_prev[i_dp, i_c, i_w] = q_old
@@ -779,13 +746,13 @@ def func_planner_lbfgs(
                                     planner_info.fk.dofs.q_limit_lower[i_dp],
                                     planner_info.fk.dofs.q_limit_upper[i_dp],
                                 )
-                    cost = func_planner_candidate_cost_grad(
+                    cost = func_candidate_cost_grad(
                         i_c,
                         i_b,
                         planner_state=planner_state,
-                        planner_info=planner_info,
                         planner_world=planner_world,
                         dyn_state=dyn_state,
+                        planner_info=planner_info,
                         dyn_info=dyn_info,
                         rigid_info=rigid_info,
                         sdf_info=sdf_info,
@@ -794,7 +761,7 @@ def func_planner_lbfgs(
                         planner_config=planner_config,
                     )
                     for i_w in range(n_knots):
-                        if func_planner_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
+                        if func_mask_clamped(i_c, i_w, i_b, planner_info, planner_config):
                             for i_dp in range(n_dp):
                                 planner_state.cost.grad[i_dp, i_c, i_w] = 0.0
                     # Curvature-guarded history push.
@@ -821,14 +788,14 @@ def func_planner_lbfgs(
 
 
 @qd.kernel
-def kernel_planner_lbfgs(
+def kernel_lbfgs(
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -837,14 +804,14 @@ def kernel_planner_lbfgs(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    func_planner_lbfgs(
+    func_lbfgs(
         envs_idx,
         planner_state,
-        planner_info,
         planner_world,
         dyn_state,
         collider_state,
         gjk_state,
+        planner_info,
         dyn_info,
         rigid_info,
         collider_info,

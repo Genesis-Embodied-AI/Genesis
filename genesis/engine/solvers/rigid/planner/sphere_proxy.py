@@ -54,8 +54,7 @@ def _greedy_sphere_cover(candidates_pos, candidates_radius, targets, delta_cover
 
 
 def build_geom_sphere_proxy(geom, n_max_spheres, sphere_pad):
-    """
-    Build a conservative sphere cover of a geom's collision volume, in the link frame.
+    """Build a conservative sphere cover of a geom's collision volume, in the link frame.
 
     The union of the returned spheres contains the geom volume: sphere centers are interior signed distance field
     (SDF) grid nodes (radius = interior depth + padding) or surface vertices for thin geoms, greedily selected to

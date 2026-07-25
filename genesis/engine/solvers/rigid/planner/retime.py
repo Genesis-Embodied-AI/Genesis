@@ -12,9 +12,9 @@ _BLEND_DEV_MAX = 1.5e-3
 
 
 def retime_trajectory(qpos_knots, vel_limit, acc_limit, dofs_reach, num_waypoints, scene_dt):
-    """
-    Batched retiming and resampling of the knot trajectory by velocity profiling along the knot polyline: the
-    output positions follow the certified piecewise-linear path (what the validator sweeps), so retiming cannot
+    """Batched retiming and resampling of the knot trajectory by velocity profiling along the knot polyline.
+
+    The output positions follow the certified piecewise-linear path that the validator sweeps, so retiming cannot
     overshoot the knots, and the only deviation is the corner blends' bounded one (see _BLEND_DEV_MAX).
 
     The profile is trapezoidal in arc length (max-norm of the per-step joint motion) with the speed varying at

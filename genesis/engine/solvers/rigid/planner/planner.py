@@ -17,8 +17,7 @@ from .graph import (
     _RRT_N_SHORTCUT,
     _RRT_STALL_ITERS,
     _RRT_STEER_STEP,
-    func_planner_rrt_connect,
-    kernel_planner_rrt_connect,
+    func_rrt_connect,
 )
 from .retime import retime_trajectory
 from .sphere_proxy import build_geom_sphere_proxy
@@ -26,14 +25,13 @@ from .trajopt import (
     _LS_LADDER,
     _MPPI_ANNEAL,
     build_noise_basis,
-    func_planner_lbfgs,
-    func_planner_mppi,
-    func_planner_seed,
-    func_planner_seed_from_rrt,
-    kernel_planner_lbfgs,
-    kernel_planner_mppi,
+    func_lbfgs,
+    func_mppi,
+    func_seed,
+    func_seed_from_rrt,
+    kernel_lbfgs,
 )
-from .world import kernel_planner_snapshot_world
+from .world import kernel_snapshot_world
 
 # Sphere-fill budgets (per geom) and default derivative limits when the asset carries none.
 _N_MAX_SPHERES_PER_GEOM = 8
@@ -58,11 +56,11 @@ _STRAIGHTEN_RADII = (0.05, 0.015, 0.005)
 
 
 def _straighten_knots(qpos_knots, dofs_reach, radius):
-    """
-    Snap near-collinear knot runs onto their chords within the given reach-weighted radius (see
-    _STRAIGHTEN_RADII): Douglas-Peucker on the reach-weighted deviation selects the knots that carry the path's
-    shape, and every pruned knot moves to its projection on the surviving chord, ordered along it so the
-    polyline never backtracks. Endpoints (and the duplicated boundary knots) are always kept.
+    """Snap near-collinear knot runs onto their chords within the given reach-weighted radius.
+
+    Douglas-Peucker on the reach-weighted deviation selects the knots that carry the path's shape (see
+    _STRAIGHTEN_RADII), and every pruned knot moves to its projection on the surviving chord, ordered along it so
+    the polyline never backtracks. Endpoints, and the duplicated boundary knots, are always kept.
     """
     B, W, n_dp = qpos_knots.shape
     reach = tensor_to_array(dofs_reach)
@@ -94,8 +92,7 @@ def _straighten_knots(qpos_knots, dofs_reach, radius):
 
 @dataclasses.dataclass(frozen=True)
 class PlannerPath:
-    """
-    Time-parametrized planned trajectory.
+    """Time-parametrized planned trajectory.
 
     Waypoints are spaced ``dt`` seconds apart per env; ``is_valid`` marks the envs whose path was certified
     collision-free at the requested safety margin - paths of failed envs hold the start configuration at rest and
@@ -109,7 +106,7 @@ class PlannerPath:
     is_valid: torch.Tensor
 
 
-class PlannerAttachment(NamedTuple):
+class Attachment(NamedTuple):
     """One entity carried rigidly during the plan: the attach link and the per-env grasp transform."""
 
     entity: object
@@ -118,7 +115,7 @@ class PlannerAttachment(NamedTuple):
     quat_offset: torch.Tensor
 
 
-class _PlannerBudgets(NamedTuple):
+class _Budgets(NamedTuple):
     """Iteration budgets of the trajectory optimizer, resolved per arm (see _resolve_budgets)."""
 
     mppi_n_iters: int
@@ -128,9 +125,11 @@ class _PlannerBudgets(NamedTuple):
 
 
 class _EntityContext(NamedTuple):
-    """Per-entity planner buffers, allocated once at the entity's first plan and reused forever. gjk_state is
-    the planner-owned scratch of the collider's GJK distance queries, one column per eval column (see
-    func_planner_gjk_clearance in cost.py)."""
+    """Per-entity planner buffers, allocated once at the entity's first plan and reused forever.
+
+    gjk_state is the planner-owned scratch of the collider's Gilbert-Johnson-Keerthi (GJK) distance queries, one
+    column per eval column (see func_gjk_clearance in cost.py).
+    """
 
     planner_config: object
     planner_info: object
@@ -141,7 +140,7 @@ class _EntityContext(NamedTuple):
 
 
 @qd.kernel
-def kernel_planner_set_plan_scalars(
+def kernel_set_plan_scalars(
     goal_link_idx: int,
     seed_key: int,
     has_pose_goal: int,
@@ -183,7 +182,7 @@ def kernel_planner_set_plan_scalars(
 
 
 @qd.kernel
-def kernel_planner_set_opt_phase(
+def kernel_set_opt_phase(
     seed_key: int,
     w_obs: float,
     w_self: float,
@@ -206,7 +205,7 @@ def kernel_planner_set_opt_phase(
 
 
 @qd.kernel
-def kernel_planner_set_clearance(
+def kernel_set_clearance(
     d_safe: float,
     planner_info: array_class.PlannerEntityInfo,
 ):
@@ -232,9 +231,11 @@ def _set_plan_scalars(
     eps_self,
     d_safe,
 ):
-    """One packed per-plan update of every runtime scalar (goal designation, noise key, cost weights, clearance)
-    together with the lock-mask, attach-mask, and errno clears: in place through zero-copy views when available,
-    a single kernel launch otherwise."""
+    """One packed per-plan update of every runtime scalar, with the lock-mask, attach-mask and errno clears.
+
+    The scalars are the goal designation, noise key, cost weights and clearance. The update goes in place through
+    zero-copy views when available, a single kernel launch otherwise.
+    """
     if gs.use_zerocopy:
         for field, value in (
             (planner_info.cost.boundary.goal_link_idx, goal_link_idx),
@@ -258,7 +259,7 @@ def _set_plan_scalars(
             field_t = qd_to_torch(field, copy=False)
             field_t[...] = value
     else:
-        kernel_planner_set_plan_scalars(
+        kernel_set_plan_scalars(
             goal_link_idx,
             seed_key,
             int(has_pose_goal),
@@ -294,9 +295,7 @@ def _set_opt_phase(planner_info, seed_key, w_obs, w_self, w_acc, w_jerk, w_pose_
             field_t = qd_to_torch(field, copy=False)
             field_t[...] = value
     else:
-        kernel_planner_set_opt_phase(
-            seed_key, w_obs, w_self, w_acc, w_jerk, w_pose_pos, w_pose_rot, eps_act, planner_info
-        )
+        kernel_set_opt_phase(seed_key, w_obs, w_self, w_acc, w_jerk, w_pose_pos, w_pose_rot, eps_act, planner_info)
 
 
 def _set_clearance(planner_info, d_safe):
@@ -305,11 +304,11 @@ def _set_clearance(planner_info, d_safe):
         d_safe_t = qd_to_torch(planner_info.cost.d_safe, copy=False)
         d_safe_t[...] = d_safe
     else:
-        kernel_planner_set_clearance(d_safe, planner_info)
+        kernel_set_clearance(d_safe, planner_info)
 
 
 @qd.func
-def func_planner_fold_and_check_exit(
+def func_fold_and_check_exit(
     graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
@@ -355,16 +354,16 @@ def func_planner_fold_and_check_exit(
 
 
 @qd.kernel(graph=True, fastcache=True)
-def kernel_planner_plan(
+def kernel_plan(
     graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -397,14 +396,14 @@ def kernel_planner_plan(
             # allowances would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the
             # goal side is stripped before the probe and folded back in once the goals are resolved (the ladder
             # validator below then excuses the resolved goal's own contacts). See the host ladder for the rationale.
-            cost_mod.func_planner_boundary_exclusions(
+            cost_mod.func_boundary_exclusions(
                 envs_idx,
                 planner_state,
-                planner_info,
                 planner_world,
                 dyn_state,
                 collider_state,
                 gjk_state,
+                planner_info,
                 dyn_info,
                 rigid_info,
                 collider_info,
@@ -415,15 +414,15 @@ def kernel_planner_plan(
                 include_goal=False,
                 errno=errno,
             )
-            cost_mod.func_planner_resolve_goal(
+            cost_mod.func_resolve_goal(
                 graph_counter,
                 envs_idx,
                 planner_state,
-                planner_info,
                 planner_world,
                 dyn_state,
                 collider_state,
                 gjk_state,
+                planner_info,
                 dyn_info,
                 rigid_info,
                 collider_info,
@@ -433,14 +432,14 @@ def kernel_planner_plan(
                 planner_config,
                 ignore_collision_static,
             )
-            cost_mod.func_planner_boundary_exclusions(
+            cost_mod.func_boundary_exclusions(
                 envs_idx,
                 planner_state,
-                planner_info,
                 planner_world,
                 dyn_state,
                 collider_state,
                 gjk_state,
+                planner_info,
                 dyn_info,
                 rigid_info,
                 collider_info,
@@ -465,15 +464,15 @@ def kernel_planner_plan(
                     trees_is_active[i_t] = 1
             d_safe_opt = planner_info.cost.d_safe[None]
             planner_info.cost.d_safe[None] = d_safe_opt - 0.01
-            func_planner_rrt_connect(
+            func_rrt_connect(
                 envs_idx,
                 trees_is_active,
                 planner_state,
-                planner_info,
                 planner_world,
                 dyn_state,
                 collider_state,
                 gjk_state,
+                planner_info,
                 dyn_info,
                 rigid_info,
                 collider_info,
@@ -483,21 +482,21 @@ def kernel_planner_plan(
                 planner_config,
             )
             planner_info.cost.d_safe[None] = d_safe_opt
-            func_planner_seed_from_rrt(envs_idx, planner_state, planner_config)
-        func_planner_seed(graph_counter, envs_idx, planner_state, planner_info, planner_config)
+            func_seed_from_rrt(envs_idx, planner_state, planner_config)
+        func_seed(graph_counter, envs_idx, planner_state, planner_info, planner_config)
         qd.loop_config(name="planner_plan_mark_seeded")
         for i_b_ in range(envs_idx.shape[0]):
             if not planner_state.is_env_solved[envs_idx[i_b_]]:
                 planner_state.is_env_seeded[envs_idx[i_b_]] = True
         if qd.static(not ignore_collision_static):
-            func_planner_mppi(
+            func_mppi(
                 envs_idx,
                 planner_state,
-                planner_info,
                 planner_world,
                 dyn_state,
                 collider_state,
                 gjk_state,
+                planner_info,
                 dyn_info,
                 rigid_info,
                 collider_info,
@@ -506,14 +505,14 @@ def kernel_planner_plan(
                 collider_static_config,
                 planner_config,
             )
-            func_planner_lbfgs(
+            func_lbfgs(
                 envs_idx,
                 planner_state,
-                planner_info,
                 planner_world,
                 dyn_state,
                 collider_state,
                 gjk_state,
+                planner_info,
                 dyn_info,
                 rigid_info,
                 collider_info,
@@ -529,14 +528,14 @@ def kernel_planner_plan(
         # would leave every cluttered env for the host ladder.
         d_safe_opt = planner_info.cost.d_safe[None]
         planner_info.cost.d_safe[None] = d_safe_opt - 0.02
-        cost_mod.func_planner_validate(
+        cost_mod.func_validate(
             envs_idx,
             planner_state,
-            planner_info,
             planner_world,
             dyn_state,
             collider_state,
             gjk_state,
+            planner_info,
             dyn_info,
             rigid_info,
             collider_info,
@@ -547,14 +546,11 @@ def kernel_planner_plan(
             check_start=True,
         )
         planner_info.cost.d_safe[None] = d_safe_opt
-        func_planner_fold_and_check_exit(
-            graph_counter, envs_idx, planner_state, planner_config, ignore_collision_static
-        )
+        func_fold_and_check_exit(graph_counter, envs_idx, planner_state, planner_config, ignore_collision_static)
 
 
 class Planner:
-    """
-    Optimization-based motion planner of the rigid solver (see plan_path for the user entrypoint).
+    """Optimization-based motion planner of the rigid solver (see plan_path for the user entrypoint).
 
     Planning runs entirely on planner-owned scratch buffers: the live solver state is only ever read (world
     snapshot, start configuration, grasp transforms), so a plan can never alter the kinematic state of the scene.
@@ -594,9 +590,9 @@ class Planner:
             else:
                 n_seeds = min(max(4096 // B, 12), 64)
         if arm == gs.planner_arm.SERIAL:
-            budgets = _PlannerBudgets(mppi_n_iters=6, mppi_n_particles=4, lbfgs_n_iters=48, ls_n_trials=4)
+            budgets = _Budgets(mppi_n_iters=6, mppi_n_particles=4, lbfgs_n_iters=48, ls_n_trials=4)
         else:
-            budgets = _PlannerBudgets(mppi_n_iters=12, mppi_n_particles=8, lbfgs_n_iters=48, ls_n_trials=4)
+            budgets = _Budgets(mppi_n_iters=12, mppi_n_particles=8, lbfgs_n_iters=48, ls_n_trials=4)
         return arm, n_seeds, budgets
 
     def _get_entity_context(self, entity):
@@ -787,7 +783,7 @@ class Planner:
         planner_state = array_class.get_planner_state(planner_config, B)
         # Planner-owned scratch of the collider's GJK distance queries, one column per eval column (the RRT
         # tree columns alias the low eval columns). EPA never runs in the planner, so the contact-only layout
-        # suffices - see func_planner_gjk_clearance in cost.py.
+        # suffices - see func_gjk_clearance in cost.py.
         gjk_state = array_class.get_gjk_state_contact_only(B * n_seeds * planner_config.n_eval_per_candidate)
         errno = array_class.V(dtype=gs.qd_int, shape=(B,))
 
@@ -893,11 +889,12 @@ class Planner:
         return context
 
     def _compute_dof_reach(self, entity, spheres_link_idx, spheres_pos_local, spheres_radius, links_verts_extent):
-        """
-        Config-independent per-DOF workspace reach bound: chain-length sum of the link offsets distal of the
-        joint, plus the largest material extent on that subtree, plus the prismatic ranges. Bounds how far any
-        checked material point can move per radian (or meter) of that DOF - the Lipschitz constant of the
-        forward-kinematics map used by every swept-collision cover. The extent covers both the proxy spheres
+        """Config-independent per-DOF workspace reach bound.
+
+        The bound is the chain-length sum of the link offsets distal of the joint, plus the largest material extent
+        on that subtree, plus the prismatic ranges. It bounds how far any checked material point can move per radian
+        (or meter) of that DOF - the Lipschitz constant of the forward-kinematics map used by every swept-collision
+        cover. The extent covers both the proxy spheres
         and the collision-mesh vertices: mesh points can lie outside every proxy sphere (the fill proxy is not
         a strict cover), and the exact re-checks certify those points, so the sweep must bound their motion too.
         """
@@ -931,10 +928,10 @@ class Planner:
         return dof_reach
 
     def _compute_self_pairs_reach(self, entity, spheres_link_idx, self_pairs, dof_reach):
-        """
-        Per-pair relative reach bound: the sum of the reach of the DOFs on the kinematic path between the pair's
-        links - only those DOFs change the pair's relative pose, so this bounds their mutual approach per radian
-        of L-inf joint motion far tighter than the absolute reach of the whole chain.
+        """Per-pair relative reach bound: the summed reach of the DOFs on the path between the pair's links.
+
+        Only those DOFs change the pair's relative pose, so this bounds their mutual approach per radian of L-inf
+        joint motion far tighter than the absolute reach of the whole chain.
         """
         links = list(entity.links)
         dofs_of_link = {}
@@ -970,14 +967,15 @@ class Planner:
         pos_offset, quat_offset = gu.inv_transform_pos_quat_by_trans_quat(obj_pos, obj_quat, link_pos, link_quat)
         if pos_offset.ndim == 1:
             pos_offset, quat_offset = pos_offset[None], quat_offset[None]
-        return PlannerAttachment(entity=held, link=attach_link, pos_offset=pos_offset, quat_offset=quat_offset)
+        return Attachment(entity=held, link=attach_link, pos_offset=pos_offset, quat_offset=quat_offset)
 
     def _detect_held_attachments(self, entity, context, envs_idx, excluded_entities):
-        """
-        Auto-grasp characterization from the live state and the planner's own sphere proxies: an entity is held
-        iff proxy spheres of at least two distinct robot links touch it with an antipodal squeeze (some pair of
-        contact directions opposing), which distinguishes a grasped object from one merely resting against a
-        link. The attach frame is the lowest common ancestor of the squeezing links, and every DOF between that
+        """Auto-grasp characterization from the live state and the planner's own sphere proxies.
+
+        An entity is held iff proxy spheres of at least two distinct robot links touch it with an antipodal squeeze
+        (some pair of contact directions opposing), which distinguishes a grasped object from one merely resting
+        against a link. The attach frame is the lowest common ancestor of the squeezing links, and every DOF between
+        that
         ancestor and the squeezing links is locked for the plan (the grasp transform is only rigid while the
         squeeze geometry holds). Objects carried by a single link (suction, tray) need the explicit arguments.
         """
@@ -1119,7 +1117,8 @@ class Planner:
             if goal_quat.ndim == 1 and solver.n_envs > 0:
                 goal_quat = goal_quat[None].expand(B_plan, 4)
         if has_pose_goal:
-            qpos_goal_t = None  # resolved below by the certified multi-restart inverse kinematics
+            # Resolved below by the certified multi-restart inverse kinematics.
+            qpos_goal_t = None
         else:
             qpos_goal_t = torch.as_tensor(qpos_goal, dtype=gs.tc_float, device=gs.device)
             if qpos_goal_t.ndim == 1:
@@ -1210,7 +1209,7 @@ class Planner:
             ],
             dtype=gs.np_int,
         )
-        kernel_planner_snapshot_world(
+        kernel_snapshot_world(
             envs_idx_np, obstacle_geoms_idx, planner_world, solver.dyn_state, solver.rigid_info, planner_config
         )
         # Grid signed distance fields answer metrically only within their padded box; analytic primitives always.
@@ -1240,11 +1239,11 @@ class Planner:
         kernel_args = (
             envs_idx_np,
             planner_state,
-            planner_info,
             planner_world,
             solver.dyn_state,
             solver.collider._collider_state,
             context.gjk_state,
+            planner_info,
             solver.dyn_info,
             solver.rigid_info,
             solver.collider._collider_info,
@@ -1256,9 +1255,7 @@ class Planner:
             # Boundary (start and goal) contact exclusions: pairs violating the margin at either boundary keep
             # their worst boundary clearance for the whole plan, which is what makes grasp and place goals
             # plannable.
-            cost_mod.kernel_planner_boundary_exclusions(
-                *kernel_args, planner_config, include_goal=True, errno=context.errno
-            )
+            cost_mod.kernel_boundary_exclusions(*kernel_args, planner_config, include_goal=True, errno=context.errno)
         errno_t = qd_to_torch(context.errno)
         if bool((errno_t != 0).any()):
             gs.raise_exception(
@@ -1288,16 +1285,16 @@ class Planner:
         # path is the one that matters, so both the env index and the tree-activity scratch live on device.
         envs_idx_dev = torch.as_tensor(envs_idx_np, dtype=gs.tc_int, device=gs.device)
         trees_is_active = torch.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.tc_int, device=gs.device)
-        kernel_planner_plan(
+        kernel_plan(
             planner_state.graph_counter,
             envs_idx_dev,
             trees_is_active,
             planner_state,
-            planner_info,
             planner_world,
             solver.dyn_state,
             solver.collider._collider_state,
             context.gjk_state,
+            planner_info,
             solver.dyn_info,
             solver.rigid_info,
             solver.collider._collider_info,
@@ -1361,7 +1358,7 @@ class Planner:
                 w_pose_rot=5e2,
                 eps_act=0.05,
             )
-            kernel_planner_lbfgs(*kernel_args, planner_config)
+            kernel_lbfgs(*kernel_args, planner_config)
             _set_opt_phase(
                 planner_info,
                 seed_key=seed_key_cur,
@@ -1374,7 +1371,7 @@ class Planner:
                 eps_act=0.05,
             )
             _set_clearance(planner_info, float(safety_margin))
-            cost_mod.kernel_planner_validate(*kernel_args, planner_config, check_start=True)
+            cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True)
             is_env_smooth = self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0]
             knots = qd_to_torch(planner_state.cost.qpos).T.reshape(B, S, W, n_dp)
             knots_smooth = knots.gather(1, best_seed[:, None, None, None].expand(B, 1, W, n_dp))[:, 0]
@@ -1390,7 +1387,7 @@ class Planner:
                     break
                 knots_straight = _straighten_knots(knots_best, qd_to_torch(planner_info.fk.dofs.reach), radius)
                 traj_t[env_rough, best_seed[env_rough]] = knots_straight[env_rough]
-                cost_mod.kernel_planner_validate(*kernel_args, planner_config, check_start=True)
+                cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True)
                 is_env_straight = (
                     self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0] & env_rough
                 )

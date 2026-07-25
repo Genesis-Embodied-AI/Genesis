@@ -2817,7 +2817,7 @@ class PlannerSpheresInfo:
 class PlannerGeomsInfo:
     """Robot collision geoms for the exact convex rescue: the global geom index plus the link-frame offset pose,
     so certification paths can pose each geom at hypothetical forward-kinematics poses and query the collider's
-    GJK distance (see func_planner_gjk_clearance in cost.py); links_start ranges the geoms per entity-local link
+    GJK distance (see func_gjk_clearance in cost.py); links_start ranges the geoms per entity-local link
     (geoms sorted by link). Each geom carries the link-frame bounding sphere of its collision mesh for a
     query-free skip bound."""
 
@@ -3238,7 +3238,7 @@ class PlannerCostState:
 class PlannerCertState:
     """Per-candidate certification outputs: the validity-flags bitfield, the optimization mask, and the min
     clearances split by reading fidelity - exact = robot-sphere world pairs (rescue-bounded), proxy = self and
-    attached-entity pairs (raw proxy conservatism), see func_planner_collision_cost."""
+    attached-entity pairs (raw proxy conservatism), see func_collision_cost."""
 
     valid_flags: qd.Tensor
     is_active: qd.Tensor

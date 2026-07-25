@@ -7,7 +7,7 @@ from genesis.engine.solvers.rigid.abd.inverse_kinematics import func_forward_kin
 
 
 @qd.func
-def func_planner_fk(
+def func_fk(
     i_col_out,
     i_col_q,
     i_b,
@@ -22,8 +22,11 @@ def func_planner_fk(
     rigid_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """Forward kinematics of the planned entity on planner-owned buffers, binding the planner offsets to the
-    shared scratch forward kinematics (see func_forward_kinematics_scratch)."""
+    """Forward kinematics of the planned entity on planner-owned buffers.
+
+    Binds the planner's link, joint and q offsets to the shared scratch forward kinematics (see
+    func_forward_kinematics_scratch).
+    """
     func_forward_kinematics_scratch(
         i_col_out,
         i_col_q,
@@ -45,7 +48,7 @@ def func_planner_fk(
 
 
 @qd.func
-def func_planner_ik_jacobian(
+def func_ik_jacobian(
     i_col,
     i_b,
     ee_link,
@@ -57,8 +60,10 @@ def func_planner_ik_jacobian(
     rigid_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """Spatial Jacobian of the goal point from the per-column planner FK frames, binding the planner offsets to
-    the shared scratch Jacobian (see func_jacobian_scratch)."""
+    """Spatial Jacobian of the goal point, from the per-column planner forward-kinematics frames.
+
+    Binds the planner's link, joint and q offsets to the shared scratch Jacobian (see func_jacobian_scratch).
+    """
     func_jacobian_scratch(
         i_col,
         i_b,
@@ -75,7 +80,7 @@ def func_planner_ik_jacobian(
 
 
 @qd.func
-def func_planner_spheres(
+def func_spheres(
     i_col,
     i_b,
     links_pos: qd.Tensor,

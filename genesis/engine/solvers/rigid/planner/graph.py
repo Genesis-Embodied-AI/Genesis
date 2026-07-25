@@ -4,8 +4,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
 
-from .cost import func_planner_collision_cost
-from .kinematics import func_planner_fk, func_planner_spheres
+from .cost import func_collision_cost
+from .kinematics import func_fk, func_spheres
 
 # Joint-space steer step (L-inf, radians), the goal-bias probability of extending straight at the other tree,
 # and the number of shortcut splices applied to an extracted path.
@@ -20,17 +20,17 @@ _RRT_STALL_ITERS = 200
 
 
 @qd.func
-def func_planner_rrt_config_is_free(
+def func_rrt_config_is_free(
     i_t,
     i_b,
     swp,
     dq_inf,
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -40,7 +40,7 @@ def func_planner_rrt_config_is_free(
     planner_config: qd.template(),
 ):
     """Collision check of the configuration staged in the tree's eval column, with sweep allowance swp."""
-    func_planner_fk(
+    func_fk(
         i_t,
         i_t,
         i_b,
@@ -55,7 +55,7 @@ def func_planner_rrt_config_is_free(
         rigid_config=rigid_config,
         planner_config=planner_config,
     )
-    func_planner_spheres(
+    func_spheres(
         i_t,
         i_b,
         links_pos=planner_state.fk.eval.links_pos,
@@ -64,7 +64,7 @@ def func_planner_rrt_config_is_free(
         planner_info=planner_info,
         planner_config=planner_config,
     )
-    _, min_sd_exact, min_sd_proxy = func_planner_collision_cost(
+    _, min_sd_exact, min_sd_proxy = func_collision_cost(
         i_t,
         i_b,
         swp,
@@ -72,10 +72,10 @@ def func_planner_rrt_config_is_free(
         links_pos=planner_state.fk.eval.links_pos,
         links_quat=planner_state.fk.eval.links_quat,
         spheres_pos=planner_state.fk.eval.spheres_pos,
-        planner_info=planner_info,
         planner_world=planner_world,
         collider_state=collider_state,
         gjk_state=gjk_state,
+        planner_info=planner_info,
         dyn_info=dyn_info,
         collider_info=collider_info,
         sdf_info=sdf_info,
@@ -88,17 +88,17 @@ def func_planner_rrt_config_is_free(
 
 
 @qd.func
-def func_planner_rrt_edge_is_free(
+def func_rrt_edge_is_free(
     i_t,
     i_b,
     col_from,
     col_to,
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -107,10 +107,11 @@ def func_planner_rrt_edge_is_free(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """
-    Certified edge check between two stored nodes: sample the segment densely enough that each sample's sweep
-    allowance (from the per-DOF Lipschitz reach bounds) covers the whole inter-sample motion, so a passing edge
-    is collision-free along its continuum, at the required clearance.
+    """Certified collision check of the edge between two stored nodes.
+
+    The segment is sampled densely enough that each sample's sweep allowance, from the per-DOF Lipschitz reach
+    bounds, covers the whole inter-sample motion, so a passing edge is collision-free along its continuum, at the
+    required clearance.
     """
     n_dp = qd.static(planner_config.n_dp)
     reach = gs.qd_float(0.0)
@@ -139,17 +140,17 @@ def func_planner_rrt_edge_is_free(
             planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
                 planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
             )
-        is_free = func_planner_rrt_config_is_free(
+        is_free = func_rrt_config_is_free(
             i_t,
             i_b,
             swp,
             dq_inf,
             planner_state=planner_state,
-            planner_info=planner_info,
             planner_world=planner_world,
             dyn_state=dyn_state,
             collider_state=collider_state,
             gjk_state=gjk_state,
+            planner_info=planner_info,
             dyn_info=dyn_info,
             rigid_info=rigid_info,
             collider_info=collider_info,
@@ -163,15 +164,15 @@ def func_planner_rrt_edge_is_free(
 
 
 @qd.func
-def func_planner_rrt_connect(
+def func_rrt_connect(
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
     collider_state: array_class.ColliderState,
     gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_info: array_class.RigidInfo,
     collider_info: array_class.ColliderInfo,
@@ -180,10 +181,11 @@ def func_planner_rrt_connect(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """
-    Batched RRT-Connect seed generator: one thread runs one whole tree pair (sample -> nearest -> steer ->
-    certified edge -> insert -> connect), entirely serial inside, so every accepted edge is certified and the
-    result is deterministic per backend (all randomness from the counter-based hash). The start tree grows in
+    """Batched RRT-Connect seed generator, one thread per tree pair.
+
+    A thread runs its whole pair (sample -> nearest -> steer -> certified edge -> insert -> connect) serially, so
+    every accepted edge is certified and the result is deterministic per backend, all randomness coming from the
+    counter-based hash. The start tree grows in
     node columns [0, n/2), the goal tree in [n/2, n); on success the bridge pair joins them and the path is
     backtracked into rrt_path, start to goal.
     """
@@ -269,17 +271,17 @@ def func_planner_rrt_connect(
                         planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
                             planner_state.fk.eval.qpos[i_dp, i_t] - q_near
                         )
-                    if func_planner_rrt_edge_is_free(
+                    if func_rrt_edge_is_free(
                         i_t,
                         i_b,
                         col0 + base + i_near,
                         col_new,
                         planner_state=planner_state,
-                        planner_info=planner_info,
                         planner_world=planner_world,
                         dyn_state=dyn_state,
                         collider_state=collider_state,
                         gjk_state=gjk_state,
+                        planner_info=planner_info,
                         dyn_info=dyn_info,
                         rigid_info=rigid_info,
                         collider_info=collider_info,
@@ -305,17 +307,17 @@ def func_planner_rrt_connect(
                             if d < d_join:
                                 d_join = d
                                 i_join = i_n
-                        if func_planner_rrt_edge_is_free(
+                        if func_rrt_edge_is_free(
                             i_t,
                             i_b,
                             col0 + other + i_join,
                             col_new,
                             planner_state=planner_state,
-                            planner_info=planner_info,
                             planner_world=planner_world,
                             dyn_state=dyn_state,
                             collider_state=collider_state,
                             gjk_state=gjk_state,
+                            planner_info=planner_info,
                             dyn_info=dyn_info,
                             rigid_info=rigid_info,
                             collider_info=collider_info,
@@ -370,17 +372,17 @@ def func_planner_rrt_connect(
                         for i_dp in range(n_dp):
                             planner_state.rrt.qpos[i_dp, col0] = planner_state.rrt.path[i_dp, col0 + i_from]
                             planner_state.rrt.qpos[i_dp, col0 + 1] = planner_state.rrt.path[i_dp, col0 + i_to]
-                        if func_planner_rrt_edge_is_free(
+                        if func_rrt_edge_is_free(
                             i_t,
                             i_b,
                             col0,
                             col0 + 1,
                             planner_state=planner_state,
-                            planner_info=planner_info,
                             planner_world=planner_world,
                             dyn_state=dyn_state,
                             collider_state=collider_state,
                             gjk_state=gjk_state,
+                            planner_info=planner_info,
                             dyn_info=dyn_info,
                             rigid_info=rigid_info,
                             collider_info=collider_info,
@@ -397,40 +399,3 @@ def func_planner_rrt_connect(
                                     ]
                             n_path -= n_cut
                 planner_state.rrt.path_len[i_t] = n_path
-
-
-@qd.kernel
-def kernel_planner_rrt_connect(
-    envs_idx: qd.types.ndarray(),
-    trees_is_active: qd.types.ndarray(),
-    planner_state: array_class.PlannerState,
-    planner_info: array_class.PlannerEntityInfo,
-    planner_world: array_class.PlannerWorldState,
-    dyn_state: array_class.DynState,
-    collider_state: array_class.ColliderState,
-    gjk_state: array_class.GJKState,
-    dyn_info: array_class.DynInfo,
-    rigid_info: array_class.RigidInfo,
-    collider_info: array_class.ColliderInfo,
-    sdf_info: array_class.SDFInfo,
-    rigid_config: qd.template(),
-    collider_static_config: qd.template(),
-    planner_config: qd.template(),
-):
-    func_planner_rrt_connect(
-        envs_idx,
-        trees_is_active,
-        planner_state,
-        planner_info,
-        planner_world,
-        dyn_state,
-        collider_state,
-        gjk_state,
-        dyn_info,
-        rigid_info,
-        collider_info,
-        sdf_info,
-        rigid_config,
-        collider_static_config,
-        planner_config,
-    )
