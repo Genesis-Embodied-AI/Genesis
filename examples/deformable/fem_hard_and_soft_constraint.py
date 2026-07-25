@@ -13,7 +13,10 @@ SCENE_POS = np.array([0.5, 0.5, 1.0])
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--solver", choices=["explicit", "implicit"], default="implicit", help="FEM solver type (default: implicit)"
+        "--solver",
+        choices=["explicit", "implicit"],
+        default="implicit",
+        help="Finite element solver to integrate the deformable with",
     )
     parser.add_argument("--dt", type=float, help="Simulation time step")
     parser.add_argument("--substeps", type=int, help="Number of solver substeps per step")

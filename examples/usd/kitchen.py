@@ -37,12 +37,12 @@ def main():
         "--asset",
         default="bottle" if "PYTEST_VERSION" in os.environ else "all",
         choices=[*SAMPLE_ASSETS, "all"],
-        help="Which sample asset(s) to load.",
+        help="Which sample asset(s) to load",
     )
-    parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples.")
-    parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer.")
+    parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer")
     parser.add_argument(
-        "--collision", action="store_true", help="Visualize collision geometry instead of the visual meshes."
+        "--collision", action="store_true", help="Visualize collision geometry instead of the visual meshes"
     )
     args = parser.parse_args()
 
