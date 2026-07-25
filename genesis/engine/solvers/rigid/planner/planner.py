@@ -735,6 +735,11 @@ class Planner:
         )
 
         arm, n_seeds, budgets = self._resolve_budgets(B)
+        # A GPU lane owns one candidate and the lanes of a warp advance through the knots together, so the knot-major
+        # working set (see get_planner_state) serves a warp's L-BFGS reads from one cache line. A CPU thread instead
+        # walks one whole candidate, which the candidate-major order keeps contiguous. The penalty for taking the
+        # wrong order is an order of magnitude on either side, so it follows the backend.
+        is_knot_major = gs.backend != gs.cpu
         planner_config = array_class.PlannerStaticConfig(
             para_level=solver._para_level,
             is_batched_arm=arm == gs.planner_arm.BATCHED,
@@ -750,6 +755,7 @@ class Planner:
             n_knots=solver._options.planner_n_knots,
             n_seeds=n_seeds,
             n_eval_per_candidate=1,
+            is_knot_major=is_knot_major,
             n_rrt_trees=_N_RRT_TREES,
             n_rrt_nodes=_N_RRT_NODES,
             n_noise_knots=array_class.PLANNER_N_NOISE_KNOTS,

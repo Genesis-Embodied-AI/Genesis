@@ -2752,6 +2752,9 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     n_knots: int
     n_seeds: int
     n_eval_per_candidate: int
+    # Physical layout of the L-BFGS working set (see get_planner_state for the buffers it covers, and
+    # Planner._get_entity_context for how it is chosen).
+    is_knot_major: bool
     # Sampling-fallback extents: independent RRT-Connect tree pairs per env and the node capacity per tree pair.
     n_rrt_trees: int
     n_rrt_nodes: int
@@ -3277,11 +3280,22 @@ class PlannerState:
 
 def get_planner_state(planner_config, B):
     C = B * planner_config.n_seeds
-    NF = C * planner_config.n_knots
+    W = planner_config.n_knots
+    NF = C * W
     E = C * planner_config.n_eval_per_candidate
     n_sph_tot = planner_config.n_spheres + planner_config.n_attach_max
     NT = B * planner_config.n_rrt_trees
     n_rrt_cols = NT * planner_config.n_rrt_nodes
+
+    # The L-BFGS working set - its history pair, descent direction, previous iterate, and the cost gradient plus
+    # per-knot cost it reads - is addressed canonically as (.., candidate, knot); is_knot_major then places knot
+    # first in memory, so the same knot of adjacent candidates lands contiguous. The trajectory and forward-
+    # kinematics buffers stay flat under a single candidate-major column because the shared kinematics and collision
+    # funcs address them by one column index, coming from either this family or the per-evaluation scratch. Why one
+    # order wins per backend: see Planner._get_entity_context.
+    is_knot_major = planner_config.is_knot_major
+    knot_layout = (0, 2, 1) if is_knot_major else None
+    hist_layout = (0, 1, 3, 2) if is_knot_major else None
 
     return PlannerState(
         fk=PlannerFKState(
@@ -3302,11 +3316,11 @@ def get_planner_state(planner_config, B):
         mppi=PlannerMPPIState(),
         lbfgs=PlannerLBFGSState(
             trial_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            qpos_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            grad_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            dir_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            dqpos_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
-            dgrad_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, NF)),
+            qpos_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
+            grad_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
+            dir_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
+            dqpos_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, C, W), layout=hist_layout),
+            dgrad_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, C, W), layout=hist_layout),
             rho_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, C)),
         ),
         rrt=PlannerRRTState(
@@ -3320,9 +3334,9 @@ def get_planner_state(planner_config, B):
         ),
         cost=PlannerCostState(
             qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
-            grad=V(dtype=gs.qd_float, shape=(planner_config.n_dp, NF)),
+            grad=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
             cost=V(dtype=gs.qd_float, shape=(C,)),
-            cost_wp=V(dtype=gs.qd_float, shape=(NF,)),
+            cost_wp=V(dtype=gs.qd_float, shape=(C, W), layout=(1, 0) if is_knot_major else None),
         ),
         cert=PlannerCertState(
             valid_flags=V(dtype=gs.qd_int, shape=(C,)),

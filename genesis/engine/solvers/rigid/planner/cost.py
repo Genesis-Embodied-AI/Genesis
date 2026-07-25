@@ -264,6 +264,7 @@ def func_planner_sphere_link(i_s, planner_info: array_class.PlannerEntityInfo, p
 def func_planner_chain_grad(
     i_l,
     i_c,
+    i_w,
     i_col_fk,
     i_b,
     x,
@@ -272,16 +273,15 @@ def func_planner_chain_grad(
     joints_xanchor: qd.Tensor,
     joints_xaxis: qd.Tensor,
     grad_traj: qd.Tensor,
-    i_col_grad,
     planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     rigid_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """
-    Accumulate a workspace gradient g applied at point x on entity-local link i_l into the joint-space gradient
-    column i_col_grad, by walking the parent chain (the J^T v product assembled without materializing J - pattern
-    of the entity jacobian, rigid_entity.py). Locked DOFs are skipped.
+    """Accumulate a workspace gradient into the joint-space gradient of candidate i_c at knot i_w.
+
+    The gradient g applies at point x on entity-local link i_l and is walked up the parent chain, which assembles the
+    J^T v product without materializing J, the same way the entity jacobian does. Locked DOFs are skipped.
     """
     link_offset = qd.static(planner_config.link_offset)
     q_offset = qd.static(planner_config.q_offset)
@@ -307,7 +307,7 @@ def func_planner_chain_grad(
                             )
                         else:
                             dq = joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_col_fk].dot(g)
-                        grad_traj[i_dp, i_col_grad] += scale * dq
+                        grad_traj[i_dp, i_c, i_w] += scale * dq
             i_l_glob = dyn_info.links.parent_idx[I_l]
 
 
@@ -838,7 +838,7 @@ def func_planner_knot_cost_grad(
 
     cost = gs.qd_float(0.0)
     for i_dp in range(n_dp):
-        planner_state.cost.grad[i_dp, i_cw] = 0.0
+        planner_state.cost.grad[i_dp, i_c, i_w] = 0.0
 
     # Sweep allowance: half the largest neighbor-knot travel of any sphere. Stop-gradient by design, so
     # its influence (and the induced gradient error) is clamped to the activation band; the validator
@@ -908,6 +908,7 @@ def func_planner_knot_cost_grad(
                         func_planner_chain_grad(
                             func_planner_sphere_link(i_s, planner_info, planner_config),
                             i_c,
+                            i_w,
                             i_cw,
                             i_b,
                             x,
@@ -916,7 +917,6 @@ def func_planner_knot_cost_grad(
                             joints_xanchor=planner_state.fk.joints_xanchor,
                             joints_xaxis=planner_state.fk.joints_xaxis,
                             grad_traj=planner_state.cost.grad,
-                            i_col_grad=i_cw,
                             planner_info=planner_info,
                             dyn_info=dyn_info,
                             rigid_config=rigid_config,
@@ -956,6 +956,7 @@ def func_planner_knot_cost_grad(
                 func_planner_chain_grad(
                     func_planner_sphere_link(i_sa, planner_info, planner_config),
                     i_c,
+                    i_w,
                     i_cw,
                     i_b,
                     planner_state.fk.spheres_pos[i_sa, i_cw],
@@ -964,7 +965,6 @@ def func_planner_knot_cost_grad(
                     joints_xanchor=planner_state.fk.joints_xanchor,
                     joints_xaxis=planner_state.fk.joints_xaxis,
                     grad_traj=planner_state.cost.grad,
-                    i_col_grad=i_cw,
                     planner_info=planner_info,
                     dyn_info=dyn_info,
                     rigid_config=rigid_config,
@@ -973,6 +973,7 @@ def func_planner_knot_cost_grad(
                 func_planner_chain_grad(
                     func_planner_sphere_link(i_sb, planner_info, planner_config),
                     i_c,
+                    i_w,
                     i_cw,
                     i_b,
                     planner_state.fk.spheres_pos[i_sb, i_cw],
@@ -981,7 +982,6 @@ def func_planner_knot_cost_grad(
                     joints_xanchor=planner_state.fk.joints_xanchor,
                     joints_xaxis=planner_state.fk.joints_xaxis,
                     grad_traj=planner_state.cost.grad,
-                    i_col_grad=i_cw,
                     planner_info=planner_info,
                     dyn_info=dyn_info,
                     rigid_config=rigid_config,
@@ -1008,7 +1008,7 @@ def func_planner_knot_cost_grad(
                     coeff = gs.qd_float(-2.0 if dw == 0 else 1.0)
                     if dw == 0:
                         cost += planner_info.cost.w_acc[None] * acc**2
-                    planner_state.cost.grad[i_dp, i_cw] += 2.0 * planner_info.cost.w_acc[None] * acc * coeff
+                    planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_acc[None] * acc * coeff
             # Jerk stencil: j_w = q_{w+2} - 3 q_{w+1} + 3 q_w - q_{w-1}; knot i_w is term (dw) of row
             # i_wc = i_w - dw for dw in {-1, 0, 1, 2}.
             for dw in qd.static(range(-1, 3)):
@@ -1031,22 +1031,22 @@ def func_planner_knot_cost_grad(
                         coeff = -1.0
                     if dw == 0:
                         cost += planner_info.cost.w_jerk[None] * jerk**2
-                    planner_state.cost.grad[i_dp, i_cw] += 2.0 * planner_info.cost.w_jerk[None] * jerk * coeff
+                    planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_jerk[None] * jerk * coeff
             # Joint-limit quadratic hinge.
             over = q - planner_info.fk.dofs.q_limit_upper[i_dp]
             under = planner_info.fk.dofs.q_limit_lower[i_dp] - q
             if over > 0.0:
                 cost += planner_info.cost.w_lim[None] * over**2
-                planner_state.cost.grad[i_dp, i_cw] += 2.0 * planner_info.cost.w_lim[None] * over
+                planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_lim[None] * over
             if under > 0.0:
                 cost += planner_info.cost.w_lim[None] * under**2
-                planner_state.cost.grad[i_dp, i_cw] -= 2.0 * planner_info.cost.w_lim[None] * under
+                planner_state.cost.grad[i_dp, i_c, i_w] -= 2.0 * planner_info.cost.w_lim[None] * under
             # Posture regularizer toward the straight-line reference (kept tiny; resolves redundancy).
             ref = planner_info.cost.boundary.qpos_start[i_dp, i_b] + (
                 planner_info.cost.boundary.qpos_goal[i_dp, i_b] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
             ) * (qd.cast(i_w, gs.qd_float) / float(n_knots - 1))
             cost += planner_info.cost.w_posture[None] * (q - ref) ** 2
-            planner_state.cost.grad[i_dp, i_cw] += 2.0 * planner_info.cost.w_posture[None] * (q - ref)
+            planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_posture[None] * (q - ref)
 
     # Terminal pose cost for Cartesian goals (last knot only), gradient through the ee chain.
     if planner_info.cost.boundary.has_pose_goal[None] and i_w == n_knots - 1:
@@ -1062,6 +1062,7 @@ def func_planner_knot_cost_grad(
         func_planner_chain_grad(
             i_l,
             i_c,
+            i_w,
             i_cw,
             i_b,
             planner_state.fk.links_pos[i_l, i_cw],
@@ -1070,7 +1071,6 @@ def func_planner_knot_cost_grad(
             joints_xanchor=planner_state.fk.joints_xanchor,
             joints_xaxis=planner_state.fk.joints_xaxis,
             grad_traj=planner_state.cost.grad,
-            i_col_grad=i_cw,
             planner_info=planner_info,
             dyn_info=dyn_info,
             rigid_config=rigid_config,
@@ -1092,7 +1092,7 @@ def func_planner_knot_cost_grad(
                     if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
                         i_dp = dyn_info.joints.q_start[I_j] - q_offset
                         if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
-                            planner_state.cost.grad[i_dp, i_cw] -= (
+                            planner_state.cost.grad[i_dp, i_c, i_w] -= (
                                 2.0
                                 * planner_info.cost.w_pose_rot[None]
                                 * planner_state.fk.joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_cw].dot(
@@ -1101,7 +1101,7 @@ def func_planner_knot_cost_grad(
                             )
                 i_l_glob = dyn_info.links.parent_idx[I_l]
 
-    planner_state.cost.cost_wp[i_cw] = cost
+    planner_state.cost.cost_wp[i_c, i_w] = cost
 
 
 @qd.func
