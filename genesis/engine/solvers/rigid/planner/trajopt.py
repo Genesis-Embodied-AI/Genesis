@@ -184,6 +184,7 @@ def func_trajectory_cost(
 def func_candidate_cost_gradient(
     i_c,
     i_b,
+    i_lane,
     planner_state: array_class.PlannerState,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
@@ -195,21 +196,29 @@ def func_candidate_cost_gradient(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """Forward-kinematics cache, cost and gradient of one candidate's whole trajectory, serial over its knots.
+    """Forward-kinematics cache, cost and gradient of one candidate's whole trajectory.
 
-    Returns the cost. Each knot is staged through the candidate's evaluation column before the forward kinematics
-    reads it, which is what lets the trajectory carry the optimizer's (candidate, knot) layout while the shared
-    kinematics keeps its single-column addressing.
+    Returns the cost. Lane i_lane of n_cost_lanes takes every n_cost_lanes-th knot and the costs are summed across
+    the lanes, so every lane returns the whole trajectory's cost. Each knot is staged through the lane's evaluation
+    column before the forward kinematics reads it, which is what lets the trajectory carry the optimizer's
+    (candidate, knot) layout while the shared kinematics keeps its single-column addressing. The gradient stencils
+    read the neighbor knots' frames, so the lanes barrier between filling the cache and reading it.
     """
     n_knots = qd.static(planner_config.n_knots)
     n_dp = qd.static(planner_config.n_dp)
-    for i_w in range(n_knots):
+    n_lanes = qd.static(planner_config.n_cost_lanes)
+    n_knot_chunks = qd.static((planner_config.n_knots + planner_config.n_cost_lanes - 1) // planner_config.n_cost_lanes)
+    i_e_col = i_c * n_lanes + i_lane
+    for i_knot_chunk in range(n_knot_chunks):
+        i_w = i_knot_chunk * n_lanes + i_lane
+        if i_w >= n_knots:
+            continue
         i_cw = i_c * n_knots + i_w
         for i_dp in range(n_dp):
-            planner_state.fk.eval.qpos[i_dp, i_c] = planner_state.cost.qpos[i_dp, i_c, i_w]
+            planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.cost.qpos[i_dp, i_c, i_w]
         func_forward_kinematics(
             i_cw,
-            i_c,
+            i_e_col,
             i_b,
             qpos=planner_state.fk.eval.qpos,
             links_pos=planner_state.fk.links_pos,
@@ -231,13 +240,18 @@ def func_candidate_cost_gradient(
             planner_info=planner_info,
             planner_config=planner_config,
         )
+    # The gradient stencils below read the neighbor knots' frames, which other lanes just wrote.
+    if qd.static(n_lanes > 1):
+        qd.simt.block.sync()
     cost = gs.qd_float(0.0)
-    for i_w in range(n_knots):
-        i_cw = i_c * n_knots + i_w
+    for i_knot_chunk in range(n_knot_chunks):
+        i_w = i_knot_chunk * n_lanes + i_lane
+        if i_w >= n_knots:
+            continue
         func_knot_cost_gradient(
             i_c,
             i_w,
-            i_cw,
+            i_c * n_knots + i_w,
             i_b,
             planner_state=planner_state,
             planner_world=planner_world,
@@ -250,6 +264,11 @@ def func_candidate_cost_gradient(
             planner_config=planner_config,
         )
         cost += planner_state.cost.cost_wp[i_c, i_w]
+    # Every lane leaves with the whole trajectory's cost, and with the whole gradient visible: the caller's
+    # recursion reads knots this lane did not write.
+    if qd.static(n_lanes > 1):
+        cost = qd.simt.subgroup.reduce_all_add_tiled(cost, qd.static(planner_config.n_cost_lanes.bit_length() - 1))
+        qd.simt.block.sync()
     return cost
 
 
@@ -631,15 +650,20 @@ def func_lbfgs(
     n_seeds = qd.static(planner_config.n_seeds)
     n_dp = qd.static(planner_config.n_dp)
     m_hist = qd.static(planner_config.n_lbfgs_hist)
+    n_lanes = qd.static(planner_config.n_cost_lanes)
 
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_c in range(envs_idx.shape[0] * n_seeds):
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL), block_dim=qd.static(n_lanes))
+    for i_cl in range(envs_idx.shape[0] * n_seeds * n_lanes):
+        i_lane = i_cl % n_lanes
+        i_c = i_cl // n_lanes
+        # Uniform across the candidate's lanes, so the barriers and cross-lane sums below stay convergent.
         if planner_state.cert.is_active[i_c]:
             i_b = envs_idx[i_c // n_seeds]
 
             cost = func_candidate_cost_gradient(
                 i_c,
                 i_b,
+                i_lane,
                 planner_state=planner_state,
                 planner_world=planner_world,
                 dyn_state=dyn_state,
@@ -745,11 +769,15 @@ def func_lbfgs(
                                     planner_info.fk.dofs.q_limit_upper[i_dp],
                                 )
                             planner_state.lbfgs.trial_qpos[i_dp, i_c, i_w] = q
+                    # The trial's knots are split across the lanes, so each lane's cost reads neighbors the others
+                    # wrote.
+                    if qd.static(n_lanes > 1):
+                        qd.simt.block.sync()
                     cost_trial = func_trajectory_cost(
                         i_c,
                         i_b,
-                        0,
-                        i_c * qd.static(planner_config.n_cost_lanes),
+                        i_lane,
+                        i_c * n_lanes + i_lane,
                         qpos_cols=planner_state.lbfgs.trial_qpos,
                         planner_state=planner_state,
                         planner_world=planner_world,
@@ -764,7 +792,7 @@ def func_lbfgs(
                         rigid_config=rigid_config,
                         collider_static_config=collider_static_config,
                         planner_config=planner_config,
-                        is_tiled=False,
+                        is_tiled=True,
                     )
                     if cost_trial < cost_best:
                         cost_best = cost_trial
@@ -792,6 +820,7 @@ def func_lbfgs(
                     cost = func_candidate_cost_gradient(
                         i_c,
                         i_b,
+                        i_lane,
                         planner_state=planner_state,
                         planner_world=planner_world,
                         dyn_state=dyn_state,

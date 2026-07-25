@@ -7,6 +7,7 @@ import subprocess
 import sys
 import warnings
 from argparse import SUPPRESS
+from collections import Counter
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
@@ -399,6 +400,69 @@ def pytest_xdist_auto_num_workers(config):
     return int(num_workers)
 
 
+# Init-key: the tuple of resolved 'gs.init' inputs that force a distinct Genesis runtime. Tests
+# sharing an init-key reuse the live runtime with no qd.reset()/qd.init() cycle (see
+# 'initialize_genesis'), which is the whole point of the scheduling and fixture logic below.
+# The worker-global tracks the key the live runtime was initialized with; None means uninitialized.
+_LIVE_INIT_KEY = None
+# Worker-local count of real (re)initializations, and the controller-side aggregate per worker.
+_REINIT_COUNT = 0
+_WORKER_REINIT_COUNTS = {}
+
+
+def _single_marker_value(node, name, default):
+    value = None
+    for mark in node.iter_markers(name):
+        if mark.args:
+            if value is not None:
+                pytest.fail(f"'{name}' can only be specified once.")
+            (value,) = mark.args
+    return default if value is None else value
+
+
+def _default_precision(config, backend_name):
+    expr = Expression.compile(config.option.markexpr)
+    is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+    # Only default to 64bits precision when running the unit tests on CPU backend
+    return "64" if not is_benchmarks and backend_name == "cpu" else "32"
+
+
+def _use_ndarray(performance_mode):
+    # Dynamic (ndarray) vs static (field) Quadrants arrays, derived exactly as 'gs.init' does. It
+    # cannot toggle without a fresh 'qd.init', so it is part of the init-key.
+    return not (os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" or performance_mode)
+
+
+def _init_key(backend, precision, debug, performance_mode, cache):
+    backend_name = backend.name if isinstance(backend, Enum) else str(backend)
+    return (_use_ndarray(performance_mode), backend_name, str(precision), bool(debug), bool(cache))
+
+
+def _item_init_key(item, config):
+    # Collection-time resolution, for scheduling only; 'initialize_genesis' re-resolves the key from
+    # its own fixtures and is authoritative for the reuse decision, so a mismatch here only costs an
+    # extra re-init, never correctness. Mirrors the resolution the fixtures apply.
+    callspec = getattr(item, "callspec", None)
+    if callspec is not None and "backend" in callspec.params:
+        backend = callspec.params["backend"]
+    else:
+        backend = config.getoption("--backend") or "cpu"
+    # 'backend is None' disables Genesis initialization entirely: a scheduling wildcard (any bucket).
+    if backend is None:
+        return None
+    backend_name = backend.name if isinstance(backend, Enum) else str(backend)
+    if callspec is not None and "precision" in callspec.params:
+        precision = callspec.params["precision"]
+    else:
+        precision = _single_marker_value(item, "precision", None) or _default_precision(config, backend_name)
+    debug = _single_marker_value(item, "debug", None)
+    if debug is None:
+        debug = config.getoption("--dev")
+    performance_mode = _single_marker_value(item, "performance_mode", None)
+    cache = _single_marker_value(item, "cache", True)
+    return _init_key(backend, precision, debug, performance_mode, cache)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_collection_modifyitems(config, items):
     # Resolve backend-conditional 'slow' markers before pytest applies '-m' selection.
@@ -423,20 +487,74 @@ def pytest_collection_modifyitems(config, items):
 
     yield
 
-    # Run slow tests first
-    slow = [item for item in items if item.get_closest_marker("slow") is not None]
-    fast = [item for item in items if item.get_closest_marker("slow") is None]
-
     max_workers = config.option.numprocesses
     if max_workers is None:
         max_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
     max_workers = max(max_workers, 1)
 
+    # Build balanced, clustering-friendly buckets. Worksteal hands each worker one bucket as its
+    # contiguous starting chunk, so a bucket = one worker's initial workload. Two goals, in order:
+    #   1. Balance: every bucket gets ~equal slow and ~equal fast work (no worker depends on stealing).
+    #   2. Reuse: same-init-key tests sit together within a bucket so a worker avoids re-initializing
+    #      Genesis as it marches through its chunk; re-inits then approach the floor of one per key.
+    key_of = {item: _item_init_key(item, config) for item in items}
+    slow_items = {item for item in items if item.get_closest_marker("slow") is not None}
+    key_counts = Counter(key for key in key_of.values() if key is not None)
+    # The dominant key (most tests) spans every bucket as the balance backbone; workers start on it
+    # and never leave it for the bulk of the run.
+    dominant_key = key_counts.most_common(1)[0][0] if key_counts else None
+
     buckets = [[] for _ in range(max_workers)]
-    for idx, item in enumerate(slow + fast):
-        bucket_idx = idx % max_workers
+    slow_load = [0] * max_workers
+    total_load = [0] * max_workers
+
+    def _place(bucket_idx, item):
         buckets[bucket_idx].append(item)
-    items[:] = [item for bucket in sorted(buckets, key=len) for item in bucket]
+        total_load[bucket_idx] += 1
+        if item in slow_items:
+            slow_load[bucket_idx] += 1
+
+    # Dominant key: round-robin slow then fast for an even per-bucket base.
+    dominant_slow = [item for item in items if key_of[item] == dominant_key and item in slow_items]
+    dominant_fast = [item for item in items if key_of[item] == dominant_key and item not in slow_items]
+    for idx, item in enumerate(dominant_slow):
+        _place(idx % max_workers, item)
+    for idx, item in enumerate(dominant_fast):
+        _place(idx % max_workers, item)
+
+    # Non-dominant keys: concentrate each key's fast tests in the lightest bucket (one worker owns a
+    # rare key => ~one re-init for it), while spreading its slow tests to preserve slow-load balance,
+    # co-locating them in that same bucket when it is also the lightest by slow load.
+    for key in sorted(key_counts, key=lambda key: (-key_counts[key], str(key))):
+        if key == dominant_key:
+            continue
+        key_slow = [item for item in items if key_of[item] == key and item in slow_items]
+        key_fast = [item for item in items if key_of[item] == key and item not in slow_items]
+        home = min(range(max_workers), key=lambda bucket_idx: (total_load[bucket_idx], bucket_idx))
+        for item in key_fast:
+            _place(home, item)
+        for item in key_slow:
+            target = min(
+                range(max_workers), key=lambda bucket_idx: (slow_load[bucket_idx], bucket_idx != home, bucket_idx)
+            )
+            _place(target, item)
+
+    # 'backend=None' tests never initialize Genesis: free filler, dropped into the lightest bucket.
+    for item in items:
+        if key_of[item] is None:
+            _place(min(range(max_workers), key=lambda bucket_idx: (total_load[bucket_idx], bucket_idx)), item)
+
+    # Within a bucket: slow tests first (each worker front-loads its heavy tests so none lingers at
+    # the tail), grouped by key; then fast tests grouped by key. The dominant key straddles the
+    # boundary (its slow last, its fast first) so that transition costs no re-init.
+    def _within_bucket(bucket_items):
+        bucket_slow = [item for item in bucket_items if item in slow_items]
+        bucket_fast = [item for item in bucket_items if item not in slow_items]
+        bucket_slow.sort(key=lambda item: (key_of[item] == dominant_key, str(key_of[item])))
+        bucket_fast.sort(key=lambda item: (key_of[item] != dominant_key, str(key_of[item])))
+        return bucket_slow + bucket_fast
+
+    items[:] = [item for bucket in buckets for item in _within_bucket(bucket)]
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -506,7 +624,15 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     Replaces pytest's default 'FAILED test_id - msg' short summary lines (which in verbose mode
     duplicate the FAILURES section) with a compact, easy-to-scan ID-only list.
+
+    Also reports Genesis runtime reuse: how many times each worker re-initialized (fewer is better).
     """
+    reinit_counts = _WORKER_REINIT_COUNTS or ({"master": _REINIT_COUNT} if _REINIT_COUNT else {})
+    if reinit_counts:
+        terminalreporter.write_sep("=", "Genesis re-inits per worker")
+        for name in sorted(reinit_counts):
+            terminalreporter.write_line(f"{name}: {reinit_counts[name]}")
+
     failed = terminalreporter.stats.get("failed")
     if not failed:
         return
@@ -522,6 +648,26 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         if len(line) > fullwidth:
             line = line[: fullwidth - 3] + "..."
         terminalreporter.write_line(line)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    # Tear down the runtime kept alive across tests here, while logging streams are still open, rather
+    # than leaving it to the atexit hook (which would log to an already-closed captured stream).
+    gs = sys.modules.get("genesis")
+    if gs is not None and gs._initialized:
+        gs.destroy()
+
+    # On an xdist worker, report the re-init count back to the controller for aggregation.
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:
+        workeroutput["genesis_reinit_count"] = _REINIT_COUNT
+
+
+def pytest_testnodedown(node, error):
+    # Controller side: collect each worker's re-init count as it shuts down.
+    workeroutput = getattr(node, "workeroutput", None)
+    if workeroutput is not None and "genesis_reinit_count" in workeroutput:
+        _WORKER_REINIT_COUNTS[node.gateway.id] = workeroutput["genesis_reinit_count"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -572,21 +718,10 @@ def tol():
 
 @pytest.fixture
 def precision(request, backend):
-    import genesis as gs
-
-    precision = None
-    for mark in request.node.iter_markers("precision"):
-        if mark.args:
-            if precision is not None:
-                pytest.fail("'precision' can only be specified once.")
-            (precision,) = mark.args
+    precision = _single_marker_value(request.node, "precision", None)
     if precision is None:
-        # Only default to 64bits precision when running the unit tests on CPU backend
-        expr = Expression.compile(request.config.option.markexpr)
-        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
-        if isinstance(backend, str):
-            backend = getattr(gs.constants.backend, backend)
-        precision = "64" if not is_benchmarks and backend == gs.cpu else "32"
+        backend_name = backend.name if isinstance(backend, Enum) else str(backend)
+        precision = _default_precision(request.config, backend_name)
     return precision
 
 
@@ -711,45 +846,36 @@ def dof_damping(request):
 
 @pytest.fixture
 def cache(request):
-    cache = None
-    for mark in request.node.iter_markers("cache"):
-        if mark.args:
-            if cache is not None:
-                pytest.fail("'cache' can only be specified once.")
-            (cache,) = mark.args
-    if cache is None:
-        cache = True
-    return cache
+    return _single_marker_value(request.node, "cache", True)
 
 
 @pytest.fixture
 def performance_mode(request):
-    performance_mode = None
-    for mark in request.node.iter_markers("performance_mode"):
-        if mark.args:
-            if performance_mode is not None:
-                pytest.fail("'performance_mode' can only be specified once.")
-            (performance_mode,) = mark.args
-    return performance_mode
+    return _single_marker_value(request.node, "performance_mode", None)
 
 
 @pytest.fixture
 def debug(request):
-    debug = None
-    for mark in request.node.iter_markers("debug"):
-        if mark.args:
-            if debug is not None:
-                pytest.fail("'debug' can only be specified once.")
-            (debug,) = mark.args
-    return debug
+    return _single_marker_value(request.node, "debug", None)
 
 
 @pytest.fixture(scope="function", autouse=True)
 def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache):
-    import genesis as gs
+    import quadrants as qd
 
-    # Early return if backend is None
+    import genesis as gs
+    from genesis.utils.misc import clear_caches, set_random_seed
+
+    global _LIVE_INIT_KEY, _REINIT_COUNT
+
+    # Tests with backend=None drive the Genesis lifecycle themselves (e.g. backend-switching tests),
+    # so tear down any runtime a prior reused test left alive to give them a clean, uninitialized start.
     if backend is None:
+        if gs._initialized:
+            gs.destroy()
+            _LIVE_INIT_KEY = None
+            gc.collect()
+            gc.collect()
         yield
         return
 
@@ -795,17 +921,46 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         if performance_mode is not None and ((os.environ.get("GS_ENABLE_NDARRAY", "1") == "0") ^ performance_mode):
             pytest.skip(SKIP_NDARRAY_PERFORMANCE_MODE)
 
-        gs.init(
-            backend=backend,
-            precision=precision,
-            debug=debug,
-            seed=0,
-            logging_level=logging_level,
-            performance_mode=performance_mode,
-        )
-        gc.collect()
+        # Reuse the live runtime whenever the required init config is unchanged, avoiding the costly
+        # qd.reset()/qd.init() cycle. Re-initialize only when the key changes. The key is resolved from
+        # this fixture's own inputs, so the reuse decision is authoritative regardless of the
+        # scheduling-side estimate in 'pytest_collection_modifyitems'. Per-test memory is reclaimed in
+        # the teardown below (qd.free_all_memory), so reuse is safe in both ndarray and field modes.
+        desired_key = _init_key(backend, precision, debug, performance_mode, cache)
+        if not gs._initialized or _LIVE_INIT_KEY != desired_key:
+            if gs._initialized:
+                gs.destroy()
+                gc.collect()
+                gc.collect()
+            gs.init(
+                backend=backend,
+                precision=precision,
+                debug=debug,
+                seed=0,
+                logging_level=logging_level,
+                performance_mode=performance_mode,
+            )
+            gc.collect()
+            _LIVE_INIT_KEY = desired_key
+            _REINIT_COUNT += 1
 
-        # Prefer the decomposed solver on GPU so both code paths (decomposed on GPU, monolith on CPU) are tested
+            if gs.backend != gs.cpu and gs.device.index is not None:
+                # The device torch selected must be one this worker is allowed to use. Anything else - including a
+                # -1 meaning the device could not be confirmed - fails hard rather than letting an unverified device
+                # through, on every platform.
+                device_idx = _torch_get_gpu_idx(gs.device.index)
+                if device_idx not in _get_gpu_indices():
+                    raise RuntimeError(f"Invalid CUDA GPU device, got {device_idx}, not in {_get_gpu_indices()}.")
+        else:
+            # Reused runtime: restore the deterministic RNG state a fresh 'gs.init(seed=0)' would set.
+            set_random_seed(0)
+
+        # Must run every test, not just on re-init: a requested GPU backend may fall back to CPU.
+        if backend != gs.cpu and gs.backend == gs.cpu:
+            pytest.skip(SKIP_NO_GPU)
+
+        # Prefer the decomposed solver on GPU so both code paths (decomposed on GPU, monolith on CPU) are tested.
+        # Applied every test because 'monkeypatch' reverts it at teardown while scene builds need it live.
         # Skip for benchmarks - let auto-detection choose freely
         expr = Expression.compile(request.config.option.markexpr)
         is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
@@ -820,23 +975,22 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
 
             monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
-        if gs.backend != gs.cpu and gs.device.index is not None:
-            # The device torch selected must be one this worker is allowed to use. Anything else - including a
-            # -1 meaning the device could not be confirmed - fails hard rather than letting an unverified device
-            # through, on every platform.
-            device_idx = _torch_get_gpu_idx(gs.device.index)
-            if device_idx not in _get_gpu_indices():
-                raise RuntimeError(f"Invalid CUDA GPU device, got {device_idx}, not in {_get_gpu_indices()}.")
-
-        if backend != gs.cpu and gs.backend == gs.cpu:
-            pytest.skip(SKIP_NO_GPU)
-
         yield
     finally:
-        gs.destroy()
-        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
-        gc.collect()
-        gc.collect()
+        # Per-test cleanup that keeps the runtime alive for the next same-key test instead of tearing
+        # down Quadrants: destroy this test's scenes (as gs.destroy() does), then reclaim all per-scene
+        # Quadrants memory (ndarrays and field trees) via free_all_memory so reuse does not accumulate
+        # memory. The runtime itself is torn down at session end (see pytest_sessionfinish).
+        if gs._initialized:
+            for scene_ref in gs._scene_registry.copy():
+                scene = scene_ref()
+                if scene is not None:
+                    scene.destroy()
+            clear_caches()
+            qd.free_all_memory()
+            # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
+            gc.collect()
+            gc.collect()
 
 
 @pytest.fixture
