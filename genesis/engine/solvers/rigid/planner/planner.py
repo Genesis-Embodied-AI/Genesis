@@ -633,7 +633,11 @@ class Planner:
             if arm == gs.planner_arm.SERIAL:
                 n_seeds = 8 if B <= 1 else max(4, 8 // B)
             else:
-                n_seeds = min(max(4096 // B, 12), 64)
+                # Candidates buy basin diversity, which a handful already provides; they do not buy occupancy any
+                # more, now that a candidate's own work is spread over a subgroup of lanes. Seeding past that costs
+                # every phase - the goal resolution draws restarts per candidate, and the optimizer refines each of
+                # them - for diversity the escalation already covers.
+                n_seeds = 8
         if arm == gs.planner_arm.SERIAL:
             budgets = _Budgets(mppi_n_iters=6, mppi_n_particles=4, lbfgs_n_iters=48, ls_n_trials=4)
         else:
