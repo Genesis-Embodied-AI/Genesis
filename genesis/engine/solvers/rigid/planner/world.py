@@ -52,7 +52,7 @@ def kernel_snapshot_world(
 
 
 @qd.func
-def func_world_sd(
+def func_world_signed_distance(
     i_gw,
     i_b,
     x,
@@ -98,7 +98,7 @@ def func_world_sd(
 
 
 @qd.func
-def func_world_sd_grad(
+def func_world_signed_distance_gradient(
     i_gw,
     i_b,
     x,
@@ -108,7 +108,7 @@ def func_world_sd_grad(
     sdf_info: array_class.SDFInfo,
     collider_static_config: qd.template(),
 ):
-    """World-frame gradient of func_world_sd, unit-norm away from the geom."""
+    """World-frame gradient of func_world_signed_distance, unit-norm away from the geom."""
     i_g = planner_world.geoms_idx[i_gw]
     g_pos = planner_world.geoms_pos[i_gw, i_b]
     g_quat = planner_world.geoms_quat[i_gw, i_b]

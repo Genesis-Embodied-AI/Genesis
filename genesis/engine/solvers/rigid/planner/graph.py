@@ -5,7 +5,7 @@ import genesis.utils.geom as gu
 from genesis.utils import array_class
 
 from .cost import func_collision_cost
-from .kinematics import func_fk, func_spheres
+from .kinematics import func_forward_kinematics, func_sphere_positions
 
 # Joint-space steer step (L-inf, radians), the goal-bias probability of extending straight at the other tree,
 # and the number of shortcut splices applied to an extracted path.
@@ -40,7 +40,7 @@ def func_rrt_config_is_free(
     planner_config: qd.template(),
 ):
     """Collision check of the configuration staged in the tree's eval column, with sweep allowance swp."""
-    func_fk(
+    func_forward_kinematics(
         i_t,
         i_t,
         i_b,
@@ -55,7 +55,7 @@ def func_rrt_config_is_free(
         rigid_config=rigid_config,
         planner_config=planner_config,
     )
-    func_spheres(
+    func_sphere_positions(
         i_t,
         i_b,
         links_pos=planner_state.fk.eval.links_pos,

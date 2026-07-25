@@ -7,7 +7,7 @@ from genesis.engine.solvers.rigid.abd.inverse_kinematics import func_forward_kin
 
 
 @qd.func
-def func_fk(
+def func_forward_kinematics(
     i_col_out,
     i_col_q,
     i_b,
@@ -48,7 +48,7 @@ def func_fk(
 
 
 @qd.func
-def func_ik_jacobian(
+def func_inverse_kinematics_jacobian(
     i_col,
     i_b,
     ee_link,
@@ -80,7 +80,7 @@ def func_ik_jacobian(
 
 
 @qd.func
-def func_spheres(
+def func_sphere_positions(
     i_col,
     i_b,
     links_pos: qd.Tensor,

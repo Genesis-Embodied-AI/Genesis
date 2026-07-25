@@ -27,8 +27,8 @@ from .trajopt import (
     build_noise_basis,
     func_lbfgs,
     func_mppi,
-    func_seed,
-    func_seed_from_rrt,
+    func_seed_trajectories,
+    func_seed_trajectories_from_rrt,
     kernel_lbfgs,
 )
 from .world import kernel_snapshot_world
@@ -482,8 +482,8 @@ def kernel_plan(
                 planner_config,
             )
             planner_info.cost.d_safe[None] = d_safe_opt
-            func_seed_from_rrt(envs_idx, planner_state, planner_config)
-        func_seed(graph_counter, envs_idx, planner_state, planner_info, planner_config)
+            func_seed_trajectories_from_rrt(envs_idx, planner_state, planner_config)
+        func_seed_trajectories(graph_counter, envs_idx, planner_state, planner_info, planner_config)
         qd.loop_config(name="planner_plan_mark_seeded")
         for i_b_ in range(envs_idx.shape[0]):
             if not planner_state.is_env_solved[envs_idx[i_b_]]:
@@ -732,9 +732,8 @@ class Planner:
 
         arm, n_seeds, budgets = self._resolve_budgets(B)
         # A GPU lane owns one candidate and the lanes of a warp advance through the knots together, so the knot-major
-        # working set (see get_planner_state) serves a warp's L-BFGS reads from one cache line. A CPU thread instead
-        # walks one whole candidate, which the candidate-major order keeps contiguous. The penalty for taking the
-        # wrong order is an order of magnitude on either side, so it follows the backend.
+        # working set (see get_planner_state) serves a warp's reads from one cache line. A CPU thread instead walks one
+        # whole candidate, which the candidate-major order keeps contiguous, by an order of magnitude either way.
         is_knot_major = gs.backend != gs.cpu
         planner_config = array_class.PlannerStaticConfig(
             para_level=solver._para_level,
@@ -1337,7 +1336,7 @@ class Planner:
         best_seed = costs_gated.argmin(dim=-1)
         is_env_valid = is_seed_valid.gather(-1, best_seed[:, None])[:, 0]
 
-        knots = qd_to_torch(planner_state.cost.qpos).T.reshape(B, S, W, n_dp)
+        knots = qd_to_torch(planner_state.cost.qpos).permute(1, 2, 0).reshape(B, S, W, n_dp)
         knots_best = knots.gather(1, best_seed[:, None, None, None].expand(B, 1, W, n_dp))[:, 0]
         if not ignore_collision and bool(is_env_valid.any()):
             # Certified smoothing polish: each valid env's winning candidate alone takes one more refinement
@@ -1373,14 +1372,14 @@ class Planner:
             _set_clearance(planner_info, float(safety_margin))
             cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True)
             is_env_smooth = self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0]
-            knots = qd_to_torch(planner_state.cost.qpos).T.reshape(B, S, W, n_dp)
+            knots = qd_to_torch(planner_state.cost.qpos).permute(1, 2, 0).reshape(B, S, W, n_dp)
             knots_smooth = knots.gather(1, best_seed[:, None, None, None].expand(B, 1, W, n_dp))[:, 0]
             knots_best = torch.where((is_env_smooth & is_env_valid)[:, None, None], knots_smooth, knots_best)
             # Certified straightening ladder: near-collinear knot runs snap onto their chords, so the retimed
             # profile cruises between the few essential corners instead of slowing at every residual knot
             # wiggle. The snapped polyline is a knot trajectory like any other, so the same certificate gates
             # it per env; envs whose coarse straightening fails retry at the finer radii (see _STRAIGHTEN_RADII).
-            traj_t = qd_to_torch(planner_state.cost.qpos, copy=False).T.reshape(B, S, W, n_dp)
+            traj_t = qd_to_torch(planner_state.cost.qpos, copy=False).permute(1, 2, 0).reshape(B, S, W, n_dp)
             env_rough = is_env_valid.clone()
             for radius in _STRAIGHTEN_RADII:
                 if not bool(env_rough.any()):
