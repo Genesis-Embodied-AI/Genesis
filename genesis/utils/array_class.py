@@ -2808,12 +2808,19 @@ class PlannerDofsInfo:
 class PlannerSpheresInfo:
     """Robot collision proxy: spheres in link-local frames, sorted by link (see sphere_proxy.py). Each sphere
     keeps the robot collision geom it proxies (geom_idx into PlannerGeomsInfo), so the exact rescue re-checks
-    precisely that geom."""
+    precisely that geom.
+
+    links_start ranges the spheres per entity-local link, and each link carries the link-frame sphere bounding
+    all of them, radii included: one test against that bound skips a whole link's spheres against an obstacle,
+    which is where nearly all the per-configuration pair tests go."""
 
     link_idx: qd.Tensor
     geom_idx: qd.Tensor
     pos_local: qd.Tensor
     radius: qd.Tensor
+    links_start: qd.Tensor
+    links_bound_center_local: qd.Tensor
+    links_bound_radius: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -3027,6 +3034,9 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
                 geom_idx=V(dtype=gs.qd_int, shape=(planner_config.n_spheres,)),
                 pos_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
                 radius=V(dtype=gs.qd_float, shape=(planner_config.n_spheres,)),
+                links_start=V(dtype=gs.qd_int, shape=(planner_config.n_links + 1,)),
+                links_bound_center_local=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links,)),
+                links_bound_radius=V(dtype=gs.qd_float, shape=(planner_config.n_links,)),
             ),
             geoms=PlannerGeomsInfo(
                 geoms_idx=V(dtype=gs.qd_int, shape=(max(n_robot_geoms, 1),)),

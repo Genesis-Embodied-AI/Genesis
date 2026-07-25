@@ -321,6 +321,145 @@ def func_chain_gradient(
 
 
 @qd.func
+def func_sphere_world_cost(
+    i_s,
+    i_gw,
+    i_col,
+    i_b,
+    x,
+    radius,
+    swp,
+    anchor_slack,
+    links_pos: qd.Tensor,
+    links_quat: qd.Tensor,
+    planner_world: array_class.PlannerWorldState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
+    dyn_info: array_class.DynInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+    use_exact: qd.template(),
+):
+    """Hinge cost and effective clearance of one (proxy sphere, obstacle geom) pair at column i_col.
+
+    The caller has already established that the pair is within band. Returns (cost, sd_eff), leaving the caller to
+    fold sd_eff into whichever clearance minimum the sphere belongs to.
+    """
+    eps_act = qd.min(planner_info.cost.eps_act[None], planner_world.geoms_max_band[i_gw])
+    sd = func_world_signed_distance(i_gw, i_b, x, planner_world, dyn_info, sdf_info)
+    sd_eff = sd - radius - planner_info.cost.d_safe[None] - swp
+    for i_bound in range(2):
+        offset = func_exclusion_world_offset(i_s, i_gw, i_bound, i_b, planner_info)
+        if offset < 0.0:
+            # Excluded pair: allowed to keep its anchoring boundary's clearance near it, ramped away from the
+            # anchor (see _EXCL_ANCHOR_SLACK_CERT); sweep-free (the allowance is exact at the boundary sample, and
+            # sweep-inflating it would flag pairs pinned at constant depth).
+            anchor, anchor_quat = func_exclusion_world_anchor(i_s, i_gw, i_bound, i_b, planner_info)
+            drift = (x - anchor).norm()
+            if qd.static(use_exact):
+                # Certification charges the link rotation too: the covered surface patch moves with the link
+                # frame, so a matching sphere position under a rotated link is a different contact (points within
+                # the sphere move at most radius * angle).
+                i_l_s = func_sphere_link(i_s, planner_info, planner_config)
+                quat_dot = qd.abs(links_quat[i_l_s, i_col].dot(anchor_quat))
+                drift = drift + (2.0 * qd.acos(qd.min(quat_dot, 1.0)) * radius)
+            ramp = qd.max(0.0, drift - anchor_slack)
+            sd_eff = qd.max(sd_eff, sd - radius - planner_info.cost.d_safe[None] - offset - ramp + 1e-4)
+    if qd.static(use_exact):
+        if (
+            sd_eff < 0.0
+            and sd_eff > -planner_info.cert.exact_rescue_window[None]
+            and i_s < qd.static(planner_config.n_spheres)
+        ):
+            # Borderline robot pair: the exact clearance replaces the proxy one (it is never smaller), which
+            # admits corridors the proxy conservatism walls off. Against a convex world geom the collider's GJK
+            # reads it directly on the sphere's own collision geom; a zero reading (intersecting, depth
+            # unresolved) and non-convex world geoms fall through to the covering-sample sweep.
+            is_exact_resolved = False
+            if planner_world.geoms_is_convex[i_gw]:
+                i_gr = planner_info.fk.spheres.geom_idx[i_s]
+                i_l_s = planner_info.fk.spheres.link_idx[i_s]
+                geom_pos = links_pos[i_l_s, i_col] + gu.qd_transform_by_quat(
+                    planner_info.fk.geoms.offset_pos[i_gr], links_quat[i_l_s, i_col]
+                )
+                geom_quat = gu.qd_transform_quat_by_quat(
+                    planner_info.fk.geoms.offset_quat[i_gr], links_quat[i_l_s, i_col]
+                )
+                d_exact = func_gjk_clearance(
+                    planner_info.fk.geoms.geoms_idx[i_gr],
+                    planner_world.geoms_idx[i_gw],
+                    i_col,
+                    geom_pos,
+                    geom_quat,
+                    planner_world.geoms_pos[i_gw, i_b],
+                    planner_world.geoms_quat[i_gw, i_b],
+                    collider_state=collider_state,
+                    gjk_state=gjk_state,
+                    dyn_info=dyn_info,
+                    collider_info=collider_info,
+                    rigid_config=rigid_config,
+                    collider_static_config=collider_static_config,
+                )
+                if d_exact != 0.0:
+                    sd_eff = qd.max(sd_eff, d_exact - planner_info.cost.d_safe[None] - swp)
+                    is_exact_resolved = True
+            if not is_exact_resolved:
+                # Two-level covering sweep: the coarse screening level settles the clear-cut cases; only its
+                # marginal band pays the fine sweep (see _EXACT_RESCUE_WINDOW).
+                sd_stop = sd_eff + planner_info.cert.exact_sample_cov[None] + planner_info.cost.d_safe[None] + swp
+                sd_coarse = func_sphere_exact_signed_distance(
+                    i_s,
+                    i_gw,
+                    i_col,
+                    i_b,
+                    sd_stop,
+                    verts_pos=planner_info.fk.verts.coarse_pos_local,
+                    verts_start=planner_info.fk.verts.spheres_coarse_start,
+                    links_pos=links_pos,
+                    links_quat=links_quat,
+                    planner_world=planner_world,
+                    planner_info=planner_info,
+                    dyn_info=dyn_info,
+                    sdf_info=sdf_info,
+                )
+                if sd_coarse >= sd_stop:
+                    bound_coarse = (
+                        sd_coarse
+                        - planner_info.cert.exact_sample_cov_coarse[None]
+                        - planner_info.cost.d_safe[None]
+                        - swp
+                    )
+                    if bound_coarse >= 0.0:
+                        sd_eff = qd.max(sd_eff, bound_coarse)
+                    else:
+                        sd_fine = func_sphere_exact_signed_distance(
+                            i_s,
+                            i_gw,
+                            i_col,
+                            i_b,
+                            sd_stop,
+                            verts_pos=planner_info.fk.verts.pos_local,
+                            verts_start=planner_info.fk.verts.spheres_start,
+                            links_pos=links_pos,
+                            links_quat=links_quat,
+                            planner_world=planner_world,
+                            planner_info=planner_info,
+                            dyn_info=dyn_info,
+                            sdf_info=sdf_info,
+                        )
+                        sd_eff = qd.max(
+                            sd_eff,
+                            sd_fine - planner_info.cert.exact_sample_cov[None] - planner_info.cost.d_safe[None] - swp,
+                        )
+    hinge, _ = func_hinge_cost(sd_eff, eps_act)
+    return planner_info.cost.w_obs[None] * hinge, sd_eff
+
+
+@qd.func
 def func_collision_cost(
     i_col,
     i_b,
@@ -361,7 +500,58 @@ def func_collision_cost(
     min_sd_exact = gs.qd_float(qd.math.inf)
     min_sd_proxy = gs.qd_float(qd.math.inf)
 
-    for i_s in range(n_sph_tot):
+    # Obstacle pairs, hierarchically: one bound per link against each obstacle skips that link's spheres
+    # wholesale, which is where nearly every pair test would otherwise go. Attached spheres ride their own loop
+    # since their activity, and so their link's bound, varies per environment.
+    for i_l in range(qd.static(planner_config.n_links)):
+        if planner_info.fk.spheres.links_start[i_l] < planner_info.fk.spheres.links_start[i_l + 1]:
+            center_link = links_pos[i_l, i_col] + gu.qd_transform_by_quat(
+                planner_info.fk.spheres.links_bound_center_local[i_l], links_quat[i_l, i_col]
+            )
+            band_link = (
+                planner_info.fk.spheres.links_bound_radius[i_l]
+                + planner_info.cost.d_safe[None]
+                + planner_info.cost.eps_act[None]
+                + swp
+            )
+            for i_gw in range(planner_world.n_geoms[None]):
+                if planner_world.geoms_is_active[i_gw, i_b] and not func_world_aabb_skip(
+                    i_gw, i_b, center_link, band_link, planner_world
+                ):
+                    for i_s in range(
+                        planner_info.fk.spheres.links_start[i_l], planner_info.fk.spheres.links_start[i_l + 1]
+                    ):
+                        radius = planner_info.fk.spheres.radius[i_s]
+                        x = spheres_pos[i_s, i_col]
+                        band = radius + planner_info.cost.d_safe[None] + planner_info.cost.eps_act[None] + swp
+                        if not func_world_aabb_skip(i_gw, i_b, x, band, planner_world):
+                            pair_cost, sd_eff = func_sphere_world_cost(
+                                i_s,
+                                i_gw,
+                                i_col,
+                                i_b,
+                                x,
+                                radius,
+                                swp,
+                                anchor_slack,
+                                links_pos,
+                                links_quat,
+                                planner_world,
+                                collider_state,
+                                gjk_state,
+                                planner_info,
+                                dyn_info,
+                                collider_info,
+                                sdf_info,
+                                rigid_config,
+                                collider_static_config,
+                                planner_config,
+                                use_exact,
+                            )
+                            cost = cost + pair_cost
+                            min_sd_exact = qd.min(min_sd_exact, sd_eff)
+
+    for i_s in range(qd.static(planner_config.n_spheres), n_sph_tot):
         radius = func_sphere_radius(i_s, i_b, planner_info, planner_config)
         if radius > 0.0:
             x = spheres_pos[i_s, i_col]
@@ -370,135 +560,62 @@ def func_collision_cost(
                 if planner_world.geoms_is_active[i_gw, i_b] and not func_world_aabb_skip(
                     i_gw, i_b, x, band, planner_world
                 ):
-                    eps_act = qd.min(planner_info.cost.eps_act[None], planner_world.geoms_max_band[i_gw])
-                    sd = func_world_signed_distance(i_gw, i_b, x, planner_world, dyn_info, sdf_info)
-                    sd_eff = sd - radius - planner_info.cost.d_safe[None] - swp
-                    for i_bound in range(2):
-                        offset = func_exclusion_world_offset(i_s, i_gw, i_bound, i_b, planner_info)
-                        if offset < 0.0:
-                            # Excluded pair: allowed to keep its anchoring boundary's clearance near it, ramped
-                            # away from the anchor (see _EXCL_ANCHOR_SLACK_CERT); sweep-free (the allowance is exact
-                            # at the boundary sample, and sweep-inflating it would flag pairs pinned at constant
-                            # depth).
-                            anchor, anchor_quat = func_exclusion_world_anchor(i_s, i_gw, i_bound, i_b, planner_info)
-                            drift = (x - anchor).norm()
-                            if qd.static(use_exact):
-                                # Certification charges the link rotation too: the covered surface patch moves
-                                # with the link frame, so a matching sphere position under a rotated link is a
-                                # different contact (points within the sphere move at most radius * angle).
-                                i_l_s = func_sphere_link(i_s, planner_info, planner_config)
-                                quat_dot = qd.abs(links_quat[i_l_s, i_col].dot(anchor_quat))
-                                drift = drift + (2.0 * qd.acos(qd.min(quat_dot, 1.0)) * radius)
-                            ramp = qd.max(0.0, drift - anchor_slack)
-                            sd_eff = qd.max(sd_eff, sd - radius - planner_info.cost.d_safe[None] - offset - ramp + 1e-4)
-                    if qd.static(use_exact):
-                        if (
-                            sd_eff < 0.0
-                            and sd_eff > -planner_info.cert.exact_rescue_window[None]
-                            and i_s < qd.static(planner_config.n_spheres)
-                        ):
-                            # Borderline robot pair: the exact clearance replaces the proxy one (it is never
-                            # smaller), which admits corridors the proxy conservatism walls off. Against a
-                            # convex world geom the collider's GJK reads it directly on the sphere's own
-                            # collision geom; a zero reading (intersecting, depth unresolved) and non-convex
-                            # world geoms fall through to the covering-sample sweep.
-                            is_exact_resolved = False
-                            if planner_world.geoms_is_convex[i_gw]:
-                                i_gr = planner_info.fk.spheres.geom_idx[i_s]
-                                i_l_s = planner_info.fk.spheres.link_idx[i_s]
-                                geom_pos = links_pos[i_l_s, i_col] + gu.qd_transform_by_quat(
-                                    planner_info.fk.geoms.offset_pos[i_gr], links_quat[i_l_s, i_col]
-                                )
-                                geom_quat = gu.qd_transform_quat_by_quat(
-                                    planner_info.fk.geoms.offset_quat[i_gr], links_quat[i_l_s, i_col]
-                                )
-                                d_exact = func_gjk_clearance(
-                                    planner_info.fk.geoms.geoms_idx[i_gr],
-                                    planner_world.geoms_idx[i_gw],
-                                    i_col,
-                                    geom_pos,
-                                    geom_quat,
-                                    planner_world.geoms_pos[i_gw, i_b],
-                                    planner_world.geoms_quat[i_gw, i_b],
-                                    collider_state=collider_state,
-                                    gjk_state=gjk_state,
-                                    dyn_info=dyn_info,
-                                    collider_info=collider_info,
-                                    rigid_config=rigid_config,
-                                    collider_static_config=collider_static_config,
-                                )
-                                if d_exact != 0.0:
-                                    sd_eff = qd.max(sd_eff, d_exact - planner_info.cost.d_safe[None] - swp)
-                                    is_exact_resolved = True
-                            if not is_exact_resolved:
-                                # Two-level covering sweep: the coarse screening level settles the clear-cut
-                                # cases; only its marginal band pays the fine sweep (see _EXACT_RESCUE_WINDOW).
-                                sd_stop = (
-                                    sd_eff
-                                    + planner_info.cert.exact_sample_cov[None]
-                                    + planner_info.cost.d_safe[None]
-                                    + swp
-                                )
-                                sd_coarse = func_sphere_exact_signed_distance(
-                                    i_s,
-                                    i_gw,
-                                    i_col,
-                                    i_b,
-                                    sd_stop,
-                                    verts_pos=planner_info.fk.verts.coarse_pos_local,
-                                    verts_start=planner_info.fk.verts.spheres_coarse_start,
-                                    links_pos=links_pos,
-                                    links_quat=links_quat,
-                                    planner_world=planner_world,
-                                    planner_info=planner_info,
-                                    dyn_info=dyn_info,
-                                    sdf_info=sdf_info,
-                                )
-                                if sd_coarse >= sd_stop:
-                                    bound_coarse = (
-                                        sd_coarse
-                                        - planner_info.cert.exact_sample_cov_coarse[None]
-                                        - planner_info.cost.d_safe[None]
-                                        - swp
-                                    )
-                                    if bound_coarse >= 0.0:
-                                        sd_eff = qd.max(sd_eff, bound_coarse)
-                                    else:
-                                        sd_fine = func_sphere_exact_signed_distance(
-                                            i_s,
-                                            i_gw,
-                                            i_col,
-                                            i_b,
-                                            sd_stop,
-                                            verts_pos=planner_info.fk.verts.pos_local,
-                                            verts_start=planner_info.fk.verts.spheres_start,
-                                            links_pos=links_pos,
-                                            links_quat=links_quat,
-                                            planner_world=planner_world,
-                                            planner_info=planner_info,
-                                            dyn_info=dyn_info,
-                                            sdf_info=sdf_info,
-                                        )
-                                        sd_eff = qd.max(
-                                            sd_eff,
-                                            sd_fine
-                                            - planner_info.cert.exact_sample_cov[None]
-                                            - planner_info.cost.d_safe[None]
-                                            - swp,
-                                        )
-                    if i_s < qd.static(planner_config.n_spheres):
-                        min_sd_exact = qd.min(min_sd_exact, sd_eff)
-                    else:
-                        min_sd_proxy = qd.min(min_sd_proxy, sd_eff)
-                    hinge, _ = func_hinge_cost(sd_eff, eps_act)
-                    cost = cost + (planner_info.cost.w_obs[None] * hinge)
+                    pair_cost, sd_eff = func_sphere_world_cost(
+                        i_s,
+                        i_gw,
+                        i_col,
+                        i_b,
+                        x,
+                        radius,
+                        swp,
+                        anchor_slack,
+                        links_pos,
+                        links_quat,
+                        planner_world,
+                        collider_state,
+                        gjk_state,
+                        planner_info,
+                        dyn_info,
+                        collider_info,
+                        sdf_info,
+                        rigid_config,
+                        collider_static_config,
+                        planner_config,
+                        use_exact,
+                    )
+                    cost = cost + pair_cost
+                    min_sd_proxy = qd.min(min_sd_proxy, sd_eff)
 
     for i_lp in range(planner_info.fk.self_pairs.link_pairs_idx.shape[0]):
         sd_pair = gs.qd_float(qd.math.inf)
         swp_pair_max = gs.qd_float(0.0)
-        for i_p in range(
-            planner_info.fk.self_pairs.link_pairs_start[i_lp], planner_info.fk.self_pairs.link_pairs_start[i_lp + 1]
-        ):
+        # One test between the two links' bounds skips a whole sphere-pair block, the same way the obstacle loop
+        # skips a link: the pair list is quadratic in spheres per link and nearly all of it is far apart. The
+        # demand charges the widest sweep allowance a pair can carry (eps_act) and the hinge activation, so a
+        # non-negative bound means no pair of the block can cost anything; requiring it to also clear the running
+        # minimum keeps the reported clearance exactly what iterating every pair would have produced, which the
+        # obstacle loop gets for free from its band test and this one does not.
+        i_la_bound = planner_info.fk.self_pairs.link_pairs_idx[i_lp][0]
+        i_lb_bound = planner_info.fk.self_pairs.link_pairs_idx[i_lp][1]
+        center_a = links_pos[i_la_bound, i_col] + gu.qd_transform_by_quat(
+            planner_info.fk.spheres.links_bound_center_local[i_la_bound], links_quat[i_la_bound, i_col]
+        )
+        center_b = links_pos[i_lb_bound, i_col] + gu.qd_transform_by_quat(
+            planner_info.fk.spheres.links_bound_center_local[i_lb_bound], links_quat[i_lb_bound, i_col]
+        )
+        bound_links = (
+            (center_a - center_b).norm()
+            - planner_info.fk.spheres.links_bound_radius[i_la_bound]
+            - planner_info.fk.spheres.links_bound_radius[i_lb_bound]
+            - planner_info.cost.d_safe[None]
+            - planner_info.cost.eps_act[None]
+            - planner_info.cost.eps_self[None]
+        )
+        i_p_start = planner_info.fk.self_pairs.link_pairs_start[i_lp]
+        i_p_end = planner_info.fk.self_pairs.link_pairs_start[i_lp + 1]
+        if bound_links >= 0.0 and bound_links >= min_sd_proxy:
+            i_p_end = i_p_start
+        for i_p in range(i_p_start, i_p_end):
             i_sa, i_sb = planner_info.fk.self_pairs.spheres_idx[i_p][0], planner_info.fk.self_pairs.spheres_idx[i_p][1]
             radius_a = func_sphere_radius(i_sa, i_b, planner_info, planner_config)
             radius_b = func_sphere_radius(i_sb, i_b, planner_info, planner_config)

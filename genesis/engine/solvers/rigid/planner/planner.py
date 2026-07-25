@@ -682,6 +682,17 @@ class Planner:
         spheres_geom_idx = np.array(spheres_geom_idx, dtype=gs.np_int)
         spheres_pos_local = np.concatenate(spheres_pos_local, dtype=gs.np_float)
         spheres_radius = np.concatenate(spheres_radius, dtype=gs.np_float)
+        spheres_links_start = np.zeros(entity.n_links + 1, dtype=gs.np_int)
+        np.cumsum(np.bincount(spheres_link_idx, minlength=entity.n_links), out=spheres_links_start[1:])
+        links_bound_center = np.zeros((entity.n_links, 3), dtype=gs.np_float)
+        links_bound_radius = np.zeros(entity.n_links, dtype=gs.np_float)
+        for i_l in range(entity.n_links):
+            pos_l = spheres_pos_local[spheres_links_start[i_l] : spheres_links_start[i_l + 1]]
+            radius_l = spheres_radius[spheres_links_start[i_l] : spheres_links_start[i_l + 1]]
+            if len(radius_l):
+                center = 0.5 * ((pos_l - radius_l[:, None]).min(axis=0) + (pos_l + radius_l[:, None]).max(axis=0))
+                links_bound_center[i_l] = center
+                links_bound_radius[i_l] = (np.linalg.norm(pos_l - center, axis=-1) + radius_l).max()
 
         # Self-collision sphere pairs from the collider's build-time geom-pair filter, collapsed to link pairs.
         pair_mask = tensor_to_array(qd_to_torch(solver.collider._collider_info.collision_pair_idx) != -1)
@@ -853,6 +864,12 @@ class Planner:
         spheres_pos_local_t[:] = torch.as_tensor(spheres_pos_local, device=gs.device)
         spheres_radius_t = qd_to_torch(planner_info.fk.spheres.radius, copy=False)
         spheres_radius_t[:] = torch.as_tensor(spheres_radius, device=gs.device)
+        spheres_links_start_t = qd_to_torch(planner_info.fk.spheres.links_start, copy=False)
+        spheres_links_start_t[:] = torch.as_tensor(spheres_links_start, device=gs.device)
+        links_bound_center_t = qd_to_torch(planner_info.fk.spheres.links_bound_center_local, copy=False)
+        links_bound_center_t[:] = torch.as_tensor(links_bound_center, device=gs.device)
+        links_bound_radius_t = qd_to_torch(planner_info.fk.spheres.links_bound_radius, copy=False)
+        links_bound_radius_t[:] = torch.as_tensor(links_bound_radius, device=gs.device)
         rgeoms_idx_t = qd_to_torch(planner_info.fk.geoms.geoms_idx, copy=False)
         rgeoms_idx_t[:] = torch.as_tensor(np.array(rgeoms_idx, dtype=gs.np_int), device=gs.device)
         rgeoms_links_start_t = qd_to_torch(planner_info.fk.geoms.links_start, copy=False)
