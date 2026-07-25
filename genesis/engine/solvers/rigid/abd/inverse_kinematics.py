@@ -436,7 +436,7 @@ def func_inverse_kinematics(
 
                     err_pos_i = targets.pos[i_ee, i_b_] - ee_pos
                     for k in range(3):
-                        err_pos_i[k] *= targets.pos_mask[k] * targets.link_pos_mask[i_ee]
+                        err_pos_i[k] = err_pos_i[k] * (targets.pos_mask[k] * targets.link_pos_mask[i_ee])
                     if err_pos_i.norm() > pos_tol:
                         solved = False
 
@@ -444,7 +444,7 @@ def func_inverse_kinematics(
                         gu.qd_transform_quat_by_quat(gu.qd_inv_quat(ee_quat), targets.quat[i_ee, i_b_]), EPS
                     )
                     for k in range(3):
-                        err_rot_i[k] *= targets.rot_mask[k] * targets.link_rot_mask[i_ee]
+                        err_rot_i[k] = err_rot_i[k] * (targets.rot_mask[k] * targets.link_rot_mask[i_ee])
                     if err_rot_i.norm() > rot_tol:
                         solved = False
 
@@ -513,7 +513,7 @@ def func_inverse_kinematics(
                 for i_d_ in range(n_dofs):
                     i_d = targets.dofs_idx[i_d_]
                     for j in range(n_error_dims):
-                        ik_state.delta_qpos[i_d, i_b] += (
+                        ik_state.delta_qpos[i_d, i_b] = ik_state.delta_qpos[i_d, i_b] + (
                             ik_state.jacobian_stacked_t[i_d_, j, i_b] * ik_state.vec[j, i_b]
                         )
 
@@ -564,7 +564,7 @@ def func_inverse_kinematics(
                     )
                     err_pos_i = targets.pos[i_ee, i_b_] - ee_pos
                     for k in range(3):
-                        err_pos_i[k] *= targets.pos_mask[k] * targets.link_pos_mask[i_ee]
+                        err_pos_i[k] = err_pos_i[k] * (targets.pos_mask[k] * targets.link_pos_mask[i_ee])
                     if err_pos_i.norm() > pos_tol:
                         solved = False
 
@@ -572,7 +572,7 @@ def func_inverse_kinematics(
                         gu.qd_transform_quat_by_quat(gu.qd_inv_quat(ee_quat), targets.quat[i_ee, i_b_]), EPS
                     )
                     for k in range(3):
-                        err_rot_i[k] *= targets.rot_mask[k] * targets.link_rot_mask[i_ee]
+                        err_rot_i[k] = err_rot_i[k] * (targets.rot_mask[k] * targets.link_rot_mask[i_ee])
                     if err_rot_i.norm() > rot_tol:
                         solved = False
 

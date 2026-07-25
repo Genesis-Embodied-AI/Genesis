@@ -119,8 +119,9 @@ def func_rrt_edge_is_free(
     n_dp = qd.static(planner_config.n_dp)
     reach = gs.qd_float(0.0)
     for i_dp in range(n_dp):
-        reach += planner_info.fk.dofs.reach[i_dp] * qd.abs(
-            planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
+        reach = reach + (
+            planner_info.fk.dofs.reach[i_dp]
+            * qd.abs(planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from])
         )
     # Quarter-band granularity: each sample's sweep allowance stays ~eps_act/8, so edges certify while only
     # requiring modest true clearance (the demand IS the allowance - coarser sampling would reject any edge
@@ -169,7 +170,7 @@ def func_rrt_edge_is_free(
             collider_static_config=collider_static_config,
             planner_config=planner_config,
         )
-        i_sub += n_lanes
+        i_sub = i_sub + n_lanes
     # An edge is free only if every lane's share was: a minimum over 0/1 is their conjunction.
     if qd.static(planner_config.n_cost_lanes > 1):
         return (
@@ -270,9 +271,10 @@ def func_rrt_connect(
                 for i_n in range(planner_state.rrt.n_nodes[2 * i_t + side]):
                     d = gs.qd_float(0.0)
                     for i_dp in range(n_dp):
-                        d += (
-                            planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n]
-                        ) ** 2
+                        d = d + (
+                            (planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n])
+                            ** 2
+                        )
                     if d < d_near:
                         d_near = d
                         i_near = i_n
@@ -325,10 +327,13 @@ def func_rrt_connect(
                         for i_n in range(planner_state.rrt.n_nodes[2 * i_t + 1 - side]):
                             d = gs.qd_float(0.0)
                             for i_dp in range(n_dp):
-                                d += (
-                                    planner_state.rrt.qpos[i_dp, col_new]
-                                    - planner_state.rrt.qpos[i_dp, col0 + other + i_n]
-                                ) ** 2
+                                d = d + (
+                                    (
+                                        planner_state.rrt.qpos[i_dp, col_new]
+                                        - planner_state.rrt.qpos[i_dp, col0 + other + i_n]
+                                    )
+                                    ** 2
+                                )
                             if d < d_join:
                                 d_join = d
                                 i_join = i_n
@@ -359,8 +364,8 @@ def func_rrt_connect(
                                 planner_state.rrt.bridge[i_t] = qd.Vector([other + i_join, base + i_new], dt=gs.qd_int)
                             planner_state.rrt.is_done[i_t] = True
                 side = 1 - side
-                it += 1
-                n_stall += 1
+                it = it + 1
+                n_stall = n_stall + 1
 
             # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended.
             if planner_state.rrt.is_done[i_t]:
@@ -369,7 +374,7 @@ def func_rrt_connect(
                 while node != -1:
                     for i_dp in range(n_dp):
                         planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
-                    n_path += 1
+                    n_path = n_path + 1
                     node = planner_state.rrt.parent[col0 + node]
                 for i_swap in range(n_path // 2):
                     for i_dp in range(n_dp):
@@ -382,7 +387,7 @@ def func_rrt_connect(
                 while node != -1 and n_path < n_nodes:
                     for i_dp in range(n_dp):
                         planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
-                    n_path += 1
+                    n_path = n_path + 1
                     node = planner_state.rrt.parent[col0 + node]
 
                 # Shortcut pass: splice certified straight edges over random sub-chains. Downstream the path is
@@ -424,5 +429,5 @@ def func_rrt_connect(
                                     planner_state.rrt.path[i_dp, col0 + i_n] = planner_state.rrt.path[
                                         i_dp, col0 + i_n + n_cut
                                     ]
-                            n_path -= n_cut
+                            n_path = n_path - n_cut
                 planner_state.rrt.path_len[i_t] = n_path

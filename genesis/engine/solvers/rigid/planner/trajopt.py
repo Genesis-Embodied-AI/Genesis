@@ -135,14 +135,14 @@ def func_trajectory_cost(
                 planner_config=planner_config,
                 use_exact=False,
             )
-            cost += coll_cost
+            cost = cost + coll_cost
 
             # Smoothness / limit / posture terms, identical to the gradient path (see func_knot_cost_gradient).
             for i_dp in range(n_dp):
                 q = qpos_cols[i_dp, i_c, i_w]
                 if 1 <= i_w < n_knots - 1:
                     acc = qpos_cols[i_dp, i_c, i_w - 1] - 2.0 * q + qpos_cols[i_dp, i_c, i_w + 1]
-                    cost += planner_info.cost.w_acc[None] * acc**2
+                    cost = cost + (planner_info.cost.w_acc[None] * acc**2)
                 if 1 <= i_w < n_knots - 2:
                     jerk = (
                         qpos_cols[i_dp, i_c, i_w + 2]
@@ -150,20 +150,20 @@ def func_trajectory_cost(
                         + 3.0 * q
                         - qpos_cols[i_dp, i_c, i_w - 1]
                     )
-                    cost += planner_info.cost.w_jerk[None] * jerk**2
+                    cost = cost + (planner_info.cost.w_jerk[None] * jerk**2)
                 over = q - planner_info.fk.dofs.q_limit_upper[i_dp]
                 under = planner_info.fk.dofs.q_limit_lower[i_dp] - q
                 if over > 0.0:
-                    cost += planner_info.cost.w_lim[None] * over**2
+                    cost = cost + (planner_info.cost.w_lim[None] * over**2)
                 if under > 0.0:
-                    cost += planner_info.cost.w_lim[None] * under**2
+                    cost = cost + (planner_info.cost.w_lim[None] * under**2)
                 ref = planner_info.cost.boundary.qpos_start[i_dp, i_b] + (
                     planner_info.cost.boundary.qpos_goal[i_dp, i_b] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
                 ) * (qd.cast(i_w, gs.qd_float) / float(n_knots - 1))
-                cost += planner_info.cost.w_posture[None] * (q - ref) ** 2
+                cost = cost + (planner_info.cost.w_posture[None] * (q - ref) ** 2)
 
             if planner_info.cost.boundary.has_pose_goal[None] and i_w == n_knots - 1:
-                cost += func_pose_cost(
+                cost = cost + func_pose_cost(
                     i_e_col,
                     i_b,
                     links_pos=planner_state.fk.eval.links_pos,
@@ -263,7 +263,7 @@ def func_candidate_cost_gradient(
             collider_static_config=collider_static_config,
             planner_config=planner_config,
         )
-        cost += planner_state.cost.cost_wp[i_c, i_w]
+        cost = cost + planner_state.cost.cost_wp[i_c, i_w]
     # Every lane leaves with the whole trajectory's cost, and with the whole gradient visible: the caller's
     # recursion reads knots this lane did not write.
     if qd.static(n_lanes > 1):
@@ -322,10 +322,11 @@ def func_seed_trajectories(
                             delta = gs.qd_float(0.0)
                             for i_k in range(n_noise):
                                 key = i_k * n_dp + i_dp
-                                delta += planner_info.mppi.noise_basis[i_w, i_k] * gu.qd_hash_gauss(
-                                    planner_info.mppi.seed_key[None], i_c, key, attempt
+                                delta = delta + (
+                                    planner_info.mppi.noise_basis[i_w, i_k]
+                                    * gu.qd_hash_gauss(planner_info.mppi.seed_key[None], i_c, key, attempt)
                                 )
-                            q += 0.5 * delta
+                            q = q + (0.5 * delta)
                         q = qd.math.clamp(
                             q, planner_info.fk.dofs.q_limit_lower[i_dp], planner_info.fk.dofs.q_limit_upper[i_dp]
                         )
@@ -362,7 +363,7 @@ def func_seed_trajectories_from_rrt(
             for i_t_ in range(n_trees):
                 i_t = i_b_ * n_trees + i_t_
                 if planner_state.rrt.is_done[i_t] and planner_state.rrt.path_len[i_t] >= 2:
-                    n_conn += 1
+                    n_conn = n_conn + 1
             if n_conn > 0:
                 for i_s in range(n_seeds):
                     # The (i_s mod n_conn)-th connected tree seeds column i_s.
@@ -374,7 +375,7 @@ def func_seed_trajectories_from_rrt(
                         if planner_state.rrt.is_done[i_t] and planner_state.rrt.path_len[i_t] >= 2:
                             if seen == target:
                                 i_t_sel = i_t
-                            seen += 1
+                            seen = seen + 1
                     n_path = planner_state.rrt.path_len[i_t_sel]
                     rrt_col0 = i_t_sel * n_nodes
                     i_c = i_b_ * n_seeds + i_s
@@ -392,8 +393,8 @@ def func_seed_trajectories_from_rrt(
                                     planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
                                     - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
                                 )
-                                d += diff * diff
-                            total += qd.sqrt(d)
+                                d = d + (diff * diff)
+                            total = total + qd.sqrt(d)
                         extra = n_knots - n_path
                         for i_dp in range(n_dp):
                             planner_state.cost.qpos[i_dp, i_c, 0] = planner_state.rrt.path[i_dp, rrt_col0]
@@ -407,24 +408,24 @@ def func_seed_trajectories_from_rrt(
                                     planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
                                     - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
                                 )
-                                d += diff * diff
-                            acc += qd.sqrt(d) * qd.cast(extra, gs.qd_float) / qd.max(total, 1e-9)
+                                d = d + (diff * diff)
+                            acc = acc + (qd.sqrt(d) * qd.cast(extra, gs.qd_float) / qd.max(total, 1e-9))
                             n_sub = gs.qd_int(qd.floor(acc)) - placed
                             if i_seg == n_path - 2:
                                 n_sub = extra - placed
-                            placed += n_sub
+                            placed = placed + n_sub
                             for k in range(n_sub):
                                 u = qd.cast(k + 1, gs.qd_float) / qd.cast(n_sub + 1, gs.qd_float)
                                 for i_dp in range(n_dp):
                                     q_a = planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
                                     q_b = planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
                                     planner_state.cost.qpos[i_dp, i_c, i_w] = q_a * (1.0 - u) + q_b * u
-                                i_w += 1
+                                i_w = i_w + 1
                             for i_dp in range(n_dp):
                                 planner_state.cost.qpos[i_dp, i_c, i_w] = planner_state.rrt.path[
                                     i_dp, rrt_col0 + i_seg + 1
                                 ]
-                            i_w += 1
+                            i_w = i_w + 1
                     else:
                         # Arclength resample: total polyline length in one pass, then a single walk placing the
                         # interior knots; the endpoints pin to the polyline start and goal.
@@ -436,8 +437,8 @@ def func_seed_trajectories_from_rrt(
                                     planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
                                     - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
                                 )
-                                d += diff * diff
-                            total += qd.sqrt(d)
+                                d = d + (diff * diff)
+                            total = total + qd.sqrt(d)
                         for i_dp in range(n_dp):
                             planner_state.cost.qpos[i_dp, i_c, 0] = planner_state.rrt.path[i_dp, rrt_col0]
                             planner_state.cost.qpos[i_dp, i_c, n_knots - 1] = planner_state.rrt.path[
@@ -456,11 +457,11 @@ def func_seed_trajectories_from_rrt(
                                         planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
                                         - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
                                     )
-                                    seg_len += diff * diff
+                                    seg_len = seg_len + (diff * diff)
                                 seg_len = qd.sqrt(seg_len)
                                 if i_seg < n_path - 2 and s_cum + seg_len < s_tgt:
-                                    s_cum += seg_len
-                                    i_seg += 1
+                                    s_cum = s_cum + seg_len
+                                    i_seg = i_seg + 1
                                 else:
                                     advancing = False
                             u = (s_tgt - s_cum) / qd.max(seg_len, 1e-9)
@@ -542,8 +543,8 @@ def func_mppi(
                                 if not func_is_knot_clamped(i_c, i_w, i_b, planner_info, planner_config):
                                     delta = gs.qd_float(0.0)
                                     for i_k in range(n_noise):
-                                        delta += planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k]
-                                    delta *= anneal * planner_info.mppi.sigma[i_dp]
+                                        delta = delta + (planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k])
+                                    delta = delta * (anneal * planner_info.mppi.sigma[i_dp])
                                     q = qd.math.clamp(
                                         q + delta,
                                         planner_info.fk.dofs.q_limit_lower[i_dp],
@@ -580,14 +581,14 @@ def func_mppi(
                 cost_mean = gs.qd_float(0.0)
                 for i_p in range(n_particles):
                     cost_min = qd.min(cost_min, costs[i_p])
-                    cost_mean += costs[i_p]
-                cost_mean /= qd.cast(n_particles, gs.qd_float)
+                    cost_mean = cost_mean + costs[i_p]
+                cost_mean = cost_mean / qd.cast(n_particles, gs.qd_float)
                 beta = 0.5 * (cost_mean - cost_min) + 1e-6
                 weight_sum = gs.qd_float(0.0)
                 exps = qd.Vector.zero(gs.qd_float, n_particles_max)
                 for i_p in range(n_particles):
                     exps[i_p] = qd.exp(-(costs[i_p] - cost_min) / beta)
-                    weight_sum += exps[i_p]
+                    weight_sum = weight_sum + exps[i_p]
 
                 # Pass 2: rebuild the weighted noise mixture and fold it into the mean. The mixture accumulates
                 # per knot so the DOF and its particles stay the outer loops, sharing one draw of the coefficients
@@ -608,8 +609,10 @@ def func_mppi(
                                 ):
                                     delta = gs.qd_float(0.0)
                                     for i_k in range(n_noise):
-                                        delta += planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k]
-                                    delta_mean[i_w] += weight * delta * anneal * planner_info.mppi.sigma[i_dp]
+                                        delta = delta + (planner_info.mppi.noise_basis[i_w, i_k] * coeffs[i_k])
+                                    delta_mean[i_w] = delta_mean[i_w] + (
+                                        weight * delta * anneal * planner_info.mppi.sigma[i_dp]
+                                    )
                         for i_knot_chunk in range(n_knot_chunks):
                             i_w = i_knot_chunk * n_lanes + i_lane
                             if i_w < n_knots and not func_is_knot_clamped(i_c, i_w, i_b, planner_info, planner_config):
@@ -695,7 +698,7 @@ def func_lbfgs(
                     dot_sd = gs.qd_float(0.0)
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            dot_sd += (
+                            dot_sd = dot_sd + (
                                 planner_state.lbfgs.dqpos_hist[i_h, i_dp, i_c, i_w]
                                 * planner_state.lbfgs.dir_traj[i_dp, i_c, i_w]
                             )
@@ -703,9 +706,9 @@ def func_lbfgs(
                     alphas[i_h] = alpha_h
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] -= (
-                                alpha_h * planner_state.lbfgs.dgrad_hist[i_h, i_dp, i_c, i_w]
-                            )
+                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] = planner_state.lbfgs.dir_traj[
+                                i_dp, i_c, i_w
+                            ] - (alpha_h * planner_state.lbfgs.dgrad_hist[i_h, i_dp, i_c, i_w])
                 # Fresh history: scale steepest descent so the ladder's unit step moves the largest joint by
                 # one radian - the raw gradient magnitude is arbitrary and would overshoot every trial.
                 if n_hist == 0:
@@ -716,7 +719,9 @@ def func_lbfgs(
                     scale_sd = 1.0 / qd.max(dir_inf, 1e-9)
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] *= scale_sd
+                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] = (
+                                planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] * scale_sd
+                            )
                 # Initial scaling gamma = (s.y) / (y.y) of the most recent pair.
                 if n_hist > 0:
                     i_h = (i_next - 1) % m_hist
@@ -724,30 +729,32 @@ def func_lbfgs(
                     dot_yy = gs.qd_float(0.0)
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            dot_sy += (
+                            dot_sy = dot_sy + (
                                 planner_state.lbfgs.dqpos_hist[i_h, i_dp, i_c, i_w]
                                 * planner_state.lbfgs.dgrad_hist[i_h, i_dp, i_c, i_w]
                             )
-                            dot_yy += planner_state.lbfgs.dgrad_hist[i_h, i_dp, i_c, i_w] ** 2
+                            dot_yy = dot_yy + (planner_state.lbfgs.dgrad_hist[i_h, i_dp, i_c, i_w] ** 2)
                     gamma = qd.math.clamp(dot_sy / qd.max(dot_yy, 1e-12), 1e-4, 1e2)
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] *= gamma
+                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] = (
+                                planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] * gamma
+                            )
                 for i_h_ in range(n_hist):
                     i_h = (i_next - n_hist + i_h_) % m_hist
                     dot_yd = gs.qd_float(0.0)
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            dot_yd += (
+                            dot_yd = dot_yd + (
                                 planner_state.lbfgs.dgrad_hist[i_h, i_dp, i_c, i_w]
                                 * planner_state.lbfgs.dir_traj[i_dp, i_c, i_w]
                             )
                     beta_h = planner_state.lbfgs.rho_hist[i_h, i_c] * dot_yd
                     for i_w in range(n_knots):
                         for i_dp in range(n_dp):
-                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] += (
-                                alphas[i_h] - beta_h
-                            ) * planner_state.lbfgs.dqpos_hist[i_h, i_dp, i_c, i_w]
+                            planner_state.lbfgs.dir_traj[i_dp, i_c, i_w] = planner_state.lbfgs.dir_traj[
+                                i_dp, i_c, i_w
+                            ] + ((alphas[i_h] - beta_h) * planner_state.lbfgs.dqpos_hist[i_h, i_dp, i_c, i_w])
 
                 # Step-ladder line search on trial trajectories, jittered per (candidate, iteration).
                 jitter = 0.8 + 0.4 * gu.qd_hash01(planner_info.mppi.seed_key[None], i_c, it, 12345)
@@ -799,7 +806,7 @@ def func_lbfgs(
 
                 if alpha_best == 0.0:
                     # No improving step: drop the history (bad curvature model) before giving up.
-                    n_stall += 1
+                    n_stall = n_stall + 1
                     n_hist = 0
                 else:
                     n_stall = 0
@@ -847,12 +854,12 @@ def func_lbfgs(
                             )
                             planner_state.lbfgs.dqpos_hist[i_next % m_hist, i_dp, i_c, i_w] = s_e
                             planner_state.lbfgs.dgrad_hist[i_next % m_hist, i_dp, i_c, i_w] = y_e
-                            dot_sy += s_e * y_e
+                            dot_sy = dot_sy + (s_e * y_e)
                     if dot_sy > 1e-10:
                         planner_state.lbfgs.rho_hist[i_next % m_hist, i_c] = 1.0 / dot_sy
-                        i_next += 1
+                        i_next = i_next + 1
                         n_hist = qd.min(n_hist + 1, m_hist)
-                it += 1
+                it = it + 1
 
             planner_state.cost.cost[i_c] = cost
 

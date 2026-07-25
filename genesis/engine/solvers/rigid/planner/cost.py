@@ -190,7 +190,7 @@ def func_sphere_exact_signed_distance(
     while i_v < verts_start[i_s + 1] and min_sd >= sd_stop:
         p = links_pos[i_l, i_col] + gu.qd_transform_by_quat(verts_pos[i_v], links_quat[i_l, i_col])
         min_sd = qd.min(min_sd, func_world_signed_distance(i_gw, i_b, p, planner_world, dyn_info, sdf_info))
-        i_v += 1
+        i_v = i_v + 1
     return min_sd
 
 
@@ -241,9 +241,9 @@ def func_gjk_clearance(
         dist = 0.0
     elif shrink_sphere:
         if is_swept_a:
-            dist -= dyn_info.geoms.data[i_ga][0]
+            dist = dist - dyn_info.geoms.data[i_ga][0]
         if is_swept_b:
-            dist -= dyn_info.geoms.data[i_gb][0]
+            dist = dist - dyn_info.geoms.data[i_gb][0]
     return dist
 
 
@@ -316,7 +316,7 @@ def func_chain_gradient(
                             )
                         else:
                             dq = joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_col_fk].dot(g)
-                        grad_traj[i_dp, i_c, i_w] += scale * dq
+                        grad_traj[i_dp, i_c, i_w] = grad_traj[i_dp, i_c, i_w] + (scale * dq)
             i_l_glob = dyn_info.links.parent_idx[I_l]
 
 
@@ -388,7 +388,7 @@ def func_collision_cost(
                                 # different contact (points within the sphere move at most radius * angle).
                                 i_l_s = func_sphere_link(i_s, planner_info, planner_config)
                                 quat_dot = qd.abs(links_quat[i_l_s, i_col].dot(anchor_quat))
-                                drift += 2.0 * qd.acos(qd.min(quat_dot, 1.0)) * radius
+                                drift = drift + (2.0 * qd.acos(qd.min(quat_dot, 1.0)) * radius)
                             ramp = qd.max(0.0, drift - anchor_slack)
                             sd_eff = qd.max(sd_eff, sd - radius - planner_info.cost.d_safe[None] - offset - ramp + 1e-4)
                     if qd.static(use_exact):
@@ -491,7 +491,7 @@ def func_collision_cost(
                     else:
                         min_sd_proxy = qd.min(min_sd_proxy, sd_eff)
                     hinge, _ = func_hinge_cost(sd_eff, eps_act)
-                    cost += planner_info.cost.w_obs[None] * hinge
+                    cost = cost + (planner_info.cost.w_obs[None] * hinge)
 
     for i_lp in range(planner_info.fk.self_pairs.link_pairs_idx.shape[0]):
         sd_pair = gs.qd_float(qd.math.inf)
@@ -519,7 +519,7 @@ def func_collision_cost(
                 sd_pair = qd.min(sd_pair, sd_eff)
                 swp_pair_max = qd.max(swp_pair_max, swp_pair)
                 hinge, _ = func_hinge_cost(sd_eff, planner_info.cost.eps_self[None])
-                cost += planner_info.cost.w_self[None] * hinge
+                cost = cost + (planner_info.cost.w_self[None] * hinge)
         if qd.static(use_exact):
             if sd_pair < 0.0:
                 # Failing self link pair: one exact GJK reading per geom pair replaces the proxy one when every
@@ -769,7 +769,7 @@ def func_boundary_exclusions(
             )
             contact_band = qd.math.inf if i_bound == 0 else planner_info.cert.excl_contact_band[None]
             depth_max = qd.math.inf if i_bound == 0 else planner_info.cert.excl_depth_max[None]
-            is_overflow |= func_merge_boundary_exclusions(
+            is_overflow = is_overflow | func_merge_boundary_exclusions(
                 i_b_,
                 i_b,
                 i_bound,
@@ -915,7 +915,7 @@ def func_knot_cost_gradient(
                                     ramp_dir = drift / drift_norm
                     hinge, dhinge = func_hinge_cost(sd_eff, eps_act)
                     if hinge > 0.0:
-                        cost += planner_info.cost.w_obs[None] * hinge
+                        cost = cost + (planner_info.cost.w_obs[None] * hinge)
                         normal = func_world_signed_distance_gradient(
                             i_gw, i_b, x, planner_world, dyn_info, rigid_info, sdf_info, collider_static_config
                         )
@@ -965,7 +965,7 @@ def func_knot_cost_gradient(
                             ramp_dir = drift / drift_norm
             hinge, dhinge = func_hinge_cost(sd_eff, planner_info.cost.eps_self[None])
             if hinge > 0.0 and dist > rigid_info.EPS[None]:
-                cost += planner_info.cost.w_self[None] * hinge
+                cost = cost + (planner_info.cost.w_self[None] * hinge)
                 normal = delta / dist
                 func_chain_gradient(
                     func_sphere_link(i_sa, planner_info, planner_config),
@@ -1019,8 +1019,10 @@ def func_knot_cost_gradient(
                     )
                     coeff = gs.qd_float(-2.0 if dw == 0 else 1.0)
                     if dw == 0:
-                        cost += planner_info.cost.w_acc[None] * acc**2
-                    planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_acc[None] * acc * coeff
+                        cost = cost + (planner_info.cost.w_acc[None] * acc**2)
+                    planner_state.cost.grad[i_dp, i_c, i_w] = planner_state.cost.grad[i_dp, i_c, i_w] + (
+                        2.0 * planner_info.cost.w_acc[None] * acc * coeff
+                    )
             # Jerk stencil: j_w = q_{w+2} - 3 q_{w+1} + 3 q_w - q_{w-1}; knot i_w is term (dw) of row
             # i_wc = i_w - dw for dw in {-1, 0, 1, 2}.
             for dw in qd.static(range(-1, 3)):
@@ -1042,23 +1044,31 @@ def func_knot_cost_gradient(
                     else:
                         coeff = -1.0
                     if dw == 0:
-                        cost += planner_info.cost.w_jerk[None] * jerk**2
-                    planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_jerk[None] * jerk * coeff
+                        cost = cost + (planner_info.cost.w_jerk[None] * jerk**2)
+                    planner_state.cost.grad[i_dp, i_c, i_w] = planner_state.cost.grad[i_dp, i_c, i_w] + (
+                        2.0 * planner_info.cost.w_jerk[None] * jerk * coeff
+                    )
             # Joint-limit quadratic hinge.
             over = q - planner_info.fk.dofs.q_limit_upper[i_dp]
             under = planner_info.fk.dofs.q_limit_lower[i_dp] - q
             if over > 0.0:
-                cost += planner_info.cost.w_lim[None] * over**2
-                planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_lim[None] * over
+                cost = cost + (planner_info.cost.w_lim[None] * over**2)
+                planner_state.cost.grad[i_dp, i_c, i_w] = planner_state.cost.grad[i_dp, i_c, i_w] + (
+                    2.0 * planner_info.cost.w_lim[None] * over
+                )
             if under > 0.0:
-                cost += planner_info.cost.w_lim[None] * under**2
-                planner_state.cost.grad[i_dp, i_c, i_w] -= 2.0 * planner_info.cost.w_lim[None] * under
+                cost = cost + (planner_info.cost.w_lim[None] * under**2)
+                planner_state.cost.grad[i_dp, i_c, i_w] = planner_state.cost.grad[i_dp, i_c, i_w] - (
+                    2.0 * planner_info.cost.w_lim[None] * under
+                )
             # Posture regularizer toward the straight-line reference (kept tiny; resolves redundancy).
             ref = planner_info.cost.boundary.qpos_start[i_dp, i_b] + (
                 planner_info.cost.boundary.qpos_goal[i_dp, i_b] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
             ) * (qd.cast(i_w, gs.qd_float) / float(n_knots - 1))
-            cost += planner_info.cost.w_posture[None] * (q - ref) ** 2
-            planner_state.cost.grad[i_dp, i_c, i_w] += 2.0 * planner_info.cost.w_posture[None] * (q - ref)
+            cost = cost + (planner_info.cost.w_posture[None] * (q - ref) ** 2)
+            planner_state.cost.grad[i_dp, i_c, i_w] = planner_state.cost.grad[i_dp, i_c, i_w] + (
+                2.0 * planner_info.cost.w_posture[None] * (q - ref)
+            )
 
     # Terminal pose cost for Cartesian goals (last knot only), gradient through the ee chain.
     if planner_info.cost.boundary.has_pose_goal[None] and i_w == n_knots - 1:
@@ -1068,8 +1078,8 @@ def func_knot_cost_gradient(
             planner_state.fk.links_quat[i_l, i_cw], gu.qd_inv_quat(planner_info.cost.boundary.goal_quat[i_b])
         )
         err_rot = gu.qd_quat_to_rotvec(quat_rel, rigid_info.EPS[None])
-        cost += planner_info.cost.w_pose_pos[None] * err_pos.norm_sqr()
-        cost += planner_info.cost.w_pose_rot[None] * err_rot.norm_sqr()
+        cost = cost + (planner_info.cost.w_pose_pos[None] * err_pos.norm_sqr())
+        cost = cost + (planner_info.cost.w_pose_rot[None] * err_rot.norm_sqr())
         # Position term: gradient 2 w (x - x*) applied at the link origin.
         func_chain_gradient(
             i_l,
@@ -1104,7 +1114,7 @@ def func_knot_cost_gradient(
                     if dyn_info.joints.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
                         i_dp = dyn_info.joints.q_start[I_j] - q_offset
                         if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
-                            planner_state.cost.grad[i_dp, i_c, i_w] -= (
+                            planner_state.cost.grad[i_dp, i_c, i_w] = planner_state.cost.grad[i_dp, i_c, i_w] - (
                                 2.0
                                 * planner_info.cost.w_pose_rot[None]
                                 * planner_state.fk.joints_xaxis[i_j - qd.static(planner_config.joint_offset), i_cw].dot(
@@ -1264,7 +1274,7 @@ def func_validate(
                     q = q0 + alpha * (q1 - q0)
                     planner_state.fk.eval.qpos[i_dp, i_e_col] = q
                     # Half the inter-sample joint travel bounds the workspace motion of every sphere.
-                    swp += 0.5 * planner_info.fk.dofs.reach[i_dp] * qd.abs(q1 - q0) / float(n_upsample)
+                    swp = swp + (0.5 * planner_info.fk.dofs.reach[i_dp] * qd.abs(q1 - q0) / float(n_upsample))
                     dq_inf = qd.max(dq_inf, qd.abs(q1 - q0) / float(n_upsample))
                     # A start (or goal) configuration supplied beyond a limit is a boundary condition, so a knot
                     # is only flagged when it exceeds the limit by more than the boundary conditions already do.
@@ -1280,7 +1290,7 @@ def func_validate(
                         q > planner_info.fk.dofs.q_limit_upper[i_dp] + qd.max(over_allow, 0.0) + 1e-5
                         or q < planner_info.fk.dofs.q_limit_lower[i_dp] - qd.max(under_allow, 0.0) - 1e-5
                     ):
-                        flags |= planner_config.flag_joint_limit
+                        flags = flags | planner_config.flag_joint_limit
 
                 min_sd_exact, min_sd_proxy = func_eval_clearance(
                     i_e_col,
@@ -1321,7 +1331,7 @@ def func_validate(
                             q1r = planner_state.cost.qpos[i_dp, i_c, i_w_r + 1]
                             planner_state.fk.eval.qpos[i_dp, i_e_col] = q0r + alpha_r * (q1r - q0r)
                             dq_r = qd.abs(q1r - q0r) / float(n_upsample * n_refine)
-                            swp_r += 0.5 * planner_info.fk.dofs.reach[i_dp] * dq_r
+                            swp_r = swp_r + (0.5 * planner_info.fk.dofs.reach[i_dp] * dq_r)
                             dq_inf_r = qd.max(dq_inf_r, dq_r)
                         min_sd_exact_r, min_sd_proxy_r = func_eval_clearance(
                             i_e_col,
@@ -1347,7 +1357,7 @@ def func_validate(
                 min_clearance_exact = qd.min(min_clearance_exact, min_sd_exact)
                 min_clearance_proxy = qd.min(min_clearance_proxy, min_sd_proxy)
                 if qd.min(min_sd_exact, min_sd_proxy) < 0.0:
-                    flags |= planner_config.flag_collision
+                    flags = flags | planner_config.flag_collision
 
             # Boundary reaching: every candidate must depart from qpos_start, and land on qpos_goal (joint
             # goals) or within the pose tolerance (Cartesian goals) - otherwise a trajectory holding inside its
@@ -1359,7 +1369,7 @@ def func_validate(
                         qd.abs(planner_state.cost.qpos[i_dp, i_c, 0] - planner_info.cost.boundary.qpos_start[i_dp, i_b])
                         > 1e-4
                     ):
-                        flags |= planner_config.flag_goal_tol
+                        flags = flags | planner_config.flag_goal_tol
             # Combine the lanes' sweep verdicts: the worst clearance and the union of the flag bits, which are
             # disjoint powers of two, so a per-bit maximum reconstructs the union exactly. Every lane ends up with
             # the combined verdict and runs the goal checks below identically.
@@ -1376,7 +1386,7 @@ def func_validate(
                         planner_config.flag_goal_in_collision,
                     )
                 ):
-                    flags_union += qd.simt.subgroup.reduce_all_max_tiled(flags & i_bit, log2_lanes)
+                    flags_union = flags_union + qd.simt.subgroup.reduce_all_max_tiled(flags & i_bit, log2_lanes)
                 flags = flags_union
 
             if planner_info.cost.boundary.has_pose_goal[None]:
@@ -1405,12 +1415,12 @@ def func_validate(
                 )
                 err_rot = gu.qd_quat_to_rotvec(quat_rel, rigid_info.EPS[None])
                 if err_pos.norm() > 5e-3 or err_rot.norm() > 5e-2:
-                    flags |= planner_config.flag_goal_tol
+                    flags = flags | planner_config.flag_goal_tol
             else:
                 for i_dp in range(n_dp):
                     q_end = planner_state.cost.qpos[i_dp, i_c, n_knots - 1]
                     if qd.abs(q_end - planner_info.cost.boundary.qpos_goal[i_dp, i_b]) > 1e-4:
-                        flags |= planner_config.flag_goal_tol
+                        flags = flags | planner_config.flag_goal_tol
 
             # The lanes hold the same verdict by now, so one of them owns the candidate's result.
             if i_lane == 0:
@@ -1594,7 +1604,9 @@ def func_resolve_goal(
                         if not planner_info.fk.dofs.is_locked[i_dp, i_b]:
                             dq = gs.qd_float(0.0)
                             for j in range(6):
-                                dq += planner_state.ik.jacobian_stacked_t[i_dp, j, i_c] * planner_state.ik.vec[j, i_c]
+                                dq = dq + (
+                                    planner_state.ik.jacobian_stacked_t[i_dp, j, i_c] * planner_state.ik.vec[j, i_c]
+                                )
                             planner_state.fk.eval.qpos[i_dp, i_c] = qd.math.clamp(
                                 planner_state.fk.eval.qpos[i_dp, i_c]
                                 + qd.math.clamp(dq, -planner_config.goal_ik_max_step, planner_config.goal_ik_max_step),
@@ -1654,11 +1666,11 @@ def func_resolve_goal(
                     if is_acceptable:
                         dist = gs.qd_float(0.0)
                         for i_dp in range(n_dp):
-                            dist += qd.abs(
+                            dist = dist + qd.abs(
                                 planner_state.ik.qpos_best[i_dp, i_c] - planner_info.cost.boundary.qpos_start[i_dp, i_b]
                             )
                         if qd.static(not ignore_collision) and (flags & planner_config.flag_collision) != 0:
-                            dist += 1e6
+                            dist = dist + 1e6
                         if dist < best_score:
                             best_score = dist
                             best_c = i_c
