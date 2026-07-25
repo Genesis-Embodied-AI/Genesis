@@ -22,6 +22,7 @@ _RRT_STALL_ITERS = 200
 @qd.func
 def func_rrt_config_is_free(
     i_t,
+    i_lane,
     i_b,
     swp,
     dq_inf,
@@ -39,10 +40,11 @@ def func_rrt_config_is_free(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
 ):
-    """Collision check of the configuration staged in the tree's eval column, with sweep allowance swp."""
+    """Collision check of the configuration staged in the lane's eval column, with sweep allowance swp."""
+    i_e_col = i_t * qd.static(planner_config.n_cost_lanes) + i_lane
     func_forward_kinematics(
-        i_t,
-        i_t,
+        i_e_col,
+        i_e_col,
         i_b,
         qpos=planner_state.fk.eval.qpos,
         links_pos=planner_state.fk.eval.links_pos,
@@ -56,7 +58,7 @@ def func_rrt_config_is_free(
         planner_config=planner_config,
     )
     func_sphere_positions(
-        i_t,
+        i_e_col,
         i_b,
         links_pos=planner_state.fk.eval.links_pos,
         links_quat=planner_state.fk.eval.links_quat,
@@ -65,7 +67,7 @@ def func_rrt_config_is_free(
         planner_config=planner_config,
     )
     _, min_sd_exact, min_sd_proxy = func_collision_cost(
-        i_t,
+        i_e_col,
         i_b,
         swp,
         dq_inf,
@@ -90,6 +92,7 @@ def func_rrt_config_is_free(
 @qd.func
 def func_rrt_edge_is_free(
     i_t,
+    i_lane,
     i_b,
     col_from,
     col_to,
@@ -132,16 +135,23 @@ def func_rrt_edge_is_free(
             / qd.cast(n_sub, gs.qd_float),
         )
 
-    is_free = True
-    i_sub = 1
-    while is_free and i_sub <= n_sub:
+    # Lane i_lane takes every n_cost_lanes-th sample of the segment and the lanes' verdicts are combined, so an
+    # edge costs its samples spread across a subgroup rather than walked one by one. The serial walk could stop at
+    # the first blocked sample; the lanes instead check their share and agree at the end, which is the trade that
+    # buys the parallelism.
+    n_lanes = qd.static(planner_config.n_cost_lanes)
+    i_e_col = i_t * n_lanes + i_lane
+    is_free_lane = True
+    i_sub = 1 + i_lane
+    while is_free_lane and i_sub <= n_sub:
         alpha = qd.cast(i_sub, gs.qd_float) / qd.cast(n_sub, gs.qd_float)
         for i_dp in range(n_dp):
-            planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
+            planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
                 planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
             )
-        is_free = func_rrt_config_is_free(
+        is_free_lane = func_rrt_config_is_free(
             i_t,
+            i_lane,
             i_b,
             swp,
             dq_inf,
@@ -159,8 +169,17 @@ def func_rrt_edge_is_free(
             collider_static_config=collider_static_config,
             planner_config=planner_config,
         )
-        i_sub += 1
-    return is_free
+        i_sub += n_lanes
+    # An edge is free only if every lane's share was: a minimum over 0/1 is their conjunction.
+    if qd.static(planner_config.n_cost_lanes > 1):
+        return (
+            qd.simt.subgroup.reduce_all_min_tiled(
+                gs.qd_int(1) if is_free_lane else gs.qd_int(0),
+                qd.static(planner_config.n_cost_lanes.bit_length() - 1),
+            )
+            == 1
+        )
+    return is_free_lane
 
 
 @qd.func
@@ -194,10 +213,15 @@ def func_rrt_connect(
     n_nodes = qd.static(planner_config.n_rrt_nodes)
     n_half = qd.static(planner_config.n_rrt_nodes // 2)
 
-    # One thread per tree pair: trees write disjoint node columns and draw counter-hashed streams, so tree
-    # parallelism preserves determinism (a hard-serial loop runs the whole batch on a single GPU thread).
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_t in range(envs_idx.shape[0] * n_trees):
+    # One subgroup per tree pair: trees write disjoint node columns and draw counter-hashed streams, so tree
+    # parallelism preserves determinism. The lanes of a pair replicate its bookkeeping - sampling, steering, the
+    # node insertions - which keeps their control flow convergent for the certified edge checks they share, where
+    # the samples of an edge are split across them.
+    n_lanes = qd.static(planner_config.n_cost_lanes)
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL), block_dim=qd.static(n_lanes))
+    for i_tl in range(envs_idx.shape[0] * n_trees * n_lanes):
+        i_lane = i_tl % n_lanes
+        i_t = i_tl // n_lanes
         if trees_is_active[i_t] == 1:
             i_b = envs_idx[i_t // n_trees]
             col0 = i_t * n_nodes
@@ -273,6 +297,7 @@ def func_rrt_connect(
                         )
                     if func_rrt_edge_is_free(
                         i_t,
+                        i_lane,
                         i_b,
                         col0 + base + i_near,
                         col_new,
@@ -309,6 +334,7 @@ def func_rrt_connect(
                                 i_join = i_n
                         if func_rrt_edge_is_free(
                             i_t,
+                            i_lane,
                             i_b,
                             col0 + other + i_join,
                             col_new,
@@ -374,6 +400,7 @@ def func_rrt_connect(
                             planner_state.rrt.qpos[i_dp, col0 + 1] = planner_state.rrt.path[i_dp, col0 + i_to]
                         if func_rrt_edge_is_free(
                             i_t,
+                            i_lane,
                             i_b,
                             col0,
                             col0 + 1,
