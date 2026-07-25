@@ -2747,10 +2747,13 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     n_joints: int
     n_spheres: int
     n_attach_max: int
-    # Trajectory knots (W), seeds per env (S), and the widest cost-only evaluation fan-out per candidate
-    # (max of MPPI particles and line-search trials), which sizes the per-thread FK scratch columns.
+    # Trajectory knots (W), seeds per env (S), the lanes cooperating on one candidate's trajectory cost, and the
+    # evaluation fan-out per candidate, which sizes the forward-kinematics scratch columns: every lane evaluates
+    # its own knots and so needs a column of its own. n_cost_lanes is 1 for the one-thread-per-candidate arm and a
+    # power of two (at most a subgroup) for the tiled arm; see Planner._get_entity_context for the choice.
     n_knots: int
     n_seeds: int
+    n_cost_lanes: int
     n_eval_per_candidate: int
     # Physical layout of the optimizer's per-knot buffers (see get_planner_state for the buffers it covers, and
     # Planner._get_entity_context for how it is chosen).

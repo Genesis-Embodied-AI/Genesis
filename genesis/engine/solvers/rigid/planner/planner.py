@@ -9,7 +9,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.utils import array_class
-from genesis.utils.misc import qd_to_torch, tensor_to_array
+from genesis.utils.misc import get_gpu_core_count, qd_to_torch, tensor_to_array
 
 from . import cost as cost_mod
 from .graph import (
@@ -42,6 +42,9 @@ _DEFAULT_ACC_LIMIT = 13.0
 _GRASP_CONTACT_TOL = 0.01
 _GRASP_NORMAL_COS = -0.5
 # RRT-Connect fallback extents and iteration budget.
+# Lanes cooperating on one candidate's trajectory cost in the tiled arm, capped at a subgroup and rounded down to
+# a power of two by the resolution below (the cross-lane sum is a butterfly over 2**k lanes).
+_N_COST_LANES_MAX = 32
 _N_RRT_TREES = 4
 _N_RRT_NODES = 2048
 _N_RRT_ITERS = 600
@@ -735,6 +738,15 @@ class Planner:
         # working set (see get_planner_state) serves a warp's reads from one cache line. A CPU thread instead walks one
         # whole candidate, which the candidate-major order keeps contiguous, by an order of magnitude either way.
         is_knot_major = gs.backend != gs.cpu
+        # One thread per candidate leaves a GPU idle whenever the candidate columns alone do not fill it, since a
+        # candidate's trajectory cost is a serial walk over its knots. Below that occupancy the walk is spread over a
+        # subgroup of lanes, each taking a slice of the knots, and their partial costs are summed across the lanes.
+        # Above it the columns already saturate the device and the extra evaluation scratch each lane needs would be
+        # pure cost, so the one-thread-per-candidate arm stays.
+        n_cost_lanes = 1
+        if gs.backend != gs.cpu and B * n_seeds <= get_gpu_core_count():
+            n_lanes_max = min(_N_COST_LANES_MAX, solver._options.planner_n_knots)
+            n_cost_lanes = 1 << (n_lanes_max.bit_length() - 1)
         planner_config = array_class.PlannerStaticConfig(
             para_level=solver._para_level,
             is_batched_arm=arm == gs.planner_arm.BATCHED,
@@ -749,7 +761,8 @@ class Planner:
             n_attach_max=n_attach_max,
             n_knots=solver._options.planner_n_knots,
             n_seeds=n_seeds,
-            n_eval_per_candidate=1,
+            n_cost_lanes=n_cost_lanes,
+            n_eval_per_candidate=n_cost_lanes,
             is_knot_major=is_knot_major,
             n_rrt_trees=_N_RRT_TREES,
             n_rrt_nodes=_N_RRT_NODES,
