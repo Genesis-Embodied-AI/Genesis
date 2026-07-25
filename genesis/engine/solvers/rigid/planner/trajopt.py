@@ -283,7 +283,6 @@ def func_is_knot_clamped(i_c, i_w, i_b, planner_info: array_class.PlannerEntityI
 
 @qd.func
 def func_seed_trajectories(
-    graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_info: array_class.PlannerEntityInfo,
@@ -302,7 +301,7 @@ def func_seed_trajectories(
     n_seeds = qd.static(planner_config.n_seeds)
     n_dp = qd.static(planner_config.n_dp)
     n_noise = qd.static(planner_config.n_noise_knots)
-    attempt = graph_counter[()]
+    attempt = planner_state.pass_index[None]
 
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_c in range(envs_idx.shape[0] * n_seeds):

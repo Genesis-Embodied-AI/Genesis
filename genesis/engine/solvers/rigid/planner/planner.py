@@ -333,6 +333,7 @@ def func_fold_and_check_exit(
     qd.loop_config(name="planner_fold_decrement")
     for _ in range(1):
         graph_counter[()] = graph_counter[()] - 1
+        planner_state.pass_index[None] = planner_state.pass_index[None] - 1
         planner_state.early_exit_flag[()] = 0
 
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -356,6 +357,111 @@ def func_fold_and_check_exit(
             graph_counter[()] = 0
 
 
+@qd.kernel
+def kernel_init_ladder(n_attempts: int, envs_idx: qd.types.ndarray(), planner_state: array_class.PlannerState):
+    """Reset the ladder bookkeeping of every planned env at the start of a plan.
+
+    Split from kernel_plan so a ladder driven one pass per launch does not reset itself between passes, and so the
+    graph kernel holds nothing outside its loop - work placed there replays per task on the backends that fall back
+    to a host-driven loop. pass_index counts the attempt budget down, the order the restart and seed draws key on.
+    """
+    for i_b_ in range(envs_idx.shape[0]):
+        planner_state.is_env_solved[envs_idx[i_b_]] = False
+        planner_state.is_env_seeded[envs_idx[i_b_]] = False
+    qd.loop_config(name="planner_init_pass_index")
+    for _ in range(1):
+        planner_state.pass_index[None] = n_attempts
+
+
+@qd.kernel(graph=True, fastcache=True)
+def kernel_resolve_goal(
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+    ignore_collision_static: qd.template(),
+    errno: qd.Tensor,
+):
+    """Resolve every planned env's Cartesian goal into a joint configuration, for one ladder pass.
+
+    Judge each hold-at-goal restart with the start-side allowances only: a previously resolved branch's allowances
+    would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the goal side is
+    stripped before the probe and folded back in once the goals are resolved (the ladder validator then excuses the
+    resolved goal's own contacts).
+
+    This is the pass's first half, split from kernel_plan because goal resolution is by far its largest body and
+    compiling the two together costs far more than compiling them apart. graph_counter is read, never advanced: it
+    the resolution keys its restart draws on planner_state.pass_index, which the ladder in kernel_plan owns.
+    """
+    # Judge each hold-at-goal restart with the start-side allowances only: a previously resolved branch's
+    # allowances would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the
+    # goal side is stripped before the probe and folded back in once the goals are resolved (the ladder
+    # validator below then excuses the resolved goal's own contacts). See the host ladder for the rationale.
+    cost_mod.func_boundary_exclusions(
+        envs_idx,
+        planner_state,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        planner_info,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+        include_goal=False,
+        errno=errno,
+    )
+    cost_mod.func_resolve_goal(
+        envs_idx,
+        planner_state,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        planner_info,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+        ignore_collision_static,
+    )
+    cost_mod.func_boundary_exclusions(
+        envs_idx,
+        planner_state,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        planner_info,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+        include_goal=True,
+        errno=errno,
+    )
+
+
 @qd.kernel(graph=True, fastcache=True)
 def kernel_plan(
     graph_counter: qd.types.ndarray(),
@@ -374,11 +480,10 @@ def kernel_plan(
     rigid_config: qd.template(),
     collider_static_config: qd.template(),
     planner_config: qd.template(),
-    has_pose_goal_static: qd.template(),
     ignore_collision_static: qd.template(),
     errno: qd.Tensor,
 ):
-    """Run the joint-space attempt ladder for every planned env in a single graph-captured launch.
+    """Run the joint-space attempt ladder for every planned env.
 
     The ladder - seed the unsolved envs, refine, certify, fold the verdicts - repeats device-side until every
     planned env certifies or graph_counter, the caller-set attempt budget, reaches zero. Each env seeds from
@@ -388,71 +493,7 @@ def kernel_plan(
     selects the best seed per env and retimes it.
     """
     n_rrt_trees = qd.static(planner_config.n_rrt_trees)
-    qd.loop_config(name="planner_plan_init_solved")
-    for i_b_ in range(envs_idx.shape[0]):
-        planner_state.is_env_solved[envs_idx[i_b_]] = False
-        planner_state.is_env_seeded[envs_idx[i_b_]] = False
-
     while qd.graph_do_while(graph_counter):
-        if qd.static(has_pose_goal_static):
-            # Judge each hold-at-goal restart with the start-side allowances only: a previously resolved branch's
-            # allowances would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the
-            # goal side is stripped before the probe and folded back in once the goals are resolved (the ladder
-            # validator below then excuses the resolved goal's own contacts). See the host ladder for the rationale.
-            cost_mod.func_boundary_exclusions(
-                envs_idx,
-                planner_state,
-                planner_world,
-                dyn_state,
-                collider_state,
-                gjk_state,
-                planner_info,
-                dyn_info,
-                rigid_info,
-                collider_info,
-                sdf_info,
-                rigid_config,
-                collider_static_config,
-                planner_config,
-                include_goal=False,
-                errno=errno,
-            )
-            cost_mod.func_resolve_goal(
-                graph_counter,
-                envs_idx,
-                planner_state,
-                planner_world,
-                dyn_state,
-                collider_state,
-                gjk_state,
-                planner_info,
-                dyn_info,
-                rigid_info,
-                collider_info,
-                sdf_info,
-                rigid_config,
-                collider_static_config,
-                planner_config,
-                ignore_collision_static,
-            )
-            cost_mod.func_boundary_exclusions(
-                envs_idx,
-                planner_state,
-                planner_world,
-                dyn_state,
-                collider_state,
-                gjk_state,
-                planner_info,
-                dyn_info,
-                rigid_info,
-                collider_info,
-                sdf_info,
-                rigid_config,
-                collider_static_config,
-                planner_config,
-                include_goal=True,
-                errno=errno,
-            )
         # Escalate the still-unsolved envs already seeded on an earlier pass to RRT-Connect: activate their tree
         # pairs, search at a smaller headroom than the optimizer (a goal snugger than the full headroom would wall
         # off its own tree), then transplant the certified polylines into the candidate columns. Fresh envs (not
@@ -486,7 +527,7 @@ def kernel_plan(
             )
             planner_info.cost.d_safe[None] = d_safe_opt
             func_seed_trajectories_from_rrt(envs_idx, planner_state, planner_config)
-        func_seed_trajectories(graph_counter, envs_idx, planner_state, planner_info, planner_config)
+        func_seed_trajectories(envs_idx, planner_state, planner_info, planner_config)
         qd.loop_config(name="planner_plan_mark_seeded")
         for i_b_ in range(envs_idx.shape[0]):
             if not planner_state.is_env_solved[envs_idx[i_b_]]:
@@ -1297,7 +1338,11 @@ class Planner:
         # path is the one that matters, so both the env index and the tree-activity scratch live on device.
         envs_idx_dev = torch.as_tensor(envs_idx_np, dtype=gs.tc_int, device=gs.device)
         trees_is_active = torch.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.tc_int, device=gs.device)
-        kernel_plan(
+        # A joint goal runs its whole ladder inside one launch. A Cartesian goal resolves its goals at the head of
+        # every pass, and resolution lives in a kernel of its own (see kernel_resolve_goal), so its ladder is driven
+        # from here: one pass per iteration, ending as soon as every planned env certifies.
+        kernel_init_ladder(2 + max_retry, envs_idx_dev, planner_state)
+        plan_args = (
             planner_state.graph_counter,
             envs_idx_dev,
             trees_is_active,
@@ -1314,10 +1359,36 @@ class Planner:
             solver.rigid_config,
             solver.collider._collider_static_config,
             planner_config,
-            has_pose_goal,
             ignore_collision,
             context.errno,
         )
+        if has_pose_goal:
+            for _ in range(2 + max_retry):
+                kernel_resolve_goal(
+                    envs_idx_dev,
+                    planner_state,
+                    planner_world,
+                    solver.dyn_state,
+                    solver.collider._collider_state,
+                    context.gjk_state,
+                    planner_info,
+                    solver.dyn_info,
+                    solver.rigid_info,
+                    solver.collider._collider_info,
+                    sdf_info,
+                    solver.rigid_config,
+                    solver.collider._collider_static_config,
+                    planner_config,
+                    ignore_collision,
+                    context.errno,
+                )
+                planner_state.graph_counter.from_numpy(np.array(1, dtype=np.int32))
+                kernel_plan(*plan_args)
+                if not bool((qd_to_torch(planner_state.is_env_solved) != 0)[envs_idx_np].all()):
+                    continue
+                break
+        else:
+            kernel_plan(*plan_args)
         errno_t = qd_to_torch(context.errno)
         if bool((errno_t != 0).any()):
             gs.raise_exception(

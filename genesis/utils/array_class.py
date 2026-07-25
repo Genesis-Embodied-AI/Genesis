@@ -3272,6 +3272,9 @@ class PlannerState:
     graph_counter: qd.types.ndarray()
     early_exit_flag: qd.Tensor
     is_env_solved: qd.Tensor
+    # Ladder pass index, reset when a plan starts and advanced by the fold. The restart and seed draws key on it,
+    # so it must count passes even when the ladder is driven one launch at a time (see kernel_plan).
+    pass_index: qd.Tensor
     # Per-env flag: an env is seeded with straight-line candidates on its first ladder pass, then escalates to
     # RRT-Connect seeds on later passes (mirrors the host env_fresh / env_escalate split).
     is_env_seeded: qd.Tensor
@@ -3351,6 +3354,7 @@ def get_planner_state(planner_config, B):
         graph_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
         is_env_solved=V(dtype=gs.qd_bool, shape=(B,)),
+        pass_index=V(dtype=gs.qd_int, shape=()),
         is_env_seeded=V(dtype=gs.qd_bool, shape=(B,)),
         goal_resolve_score=V(dtype=gs.qd_float, shape=(B,)),
     )

@@ -1453,7 +1453,6 @@ def kernel_validate(
 
 @qd.func
 def func_resolve_goal(
-    graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_world: array_class.PlannerWorldState,
@@ -1484,7 +1483,7 @@ def func_resolve_goal(
     n_dp = qd.static(planner_config.n_dp)
     link_offset = qd.static(planner_config.link_offset)
     goal_link = planner_info.cost.boundary.goal_link_idx[None]
-    attempt = graph_counter[()]
+    attempt = planner_state.pass_index[None]
     margin = planner_info.cost.d_safe[None]
 
     # Reset the per-pass best goal score: each pass keeps the best branch across its restart sub-batches
