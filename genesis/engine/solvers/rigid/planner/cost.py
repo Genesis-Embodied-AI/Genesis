@@ -1204,6 +1204,7 @@ def func_validate(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
     check_start: qd.template(),
+    is_swept: int,
 ):
     """Certify every active candidate independently of the optimizer costs.
 
@@ -1220,12 +1221,13 @@ def func_validate(
     n_dp = qd.static(planner_config.n_dp)
     n_upsample = qd.static(planner_config.n_upsample)
     n_refine = qd.static(planner_config.n_refine)
-    n_samples = qd.static(planner_config.n_upsample * (planner_config.n_knots - 1) + 1)
+    n_samples_full = qd.static(planner_config.n_upsample * (planner_config.n_knots - 1) + 1)
     n_lanes = qd.static(planner_config.n_cost_lanes)
-    n_sample_chunks = qd.static(
-        (planner_config.n_upsample * (planner_config.n_knots - 1) + planner_config.n_cost_lanes)
-        // planner_config.n_cost_lanes
-    )
+    # A hold-at-goal candidate holds one configuration at every knot, so its densified sweep would certify the same
+    # pose n_samples_full times over - and that pose sits at grasp contact, where the exact re-checks are at their
+    # most expensive. Such a caller asks for a single sample instead.
+    n_samples = n_samples_full if is_swept == 1 else 1
+    n_sample_chunks = (n_samples + n_lanes - 1) // n_lanes
 
     # Every candidate is validated, frozen ones included: the raw sampling-fallback path is deliberately kept
     # unrefined as an insurance candidate, and re-validating already-solved candidates is idempotent. The samples
@@ -1247,8 +1249,11 @@ def func_validate(
                 i_smp = i_sample_chunk * n_lanes + i_lane
                 if i_smp >= n_samples:
                     continue
-                # Linear interpolation between knots at the densified sample, and the per-segment sweep bound.
-                t = qd.cast(i_smp, gs.qd_float) / float(n_samples - 1) * float(n_knots - 1)
+                # Linear interpolation between knots at the densified sample, and the per-segment sweep bound. A
+                # single-sample caller reads knot 0, which for a hold is every knot.
+                t = gs.qd_float(0.0)
+                if is_swept == 1:
+                    t = qd.cast(i_smp, gs.qd_float) / float(n_samples_full - 1) * float(n_knots - 1)
                 i_w = qd.min(gs.qd_int(t), n_knots - 2)
                 alpha = t - qd.cast(i_w, gs.qd_float)
                 swp = gs.qd_float(0.0)
@@ -1431,6 +1436,7 @@ def kernel_validate(
     collider_static_config: qd.template(),
     planner_config: qd.template(),
     check_start: qd.template(),
+    is_swept: int,
 ):
     func_validate(
         envs_idx,
@@ -1448,6 +1454,7 @@ def kernel_validate(
         collider_static_config,
         planner_config,
         check_start=check_start,
+        is_swept=is_swept,
     )
 
 
@@ -1618,6 +1625,7 @@ def func_resolve_goal(
             collider_static_config,
             planner_config,
             check_start=False,
+            is_swept=0,
         )
 
         # Adopt each env's goal: the closest-to-start certified restart, preferring collision-free over excusable.

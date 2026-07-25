@@ -588,6 +588,7 @@ def kernel_plan(
             collider_static_config,
             planner_config,
             check_start=True,
+            is_swept=1,
         )
         planner_info.cost.d_safe[None] = d_safe_opt
         func_fold_and_check_exit(graph_counter, envs_idx, planner_state, planner_config, ignore_collision_static)
@@ -1454,7 +1455,7 @@ class Planner:
                 eps_act=0.05,
             )
             _set_clearance(planner_info, float(safety_margin))
-            cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True)
+            cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True, is_swept=1)
             is_env_smooth = self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0]
             knots = qd_to_torch(planner_state.cost.qpos).permute(1, 2, 0).reshape(B, S, W, n_dp)
             knots_smooth = knots.gather(1, best_seed[:, None, None, None].expand(B, 1, W, n_dp))[:, 0]
@@ -1470,7 +1471,7 @@ class Planner:
                     break
                 knots_straight = _straighten_knots(knots_best, qd_to_torch(planner_info.fk.dofs.reach), radius)
                 traj_t[env_rough, best_seed[env_rough]] = knots_straight[env_rough]
-                cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True)
+                cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True, is_swept=1)
                 is_env_straight = (
                     self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0] & env_rough
                 )
