@@ -1221,20 +1221,32 @@ def func_validate(
     n_upsample = qd.static(planner_config.n_upsample)
     n_refine = qd.static(planner_config.n_refine)
     n_samples = qd.static(planner_config.n_upsample * (planner_config.n_knots - 1) + 1)
+    n_lanes = qd.static(planner_config.n_cost_lanes)
+    n_sample_chunks = qd.static(
+        (planner_config.n_upsample * (planner_config.n_knots - 1) + planner_config.n_cost_lanes)
+        // planner_config.n_cost_lanes
+    )
 
     # Every candidate is validated, frozen ones included: the raw sampling-fallback path is deliberately kept
-    # unrefined as an insurance candidate, and re-validating already-solved candidates is idempotent.
-    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_c in range(envs_idx.shape[0] * n_seeds):
+    # unrefined as an insurance candidate, and re-validating already-solved candidates is idempotent. The samples
+    # of a candidate are independent, so lane i_lane certifies every n_cost_lanes-th one through its own scratch
+    # column and the verdicts are combined across the lanes below.
+    qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL), block_dim=qd.static(n_lanes))
+    for i_cl in range(envs_idx.shape[0] * n_seeds * n_lanes):
+        i_lane = i_cl % n_lanes
+        i_c = i_cl // n_lanes
         if True:
             i_b = envs_idx[i_c // n_seeds]
-            # Eval scratch column owned by this thread.
-            i_e_col = i_c
+            # Eval scratch column owned by this lane.
+            i_e_col = i_c * n_lanes + i_lane
             flags = gs.qd_int(0)
             min_clearance_exact = gs.qd_float(qd.math.inf)
             min_clearance_proxy = gs.qd_float(qd.math.inf)
 
-            for i_smp in range(n_samples):
+            for i_sample_chunk in range(n_sample_chunks):
+                i_smp = i_sample_chunk * n_lanes + i_lane
+                if i_smp >= n_samples:
+                    continue
                 # Linear interpolation between knots at the densified sample, and the per-segment sweep bound.
                 t = qd.cast(i_smp, gs.qd_float) / float(n_samples - 1) * float(n_knots - 1)
                 i_w = qd.min(gs.qd_int(t), n_knots - 2)
@@ -1343,6 +1355,25 @@ def func_validate(
                         > 1e-4
                     ):
                         flags |= planner_config.flag_goal_tol
+            # Combine the lanes' sweep verdicts: the worst clearance and the union of the flag bits, which are
+            # disjoint powers of two, so a per-bit maximum reconstructs the union exactly. Every lane ends up with
+            # the combined verdict and runs the goal checks below identically.
+            if qd.static(n_lanes > 1):
+                log2_lanes = qd.static(planner_config.n_cost_lanes.bit_length() - 1)
+                min_clearance_exact = qd.simt.subgroup.reduce_all_min_tiled(min_clearance_exact, log2_lanes)
+                min_clearance_proxy = qd.simt.subgroup.reduce_all_min_tiled(min_clearance_proxy, log2_lanes)
+                flags_union = gs.qd_int(0)
+                for i_bit in qd.static(
+                    (
+                        planner_config.flag_collision,
+                        planner_config.flag_joint_limit,
+                        planner_config.flag_goal_tol,
+                        planner_config.flag_goal_in_collision,
+                    )
+                ):
+                    flags_union += qd.simt.subgroup.reduce_all_max_tiled(flags & i_bit, log2_lanes)
+                flags = flags_union
+
             if planner_info.cost.boundary.has_pose_goal[None]:
                 for i_dp in range(n_dp):
                     planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.cost.qpos[i_dp, i_c, n_knots - 1]
@@ -1376,9 +1407,11 @@ def func_validate(
                     if qd.abs(q_end - planner_info.cost.boundary.qpos_goal[i_dp, i_b]) > 1e-4:
                         flags |= planner_config.flag_goal_tol
 
-            planner_state.cert.valid_flags[i_c] = flags
-            planner_state.cert.min_clearance_exact[i_c] = min_clearance_exact
-            planner_state.cert.min_clearance_proxy[i_c] = min_clearance_proxy
+            # The lanes hold the same verdict by now, so one of them owns the candidate's result.
+            if i_lane == 0:
+                planner_state.cert.valid_flags[i_c] = flags
+                planner_state.cert.min_clearance_exact[i_c] = min_clearance_exact
+                planner_state.cert.min_clearance_proxy[i_c] = min_clearance_proxy
 
 
 @qd.kernel
