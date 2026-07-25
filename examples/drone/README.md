@@ -16,7 +16,7 @@ A real-time interactive drone simulation where you can control the drone using k
 
 Run with:
 ```bash
-python interactive_drone.py -v
+python interactive_drone.py
 ```
 
 ### 2. Automated Flight (`fly.py`)
