@@ -123,10 +123,12 @@ def func_rrt_edge_is_free(
             planner_info.fk.dofs.reach[i_dp]
             * qd.abs(planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from])
         )
-    # Quarter-band granularity: each sample's sweep allowance stays ~eps_act/8, so edges certify while only
-    # requiring modest true clearance (the demand IS the allowance - coarser sampling would reject any edge
-    # whose clearance is below half the activation band).
-    n_sub = gs.qd_int(qd.ceil(4.0 * reach / qd.max(planner_info.cost.eps_act[None], 1e-3))) + 1
+    # The density sets each sample's sweep allowance to ~eps_act/(2*density), and the demand IS the allowance:
+    # sampling more coarsely rejects any edge whose true clearance falls below it (see planner_edge_check_density).
+    n_sub = (
+        gs.qd_int(qd.ceil(planner_info.rrt.edge_density[None] * reach / qd.max(planner_info.cost.eps_act[None], 1e-3)))
+        + 1
+    )
     swp = 0.5 * reach / qd.cast(n_sub, gs.qd_float)
     dq_inf = gs.qd_float(0.0)
     for i_dp in range(n_dp):

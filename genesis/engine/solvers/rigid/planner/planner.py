@@ -936,6 +936,7 @@ class Planner:
             (planner_info.rrt.n_iters, _N_RRT_ITERS),
             (planner_info.rrt.n_shortcut, _RRT_N_SHORTCUT),
             (planner_info.rrt.n_stall_iters, _RRT_STALL_ITERS),
+            (planner_info.rrt.edge_density, solver._options.planner_edge_check_density),
             (planner_info.rrt.steer_step, _RRT_STEER_STEP),
             (planner_info.rrt.goal_bias, _RRT_GOAL_BIAS),
             (planner_info.cert.excl_depth_max, cost_mod._EXCL_DEPTH_MAX),

@@ -531,6 +531,12 @@ class RigidOptions(Options):
     planner_n_knots : int, optional
         Trajectory knots optimized by the motion planner. More knots track tighter detours around obstacles but
         slow every plan down; the output waypoint count is independent (interpolated on demand). Defaults to 32.
+    planner_edge_check_density : float, optional
+        How finely the motion planner verifies the motion between two configurations. Higher values accept motions
+        through narrower gaps, since a coarser verification must allow for how far the robot travels between checks
+        and so demands more clearance to accept the same motion; lower values make every plan faster, and on a
+        cluttered scene can leave no route the planner will accept. A returned path is certified collision-free at
+        any value. Defaults to 4.0.
 
     Warning
     -------
@@ -595,6 +601,7 @@ class RigidOptions(Options):
     planner_arm: gs.planner_arm | None = None
     planner_n_seeds: PositiveInt | None = None
     planner_n_knots: PositiveInt = 32
+    planner_edge_check_density: PositiveFloat = 4.0
 
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)

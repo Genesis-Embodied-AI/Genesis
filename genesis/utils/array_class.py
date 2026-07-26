@@ -2924,6 +2924,7 @@ class PlannerRRTInfo:
     n_iters: qd.Tensor
     n_shortcut: qd.Tensor
     n_stall_iters: qd.Tensor
+    edge_density: qd.Tensor
     steer_step: qd.Tensor
     goal_bias: qd.Tensor
 
@@ -3082,6 +3083,7 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
             n_iters=V(dtype=gs.qd_int, shape=()),
             n_shortcut=V(dtype=gs.qd_int, shape=()),
             n_stall_iters=V(dtype=gs.qd_int, shape=()),
+            edge_density=V(dtype=gs.qd_float, shape=()),
             steer_step=V(dtype=gs.qd_float, shape=()),
             goal_bias=V(dtype=gs.qd_float, shape=()),
         ),
