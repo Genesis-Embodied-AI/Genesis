@@ -146,10 +146,11 @@ def func_rrt_edge_is_free(
             / qd.cast(n_sub, gs.qd_float),
         )
 
-    # Lane i_lane takes a share of the segment's samples (see the visiting order below) and the lanes' verdicts
-    # are combined, so an edge costs its samples spread across a subgroup rather than walked one by one. A lane
-    # stops at the first blocked sample of its own share; the lanes agree only at the end, which is the trade that
-    # buys the parallelism.
+    # Lane i_lane takes a share of the segment's samples (see the visiting order below) and the lanes agree after
+    # every round, so an edge costs its samples spread across a subgroup rather than walked one by one and a
+    # blocked edge stops at the first round any lane rejects it, rather than each lane walking to its own blocker.
+    # The agreed verdict is what drives the loop, so the lanes stay convergent and all of them reach the round's
+    # reduction. The verdict itself cannot change: leaving early means a blocker was already found.
     n_lanes = qd.static(planner_config.n_cost_lanes)
     i_e_col = i_t * n_lanes + i_lane
     # A lane walks its share in one of two orders, and either way the visited set is the same {1..n_sub}, so the
@@ -172,8 +173,9 @@ def func_rrt_edge_is_free(
             n_perm = n_perm * 2
         n_steps = n_perm
     is_free_lane = True
+    is_free_agreed = True
     i_step = gs.qd_int(0)
-    while is_free_lane and i_step < n_steps:
+    while is_free_agreed and i_step < n_steps:
         i_sub = gs.qd_int(1 + i_lane) + i_step * n_lanes
         if qd.static(n_lanes == 1):
             i_sub = gs.qd_int(0)
@@ -213,16 +215,18 @@ def func_rrt_edge_is_free(
                 planner_config=planner_config,
             )
         i_step = i_step + 1
-    # An edge is free only if every lane's share was: a minimum over 0/1 is their conjunction.
-    if qd.static(planner_config.n_cost_lanes > 1):
-        return (
-            qd.simt.subgroup.reduce_all_min_tiled(
-                gs.qd_int(1) if is_free_lane else gs.qd_int(0),
-                qd.static(planner_config.n_cost_lanes.bit_length() - 1),
+        # An edge is free only if every lane's share was: a minimum over 0/1 is their conjunction.
+        if qd.static(n_lanes > 1):
+            is_free_agreed = (
+                qd.simt.subgroup.reduce_all_min_tiled(
+                    gs.qd_int(1) if is_free_lane else gs.qd_int(0),
+                    qd.static(planner_config.n_cost_lanes.bit_length() - 1),
+                )
+                == 1
             )
-            == 1
-        )
-    return is_free_lane
+        else:
+            is_free_agreed = is_free_lane
+    return is_free_agreed
 
 
 @qd.func
