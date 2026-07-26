@@ -257,6 +257,11 @@ def func_rrt_connect(
     """
     n_dp = qd.static(planner_config.n_dp)
     n_trees = qd.static(planner_config.n_rrt_trees)
+    # The sampling stream keys on the ladder attempt as well as the tree, so a tree that gets walled is grown from
+    # a different stream by the next attempt. Without it every attempt regrows the same tree and an env that needs
+    # a tree can never be rescued by the ladder, however many attempts it is given. Folding the attempt into the
+    # key keeps the draws counter-based, so they stay deterministic under any parallel execution.
+    seed_key = planner_info.mppi.seed_key[None] + planner_state.pass_index[None] * 7919
     n_nodes = qd.static(planner_config.n_rrt_nodes)
     n_half = qd.static(planner_config.n_rrt_nodes // 2)
 
@@ -347,13 +352,13 @@ def func_rrt_connect(
 
                     # Sample a target: goal-biased toward the other tree's newest node, else uniform in limits
                     # (locked DOFs pinned to the start value).
-                    if gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, 777) < planner_info.rrt.goal_bias[None]:
+                    if gu.qd_hash01(seed_key, i_t, it, 777) < planner_info.rrt.goal_bias[None]:
                         newest = other + planner_state.rrt.n_nodes[1 - side, i_tree, i_b_] - 1
                         for i_dp in range(n_dp):
                             planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, i_tree, newest, i_b_]
                     else:
                         for i_dp in range(n_dp):
-                            u = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, i_dp)
+                            u = gu.qd_hash01(seed_key, i_t, it, i_dp)
                             q = planner_info.fk.dofs.q_limit_lower[i_dp] + u * (
                                 planner_info.fk.dofs.q_limit_upper[i_dp] - planner_info.fk.dofs.q_limit_lower[i_dp]
                             )
@@ -403,8 +408,8 @@ def func_rrt_connect(
                     # is arclength-resampled to the knot count, and resampled chords cut the corners of the raw
                     # polyline - straightening it first is what keeps the resampled trajectory certifiable. The
                     # tree storage is disposable now, so its first two columns serve as edge-check scratch.
-                    u0 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 555)
-                    u1 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 556)
+                    u0 = gu.qd_hash01(seed_key, i_t, i_cut, 555)
+                    u1 = gu.qd_hash01(seed_key, i_t, i_cut, 556)
                     i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
                     i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
                     for i_dp in range(n_dp):
