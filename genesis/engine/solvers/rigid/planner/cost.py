@@ -1387,52 +1387,37 @@ def func_validate(
                     ):
                         flags = flags | planner_config.flag_joint_limit
 
-                min_sd_exact, min_sd_proxy = func_eval_clearance(
-                    i_e_col,
-                    i_b,
-                    swp,
-                    dq_inf,
-                    planner_state=planner_state,
-                    planner_world=planner_world,
-                    dyn_state=dyn_state,
-                    collider_state=collider_state,
-                    gjk_state=gjk_state,
-                    planner_info=planner_info,
-                    dyn_info=dyn_info,
-                    rigid_info=rigid_info,
-                    collider_info=collider_info,
-                    sdf_info=sdf_info,
-                    rigid_config=rigid_config,
-                    collider_static_config=collider_static_config,
-                    planner_config=planner_config,
-                )
-                min_sd = qd.min(min_sd_exact, min_sd_proxy)
-                if min_sd < 0.0 and min_sd + swp > 0.0:
-                    # Borderline: the raw clearance is positive and only the sweep allowance fails, so the
-                    # covered interval [t - h, t + h] is re-certified by _VALIDATE_REFINE sub-samples whose
-                    # allowance shrinks accordingly (see _VALIDATE_REFINE).
-                    min_sd_exact = qd.math.inf
-                    min_sd_proxy = qd.math.inf
-                    h = 0.5 / float(n_upsample)
-                    for i_r in range(n_refine):
-                        t_r = t + h * ((2.0 * qd.cast(i_r, gs.qd_float) + 1.0) / float(n_refine) - 1.0)
-                        t_r = qd.max(qd.min(t_r, float(n_knots - 1)), 0.0)
-                        i_w_r = qd.min(gs.qd_int(t_r), n_knots - 2)
-                        alpha_r = t_r - qd.cast(i_w_r, gs.qd_float)
-                        swp_r = gs.qd_float(0.0)
-                        dq_inf_r = gs.qd_float(0.0)
-                        for i_dp in range(n_dp):
-                            q0r = planner_state.cost.qpos[i_dp, i_c, i_w_r]
-                            q1r = planner_state.cost.qpos[i_dp, i_c, i_w_r + 1]
-                            planner_state.fk.eval.qpos[i_dp, i_e_col] = q0r + alpha_r * (q1r - q0r)
-                            dq_r = qd.abs(q1r - q0r) / float(n_upsample * n_refine)
-                            swp_r = swp_r + (0.5 * planner_info.fk.dofs.reach[i_dp] * dq_r)
-                            dq_inf_r = qd.max(dq_inf_r, dq_r)
-                        min_sd_exact_r, min_sd_proxy_r = func_eval_clearance(
+                # The coarse sample and the refinement sub-samples that may follow it are certified through
+                # one clearance call: the clearance inlines the whole collision model, so a second call site
+                # would duplicate it in every kernel that validates (see func_eval_clearance).
+                min_sd_exact = gs.qd_float(qd.math.inf)
+                min_sd_proxy = gs.qd_float(qd.math.inf)
+                is_refining = False
+                h = 0.5 / float(n_upsample)
+                for i_eval in range(1 + n_refine):
+                    if i_eval == 0 or is_refining:
+                        swp_e = swp
+                        dq_inf_e = dq_inf
+                        if i_eval > 0:
+                            i_r = i_eval - 1
+                            t_r = t + h * ((2.0 * qd.cast(i_r, gs.qd_float) + 1.0) / float(n_refine) - 1.0)
+                            t_r = qd.max(qd.min(t_r, float(n_knots - 1)), 0.0)
+                            i_w_r = qd.min(gs.qd_int(t_r), n_knots - 2)
+                            alpha_r = t_r - qd.cast(i_w_r, gs.qd_float)
+                            swp_e = gs.qd_float(0.0)
+                            dq_inf_e = gs.qd_float(0.0)
+                            for i_dp in range(n_dp):
+                                q0r = planner_state.cost.qpos[i_dp, i_c, i_w_r]
+                                q1r = planner_state.cost.qpos[i_dp, i_c, i_w_r + 1]
+                                planner_state.fk.eval.qpos[i_dp, i_e_col] = q0r + alpha_r * (q1r - q0r)
+                                dq_r = qd.abs(q1r - q0r) / float(n_upsample * n_refine)
+                                swp_e = swp_e + (0.5 * planner_info.fk.dofs.reach[i_dp] * dq_r)
+                                dq_inf_e = qd.max(dq_inf_e, dq_r)
+                        min_sd_exact_e, min_sd_proxy_e = func_eval_clearance(
                             i_e_col,
                             i_b,
-                            swp_r,
-                            dq_inf_r,
+                            swp_e,
+                            dq_inf_e,
                             planner_state=planner_state,
                             planner_world=planner_world,
                             dyn_state=dyn_state,
@@ -1447,8 +1432,20 @@ def func_validate(
                             collider_static_config=collider_static_config,
                             planner_config=planner_config,
                         )
-                        min_sd_exact = qd.min(min_sd_exact, min_sd_exact_r)
-                        min_sd_proxy = qd.min(min_sd_proxy, min_sd_proxy_r)
+                        if i_eval == 0:
+                            min_sd_exact = min_sd_exact_e
+                            min_sd_proxy = min_sd_proxy_e
+                            min_sd = qd.min(min_sd_exact_e, min_sd_proxy_e)
+                            if min_sd < 0.0 and min_sd + swp > 0.0:
+                                # Borderline: the raw clearance is positive and only the sweep allowance fails,
+                                # so the covered interval [t - h, t + h] is re-certified by _VALIDATE_REFINE
+                                # sub-samples whose allowance shrinks accordingly (see _VALIDATE_REFINE).
+                                is_refining = True
+                                min_sd_exact = gs.qd_float(qd.math.inf)
+                                min_sd_proxy = gs.qd_float(qd.math.inf)
+                        else:
+                            min_sd_exact = qd.min(min_sd_exact, min_sd_exact_e)
+                            min_sd_proxy = qd.min(min_sd_proxy, min_sd_proxy_e)
                 min_clearance_exact = qd.min(min_clearance_exact, min_sd_exact)
                 min_clearance_proxy = qd.min(min_clearance_proxy, min_sd_proxy)
                 if qd.min(min_sd_exact, min_sd_proxy) < 0.0:
