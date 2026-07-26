@@ -469,6 +469,65 @@ def kernel_resolve_goal(
 
 
 @qd.kernel(graph=True, fastcache=True)
+def kernel_rrt_escalate(
+    envs_idx: qd.types.ndarray(),
+    trees_is_active: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_world: array_class.PlannerWorldState,
+    dyn_state: array_class.DynState,
+    collider_state: array_class.ColliderState,
+    gjk_state: array_class.GJKState,
+    planner_info: array_class.PlannerEntityInfo,
+    dyn_info: array_class.DynInfo,
+    rigid_info: array_class.RigidInfo,
+    collider_info: array_class.ColliderInfo,
+    sdf_info: array_class.SDFInfo,
+    rigid_config: qd.template(),
+    collider_static_config: qd.template(),
+    planner_config: qd.template(),
+):
+    """Escalate one attempt pass of the still-unsolved envs to RRT-Connect, seeding from the certified polylines.
+
+    Tree growth is the ladder's heaviest phase and shares nothing with the rest of a pass but planner state, so it
+    compiles apart from it: the whole collision model is inlined into whichever kernel reaches it, and compilation
+    grows faster than the kernel does.
+    """
+    n_rrt_trees = qd.static(planner_config.n_rrt_trees)
+    # Escalate the still-unsolved envs already seeded on an earlier pass to RRT-Connect: activate their tree
+    # pairs, search at a smaller headroom than the optimizer (a goal snugger than the full headroom would wall
+    # off its own tree), then transplant the certified polylines into the candidate columns. Fresh envs (not
+    # yet seeded) instead take straight-line seeds; every unsolved env is then marked seeded so its next pass
+    # escalates. On the first pass no env is seeded, so RRT runs on no tree and only the straight-line seed fires.
+    qd.loop_config(name="planner_plan_rrt_active")
+    for i_t in range(envs_idx.shape[0] * n_rrt_trees):
+        i_b = envs_idx[i_t // n_rrt_trees]
+        trees_is_active[i_t] = 0
+        if not planner_state.is_env_solved[i_b] and planner_state.is_env_seeded[i_b]:
+            trees_is_active[i_t] = 1
+    d_safe_opt = planner_info.cost.d_safe[None]
+    planner_info.cost.d_safe[None] = d_safe_opt - 0.01
+    func_rrt_connect(
+        envs_idx,
+        trees_is_active,
+        planner_state,
+        planner_world,
+        dyn_state,
+        collider_state,
+        gjk_state,
+        planner_info,
+        dyn_info,
+        rigid_info,
+        collider_info,
+        sdf_info,
+        rigid_config,
+        collider_static_config,
+        planner_config,
+    )
+    planner_info.cost.d_safe[None] = d_safe_opt
+    func_seed_trajectories_from_rrt(envs_idx, planner_state, planner_config)
+
+
+@qd.kernel(graph=True, fastcache=True)
 def kernel_plan(
     graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -500,39 +559,6 @@ def kernel_plan(
     """
     n_rrt_trees = qd.static(planner_config.n_rrt_trees)
     while qd.graph_do_while(graph_counter):
-        # Escalate the still-unsolved envs already seeded on an earlier pass to RRT-Connect: activate their tree
-        # pairs, search at a smaller headroom than the optimizer (a goal snugger than the full headroom would wall
-        # off its own tree), then transplant the certified polylines into the candidate columns. Fresh envs (not
-        # yet seeded) instead take straight-line seeds; every unsolved env is then marked seeded so its next pass
-        # escalates. On the first pass no env is seeded, so RRT runs on no tree and only the straight-line seed fires.
-        if qd.static(not ignore_collision_static):
-            qd.loop_config(name="planner_plan_rrt_active")
-            for i_t in range(envs_idx.shape[0] * n_rrt_trees):
-                i_b = envs_idx[i_t // n_rrt_trees]
-                trees_is_active[i_t] = 0
-                if not planner_state.is_env_solved[i_b] and planner_state.is_env_seeded[i_b]:
-                    trees_is_active[i_t] = 1
-            d_safe_opt = planner_info.cost.d_safe[None]
-            planner_info.cost.d_safe[None] = d_safe_opt - 0.01
-            func_rrt_connect(
-                envs_idx,
-                trees_is_active,
-                planner_state,
-                planner_world,
-                dyn_state,
-                collider_state,
-                gjk_state,
-                planner_info,
-                dyn_info,
-                rigid_info,
-                collider_info,
-                sdf_info,
-                rigid_config,
-                collider_static_config,
-                planner_config,
-            )
-            planner_info.cost.d_safe[None] = d_safe_opt
-            func_seed_trajectories_from_rrt(envs_idx, planner_state, planner_config)
         func_seed_trajectories(envs_idx, planner_state, planner_info, planner_config)
         qd.loop_config(name="planner_plan_mark_seeded")
         for i_b_ in range(envs_idx.shape[0]):
@@ -1351,9 +1377,9 @@ class Planner:
         # path is the one that matters, so both the env index and the tree-activity scratch live on device.
         envs_idx_dev = torch.as_tensor(envs_idx_np, dtype=gs.tc_int, device=gs.device)
         trees_is_active = torch.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.tc_int, device=gs.device)
-        # A joint goal runs its whole ladder inside one launch. A Cartesian goal resolves its goals at the head of
-        # every pass, and resolution lives in a kernel of its own (see kernel_resolve_goal), so its ladder is driven
-        # from here: one pass per iteration, ending as soon as every planned env certifies.
+        # The ladder is driven from here, one pass per iteration, ending as soon as every planned env certifies.
+        # Its phases are compiled apart - goal resolution, tree escalation, and the pass itself - because each of
+        # them inlines the whole collision model, and compilation grows faster than a kernel does.
         kernel_init_ladder(2 + max_retry, envs_idx_dev, planner_state)
         plan_args = (
             planner_state.graph_counter,
@@ -1375,8 +1401,25 @@ class Planner:
             ignore_collision,
             context.errno,
         )
-        if has_pose_goal:
-            for _ in range(2 + max_retry):
+        rrt_args = (
+            envs_idx_dev,
+            trees_is_active,
+            planner_state,
+            planner_world,
+            solver.dyn_state,
+            solver.collider._collider_state,
+            context.gjk_state,
+            planner_info,
+            solver.dyn_info,
+            solver.rigid_info,
+            solver.collider._collider_info,
+            sdf_info,
+            solver.rigid_config,
+            solver.collider._collider_static_config,
+            planner_config,
+        )
+        for _ in range(2 + max_retry):
+            if has_pose_goal:
                 kernel_resolve_goal(
                     envs_idx_dev,
                     planner_state,
@@ -1395,13 +1438,12 @@ class Planner:
                     ignore_collision,
                     context.errno,
                 )
-                planner_state.graph_counter.from_numpy(np.array(1, dtype=np.int32))
-                kernel_plan(*plan_args)
-                if not bool((qd_to_torch(planner_state.is_env_solved) != 0)[envs_idx_np].all()):
-                    continue
-                break
-        else:
+            if not ignore_collision:
+                kernel_rrt_escalate(*rrt_args)
+            planner_state.graph_counter.from_numpy(np.array(1, dtype=np.int32))
             kernel_plan(*plan_args)
+            if bool((qd_to_torch(planner_state.is_env_solved) != 0)[envs_idx_np].all()):
+                break
         errno_t = qd_to_torch(context.errno)
         if bool((errno_t != 0).any()):
             gs.raise_exception(
