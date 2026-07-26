@@ -292,8 +292,8 @@ def func_rrt_connect(
 
             # Tree growth and the shortcut pass share one certified-edge slot: the check inlines the whole
             # collision cost, so every extra call site duplicates that cost in each kernel reaching the tree (see
-            # func_rrt_edge_is_free). Growth fills up to two slots per iteration - the extend edge, then the
-            # connect edge, the latter only when the former was certified - and the shortcut pass fills one.
+            # func_rrt_edge_is_free). An iteration issues the extend edge, then - only if it certified - the
+            # connect walk's edges one at a time; the shortcut pass issues one.
             side = 0
             it = 0
             n_stall = 0
@@ -307,9 +307,14 @@ def func_rrt_connect(
             base = gs.qd_int(0)
             other = gs.qd_int(0)
             i_node_new = gs.qd_int(0)
-            n_edges = gs.qd_int(0)
+            i_conn = gs.qd_int(0)
+            i_cand = gs.qd_int(0)
+            i_node_from = gs.qd_int(0)
+            i_node_to = gs.qd_int(0)
+            is_wanted = False
             is_growing = True
             is_shortcutting = False
+            is_reaching = False
             while is_growing or is_shortcutting:
                 if is_growing and (
                     it >= planner_info.rrt.n_iters[None]
@@ -345,7 +350,7 @@ def func_rrt_connect(
                             node = planner_state.rrt.parent[i_tree, node, i_b_]
                         is_shortcutting = i_cut < planner_info.rrt.n_shortcut[None] and n_path > 3
 
-                n_edges = 0
+                is_wanted = False
                 if is_growing:
                     base = side * n_half
                     other = (1 - side) * n_half
@@ -402,7 +407,7 @@ def func_rrt_connect(
                             planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_] = q_near + scale * (
                                 planner_state.fk.eval.qpos[i_dp, i_t] - q_near
                             )
-                        n_edges = 2
+                        is_wanted = True
                 elif is_shortcutting:
                     # Shortcut pass: splice certified straight edges over random sub-chains. Downstream the path
                     # is arclength-resampled to the knot count, and resampled chords cut the corners of the raw
@@ -417,35 +422,49 @@ def func_rrt_connect(
                             i_dp, i_tree, i_from, i_b_
                         ]
                         planner_state.rrt.qpos[i_dp, i_tree, 1, i_b_] = planner_state.rrt.path[i_dp, i_tree, i_to, i_b_]
-                    n_edges = 1
+                    is_wanted = True
 
+                # The extend edge comes first; the connect walk below then issues one request per steer step, so
+                # both go through the single certified-edge slot.
                 is_extended = False
-                for i_edge in range(n_edges):
+                is_connecting = False
+                while is_wanted:
                     i_node_from = 0
                     i_node_to = 1
-                    is_wanted = True
                     if is_growing:
                         i_node_from = base + i_near
                         i_node_to = i_node_new
-                        if i_edge == 1:
-                            is_wanted = is_extended
-                            if is_wanted:
-                                # Connect attempt: nearest node of the other tree tries to join the new node.
-                                d_join = gs.qd_float(qd.math.inf)
-                                for i_n in range(planner_state.rrt.n_nodes[1 - side, i_tree, i_b_]):
-                                    d = gs.qd_float(0.0)
+                        if is_connecting:
+                            # Greedy connect: the other tree walks toward the new node one steer step at a time,
+                            # keeping every step that certifies, and bridges when the last step lands within one
+                            # step of it. Joining through a single long edge instead leaves the other tree unable
+                            # to gain a node at all in clutter - the far endpoint is the whole gap away, so the
+                            # edge almost never certifies and the search degenerates to one tree with a goal bias.
+                            d_conn = gs.qd_float(0.0)
+                            for i_dp in range(n_dp):
+                                d_conn = qd.max(
+                                    d_conn,
+                                    qd.abs(
+                                        planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_]
+                                        - planner_state.rrt.qpos[i_dp, i_tree, i_conn, i_b_]
+                                    ),
+                                )
+                            is_reaching = d_conn <= planner_info.rrt.steer_step[None]
+                            i_node_from = i_conn
+                            if is_reaching:
+                                i_node_to = i_node_new
+                            else:
+                                i_cand = planner_state.rrt.n_nodes[1 - side, i_tree, i_b_]
+                                # A full tree stops walking rather than overwriting a node another edge relies on.
+                                is_wanted = i_cand < n_half
+                                if is_wanted:
+                                    i_node_to = other + i_cand
+                                    scale_conn = planner_info.rrt.steer_step[None] / d_conn
                                     for i_dp in range(n_dp):
-                                        d = d + (
-                                            (
-                                                planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_]
-                                                - planner_state.rrt.qpos[i_dp, i_tree, other + i_n, i_b_]
-                                            )
-                                            ** 2
+                                        q_conn = planner_state.rrt.qpos[i_dp, i_tree, i_conn, i_b_]
+                                        planner_state.rrt.qpos[i_dp, i_tree, i_node_to, i_b_] = q_conn + scale_conn * (
+                                            planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_] - q_conn
                                         )
-                                    if d < d_join:
-                                        d_join = d
-                                        i_join = i_n
-                                i_node_from = other + i_join
                     is_free = False
                     if is_wanted:
                         is_free = func_rrt_edge_is_free(
@@ -477,22 +496,50 @@ def func_rrt_connect(
                                         i_dp, i_tree, i_n + n_cut, i_b_
                                     ]
                             n_path = n_path - n_cut
-                        elif i_edge == 0:
+                        elif not is_connecting:
                             planner_state.rrt.parent[i_tree, i_node_new, i_b_] = base + i_near
                             planner_state.rrt.n_nodes[side, i_tree, i_b_] = i_new + 1
                             n_stall = -1
                             is_extended = True
-                        else:
+                        elif is_reaching:
                             # Bridge stored as (start-tree node, goal-tree node).
                             if side == 0:
-                                planner_state.rrt.bridge[i_tree, i_b_] = qd.Vector(
-                                    [base + i_new, other + i_join], dt=gs.qd_int
-                                )
+                                planner_state.rrt.bridge[i_tree, i_b_] = qd.Vector([i_node_new, i_conn], dt=gs.qd_int)
                             else:
-                                planner_state.rrt.bridge[i_tree, i_b_] = qd.Vector(
-                                    [other + i_join, base + i_new], dt=gs.qd_int
-                                )
+                                planner_state.rrt.bridge[i_tree, i_b_] = qd.Vector([i_conn, i_node_new], dt=gs.qd_int)
                             planner_state.rrt.is_done[i_tree, i_b_] = True
+                        else:
+                            # A certified step is a node the other tree keeps, and the walk resumes from it.
+                            planner_state.rrt.parent[i_tree, i_node_to, i_b_] = i_conn
+                            planner_state.rrt.n_nodes[1 - side, i_tree, i_b_] = i_cand + 1
+                            i_conn = i_node_to
+                            n_stall = -1
+
+                    # The extend edge hands over to the connect walk, which continues while its steps certify.
+                    if not is_growing:
+                        is_wanted = False
+                    elif not is_connecting:
+                        is_wanted = is_free
+                        if is_wanted:
+                            # The walk starts at the other tree's node nearest the new one.
+                            d_join = gs.qd_float(qd.math.inf)
+                            for i_n in range(planner_state.rrt.n_nodes[1 - side, i_tree, i_b_]):
+                                d = gs.qd_float(0.0)
+                                for i_dp in range(n_dp):
+                                    d = d + (
+                                        (
+                                            planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_]
+                                            - planner_state.rrt.qpos[i_dp, i_tree, other + i_n, i_b_]
+                                        )
+                                        ** 2
+                                    )
+                                if d < d_join:
+                                    d_join = d
+                                    i_join = i_n
+                            i_conn = other + i_join
+                            is_connecting = True
+                    else:
+                        is_wanted = is_free and not is_reaching
 
                 if is_growing:
                     side = 1 - side
