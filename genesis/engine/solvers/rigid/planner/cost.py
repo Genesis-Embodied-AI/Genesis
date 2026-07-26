@@ -80,7 +80,10 @@ _GOAL_IK_ITERS = 20
 # Sub-batches of n_seeds restarts drawn per resolution pass (decouples goal-resolution restart depth from the
 # trajectory candidate count): 4 sub-batches x n_seeds gives the restart diversity a rare collision-free goal
 # branch needs, without inflating the trajectory-candidate pipeline.
-_GOAL_IK_BATCHES = 4
+# Restart sub-batches a pass may draw for one env's Cartesian goal. An env stops drawing as soon as it holds a
+# collision-free branch, so this bounds the effort a hard goal may ask for rather than setting what every goal
+# pays: cluttered goals, where the acceptable branch is rare, are exactly the ones that need the extra draws.
+_GOAL_IK_BATCHES = 16
 _GOAL_IK_DAMPING = 0.01
 _GOAL_IK_POS_TOL = 5e-4
 _GOAL_IK_ROT_TOL = 5e-3
@@ -1629,7 +1632,13 @@ def func_resolve_goal(
         qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_c in range(envs_idx.shape[0] * n_seeds):
             i_b = envs_idx[i_c // n_seeds]
-            if not planner_state.is_env_solved[i_b]:
+            # Draw only for envs still without a collision-free branch: adoption scores those below the
+            # penalty it adds to a merely excusable one, and re-drawing behind a free branch buys nothing
+            # adoption would keep. With collision checking off, any converged branch settles the goal.
+            planner_state.cert.is_active[i_c] = False
+            if not planner_state.is_env_solved[i_b] and planner_state.goal_resolve_score[i_b] >= qd.static(
+                1e6 if not ignore_collision else 1e29
+            ):
                 i_r = i_c % n_seeds
                 for i_dp in range(n_dp):
                     q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
