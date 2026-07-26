@@ -492,7 +492,7 @@ class Camera(RBC):
                 gs.raise_exception(
                     "Missing frames in recording. Please call 'camera.render()' after 'every scene.step()'."
                 )
-            self._recorded_t_prev == self._visualizer.scene._t
+            self._recorded_t_prev = self._visualizer.scene._t
             rgb_frame = tensor_to_array(rgb_arr)
             self._recorded_imgs.append(rgb_frame)
 
@@ -684,6 +684,9 @@ class Camera(RBC):
         Start recording on the camera. After recording is started, all the rgb images rendered by `camera.render()`
         will be stored, and saved to a video file when `camera.stop_recording()` is called.
         """
+        # Restart timestamp tracking when recording becomes active, excluding simulation steps elapsed while paused
+        if not self._in_recording:
+            self._recorded_t_prev = -1
         self._in_recording = True
 
     @gs.assert_built

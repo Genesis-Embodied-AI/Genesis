@@ -1532,3 +1532,60 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
     # Per-env sensor images must be invariant to env_spacing — the offset is purely for
     # visual separation in the interactive viewer and must be transparent to sensors.
     assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_recording_stores_one_frame_per_timestamp(renderer, show_viewer):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.5),
+            size=(0.2, 0.2, 0.2),
+        ),
+    )
+    cam = scene.add_camera(
+        res=(64, 64),
+        pos=(2.5, 0.0, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    scene.build()
+
+    cam.start_recording()
+
+    scene.step()
+    cam.render()
+    cam.render()
+    assert len(cam._recorded_imgs) == 1
+
+    # Starting an already active recording must preserve timestamp tracking
+    cam.start_recording()
+    cam.render()
+    assert len(cam._recorded_imgs) == 1
+
+    scene.step()
+    cam.render()
+    assert len(cam._recorded_imgs) == 2
+
+    # Resuming starts a new sequence, so the steps elapsed while paused are not missing frames
+    cam.pause_recording()
+    scene.step()
+    scene.step()
+    cam.start_recording()
+    cam.render()
+    assert len(cam._recorded_imgs) == 3
+
+    scene.step()
+    scene.step()
+    with pytest.raises(gs.GenesisException, match="Missing frames"):
+        cam.render()
