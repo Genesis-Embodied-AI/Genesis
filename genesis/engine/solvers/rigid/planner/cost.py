@@ -492,7 +492,7 @@ def func_collision_cost(
     _EXACT_SAMPLE_COV); the proxy minimum runs over self and attached-entity pairs, whose reading carries the raw
     proxy conservatism except where the self rescue certifies an exact reading.
     """
-    n_sph_tot = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
+    n_spheres_with_attach = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
     anchor_slack = (
         planner_info.cert.excl_anchor_slack_cert[None] if use_exact else planner_info.cert.excl_anchor_slack_opt[None]
     )
@@ -506,7 +506,7 @@ def func_collision_cost(
     for i_group in range(qd.static(planner_config.n_links + 1)):
         is_attach_group = i_group == qd.static(planner_config.n_links)
         i_s_start = gs.qd_int(qd.static(planner_config.n_spheres))
-        i_s_end = gs.qd_int(n_sph_tot)
+        i_s_end = gs.qd_int(n_spheres_with_attach)
         if not is_attach_group:
             i_s_start = planner_info.fk.spheres.links_start[i_group]
             i_s_end = planner_info.fk.spheres.links_start[i_group + 1]
@@ -724,11 +724,11 @@ def func_merge_boundary_exclusions(
     clearance lies in (-depth_max, contact_band) are excused (see _EXCL_DEPTH_MAX). Returns nonzero when a list
     overflows.
     """
-    n_sph_tot = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
+    n_spheres_with_attach = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
     n_excl_max = planner_info.cert.excl.world_pair.shape[0]
     is_overflow = gs.qd_int(0)
 
-    for i_s in range(n_sph_tot):
+    for i_s in range(n_spheres_with_attach):
         radius = func_sphere_radius(i_s, i_b, planner_info, planner_config)
         if radius > 0.0:
             x = planner_state.fk.eval.spheres_pos[i_s, i_b_]
@@ -948,7 +948,7 @@ def func_knot_cost_gradient(
     """
     n_knots = qd.static(planner_config.n_knots)
     n_dp = qd.static(planner_config.n_dp)
-    n_sph_tot = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
+    n_spheres_with_attach = qd.static(planner_config.n_spheres + planner_config.n_attach_max)
 
     cost = gs.qd_float(0.0)
     for i_dp in range(n_dp):
@@ -958,7 +958,7 @@ def func_knot_cost_gradient(
     # its influence (and the induced gradient error) is clamped to the activation band; the validator
     # applies the full unclamped sweep, which is where rigor matters.
     swp = gs.qd_float(0.0)
-    for i_s in range(n_sph_tot):
+    for i_s in range(n_spheres_with_attach):
         if i_w > 0:
             swp = qd.max(
                 swp,
@@ -984,7 +984,7 @@ def func_knot_cost_gradient(
             )
 
     # World collision, with gradient through the chain walk.
-    for i_s in range(n_sph_tot):
+    for i_s in range(n_spheres_with_attach):
         radius = func_sphere_radius(i_s, i_b, planner_info, planner_config)
         if radius > 0.0:
             x = planner_state.fk.spheres_pos[i_s, i_cw]

@@ -3272,8 +3272,8 @@ class PlannerCertState:
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerState:
     """Planner-owned scratch, six symmetric per-algorithm leaves shared with PlannerEntityInfo (fk, mppi, lbfgs,
-    rrt, cost, cert), plus the top-level attempt-ladder orchestration. The candidate axis C = B*S folds env x
-    seed; NF = C*W adds the knot axis.
+    rrt, cost, cert), plus the top-level attempt-ladder orchestration. The candidate axis folds env x seed
+    (n_candidates), and the knot axis multiplies it (n_knot_cols).
 
     graph_counter drives the device-side graph_do_while of the single graph kernel: the host sets it to
     2 + max_retry, the fold decrements it each pass and zeroes it once every env is solved. early_exit_flag is
@@ -3286,7 +3286,7 @@ class PlannerState:
     rrt: PlannerRRTState
     cost: PlannerCostState
     cert: PlannerCertState
-    # Damped-least-squares scratch for the in-kernel Cartesian-goal solve, one column per candidate (C = B*S
+    # Damped-least-squares scratch for the in-kernel Cartesian-goal solve, one column per candidate (the env x seed
     # restarts run in parallel); a single 6-dof pose target, so error_dim = 6.
     ik: IKState
     graph_counter: qd.types.ndarray()
@@ -3305,13 +3305,14 @@ class PlannerState:
 
 
 def get_planner_state(planner_config, B):
-    C = B * planner_config.n_seeds
-    W = planner_config.n_knots
-    NF = C * W
-    E = C * planner_config.n_eval_per_candidate
-    n_sph_tot = planner_config.n_spheres + planner_config.n_attach_max
-    NT = B * planner_config.n_rrt_trees
-    n_rrt_cols = NT * planner_config.n_rrt_nodes
+    n_candidates = B * planner_config.n_seeds
+    n_knot_cols = n_candidates * planner_config.n_knots
+    n_eval_cols = n_candidates * planner_config.n_eval_per_candidate
+    n_spheres_with_attach = planner_config.n_spheres + planner_config.n_attach_max
+    n_trees = B * planner_config.n_rrt_trees
+    n_rrt_cols = n_trees * planner_config.n_rrt_nodes
+    knot_shape = (planner_config.n_dp, n_candidates, planner_config.n_knots)
+    hist_shape = (PLANNER_LBFGS_M, *knot_shape)
 
     # The optimizer's per-knot working set - the trajectory and its trial copy, the L-BFGS history pair, descent
     # direction and previous iterate, the cost gradient and the per-knot cost - is addressed canonically as
@@ -3325,52 +3326,56 @@ def get_planner_state(planner_config, B):
 
     return PlannerState(
         fk=PlannerFKState(
-            links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, NF)),
-            links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, NF)),
-            joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
-            joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, NF)),
-            spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, NF)),
+            links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, n_knot_cols)),
+            links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, n_knot_cols)),
+            joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_knot_cols)),
+            joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_knot_cols)),
+            spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_spheres_with_attach, n_knot_cols)),
             eval=PlannerEvalState(
-                qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, E)),
-                links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
-                links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, E)),
-                joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
-                joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, E)),
-                spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_sph_tot, E)),
+                qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, n_eval_cols)),
+                links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, n_eval_cols)),
+                links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, n_eval_cols)),
+                joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_eval_cols)),
+                joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_eval_cols)),
+                spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_spheres_with_attach, n_eval_cols)),
             ),
         ),
         mppi=PlannerMPPIState(),
         lbfgs=PlannerLBFGSState(
-            trial_qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
-            qpos_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
-            grad_prev=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
-            dir_traj=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
-            dqpos_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, C, W), layout=hist_layout),
-            dgrad_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, planner_config.n_dp, C, W), layout=hist_layout),
-            rho_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, C)),
+            trial_qpos=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),
+            qpos_prev=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),
+            grad_prev=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),
+            dir_traj=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),
+            dqpos_hist=V(dtype=gs.qd_float, shape=hist_shape, layout=hist_layout),
+            dgrad_hist=V(dtype=gs.qd_float, shape=hist_shape, layout=hist_layout),
+            rho_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, n_candidates)),
         ),
         rrt=PlannerRRTState(
             qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
             parent=V(dtype=gs.qd_int, shape=(max(n_rrt_cols, 1),)),
-            n_nodes=V(dtype=gs.qd_int, shape=(2 * max(NT, 1),)),
-            bridge=V_VEC(2, dtype=gs.qd_int, shape=(max(NT, 1),)),
-            is_done=V(dtype=gs.qd_bool, shape=(max(NT, 1),)),
+            n_nodes=V(dtype=gs.qd_int, shape=(2 * max(n_trees, 1),)),
+            bridge=V_VEC(2, dtype=gs.qd_int, shape=(max(n_trees, 1),)),
+            is_done=V(dtype=gs.qd_bool, shape=(max(n_trees, 1),)),
             path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
-            path_len=V(dtype=gs.qd_int, shape=(max(NT, 1),)),
+            path_len=V(dtype=gs.qd_int, shape=(max(n_trees, 1),)),
         ),
         cost=PlannerCostState(
-            qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
-            grad=V(dtype=gs.qd_float, shape=(planner_config.n_dp, C, W), layout=knot_layout),
-            cost=V(dtype=gs.qd_float, shape=(C,)),
-            cost_wp=V(dtype=gs.qd_float, shape=(C, W), layout=(1, 0) if planner_config.is_knot_major else None),
+            qpos=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),
+            grad=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),
+            cost=V(dtype=gs.qd_float, shape=(n_candidates,)),
+            cost_wp=V(
+                dtype=gs.qd_float,
+                shape=(n_candidates, planner_config.n_knots),
+                layout=(1, 0) if planner_config.is_knot_major else None,
+            ),
         ),
         cert=PlannerCertState(
-            valid_flags=V(dtype=gs.qd_int, shape=(C,)),
-            is_active=V(dtype=gs.qd_bool, shape=(C,)),
-            min_clearance_exact=V(dtype=gs.qd_float, shape=(C,)),
-            min_clearance_proxy=V(dtype=gs.qd_float, shape=(C,)),
+            valid_flags=V(dtype=gs.qd_int, shape=(n_candidates,)),
+            is_active=V(dtype=gs.qd_bool, shape=(n_candidates,)),
+            min_clearance_exact=V(dtype=gs.qd_float, shape=(n_candidates,)),
+            min_clearance_proxy=V(dtype=gs.qd_float, shape=(n_candidates,)),
         ),
-        ik=get_ik_state(planner_config.n_dp, planner_config.n_dp, 6, C),
+        ik=get_ik_state(planner_config.n_dp, planner_config.n_dp, 6, n_candidates),
         graph_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
         is_env_solved=V(dtype=gs.qd_bool, shape=(B,)),
