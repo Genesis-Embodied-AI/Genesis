@@ -297,72 +297,72 @@ def func_rrt_connect(
                         planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
                             planner_state.fk.eval.qpos[i_dp, i_t] - q_near
                         )
-                    if func_rrt_edge_is_free(
-                        i_t,
-                        i_lane,
-                        i_b,
-                        col0 + base + i_near,
-                        col_new,
-                        planner_state=planner_state,
-                        planner_world=planner_world,
-                        dyn_state=dyn_state,
-                        collider_state=collider_state,
-                        gjk_state=gjk_state,
-                        planner_info=planner_info,
-                        dyn_info=dyn_info,
-                        rigid_info=rigid_info,
-                        collider_info=collider_info,
-                        sdf_info=sdf_info,
-                        rigid_config=rigid_config,
-                        collider_static_config=collider_static_config,
-                        planner_config=planner_config,
-                    ):
-                        planner_state.rrt.parent[col_new] = base + i_near
-                        planner_state.rrt.n_nodes[2 * i_t + side] = i_new + 1
-                        n_stall = -1
-
-                        # Connect attempt: nearest node of the other tree tries to join the new node.
-                        i_join = 0
-                        d_join = gs.qd_float(qd.math.inf)
-                        for i_n in range(planner_state.rrt.n_nodes[2 * i_t + 1 - side]):
-                            d = gs.qd_float(0.0)
-                            for i_dp in range(n_dp):
-                                d = d + (
-                                    (
-                                        planner_state.rrt.qpos[i_dp, col_new]
-                                        - planner_state.rrt.qpos[i_dp, col0 + other + i_n]
-                                    )
-                                    ** 2
-                                )
-                            if d < d_join:
-                                d_join = d
-                                i_join = i_n
-                        if func_rrt_edge_is_free(
-                            i_t,
-                            i_lane,
-                            i_b,
-                            col0 + other + i_join,
-                            col_new,
-                            planner_state=planner_state,
-                            planner_world=planner_world,
-                            dyn_state=dyn_state,
-                            collider_state=collider_state,
-                            gjk_state=gjk_state,
-                            planner_info=planner_info,
-                            dyn_info=dyn_info,
-                            rigid_info=rigid_info,
-                            collider_info=collider_info,
-                            sdf_info=sdf_info,
-                            rigid_config=rigid_config,
-                            collider_static_config=collider_static_config,
-                            planner_config=planner_config,
-                        ):
-                            # Bridge stored as (start-tree node, goal-tree node).
-                            if side == 0:
-                                planner_state.rrt.bridge[i_t] = qd.Vector([base + i_new, other + i_join], dt=gs.qd_int)
+                    # The extend edge and the connect edge that follows it are certified through one request
+                    # slot: a certified edge check inlines the whole collision cost, so a second call site would
+                    # duplicate it in every kernel reaching the tree growth (see func_rrt_edge_is_free).
+                    is_extended = False
+                    i_join = gs.qd_int(0)
+                    for i_edge in range(2):
+                        col_from = col0 + base + i_near
+                        is_wanted = True
+                        if i_edge == 1:
+                            is_wanted = is_extended
+                            if is_wanted:
+                                # Connect attempt: nearest node of the other tree tries to join the new node.
+                                d_join = gs.qd_float(qd.math.inf)
+                                for i_n in range(planner_state.rrt.n_nodes[2 * i_t + 1 - side]):
+                                    d = gs.qd_float(0.0)
+                                    for i_dp in range(n_dp):
+                                        d = d + (
+                                            (
+                                                planner_state.rrt.qpos[i_dp, col_new]
+                                                - planner_state.rrt.qpos[i_dp, col0 + other + i_n]
+                                            )
+                                            ** 2
+                                        )
+                                    if d < d_join:
+                                        d_join = d
+                                        i_join = i_n
+                                col_from = col0 + other + i_join
+                        is_free = False
+                        if is_wanted:
+                            is_free = func_rrt_edge_is_free(
+                                i_t,
+                                i_lane,
+                                i_b,
+                                col_from,
+                                col_new,
+                                planner_state=planner_state,
+                                planner_world=planner_world,
+                                dyn_state=dyn_state,
+                                collider_state=collider_state,
+                                gjk_state=gjk_state,
+                                planner_info=planner_info,
+                                dyn_info=dyn_info,
+                                rigid_info=rigid_info,
+                                collider_info=collider_info,
+                                sdf_info=sdf_info,
+                                rigid_config=rigid_config,
+                                collider_static_config=collider_static_config,
+                                planner_config=planner_config,
+                            )
+                        if is_free:
+                            if i_edge == 0:
+                                planner_state.rrt.parent[col_new] = base + i_near
+                                planner_state.rrt.n_nodes[2 * i_t + side] = i_new + 1
+                                n_stall = -1
+                                is_extended = True
                             else:
-                                planner_state.rrt.bridge[i_t] = qd.Vector([other + i_join, base + i_new], dt=gs.qd_int)
-                            planner_state.rrt.is_done[i_t] = True
+                                # Bridge stored as (start-tree node, goal-tree node).
+                                if side == 0:
+                                    planner_state.rrt.bridge[i_t] = qd.Vector(
+                                        [base + i_new, other + i_join], dt=gs.qd_int
+                                    )
+                                else:
+                                    planner_state.rrt.bridge[i_t] = qd.Vector(
+                                        [other + i_join, base + i_new], dt=gs.qd_int
+                                    )
+                                planner_state.rrt.is_done[i_t] = True
                 side = 1 - side
                 it = it + 1
                 n_stall = n_stall + 1
