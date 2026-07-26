@@ -312,6 +312,9 @@ def _set_clearance(planner_info, d_safe):
     if gs.use_zerocopy:
         d_safe_t = qd_to_torch(planner_info.cost.d_safe, copy=False)
         d_safe_t[...] = d_safe
+        # The next kernel reads the clearance through this same buffer, so the write has to have landed first.
+        if gs.backend == gs.metal:
+            torch.mps.synchronize()
     else:
         kernel_set_clearance(d_safe, planner_info)
 
