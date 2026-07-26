@@ -238,73 +238,137 @@ def func_rrt_connect(
             planner_state.rrt.is_done[i_t] = False
             planner_state.rrt.path_len[i_t] = 0
 
+            # Tree growth and the shortcut pass share one certified-edge slot: the check inlines the whole
+            # collision cost, so every extra call site duplicates that cost in each kernel reaching the tree (see
+            # func_rrt_edge_is_free). Growth fills up to two slots per iteration - the extend edge, then the
+            # connect edge, the latter only when the former was certified - and the shortcut pass fills one.
             side = 0
             it = 0
             n_stall = 0
-            while (
-                it < planner_info.rrt.n_iters[None]
-                and n_stall < planner_info.rrt.n_stall_iters[None]
-                and not planner_state.rrt.is_done[i_t]
-            ):
-                base = side * n_half
-                other = (1 - side) * n_half
+            n_path = 0
+            i_cut = 0
+            i_near = gs.qd_int(0)
+            i_new = gs.qd_int(0)
+            i_join = gs.qd_int(0)
+            i_from = gs.qd_int(0)
+            i_to = gs.qd_int(0)
+            base = gs.qd_int(0)
+            other = gs.qd_int(0)
+            col_new = gs.qd_int(0)
+            n_edges = gs.qd_int(0)
+            is_growing = True
+            is_shortcutting = False
+            while is_growing or is_shortcutting:
+                if is_growing and (
+                    it >= planner_info.rrt.n_iters[None]
+                    or n_stall >= planner_info.rrt.n_stall_iters[None]
+                    or planner_state.rrt.is_done[i_t]
+                ):
+                    is_growing = False
+                    # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended.
+                    if planner_state.rrt.is_done[i_t]:
+                        n_path = 0
+                        node = planner_state.rrt.bridge[i_t][0]
+                        while node != -1:
+                            for i_dp in range(n_dp):
+                                planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
+                            n_path = n_path + 1
+                            node = planner_state.rrt.parent[col0 + node]
+                        for i_swap in range(n_path // 2):
+                            for i_dp in range(n_dp):
+                                tmp = planner_state.rrt.path[i_dp, col0 + i_swap]
+                                planner_state.rrt.path[i_dp, col0 + i_swap] = planner_state.rrt.path[
+                                    i_dp, col0 + n_path - 1 - i_swap
+                                ]
+                                planner_state.rrt.path[i_dp, col0 + n_path - 1 - i_swap] = tmp
+                        node = planner_state.rrt.bridge[i_t][1]
+                        while node != -1 and n_path < n_nodes:
+                            for i_dp in range(n_dp):
+                                planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
+                            n_path = n_path + 1
+                            node = planner_state.rrt.parent[col0 + node]
+                        is_shortcutting = i_cut < planner_info.rrt.n_shortcut[None] and n_path > 3
 
-                # Sample a target: goal-biased toward the other tree's newest node, else uniform in limits
-                # (locked DOFs pinned to the start value).
-                if gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, 777) < planner_info.rrt.goal_bias[None]:
-                    newest = other + planner_state.rrt.n_nodes[2 * i_t + 1 - side] - 1
-                    for i_dp in range(n_dp):
-                        planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
-                else:
-                    for i_dp in range(n_dp):
-                        u = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, i_dp)
-                        q = planner_info.fk.dofs.q_limit_lower[i_dp] + u * (
-                            planner_info.fk.dofs.q_limit_upper[i_dp] - planner_info.fk.dofs.q_limit_lower[i_dp]
-                        )
-                        if planner_info.fk.dofs.is_locked[i_dp, i_b]:
-                            q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
-                        planner_state.fk.eval.qpos[i_dp, i_t] = q
+                n_edges = 0
+                if is_growing:
+                    base = side * n_half
+                    other = (1 - side) * n_half
 
-                # Nearest node of the growing side (deterministic lowest-index tie-break).
-                i_near = 0
-                d_near = gs.qd_float(qd.math.inf)
-                for i_n in range(planner_state.rrt.n_nodes[2 * i_t + side]):
-                    d = gs.qd_float(0.0)
-                    for i_dp in range(n_dp):
-                        d = d + (
-                            (planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_n])
-                            ** 2
-                        )
-                    if d < d_near:
-                        d_near = d
-                        i_near = i_n
+                    # Sample a target: goal-biased toward the other tree's newest node, else uniform in limits
+                    # (locked DOFs pinned to the start value).
+                    if gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, 777) < planner_info.rrt.goal_bias[None]:
+                        newest = other + planner_state.rrt.n_nodes[2 * i_t + 1 - side] - 1
+                        for i_dp in range(n_dp):
+                            planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
+                    else:
+                        for i_dp in range(n_dp):
+                            u = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, i_dp)
+                            q = planner_info.fk.dofs.q_limit_lower[i_dp] + u * (
+                                planner_info.fk.dofs.q_limit_upper[i_dp] - planner_info.fk.dofs.q_limit_lower[i_dp]
+                            )
+                            if planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                                q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                            planner_state.fk.eval.qpos[i_dp, i_t] = q
 
-                # Steer from the nearest node toward the sample, one L-inf step.
-                d_inf = gs.qd_float(0.0)
-                for i_dp in range(n_dp):
-                    d_inf = qd.max(
-                        d_inf,
-                        qd.abs(
-                            planner_state.fk.eval.qpos[i_dp, i_t] - planner_state.rrt.qpos[i_dp, col0 + base + i_near]
-                        ),
-                    )
-                scale = qd.min(1.0, planner_info.rrt.steer_step[None] / qd.max(d_inf, 1e-9))
-                i_new = planner_state.rrt.n_nodes[2 * i_t + side]
-                if i_new < n_half:
-                    col_new = col0 + base + i_new
+                    # Nearest node of the growing side (deterministic lowest-index tie-break).
+                    i_near = 0
+                    d_near = gs.qd_float(qd.math.inf)
+                    for i_n in range(planner_state.rrt.n_nodes[2 * i_t + side]):
+                        d = gs.qd_float(0.0)
+                        for i_dp in range(n_dp):
+                            d = d + (
+                                (
+                                    planner_state.fk.eval.qpos[i_dp, i_t]
+                                    - planner_state.rrt.qpos[i_dp, col0 + base + i_n]
+                                )
+                                ** 2
+                            )
+                        if d < d_near:
+                            d_near = d
+                            i_near = i_n
+
+                    # Steer from the nearest node toward the sample, one L-inf step.
+                    d_inf = gs.qd_float(0.0)
                     for i_dp in range(n_dp):
-                        q_near = planner_state.rrt.qpos[i_dp, col0 + base + i_near]
-                        planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
-                            planner_state.fk.eval.qpos[i_dp, i_t] - q_near
+                        d_inf = qd.max(
+                            d_inf,
+                            qd.abs(
+                                planner_state.fk.eval.qpos[i_dp, i_t]
+                                - planner_state.rrt.qpos[i_dp, col0 + base + i_near]
+                            ),
                         )
-                    # The extend edge and the connect edge that follows it are certified through one request
-                    # slot: a certified edge check inlines the whole collision cost, so a second call site would
-                    # duplicate it in every kernel reaching the tree growth (see func_rrt_edge_is_free).
-                    is_extended = False
-                    i_join = gs.qd_int(0)
-                    for i_edge in range(2):
+                    scale = qd.min(1.0, planner_info.rrt.steer_step[None] / qd.max(d_inf, 1e-9))
+                    i_new = planner_state.rrt.n_nodes[2 * i_t + side]
+                    if i_new < n_half:
+                        col_new = col0 + base + i_new
+                        for i_dp in range(n_dp):
+                            q_near = planner_state.rrt.qpos[i_dp, col0 + base + i_near]
+                            planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
+                                planner_state.fk.eval.qpos[i_dp, i_t] - q_near
+                            )
+                        n_edges = 2
+                elif is_shortcutting:
+                    # Shortcut pass: splice certified straight edges over random sub-chains. Downstream the path
+                    # is arclength-resampled to the knot count, and resampled chords cut the corners of the raw
+                    # polyline - straightening it first is what keeps the resampled trajectory certifiable. The
+                    # tree storage is disposable now, so its first two columns serve as edge-check scratch.
+                    u0 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 555)
+                    u1 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 556)
+                    i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
+                    i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
+                    for i_dp in range(n_dp):
+                        planner_state.rrt.qpos[i_dp, col0] = planner_state.rrt.path[i_dp, col0 + i_from]
+                        planner_state.rrt.qpos[i_dp, col0 + 1] = planner_state.rrt.path[i_dp, col0 + i_to]
+                    n_edges = 1
+
+                is_extended = False
+                for i_edge in range(n_edges):
+                    col_from = col0
+                    col_to = col0 + 1
+                    is_wanted = True
+                    if is_growing:
                         col_from = col0 + base + i_near
-                        is_wanted = True
+                        col_to = col_new
                         if i_edge == 1:
                             is_wanted = is_extended
                             if is_wanted:
@@ -324,91 +388,14 @@ def func_rrt_connect(
                                         d_join = d
                                         i_join = i_n
                                 col_from = col0 + other + i_join
-                        is_free = False
-                        if is_wanted:
-                            is_free = func_rrt_edge_is_free(
-                                i_t,
-                                i_lane,
-                                i_b,
-                                col_from,
-                                col_new,
-                                planner_state=planner_state,
-                                planner_world=planner_world,
-                                dyn_state=dyn_state,
-                                collider_state=collider_state,
-                                gjk_state=gjk_state,
-                                planner_info=planner_info,
-                                dyn_info=dyn_info,
-                                rigid_info=rigid_info,
-                                collider_info=collider_info,
-                                sdf_info=sdf_info,
-                                rigid_config=rigid_config,
-                                collider_static_config=collider_static_config,
-                                planner_config=planner_config,
-                            )
-                        if is_free:
-                            if i_edge == 0:
-                                planner_state.rrt.parent[col_new] = base + i_near
-                                planner_state.rrt.n_nodes[2 * i_t + side] = i_new + 1
-                                n_stall = -1
-                                is_extended = True
-                            else:
-                                # Bridge stored as (start-tree node, goal-tree node).
-                                if side == 0:
-                                    planner_state.rrt.bridge[i_t] = qd.Vector(
-                                        [base + i_new, other + i_join], dt=gs.qd_int
-                                    )
-                                else:
-                                    planner_state.rrt.bridge[i_t] = qd.Vector(
-                                        [other + i_join, base + i_new], dt=gs.qd_int
-                                    )
-                                planner_state.rrt.is_done[i_t] = True
-                side = 1 - side
-                it = it + 1
-                n_stall = n_stall + 1
-
-            # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended.
-            if planner_state.rrt.is_done[i_t]:
-                n_path = 0
-                node = planner_state.rrt.bridge[i_t][0]
-                while node != -1:
-                    for i_dp in range(n_dp):
-                        planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
-                    n_path = n_path + 1
-                    node = planner_state.rrt.parent[col0 + node]
-                for i_swap in range(n_path // 2):
-                    for i_dp in range(n_dp):
-                        tmp = planner_state.rrt.path[i_dp, col0 + i_swap]
-                        planner_state.rrt.path[i_dp, col0 + i_swap] = planner_state.rrt.path[
-                            i_dp, col0 + n_path - 1 - i_swap
-                        ]
-                        planner_state.rrt.path[i_dp, col0 + n_path - 1 - i_swap] = tmp
-                node = planner_state.rrt.bridge[i_t][1]
-                while node != -1 and n_path < n_nodes:
-                    for i_dp in range(n_dp):
-                        planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
-                    n_path = n_path + 1
-                    node = planner_state.rrt.parent[col0 + node]
-
-                # Shortcut pass: splice certified straight edges over random sub-chains. Downstream the path is
-                # arclength-resampled to the knot count, and resampled chords cut the corners of the raw
-                # polyline - straightening it first is what keeps the resampled trajectory certifiable. The tree
-                # storage is disposable now, so its first two columns serve as edge-check scratch.
-                for i_cut in range(planner_info.rrt.n_shortcut[None]):
-                    if n_path > 3:
-                        u0 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 555)
-                        u1 = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, i_cut, 556)
-                        i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
-                        i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
-                        for i_dp in range(n_dp):
-                            planner_state.rrt.qpos[i_dp, col0] = planner_state.rrt.path[i_dp, col0 + i_from]
-                            planner_state.rrt.qpos[i_dp, col0 + 1] = planner_state.rrt.path[i_dp, col0 + i_to]
-                        if func_rrt_edge_is_free(
+                    is_free = False
+                    if is_wanted:
+                        is_free = func_rrt_edge_is_free(
                             i_t,
                             i_lane,
                             i_b,
-                            col0,
-                            col0 + 1,
+                            col_from,
+                            col_to,
                             planner_state=planner_state,
                             planner_world=planner_world,
                             dyn_state=dyn_state,
@@ -422,7 +409,9 @@ def func_rrt_connect(
                             rigid_config=rigid_config,
                             collider_static_config=collider_static_config,
                             planner_config=planner_config,
-                        ):
+                        )
+                    if is_free:
+                        if not is_growing:
                             n_cut = i_to - i_from - 1
                             for i_n in range(i_from + 1, n_path - n_cut):
                                 for i_dp in range(n_dp):
@@ -430,4 +419,25 @@ def func_rrt_connect(
                                         i_dp, col0 + i_n + n_cut
                                     ]
                             n_path = n_path - n_cut
-                planner_state.rrt.path_len[i_t] = n_path
+                        elif i_edge == 0:
+                            planner_state.rrt.parent[col_new] = base + i_near
+                            planner_state.rrt.n_nodes[2 * i_t + side] = i_new + 1
+                            n_stall = -1
+                            is_extended = True
+                        else:
+                            # Bridge stored as (start-tree node, goal-tree node).
+                            if side == 0:
+                                planner_state.rrt.bridge[i_t] = qd.Vector([base + i_new, other + i_join], dt=gs.qd_int)
+                            else:
+                                planner_state.rrt.bridge[i_t] = qd.Vector([other + i_join, base + i_new], dt=gs.qd_int)
+                            planner_state.rrt.is_done[i_t] = True
+
+                if is_growing:
+                    side = 1 - side
+                    it = it + 1
+                    n_stall = n_stall + 1
+                elif is_shortcutting:
+                    i_cut = i_cut + 1
+                    is_shortcutting = i_cut < planner_info.rrt.n_shortcut[None] and n_path > 3
+
+            planner_state.rrt.path_len[i_t] = n_path
