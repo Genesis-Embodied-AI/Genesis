@@ -501,90 +501,68 @@ def func_collision_cost(
     min_sd_proxy = gs.qd_float(qd.math.inf)
 
     # Obstacle pairs, hierarchically: one bound per link against each obstacle skips that link's spheres
-    # wholesale, which is where nearly every pair test would otherwise go. Attached spheres ride their own loop
-    # since their activity, and so their link's bound, varies per environment.
-    for i_l in range(qd.static(planner_config.n_links)):
-        if planner_info.fk.spheres.links_start[i_l] < planner_info.fk.spheres.links_start[i_l + 1]:
-            center_link = links_pos[i_l, i_col] + gu.qd_transform_by_quat(
-                planner_info.fk.spheres.links_bound_center_local[i_l], links_quat[i_l, i_col]
-            )
-            band_link = (
-                planner_info.fk.spheres.links_bound_radius[i_l]
-                + planner_info.cost.d_safe[None]
-                + planner_info.cost.eps_act[None]
-                + swp
-            )
+    # wholesale, which is where nearly every pair test would otherwise go. The attached spheres form one more
+    # group, skipped only per sphere, since their activity - and so any bound over them - varies per environment.
+    for i_group in range(qd.static(planner_config.n_links + 1)):
+        is_attach_group = i_group == qd.static(planner_config.n_links)
+        i_s_start = gs.qd_int(qd.static(planner_config.n_spheres))
+        i_s_end = gs.qd_int(n_sph_tot)
+        if not is_attach_group:
+            i_s_start = planner_info.fk.spheres.links_start[i_group]
+            i_s_end = planner_info.fk.spheres.links_start[i_group + 1]
+        if i_s_start < i_s_end:
+            is_group_bounded = False
+            center_group = gs.qd_vec3(0.0, 0.0, 0.0)
+            band_group = gs.qd_float(0.0)
+            if not is_attach_group:
+                is_group_bounded = True
+                center_group = links_pos[i_group, i_col] + gu.qd_transform_by_quat(
+                    planner_info.fk.spheres.links_bound_center_local[i_group], links_quat[i_group, i_col]
+                )
+                band_group = (
+                    planner_info.fk.spheres.links_bound_radius[i_group]
+                    + planner_info.cost.d_safe[None]
+                    + planner_info.cost.eps_act[None]
+                    + swp
+                )
             for i_gw in range(planner_world.n_geoms[None]):
-                if planner_world.geoms_is_active[i_gw, i_b] and not func_world_aabb_skip(
-                    i_gw, i_b, center_link, band_link, planner_world
+                if planner_world.geoms_is_active[i_gw, i_b] and not (
+                    is_group_bounded and func_world_aabb_skip(i_gw, i_b, center_group, band_group, planner_world)
                 ):
-                    for i_s in range(
-                        planner_info.fk.spheres.links_start[i_l], planner_info.fk.spheres.links_start[i_l + 1]
-                    ):
-                        radius = planner_info.fk.spheres.radius[i_s]
-                        x = spheres_pos[i_s, i_col]
-                        band = radius + planner_info.cost.d_safe[None] + planner_info.cost.eps_act[None] + swp
-                        if not func_world_aabb_skip(i_gw, i_b, x, band, planner_world):
-                            pair_cost, sd_eff = func_sphere_world_cost(
-                                i_s,
-                                i_gw,
-                                i_col,
-                                i_b,
-                                x,
-                                radius,
-                                swp,
-                                anchor_slack,
-                                links_pos,
-                                links_quat,
-                                planner_world,
-                                collider_state,
-                                gjk_state,
-                                planner_info,
-                                dyn_info,
-                                collider_info,
-                                sdf_info,
-                                rigid_config,
-                                collider_static_config,
-                                planner_config,
-                                use_exact,
-                            )
-                            cost = cost + pair_cost
-                            min_sd_exact = qd.min(min_sd_exact, sd_eff)
-
-    for i_s in range(qd.static(planner_config.n_spheres), n_sph_tot):
-        radius = func_sphere_radius(i_s, i_b, planner_info, planner_config)
-        if radius > 0.0:
-            x = spheres_pos[i_s, i_col]
-            band = radius + planner_info.cost.d_safe[None] + planner_info.cost.eps_act[None] + swp
-            for i_gw in range(planner_world.n_geoms[None]):
-                if planner_world.geoms_is_active[i_gw, i_b] and not func_world_aabb_skip(
-                    i_gw, i_b, x, band, planner_world
-                ):
-                    pair_cost, sd_eff = func_sphere_world_cost(
-                        i_s,
-                        i_gw,
-                        i_col,
-                        i_b,
-                        x,
-                        radius,
-                        swp,
-                        anchor_slack,
-                        links_pos,
-                        links_quat,
-                        planner_world,
-                        collider_state,
-                        gjk_state,
-                        planner_info,
-                        dyn_info,
-                        collider_info,
-                        sdf_info,
-                        rigid_config,
-                        collider_static_config,
-                        planner_config,
-                        use_exact,
-                    )
-                    cost = cost + pair_cost
-                    min_sd_proxy = qd.min(min_sd_proxy, sd_eff)
+                    for i_s in range(i_s_start, i_s_end):
+                        radius = func_sphere_radius(i_s, i_b, planner_info, planner_config)
+                        if radius > 0.0:
+                            x = spheres_pos[i_s, i_col]
+                            band = radius + planner_info.cost.d_safe[None] + planner_info.cost.eps_act[None] + swp
+                            if not func_world_aabb_skip(i_gw, i_b, x, band, planner_world):
+                                pair_cost, sd_eff = func_sphere_world_cost(
+                                    i_s,
+                                    i_gw,
+                                    i_col,
+                                    i_b,
+                                    x,
+                                    radius,
+                                    swp,
+                                    anchor_slack,
+                                    links_pos,
+                                    links_quat,
+                                    planner_world,
+                                    collider_state,
+                                    gjk_state,
+                                    planner_info,
+                                    dyn_info,
+                                    collider_info,
+                                    sdf_info,
+                                    rigid_config,
+                                    collider_static_config,
+                                    planner_config,
+                                    use_exact,
+                                )
+                                cost = cost + pair_cost
+                                if is_attach_group:
+                                    min_sd_proxy = qd.min(min_sd_proxy, sd_eff)
+                                else:
+                                    min_sd_exact = qd.min(min_sd_exact, sd_eff)
 
     for i_lp in range(planner_info.fk.self_pairs.link_pairs_idx.shape[0]):
         sd_pair = gs.qd_float(qd.math.inf)
