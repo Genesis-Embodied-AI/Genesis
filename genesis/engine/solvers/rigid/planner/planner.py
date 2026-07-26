@@ -527,9 +527,20 @@ def kernel_rrt_escalate(
     func_seed_trajectories_from_rrt(envs_idx, planner_state, planner_config)
 
 
+@qd.kernel(fastcache=True)
+def kernel_fold(
+    graph_counter: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    planner_state: array_class.PlannerState,
+    planner_config: qd.template(),
+    ignore_collision_static: qd.template(),
+):
+    """Fold one attempt pass's verdicts and advance the attempt budget (see func_fold_and_check_exit)."""
+    func_fold_and_check_exit(graph_counter, envs_idx, planner_state, planner_config, ignore_collision_static)
+
+
 @qd.kernel(graph=True, fastcache=True)
 def kernel_plan(
-    graph_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
@@ -548,48 +559,21 @@ def kernel_plan(
     ignore_collision_static: qd.template(),
     errno: qd.Tensor,
 ):
-    """Run the joint-space attempt ladder for every planned env.
+    """Seed and refine one attempt pass of every planned env.
 
-    The ladder - seed the unsolved envs, refine, certify, fold the verdicts - repeats device-side until every
-    planned env certifies or graph_counter, the caller-set attempt budget, reaches zero. Each env seeds from
-    straight lines on its first pass and escalates to RRT-Connect on later passes; trees_is_active is per-pass
-    scratch the kernel rewrites. The world snapshot and boundary exclusions the ladder reads must already be in
-    planner state; the launch then fills the per-candidate trajectories and validity flags, from which the caller
-    selects the best seed per env and retimes it.
+    An env seeds from straight lines while it is unseeded and from its escalated trees once it is not, and is then
+    marked seeded so its next pass escalates. The world snapshot and boundary exclusions this reads must already
+    be in planner state, and the caller certifies and folds the pass (see kernel_validate and kernel_fold).
     """
     n_rrt_trees = qd.static(planner_config.n_rrt_trees)
-    while qd.graph_do_while(graph_counter):
-        func_seed_trajectories(envs_idx, planner_state, planner_info, planner_config)
-        qd.loop_config(name="planner_plan_mark_seeded")
-        for i_b_ in range(envs_idx.shape[0]):
-            if not planner_state.is_env_solved[envs_idx[i_b_]]:
-                planner_state.is_env_seeded[envs_idx[i_b_]] = True
-        if qd.static(not ignore_collision_static):
-            func_optimize(
-                0,
-                envs_idx,
-                planner_state,
-                planner_world,
-                dyn_state,
-                collider_state,
-                gjk_state,
-                planner_info,
-                dyn_info,
-                rigid_info,
-                collider_info,
-                sdf_info,
-                rigid_config,
-                collider_static_config,
-                planner_config,
-            )
-        # Certify at the user clearance, not the optimizer headroom: the optimizer plans with an extra headroom so
-        # refined paths arrive with slack, but an env is solved once its trajectory clears the requested margin
-        # (the validator adds the swept Lipschitz allowance on top, so this still covers the continuous path). A
-        # tight fallback corridor is feasible at the margin yet not at the headroom, so folding at the headroom
-        # would leave every cluttered env for the host ladder.
-        d_safe_opt = planner_info.cost.d_safe[None]
-        planner_info.cost.d_safe[None] = d_safe_opt - 0.02
-        func_validate(
+    func_seed_trajectories(envs_idx, planner_state, planner_info, planner_config)
+    qd.loop_config(name="planner_plan_mark_seeded")
+    for i_b_ in range(envs_idx.shape[0]):
+        if not planner_state.is_env_solved[envs_idx[i_b_]]:
+            planner_state.is_env_seeded[envs_idx[i_b_]] = True
+    if qd.static(not ignore_collision_static):
+        func_optimize(
+            0,
             envs_idx,
             planner_state,
             planner_world,
@@ -604,11 +588,7 @@ def kernel_plan(
             rigid_config,
             collider_static_config,
             planner_config,
-            check_start=True,
-            is_swept=1,
         )
-        planner_info.cost.d_safe[None] = d_safe_opt
-        func_fold_and_check_exit(graph_counter, envs_idx, planner_state, planner_config, ignore_collision_static)
 
 
 class Planner:
@@ -1382,7 +1362,6 @@ class Planner:
         # them inlines the whole collision model, and compilation grows faster than a kernel does.
         kernel_init_ladder(2 + max_retry, envs_idx_dev, planner_state)
         plan_args = (
-            planner_state.graph_counter,
             envs_idx_dev,
             trees_is_active,
             planner_state,
@@ -1442,6 +1421,32 @@ class Planner:
                 kernel_rrt_escalate(*rrt_args)
             planner_state.graph_counter.from_numpy(np.array(1, dtype=np.int32))
             kernel_plan(*plan_args)
+            # Certify at the user clearance, not the optimizer headroom: the optimizer plans with an extra
+            # headroom so refined paths arrive with slack, but an env is solved once its trajectory clears the
+            # requested margin (the validator adds the swept Lipschitz allowance on top, so this still covers the
+            # continuous path). A tight fallback corridor is feasible at the margin yet not at the headroom, so
+            # folding at the headroom would leave every cluttered env unsolved.
+            _set_clearance(planner_info, float(safety_margin))
+            kernel_validate(
+                envs_idx_dev,
+                planner_state,
+                planner_world,
+                solver.dyn_state,
+                solver.collider._collider_state,
+                context.gjk_state,
+                planner_info,
+                solver.dyn_info,
+                solver.rigid_info,
+                solver.collider._collider_info,
+                sdf_info,
+                solver.rigid_config,
+                solver.collider._collider_static_config,
+                planner_config,
+                True,
+                1,
+            )
+            _set_clearance(planner_info, float(safety_margin) + 0.02)
+            kernel_fold(planner_state.graph_counter, envs_idx_dev, planner_state, planner_config, ignore_collision)
             if bool((qd_to_torch(planner_state.is_env_solved) != 0)[envs_idx_np].all()):
                 break
         errno_t = qd_to_torch(context.errno)
