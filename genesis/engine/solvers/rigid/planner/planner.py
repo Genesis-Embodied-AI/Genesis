@@ -1427,8 +1427,10 @@ class Planner:
             # continuous path). A tight fallback corridor is feasible at the margin yet not at the headroom, so
             # folding at the headroom would leave every cluttered env unsolved.
             _set_clearance(planner_info, float(safety_margin))
+            # The straightening pass below certifies through this same kernel; passing the env indices the same
+            # way keeps both on one compiled instantiation.
             kernel_validate(
-                envs_idx_dev,
+                envs_idx_np,
                 planner_state,
                 planner_world,
                 solver.dyn_state,
