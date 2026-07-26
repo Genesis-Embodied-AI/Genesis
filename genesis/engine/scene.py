@@ -1017,6 +1017,9 @@ class Scene(RBC):
         # TODO: Could be optimized to only clear cache associated the the environments being reset.
         if self._visualizer.is_built:
             self._visualizer.reset()
+            # Restart camera recording sequences because the scene clock was reset above
+            for camera in self._visualizer.cameras:
+                camera._recorded_t_prev = -1
 
         # TODO: sets _next_particle = 0; not sure this is env isolation safe
         for emitter in self._emitters:

@@ -1589,3 +1589,18 @@ def test_recording_stores_one_frame_per_timestamp(renderer, show_viewer):
     scene.step()
     with pytest.raises(gs.GenesisException, match="Missing frames"):
         cam.render()
+
+    # Resetting rewinds the scene clock, so a recording spanning the reset starts a new sequence
+    scene.reset()
+    cam.render()
+    assert len(cam._recorded_imgs) == 4
+
+    # Visualizer refreshes at the same timestamp must preserve recording state
+    scene.visualizer.update()
+    cam.render()
+    assert len(cam._recorded_imgs) == 4
+
+    # A reset at timestamp zero still starts a new recording sequence
+    scene.reset()
+    cam.render()
+    assert len(cam._recorded_imgs) == 5
