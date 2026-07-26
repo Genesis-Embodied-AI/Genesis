@@ -380,6 +380,7 @@ def kernel_init_ladder(n_attempts: int, envs_idx: qd.types.ndarray(), planner_st
     for i_b_ in range(envs_idx.shape[0]):
         planner_state.is_env_solved[envs_idx[i_b_]] = False
         planner_state.is_env_seeded[envs_idx[i_b_]] = False
+        planner_state.is_goal_free[envs_idx[i_b_]] = False
     qd.loop_config(name="planner_init_pass_index")
     for _ in range(1):
         planner_state.pass_index[None] = n_attempts
@@ -1469,11 +1470,13 @@ class Planner:
         # construction; without this the host-only goal-resolved bookkeeping would stay clear for those envs
         # and the post-ladder unreachable-goal stamp below would flag them GOAL_IN_COLLISION, corrupting the
         # very verdicts the graph kernel just certified.
-        env_goal_resolved |= env_solved
+        env_goal_resolved |= env_solved | (qd_to_torch(planner_state.is_goal_free) != 0)
 
-        # Envs whose goal never yielded an acceptable branch carry the dedicated code on every candidate: the
-        # validator rewrites the flags each attempt, so the code is stamped once the flags are final, and it
-        # holds whatever stale content their never-seeded candidates carry away from certification.
+        # Envs whose goal never yielded a collision-free branch carry the dedicated code on every candidate, so a
+        # goal no configuration can reach without collision reports as such instead of as a plan that ran out of
+        # attempts - the two call for opposite responses from the caller. The validator rewrites the flags each
+        # attempt, so the code is stamped once the flags are final, and it holds whatever stale content their
+        # never-seeded candidates carry away from certification.
         if has_pose_goal:
             env_goal_invalid = env_pending_mask & ~env_goal_resolved
             if bool(env_goal_invalid.any()):

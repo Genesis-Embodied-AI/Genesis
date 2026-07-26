@@ -3307,6 +3307,10 @@ class PlannerState:
     # below colliding ones, so the pass keeps the best branch across its restart sub-batches before overwriting
     # the goal. Reset per pass, so a failed pass still hands the next pass fresh restarts (the adaptive retry).
     goal_resolve_score: qd.Tensor
+    # Per-env flag held for the whole plan: has any pass adopted a collision-free branch of the Cartesian goal?
+    # Distinguishes a goal no configuration can reach without collision - which the planner must refuse, and must
+    # say so - from a plan that simply ran out of attempts.
+    is_goal_free: qd.Tensor
 
 
 def get_planner_state(planner_config, B):
@@ -3389,6 +3393,7 @@ def get_planner_state(planner_config, B):
         pass_index=V(dtype=gs.qd_int, shape=()),
         is_env_seeded=V(dtype=gs.qd_bool, shape=(B,)),
         goal_resolve_score=V(dtype=gs.qd_float, shape=(B,)),
+        is_goal_free=V(dtype=gs.qd_bool, shape=(B,)),
     )
 
 

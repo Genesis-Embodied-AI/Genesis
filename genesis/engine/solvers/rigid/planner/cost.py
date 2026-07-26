@@ -85,6 +85,8 @@ _GOAL_IK_ITERS = 20
 # pays: cluttered goals, where the acceptable branch is rare, are exactly the ones that need the extra draws.
 _GOAL_IK_BATCHES = 16
 _GOAL_IK_DAMPING = 0.01
+# One prime per degree of freedom, the radical-inverse bases of the goal restarts' low-discrepancy sequence.
+_HALTON_BASES = (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37)
 _GOAL_IK_POS_TOL = 5e-4
 _GOAL_IK_ROT_TOL = 5e-3
 _GOAL_IK_MAX_STEP = 0.5
@@ -1632,20 +1634,33 @@ def func_resolve_goal(
         qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_c in range(envs_idx.shape[0] * n_seeds):
             i_b = envs_idx[i_c // n_seeds]
-            # Draw only for envs still without a collision-free branch: adoption scores those below the
-            # penalty it adds to a merely excusable one, and re-drawing behind a free branch buys nothing
-            # adoption would keep. With collision checking off, any converged branch settles the goal.
+            # Draw only for envs still without a collision-free branch. The flag holds for the whole plan, unlike
+            # the score, which resets every pass: gating on the score would reopen the draw on the next pass and
+            # let a later, merely excusable branch overwrite a free goal the env had already earned.
             planner_state.cert.is_active[i_c] = False
-            if not planner_state.is_env_solved[i_b] and planner_state.goal_resolve_score[i_b] >= qd.static(
-                1e6 if not ignore_collision else 1e29
-            ):
+            if not planner_state.is_env_solved[i_b] and not planner_state.is_goal_free[i_b]:
+                # Restart from a low-discrepancy point of the joint box, indexed by the restart's global position
+                # in the plan (draw 0 is the plan's own start configuration). Random draws clump: sixteen of them
+                # cover far fewer than sixteen distinct branches, which is why the acceptable branch was missed
+                # even though every restart converged on the pose. A radical-inverse sequence has no such
+                # clumping - every prefix of it is spread over the box - so coverage grows with the draw count
+                # instead of merely being resampled, and the same environment resolves the same way every run.
                 i_r = i_c % n_seeds
-                for i_dp in range(n_dp):
+                i_draw = attempt_key * n_seeds + i_r
+                for i_dp in qd.static(range(n_dp)):
                     q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
-                    if i_r > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                    if i_draw > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
+                        base = qd.static(_HALTON_BASES[i_dp % len(_HALTON_BASES)])
+                        digit = i_draw
+                        scale = gs.qd_float(1.0 / base)
+                        u = gs.qd_float(0.0)
+                        while digit > 0:
+                            u = u + scale * qd.cast(digit % base, gs.qd_float)
+                            digit = digit // base
+                            scale = scale / base
                         lo = planner_info.fk.dofs.q_limit_lower[i_dp]
                         hi = planner_info.fk.dofs.q_limit_upper[i_dp]
-                        q = lo + gu.qd_hash01(planner_info.mppi.seed_key[None], i_c, i_dp, attempt_key) * (hi - lo)
+                        q = lo + u * (hi - lo)
                     planner_state.fk.eval.qpos[i_dp, i_c] = q
 
                 for _ in range(qd.static(planner_config.goal_ik_iters)):
@@ -1793,5 +1808,7 @@ def func_resolve_goal(
                             best_c = i_c
                 if best_c != -1 and best_score < planner_state.goal_resolve_score[i_b]:
                     planner_state.goal_resolve_score[i_b] = best_score
+                    if best_score < 1e6:
+                        planner_state.is_goal_free[i_b] = True
                     for i_dp in range(n_dp):
                         planner_info.cost.boundary.qpos_goal[i_dp, i_b] = planner_state.ik.qpos_best[i_dp, best_c]
