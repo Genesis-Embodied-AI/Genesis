@@ -25,8 +25,7 @@ from .trajopt import (
     _LS_LADDER,
     _MPPI_ANNEAL,
     build_noise_basis,
-    func_lbfgs,
-    func_mppi,
+    func_optimize,
     func_seed_trajectories,
     func_seed_trajectories_from_rrt,
     kernel_lbfgs,
@@ -533,23 +532,8 @@ def kernel_plan(
             if not planner_state.is_env_solved[envs_idx[i_b_]]:
                 planner_state.is_env_seeded[envs_idx[i_b_]] = True
         if qd.static(not ignore_collision_static):
-            func_mppi(
-                envs_idx,
-                planner_state,
-                planner_world,
-                dyn_state,
-                collider_state,
-                gjk_state,
-                planner_info,
-                dyn_info,
-                rigid_info,
-                collider_info,
-                sdf_info,
-                rigid_config,
-                collider_static_config,
-                planner_config,
-            )
-            func_lbfgs(
+            func_optimize(
+                0,
                 envs_idx,
                 planner_state,
                 planner_world,
