@@ -124,12 +124,12 @@ def func_exclusion_world_offset(i_s, i_gw, i_bound, i_b, planner_info: array_cla
 
 @qd.func
 def func_exclusion_self_offset(i_p, i_bound, i_b, planner_info: array_class.PlannerEntityInfo):
-    """Boundary-contact allowance of a self-collision sphere pair (see func_exclusion_world_offset)."""
-    offset = gs.qd_float(0.0)
-    for i_x in range(planner_info.cert.excl.self_count[i_b]):
-        if planner_info.cert.excl.self_pair[i_x, i_b] == i_p and planner_info.cert.excl.self_bound[i_x, i_b] == i_bound:
-            offset = qd.min(planner_info.cert.excl.self_sd[i_x, i_b], 0.0)
-    return offset
+    """Boundary-contact allowance of a self-collision sphere pair (see func_exclusion_world_offset).
+
+    Read from the per-pair index rather than by walking the exclusion list, because every sphere pair of every
+    checked configuration asks for one (see self_offset in array_class.py).
+    """
+    return planner_info.cert.excl.self_offset[i_p, i_bound, i_b]
 
 
 @qd.func
@@ -787,6 +787,7 @@ def func_merge_boundary_exclusions(
                         if sd_eff < planner_info.cert.excl.self_sd[i_x, i_b]:
                             planner_info.cert.excl.self_sd[i_x, i_b] = sd_eff
                             planner_info.cert.excl.self_anchor[i_x, i_b] = delta
+                            planner_info.cert.excl.self_offset[i_p, i_bound, i_b] = qd.min(sd_eff, 0.0)
                         is_listed = True
                 if not is_listed:
                     if n_self < n_excl_max:
@@ -794,6 +795,7 @@ def func_merge_boundary_exclusions(
                         planner_info.cert.excl.self_sd[n_self, i_b] = sd_eff
                         planner_info.cert.excl.self_bound[n_self, i_b] = i_bound
                         planner_info.cert.excl.self_anchor[n_self, i_b] = delta
+                        planner_info.cert.excl.self_offset[i_p, i_bound, i_b] = qd.min(sd_eff, 0.0)
                         planner_info.cert.excl.self_count[i_b] = n_self + 1
                     else:
                         is_overflow = 1
@@ -830,6 +832,9 @@ def func_boundary_exclusions(
         i_b = envs_idx[i_b_]
         planner_info.cert.excl.world_count[i_b] = 0
         planner_info.cert.excl.self_count[i_b] = 0
+        for i_p in range(planner_info.fk.self_pairs.spheres_idx.shape[0]):
+            for i_bound in range(2):
+                planner_info.cert.excl.self_offset[i_p, i_bound, i_b] = 0.0
         is_overflow = gs.qd_int(0)
         for i_bound in range(qd.static(2 if include_goal else 1)):
             # FK of the boundary configuration through the eval scratch, one column per env.

@@ -2971,7 +2971,13 @@ class PlannerExclInfo:
     the certification ramp measures displacement from (see _EXCL_ANCHOR_SLACK_CERT in cost.py): the sphere
     world position plus the owning link's orientation for world entries (the covered surface patch moves with
     the link frame, so a matching position with a rotated link is a different contact), the sphere-pair
-    relative offset for self entries."""
+    relative offset for self entries.
+
+    self_offset indexes the self entries by (self-pair, boundary) so the collision cost reads a pair's allowance
+    without walking the list: the self loop consults it for every sphere pair of every configuration it checks,
+    which makes a scan proportional to the list the dominant term of that loop. It holds min(clearance, 0), zero
+    where no entry exists, so a read needs no comparison. The list stays the record - the anchors are still found
+    through it, being needed only for the pairs an entry does cover."""
 
     world_pair: qd.Tensor
     world_sd: qd.Tensor
@@ -2980,6 +2986,7 @@ class PlannerExclInfo:
     world_anchor_quat: qd.Tensor
     world_count: qd.Tensor
     self_pair: qd.Tensor
+    self_offset: qd.Tensor
     self_sd: qd.Tensor
     self_bound: qd.Tensor
     self_anchor: qd.Tensor
@@ -3117,6 +3124,7 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
                 world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
                 world_count=V(dtype=gs.qd_int, shape=(B,)),
                 self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                self_offset=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1), 2, B)),
                 self_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
                 self_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
                 self_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
