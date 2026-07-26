@@ -2973,6 +2973,10 @@ class PlannerExclInfo:
     the link frame, so a matching position with a rotated link is a different contact), the sphere-pair
     relative offset for self entries.
 
+    world_has_entry records which (sphere, boundary) keys the world entries cover, so the obstacle loop skips the
+    walk for the majority of spheres that no entry mentions; the walk itself stays, the geom being part of a
+    world entry's key.
+
     self_offset indexes the self entries by (self-pair, boundary) so the collision cost reads a pair's allowance
     without walking the list: the self loop consults it for every sphere pair of every configuration it checks,
     which makes a scan proportional to the list the dominant term of that loop. It holds min(clearance, 0), zero
@@ -2984,6 +2988,7 @@ class PlannerExclInfo:
     world_bound: qd.Tensor
     world_anchor: qd.Tensor
     world_anchor_quat: qd.Tensor
+    world_has_entry: qd.Tensor
     world_count: qd.Tensor
     self_pair: qd.Tensor
     self_offset: qd.Tensor
@@ -3122,6 +3127,9 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
                 world_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
                 world_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
                 world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_has_entry=V(
+                    dtype=gs.qd_bool, shape=(planner_config.n_spheres + planner_config.n_attach_max, 2, B)
+                ),
                 world_count=V(dtype=gs.qd_int, shape=(B,)),
                 self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
                 self_offset=V(dtype=gs.qd_float, shape=(max(n_self_pairs, 1), 2, B)),

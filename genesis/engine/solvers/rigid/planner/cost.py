@@ -110,9 +110,16 @@ def func_exclusion_world_offset(i_s, i_gw, i_bound, i_b, planner_info: array_cla
 
     Pairs violating the margin at that boundary may keep their boundary clearance near it, never getting worse than
     the boundary configurations, which is what makes grasp and place goals plannable; everything else gets no
-    allowance."""
+    allowance.
+
+    Spheres no entry mentions are settled by world_has_entry without walking the list, which every (sphere, geom)
+    pair reaching the distance query would otherwise do (see world_has_entry in array_class.py).
+    """
     offset = gs.qd_float(0.0)
-    for i_x in range(planner_info.cert.excl.world_count[i_b]):
+    n_entries = (
+        planner_info.cert.excl.world_count[i_b] if planner_info.cert.excl.world_has_entry[i_s, i_bound, i_b] else 0
+    )
+    for i_x in range(n_entries):
         if (
             planner_info.cert.excl.world_pair[i_x, i_b][0] == i_s
             and planner_info.cert.excl.world_pair[i_x, i_b][1] == i_gw
@@ -764,6 +771,7 @@ def func_merge_boundary_exclusions(
                                 planner_info.cert.excl.world_bound[n_world, i_b] = i_bound
                                 planner_info.cert.excl.world_anchor[n_world, i_b] = x
                                 planner_info.cert.excl.world_anchor_quat[n_world, i_b] = link_quat
+                                planner_info.cert.excl.world_has_entry[i_s, i_bound, i_b] = True
                                 planner_info.cert.excl.world_count[i_b] = n_world + 1
                             else:
                                 is_overflow = 1
@@ -832,6 +840,9 @@ def func_boundary_exclusions(
         i_b = envs_idx[i_b_]
         planner_info.cert.excl.world_count[i_b] = 0
         planner_info.cert.excl.self_count[i_b] = 0
+        for i_s in range(qd.static(planner_config.n_spheres + planner_config.n_attach_max)):
+            for i_bound in range(2):
+                planner_info.cert.excl.world_has_entry[i_s, i_bound, i_b] = False
         for i_p in range(planner_info.fk.self_pairs.spheres_idx.shape[0]):
             for i_bound in range(2):
                 planner_info.cert.excl.self_offset[i_p, i_bound, i_b] = 0.0
