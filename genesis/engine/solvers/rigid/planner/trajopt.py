@@ -353,7 +353,6 @@ def func_seed_trajectories_from_rrt(
     n_seeds = qd.static(planner_config.n_seeds)
     n_dp = qd.static(planner_config.n_dp)
     n_trees = qd.static(planner_config.n_rrt_trees)
-    n_nodes = qd.static(planner_config.n_rrt_nodes)
 
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_ in range(envs_idx.shape[0]):
@@ -361,23 +360,20 @@ def func_seed_trajectories_from_rrt(
         if not planner_state.is_env_solved[i_b] and planner_state.is_env_seeded[i_b]:
             n_conn = 0
             for i_t_ in range(n_trees):
-                i_t = i_b_ * n_trees + i_t_
-                if planner_state.rrt.is_done[i_t] and planner_state.rrt.path_len[i_t] >= 2:
+                if planner_state.rrt.is_done[i_t_, i_b_] and planner_state.rrt.path_len[i_t_, i_b_] >= 2:
                     n_conn = n_conn + 1
             if n_conn > 0:
                 for i_s in range(n_seeds):
                     # The (i_s mod n_conn)-th connected tree seeds column i_s.
                     target = i_s % n_conn
-                    i_t_sel = i_b_ * n_trees
+                    i_tree_sel = gs.qd_int(0)
                     seen = 0
                     for i_t_ in range(n_trees):
-                        i_t = i_b_ * n_trees + i_t_
-                        if planner_state.rrt.is_done[i_t] and planner_state.rrt.path_len[i_t] >= 2:
+                        if planner_state.rrt.is_done[i_t_, i_b_] and planner_state.rrt.path_len[i_t_, i_b_] >= 2:
                             if seen == target:
-                                i_t_sel = i_t
+                                i_tree_sel = i_t_
                             seen = seen + 1
-                    n_path = planner_state.rrt.path_len[i_t_sel]
-                    rrt_col0 = i_t_sel * n_nodes
+                    n_path = planner_state.rrt.path_len[i_tree_sel, i_b_]
                     i_c = i_b_ * n_seeds + i_s
                     if n_path <= n_knots:
                         # Vertex-preserving subdivision: every vertex is a knot and the leftover knots subdivide
@@ -390,14 +386,14 @@ def func_seed_trajectories_from_rrt(
                             d = gs.qd_float(0.0)
                             for i_dp in range(n_dp):
                                 diff = (
-                                    planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
-                                    - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                    planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
+                                    - planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
                                 )
                                 d = d + (diff * diff)
                             total = total + qd.sqrt(d)
                         extra = n_knots - n_path
                         for i_dp in range(n_dp):
-                            planner_state.cost.qpos[i_dp, i_c, 0] = planner_state.rrt.path[i_dp, rrt_col0]
+                            planner_state.cost.qpos[i_dp, i_c, 0] = planner_state.rrt.path[i_dp, i_tree_sel, 0, i_b_]
                         i_w = 1
                         placed = 0
                         acc = gs.qd_float(0.0)
@@ -405,8 +401,8 @@ def func_seed_trajectories_from_rrt(
                             d = gs.qd_float(0.0)
                             for i_dp in range(n_dp):
                                 diff = (
-                                    planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
-                                    - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                    planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
+                                    - planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
                                 )
                                 d = d + (diff * diff)
                             acc = acc + (qd.sqrt(d) * qd.cast(extra, gs.qd_float) / qd.max(total, 1e-9))
@@ -417,13 +413,13 @@ def func_seed_trajectories_from_rrt(
                             for k in range(n_sub):
                                 u = qd.cast(k + 1, gs.qd_float) / qd.cast(n_sub + 1, gs.qd_float)
                                 for i_dp in range(n_dp):
-                                    q_a = planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
-                                    q_b = planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                    q_a = planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
+                                    q_b = planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
                                     planner_state.cost.qpos[i_dp, i_c, i_w] = q_a * (1.0 - u) + q_b * u
                                 i_w = i_w + 1
                             for i_dp in range(n_dp):
                                 planner_state.cost.qpos[i_dp, i_c, i_w] = planner_state.rrt.path[
-                                    i_dp, rrt_col0 + i_seg + 1
+                                    i_dp, i_tree_sel, i_seg + 1, i_b_
                                 ]
                             i_w = i_w + 1
                     else:
@@ -434,15 +430,15 @@ def func_seed_trajectories_from_rrt(
                             d = gs.qd_float(0.0)
                             for i_dp in range(n_dp):
                                 diff = (
-                                    planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
-                                    - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                    planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
+                                    - planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
                                 )
                                 d = d + (diff * diff)
                             total = total + qd.sqrt(d)
                         for i_dp in range(n_dp):
-                            planner_state.cost.qpos[i_dp, i_c, 0] = planner_state.rrt.path[i_dp, rrt_col0]
+                            planner_state.cost.qpos[i_dp, i_c, 0] = planner_state.rrt.path[i_dp, i_tree_sel, 0, i_b_]
                             planner_state.cost.qpos[i_dp, i_c, n_knots - 1] = planner_state.rrt.path[
-                                i_dp, rrt_col0 + n_path - 1
+                                i_dp, i_tree_sel, n_path - 1, i_b_
                             ]
                         i_seg = 0
                         s_cum = gs.qd_float(0.0)
@@ -454,8 +450,8 @@ def func_seed_trajectories_from_rrt(
                                 seg_len = gs.qd_float(0.0)
                                 for i_dp in range(n_dp):
                                     diff = (
-                                        planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
-                                        - planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
+                                        planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
+                                        - planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
                                     )
                                     seg_len = seg_len + (diff * diff)
                                 seg_len = qd.sqrt(seg_len)
@@ -466,8 +462,8 @@ def func_seed_trajectories_from_rrt(
                                     advancing = False
                             u = (s_tgt - s_cum) / qd.max(seg_len, 1e-9)
                             for i_dp in range(n_dp):
-                                q_a = planner_state.rrt.path[i_dp, rrt_col0 + i_seg]
-                                q_b = planner_state.rrt.path[i_dp, rrt_col0 + i_seg + 1]
+                                q_a = planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
+                                q_b = planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
                                 planner_state.cost.qpos[i_dp, i_c, i_w] = q_a * (1.0 - u) + q_b * u
                     planner_state.cert.is_active[i_b_ * n_seeds + i_s] = True
                 # Seed 0 keeps the raw fallback polyline unrefined, so refinement can only add better candidates.

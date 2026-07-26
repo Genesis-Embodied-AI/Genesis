@@ -3314,9 +3314,11 @@ def get_planner_state(planner_config, B):
     n_knot_cols = n_candidates * planner_config.n_knots
     n_eval_cols = n_candidates * planner_config.n_eval_per_candidate
     n_spheres_with_attach = planner_config.n_spheres + planner_config.n_attach_max
-    n_trees = B * planner_config.n_rrt_trees
-    n_rrt_cols = n_trees * planner_config.n_rrt_nodes
     knot_shape = (planner_config.n_dp, n_candidates, planner_config.n_knots)
+    # One tree of one env per (tree, env) slot, its nodes spanning the middle axis; the batch axis stays last, as
+    # everywhere else. The two sides of a tree pair split its node range, so a side is a node offset, not an axis.
+    tree_shape = (planner_config.n_rrt_trees, B)
+    tree_node_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_nodes, B)
     hist_shape = (PLANNER_LBFGS_M, *knot_shape)
 
     # The optimizer's per-knot working set - the trajectory and its trial copy, the L-BFGS history pair, descent
@@ -3356,13 +3358,13 @@ def get_planner_state(planner_config, B):
             rho_hist=V(dtype=gs.qd_float, shape=(PLANNER_LBFGS_M, n_candidates)),
         ),
         rrt=PlannerRRTState(
-            qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
-            parent=V(dtype=gs.qd_int, shape=(max(n_rrt_cols, 1),)),
-            n_nodes=V(dtype=gs.qd_int, shape=(2 * max(n_trees, 1),)),
-            bridge=V_VEC(2, dtype=gs.qd_int, shape=(max(n_trees, 1),)),
-            is_done=V(dtype=gs.qd_bool, shape=(max(n_trees, 1),)),
-            path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, max(n_rrt_cols, 1))),
-            path_len=V(dtype=gs.qd_int, shape=(max(n_trees, 1),)),
+            qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, *tree_node_shape)),
+            parent=V(dtype=gs.qd_int, shape=tree_node_shape),
+            n_nodes=V(dtype=gs.qd_int, shape=(2, *tree_shape)),
+            bridge=V_VEC(2, dtype=gs.qd_int, shape=tree_shape),
+            is_done=V(dtype=gs.qd_bool, shape=tree_shape),
+            path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, *tree_node_shape)),
+            path_len=V(dtype=gs.qd_int, shape=tree_shape),
         ),
         cost=PlannerCostState(
             qpos=V(dtype=gs.qd_float, shape=knot_shape, layout=knot_layout),

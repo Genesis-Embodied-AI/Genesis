@@ -94,8 +94,8 @@ def func_rrt_edge_is_free(
     i_t,
     i_lane,
     i_b,
-    col_from,
-    col_to,
+    i_node_from,
+    i_node_to,
     planner_state: array_class.PlannerState,
     planner_world: array_class.PlannerWorldState,
     dyn_state: array_class.DynState,
@@ -117,11 +117,16 @@ def func_rrt_edge_is_free(
     required clearance.
     """
     n_dp = qd.static(planner_config.n_dp)
+    i_tree = i_t % qd.static(planner_config.n_rrt_trees)
+    i_b_ = i_t // qd.static(planner_config.n_rrt_trees)
     reach = gs.qd_float(0.0)
     for i_dp in range(n_dp):
         reach = reach + (
             planner_info.fk.dofs.reach[i_dp]
-            * qd.abs(planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from])
+            * qd.abs(
+                planner_state.rrt.qpos[i_dp, i_tree, i_node_to, i_b_]
+                - planner_state.rrt.qpos[i_dp, i_tree, i_node_from, i_b_]
+            )
         )
     # The density sets each sample's sweep allowance to ~eps_act/(2*density), and the demand IS the allowance:
     # sampling more coarsely rejects any edge whose true clearance falls below it (see planner_edge_check_density).
@@ -134,7 +139,10 @@ def func_rrt_edge_is_free(
     for i_dp in range(n_dp):
         dq_inf = qd.max(
             dq_inf,
-            qd.abs(planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from])
+            qd.abs(
+                planner_state.rrt.qpos[i_dp, i_tree, i_node_to, i_b_]
+                - planner_state.rrt.qpos[i_dp, i_tree, i_node_from, i_b_]
+            )
             / qd.cast(n_sub, gs.qd_float),
         )
 
@@ -178,8 +186,11 @@ def func_rrt_edge_is_free(
         if i_sub <= n_sub:
             alpha = qd.cast(i_sub, gs.qd_float) / qd.cast(n_sub, gs.qd_float)
             for i_dp in range(n_dp):
-                planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
-                    planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
+                planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.rrt.qpos[
+                    i_dp, i_tree, i_node_from, i_b_
+                ] + alpha * (
+                    planner_state.rrt.qpos[i_dp, i_tree, i_node_to, i_b_]
+                    - planner_state.rrt.qpos[i_dp, i_tree, i_node_from, i_b_]
                 )
             is_free_lane = func_rrt_config_is_free(
                 i_t,
@@ -255,19 +266,20 @@ def func_rrt_connect(
         i_lane = i_tl % n_lanes
         i_t = i_tl // n_lanes
         if trees_is_active[i_t] == 1:
-            i_b = envs_idx[i_t // n_trees]
-            col0 = i_t * n_nodes
+            i_b_ = i_t // n_trees
+            i_tree = i_t % n_trees
+            i_b = envs_idx[i_b_]
 
             # Roots: node 0 = start, node n_half = goal.
             for i_dp in range(n_dp):
-                planner_state.rrt.qpos[i_dp, col0] = planner_info.cost.boundary.qpos_start[i_dp, i_b]
-                planner_state.rrt.qpos[i_dp, col0 + n_half] = planner_info.cost.boundary.qpos_goal[i_dp, i_b]
-            planner_state.rrt.parent[col0] = -1
-            planner_state.rrt.parent[col0 + n_half] = -1
-            planner_state.rrt.n_nodes[2 * i_t] = 1
-            planner_state.rrt.n_nodes[2 * i_t + 1] = 1
-            planner_state.rrt.is_done[i_t] = False
-            planner_state.rrt.path_len[i_t] = 0
+                planner_state.rrt.qpos[i_dp, i_tree, 0, i_b_] = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                planner_state.rrt.qpos[i_dp, i_tree, n_half, i_b_] = planner_info.cost.boundary.qpos_goal[i_dp, i_b]
+            planner_state.rrt.parent[i_tree, 0, i_b_] = -1
+            planner_state.rrt.parent[i_tree, n_half, i_b_] = -1
+            planner_state.rrt.n_nodes[0, i_tree, i_b_] = 1
+            planner_state.rrt.n_nodes[1, i_tree, i_b_] = 1
+            planner_state.rrt.is_done[i_tree, i_b_] = False
+            planner_state.rrt.path_len[i_tree, i_b_] = 0
 
             # Tree growth and the shortcut pass share one certified-edge slot: the check inlines the whole
             # collision cost, so every extra call site duplicates that cost in each kernel reaching the tree (see
@@ -285,7 +297,7 @@ def func_rrt_connect(
             i_to = gs.qd_int(0)
             base = gs.qd_int(0)
             other = gs.qd_int(0)
-            col_new = gs.qd_int(0)
+            i_node_new = gs.qd_int(0)
             n_edges = gs.qd_int(0)
             is_growing = True
             is_shortcutting = False
@@ -293,31 +305,35 @@ def func_rrt_connect(
                 if is_growing and (
                     it >= planner_info.rrt.n_iters[None]
                     or n_stall >= planner_info.rrt.n_stall_iters[None]
-                    or planner_state.rrt.is_done[i_t]
+                    or planner_state.rrt.is_done[i_tree, i_b_]
                 ):
                     is_growing = False
                     # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended.
-                    if planner_state.rrt.is_done[i_t]:
+                    if planner_state.rrt.is_done[i_tree, i_b_]:
                         n_path = 0
-                        node = planner_state.rrt.bridge[i_t][0]
+                        node = planner_state.rrt.bridge[i_tree, i_b_][0]
                         while node != -1:
                             for i_dp in range(n_dp):
-                                planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
+                                planner_state.rrt.path[i_dp, i_tree, n_path, i_b_] = planner_state.rrt.qpos[
+                                    i_dp, i_tree, node, i_b_
+                                ]
                             n_path = n_path + 1
-                            node = planner_state.rrt.parent[col0 + node]
+                            node = planner_state.rrt.parent[i_tree, node, i_b_]
                         for i_swap in range(n_path // 2):
                             for i_dp in range(n_dp):
-                                tmp = planner_state.rrt.path[i_dp, col0 + i_swap]
-                                planner_state.rrt.path[i_dp, col0 + i_swap] = planner_state.rrt.path[
-                                    i_dp, col0 + n_path - 1 - i_swap
+                                tmp = planner_state.rrt.path[i_dp, i_tree, i_swap, i_b_]
+                                planner_state.rrt.path[i_dp, i_tree, i_swap, i_b_] = planner_state.rrt.path[
+                                    i_dp, i_tree, n_path - 1 - i_swap, i_b_
                                 ]
-                                planner_state.rrt.path[i_dp, col0 + n_path - 1 - i_swap] = tmp
-                        node = planner_state.rrt.bridge[i_t][1]
+                                planner_state.rrt.path[i_dp, i_tree, n_path - 1 - i_swap, i_b_] = tmp
+                        node = planner_state.rrt.bridge[i_tree, i_b_][1]
                         while node != -1 and n_path < n_nodes:
                             for i_dp in range(n_dp):
-                                planner_state.rrt.path[i_dp, col0 + n_path] = planner_state.rrt.qpos[i_dp, col0 + node]
+                                planner_state.rrt.path[i_dp, i_tree, n_path, i_b_] = planner_state.rrt.qpos[
+                                    i_dp, i_tree, node, i_b_
+                                ]
                             n_path = n_path + 1
-                            node = planner_state.rrt.parent[col0 + node]
+                            node = planner_state.rrt.parent[i_tree, node, i_b_]
                         is_shortcutting = i_cut < planner_info.rrt.n_shortcut[None] and n_path > 3
 
                 n_edges = 0
@@ -328,9 +344,9 @@ def func_rrt_connect(
                     # Sample a target: goal-biased toward the other tree's newest node, else uniform in limits
                     # (locked DOFs pinned to the start value).
                     if gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, 777) < planner_info.rrt.goal_bias[None]:
-                        newest = other + planner_state.rrt.n_nodes[2 * i_t + 1 - side] - 1
+                        newest = other + planner_state.rrt.n_nodes[1 - side, i_tree, i_b_] - 1
                         for i_dp in range(n_dp):
-                            planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, col0 + newest]
+                            planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, i_tree, newest, i_b_]
                     else:
                         for i_dp in range(n_dp):
                             u = gu.qd_hash01(planner_info.mppi.seed_key[None], i_t, it, i_dp)
@@ -344,13 +360,13 @@ def func_rrt_connect(
                     # Nearest node of the growing side (deterministic lowest-index tie-break).
                     i_near = 0
                     d_near = gs.qd_float(qd.math.inf)
-                    for i_n in range(planner_state.rrt.n_nodes[2 * i_t + side]):
+                    for i_n in range(planner_state.rrt.n_nodes[side, i_tree, i_b_]):
                         d = gs.qd_float(0.0)
                         for i_dp in range(n_dp):
                             d = d + (
                                 (
                                     planner_state.fk.eval.qpos[i_dp, i_t]
-                                    - planner_state.rrt.qpos[i_dp, col0 + base + i_n]
+                                    - planner_state.rrt.qpos[i_dp, i_tree, base + i_n, i_b_]
                                 )
                                 ** 2
                             )
@@ -365,16 +381,16 @@ def func_rrt_connect(
                             d_inf,
                             qd.abs(
                                 planner_state.fk.eval.qpos[i_dp, i_t]
-                                - planner_state.rrt.qpos[i_dp, col0 + base + i_near]
+                                - planner_state.rrt.qpos[i_dp, i_tree, base + i_near, i_b_]
                             ),
                         )
                     scale = qd.min(1.0, planner_info.rrt.steer_step[None] / qd.max(d_inf, 1e-9))
-                    i_new = planner_state.rrt.n_nodes[2 * i_t + side]
+                    i_new = planner_state.rrt.n_nodes[side, i_tree, i_b_]
                     if i_new < n_half:
-                        col_new = col0 + base + i_new
+                        i_node_new = base + i_new
                         for i_dp in range(n_dp):
-                            q_near = planner_state.rrt.qpos[i_dp, col0 + base + i_near]
-                            planner_state.rrt.qpos[i_dp, col_new] = q_near + scale * (
+                            q_near = planner_state.rrt.qpos[i_dp, i_tree, base + i_near, i_b_]
+                            planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_] = q_near + scale * (
                                 planner_state.fk.eval.qpos[i_dp, i_t] - q_near
                             )
                         n_edges = 2
@@ -388,45 +404,47 @@ def func_rrt_connect(
                     i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
                     i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
                     for i_dp in range(n_dp):
-                        planner_state.rrt.qpos[i_dp, col0] = planner_state.rrt.path[i_dp, col0 + i_from]
-                        planner_state.rrt.qpos[i_dp, col0 + 1] = planner_state.rrt.path[i_dp, col0 + i_to]
+                        planner_state.rrt.qpos[i_dp, i_tree, 0, i_b_] = planner_state.rrt.path[
+                            i_dp, i_tree, i_from, i_b_
+                        ]
+                        planner_state.rrt.qpos[i_dp, i_tree, 1, i_b_] = planner_state.rrt.path[i_dp, i_tree, i_to, i_b_]
                     n_edges = 1
 
                 is_extended = False
                 for i_edge in range(n_edges):
-                    col_from = col0
-                    col_to = col0 + 1
+                    i_node_from = 0
+                    i_node_to = 1
                     is_wanted = True
                     if is_growing:
-                        col_from = col0 + base + i_near
-                        col_to = col_new
+                        i_node_from = base + i_near
+                        i_node_to = i_node_new
                         if i_edge == 1:
                             is_wanted = is_extended
                             if is_wanted:
                                 # Connect attempt: nearest node of the other tree tries to join the new node.
                                 d_join = gs.qd_float(qd.math.inf)
-                                for i_n in range(planner_state.rrt.n_nodes[2 * i_t + 1 - side]):
+                                for i_n in range(planner_state.rrt.n_nodes[1 - side, i_tree, i_b_]):
                                     d = gs.qd_float(0.0)
                                     for i_dp in range(n_dp):
                                         d = d + (
                                             (
-                                                planner_state.rrt.qpos[i_dp, col_new]
-                                                - planner_state.rrt.qpos[i_dp, col0 + other + i_n]
+                                                planner_state.rrt.qpos[i_dp, i_tree, i_node_new, i_b_]
+                                                - planner_state.rrt.qpos[i_dp, i_tree, other + i_n, i_b_]
                                             )
                                             ** 2
                                         )
                                     if d < d_join:
                                         d_join = d
                                         i_join = i_n
-                                col_from = col0 + other + i_join
+                                i_node_from = other + i_join
                     is_free = False
                     if is_wanted:
                         is_free = func_rrt_edge_is_free(
                             i_t,
                             i_lane,
                             i_b,
-                            col_from,
-                            col_to,
+                            i_node_from,
+                            i_node_to,
                             planner_state=planner_state,
                             planner_world=planner_world,
                             dyn_state=dyn_state,
@@ -446,22 +464,26 @@ def func_rrt_connect(
                             n_cut = i_to - i_from - 1
                             for i_n in range(i_from + 1, n_path - n_cut):
                                 for i_dp in range(n_dp):
-                                    planner_state.rrt.path[i_dp, col0 + i_n] = planner_state.rrt.path[
-                                        i_dp, col0 + i_n + n_cut
+                                    planner_state.rrt.path[i_dp, i_tree, i_n, i_b_] = planner_state.rrt.path[
+                                        i_dp, i_tree, i_n + n_cut, i_b_
                                     ]
                             n_path = n_path - n_cut
                         elif i_edge == 0:
-                            planner_state.rrt.parent[col_new] = base + i_near
-                            planner_state.rrt.n_nodes[2 * i_t + side] = i_new + 1
+                            planner_state.rrt.parent[i_tree, i_node_new, i_b_] = base + i_near
+                            planner_state.rrt.n_nodes[side, i_tree, i_b_] = i_new + 1
                             n_stall = -1
                             is_extended = True
                         else:
                             # Bridge stored as (start-tree node, goal-tree node).
                             if side == 0:
-                                planner_state.rrt.bridge[i_t] = qd.Vector([base + i_new, other + i_join], dt=gs.qd_int)
+                                planner_state.rrt.bridge[i_tree, i_b_] = qd.Vector(
+                                    [base + i_new, other + i_join], dt=gs.qd_int
+                                )
                             else:
-                                planner_state.rrt.bridge[i_t] = qd.Vector([other + i_join, base + i_new], dt=gs.qd_int)
-                            planner_state.rrt.is_done[i_t] = True
+                                planner_state.rrt.bridge[i_tree, i_b_] = qd.Vector(
+                                    [other + i_join, base + i_new], dt=gs.qd_int
+                                )
+                            planner_state.rrt.is_done[i_tree, i_b_] = True
 
                 if is_growing:
                     side = 1 - side
@@ -471,4 +493,4 @@ def func_rrt_connect(
                     i_cut = i_cut + 1
                     is_shortcutting = i_cut < planner_info.rrt.n_shortcut[None] and n_path > 3
 
-            planner_state.rrt.path_len[i_t] = n_path
+            planner_state.rrt.path_len[i_tree, i_b_] = n_path
