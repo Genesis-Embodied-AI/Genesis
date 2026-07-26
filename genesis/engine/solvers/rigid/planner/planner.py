@@ -12,6 +12,13 @@ from genesis.utils import array_class
 from genesis.utils.misc import get_gpu_core_count, qd_to_torch, tensor_to_array
 
 from . import cost as cost_mod
+from .cost import (
+    func_boundary_exclusions,
+    func_resolve_goal,
+    func_validate,
+    kernel_boundary_exclusions,
+    kernel_validate,
+)
 from .graph import (
     _RRT_GOAL_BIAS,
     _RRT_N_SHORTCUT,
@@ -406,7 +413,7 @@ def kernel_resolve_goal(
     # allowances would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the
     # goal side is stripped before the probe and folded back in once the goals are resolved (the ladder
     # validator below then excuses the resolved goal's own contacts). See the host ladder for the rationale.
-    cost_mod.func_boundary_exclusions(
+    func_boundary_exclusions(
         envs_idx,
         planner_state,
         planner_world,
@@ -424,7 +431,7 @@ def kernel_resolve_goal(
         include_goal=False,
         errno=errno,
     )
-    cost_mod.func_resolve_goal(
+    func_resolve_goal(
         envs_idx,
         planner_state,
         planner_world,
@@ -441,7 +448,7 @@ def kernel_resolve_goal(
         planner_config,
         ignore_collision_static,
     )
-    cost_mod.func_boundary_exclusions(
+    func_boundary_exclusions(
         envs_idx,
         planner_state,
         planner_world,
@@ -556,7 +563,7 @@ def kernel_plan(
         # would leave every cluttered env for the host ladder.
         d_safe_opt = planner_info.cost.d_safe[None]
         planner_info.cost.d_safe[None] = d_safe_opt - 0.02
-        cost_mod.func_validate(
+        func_validate(
             envs_idx,
             planner_state,
             planner_world,
@@ -1314,7 +1321,7 @@ class Planner:
             # Boundary (start and goal) contact exclusions: pairs violating the margin at either boundary keep
             # their worst boundary clearance for the whole plan, which is what makes grasp and place goals
             # plannable.
-            cost_mod.kernel_boundary_exclusions(*kernel_args, planner_config, include_goal=True, errno=context.errno)
+            kernel_boundary_exclusions(*kernel_args, planner_config, include_goal=True, errno=context.errno)
         errno_t = qd_to_torch(context.errno)
         if bool((errno_t != 0).any()):
             gs.raise_exception(
@@ -1460,7 +1467,7 @@ class Planner:
                 eps_act=0.05,
             )
             _set_clearance(planner_info, float(safety_margin))
-            cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True, is_swept=1)
+            kernel_validate(*kernel_args, planner_config, check_start=True, is_swept=1)
             is_env_smooth = self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0]
             knots = qd_to_torch(planner_state.cost.qpos).permute(1, 2, 0).reshape(B, S, W, n_dp)
             knots_smooth = knots.gather(1, best_seed[:, None, None, None].expand(B, 1, W, n_dp))[:, 0]
@@ -1476,7 +1483,7 @@ class Planner:
                     break
                 knots_straight = _straighten_knots(knots_best, qd_to_torch(planner_info.fk.dofs.reach), radius)
                 traj_t[env_rough, best_seed[env_rough]] = knots_straight[env_rough]
-                cost_mod.kernel_validate(*kernel_args, planner_config, check_start=True, is_swept=1)
+                kernel_validate(*kernel_args, planner_config, check_start=True, is_swept=1)
                 is_env_straight = (
                     self._seed_validity(flags_t, S, ignore_collision).gather(-1, best_seed[:, None])[:, 0] & env_rough
                 )
