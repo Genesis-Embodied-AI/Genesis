@@ -136,41 +136,70 @@ def func_rrt_edge_is_free(
             / qd.cast(n_sub, gs.qd_float),
         )
 
-    # Lane i_lane takes every n_cost_lanes-th sample of the segment and the lanes' verdicts are combined, so an
-    # edge costs its samples spread across a subgroup rather than walked one by one. The serial walk could stop at
-    # the first blocked sample; the lanes instead check their share and agree at the end, which is the trade that
+    # Lane i_lane takes a share of the segment's samples (see the visiting order below) and the lanes' verdicts
+    # are combined, so an edge costs its samples spread across a subgroup rather than walked one by one. A lane
+    # stops at the first blocked sample of its own share; the lanes agree only at the end, which is the trade that
     # buys the parallelism.
     n_lanes = qd.static(planner_config.n_cost_lanes)
     i_e_col = i_t * n_lanes + i_lane
+    # A lane walks its share in one of two orders, and either way the visited set is the same {1..n_sub}, so the
+    # verdict is the conjunction over identical samples and every edge decides identically - the choice only moves
+    # when a rejected edge meets its blocker. Both live in one loop because the body inlines the whole collision
+    # cost, so a second call site would duplicate it in every kernel that grows a tree.
+    #   serial arm: bit-reversed, so a blocked stretch is met after a number of samples set by its width as a
+    #     fraction of the edge rather than by the blocker's distance from the start. Long edges are the ones that
+    #     reject, so they stop paying for their length; the first index visited is the far endpoint, which for a
+    #     growth edge is the new node the check exists to qualify.
+    #   lane arm: start to end, strided. A lane holds only n_sub/n_cost_lanes samples, too few for the reordering
+    #     to save a pass over one, while its skipped indices - the bit-reversed walk covers a power-of-two range
+    #     and drops what overshoots - cost more than they buy.
+    n_steps = (n_sub + n_lanes - 1) // n_lanes
+    n_bits = gs.qd_int(1)
+    n_perm = gs.qd_int(2)
+    if qd.static(n_lanes == 1):
+        while n_perm < n_sub:
+            n_bits = n_bits + 1
+            n_perm = n_perm * 2
+        n_steps = n_perm
     is_free_lane = True
-    i_sub = 1 + i_lane
-    while is_free_lane and i_sub <= n_sub:
-        alpha = qd.cast(i_sub, gs.qd_float) / qd.cast(n_sub, gs.qd_float)
-        for i_dp in range(n_dp):
-            planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
-                planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
+    i_step = gs.qd_int(0)
+    while is_free_lane and i_step < n_steps:
+        i_sub = gs.qd_int(1 + i_lane) + i_step * n_lanes
+        if qd.static(n_lanes == 1):
+            i_sub = gs.qd_int(0)
+            i_rev = i_step
+            for _ in range(n_bits):
+                i_sub = (i_sub << 1) | (i_rev & 1)
+                i_rev = i_rev >> 1
+            if i_sub == 0:
+                i_sub = n_perm
+        if i_sub <= n_sub:
+            alpha = qd.cast(i_sub, gs.qd_float) / qd.cast(n_sub, gs.qd_float)
+            for i_dp in range(n_dp):
+                planner_state.fk.eval.qpos[i_dp, i_e_col] = planner_state.rrt.qpos[i_dp, col_from] + alpha * (
+                    planner_state.rrt.qpos[i_dp, col_to] - planner_state.rrt.qpos[i_dp, col_from]
+                )
+            is_free_lane = func_rrt_config_is_free(
+                i_t,
+                i_lane,
+                i_b,
+                swp,
+                dq_inf,
+                planner_state=planner_state,
+                planner_world=planner_world,
+                dyn_state=dyn_state,
+                collider_state=collider_state,
+                gjk_state=gjk_state,
+                planner_info=planner_info,
+                dyn_info=dyn_info,
+                rigid_info=rigid_info,
+                collider_info=collider_info,
+                sdf_info=sdf_info,
+                rigid_config=rigid_config,
+                collider_static_config=collider_static_config,
+                planner_config=planner_config,
             )
-        is_free_lane = func_rrt_config_is_free(
-            i_t,
-            i_lane,
-            i_b,
-            swp,
-            dq_inf,
-            planner_state=planner_state,
-            planner_world=planner_world,
-            dyn_state=dyn_state,
-            collider_state=collider_state,
-            gjk_state=gjk_state,
-            planner_info=planner_info,
-            dyn_info=dyn_info,
-            rigid_info=rigid_info,
-            collider_info=collider_info,
-            sdf_info=sdf_info,
-            rigid_config=rigid_config,
-            collider_static_config=collider_static_config,
-            planner_config=planner_config,
-        )
-        i_sub = i_sub + n_lanes
+        i_step = i_step + 1
     # An edge is free only if every lane's share was: a minimum over 0/1 is their conjunction.
     if qd.static(planner_config.n_cost_lanes > 1):
         return (
