@@ -2790,12 +2790,11 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerDofsInfo:
-    """Joint-space box and derivative limits of the planned DOFs, with their reach bound and lock mask."""
+    """Joint-space box of the planned DOFs, with their reach bound and lock mask. The velocity and acceleration
+    limits live on the host, being read only by the retiming (see _EntityContext)."""
 
     q_limit_lower: qd.Tensor
     q_limit_upper: qd.Tensor
-    vel_limit: qd.Tensor
-    acc_limit: qd.Tensor
     # Per-DOF workspace reach bound: config-independent Lipschitz constant of the FK map used by the
     # swept-collision cover and the certified edge checks (sum of distal chain segment lengths + max sphere
     # offset + radius).
@@ -3037,8 +3036,6 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
             dofs=PlannerDofsInfo(
                 q_limit_lower=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
                 q_limit_upper=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-                vel_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
-                acc_limit=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
                 reach=V(dtype=gs.qd_float, shape=(planner_config.n_dp,)),
                 is_locked=V(dtype=gs.qd_bool, shape=(planner_config.n_dp, B)),
             ),

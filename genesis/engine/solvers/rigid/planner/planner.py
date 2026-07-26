@@ -137,13 +137,16 @@ class _EntityContext(NamedTuple):
     """Per-entity planner buffers, allocated once at the entity's first plan and reused forever.
 
     gjk_state is the planner-owned scratch of the collider's Gilbert-Johnson-Keerthi (GJK) distance queries, one
-    column per eval column (see func_gjk_clearance in cost.py).
+    column per eval column (see func_gjk_clearance in cost.py). The velocity and acceleration limits are host
+    tensors because only the retiming reads them, on the host.
     """
 
     planner_config: object
     planner_info: object
     planner_state: object
     gjk_state: object
+    dofs_vel_limit: torch.Tensor
+    dofs_acc_limit: torch.Tensor
     spheres_link_idx: np.ndarray
     errno: object
 
@@ -913,10 +916,8 @@ class Planner:
         vel_limit = entity.get_dofs_vel_limit()
         if vel_limit.ndim > 1:
             vel_limit = vel_limit[0]
-        vel_limit_t = qd_to_torch(planner_info.fk.dofs.vel_limit, copy=False)
-        vel_limit_t[:] = torch.where(vel_limit.isfinite(), vel_limit, torch.full_like(vel_limit, _DEFAULT_VEL_LIMIT))
-        acc_limit_t = qd_to_torch(planner_info.fk.dofs.acc_limit, copy=False)
-        acc_limit_t.fill_(_DEFAULT_ACC_LIMIT)
+        dofs_vel_limit = torch.where(vel_limit.isfinite(), vel_limit, torch.full_like(vel_limit, _DEFAULT_VEL_LIMIT))
+        dofs_acc_limit = torch.full_like(dofs_vel_limit, _DEFAULT_ACC_LIMIT)
         dof_reach_t = qd_to_torch(planner_info.fk.dofs.reach, copy=False)
         dof_reach_t[:] = torch.as_tensor(dof_reach_np, device=gs.device)
 
@@ -958,6 +959,8 @@ class Planner:
             planner_info=planner_info,
             planner_state=planner_state,
             gjk_state=gjk_state,
+            dofs_vel_limit=dofs_vel_limit,
+            dofs_acc_limit=dofs_acc_limit,
             spheres_link_idx=spheres_link_idx,
             errno=errno,
         )
@@ -1549,8 +1552,8 @@ class Planner:
         knots_plan = knots_best[envs_idx_np]
         qpos_out, vel_out, acc_out, dt_out = retime_trajectory(
             knots_plan,
-            qd_to_torch(planner_info.fk.dofs.vel_limit),
-            qd_to_torch(planner_info.fk.dofs.acc_limit),
+            context.dofs_vel_limit,
+            context.dofs_acc_limit,
             qd_to_torch(planner_info.fk.dofs.reach),
             num_waypoints,
             scene_dt=solver._scene.dt,
