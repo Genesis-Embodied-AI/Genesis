@@ -52,7 +52,12 @@ _GRASP_NORMAL_COS = -0.5
 # a power of two by the resolution below (the cross-lane sum is a butterfly over 2**k lanes).
 _N_COST_LANES_MAX = 32
 _N_RRT_TREES = 4
-_N_RRT_NODES = 2048
+# Node capacity per tree pair, and the chain capacity of an extracted path. Both bound the search rather than
+# describing it: a tree that fills up stops growing and a bridge whose chain does not fit is refused, so these
+# cost validity, never soundness. Measured peak occupancy on the cluttered pre-grasp battery is 261 nodes a side
+# and 10 path knots, so each carries roughly a factor of two over what the iteration budget can reach.
+_N_RRT_NODES = 1024
+_N_RRT_PATH = 64
 _N_RRT_ITERS = 600
 # Fresh restart pools drawn within one ladder attempt for envs whose pool yielded no acceptable Cartesian goal
 # branch (see _resolve_pose_goal).
@@ -829,6 +834,7 @@ class Planner:
             is_knot_major=is_knot_major,
             n_rrt_trees=_N_RRT_TREES,
             n_rrt_nodes=_N_RRT_NODES,
+            n_rrt_path=_N_RRT_PATH,
             n_noise_knots=array_class.PLANNER_N_NOISE_KNOTS,
             n_mppi_particles_max=array_class.PLANNER_MPPI_P_MAX,
             n_lbfgs_hist=array_class.PLANNER_LBFGS_M,

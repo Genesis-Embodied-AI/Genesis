@@ -262,8 +262,8 @@ def func_rrt_connect(
     # a tree can never be rescued by the ladder, however many attempts it is given. Folding the attempt into the
     # key keeps the draws counter-based, so they stay deterministic under any parallel execution.
     seed_key = planner_info.mppi.seed_key[None] + planner_state.pass_index[None] * 7919
-    n_nodes = qd.static(planner_config.n_rrt_nodes)
     n_half = qd.static(planner_config.n_rrt_nodes // 2)
+    n_path_max = qd.static(planner_config.n_rrt_path)
 
     # One subgroup per tree pair: trees write disjoint node columns and draw counter-hashed streams, so tree
     # parallelism preserves determinism. The lanes of a pair replicate its bookkeeping - sampling, steering, the
@@ -322,33 +322,44 @@ def func_rrt_connect(
                     or planner_state.rrt.is_done[i_tree, i_b_]
                 ):
                     is_growing = False
-                    # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended.
+                    # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended. The
+                    # path buffer holds a chain, not a tree, so it is sized for one - a bridge whose chains do
+                    # not fit reports no path at all rather than a truncated one, which would silently start or
+                    # end somewhere other than the boundary it is supposed to join.
                     if planner_state.rrt.is_done[i_tree, i_b_]:
                         n_path = 0
                         node = planner_state.rrt.bridge[i_tree, i_b_][0]
-                        while node != -1:
+                        while node != -1 and n_path < n_path_max:
                             for i_dp in range(n_dp):
                                 planner_state.rrt.path[i_dp, i_tree, n_path, i_b_] = planner_state.rrt.qpos[
                                     i_dp, i_tree, node, i_b_
                                 ]
                             n_path = n_path + 1
                             node = planner_state.rrt.parent[i_tree, node, i_b_]
-                        for i_swap in range(n_path // 2):
-                            for i_dp in range(n_dp):
-                                tmp = planner_state.rrt.path[i_dp, i_tree, i_swap, i_b_]
-                                planner_state.rrt.path[i_dp, i_tree, i_swap, i_b_] = planner_state.rrt.path[
-                                    i_dp, i_tree, n_path - 1 - i_swap, i_b_
-                                ]
-                                planner_state.rrt.path[i_dp, i_tree, n_path - 1 - i_swap, i_b_] = tmp
-                        node = planner_state.rrt.bridge[i_tree, i_b_][1]
-                        while node != -1 and n_path < n_nodes:
-                            for i_dp in range(n_dp):
-                                planner_state.rrt.path[i_dp, i_tree, n_path, i_b_] = planner_state.rrt.qpos[
-                                    i_dp, i_tree, node, i_b_
-                                ]
-                            n_path = n_path + 1
-                            node = planner_state.rrt.parent[i_tree, node, i_b_]
-                        is_shortcutting = i_cut < planner_info.rrt.n_shortcut[None] and n_path > 3
+                        if node == -1:
+                            for i_swap in range(n_path // 2):
+                                for i_dp in range(n_dp):
+                                    tmp = planner_state.rrt.path[i_dp, i_tree, i_swap, i_b_]
+                                    planner_state.rrt.path[i_dp, i_tree, i_swap, i_b_] = planner_state.rrt.path[
+                                        i_dp, i_tree, n_path - 1 - i_swap, i_b_
+                                    ]
+                                    planner_state.rrt.path[i_dp, i_tree, n_path - 1 - i_swap, i_b_] = tmp
+                            node = planner_state.rrt.bridge[i_tree, i_b_][1]
+                            while node != -1 and n_path < n_path_max:
+                                for i_dp in range(n_dp):
+                                    planner_state.rrt.path[i_dp, i_tree, n_path, i_b_] = planner_state.rrt.qpos[
+                                        i_dp, i_tree, node, i_b_
+                                    ]
+                                n_path = n_path + 1
+                                node = planner_state.rrt.parent[i_tree, node, i_b_]
+                        if node != -1:
+                            planner_state.rrt.is_done[i_tree, i_b_] = False
+                            n_path = 0
+                        is_shortcutting = (
+                            planner_state.rrt.is_done[i_tree, i_b_]
+                            and i_cut < planner_info.rrt.n_shortcut[None]
+                            and n_path > 3
+                        )
 
                 is_wanted = False
                 if is_growing:

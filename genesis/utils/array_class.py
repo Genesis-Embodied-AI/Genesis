@@ -2761,6 +2761,7 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     # Sampling-fallback extents: independent RRT-Connect tree pairs per env and the node capacity per tree pair.
     n_rrt_trees: int
     n_rrt_nodes: int
+    n_rrt_path: int
     # In-kernel local-array bounds - the MPPI smooth-noise knot count, particle-count cap, L-BFGS history depth,
     # and line-search trial cap - plus the validator densification factors, compile-time so kernels size their
     # locals and unroll their sweeps.
@@ -3324,6 +3325,9 @@ def get_planner_state(planner_config, B):
     # everywhere else. The two sides of a tree pair split its node range, so a side is a node offset, not an axis.
     tree_shape = (planner_config.n_rrt_trees, B)
     tree_node_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_nodes, B)
+    # The extracted path is a chain through the tree, not a copy of it, so it is sized for a chain (see the
+    # extraction in func_rrt_connect, which refuses a bridge whose chains do not fit rather than truncating).
+    tree_path_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_path, B)
     hist_shape = (PLANNER_LBFGS_M, *knot_shape)
 
     # The optimizer's per-knot working set - the trajectory and its trial copy, the L-BFGS history pair, descent
@@ -3368,7 +3372,7 @@ def get_planner_state(planner_config, B):
             n_nodes=V(dtype=gs.qd_int, shape=(2, *tree_shape)),
             bridge=V_VEC(2, dtype=gs.qd_int, shape=tree_shape),
             is_done=V(dtype=gs.qd_bool, shape=tree_shape),
-            path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, *tree_node_shape)),
+            path=V(dtype=gs.qd_float, shape=(planner_config.n_dp, *tree_path_shape)),
             path_len=V(dtype=gs.qd_int, shape=tree_shape),
         ),
         cost=PlannerCostState(
