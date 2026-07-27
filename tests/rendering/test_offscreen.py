@@ -1328,8 +1328,10 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     CAM_RES = (256, 256)
     RENDERED_ENVS = (1, 2)
 
-    # FIXME: Small discrepancies between different hardware due to contact visualization with onscreen viewer
-    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.5 if force_show_viewer else 1.05
+    # One threshold for every frame. Marker lines land on slightly different pixels from one rasterizer to the next,
+    # which the offscreen frames absorb through a blur; the viewer frame holds up without one.
+    STD_ERR_THR = 1.5
+    BLUR_OFFSCREEN = 3
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -1341,7 +1343,8 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
             shadow=False,
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 0.2, 1.5),
+            # Far enough back for the whole ground to fit in frame, as every camera below requires
+            camera_pos=(3.0, 0.3, 2.0),
             camera_lookat=(0.0, 0.0, 0.4),
             res=CAM_RES,
             run_in_thread=False,
@@ -1352,12 +1355,16 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
         show_viewer=force_show_viewer,
         show_FPS=False,
     )
-    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        gs.morphs.Plane(
+            # Software rendering backends misrasterize geometry reaching outside the frustum, so every vertex of the
+            # ground stays in frame from each camera below. Collision keeps its own infinite plane.
+            plane_size=(1.4, 1.4),
+        )
+    )
     franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
-            # Add small negative offset to force contact with the ground
-            pos=(0.0, 0.0, -0.01),
         ),
         visualize_contact=True,
     )
@@ -1379,14 +1386,14 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     )
     scene.build(n_envs=4, env_spacing=(0.3, 0.3))
 
-    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states.
-    # Each env has a distinct pose so per-env renders differ visually.
+    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states, each arm resting
+    # against the ground so the contact markers have contacts to draw, in a pose distinct from the other envs.
     franka.set_dofs_position(
         [
-            [0.199, 1.763, -0.148, -0.224, -0.790, 0.822, 0.051, 0.002, 0.002],
-            [0.372, 1.763, 0.172, -0.369, 1.498, -0.018, -0.040, 0.000, 0.000],
-            [-0.114, -1.763, -2.885, -0.234, -1.195, 0.159, 0.316, 0.000, 0.000],
-            [-0.254, -1.763, 2.193, -0.217, 1.109, 0.501, 0.727, 0.001, 0.001],
+            [1.728, -1.763, -2.157, -2.275, -0.327, 2.201, 1.833, 0.018, 0.018],
+            [-2.717, -1.763, -2.217, -2.566, 0.226, 2.933, 1.307, 0.017, 0.017],
+            [-1.411, 1.763, 0.657, -2.817, 1.597, 3.567, 2.872, 0.000, 0.000],
+            [-2.098, 1.763, -1.004, -2.421, -0.227, 2.850, -0.136, 0.020, 0.020],
         ]
     )
     scene.step()
@@ -1399,13 +1406,8 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
         pyrender_viewer.on_draw()
         viewer_rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
 
-        try:
-            png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
-            assert rgb_array_to_png_bytes(viewer_rgb) == png_snapshot
-        except AssertionError:
-            if sys.platform == "darwin" and scene.visualizer.is_software:
-                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
-            raise
+        png_snapshot.extension._std_err_threshold = STD_ERR_THR
+        assert rgb_array_to_png_bytes(viewer_rgb) == png_snapshot
 
     # Render both cameras
     rgb, *_ = cam.render(rgb=True)
@@ -1440,17 +1442,12 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     assert rgb is not None
 
     # Non-debug camera should NOT show markers — snapshot per env validates only robots are visible
-    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_OFF
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR
+    png_snapshot.extension._blurred_kernel_size = BLUR_OFFSCREEN
     for rgb_i in rgb:
-        try:
-            assert rgb_array_to_png_bytes(rgb_i) == png_snapshot
-        except AssertionError:
-            if sys.platform == "darwin" and scene.visualizer.is_software:
-                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
-            raise
+        assert rgb_array_to_png_bytes(rgb_i) == png_snapshot
 
     # Debug camera SHOULD show markers (frames, contact arrows) — snapshot per env validates markers
-    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
     for rgb_debug_i in rgb_debug:
         assert rgb_array_to_png_bytes(rgb_debug_i) == png_snapshot
 

@@ -44,7 +44,7 @@ REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
 HUGGINGFACE_ASSETS_REVISION = "990a727788f11e34ad006c69bf769303b20cb11c"
-HUGGINGFACE_SNAPSHOT_REVISION = "dab1f3556b879f7fa7be4c1158be85885fbc7658"
+HUGGINGFACE_SNAPSHOT_REVISION = "afeaad9ab5f8d221b2cd96977feafb340c5b67af"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -330,18 +330,18 @@ def assert_pixel_match(
         if blurred_kernel_size == 1:
             blurred.append(img_arr)
             continue
-        kernel = np.ones((blurred_kernel_size, blurred_kernel_size), dtype=np.float32) / (blurred_kernel_size**2)
         pad_size = blurred_kernel_size // 2
         h, w = img_arr.shape[:2]
         padded = np.pad(img_arr, ((pad_size, pad_size), (pad_size, pad_size), (0, 0)), mode="edge")
-        blurred_arr = np.zeros_like(img_arr, dtype=np.float32)
-        for c in range(img_arr.shape[-1]):
-            for i in range(h):
-                for j in range(w):
-                    blurred_arr[i, j, c] = np.sum(
-                        padded[i : i + blurred_kernel_size, j : j + blurred_kernel_size, c] * kernel
-                    )
-        blurred.append(blurred_arr)
+        # A box kernel is separable, so the window sum accumulates one row shift at a time, then one column shift at a
+        # time over that, which costs a handful of whole-array additions instead of a pass per pixel.
+        rows = np.zeros((h, padded.shape[1], img_arr.shape[-1]), dtype=np.float32)
+        for i in range(blurred_kernel_size):
+            rows += padded[i : i + h]
+        window_sum = np.zeros_like(img_arr, dtype=np.float32)
+        for j in range(blurred_kernel_size):
+            window_sum += rows[:, j : j + w]
+        blurred.append(window_sum / blurred_kernel_size**2)
 
     img_err = np.minimum(np.abs(blurred[1] - blurred[0]), 255).astype(np.uint8)
     std_err = float(np.max(np.std(img_err.reshape((-1, img_err.shape[-1])), axis=0)))
