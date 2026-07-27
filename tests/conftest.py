@@ -976,20 +976,23 @@ def png_snapshot(request, snapshot):
     snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
     snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
 
+    # The brackets a parametrized test carries in its name are a character class to any glob, so they must be escaped
+    # for the pattern to match the files that name belongs to
+    snapshot_pattern = "".join(f"[{char}]" if char in ("[", "]") else char for char in snapshot_name) + "*"
+
     must_update_snapshot = request.config.getoption("--snapshot-update")
     if must_update_snapshot:
-        for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
+        for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(snapshot_pattern):
             assert path.is_file()
             path.unlink()
     else:
         from .utils import get_hf_dataset
 
-        snapshot_name_ = "".join(f"[{char}]" if char in ("[", "]") else char for char in snapshot_name)
         # The snapshots repository mirrors the tests tree ('rendering/__snapshots__/test_offscreen/...'), so the
         # snapshot directory path relative to the tests root is also its path in the repository.
         tests_dir = Path(__file__).parent
         get_hf_dataset(
-            pattern=f"{snapshot_dir.relative_to(tests_dir).as_posix()}/{snapshot_name_}*",
+            pattern=f"{snapshot_dir.relative_to(tests_dir).as_posix()}/{snapshot_pattern}",
             repo_name="snapshots",
             local_dir=tests_dir,
         )
