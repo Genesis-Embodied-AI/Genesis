@@ -2716,9 +2716,11 @@ def get_raycast_result(n_envs: int):
 
 # =========================================== Planner ===========================================
 
-# Capacity of the per-env start-config contact-exclusion lists (see PlannerEntityInfo); overflow raises through
-# the planner errno since it indicates a start configuration deeply entangled with the world.
-_PLANNER_N_EXCL_MAX = 128
+# Capacity of the per-env boundary contact-exclusion lists (see PlannerEntityInfo); overflow raises through the
+# planner errno. Sized for a boundary that genuinely sits in clutter, which is the case these exclusions exist
+# for: a grasp or a place puts the goal against the world, and a scene whose obstacles crowd the whole motion
+# needs about 175 entries there. At 128 such a goal was refused outright rather than planned.
+_PLANNER_N_EXCL_MAX = 256
 # Limited-memory Broyden-Fletcher-Goldfarb-Shanno (L-BFGS) history depth and the smooth-noise knot count of the
 # MPPI basis; both bound in-kernel local arrays, so they are module constants rather than options.
 PLANNER_LBFGS_M = 8
