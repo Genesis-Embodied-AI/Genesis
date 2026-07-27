@@ -719,24 +719,30 @@ class Planner:
                 links_bound_center[i_l] = center
                 links_bound_radius[i_l] = (np.linalg.norm(pos_l - center, axis=-1) + radius_l).max()
 
-        # Self-collision sphere pairs from the collider's build-time geom-pair filter, collapsed to link pairs.
+        # Self-collision sphere pairs, taken per GEOM pair from the collider's build-time filter and grouped by
+        # link pair. The filter is what has to be respected, not the link pairs it induces: a link pair carries
+        # every geom pair between its two links, and the ones the collider dropped are dropped because the robot's
+        # geometry has them overlapping - a sphere pair across them can never be satisfied, and the exact rescue
+        # over such a geom pair reads an intersection it cannot resolve, which pins the whole link pair at proxy
+        # depth and walls off every configuration near it.
         pair_mask = tensor_to_array(qd_to_torch(solver.collider._collider_info.collision_pair_idx) != -1)
-        link_pairs = set()
-        for link_a in entity.links:
-            for link_b in entity.links:
-                if link_b.idx <= link_a.idx:
-                    continue
-                if any(
-                    pair_mask[geom_a.idx, geom_b.idx] or pair_mask[geom_b.idx, geom_a.idx]
-                    for geom_a in link_a.geoms
-                    for geom_b in link_b.geoms
-                ):
-                    link_pairs.add((link_a.idx - entity.link_start, link_b.idx - entity.link_start))
+        rgeoms_idx_arr = np.array(rgeoms_idx, dtype=gs.np_int)
+        is_geom_pair_checked = pair_mask[np.ix_(rgeoms_idx_arr, rgeoms_idx_arr)]
+        is_geom_pair_checked |= is_geom_pair_checked.T
+        geoms_link_idx = np.repeat(np.arange(entity.n_links), np.diff(rgeoms_links_start))
+        link_pairs = sorted(
+            {
+                (geoms_link_idx[i_gr_a], geoms_link_idx[i_gr_b])
+                for i_gr_a, i_gr_b in zip(*np.nonzero(is_geom_pair_checked))
+                if geoms_link_idx[i_gr_a] < geoms_link_idx[i_gr_b]
+            }
+        )
         self_pairs = [
             (i_sa, i_sb)
-            for i_la, i_lb in sorted(link_pairs)
+            for i_la, i_lb in link_pairs
             for i_sa in np.flatnonzero(spheres_link_idx == i_la)
             for i_sb in np.flatnonzero(spheres_link_idx == i_lb)
+            if is_geom_pair_checked[spheres_geom_idx[i_sa], spheres_geom_idx[i_sb]]
         ]
         # Prune pairs the coarse proxy cannot discriminate: pairs resting inside the self-collision activation
         # band at the context-creation configuration would pay a permanent, unresolvable cost and poison the

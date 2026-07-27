@@ -635,11 +635,14 @@ def func_collision_cost(
                 cost = cost + (planner_info.cost.w_self[None] * hinge)
         if qd.static(use_exact):
             if sd_pair < 0.0:
-                # Failing self link pair: one exact GJK reading per geom pair replaces the proxy one when every
-                # geom pair resolves (bounding-sphere clearance settles the far pairs query-free). A zero
-                # reading leaves depth unresolved, so the proxy reading stands - self pairs have no sample
-                # sweep, and unresolved intersections must keep their conservative depth for the boundary
-                # allowances to stay sound.
+                # Failing self link pair: one exact GJK reading per geom pair the collider checks replaces the
+                # proxy one when every one of them resolves (bounding-sphere clearance settles the far pairs
+                # query-free). A zero reading leaves depth unresolved, so the proxy reading stands - self pairs
+                # have no sample sweep, and unresolved intersections must keep their conservative depth for the
+                # boundary allowances to stay sound. Geom pairs outside the collider's filter are skipped: they
+                # are the ones the robot's geometry holds overlapping, so they read an unresolvable intersection
+                # at every configuration and would leave the link pair pinned at proxy depth (see
+                # is_pair_checked in array_class.py).
                 i_la = planner_info.fk.self_pairs.link_pairs_idx[i_lp][0]
                 i_lb = planner_info.fk.self_pairs.link_pairs_idx[i_lp][1]
                 d_exact_pair = gs.qd_float(qd.math.inf)
@@ -665,6 +668,15 @@ def func_collision_cost(
                             - planner_info.fk.geoms.bound_radius[i_ga]
                             - planner_info.fk.geoms.bound_radius[i_gb]
                         )
+                        # A pair the collider does not test constrains nothing, so it takes the query-free branch
+                        # with a bound that neither limits the link pair's clearance nor leaves it unresolved.
+                        i_g_a = planner_info.fk.geoms.geoms_idx[i_ga]
+                        i_g_b = planner_info.fk.geoms.geoms_idx[i_gb]
+                        if (
+                            collider_info.collision_pair_idx[i_g_a, i_g_b] == -1
+                            and collider_info.collision_pair_idx[i_g_b, i_g_a] == -1
+                        ):
+                            bound = gs.qd_float(qd.math.inf)
                         if bound >= planner_info.cost.d_safe[None] + swp_pair_max:
                             d_exact_pair = qd.min(d_exact_pair, bound)
                         else:
