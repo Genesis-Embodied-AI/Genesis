@@ -46,7 +46,11 @@ MANIFEST
 
 # debug
 examples/debug/*
+
+# example outputs, written to the working directory the example is launched from
 examples/**/video/
+camera_sensor_output/
+imu_data.npz
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

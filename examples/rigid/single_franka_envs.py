@@ -28,7 +28,6 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(),
         show_viewer=args.vis,
     )
 

@@ -12,7 +12,6 @@ def main():
     gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
