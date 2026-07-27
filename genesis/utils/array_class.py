@@ -3285,9 +3285,10 @@ class PlannerState:
     (n_candidates), and the knot axis multiplies it (n_knot_cols).
 
     graph_counter drives the device-side graph_do_while of the single graph kernel: the host sets it to
-    2 + max_retry, the fold decrements it each pass and zeroes it once every env is solved. early_exit_flag is
-    the per-pass reduction scratch; is_env_solved carries per-env progress across attempts so finished envs skip
-    the phase bodies."""
+    2 + max_retry, the fold decrements it each pass and zeroes it once every env is solved. goal_block_counter
+    drives the same loop construct one level down, over the restart blocks of a pass's goal resolution.
+    early_exit_flag is the reduction scratch both of those loops end their body with; is_env_solved carries per-env
+    progress across attempts so finished envs skip the phase bodies."""
 
     fk: PlannerFKState
     mppi: PlannerMPPIState
@@ -3299,6 +3300,9 @@ class PlannerState:
     # restarts run in parallel); a single 6-dof pose target, so error_dim = 6.
     ik: IKState
     graph_counter: qd.types.ndarray()
+    # Restart blocks left in the current pass's goal resolution, counted down by the block loop (see
+    # func_resolve_goal). A device-side loop flag has to be an ndarray, as graph_counter is.
+    goal_block_counter: qd.types.ndarray()
     early_exit_flag: qd.Tensor
     is_env_solved: qd.Tensor
     # Ladder pass index, zeroed when a plan starts and advanced by the fold. The restart and seed draws key on it,
@@ -3399,6 +3403,7 @@ def get_planner_state(planner_config, B):
         ),
         ik=get_ik_state(planner_config.n_dp, planner_config.n_dp, 6, n_candidates),
         graph_counter=qd.ndarray(qd.i32, shape=()),
+        goal_block_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
         is_env_solved=V(dtype=gs.qd_bool, shape=(B,)),
         pass_index=V(dtype=gs.qd_int, shape=()),

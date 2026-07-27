@@ -410,6 +410,7 @@ def kernel_init_ladder(envs_idx: qd.types.ndarray(), planner_state: array_class.
 
 @qd.kernel(graph=True, fastcache=True)
 def kernel_resolve_goal(
+    goal_block_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_world: array_class.PlannerWorldState,
@@ -435,8 +436,9 @@ def kernel_resolve_goal(
     resolved goal's own contacts).
 
     This is the pass's first half, split from kernel_plan because goal resolution is by far its largest body and
-    compiling the two together costs far more than compiling them apart. graph_counter is read, never advanced: it
-    the resolution keys its restart draws on planner_state.pass_index, which the ladder in kernel_plan owns.
+    compiling the two together costs far more than compiling them apart. The resolution keys its restart draws on
+    planner_state.pass_index, which the ladder in kernel_plan owns, and walks its own restart blocks with
+    goal_block_counter, which the caller sets to the block count of one pass.
     """
     # Judge each hold-at-goal restart with the start-side allowances only: a previously resolved branch's
     # allowances would excuse a fresh hold's contacts and smuggle a penetrating branch past the gate, so the
@@ -461,6 +463,7 @@ def kernel_resolve_goal(
         errno=errno,
     )
     func_resolve_goal(
+        goal_block_counter,
         envs_idx,
         planner_state,
         planner_world,
@@ -1443,7 +1446,11 @@ class Planner:
         )
         for _ in range(2 + max_retry):
             if has_pose_goal:
+                # The pass's restart blocks are walked by the kernel itself; the count is set here, outside the
+                # loop that consumes it, as a device-side loop counter must be.
+                planner_state.goal_block_counter.from_numpy(np.array(planner_config.goal_ik_batches, dtype=np.int32))
                 kernel_resolve_goal(
+                    planner_state.goal_block_counter,
                     envs_idx_dev,
                     planner_state,
                     planner_world,

@@ -1601,6 +1601,7 @@ def kernel_validate(
 
 @qd.func
 def func_resolve_goal(
+    goal_block_counter: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_world: array_class.PlannerWorldState,
@@ -1619,39 +1620,48 @@ def func_resolve_goal(
 ):
     """Resolve the Cartesian goal of each unsolved env by parallel multi-restart inverse kinematics.
 
-    Every candidate column is one restart (seed 0 warm-starts from the plan start, the rest sample uniformly in
-    the joint limits keyed by the attempt), solved independently by damped least squares on the per-column planner
-    forward kinematics. Each restart's converged configuration is validated as a hold-at-goal candidate, and the
-    closest-to-start certified restart per env - preferring collision-free over excusably-contacting - becomes that
-    env's goal configuration. Envs with no acceptable restart keep their previous goal.
+    Every candidate column is one restart (draw 0 warm-starts from the plan start, the rest sample the joint box
+    along a low-discrepancy sequence keyed by the draw's global position), solved independently by damped least
+    squares on the per-column planner forward kinematics. Each restart's converged configuration is validated as a
+    hold-at-goal candidate, and the closest-to-start certified restart per env - preferring collision-free over
+    excusably-contacting - becomes that env's goal configuration. Envs with no acceptable restart keep their
+    previous goal.
+
+    A pass draws its restarts in blocks, each block validated and its verdict adopted before the next one draws, so
+    an env that already holds a collision-free branch stops drawing and a batch that is fully resolved ends the
+    sequence. The blocks are sequenced by the device-side loop construct, not by a plain loop, because the body's
+    own work is parallel: the outermost loop is the parallelized one, so a plain loop around that body would BE the
+    parallel loop and its blocks would race on the columns they all write. Same construct, and same
+    decrement-then-scan tail, as the constraint solver's iteration loop.
     """
     EPS = rigid_info.EPS[None]
+    n_blocks = qd.static(planner_config.goal_ik_batches)
     n_seeds = qd.static(planner_config.n_seeds)
     n_knots = qd.static(planner_config.n_knots)
     n_dp = qd.static(planner_config.n_dp)
     link_offset = qd.static(planner_config.link_offset)
     goal_link = planner_info.cost.boundary.goal_link_idx[None]
-    attempt = planner_state.pass_index[None]
     margin = planner_info.cost.d_safe[None]
 
-    # Reset the per-pass best goal score: each pass keeps the best branch across its restart sub-batches
+    # Reset the per-pass best goal score: each pass keeps the best branch across its restart blocks
     # before overwriting the goal, so a pass that finds no acceptable branch still leaves the next pass to
     # retry with fresh restarts (the adaptive re-resolution).
     qd.loop_config(name="planner_resolve_reset")
     for i_b_reset in range(envs_idx.shape[0]):
         planner_state.goal_resolve_score[envs_idx[i_b_reset]] = 1e30
 
-    # Draw goal_ik_batches sub-batches of n_seeds restarts, reusing the candidate columns: this decouples the
+    # Draw the pass's restarts in blocks of n_seeds, reusing the candidate columns: this decouples the
     # goal-resolution restart depth from the trajectory candidate count, so a rare collision-free goal branch
     # is sampled reliably without inflating the far more expensive trajectory-candidate pipeline. Each
-    # sub-batch is validated as hold-at-goal candidates and its best acceptable restart competes for the
-    # env's goal (collision-free preferred), the pass keeping the best branch across all its sub-batches.
-    for i_batch in range(qd.static(planner_config.goal_ik_batches)):
-        attempt_key = attempt * qd.static(planner_config.goal_ik_batches) + i_batch
+    # block is validated as hold-at-goal candidates and its best acceptable restart competes for the
+    # env's goal (collision-free preferred), the pass keeping the best branch across all its blocks.
+    while qd.graph_do_while(goal_block_counter):
         # One damped-least-squares solve per restart column - all restarts of all envs run in parallel.
         qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_c in range(envs_idx.shape[0] * n_seeds):
             i_b = envs_idx[i_c // n_seeds]
+            # The counter counts the blocks left, so the pass walks its draws forward as it runs down.
+            attempt_key = planner_state.pass_index[None] * n_blocks + (n_blocks - goal_block_counter[()])
             # Draw only for envs still without a collision-free branch. The flag holds for the whole plan, unlike
             # the score, which resets every pass: gating on the score would reopen the draw on the next pass and
             # let a later, merely excusable branch overwrite a free goal the env had already earned.
@@ -1837,3 +1847,22 @@ def func_resolve_goal(
                         planner_state.is_goal_free[i_b] = True
                     for i_dp in range(n_dp):
                         planner_info.cost.boundary.qpos_goal[i_dp, i_b] = planner_state.ik.qpos_best[i_dp, best_c]
+
+        # Spend the remaining blocks only on a batch that still has something to draw for: every column of an env
+        # holding a free branch, or already solved, is gated off, so a fully resolved batch would otherwise pay the
+        # whole block sequence to draw nothing.
+        qd.loop_config(name="planner_resolve_block_decrement")
+        for _ in range(1):
+            goal_block_counter[()] = goal_block_counter[()] - 1
+            planner_state.early_exit_flag[()] = 0
+
+        qd.loop_config(name="planner_resolve_block_scan")
+        for i_b_ in range(envs_idx.shape[0]):
+            i_b = envs_idx[i_b_]
+            if not planner_state.is_env_solved[i_b] and not planner_state.is_goal_free[i_b]:
+                qd.atomic_max(planner_state.early_exit_flag[()], 1)
+
+        qd.loop_config(name="planner_resolve_block_exit")
+        for _ in range(1):
+            if planner_state.early_exit_flag[()] == 0:
+                goal_block_counter[()] = 0
