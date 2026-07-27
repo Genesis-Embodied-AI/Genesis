@@ -402,6 +402,19 @@ def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer):
         )
         assert path.is_valid.all()
 
+    # A larger attempt budget extends the search rather than redirecting it, so every env solved at the smaller
+    # budget plans identically at the larger one. Without this the budget picks WHICH candidates a plan draws,
+    # and raising it silently re-rolls plans that already worked.
+    path_wider = franka.plan_path(
+        max_retry=6,
+        goal_link=hand,
+        goal_pos=goal_pos,
+        goal_quat=goal_quat,
+        seed=2,
+    )
+    assert path_wider.is_valid.all()
+    assert_equal(path_wider.qpos, path.qpos)
+
     # Ground truth on the last plan: the real collider reports no penetration of the fixed clutter anywhere
     # along the returned path, and the final waypoint reaches the pre-grasp pose in every env.
     max_penetration = _max_true_penetration(scene, franka, path.qpos, obstacles, show_viewer)
