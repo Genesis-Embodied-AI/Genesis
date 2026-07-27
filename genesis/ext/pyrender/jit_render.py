@@ -209,6 +209,15 @@ class JITRenderer:
         self.set_light(scene, scene.light_nodes, scene.ambient_light)
         self.reflection_mat = np.identity(4, np.float32)
 
+    def _update_centroid_local(self, i):
+        poses = self.primitive_list[i].poses
+        centres = np.einsum("eij,j->ei", poses[:, :3, :3], self.centroid_geom[i]) + poses[:, :3, 3]
+        if len(centres) == 1:
+            # A lone instance places the primitive in every environment, so its centre is the centre for all of them
+            self.centroid_local[i] = centres[0]
+        else:
+            self.centroid_local[i, : len(centres)] = centres
+
     def update(self, scene):
         if scene.meshes_updated:
             node_list, primitive_list = [], []
@@ -225,6 +234,9 @@ class JITRenderer:
             # TODO: more efficient pose update
             for i, node in enumerate(self.node_list):
                 self.pose[i] = scene.get_pose(node)
+            # Instances move with the simulation, so where they place their primitive has to be refreshed as well
+            for i in np.flatnonzero(self.is_instance_placed):
+                self._update_centroid_local(i)
 
         # TODO: update lights
         return self.set_light(scene, scene.light_nodes, scene.ambient_light)
@@ -316,6 +328,20 @@ class JITRenderer:
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
         self.model_buffer_id = np.zeros(n, np.int32)
         self.inst_attr_start = np.zeros(n, np.int32)
+        # Centre of each primitive in the frame of its node, per environment. Sorting on it rather than on the node
+        # origin places a mesh where its geometry actually is, which is what decides whether it occludes another one.
+        # Sized by the primitives drawn one instance per environment, since those are the only ones whose centre
+        # depends on the environment. 'n_env' spans every instance of every primitive, particles included, which for
+        # three coordinates apiece would be far more than what tracking a centre per environment needs.
+        # An instance set may be empty, and such a primitive is still drawn, so it may not shrink the axis to nothing
+        n_env_instanced = max(
+            (len(p.poses) for p in primitive_list if p.poses is not None and not p.env_shared and len(p.poses)),
+            default=1,
+        )
+        self.centroid_local = np.zeros((n, n_env_instanced, 3), np.float32)
+        # Centre of the bare geometry, which the instance transforms are applied to whenever they move
+        self.centroid_geom = np.zeros((n, 3), np.float32)
+        self.is_instance_placed = np.zeros(n, np.bool_)
 
         floor_existed = False
 
@@ -324,6 +350,22 @@ class JITRenderer:
                 primitive._add_to_context()
             self.vao_id[i] = primitive._vaid
             self.pose[i] = scene.get_pose(node_list[i])
+            # An instance transform is what places a primitive, and it moves with the simulation, so the centre has to
+            # go through it and be refreshed. That holds for the lone instance shared by every environment just as much
+            # as for one instance per environment. A cloud of instances sharing a primitive - particles - has no single
+            # centre to be sorted on, so it keeps the centre of the mesh itself.
+            self.is_instance_placed[i] = primitive.poses is not None and (
+                len(primitive.poses) == 1 or not primitive.env_shared
+            )
+            if self.is_instance_placed[i]:
+                # A primitive without a single vertex keeps the zero centre it was allocated with, as its bounds are
+                # zero too, rather than reducing over an empty axis
+                positions = primitive.positions
+                if len(positions):
+                    self.centroid_geom[i] = 0.5 * (positions.min(axis=0) + positions.max(axis=0))
+                self._update_centroid_local(i)
+            else:
+                self.centroid_local[i] = primitive.centroid
 
             material = primitive.material
             tf = material.tex_flags
@@ -441,6 +483,7 @@ class JITRenderer:
                 nb.int32[:],
                 nb.int32[:],
                 nb.boolean[:, :],
+                nb.int32[:],
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -472,6 +515,7 @@ class JITRenderer:
             model_buffer_id,
             inst_attr_start,
             env_active,
+            draw_order,
             gl,
         ):
             is_rgba = not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG)
@@ -479,10 +523,7 @@ class JITRenderer:
             det_reflection = np.linalg.det(reflection_mat)
             last_pid = -1
             lighting_texture = 0
-            solid_idx = [i for i in range(len(vao_id)) if not render_flags[i, 5]]
-            trans_idx = [i for i in range(len(vao_id)) if render_flags[i, 5]]
-            idx = solid_idx + trans_idx
-            for id in idx:
+            for id in draw_order:
                 # Only render markers on the main graphical window, while skipping plane-reflection
                 if ((render_flags[id, 4] or render_flags[id, 6]) and flags & RenderFlags_SKIP_FLOOR) or (
                     render_flags[id, 6]
@@ -994,6 +1035,21 @@ class JITRenderer:
             non_marker_mask = ~self.render_flags[:, 6].astype(bool)
             saved_non_marker_indices = self.n_indices[non_marker_mask].copy()
             self.n_indices[non_marker_mask] = 0
+
+        # Opaque primitives are drawn nearest first, so that the depth test rejects what they hide as early as
+        # possible, and transparent ones farthest first, the only order their blending is correct in. Both are keyed on
+        # the depth of the primitive's centre along the view axis, which is what decides which lies behind the other.
+        # Computed here rather than once and for all, so it follows the camera of this pass and of this environment.
+        centres_local = self.centroid_local[:, min(max(env_idx, 0), self.centroid_local.shape[1] - 1)]
+        centroids = np.einsum("nij,nj->ni", self.pose[:, :3, :3], centres_local) + self.pose[:, :3, 3]
+        # The vertex shader positions through 'V * reflection_mat', which mirrors heights in the floor pass and hence
+        # reverses which of two meshes lies behind the other, so the depth row must carry the reflection too
+        view_row = V[2] @ reflection_mat
+        depths = centroids @ view_row[:3] + view_row[3]
+        is_transparent = self.render_flags[:, 5].astype(bool)
+        # Depth along the view axis grows towards the viewer, so ascending depth is farthest first
+        draw_order = np.lexsort((np.where(is_transparent, depths, -depths), is_transparent)).astype(np.int32)
+
         with self._env_filtered_culling(env_idx):
             self._forward_pass(
                 self.vao_id,
@@ -1022,6 +1078,7 @@ class JITRenderer:
                 self.model_buffer_id,
                 self.inst_attr_start,
                 self.env_active,
+                draw_order,
                 self.gl.wrapper_instance,
             )
         if flags & RenderFlags.SKIP_MARKERS:

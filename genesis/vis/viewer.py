@@ -266,24 +266,23 @@ class Viewer(RBC):
 
         Parameters
         ----------
-        pose : [4,4] float, optional
+        pose : array-like, shape (4, 4), optional
             Camera-to-world pose. If provided, `pos` and `lookat` will be ignored.
-        pos : (3,) float, optional
+        pos : array-like, shape (3,), optional
             Camera position.
-        lookat : (3,) float, optional
+        lookat : array-like, shape (3,), optional
             Camera lookat point.
         """
         if pose is None:
-            if pos is None:
-                pos = self._camera_init_pos
-            if lookat is None:
-                lookat = self._camera_init_lookat
+            pos = self._camera_init_pos if pos is None else tensor_to_array(pos, dtype=gs.np_float)
+            lookat = self._camera_init_lookat if lookat is None else tensor_to_array(lookat, dtype=gs.np_float)
             up = self._camera_up
 
             pose = gu.pos_lookat_up_to_T(pos, lookat, up)
             self._camera_up = pose[:3, 1].copy()
         else:
-            if np.array(pose).shape != (4, 4):
+            pose = tensor_to_array(pose, dtype=gs.np_float)
+            if pose.shape != (4, 4):
                 gs.raise_exception("pose should be a 4x4 matrix.")
 
         self._pyrender_viewer._trackball.set_camera_pose(pose)

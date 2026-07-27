@@ -113,6 +113,11 @@
 - **Assert physics, not just execution.** "Simulation runs without error" is not a test. Check quantities with physical meaning: free-fall displacement (`z = z0 - 0.5*g*t^2`), no ground penetration (`min_z > -d_hat`), velocity → 0 at rest, contact stops fall.
 - **Non-regression fallback.** If no analytical expectation is available, run the simulation once to get reference values, hardcode them, and assert with a loose tolerance. Add a `FIXME` comment asking to replace with physics-informed assertions later.
 - **Use `assert_allclose` / `assert_equal` from `tests/utils.py`.** Prefer `assert_equal` for exact comparisons over framework-specific forms (`torch.equal`, `np.array_equal`).
+- **`tol=` sets both `atol` and `rtol`.** Pass `atol=` for quantities whose scale is fixed and far from 1 (pixel channels in `0..255`); reserve `tol=` for quantities of order 1.
+- **Break the implementation on purpose and watch the assertion fail** before committing a test written to catch a specific defect.
+- **Assert observables, never internals.** Validate rendered arrays (image, segmentation map, frame differences), poses, velocities, forces; never private fields, draw orders, call counts or rebuild counts. Derive the expected value analytically and design the scene so a broken mechanism moves it: two overlapping same-size semi-transparent surfaces along the view axis compose as `near + (1 - alpha) * (far - background)`.
+- **When a swept comparison has cases that legitimately differ, group them by the property responsible; never list their positions in the sweep** (`msaa_mask = [0, 1, 2, 4, 5, 6]`). Bound how far the groups may differ instead of skipping the comparison between them.
+- **A scene that needs contacts needs a movable body.** Both-fixed geom pairs are dropped at build time, so sinking a fixed entity below a surface yields no contact and permanently buries its geometry in the render.
 - **Every assertion is a specification.** Assert only behavior we genuinely want to commit to, and drop any assert already implied by a stricter one nearby.
 - **FEM entity positions:** `entity.get_state().pos` has shape `[B, n_verts, 3]`. Use `[..., 2]` to select z across all envs and vertices.
 - **Rigid entity positions:** `entity.get_pos()` returns `[B, 3]` or `[3]`. Use `np.atleast_1d(...)[..., 2]` and `.all()` for multi-env checks.
