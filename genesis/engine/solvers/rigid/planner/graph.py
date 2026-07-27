@@ -265,6 +265,11 @@ def func_rrt_connect(
     seed_key = planner_info.mppi.seed_key[None] + planner_state.pass_index[None] * 7919
     n_half = qd.static(planner_config.n_rrt_nodes // 2)
     n_path_max = qd.static(planner_config.n_rrt_path)
+    # The straightening pass needs two node slots to hold the chord it is testing, and a pass now inherits the
+    # nodes the previous one grew, so those slots cannot be tree storage. The top two of the start half are kept
+    # out of both sides' reach instead, which costs two nodes of capacity and no allocation.
+    n_grow_max = qd.static(planner_config.n_rrt_nodes // 2 - 2)
+    i_scratch = qd.static(planner_config.n_rrt_nodes // 2 - 2)
 
     # One subgroup per tree pair: trees write disjoint node columns and draw counter-hashed streams, so tree
     # parallelism preserves determinism. The lanes of a pair replicate its bookkeeping - sampling, steering, the
@@ -284,14 +289,30 @@ def func_rrt_connect(
             # it would make the tree an env grows depend on the pool size rather than on the problem.
             i_draw_key = (i_env_offset + i_b_) * n_trees + i_tree
 
-            # Roots: node 0 = start, node n_half = goal.
+            # A pass CONTINUES the pair the previous one grew instead of replanting it: an env only reaches
+            # escalation because no single search settled it, so re-rooting spends every pass on the first few
+            # hundred nodes rather than on the ones that would meet, and the sampling stream keys on the pass so
+            # the growth never repeats itself. The pair is rooted afresh only when it holds nothing yet, or when
+            # its goal root is no longer the goal - a Cartesian goal is re-resolved per pass, and nodes grown
+            # toward a branch that has been dropped hang off a root the plan no longer has.
+            is_fresh = planner_state.rrt.n_nodes[0, i_tree, i_b_] == 0
             for i_dp in range(n_dp):
-                planner_state.rrt.qpos[i_dp, i_tree, 0, i_b_] = planner_info.cost.boundary.qpos_start[i_dp, i_b]
-                planner_state.rrt.qpos[i_dp, i_tree, n_half, i_b_] = planner_info.cost.boundary.qpos_goal[i_dp, i_b]
-            planner_state.rrt.parent[i_tree, 0, i_b_] = -1
-            planner_state.rrt.parent[i_tree, n_half, i_b_] = -1
-            planner_state.rrt.n_nodes[0, i_tree, i_b_] = 1
-            planner_state.rrt.n_nodes[1, i_tree, i_b_] = 1
+                if (
+                    planner_state.rrt.qpos[i_dp, i_tree, n_half, i_b_]
+                    != planner_info.cost.boundary.qpos_goal[i_dp, i_b]
+                ):
+                    is_fresh = True
+            if is_fresh:
+                # Roots: node 0 = start, node n_half = goal.
+                for i_dp in range(n_dp):
+                    planner_state.rrt.qpos[i_dp, i_tree, 0, i_b_] = planner_info.cost.boundary.qpos_start[i_dp, i_b]
+                    planner_state.rrt.qpos[i_dp, i_tree, n_half, i_b_] = planner_info.cost.boundary.qpos_goal[i_dp, i_b]
+                planner_state.rrt.parent[i_tree, 0, i_b_] = -1
+                planner_state.rrt.parent[i_tree, n_half, i_b_] = -1
+                planner_state.rrt.n_nodes[0, i_tree, i_b_] = 1
+                planner_state.rrt.n_nodes[1, i_tree, i_b_] = 1
+            # The bridge is this pass's to find. An already joined pair re-joins within its first iterations, and a
+            # pass that joins nothing leaves the candidates as the previous one left them.
             planner_state.rrt.is_done[i_tree, i_b_] = False
             planner_state.rrt.path_len[i_tree, i_b_] = 0
 
@@ -416,7 +437,7 @@ def func_rrt_connect(
                         )
                     scale = qd.min(1.0, planner_info.rrt.steer_step[None] / qd.max(d_inf, 1e-9))
                     i_new = planner_state.rrt.n_nodes[side, i_tree, i_b_]
-                    if i_new < n_half:
+                    if i_new < n_grow_max:
                         i_node_new = base + i_new
                         for i_dp in range(n_dp):
                             q_near = planner_state.rrt.qpos[i_dp, i_tree, base + i_near, i_b_]
@@ -428,16 +449,18 @@ def func_rrt_connect(
                     # Shortcut pass: splice certified straight edges over random sub-chains. Downstream the path
                     # is arclength-resampled to the knot count, and resampled chords cut the corners of the raw
                     # polyline - straightening it first is what keeps the resampled trajectory certifiable. The
-                    # tree storage is disposable now, so its first two columns serve as edge-check scratch.
+                    # chord goes in the reserved scratch slots (see i_scratch), which no node ever occupies.
                     u0 = gu.qd_hash01(seed_key, i_draw_key, i_cut, 555)
                     u1 = gu.qd_hash01(seed_key, i_draw_key, i_cut, 556)
                     i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
                     i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
                     for i_dp in range(n_dp):
-                        planner_state.rrt.qpos[i_dp, i_tree, 0, i_b_] = planner_state.rrt.path[
+                        planner_state.rrt.qpos[i_dp, i_tree, i_scratch, i_b_] = planner_state.rrt.path[
                             i_dp, i_tree, i_from, i_b_
                         ]
-                        planner_state.rrt.qpos[i_dp, i_tree, 1, i_b_] = planner_state.rrt.path[i_dp, i_tree, i_to, i_b_]
+                        planner_state.rrt.qpos[i_dp, i_tree, i_scratch + 1, i_b_] = planner_state.rrt.path[
+                            i_dp, i_tree, i_to, i_b_
+                        ]
                     is_wanted = True
 
                 # The extend edge comes first; the connect walk below then issues one request per steer step, so
@@ -445,8 +468,8 @@ def func_rrt_connect(
                 is_extended = False
                 is_connecting = False
                 while is_wanted:
-                    i_node_from = 0
-                    i_node_to = 1
+                    i_node_from = i_scratch
+                    i_node_to = i_scratch + 1
                     if is_growing:
                         i_node_from = base + i_near
                         i_node_to = i_node_new
@@ -472,7 +495,7 @@ def func_rrt_connect(
                             else:
                                 i_cand = planner_state.rrt.n_nodes[1 - side, i_tree, i_b_]
                                 # A full tree stops walking rather than overwriting a node another edge relies on.
-                                is_wanted = i_cand < n_half
+                                is_wanted = i_cand < n_grow_max
                                 if is_wanted:
                                     i_node_to = other + i_cand
                                     scale_conn = planner_info.rrt.steer_step[None] / d_conn

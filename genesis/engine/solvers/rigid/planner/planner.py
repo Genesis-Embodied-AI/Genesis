@@ -396,6 +396,13 @@ def kernel_init_ladder(envs_idx: qd.types.ndarray(), planner_state: array_class.
         planner_state.is_env_solved[envs_idx[i_b_]] = False
         planner_state.is_env_seeded[envs_idx[i_b_]] = False
         planner_state.is_goal_free[envs_idx[i_b_]] = False
+    # Empty every pooled tree pair. Escalation passes continue the pair in their slot (see func_rrt_connect), and a
+    # slot holds the same env for the whole plan, but across plans the same slot serves a different problem in a
+    # world that has moved - and nodes are certified against the world they were grown in, never re-checked.
+    for i_tree in range(planner_state.rrt.n_nodes.shape[1]):
+        for i_slot in range(planner_state.rrt.n_nodes.shape[2]):
+            planner_state.rrt.n_nodes[0, i_tree, i_slot] = 0
+            planner_state.rrt.n_nodes[1, i_tree, i_slot] = 0
     qd.loop_config(name="planner_init_pass_index")
     for _ in range(1):
         planner_state.pass_index[None] = 0
