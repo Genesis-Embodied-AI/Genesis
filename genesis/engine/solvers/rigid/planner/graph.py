@@ -341,11 +341,13 @@ def func_rrt_connect(
             is_growing = True
             is_shortcutting = False
             is_reaching = False
+            is_both_full = False
             while is_growing or is_shortcutting:
                 if is_growing and (
                     it >= planner_info.rrt.n_iters[None]
                     or n_stall >= planner_info.rrt.n_stall_iters[None]
                     or planner_state.rrt.is_done[i_tree, i_b_]
+                    or is_both_full
                 ):
                     is_growing = False
                     # Path extraction: start-tree chain reversed in place, then the goal-tree chain appended. The
@@ -582,6 +584,14 @@ def func_rrt_connect(
 
                 if is_growing:
                     side = 1 - side
+                    # A side that has filled its half can store nothing, so it hands its turn to the other one
+                    # rather than spending the iteration on an extension with nowhere to go. The two sides fill at
+                    # very different rates - the one rooted in open space runs away with its half while the one
+                    # walled in clutter is still near its root - so this is what lets the walled side keep growing
+                    # once its partner is done. Growth ends when neither side has room.
+                    if planner_state.rrt.n_nodes[side, i_tree, i_b_] >= n_grow_max:
+                        side = 1 - side
+                        is_both_full = planner_state.rrt.n_nodes[side, i_tree, i_b_] >= n_grow_max
                     it = it + 1
                     n_stall = n_stall + 1
                 elif is_shortcutting:
