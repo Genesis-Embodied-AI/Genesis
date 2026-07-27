@@ -57,7 +57,6 @@ def main():
             gyro_random_walk=(0.001, 0.001, 0.001),
             delay=0.01,
             jitter=0.01,
-            # visualize
             draw_debug=True,
         )
     )
@@ -91,7 +90,7 @@ def main():
 
     scene.start_recording(
         data_func=lambda: imu.read()._asdict(),
-        rec_options=gs.recorders.NPZFile(filename="imu_data.npz"),
+        rec_options=gs.recorders.NPZFile(filename="out/imu_data.npz"),
     )
 
     scene.build()

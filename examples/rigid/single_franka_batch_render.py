@@ -12,7 +12,9 @@ def main():
     parser.add_argument("-b", "--num-envs", type=int, default=3, help="Number of parallel environments")
     parser.add_argument("-s", "--steps", type=int, default=2, help="Number of simulation steps")
     parser.add_argument("--render-all-cameras", action="store_true", help="Render every camera each step")
-    parser.add_argument("-o", "--output-dir", type=str, default="data/test", help="Directory for rendered frames")
+    parser.add_argument(
+        "-o", "--output-dir", type=str, default="out/batch_render", help="Directory for rendered frames"
+    )
     parser.add_argument(
         "--use-rasterizer", action="store_true", help="Use the rasterizer instead of the batch renderer"
     )
@@ -101,7 +103,7 @@ def main():
     exporter = FrameImageExporter(args.output_dir)
 
     if args.debug:
-        debug_cam.start_recording(save_to_filename="debug_cam.mp4")
+        debug_cam.start_recording(save_to_filename="out/batch_render_debug.mp4")
     for i in range(args.steps):
         scene.step()
         if args.render_all_cameras:

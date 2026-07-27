@@ -40,10 +40,9 @@ cam = scene.add_camera(
 
 scene.build()
 
-# render rgb, depth, segmentation, normal
 rgb, depth, segmentation, normal = cam.render(rgb=True, depth=True, segmentation=True, normal=True)
 
-cam.start_recording(save_to_filename="video.mp4", fps=60)
+cam.start_recording(save_to_filename="out/visualization.mp4", fps=60)
 
 horizon = 120 if "PYTEST_VERSION" not in os.environ else 1
 for i in range(horizon):

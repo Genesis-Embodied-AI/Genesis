@@ -83,7 +83,7 @@ def main():
 
     scene.build()
 
-    cam.start_recording(save_to_filename="../../videos/fly_route.mp4")
+    cam.start_recording(save_to_filename="out/fly_route.mp4")
 
     points = [(1, 1, 2), (-1, 2, 1), (0, 0, 0.5)]
 

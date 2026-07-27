@@ -48,6 +48,14 @@ exposing a flag with a single usable value (see `rigid/hibernation.py`).
 
 Long-running scripts cut their horizon under `"PYTEST_VERSION" in os.environ` so the examples CI stays cheap.
 
+## Output files
+
+Everything an example writes goes under `out/`, resolved against the directory the script is launched from, so
+a single ignore rule covers the whole tree and nothing lands next to the sources. Name the file after the
+example rather than something generic, since every script shares the one directory. Where a script exposes
+`-o/--output-dir`, default it to a subdirectory of `out/`. Training scripts are the exception: they keep
+checkpoints under `logs/<exp-name>/`, which their evaluation counterparts read back.
+
 ## Style
 
 Examples are read as reference code, so they are held to `CODING_GUIDELINES.md` like the rest of the tree.

@@ -63,7 +63,7 @@ def main():
 
     scene.build()
 
-    video_filename = f"fem_hard_soft_dt={args.dt}_substeps={args.substeps}.mp4"
+    video_filename = f"out/fem_hard_soft_dt={args.dt}_substeps={args.substeps}.mp4"
     cam.start_recording(save_to_filename=video_filename, fps=video_fps)
 
     pinned_idx = [0]

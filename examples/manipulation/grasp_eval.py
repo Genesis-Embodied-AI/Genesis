@@ -66,13 +66,15 @@ def main():
         "--video-path",
         type=str,
         default=None,
-        help="Video filename written under the log directory",
+        help="Video filename for the main camera, written under the run's output directory",
     )
     args = parser.parse_args()
 
     gs.init()
 
-    log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
+    run_name = f"{args.exp_name}_{args.stage}"
+    log_dir = Path("logs") / run_name
+    video_dir = Path("out") / run_name
 
     with open(log_dir / "cfgs.pkl", "rb") as f:
         env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(f)
@@ -83,9 +85,9 @@ def main():
 
     if args.record:
         env_cfg["record_video"] = {
-            "vis_cam": str(log_dir / (args.video_path or "video.mp4")),
-            "left_cam": str(log_dir / "left_cam.mp4"),
-            "right_cam": str(log_dir / "right_cam.mp4"),
+            "vis_cam": str(video_dir / (args.video_path or "video.mp4")),
+            "left_cam": str(video_dir / "left_cam.mp4"),
+            "right_cam": str(video_dir / "right_cam.mp4"),
         }
 
     env = GraspEnv(

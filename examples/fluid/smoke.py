@@ -87,7 +87,7 @@ def main():
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="info")
 
-    video_path = Path(__file__).parent / "video"
+    video_path = Path("out/smoke")
     video_path.mkdir(exist_ok=True, parents=True)
 
     scene = gs.Scene(

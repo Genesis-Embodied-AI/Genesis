@@ -19,7 +19,7 @@ def main():
     parser.add_argument("-b", "--num-envs", type=int, default=0, help="Number of parallel envs (0 = unbatched)")
     parser.add_argument("-s", "--steps", type=int, default=300, help="Number of simulation steps")
     parser.add_argument("--save-every", type=int, default=10, help="Save depth PNG every N steps")
-    parser.add_argument("-o", "--output-dir", type=str, default="/tmp/depth_out", help="Directory for saved depth PNGs")
+    parser.add_argument("-o", "--output-dir", type=str, default="out/depth", help="Directory for saved depth PNGs")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir).resolve()
@@ -53,7 +53,6 @@ def main():
     )
 
     # Kinematic entities (KinematicSolver)
-
     # 1) Deforming sphere - vertices are pushed every frame via set_vverts. Pre-translated to the robot's right so the
     # mesh sits at the desired world pose with morph.pos at the origin (the morph applies its own offset on top).
     sphere_tri = trimesh.creation.icosphere(subdivisions=3, radius=0.25)

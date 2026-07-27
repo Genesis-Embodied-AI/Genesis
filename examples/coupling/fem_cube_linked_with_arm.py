@@ -70,7 +70,7 @@ def main():
 
     scene.build()
 
-    video_filename = f"cube_link_arm_dt={args.dt}_substeps={args.substeps}.mp4"
+    video_filename = f"out/cube_link_arm_dt={args.dt}_substeps={args.substeps}.mp4"
     cam.start_recording(save_to_filename=video_filename, fps=video_fps)
 
     try:

@@ -116,7 +116,7 @@ def main():
             labels={"step_rate": ["steps/s"], "awake_bodies": ["awake bodies"]},
             hz=RECORDING_FPS,
             history_length=10000,
-            save_to_filename=f"hibernation_{args.scene}_fps.mp4" if args.record else None,
+            save_to_filename=f"out/hibernation_{args.scene}_fps.mp4" if args.record else None,
         ),
     )
 
@@ -129,7 +129,7 @@ def main():
     # every 1 / RECORDING_FPS of simulated time. Compare rates between scenes recorded the same way, or drop
     # '--record' to read the physics-only rate.
     if args.record:
-        camera.start_recording(save_to_filename=f"hibernation_{args.scene}.mp4", fps=RECORDING_FPS)
+        camera.start_recording(save_to_filename=f"out/hibernation_{args.scene}.mp4", fps=RECORDING_FPS)
     sim_clock = 0.0
     # Long enough to show the full settle (ducks) or the whole travelling cascade and its re-sleep (dominos).
     sim_seconds = 7.0 if args.scene == "ducks" else 9.0

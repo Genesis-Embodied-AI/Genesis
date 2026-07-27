@@ -244,7 +244,7 @@ for group_name, configs in backend_configs.items():
 
 print(f"[ok] Identified {len(attached_cameras)} attached cameras")
 
-os.makedirs("camera_sensor_output", exist_ok=True)
+os.makedirs("out/camera_as_sensor", exist_ok=True)
 
 for i in range(100):
     scene.step()
@@ -261,5 +261,5 @@ for i in range(100):
         for cam_name, data in camera_data.items():
             rgb_data = data.rgb[0] if data.rgb.ndim > 3 else data.rgb
             suffix = "_env0" if n_envs > 1 else ""
-            filename = f"camera_sensor_output/{cam_name}{suffix}_step{i:03d}.png"
+            filename = f"out/camera_as_sensor/{cam_name}{suffix}_step{i:03d}.png"
             plt.imsave(filename, tensor_to_array(rgb_data))
