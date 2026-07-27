@@ -69,7 +69,6 @@ def main():
     )
     links_idx = [franka.get_link(name).idx_local for name in links_name]
 
-    # Optional: set control gains
     franka.set_dofs_kp(
         np.array(
             [

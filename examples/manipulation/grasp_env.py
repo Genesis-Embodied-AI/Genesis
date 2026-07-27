@@ -152,7 +152,6 @@ class GraspEnv:
             )
 
         # Video recording must be set up before the scene is built.
-
         record_video = env_cfg.get("record_video", {})
         for cam_name, filename in record_video.items():
             cam = getattr(self, cam_name)
@@ -162,7 +161,6 @@ class GraspEnv:
                 rec_options=gs.recorders.VideoFile(filename=filename),
             )
 
-        # build
         self.scene.build(n_envs=env_cfg["num_envs"], env_spacing=(1.0, 1.0))
         # set pd gains (must be called after scene.build)
         self.robot.set_pd_gains()
@@ -192,7 +190,6 @@ class GraspEnv:
         envs_idx : torch.Tensor or None
             Boolean mask of shape (num_envs,) for selective reset, or None for full reset.
         """
-        # Reset robot
         self.robot.reset(envs_idx)
 
         # Generate random object state for all envs
@@ -388,7 +385,6 @@ class GraspEnv:
             self.scene.step()
 
 
-## ------------ robot ----------------
 class Manipulator:
     def __init__(self, num_envs: int, scene: gs.Scene, args: dict, device: str = "cpu"):
         self._device = device
@@ -468,7 +464,6 @@ class Manipulator:
             q_pos = self._dls_ik(action)
         else:
             raise ValueError(f"Invalid control mode: {self._ik_method}")
-        # set gripper to open
         if open_gripper:
             q_pos[:, self._fingers_dof] = self._gripper_open_dof
         else:

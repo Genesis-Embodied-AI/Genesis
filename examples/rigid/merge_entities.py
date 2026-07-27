@@ -85,7 +85,6 @@ def main():
     )
     arm_dofs_idx = [franka.get_joint(name).dofs_idx_local[0] for name in arm_joints_name]
 
-    # Optional: set control gains
     franka.set_dofs_kp(
         np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000]),
         arm_dofs_idx,
@@ -106,7 +105,6 @@ def main():
     )
     gripper_dofs_idx = [hand.get_joint(name).dofs_idx_local[0] for name in gripper_joints_name]
 
-    # Optional: set control gains
     hand.set_dofs_kp(
         np.array([100, 100]),
         gripper_dofs_idx,

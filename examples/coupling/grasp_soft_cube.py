@@ -57,7 +57,6 @@ def main():
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
 
-    # Optional: set control gains
     franka.set_dofs_kp(
         np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
     )
@@ -83,7 +82,6 @@ def main():
     # grasp with 1N force
     franka.control_dofs_position(qpos[:-2], motors_dof)
     franka.control_dofs_force(np.array([-1, -1]), fingers_dof)
-    # franka.control_dofs_position(np.array([0, 0]), fingers_dof) # you can also use position control
 
     for i in range(100):
         scene.step()

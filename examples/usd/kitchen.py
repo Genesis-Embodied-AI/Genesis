@@ -18,8 +18,8 @@ import os
 from huggingface_hub import snapshot_download
 
 import genesis as gs
-import genesis.vis.keybindings as kb
 from genesis.utils.misc import tensor_to_array
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 SAMPLE_ASSETS = {
     "dishwasher": ("Lightwheel_Kitchen/Dishwasher054/Dishwasher054.usd", ["Lightwheel_Kitchen/Dishwasher054/*"]),
@@ -135,7 +135,7 @@ def main():
             is_running = False
 
         scene.viewer.register_keybinds(
-            kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.RELEASE, callback=stop),
+            Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
 
     try:

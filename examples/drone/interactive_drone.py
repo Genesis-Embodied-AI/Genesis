@@ -36,7 +36,6 @@ def main():
     # Initialize Genesis
     gs.init(backend=gs.cpu)
 
-    # Create scene
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -68,7 +67,6 @@ def main():
     # Initialize controller
     controller = DroneController()
 
-    # Build scene
     scene.build()
 
     # Register keybindings

@@ -12,7 +12,6 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    # get current gpu
     gpu_id = torch.cuda.current_device()
     print("gpu_id:", gpu_id)
     gs.init(backend=gs.gpu, logger_verbose_time=True)

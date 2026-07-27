@@ -55,18 +55,14 @@ def main():
     )
     motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-    # Optional: set control gains.
-    # set positional gains
     franka.set_dofs_kp(
         kp=[4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100],
         dofs_idx_local=motors_dof_idx,
     )
-    # set velocity gains
     franka.set_dofs_kv(
         kv=[450, 450, 350, 350, 200, 200, 200, 10, 10],
         dofs_idx_local=motors_dof_idx,
     )
-    # set force range for safety
     franka.set_dofs_force_range(
         lower=[-87, -87, -87, -87, -12, -12, -12, -100, -100],
         upper=[87, 87, 87, 87, 12, 12, 12, 100, 100],

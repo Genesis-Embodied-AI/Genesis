@@ -8,8 +8,8 @@ from typing_extensions import override
 
 import genesis as gs
 import genesis.utils.geom as gu
-import genesis.vis.keybindings as kb
 from genesis.utils.misc import tensor_to_array
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterViewerPlugin
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
         sphere_color: tuple = (0.1, 0.3, 1.0, 1.0),
         hover_color: tuple = (0.3, 0.5, 1.0, 1.0),
         grid_snap: tuple[float, float, float] = (-1.0, -1.0, -1.0),
-        output_file: str = "selected_points.csv",
+        output_file: str = "out/selected_points.csv",
         use_visual_geom: bool = False,
     ) -> None:
         super().__init__(use_visual_geom)
@@ -191,6 +191,7 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
 
         output_file = self.output_file
         try:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, "w", newline="") as csvfile:
                 writer = csv.writer(csvfile)
 
@@ -289,7 +290,7 @@ if __name__ == "__main__":
         MeshPointSelectorPlugin(
             sphere_radius=0.004,
             grid_snap=(-1.0, 0.01, 0.01),
-            output_file="selected_points.csv",
+            output_file="out/selected_points.csv",
             use_visual_geom=args.use_visual_geom,
         )
     )
@@ -303,7 +304,7 @@ if __name__ == "__main__":
         is_running = False
 
     scene.viewer.register_keybinds(
-        kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.RELEASE, callback=stop),
+        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
     )
 
     try:

@@ -80,12 +80,10 @@ def main():
 
         error = np.concatenate([error_pos, error_rotvec])
 
-        # jacobian
         jac = robot.get_jacobian(link=ee_link).cpu().numpy()
         dq = jac.T @ np.linalg.solve(jac @ jac.T + diag, error)
         q = robot.get_qpos().cpu().numpy() + dq
 
-        # control
         robot.control_dofs_position(q)
         scene.step()
 

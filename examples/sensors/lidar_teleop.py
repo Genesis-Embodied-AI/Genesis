@@ -164,7 +164,6 @@ def main():
         overwrite=True,
     )
 
-    # Print controls
     print("Keyboard Controls:")
     print("[Up/Down/Left/Right]: Move XY")
     print("[j/k]: Down/Up")

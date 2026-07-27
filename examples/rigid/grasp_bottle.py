@@ -48,7 +48,6 @@ def main():
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
 
-    # Optional: set control gains
     if args.num_envs == 0:
         franka.set_qpos(np.array([1.56, -0.72, -0.02, -2.09, 0.04, 1.33, 2.4, 0.01, 0.01]))
     else:

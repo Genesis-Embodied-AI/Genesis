@@ -50,11 +50,9 @@ def main():
     # create ground plane
     scene.add_entity(gs.morphs.Plane(), rigid_material)
 
-    # create box
     box_morph = gs.morphs.Box(pos=[0.25, 0.25, 0.25], size=[0.25, 0.25, 0.25])
     box = scene.add_entity(box_morph, rigid_material)
 
-    # create cloth
     cloth_pos = (0.25, 0.25, 0.25 + 0.125 + particle_size)
     cloth_scale = 0.5
     cloth_morph = gs.morphs.Mesh(pos=cloth_pos, scale=cloth_scale, file="meshes/cloth.obj")

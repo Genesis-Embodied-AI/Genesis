@@ -21,8 +21,8 @@ def main():
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=1,  # Translation strength ratio
-            constraint_strength_rotation=1,  # Rotation strength ratio
+            constraint_strength_translation=1,
+            constraint_strength_rotation=1,
             enable_rigid_rigid_contact=False,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -34,7 +34,6 @@ def main():
 
     # Both FEM and Rigid bodies will be added to IPC for unified contact simulation
     # FEM bodies use StableNeoHookean constitution, Rigid bodies use ABD constitution
-
     # FEM entities (added to IPC as deformable bodies)
     blob = scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -68,7 +67,6 @@ def main():
     )
     scene.build()
 
-    # Set initial velocity
     rigid_cube.set_dofs_velocity((4.0, 0, 0, 0, 0, 0))  # Initial velocity in x direction
 
     # Storage for previous positions to compute velocity
@@ -119,7 +117,6 @@ def main():
                         if geom.instances().size() >= 1:
                             geom = merge(apply_transform(geom))
 
-                        # Get vertex positions
                         fem_vertex_positions = geom.positions().view().squeeze(axis=-1)
 
                         # Get vertex masses (mass = volume * mass_density)

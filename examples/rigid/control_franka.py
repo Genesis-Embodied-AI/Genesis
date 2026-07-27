@@ -47,7 +47,6 @@ def main():
     )
     motors_dof_idx = [franka.get_joint(name).dofs_idx_local[0] for name in joints_name]
 
-    # Optional: set control gains
     franka.set_dofs_kp(
         np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
         motors_dof_idx,

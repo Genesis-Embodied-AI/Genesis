@@ -244,8 +244,7 @@ def main():
             franka.control_dofs_position(qpos[motor_dofs_idx], motor_dofs_idx)
 
             if gripper_close[()]:
-                # FIXME: Force control is acting weird...
-                # franka.control_dofs_force(-0.1, dofs_idx_local=finger_dofs_idx)
+                # FIXME: The grip closes on position because force control on the fingers behaves erratically here.
                 franka.control_dofs_position(-0.03, dofs_idx_local=finger_dofs_idx)
             else:
                 franka.control_dofs_position(0.04, dofs_idx_local=finger_dofs_idx)

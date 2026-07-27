@@ -44,16 +44,9 @@ def main():
         np.array([1, 1, 1, 1, 1, 1]) * 50.0,
         dofs_idx,
     )
-    pos = duck.get_dofs_position()
-    pos[-1] = -1  # rotate around intrinsic z axis
-    # duck.control_dofs_position(
-    #     pos,
-    #     dofs_idx,
-    # )
     for i in range(1000):
         scene.step()
 
-        # visualize
         links_acc = duck.get_links_acc()
         links_pos = duck.get_links_pos()
         scene.clear_debug_objects()
