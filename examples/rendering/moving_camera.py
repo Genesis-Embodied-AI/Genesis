@@ -30,7 +30,7 @@ def main():
         pos=(3.5, 0.0, 2.5),
         lookat=(0, 0, 0.5),
         fov=30,
-        GUI=True,
+        GUI=args.vis,
     )
     scene.build()
 

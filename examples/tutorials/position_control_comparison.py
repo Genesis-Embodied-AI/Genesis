@@ -4,6 +4,7 @@
 # making it underperform compared to 'control_dofs_position_velocity'.
 import argparse
 import math
+import os
 
 import matplotlib.pyplot as plt
 
@@ -117,7 +118,9 @@ def main():
     plt.title("Comparison of joint position tracking with two different controllers")
     plt.grid()
     plt.legend()
-    plt.show()
+    # Showing the figure blocks until the window is closed, so skip it when nobody is there to close it.
+    if "PYTEST_VERSION" not in os.environ:
+        plt.show()
 
 
 if __name__ == "__main__":

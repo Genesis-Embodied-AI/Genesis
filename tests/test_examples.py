@@ -16,7 +16,7 @@ ALLOW_PATTERNS = {
     "fluid/**/*.py",
     "ipc/**/*.py",
     "kinematic/**/*.py",
-    "rendering/render_async.py",
+    "rendering/**/*.py",
     "rigid/**/*.py",
     "sap_coupling/**/*.py",
     "sensors/**/*.py",
@@ -33,6 +33,8 @@ IGNORE_SCRIPT_NAMES = {
     # FIXME: RaycastPlugin.cast calls qd_to_numpy from the viewer draw callback, which is Quadrants-scope
     "mesh_point_selector.py",
     "differentiable_push.py",
+    # Raytraced showcase: needs the optional LuisaRender backend and opens a GUI window to be watched
+    "demo.py",
 }
 if sys.platform != "linux":
     IGNORE_SCRIPT_NAMES |= {

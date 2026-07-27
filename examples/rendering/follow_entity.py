@@ -5,6 +5,7 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     parser.add_argument("--fix", action="store_true", help="Keep the camera orientation fixed while following")
     args = parser.parse_args()
 
@@ -33,7 +34,7 @@ def main():
         pos=(2.0, 0.0, 1.5),
         lookat=(0, 0, 0.7),
         fov=40,
-        GUI=True,
+        GUI=args.vis,
     )
     cam.follow_entity(cube, fix_orientation=args.fix)
 

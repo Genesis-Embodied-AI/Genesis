@@ -259,7 +259,9 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+    # Showing the figure blocks until the window is closed, so skip it when nobody is there to close it.
+    if "PYTEST_VERSION" not in os.environ:
+        plt.show()
 
 
 if __name__ == "__main__":
