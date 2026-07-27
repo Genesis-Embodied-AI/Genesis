@@ -44,14 +44,13 @@ scene.build()
 # render rgb, depth, segmentation, normal
 rgb, depth, segmentation, normal = cam.render(rgb=True, depth=True, segmentation=True, normal=True)
 
-cam.start_recording()
+cam.start_recording(save_to_filename="video.mp4", fps=60)
 
 horizon = 120 if "PYTEST_VERSION" not in os.environ else 1
 for i in range(horizon):
-    scene.step()
     cam.set_pose(
         pos=(3.0 * math.sin(i / 60), 3.0 * math.cos(i / 60), 2.5),
         lookat=(0, 0, 0.5),
     )
-    cam.render()
-cam.stop_recording(save_to_filename="video.mp4", fps=60)
+    scene.step()
+cam.stop_recording()

@@ -69,11 +69,8 @@ def main():
         ),
     )
 
-    # Setup camera for recording
-    video_fps = 1 / dt
-    max_fps = 100
-    frame_interval = max(1, int(video_fps / max_fps)) if max_fps > 0 else 1
-    print("video_fps:", video_fps, "frame_interval:", frame_interval)
+    # Recording every simulation step would be far denser than any player needs, and the step size here is tiny.
+    video_fps = min(100.0, 1.0 / dt)
     cam = scene.add_camera(
         res=(640, 480),
         pos=(-2.0, 3.0, 2.0),
@@ -82,7 +79,9 @@ def main():
     )
 
     scene.build()
-    cam.start_recording()
+
+    video_filename = f"cube_link_arm_{args.solver}_dt={dt}_substeps={substeps}.mp4"
+    cam.start_recording(save_to_filename=video_filename, fps=video_fps)
 
     try:
         joint_names = [j.name for j in arm.joints]
@@ -103,13 +102,11 @@ def main():
             np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
         )
 
-        for i in range(100):
+        for _ in range(100):
             arm.set_dofs_position(
                 np.array([0.9643, -0.3213, -0.6685, -2.3139, -0.2890, 2.0335, -1.6014, 0.0306, 0.0306]), dofs_idx_local
             )
             scene.step()
-            if i % frame_interval == 0:
-                cam.render()
 
         print("cube init pos", cube.init_positions)
         pin_idx = [1, 5]
@@ -126,28 +123,22 @@ def main():
         )
         arm_path_waypoints = arm.plan_path(qpos_goal=qpos, num_waypoints=steps)
 
-        for i, waypoint in tqdm(enumerate(arm_path_waypoints), total=len(arm_path_waypoints)):
+        for waypoint in tqdm(arm_path_waypoints, total=len(arm_path_waypoints)):
             arm.control_dofs_position(waypoint)
             scene.step()
-            if i % frame_interval == 0:
-                cam.render()
 
         print("Now dropping the cube")
         cube.remove_vertex_constraints()
-        for i in tqdm(range(steps), total=steps):
+        for _ in tqdm(range(steps), total=steps):
             arm.control_dofs_position(arm_path_waypoints[-1])
             scene.step()
-            if i % frame_interval == 0:
-                cam.render()
 
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
         gs.logger.info("Simulation finished.")
 
-        actual_fps = video_fps / frame_interval
-        video_filename = f"cube_link_arm_{args.solver}_dt={dt}_substeps={substeps}.mp4"
-        cam.stop_recording(save_to_filename=video_filename, fps=actual_fps)
+        cam.stop_recording()
         gs.logger.info(f"Saved video to {video_filename}")
 
 

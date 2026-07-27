@@ -3,6 +3,8 @@ import csv
 import numpy as np
 import pytest
 
+import av
+
 import genesis as gs
 from genesis.utils.image_exporter import as_grayscale_image
 
@@ -272,6 +274,9 @@ def test_video_writer(tmp_path):
 
     scene.stop_recording()
 
+    # Every sampled step must survive into the file: frames buffered by the encoder but never flushed, or dropped
+    # because it fell behind, would leave a shorter video that a size check cannot distinguish from a complete one
     for video_path in (video_rgb_path, video_depth_path):
         assert video_path.exists(), "Recorded video file should exist"
-        assert video_path.stat().st_size > 0, "Recorded video file should not be empty"
+        with av.open(video_path) as container:
+            assert sum(1 for _ in container.decode(video=0)) == STEPS

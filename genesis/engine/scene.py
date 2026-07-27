@@ -1107,6 +1107,8 @@ class Scene(RBC):
             if self.profiling_options.show_FPS:
                 self.FPS_tracker.step()
             self._recorder_manager.step(self._sim.cur_step_global)
+            for camera in self._visualizer.cameras:
+                camera.update_recording()
 
     def stop_recording(self):
         self._recorder_manager.stop()
