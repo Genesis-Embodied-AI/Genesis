@@ -47,30 +47,31 @@ _EXCL_CONTACT_BAND = 0.02
 # exact.
 _EXCL_ANCHOR_SLACK_CERT = 0.02
 _EXCL_ANCHOR_SLACK_OPT = 0.02
-# Proxy deficit window within which a failing (robot sphere, world geom) pair is re-checked exactly
-# (certification paths only). The sphere proxy over-covers the mesh by up to a few centimeters, and demanding
-# proxy clearance outright walls off every corridor the real geometry clears - random sampling then cannot grow
-# trees through them. Against a convex world geom the re-check is the collider's GJK distance on the sphere's
-# own collision geom (see func_gjk_clearance) - exact, so a clear pair reads its true clearance and a
-# sphere-swept pair its true shallow depth. The covering-sample sweep below remains the fallback for non-convex
-# world geoms (grid signed distance fields) and for depth when GJK only reports intersection: the whole surface
-# lies within _EXACT_SAMPLE_COV of some sample, so by the 1-Lipschitz world signed distance the true clearance
-# is at least the sample minimum less that covering radius; the rescued demand subtracts it, keeping the rescue
-# a strict lower bound of the true clearance (raw vertices alone are unsound: an obstacle edge can poke a face
-# interior deeper than any of its vertices). Deficits deeper than the window are genuine collisions and skip
-# the re-check, which bounds its cost. The sweep is two-level: the coarse covering decides the clear-cut cases
-# at a fraction of the samples - its minimum is an upper bound of the fine one (fewer points), so a coarse
-# sweep below the win threshold rules the rescue out, and a non-negative coarse covering bound certifies
-# positives whose sign no finer sweep could flip - and only the marginal band pays the fine sweep.
+# Proxy overlap within which a failing (robot sphere, world geom) pair is re-checked exactly (certification paths
+# only). The sphere proxy over-covers the mesh by up to a few centimeters, and demanding proxy clearance outright
+# walls off every corridor the real geometry clears - random sampling then cannot grow trees through them. Against a
+# convex world geom the re-check is the collider's GJK distance on the sphere's own collision geom (see
+# func_gjk_clearance) - exact, so a clear pair reads its true clearance and a sphere-swept pair its true shallow
+# depth. The covering-sample sweep below remains the fallback for non-convex world geoms (grid signed distance
+# fields) and for depth when GJK only reports intersection: the whole surface lies within _EXACT_SAMPLE_COV of some
+# sample, so by the 1-Lipschitz world signed distance the true clearance is at least the sample minimum less that
+# covering radius; the rescued demand subtracts it, keeping the rescue a strict lower bound of the true clearance
+# (raw vertices alone are unsound: an obstacle edge can poke a face interior deeper than any of its vertices).
+# Overlaps deeper than the window are genuine collisions and skip the re-check, which bounds its cost. The sweep is
+# two-level: the coarse covering decides the clear-cut cases at a fraction of the samples - its minimum is an upper
+# bound of the fine one (fewer points), so a coarse sweep below the win threshold rules the rescue out, and a
+# non-negative coarse covering bound certifies positives whose sign no finer sweep could flip - and only the
+# marginal band pays the fine sweep.
 _EXACT_RESCUE_WINDOW = 0.08
 _EXACT_SAMPLE_COV = 0.005
 _EXACT_SAMPLE_COV_COARSE = 0.02
-# Real penetration budget of an accepted Cartesian goal hold: with the exact rescue active in the probe, a
-# robot-world pair's exact reading is at least the real surface clearance minus _EXACT_SAMPLE_COV and the probe
-# headroom, so goal acceptance bounds the hold's true world penetration by this constant alone - it must NOT
-# track the anchor plateau, whose width is set by optimizer convergence, or widening the plateau silently
-# re-admits really-penetrating goals. It only applies to the exact minimum: self and attached-entity pairs read
-# raw proxy conservatism, which the acceptance gate bounds by boundary excusability instead (_EXCL_DEPTH_MAX).
+# Real penetration budget of an accepted Cartesian goal hold. A hold's exact reading, plus the clearance it was
+# probed at, is a lower bound of the branch's true world clearance, so the acceptance gate charges this constant
+# against that bound and nothing else - it is what the hold may really penetrate, and every term added to either
+# side of that comparison widens it by as much again. It must NOT track the anchor plateau, whose width is set by
+# optimizer convergence, or widening the plateau would silently re-admit really-penetrating goals. It only applies
+# to the exact minimum: self and attached-entity pairs read raw proxy conservatism, which the acceptance gate
+# bounds by boundary excusability instead (_EXCL_DEPTH_MAX).
 _GOAL_REAL_PEN_MAX = 0.002
 
 # Damped-least-squares budgets for the in-kernel Cartesian-goal solve (one Gauss-Newton solve per restart column):
@@ -382,9 +383,14 @@ def func_sphere_world_cost(
             ramp = qd.max(0.0, drift - anchor_slack)
             sd_eff = qd.max(sd_eff, sd - radius - planner_info.cost.d_safe[None] - offset - ramp + 1e-4)
     if qd.static(use_exact):
+        # The window bounds the re-check by how far the proxy can over-cover the real geometry, so it is read off
+        # the PROXY OVERLAP alone. Measuring the demand-adjusted clearance instead ties the re-check to what is
+        # being asked of the pair: a longer swept segment, or a wider margin, pushes a pair whose real geometry is
+        # clear out of the window and back onto the raw proxy reading, which rejects a path whose every
+        # configuration certifies on its own.
         if (
             sd_eff < 0.0
-            and sd_eff > -planner_info.cert.exact_rescue_window[None]
+            and sd - radius > -planner_info.cert.exact_rescue_window[None]
             and i_s < qd.static(planner_config.n_spheres)
         ):
             # Borderline robot pair: the exact clearance replaces the proxy one (it is never smaller), which
