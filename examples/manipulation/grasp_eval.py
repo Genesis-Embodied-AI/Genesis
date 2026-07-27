@@ -66,7 +66,7 @@ def main():
         "--video-path",
         type=str,
         default=None,
-        help="Path to save the video file (default: auto-generated)",
+        help="Video filename written under the log directory",
     )
     args = parser.parse_args()
 

@@ -47,7 +47,7 @@ def run_worker(args: argparse.Namespace) -> None:
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        show_viewer=False,
+        show_viewer=args.vis and local_rank == 0,
         show_FPS=False,
     )
     scene.add_entity(gs.morphs.Plane())
