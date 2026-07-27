@@ -9,7 +9,7 @@ from .kinematics import func_forward_kinematics, func_sphere_positions
 
 # Joint-space steer step (L-inf, radians), the goal-bias probability of extending straight at the other tree,
 # and the number of shortcut splices applied to an extracted path.
-_RRT_STEER_STEP = 0.2
+_RRT_STEER_STEP = 0.4
 _RRT_GOAL_BIAS = 0.2
 _RRT_N_SHORTCUT = 24
 # Consecutive iterations without an accepted node on either side before a tree gives up its attempt: a walled

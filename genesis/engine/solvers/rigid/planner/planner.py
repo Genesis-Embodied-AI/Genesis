@@ -59,14 +59,14 @@ _N_RRT_TREES = 2
 # describing it: a tree that fills up stops growing and a bridge whose chain does not fit is refused, so these
 # cost validity, never soundness. Measured peak occupancy on the cluttered pre-grasp battery is 261 nodes a side
 # and 10 path knots, so each carries roughly a factor of two over what the iteration budget can reach.
-_N_RRT_NODES = 1024
+_N_RRT_NODES = 2048
 _N_RRT_PATH = 64
 # Environments whose tree pairs are searched at once. The pool is the planner's largest buffer by far, so sizing
 # it by what a device actually runs concurrently rather than by the batch is what keeps a large batch affordable;
 # a pass simply runs as several waves over the same slots. Beyond this many concurrent searches a device is
 # oversubscribed and the waves cost nothing but their own launches.
 _N_RRT_POOL = 256
-_N_RRT_ITERS = 600
+_N_RRT_ITERS = 2400
 # Fresh restart pools drawn within one ladder attempt for envs whose pool yielded no acceptable Cartesian goal
 # branch (see _resolve_pose_goal).
 _N_GOAL_RESOLVE_POOLS = 4
