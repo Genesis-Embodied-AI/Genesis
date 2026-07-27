@@ -1647,3 +1647,88 @@ def test_video_recording_lifecycle(tmp_path, monkeypatch, renderer, show_viewer)
     cam.stop_recording()
 
     assert not video_path_vetoed.exists()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_transparent_surfaces_show_what_lies_behind_them(renderer, show_viewer):
+    ALPHA = 0.5
+    RES = 64
+    # Wholly inside the field of view, high enough above the pair to project clear of the patch sampled below. Geometry
+    # straddling the frustum boundary is misrasterized by software rendering backends, so it stays clear of the edge.
+    PARKED = (0.0, 0.0, 1.2)
+    CENTRE = slice(RES // 2 - 3, RES // 2 + 3)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            # The boxes are placed by hand and their overlap is what is measured, so nothing may pull them down
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        vis_options=gs.options.VisOptions(
+            shadow=False,
+            # Black leaves each surface worth exactly its own contribution, so the composite below needs no offset
+            background_color=(0.0, 0.0, 0.0),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 0.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+    )
+    # Same size and lined up along the axis the camera sits on, so that the nearer one covers the farther one
+    red = scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.6, 0.0, 0.5),
+            size=(0.2, 0.2, 0.2),
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, ALPHA),
+        ),
+    )
+    blue = scene.add_entity(
+        gs.morphs.Box(
+            pos=(-0.6, 0.0, 0.5),
+            size=(0.2, 0.2, 0.2),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.0, 0.0, 1.0, ALPHA),
+        ),
+    )
+    cam = scene.add_camera(
+        res=(RES, RES),
+        pos=(2.5, 0.0, 0.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    scene.build()
+
+    def centre_patch(pos_red, pos_blue):
+        red.set_pos(pos_red)
+        blue.set_pos(pos_blue)
+        scene.step()
+        rgb, *_ = cam.render()
+        return tensor_to_array(rgb)[CENTRE, CENTRE].reshape(-1, 3).mean(axis=0)
+
+    # Where the two overlap, the near surface composites over whatever the far one left, so the pair is worth the near
+    # one plus what survives of the far one. A far surface painted before the near one keeps that contribution; painted
+    # afterwards it fails the depth test and vanishes, leaving the near box alone.
+    patch_red = centre_patch((0.6, 0.0, 0.5), PARKED)
+    patch_blue = centre_patch(PARKED, (-0.6, 0.0, 0.5))
+    patch_pair = centre_patch((0.6, 0.0, 0.5), (-0.6, 0.0, 0.5))
+    assert_allclose(patch_pair, patch_red + (1.0 - ALPHA) * patch_blue, atol=1.0)
+
+    # Rendering the same scene again gives the same image, whichever order two surfaces at the same depth end up in
+    rgb, *_ = cam.render()
+    assert_equal(cam.render()[0], rgb)
+
+    # Bringing the blue box in front of the red one swaps which of the two composites over the other
+    patch_blue_ahead = centre_patch(PARKED, (1.2, 0.0, 0.5))
+    patch_pair_swapped = centre_patch((0.6, 0.0, 0.5), (1.2, 0.0, 0.5))
+    assert_allclose(patch_pair_swapped, patch_blue_ahead + (1.0 - ALPHA) * patch_red, atol=1.0)
+
+    # Crossing the camera over to the other side reverses which one is in front just the same
+    cam.set_pose(pos=(-2.5, 0.0, 0.5), lookat=(0.0, 0.0, 0.5))
+    patch_red_across = centre_patch((0.6, 0.0, 0.5), PARKED)
+    patch_blue_across = centre_patch(PARKED, (-0.6, 0.0, 0.5))
+    patch_pair_across = centre_patch((0.6, 0.0, 0.5), (-0.6, 0.0, 0.5))
+    assert_allclose(patch_pair_across, patch_blue_across + (1.0 - ALPHA) * patch_red_across, atol=1.0)

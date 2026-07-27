@@ -524,7 +524,7 @@ class Renderer(object):
         V, P = self._get_camera_matrices(scene, env_idx)
 
         # Now, render each object in sorted order
-        for node in scene.sorted_mesh_nodes():
+        for node in scene.sorted_mesh_nodes(env_idx):
             mesh = node.mesh
 
             # Skip the mesh if it's not visible
