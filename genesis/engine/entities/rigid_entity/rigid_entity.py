@@ -3383,7 +3383,7 @@ class RigidEntity(KinematicEntity):
         qpos_goal=None,
         qpos_start=None,
         num_waypoints=None,
-        max_retry=1,
+        max_retry=4,
         safety_margin=0.0,
         ignore_collision=False,
         envs_idx=None,
@@ -3416,7 +3416,10 @@ class RigidEntity(KinematicEntity):
             zero-velocity terminal hold), so stepping the returned waypoints tracks the planned timing; an integer
             returns exactly that many waypoints with the true per-env spacing in `dt`. Defaults to None.
         max_retry : int, optional
-            Extra full attempts (fresh seeds) for envs whose plan is still invalid. Defaults to 1.
+            Cap on the extra attempts made for envs whose plan is still invalid; an env that certifies earlier
+            stops, and each attempt continues the search rather than restarting it, so a larger cap costs time
+            only on the envs that use it and never changes what a smaller cap would have found. Lower it only to
+            bound the worst-case latency of a batch. Defaults to 4.
         safety_margin : float, optional
             Clearance [m] the certified path keeps from every obstacle. Larger margins tolerate tracking error
             but shrink free space, so tight passages become slower to solve or infeasible. Defaults to 0.0

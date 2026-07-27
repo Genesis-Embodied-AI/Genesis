@@ -345,7 +345,7 @@ def func_fold_and_check_exit(
     qd.loop_config(name="planner_fold_decrement")
     for _ in range(1):
         graph_counter[()] = graph_counter[()] - 1
-        planner_state.pass_index[None] = planner_state.pass_index[None] - 1
+        planner_state.pass_index[None] = planner_state.pass_index[None] + 1
         planner_state.early_exit_flag[()] = 0
 
     qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -370,12 +370,14 @@ def func_fold_and_check_exit(
 
 
 @qd.kernel
-def kernel_init_ladder(n_attempts: int, envs_idx: qd.types.ndarray(), planner_state: array_class.PlannerState):
+def kernel_init_ladder(envs_idx: qd.types.ndarray(), planner_state: array_class.PlannerState):
     """Reset the ladder bookkeeping of every planned env at the start of a plan.
 
     Split from kernel_plan so a ladder driven one pass per launch does not reset itself between passes, and so the
     graph kernel holds nothing outside its loop - work placed there replays per task on the backends that fall back
-    to a host-driven loop. pass_index counts the attempt budget down, the order the restart and seed draws key on.
+    to a host-driven loop. pass_index counts the passes up from zero and the restart and seed draws key on it, so
+    the sequence a plan walks does not depend on the budget it was given: raising max_retry appends draws instead
+    of displacing the ones a smaller budget would have made.
     """
     for i_b_ in range(envs_idx.shape[0]):
         planner_state.is_env_solved[envs_idx[i_b_]] = False
@@ -383,7 +385,7 @@ def kernel_init_ladder(n_attempts: int, envs_idx: qd.types.ndarray(), planner_st
         planner_state.is_goal_free[envs_idx[i_b_]] = False
     qd.loop_config(name="planner_init_pass_index")
     for _ in range(1):
-        planner_state.pass_index[None] = n_attempts
+        planner_state.pass_index[None] = 0
 
 
 @qd.kernel(graph=True, fastcache=True)
@@ -1368,7 +1370,7 @@ class Planner:
         # The ladder is driven from here, one pass per iteration, ending as soon as every planned env certifies.
         # Its phases are compiled apart - goal resolution, tree escalation, and the pass itself - because each of
         # them inlines the whole collision model, and compilation grows faster than a kernel does.
-        kernel_init_ladder(2 + max_retry, envs_idx_dev, planner_state)
+        kernel_init_ladder(envs_idx_dev, planner_state)
         plan_args = (
             envs_idx_dev,
             trees_is_active,
