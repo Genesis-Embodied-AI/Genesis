@@ -51,7 +51,10 @@ _GRASP_NORMAL_COS = -0.5
 # Lanes cooperating on one candidate's trajectory cost in the tiled arm, capped at a subgroup and rounded down to
 # a power of two by the resolution below (the cross-lane sum is a butterfly over 2**k lanes).
 _N_COST_LANES_MAX = 32
-_N_RRT_TREES = 4
+# Tree pairs grown per environment per escalation. Their value is basin diversity, not throughput: one pair loses
+# an environment of the randomized pre-grasp battery, while four cost half again as much time as two and recover
+# nothing, both benchmarks staying at full validity from two upward.
+_N_RRT_TREES = 2
 # Node capacity per tree pair, and the chain capacity of an extracted path. Both bound the search rather than
 # describing it: a tree that fills up stops growing and a bridge whose chain does not fit is refused, so these
 # cost validity, never soundness. Measured peak occupancy on the cluttered pre-grasp battery is 261 nodes a side
