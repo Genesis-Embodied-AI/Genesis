@@ -1793,8 +1793,15 @@ def func_resolve_goal(
                     # otherwise a converged solution is acceptable only if collision-free or excusably contacting.
                     if qd.static(not ignore_collision):
                         if is_acceptable:
-                            is_acceptable = planner_state.cert.min_clearance_exact[i_c] + margin + 0.01 > -(
-                                planner_info.cert.exact_sample_cov[None] + planner_info.cert.goal_real_pen_max[None]
+                            # A hold is validated unswept at the planning clearance, so its exact reading plus that
+                            # clearance is already a lower bound of the branch's TRUE world clearance - whichever
+                            # way the reading was obtained, the covering sweep's conservatism included. The budget
+                            # is therefore charged once, against that bound: adding the covering radius a second
+                            # time, or any headroom on top, widens what the branch may really penetrate by exactly
+                            # as much as it adds (see _GOAL_REAL_PEN_MAX).
+                            is_acceptable = (
+                                planner_state.cert.min_clearance_exact[i_c] + margin
+                                > -planner_info.cert.goal_real_pen_max[None]
                             )
                         if is_acceptable:
                             is_acceptable = (
