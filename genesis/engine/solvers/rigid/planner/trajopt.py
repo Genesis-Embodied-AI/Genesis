@@ -336,6 +336,7 @@ def func_seed_trajectories(
 
 @qd.func
 def func_seed_trajectories_from_rrt(
+    i_env_offset,
     envs_idx: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
     planner_config: qd.template(),
@@ -374,7 +375,8 @@ def func_seed_trajectories_from_rrt(
                                 i_tree_sel = i_t_
                             seen = seen + 1
                     n_path = planner_state.rrt.path_len[i_tree_sel, i_b_]
-                    i_c = i_b_ * n_seeds + i_s
+                    # Tree slots are wave-local, candidate columns are pass-global (see kernel_rrt_escalate).
+                    i_c = (i_env_offset + i_b_) * n_seeds + i_s
                     if n_path <= n_knots:
                         # Vertex-preserving subdivision: every vertex is a knot and the leftover knots subdivide
                         # the segments proportionally to their length, so consecutive knots stay on the certified
@@ -465,10 +467,10 @@ def func_seed_trajectories_from_rrt(
                                 q_a = planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]
                                 q_b = planner_state.rrt.path[i_dp, i_tree_sel, i_seg + 1, i_b_]
                                 planner_state.cost.qpos[i_dp, i_c, i_w] = q_a * (1.0 - u) + q_b * u
-                    planner_state.cert.is_active[i_b_ * n_seeds + i_s] = True
+                    planner_state.cert.is_active[i_c] = True
                 # Seed 0 keeps the raw fallback polyline unrefined, so refinement can only add better candidates.
-                planner_state.cert.is_active[i_b_ * n_seeds] = False
-                planner_state.cost.cost[i_b_ * n_seeds] = 1e30
+                planner_state.cert.is_active[(i_env_offset + i_b_) * n_seeds] = False
+                planner_state.cost.cost[(i_env_offset + i_b_) * n_seeds] = 1e30
 
 
 @qd.func

@@ -231,6 +231,7 @@ def func_rrt_edge_is_free(
 
 @qd.func
 def func_rrt_connect(
+    i_env_offset,
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
@@ -278,6 +279,10 @@ def func_rrt_connect(
             i_b_ = i_t // n_trees
             i_tree = i_t % n_trees
             i_b = envs_idx[i_b_]
+            # Draws key on the tree's position in the PASS, not on its slot in the pool: a pass runs in waves
+            # over a pool smaller than the batch, so an env's slot depends on how the waves fall and keying on
+            # it would make the tree an env grows depend on the pool size rather than on the problem.
+            i_draw_key = (i_env_offset + i_b_) * n_trees + i_tree
 
             # Roots: node 0 = start, node n_half = goal.
             for i_dp in range(n_dp):
@@ -368,13 +373,13 @@ def func_rrt_connect(
 
                     # Sample a target: goal-biased toward the other tree's newest node, else uniform in limits
                     # (locked DOFs pinned to the start value).
-                    if gu.qd_hash01(seed_key, i_t, it, 777) < planner_info.rrt.goal_bias[None]:
+                    if gu.qd_hash01(seed_key, i_draw_key, it, 777) < planner_info.rrt.goal_bias[None]:
                         newest = other + planner_state.rrt.n_nodes[1 - side, i_tree, i_b_] - 1
                         for i_dp in range(n_dp):
                             planner_state.fk.eval.qpos[i_dp, i_t] = planner_state.rrt.qpos[i_dp, i_tree, newest, i_b_]
                     else:
                         for i_dp in range(n_dp):
-                            u = gu.qd_hash01(seed_key, i_t, it, i_dp)
+                            u = gu.qd_hash01(seed_key, i_draw_key, it, i_dp)
                             q = planner_info.fk.dofs.q_limit_lower[i_dp] + u * (
                                 planner_info.fk.dofs.q_limit_upper[i_dp] - planner_info.fk.dofs.q_limit_lower[i_dp]
                             )
@@ -424,8 +429,8 @@ def func_rrt_connect(
                     # is arclength-resampled to the knot count, and resampled chords cut the corners of the raw
                     # polyline - straightening it first is what keeps the resampled trajectory certifiable. The
                     # tree storage is disposable now, so its first two columns serve as edge-check scratch.
-                    u0 = gu.qd_hash01(seed_key, i_t, i_cut, 555)
-                    u1 = gu.qd_hash01(seed_key, i_t, i_cut, 556)
+                    u0 = gu.qd_hash01(seed_key, i_draw_key, i_cut, 555)
+                    u1 = gu.qd_hash01(seed_key, i_draw_key, i_cut, 556)
                     i_from = gs.qd_int(u0 * qd.cast(n_path - 3, gs.qd_float))
                     i_to = i_from + 2 + gs.qd_int(u1 * qd.cast(n_path - i_from - 3, gs.qd_float))
                     for i_dp in range(n_dp):

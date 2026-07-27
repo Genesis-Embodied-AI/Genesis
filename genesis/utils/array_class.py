@@ -2762,6 +2762,7 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     n_rrt_trees: int
     n_rrt_nodes: int
     n_rrt_path: int
+    n_rrt_pool: int
     # In-kernel local-array bounds - the MPPI smooth-noise knot count, particle-count cap, L-BFGS history depth,
     # and line-search trial cap - plus the validator densification factors, compile-time so kernels size their
     # locals and unroll their sweeps.
@@ -3323,11 +3324,14 @@ def get_planner_state(planner_config, B):
     knot_shape = (planner_config.n_dp, n_candidates, planner_config.n_knots)
     # One tree of one env per (tree, env) slot, its nodes spanning the middle axis; the batch axis stays last, as
     # everywhere else. The two sides of a tree pair split its node range, so a side is a node offset, not an axis.
-    tree_shape = (planner_config.n_rrt_trees, B)
-    tree_node_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_nodes, B)
+    # Tree slots are pooled: escalation runs the pass in waves of n_rrt_pool environments, so the pool holds what
+    # a device searches at once rather than one tree pair per environment of the batch.
+    n_pool = min(planner_config.n_rrt_pool, B)
+    tree_shape = (planner_config.n_rrt_trees, n_pool)
+    tree_node_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_nodes, n_pool)
     # The extracted path is a chain through the tree, not a copy of it, so it is sized for a chain (see the
     # extraction in func_rrt_connect, which refuses a bridge whose chains do not fit rather than truncating).
-    tree_path_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_path, B)
+    tree_path_shape = (planner_config.n_rrt_trees, planner_config.n_rrt_path, n_pool)
     hist_shape = (PLANNER_LBFGS_M, *knot_shape)
 
     # The optimizer's per-knot working set - the trajectory and its trial copy, the L-BFGS history pair, descent

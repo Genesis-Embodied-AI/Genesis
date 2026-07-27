@@ -58,6 +58,11 @@ _N_RRT_TREES = 4
 # and 10 path knots, so each carries roughly a factor of two over what the iteration budget can reach.
 _N_RRT_NODES = 1024
 _N_RRT_PATH = 64
+# Environments whose tree pairs are searched at once. The pool is the planner's largest buffer by far, so sizing
+# it by what a device actually runs concurrently rather than by the batch is what keeps a large batch affordable;
+# a pass simply runs as several waves over the same slots. Beyond this many concurrent searches a device is
+# oversubscribed and the waves cost nothing but their own launches.
+_N_RRT_POOL = 256
 _N_RRT_ITERS = 600
 # Fresh restart pools drawn within one ladder attempt for envs whose pool yielded no acceptable Cartesian goal
 # branch (see _resolve_pose_goal).
@@ -484,6 +489,7 @@ def kernel_resolve_goal(
 
 @qd.kernel(graph=True, fastcache=True)
 def kernel_rrt_escalate(
+    i_env_offset: int,
     envs_idx: qd.types.ndarray(),
     trees_is_active: qd.types.ndarray(),
     planner_state: array_class.PlannerState,
@@ -505,6 +511,10 @@ def kernel_rrt_escalate(
     Tree growth is the ladder's heaviest phase and shares nothing with the rest of a pass but planner state, so it
     compiles apart from it: the whole collision model is inlined into whichever kernel reaches it, and compilation
     grows faster than the kernel does.
+
+    envs_idx is one wave of the pass's environments and the tree pool holds one slot per wave entry, so the pool
+    is sized by what a device runs at once rather than by the batch. i_env_offset is where the wave starts in the
+    pass, which is what the transplanted candidates are addressed by.
     """
     n_rrt_trees = qd.static(planner_config.n_rrt_trees)
     # Escalate the still-unsolved envs already seeded on an earlier pass to RRT-Connect: activate their tree
@@ -521,6 +531,7 @@ def kernel_rrt_escalate(
     d_safe_opt = planner_info.cost.d_safe[None]
     planner_info.cost.d_safe[None] = d_safe_opt - 0.01
     func_rrt_connect(
+        i_env_offset,
         envs_idx,
         trees_is_active,
         planner_state,
@@ -538,7 +549,7 @@ def kernel_rrt_escalate(
         planner_config,
     )
     planner_info.cost.d_safe[None] = d_safe_opt
-    func_seed_trajectories_from_rrt(envs_idx, planner_state, planner_config)
+    func_seed_trajectories_from_rrt(i_env_offset, envs_idx, planner_state, planner_config)
 
 
 @qd.kernel(fastcache=True)
@@ -835,6 +846,7 @@ class Planner:
             n_rrt_trees=_N_RRT_TREES,
             n_rrt_nodes=_N_RRT_NODES,
             n_rrt_path=_N_RRT_PATH,
+            n_rrt_pool=_N_RRT_POOL,
             n_noise_knots=array_class.PLANNER_N_NOISE_KNOTS,
             n_mppi_particles_max=array_class.PLANNER_MPPI_P_MAX,
             n_lbfgs_hist=array_class.PLANNER_LBFGS_M,
@@ -1367,12 +1379,13 @@ class Planner:
         # leaves unsolved. Collision-free requests stay on the host ladder, which owns the straight-line shortcut
         # the graph kernel does not cover.
         planner_state.graph_counter.from_numpy(np.array(2 + max_retry, dtype=np.int32))
-        # Per-pass RRT tree-activity scratch (one entry per planned env's tree pair); the kernel rewrites it each
-        # escalation pass. The graph-kernel ndarray arguments must be device-resident: the sm90+ device-side graph
+        # Per-pass RRT tree-activity scratch (one entry per pooled tree pair); the kernel rewrites it each
+        # escalation wave. The graph-kernel ndarray arguments must be device-resident: the sm90+ device-side graph
         # loop rejects host ndarrays outright. The pre-sm90 host fallback would tolerate host arrays, but the fast
         # path is the one that matters, so both the env index and the tree-activity scratch live on device.
         envs_idx_dev = torch.as_tensor(envs_idx_np, dtype=gs.tc_int, device=gs.device)
-        trees_is_active = torch.zeros(len(envs_idx_np) * planner_config.n_rrt_trees, dtype=gs.tc_int, device=gs.device)
+        n_rrt_pool = min(planner_config.n_rrt_pool, len(envs_idx_np))
+        trees_is_active = torch.zeros(n_rrt_pool * planner_config.n_rrt_trees, dtype=gs.tc_int, device=gs.device)
         # The ladder is driven from here, one pass per iteration, ending as soon as every planned env certifies.
         # Its phases are compiled apart - goal resolution, tree escalation, and the pass itself - because each of
         # them inlines the whole collision model, and compilation grows faster than a kernel does.
@@ -1397,7 +1410,6 @@ class Planner:
             context.errno,
         )
         rrt_args = (
-            envs_idx_dev,
             trees_is_active,
             planner_state,
             planner_world,
@@ -1434,7 +1446,9 @@ class Planner:
                     context.errno,
                 )
             if not ignore_collision:
-                kernel_rrt_escalate(*rrt_args)
+                # Escalation runs in waves over the tree pool, which holds fewer slots than the batch has envs.
+                for i_wave in range(0, len(envs_idx_np), n_rrt_pool):
+                    kernel_rrt_escalate(i_wave, envs_idx_dev[i_wave : i_wave + n_rrt_pool], *rrt_args)
             planner_state.graph_counter.from_numpy(np.array(1, dtype=np.int32))
             kernel_plan(*plan_args)
             # Certify at the user clearance, not the optimizer headroom: the optimizer plans with an extra
