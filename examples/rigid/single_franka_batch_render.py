@@ -9,7 +9,6 @@ from genesis.utils.image_exporter import FrameImageExporter
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("-b", "--num-envs", type=int, default=3, help="Number of parallel environments")
     parser.add_argument("-s", "--steps", type=int, default=2, help="Number of simulation steps")
     parser.add_argument("--render-all-cameras", action="store_true", help="Render every camera each step")
@@ -22,7 +21,8 @@ def main():
     parser.add_argument("--seg-level", type=str, default="link", help="Granularity of the segmentation mask")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+    # The batch renderer only runs on CUDA, so there is no CPU backend to offer here.
+    gs.init(backend=gs.gpu)
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
