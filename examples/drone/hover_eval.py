@@ -56,12 +56,11 @@ def main():
     max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
     with torch.no_grad():
         if args.record:
-            env.cam.start_recording()
+            env.cam.start_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
             for _ in range(max_sim_step):
                 actions = policy(obs_dict)
                 obs_dict, rews, dones, infos = env.step(actions)
-                env.cam.render()
-            env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.cam.stop_recording()
         else:
             for _ in range(max_sim_step):
                 actions = policy(obs_dict)

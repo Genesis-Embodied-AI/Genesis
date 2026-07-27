@@ -5,12 +5,15 @@ import numpy as np
 import pytest
 import torch
 
+import av
+
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
+from genesis.utils.video_encoder import VideoEncoder
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
 from ..utils import assert_allclose, assert_equal, assert_pixel_match, rgb_array_to_png_bytes
@@ -303,7 +306,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         robot.set_dofs_velocity(qvel, envs_idx=([i] if n_envs else None))
 
     # Run a few simulation steps while monitoring the result
-    cam_debug.start_recording()
+    cam_debug.start_recording(save_to_filename=(tmp_path / "video.mp4"))
 
     frames_prev = None
     for i in range(NUM_STEPS):
@@ -392,8 +395,12 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
         assert isinstance(rgb_debug, np.ndarray)
         assert rgb_debug.shape == (480, 640, 3)
 
-    assert len(cam_debug._recorded_imgs) == NUM_STEPS
-    cam_debug.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
+    cam_debug.stop_recording()
+
+    # Every simulation step must have contributed exactly one frame at the default framerate, which is higher than
+    # the step rate of this scene
+    with av.open(tmp_path / "video.mp4") as container:
+        assert sum(1 for _ in container.decode(video=0)) == NUM_STEPS
 
     # Verify that the output is correct pixel-wise over multiple simulation steps
     try:
@@ -574,7 +581,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         tol_env = 0.002
         tol_step = gs.EPS
 
-    cam.start_recording()
+    cam.start_recording(save_to_filename=(tmp_path / "video.mp4"))
     for _ in range(7):
         dofs_lower_bound, dofs_upper_bound = robot.get_dofs_limit()
         qpos = dofs_lower_bound + (dofs_upper_bound - dofs_lower_bound) * torch.as_tensor(
@@ -628,7 +635,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         rgb_step_diff = np.abs(np.diff(steps_rgb_arrays, axis=0))
         assert rgb_step_diff.mean() < tol_step, "Per-step renders do not match"
 
-    cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
+    cam.stop_recording()
 
 
 @pytest.mark.required
@@ -1532,3 +1539,111 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
     # Per-env sensor images must be invariant to env_spacing — the offset is purely for
     # visual separation in the interactive viewer and must be transparent to sensors.
     assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_video_recording_lifecycle(tmp_path, monkeypatch, renderer, show_viewer):
+    DT = 0.01
+    # One frame every other step, so that a span of N_STEPS resolves 2 frames and the paused span below skips 2
+    FPS = 50.0
+    N_STEPS = 4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.5),
+            size=(0.2, 0.2, 0.2),
+        ),
+    )
+    cam = scene.add_camera(
+        res=(64, 64),
+        pos=(2.5, 0.0, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    scene.build()
+
+    # Encoding is lossy, so the frames handed to the encoder are intercepted to compare them exactly
+    frames_encoded = []
+    write = VideoEncoder.write
+
+    def write_intercepted(self, frame):
+        frames_encoded.append(frame.copy())
+        write(self, frame)
+
+    monkeypatch.setattr("genesis.utils.video_encoder.VideoEncoder.write", write_intercepted)
+
+    with pytest.raises(gs.GenesisException, match="Recording not started"):
+        cam.stop_recording()
+    with pytest.raises(gs.GenesisException, match="Recording not started"):
+        cam.pause_recording()
+
+    # One frame every 1 / FPS of simulated time, whether or not 'render' is ever called by the user
+    video_path = tmp_path / "paused.mp4"
+    cam.start_recording(save_to_filename=video_path, fps=FPS)
+    with pytest.raises(gs.GenesisException, match="Recording already started"):
+        cam.start_recording()
+    for _ in range(N_STEPS):
+        scene.step()
+        cam.render()
+
+    # A paused span leaves the video untouched, and starting again carries on with the very same file
+    cam.pause_recording()
+    with pytest.raises(gs.GenesisException, match="cannot change"):
+        cam.start_recording(fps=2.0 * FPS)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.start_recording()
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.stop_recording()
+
+    # Refreshing the visualization after the step is what puts the state that step produced in the video: the last
+    # frame is the final state itself, and the one before it is genuinely different
+    rgb_final, *_ = cam.render(rgb=True, depth=False, segmentation=False, normal=False)
+    assert_equal(frames_encoded[-1], rgb_final)
+    assert not np.array_equal(frames_encoded[-2], rgb_final)
+
+    # The two recorded spans each contribute one frame per cadence, and the paused one contributes none
+    steps_per_frame = round(1.0 / (FPS * DT))
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+        assert stream.average_rate == FPS
+        assert sum(1 for _ in container.decode(stream)) == 2 * N_STEPS // steps_per_frame
+
+    # Recording again writes a separate video, and the framerate may differ from the previous one
+    video_path_fast = tmp_path / "fast.mp4"
+    cam.start_recording(save_to_filename=video_path_fast, fps=2.0 * FPS)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.stop_recording()
+
+    with av.open(video_path_fast) as container:
+        stream = container.streams.video[0]
+        assert stream.average_rate == 2.0 * FPS
+        # Twice the framerate resolves twice as many frames out of the same simulated span, capped at one per step
+        assert sum(1 for _ in container.decode(stream)) == N_STEPS
+
+    # Steps vetoed by another callback advance no simulated time, so they contribute no frame, and a recording that
+    # never gets one leaves no file behind
+    video_path_vetoed = tmp_path / "vetoed.mp4"
+    cam.start_recording(save_to_filename=video_path_vetoed, fps=FPS)
+    scene.register_pre_step_callback(lambda: True)
+    for _ in range(N_STEPS):
+        scene.step()
+    cam.stop_recording()
+
+    assert not video_path_vetoed.exists()

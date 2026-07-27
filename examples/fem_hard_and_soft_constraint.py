@@ -60,10 +60,8 @@ def main():
         material=gs.materials.FEM.Elastic(E=1.0e6, nu=0.45, rho=1000.0, model="linear_corotated"),
     )
 
-    video_fps = 1 / dt
-    max_fps = 100
-    frame_interval = max(1, int(video_fps / max_fps)) if max_fps > 0 else 1
-    print(f"video_fps: {video_fps}, frame_interval: {frame_interval}")
+    # Recording every simulation step would be far denser than any player needs, and the step size here is tiny.
+    video_fps = min(100.0, 1.0 / dt)
 
     cam = scene.add_camera(
         res=(640, 480),
@@ -73,7 +71,9 @@ def main():
     )
 
     scene.build()
-    cam.start_recording()
+
+    video_filename = f"fem_hard_soft_{args.solver}_dt={dt}_substeps={substeps}.mp4"
+    cam.start_recording(save_to_filename=video_filename, fps=video_fps)
 
     pinned_idx = [0]
     circle_radius = 0.3
@@ -112,7 +112,7 @@ def main():
         debug_circle = scene.draw_debug_spheres(poss=target_positions, radius=0.02, color=(0, 1, 0, 0.8))
         cube.set_vertex_constraints(pinned_idx, target_positions)
 
-        for step in tqdm(range(total_steps), total=total_steps):
+        for _ in tqdm(range(total_steps), total=total_steps):
             if debug_circle is not None:
                 scene.clear_debug_object(debug_circle)
 
@@ -122,17 +122,12 @@ def main():
 
             scene.step()
 
-            if step % frame_interval == 0:
-                cam.render()
-
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
         gs.logger.info("Simulation finished.")
 
-        actual_fps = video_fps / frame_interval
-        video_filename = f"fem_hard_soft_{args.solver}_dt={dt}_substeps={substeps}.mp4"
-        cam.stop_recording(save_to_filename=video_filename, fps=actual_fps)
+        cam.stop_recording()
         gs.logger.info(f"Saved video to {video_filename}")
 
 

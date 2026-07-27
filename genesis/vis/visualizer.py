@@ -110,6 +110,10 @@ class Visualizer(RBC):
         self.destroy()
 
     def destroy(self):
+        # Cameras go first, so that a recording still running is finalized while the renderers are alive.
+        for camera in self._cameras:
+            camera.destroy()
+
         if self._rasterizer is not None:
             self._rasterizer.destroy()
             self._rasterizer = None

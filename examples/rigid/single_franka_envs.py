@@ -57,7 +57,7 @@ def main():
     scene.build(n_envs=args.num_env, env_spacing=(0.5, 0.5))
 
     if args.record:
-        cam_0.start_recording()
+        cam_0.start_recording(save_to_filename="video.mp4")
 
     for i in range(args.horizon):
         scene.step()
@@ -68,7 +68,7 @@ def main():
         print(f"Step {i}:", args.num_env, color.shape, depth.shape, seg.shape, normal.shape)
 
     if args.record:
-        cam_0.stop_recording(save_to_filename="video.mp4")
+        cam_0.stop_recording()
 
 
 if __name__ == "__main__":

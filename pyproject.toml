@@ -24,6 +24,8 @@ dependencies = [
     "py-cpuinfo",
     "mujoco>=3.2.5",
     "moviepy>=2.0.0",
+    # Streams video frames to file, for 'camera.start_recording' and the 'VideoFile' recorder
+    "av",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
     # * 2.0.15 <= 2.1.8 breaks old-style option overwrite for string literal.
@@ -102,8 +104,6 @@ dev = [
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",
-    # Used internally by 'VideoFileWriter'
-    "av",
     # Used for ground truth validation in unit tests
     "scipy",
     # Used for code formatting during commits

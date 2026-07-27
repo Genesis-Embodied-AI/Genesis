@@ -104,11 +104,9 @@ def main():
     exporter = FrameImageExporter(args.output_dir)
 
     if args.debug:
-        debug_cam.start_recording()
+        debug_cam.start_recording(save_to_filename="debug_cam.mp4")
     for i in range(args.n_steps):
         scene.step()
-        if args.debug:
-            debug_cam.render()
         if args.render_all_cameras:
             color, depth, seg, normal = scene.render_all_cameras(
                 rgb=True, depth=i % 2 == 1, segmentation=i % 2 == 1, normal=True
@@ -124,7 +122,7 @@ def main():
             )
             exporter.export_frame_single_camera(i, cam_1.idx, rgb=seg, depth=depth, segmentation=None, normal=normal)
     if args.debug:
-        debug_cam.stop_recording("debug_cam.mp4")
+        debug_cam.stop_recording()
 
 
 if __name__ == "__main__":
