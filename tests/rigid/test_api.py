@@ -475,8 +475,8 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
         assert links_invweight.shape == (2, 12, 2)
         assert_allclose(links_mass[1], INERTIA_RATIO * links_mass[0], tol=tol)
         assert_allclose(INERTIA_RATIO * links_invweight[1], links_invweight[0], tol=tol)
-        assert_allclose(gs_s.get_links_inertial_mass(envs_idx=[1]), links_mass[[1]], tol=gs.EPS)
-        assert_allclose(gs_s.get_links_invweight(envs_idx=[1]), links_invweight[[1]], tol=gs.EPS)
+        assert_allclose(gs_s.get_links_inertial_mass(envs_idx=[1]), links_mass[1], tol=gs.EPS)
+        assert_allclose(gs_s.get_links_invweight(envs_idx=[1]), links_invweight[1], tol=gs.EPS)
     else:
         assert gs_s.get_links_inertial_mass().shape == (12,)
         assert gs_s.get_links_invweight().shape == (12, 2)
@@ -492,7 +492,7 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
             assert_allclose(energy[0], energy[1], tol=gs.EPS)
         energy_env_1 = get_energy(envs_idx=[1])
         assert energy_env_1.shape == (1,)
-        assert_allclose(energy_env_1, energy[[1]], tol=gs.EPS)
+        assert_allclose(energy_env_1, energy[1], tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
