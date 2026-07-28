@@ -539,9 +539,13 @@ def func_collision_cost(
             band_group = gs.qd_float(0.0)
             if not is_attach_group:
                 is_group_bounded = True
-                center_group = links_pos[i_group, i_col] + gu.qd_transform_by_quat(
-                    planner_info.fk.spheres.links_bound_center_local[i_group], links_quat[i_group, i_col]
-                )
+                # See n_placed_points in array_class.py for why only the serial arm reads a placed bound center.
+                if qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL):
+                    center_group = spheres_pos[n_spheres_with_attach + i_group, i_col]
+                else:
+                    center_group = links_pos[i_group, i_col] + gu.qd_transform_by_quat(
+                        planner_info.fk.spheres.links_bound_center_local[i_group], links_quat[i_group, i_col]
+                    )
                 band_group = (
                     planner_info.fk.spheres.links_bound_radius[i_group]
                     + planner_info.cost.d_safe[None]
@@ -598,12 +602,18 @@ def func_collision_cost(
         # obstacle loop gets for free from its band test and this one does not.
         i_la_bound = planner_info.fk.self_pairs.link_pairs_idx[i_lp][0]
         i_lb_bound = planner_info.fk.self_pairs.link_pairs_idx[i_lp][1]
-        center_a = links_pos[i_la_bound, i_col] + gu.qd_transform_by_quat(
-            planner_info.fk.spheres.links_bound_center_local[i_la_bound], links_quat[i_la_bound, i_col]
-        )
-        center_b = links_pos[i_lb_bound, i_col] + gu.qd_transform_by_quat(
-            planner_info.fk.spheres.links_bound_center_local[i_lb_bound], links_quat[i_lb_bound, i_col]
-        )
+        center_a = gs.qd_vec3(0.0, 0.0, 0.0)
+        center_b = gs.qd_vec3(0.0, 0.0, 0.0)
+        if qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL):
+            center_a = spheres_pos[n_spheres_with_attach + i_la_bound, i_col]
+            center_b = spheres_pos[n_spheres_with_attach + i_lb_bound, i_col]
+        else:
+            center_a = links_pos[i_la_bound, i_col] + gu.qd_transform_by_quat(
+                planner_info.fk.spheres.links_bound_center_local[i_la_bound], links_quat[i_la_bound, i_col]
+            )
+            center_b = links_pos[i_lb_bound, i_col] + gu.qd_transform_by_quat(
+                planner_info.fk.spheres.links_bound_center_local[i_lb_bound], links_quat[i_lb_bound, i_col]
+            )
         bound_links = (
             (center_a - center_b).norm()
             - planner_info.fk.spheres.links_bound_radius[i_la_bound]

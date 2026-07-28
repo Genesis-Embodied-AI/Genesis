@@ -89,7 +89,16 @@ def func_sphere_positions(
     planner_info: array_class.PlannerEntityInfo,
     planner_config: qd.template(),
 ):
-    """Place the collision-proxy spheres (robot + active attached) in world frame for one FK column."""
+    """Place the collision-proxy spheres (robot + active attached) and the per-link bound centers for one FK column.
+
+    The bound centers trail the spheres in the same pool (see n_placed_points in array_class.py), so the collision
+    cost reads a link's bound where it would otherwise place it again per link group and per link pair.
+    """
+    if qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL):
+        for i_l in range(qd.static(planner_config.n_links)):
+            spheres_pos[qd.static(planner_config.n_spheres + planner_config.n_attach_max) + i_l, i_col] = links_pos[
+                i_l, i_col
+            ] + gu.qd_transform_by_quat(planner_info.fk.spheres.links_bound_center_local[i_l], links_quat[i_l, i_col])
     for i_s in range(qd.static(planner_config.n_spheres)):
         i_l = planner_info.fk.spheres.link_idx[i_s]
         spheres_pos[i_s, i_col] = links_pos[i_l, i_col] + gu.qd_transform_by_quat(

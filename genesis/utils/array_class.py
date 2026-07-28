@@ -3361,6 +3361,13 @@ def get_planner_state(planner_config, B):
     n_knot_cols = n_candidates * planner_config.n_knots
     n_eval_cols = n_candidates * planner_config.n_eval_per_candidate
     n_spheres_with_attach = planner_config.n_spheres + planner_config.n_attach_max
+    # The proxy spheres, then one placed point per link on the serial arm only: a link's bound center is the same
+    # transform as a sphere's and a certified check needs it once per link group and twice per link pair, so placing
+    # it once saves the serial arm most of that arithmetic. The parallel arm keeps recomputing it, because there a
+    # store followed by a load costs more than repeating the transform over values already in registers.
+    n_placed_points = n_spheres_with_attach + (
+        planner_config.n_links if planner_config.para_level < gs.PARA_LEVEL.PARTIAL else 0
+    )
     knot_shape = (planner_config.n_dp, n_candidates, planner_config.n_knots)
     # One tree of one env per (tree, env) slot, its nodes spanning the middle axis; the batch axis stays last, as
     # everywhere else. The two sides of a tree pair split its node range, so a side is a node offset, not an axis.
@@ -3390,14 +3397,14 @@ def get_planner_state(planner_config, B):
             links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, n_knot_cols)),
             joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_knot_cols)),
             joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_knot_cols)),
-            spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_spheres_with_attach, n_knot_cols)),
+            spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_placed_points, n_knot_cols)),
             eval=PlannerEvalState(
                 qpos=V(dtype=gs.qd_float, shape=(planner_config.n_dp, n_eval_cols)),
                 links_pos=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_links, n_eval_cols)),
                 links_quat=V_VEC(4, dtype=gs.qd_float, shape=(planner_config.n_links, n_eval_cols)),
                 joints_xanchor=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_eval_cols)),
                 joints_xaxis=V_VEC(3, dtype=gs.qd_float, shape=(planner_config.n_joints, n_eval_cols)),
-                spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_spheres_with_attach, n_eval_cols)),
+                spheres_pos=V_VEC(3, dtype=gs.qd_float, shape=(n_placed_points, n_eval_cols)),
             ),
         ),
         mppi=PlannerMPPIState(),
