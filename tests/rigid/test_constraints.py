@@ -176,6 +176,46 @@ def test_dynamic_weld_scene_reset():
 
 
 @pytest.mark.required
+def test_dynamic_weld_delete_keeps_other_welds(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    boxes = [
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.05, 0.05, 0.05),
+                pos=(0.3 * i, 0.0, 0.5),
+            )
+        )
+        for i in range(4)
+    ]
+    scene.build()
+
+    solver = scene.sim.rigid_solver
+    link_a, link_b, link_c, link_d = (box.base_link.idx for box in boxes)
+    solver.add_weld_constraint(link_a, link_b)
+    solver.add_weld_constraint(link_c, link_d)
+
+    # Deleting a weld that is not the last dynamic equality must remove that weld and
+    # preserve the full record of the surviving one, not just its type.
+    solver.delete_weld_constraint(link_a, link_b)
+    weld_const_info = solver.get_weld_constraints(as_tensor=True, to_torch=True)
+    assert_allclose(weld_const_info["link_a"].flatten(), (link_c,), tol=0)
+    assert_allclose(weld_const_info["link_b"].flatten(), (link_d,), tol=0)
+
+    # The surviving weld must still act on its own links: c and d keep their relative
+    # pose while falling, which fails if the swap left behind the deleted weld's data.
+    rel_pos = boxes[3].get_pos() - boxes[2].get_pos()
+    for _ in range(100):
+        scene.step()
+    assert_allclose(boxes[3].get_pos() - boxes[2].get_pos(), rel_pos, tol=1e-3)
+
+
+@pytest.mark.required
 def test_urdf_mimic(show_viewer, tol):
     # create and build the scene
     scene = gs.Scene(
