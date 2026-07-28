@@ -2984,16 +2984,21 @@ class PlannerCostInfo:
 class PlannerExclInfo:
     """Boundary-config contact exclusions: pairs already violating the margin at qpos_start or qpos_goal are
     allowed to keep their anchoring boundary's clearance (never get worse), so grasped-object starts and
-    contact-rich goals optimize and certify. Sphere-vs-world entries pack (i_s, i_gw), self entries the
-    self-pair index; every entry carries its anchoring boundary (0 = start, 1 = goal) and the anchor geometry
-    the certification ramp measures displacement from (see _EXCL_ANCHOR_SLACK_CERT in cost.py): the sphere
+    contact-rich goals optimize and certify. A sphere-vs-world entry holds only the geom it excludes, the sphere and
+    the anchoring boundary (0 = start, 1 = goal) being the key it is filed under; self entries pack the self-pair
+    index and carry that boundary. Every entry carries the anchor geometry the certification ramp measures
+    displacement from (see _EXCL_ANCHOR_SLACK_CERT in cost.py): the sphere
     world position plus the owning link's orientation for world entries (the covered surface patch moves with
     the link frame, so a matching position with a rotated link is a different contact), the sphere-pair
     relative offset for self entries.
 
-    world_has_entry records which (sphere, boundary) keys the world entries cover, so the obstacle loop skips the
-    walk for the majority of spheres that no entry mentions; the walk itself stays, the geom being part of a
-    world entry's key.
+    world_range holds the [start, end) bracket of one (sphere, boundary) key, which the obstacle loop looks a pair
+    up by: the geom completes the key, so a lookup still walks, but only over the geoms that one sphere is excluded
+    against at that boundary rather than over every entry of the env, and it is an empty range for the majority of
+    spheres no entry mentions. Start and end share one field because the lookup is charged to every (sphere, geom)
+    pair reaching the distance query, which makes a second fetch there cost more than the iterations it saves. The
+    bracket relies on a key's entries being contiguous, which is why entries are appended in key order
+    (see func_merge_boundary_exclusions in cost.py).
 
     self_offset indexes the self entries by (self-pair, boundary) so the collision cost reads a pair's allowance
     without walking the list: the self loop consults it for every sphere pair of every configuration it checks,
@@ -3001,12 +3006,11 @@ class PlannerExclInfo:
     where no entry exists, so a read needs no comparison. The list stays the record - the anchors are still found
     through it, being needed only for the pairs an entry does cover."""
 
-    world_pair: qd.Tensor
+    world_geom: qd.Tensor
     world_sd: qd.Tensor
-    world_bound: qd.Tensor
     world_anchor: qd.Tensor
     world_anchor_quat: qd.Tensor
-    world_has_entry: qd.Tensor
+    world_range: qd.Tensor
     world_count: qd.Tensor
     self_pair: qd.Tensor
     self_offset: qd.Tensor
@@ -3139,13 +3143,12 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
         ),
         cert=PlannerCertInfo(
             excl=PlannerExclInfo(
-                world_pair=V_VEC(2, dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
+                world_geom=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
                 world_sd=V(dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-                world_bound=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
                 world_anchor=V_VEC(3, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
                 world_anchor_quat=V_VEC(4, dtype=gs.qd_float, shape=(_PLANNER_N_EXCL_MAX, B)),
-                world_has_entry=V(
-                    dtype=gs.qd_bool, shape=(planner_config.n_spheres + planner_config.n_attach_max, 2, B)
+                world_range=V_VEC(
+                    2, dtype=gs.qd_int, shape=(planner_config.n_spheres + planner_config.n_attach_max, 2, B)
                 ),
                 world_count=V(dtype=gs.qd_int, shape=(B,)),
                 self_pair=V(dtype=gs.qd_int, shape=(_PLANNER_N_EXCL_MAX, B)),
