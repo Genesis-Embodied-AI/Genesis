@@ -456,6 +456,55 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
     assert act_gain.shape == (9, 2) if batch_dofs_info else (9,)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("batch_links_info", [False, True])
+def test_link_info_environment_indexing(batch_links_info, tol):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            batch_links_info=batch_links_info,
+        ),
+        show_viewer=False,
+    )
+    entities = (
+        scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 1.0))),
+        scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0.0, 0.0, 2.0))),
+    )
+    scene.build(n_envs=3)
+
+    getters = (scene.rigid_solver.get_links_inertial_mass, scene.rigid_solver.get_links_invweight)
+    if not batch_links_info:
+        for getter in getters:
+            with pytest.raises(gs.GenesisException, match="envs_idx.*non-batched links info"):
+                getter(envs_idx=[1])
+    else:
+        entities[0].links[0].set_mass((1.0, 2.0, 3.0))
+        entities[1].links[0].set_mass((4.0, 5.0, 6.0))
+        assert_allclose(
+            scene.rigid_solver.get_links_inertial_mass(),
+            ((1.0, 4.0), (2.0, 5.0), (3.0, 6.0)),
+            tol=tol,
+        )
+        for getter in getters:
+            values = getter()
+            assert_allclose(getter(envs_idx=[1]), values[[1]], tol=tol)
+            assert_allclose(getter(links_idx=[1], envs_idx=[2, 0]), values[[2, 0]][:, [1]], tol=tol)
+        assert_allclose(
+            scene.rigid_solver.get_links_inertial_mass(links_idx=[1], envs_idx=[2, 0]),
+            ((6.0,), (4.0,)),
+            tol=tol,
+        )
+        for getter in (entities[0].get_links_inertial_mass, entities[0].get_links_invweight):
+            values = getter()
+            assert_allclose(getter(links_idx_local=[0], envs_idx=[2, 0]), values[[2, 0]][:, [0]], tol=tol)
+
+    total_energy = scene.rigid_solver.get_total_energy()
+    assert_allclose(scene.rigid_solver.get_total_energy(envs_idx=[1]), total_energy[[1]], tol=tol)
+    for entity in entities:
+        for getter in (entity.get_potential_energy, entity.get_total_energy):
+            values = getter()
+            assert_allclose(getter(envs_idx=[1]), values[[1]], tol=tol)
+
+
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_info_batching(tol):

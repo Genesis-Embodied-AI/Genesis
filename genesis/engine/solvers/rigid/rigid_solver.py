@@ -2802,13 +2802,13 @@ class RigidSolver(KinematicSolver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_inertial_mass(self, links_idx=None, envs_idx=None):
-        if self._options.batch_links_info and envs_idx is not None:
+        if not self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
         tensor = qd_to_torch(self.dyn_info.links.inertial_mass, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
 
     def get_links_invweight(self, links_idx=None, envs_idx=None):
-        if self._options.batch_links_info and envs_idx is not None:
+        if not self._options.batch_links_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched links info.")
         tensor = qd_to_torch(self.dyn_info.links.invweight, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_links_info else tensor
@@ -3014,7 +3014,9 @@ class RigidSolver(KinematicSolver):
 
         gravity = self.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
         links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
-        links_mass = self.get_links_inertial_mass(envs_idx=envs_idx)  # (n_links,), or (n_envs, n_links) if batched
+        links_mass = self.get_links_inertial_mass(
+            envs_idx=envs_idx if self._options.batch_links_info else None
+        )  # (n_links,), or (n_envs, n_links) if batched
 
         # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
         # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
