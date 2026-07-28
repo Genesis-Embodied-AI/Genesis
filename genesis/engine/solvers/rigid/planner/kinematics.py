@@ -3,7 +3,8 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils import array_class
-from genesis.engine.solvers.rigid.abd.inverse_kinematics import func_forward_kinematics_scratch, func_jacobian_scratch
+
+from ..abd.inverse_kinematics import func_forward_kinematics_scratch, func_jacobian_scratch
 
 
 @qd.func

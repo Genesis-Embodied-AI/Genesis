@@ -1428,7 +1428,7 @@ def surface_sample_covering(verts, faces, r_cov):
     samples : np.ndarray
         Sample positions with shape (n_samples, 3).
     """
-    tris = np.asarray(verts)[np.asarray(faces)]
+    tris = verts[faces]
     edge_max = math.sqrt(3.0) * r_cov
     while True:
         edges = np.linalg.norm(tris - np.roll(tris, -1, axis=1), axis=-1)

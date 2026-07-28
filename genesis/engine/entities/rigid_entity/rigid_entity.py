@@ -2095,7 +2095,8 @@ class KinematicEntity(Entity):
         velocity : array_like | None
             The velocity to set. Zero if not specified.
         dofs_idx_local : None | array_like, optional
-            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """

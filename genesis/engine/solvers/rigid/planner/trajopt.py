@@ -447,8 +447,8 @@ def func_seed_trajectories_from_rrt(
                         seg_len = gs.qd_float(0.0)
                         for i_w in range(1, n_knots - 1):
                             s_tgt = total * qd.cast(i_w, gs.qd_float) / (n_knots - 1)
-                            advancing = True
-                            while advancing:
+                            is_advancing = True
+                            while is_advancing:
                                 seg_len = gs.qd_float(0.0)
                                 for i_dp in range(n_dp):
                                     diff = (
@@ -461,7 +461,7 @@ def func_seed_trajectories_from_rrt(
                                     s_cum = s_cum + seg_len
                                     i_seg = i_seg + 1
                                 else:
-                                    advancing = False
+                                    is_advancing = False
                             u = (s_tgt - s_cum) / qd.max(seg_len, 1e-9)
                             for i_dp in range(n_dp):
                                 q_a = planner_state.rrt.path[i_dp, i_tree_sel, i_seg, i_b_]

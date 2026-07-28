@@ -765,9 +765,10 @@ class Planner:
         # certificate (the collider applies the same neutral-config filtering to its geom pairs); the per-plan
         # start exclusions absorb the rare residual cases.
         if self_pairs:
-            envs_kw = dict(envs_idx=[0]) if solver.n_envs > 0 else {}
-            links_pos = tensor_to_array(solver.get_links_pos([link.idx for link in entity.links], **envs_kw))
-            links_quat = tensor_to_array(solver.get_links_quat([link.idx for link in entity.links], **envs_kw))
+            envs_idx_arg = [0] if solver.n_envs > 0 else None
+            links_idx = [link.idx for link in entity.links]
+            links_pos = tensor_to_array(solver.get_links_pos(links_idx, envs_idx_arg))
+            links_quat = tensor_to_array(solver.get_links_quat(links_idx, envs_idx_arg))
             if links_pos.ndim == 3:
                 links_pos, links_quat = links_pos[0], links_quat[0]
             spheres_now = links_pos[spheres_link_idx] + gu.transform_by_quat(
@@ -1103,11 +1104,11 @@ class Planner:
     def _capture_attachment(self, entity, held, attach_link, envs_idx):
         """Grasp transform of a held entity in the attach-link frame, from the live poses (read-only)."""
         solver = self._solver
-        envs_kw = dict(envs_idx=envs_idx) if solver.n_envs > 0 else {}
-        link_pos = solver.get_links_pos(attach_link.idx, **envs_kw)[..., 0, :]
-        link_quat = solver.get_links_quat(attach_link.idx, **envs_kw)[..., 0, :]
-        obj_pos = solver.get_links_pos(held.links[0].idx, **envs_kw)[..., 0, :]
-        obj_quat = solver.get_links_quat(held.links[0].idx, **envs_kw)[..., 0, :]
+        envs_idx_arg = envs_idx if solver.n_envs > 0 else None
+        link_pos = solver.get_links_pos(attach_link.idx, envs_idx_arg)[..., 0, :]
+        link_quat = solver.get_links_quat(attach_link.idx, envs_idx_arg)[..., 0, :]
+        obj_pos = solver.get_links_pos(held.links[0].idx, envs_idx_arg)[..., 0, :]
+        obj_quat = solver.get_links_quat(held.links[0].idx, envs_idx_arg)[..., 0, :]
         pos_offset, quat_offset = gu.inv_transform_pos_quat_by_trans_quat(obj_pos, obj_quat, link_pos, link_quat)
         if pos_offset.ndim == 1:
             pos_offset, quat_offset = pos_offset[None], quat_offset[None]
@@ -1124,10 +1125,10 @@ class Planner:
         squeeze geometry holds). Objects carried by a single link (suction, tray) need the explicit arguments.
         """
         solver = self._solver
-        envs_kw = dict(envs_idx=envs_idx) if solver.n_envs > 0 else {}
+        envs_idx_arg = envs_idx if solver.n_envs > 0 else None
         links_idx = [link.idx for link in entity.links]
-        links_pos = tensor_to_array(solver.get_links_pos(links_idx, **envs_kw))
-        links_quat = tensor_to_array(solver.get_links_quat(links_idx, **envs_kw))
+        links_pos = tensor_to_array(solver.get_links_pos(links_idx, envs_idx_arg))
+        links_quat = tensor_to_array(solver.get_links_quat(links_idx, envs_idx_arg))
         if links_pos.ndim == 2:
             links_pos, links_quat = links_pos[None], links_quat[None]
         spheres_link_idx = context.spheres_link_idx
@@ -1144,8 +1145,8 @@ class Planner:
                 continue
             if len(held.links) != 1 or held.links[0].is_fixed:
                 continue
-            held_pos = tensor_to_array(solver.get_links_pos(held.links[0].idx, **envs_kw))[..., 0, :]
-            held_quat = tensor_to_array(solver.get_links_quat(held.links[0].idx, **envs_kw))[..., 0, :]
+            held_pos = tensor_to_array(solver.get_links_pos(held.links[0].idx, envs_idx_arg))[..., 0, :]
+            held_quat = tensor_to_array(solver.get_links_quat(held.links[0].idx, envs_idx_arg))[..., 0, :]
             if held_pos.ndim == 1:
                 held_pos, held_quat = held_pos[None], held_quat[None]
             held_local, held_radius = [], []
@@ -1268,9 +1269,9 @@ class Planner:
             if qpos_goal_t.ndim == 1:
                 qpos_goal_t = qpos_goal_t[None].expand(B_plan, n_dp)
 
-        boundary_qpos_start_t = qd_to_torch(planner_info.cost.boundary.qpos_start, copy=False).T
+        boundary_qpos_start_t = qd_to_torch(planner_info.cost.boundary.qpos_start, transpose=True, copy=False)
         boundary_qpos_start_t[envs_idx_np] = qpos_start_t
-        boundary_qpos_goal_t = qd_to_torch(planner_info.cost.boundary.qpos_goal, copy=False).T
+        boundary_qpos_goal_t = qd_to_torch(planner_info.cost.boundary.qpos_goal, transpose=True, copy=False)
         if qpos_goal_t is not None:
             boundary_qpos_goal_t[envs_idx_np] = qpos_goal_t
         else:
@@ -1622,7 +1623,7 @@ class Planner:
                 knots_best = torch.where(is_env_straight[:, None, None], knots_straight, knots_best)
                 env_rough &= ~is_env_straight
             _set_clearance(planner_info, float(safety_margin) + 0.02)
-        start_hold = qd_to_torch(planner_info.cost.boundary.qpos_start).T[:, None, :].expand(B, W, n_dp)
+        start_hold = qd_to_torch(planner_info.cost.boundary.qpos_start, transpose=True)[:, None, :].expand(B, W, n_dp)
         knots_best = torch.where(is_env_valid[:, None, None], knots_best, start_hold)
 
         knots_plan = knots_best[envs_idx_np]
