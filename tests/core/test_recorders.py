@@ -252,6 +252,14 @@ def test_video_writer(tmp_path):
         lookat=(0.0, 0.0, 0.2),
         GUI=False,
     )
+    # Registered first, so that rejecting its very last frame aborts the step before the others have sampled it
+    video_dtype_path = tmp_path / "test_dtype.mp4"
+    scene.start_recording(
+        data_func=lambda: np.zeros((64, 64, 3), dtype=np.uint8) if scene.t <= STEPS else np.full((64, 64, 3), 0.5),
+        rec_options=gs.recorders.VideoFile(
+            filename=video_dtype_path,
+        ),
+    )
     video_rgb_path = tmp_path / "test_rgb.mp4"
     scene.start_recording(
         data_func=lambda: camera.render(rgb=True, depth=False, segmentation=False, normal=False)[0],
@@ -272,11 +280,16 @@ def test_video_writer(tmp_path):
     for _ in range(STEPS):
         scene.step()
 
+    # A normalized floating-point frame cannot be represented and must be reported, whichever frame it is, rather than
+    # truncated to a black one
+    with pytest.raises(gs.GenesisException, match="integer type"):
+        scene.step()
+
     scene.stop_recording()
 
     # Every sampled step must survive into the file: frames buffered by the encoder but never flushed, or dropped
     # because it fell behind, would leave a shorter video that a size check cannot distinguish from a complete one
-    for video_path in (video_rgb_path, video_depth_path):
+    for video_path in (video_dtype_path, video_rgb_path, video_depth_path):
         assert video_path.exists(), "Recorded video file should exist"
         with av.open(video_path) as container:
             assert sum(1 for _ in container.decode(video=0)) == STEPS
