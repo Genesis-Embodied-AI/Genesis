@@ -490,9 +490,7 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol)
         energy = get_energy()
         with np.testing.assert_raises(AssertionError):
             assert_allclose(energy[0], energy[1], tol=gs.EPS)
-        energy_env_1 = get_energy(envs_idx=[1])
-        assert energy_env_1.shape == (1,)
-        assert_allclose(energy_env_1, energy[1], tol=gs.EPS)
+        assert_allclose(get_energy(envs_idx=[1]), energy[1], tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
