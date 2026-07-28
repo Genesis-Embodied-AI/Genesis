@@ -26,7 +26,7 @@ def test_gravity(show_viewer, tol):
 
     scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
     scene.sim.set_gravity(torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=2)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=-1)
     with np.testing.assert_raises(RuntimeError):
         scene.sim.set_gravity(torch.tensor([0.0, -10.0]))
     with np.testing.assert_raises(RuntimeError):

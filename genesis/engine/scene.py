@@ -1606,7 +1606,7 @@ class Scene(RBC):
         if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
         if isinstance(envs_idx, (int, np.integer)):
-            return self._envs_idx[envs_idx : envs_idx + 1]
+            return self._envs_idx[envs_idx][None]
 
         return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
 
