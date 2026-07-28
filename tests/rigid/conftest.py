@@ -848,3 +848,20 @@ def merged_overlapping_models():
     # Long box reaching back from the tip over the (non-adjacent) a2 link.
     ET.SubElement(palm, "geom", type="box", size="0.15 0.03 0.03", pos="-0.1 0 0", mass="0.2")
     return ET.tostring(arm, encoding="unicode"), ET.tostring(hand, encoding="unicode")
+
+
+@pytest.fixture(scope="session")
+def spring_double_pendulum():
+    """Generate an MJCF model for an undamped two-link arm whose hinges are held by stiff springs.
+
+    Its mass matrix depends on the elbow angle, so the arm only conserves energy if the kinetic term is evaluated at
+    the current configuration, and the springs store a share of the energy large enough to dominate rounding.
+    """
+    mjcf = ET.Element("mujoco")
+    upper = ET.SubElement(ET.SubElement(mjcf, "worldbody"), "body", name="arm_upper", pos="0.25 0.5 0.8")
+    ET.SubElement(upper, "joint", name="shoulder", type="hinge", axis="0 1 0", stiffness="20.0", damping="0")
+    ET.SubElement(upper, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
+    lower = ET.SubElement(upper, "body", name="arm_lower", pos="0.2 0 0")
+    ET.SubElement(lower, "joint", name="elbow", type="hinge", axis="0 1 0", stiffness="20.0", damping="0")
+    ET.SubElement(lower, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
+    return ET.tostring(mjcf, encoding="unicode")

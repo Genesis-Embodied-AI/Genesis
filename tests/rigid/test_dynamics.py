@@ -1,5 +1,4 @@
 import math
-import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -262,14 +261,13 @@ def test_apply_external_forces(xml_path, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("integrator", [gs.integrator.Euler, gs.integrator.approximate_implicitfast])
-def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
+def test_energy_analytical_and_conservation(spring_double_pendulum, show_viewer, tol, integrator):
     g = 9.81
     dt = 0.001
     h0 = 0.5
     radius = 0.1
     n_steps = 400
     undamped_sol_params = [10.0, 0.001, 0.9, 0.95, 0.001, 0.5, 2.0]
-    stiffness = 20.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -298,20 +296,9 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
             pos=(0.5, 0, h0),
         ),
     )
-    # Undamped two-link arm on stiff springs, swinging clear of the ground and the spheres. Its mass matrix is
-    # configuration-dependent, so its energy only balances if the kinetic term tracks the current configuration and
-    # the potential term accounts for the springs holding the joints off their neutral pose.
-    mjcf = ET.Element("mujoco")
-    worldbody = ET.SubElement(mjcf, "worldbody")
-    upper = ET.SubElement(worldbody, "body", name="arm_upper", pos="0.25 0.5 0.8")
-    ET.SubElement(upper, "joint", name="shoulder", type="hinge", axis="0 1 0", stiffness=str(stiffness), damping="0")
-    ET.SubElement(upper, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
-    lower = ET.SubElement(upper, "body", name="arm_lower", pos="0.2 0 0")
-    ET.SubElement(lower, "joint", name="elbow", type="hinge", axis="0 1 0", stiffness=str(stiffness), damping="0")
-    ET.SubElement(lower, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
     arm = scene.add_entity(
         gs.morphs.MJCF(
-            file=ET.tostring(mjcf, encoding="unicode"),
+            file=spring_double_pendulum,
         ),
     )
     scene.build()
