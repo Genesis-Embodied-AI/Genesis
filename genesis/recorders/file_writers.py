@@ -80,9 +80,9 @@ class VideoFileWriter(BaseFileWriter):
         )
 
     def process(self, data, cur_time):
-        # 'astype' copies unconditionally, which is what lets the frame be encoded asynchronously while the caller is
-        # free to reuse its own buffer.
-        self.encoder.write(data.astype(np.uint8))
+        # The copy is unconditional, which is what lets the frame be encoded asynchronously while the caller is free to
+        # reuse its own buffer.
+        self.encoder.write(data.copy())
 
     def cleanup(self):
         try:
