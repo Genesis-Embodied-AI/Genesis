@@ -431,7 +431,9 @@ def test_extended_broadcasting():
 @pytest.mark.parametrize("batch_links_info", [False, True])
 @pytest.mark.parametrize("batch_joints_info", [False, True])
 @pytest.mark.parametrize("batch_dofs_info", [False, True])
-def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
+def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info, tol):
+    INERTIA_RATIO = 2.0
+
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             batch_links_info=batch_links_info,
@@ -439,21 +441,56 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
             batch_dofs_info=batch_dofs_info,
         ),
     )
-    terrain = scene.add_entity(gs.morphs.Terrain())
-    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    scene.add_entity(gs.morphs.Terrain())
+    franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
     scene.build(n_envs=2)
+    gs_s = scene.rigid_solver
 
-    links_info = terrain.solver.data_manager.dyn_info.links
+    links_info = gs_s.data_manager.dyn_info.links
     entity_idx = links_info.entity_idx.to_numpy()
-    assert entity_idx.shape == (12, 2) if batch_links_info else (12,)
+    assert entity_idx.shape == ((12, 2) if batch_links_info else (12,))
 
-    joints_info = terrain.solver.data_manager.dyn_info.joints
+    joints_info = gs_s.data_manager.dyn_info.joints
     pos = joints_info.pos.to_numpy()
-    assert pos.shape == (10, 2, 3) if batch_joints_info else (10, 3)
+    assert pos.shape == ((10, 2, 3) if batch_joints_info else (10, 3))
 
-    dofs_info = terrain.solver.data_manager.dyn_info.dofs
+    dofs_info = gs_s.data_manager.dyn_info.dofs
     act_gain = dofs_info.act_gain.to_numpy()
-    assert act_gain.shape == (9, 2) if batch_dofs_info else (9,)
+    assert act_gain.shape == ((9, 2) if batch_dofs_info else (9,))
+
+    # Give every environment its own configuration, so that picking the wrong one cannot go unnoticed.
+    franka.set_dofs_position(np.random.rand(2, franka.n_dofs))
+
+    # Links info only has an environment dimension when batched, so `envs_idx` must be rejected otherwise.
+    if batch_links_info:
+        # Potential energy is linear in the link masses, so scaling the inertia of every link of a single environment
+        # scales the potential energy of that environment by the very same ratio, leaving the other one untouched.
+        potential_energy = franka.get_potential_energy()
+        gs_s.set_links_inertia(INERTIA_RATIO, envs_idx=[1])
+        assert_allclose(franka.get_potential_energy() / potential_energy, (1.0, INERTIA_RATIO), tol=tol)
+
+        links_mass = gs_s.get_links_inertial_mass()
+        links_invweight = gs_s.get_links_invweight()
+        assert links_mass.shape == (2, 12)
+        assert links_invweight.shape == (2, 12, 2)
+        assert_allclose(links_mass[1], INERTIA_RATIO * links_mass[0], tol=tol)
+        assert_allclose(INERTIA_RATIO * links_invweight[1], links_invweight[0], tol=tol)
+        assert_allclose(gs_s.get_links_inertial_mass(envs_idx=[1]), links_mass[1], tol=gs.EPS)
+        assert_allclose(gs_s.get_links_invweight(envs_idx=[1]), links_invweight[1], tol=gs.EPS)
+    else:
+        assert gs_s.get_links_inertial_mass().shape == (12,)
+        assert gs_s.get_links_invweight().shape == (12, 2)
+        with pytest.raises(gs.GenesisException):
+            gs_s.get_links_inertial_mass(envs_idx=[1])
+        with pytest.raises(gs.GenesisException):
+            gs_s.get_links_invweight(envs_idx=[1])
+
+    # Energy getters select environments through the dynamic state, so they accept `envs_idx` in both batching modes.
+    for get_energy in (gs_s.get_total_energy, franka.get_potential_energy, franka.get_total_energy):
+        energy = get_energy()
+        with np.testing.assert_raises(AssertionError):
+            assert_allclose(energy[0], energy[1], tol=gs.EPS)
+        assert_allclose(get_energy(envs_idx=[1]), energy[1], tol=gs.EPS)
 
 
 @pytest.mark.slow  # ~200s
