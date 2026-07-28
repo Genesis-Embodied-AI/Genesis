@@ -21,69 +21,63 @@ _VALIDATE_UPSAMPLE = 8
 # sub-intervals split exactly at the sample (the only possible knot boundary inside the interval) and each one
 # lies within a single knot segment.
 _VALIDATE_REFINE = 16
-# Window of margin-free clearance within which a goal contact may be excused: the allowance exists to absorb
-# the sphere proxy's conservatism where the goal genuinely intends contact (grasp and place poses), so it only
-# covers pairs within proxy-padding distance of contact at the goal. Above the band the pair is physically clear
-# and merely violates the requested safety margin, which must stay enforced or the clearance contract would
-# silently collapse at user-supplied goals; below the depth the goal is genuinely infeasible and must fail
-# validation. The band matches the proxy padding scale; tighter values leave a dead zone of pairs too clear to
-# excuse yet too snug for the optimizer and fallback demands, which walls off contact-rich goals. The start
-# configuration is exempt from the window: it is the live physical state, so however deep its proxy violations
-# run, they are proxy artifacts rather than real penetrations.
+# Margin-free clearance window within which a goal contact may be excused. The allowance absorbs the sphere
+# proxy's conservatism where the goal intends contact (grasp and place poses), so it covers only pairs within
+# proxy-padding distance of contact: above the band a pair is physically clear and merely violates the requested
+# margin, which stays enforced so the clearance contract holds at user-supplied goals, and below the depth the goal
+# is infeasible and fails validation. The band matches the proxy padding scale, tighter values leaving a dead zone
+# of pairs too clear to excuse yet too snug for the optimizer and fallback demands, which walls off contact-rich
+# goals. The start configuration is exempt, being the live physical state: its proxy violations are artifacts at
+# any depth.
 _EXCL_DEPTH_MAX = 0.05
 _EXCL_CONTACT_BAND = 0.02
-# Workspace displacement from the anchor geometry within which a boundary-contact allowance applies at full
-# depth; beyond it the demand ramps back to the standard clearance at the Lipschitz rate (one meter of clearance
-# per meter of displacement). Displacement is measured exactly - the excused sphere's world motion since its
-# anchor (relative motion for self pairs) - so the excused depth is confined to the true approach neighborhood
-# of its anchoring boundary: real penetration along a certified path is bounded by the anchor's own physical
-# contact plus the plateau, which makes the plateau the certified leak budget. A straight approach keeps a
-# positive margin of min(distance-to-anchor, plateau) under this ramp at ANY plateau width, and curved
-# approaches that are genuinely clear certify through the exact rescue (see _EXACT_RESCUE_WINDOW), so the
-# certification plateau stays at the leak budget. The optimizer enforces the same ramp (cost and gradient) to
-# shape terminal approaches into the certified cone, but with a wide plateau: it has no rescue, its cone needs
-# no soundness, and a budget-narrow funnel stalls descent. A joint-space travel bound was measured
-# order-of-magnitude too conservative here (it walls off every contact-rich goal); the displacement must stay
-# exact.
+# Workspace displacement from the anchor geometry over which a boundary-contact allowance holds at full depth;
+# beyond it the demand ramps back to the standard clearance at the Lipschitz rate (a meter of clearance per meter
+# of displacement). Displacement is the excused sphere's exact world motion since its anchor (relative motion for
+# self pairs), which confines the excused depth to the true approach neighborhood of its anchoring boundary: real
+# penetration along a certified path is bounded by the anchor's own physical contact plus the plateau, making the
+# plateau the certified leak budget. A straight approach keeps a positive margin of min(distance-to-anchor,
+# plateau) at ANY plateau width, and genuinely clear curved approaches certify through the exact rescue (see
+# _EXACT_RESCUE_WINDOW), so the certification plateau stays at the leak budget. The optimizer enforces the same
+# ramp in cost and gradient to shape terminal approaches into the certified cone, but on a wide plateau: it has no
+# rescue, its cone needs no soundness, and a budget-narrow funnel stalls descent. The displacement must stay
+# exact - a joint-space travel bound is an order of magnitude too conservative and walls off every contact-rich
+# goal.
 _EXCL_ANCHOR_SLACK_CERT = 0.02
 _EXCL_ANCHOR_SLACK_OPT = 0.02
-# Proxy overlap within which a failing (robot sphere, world geom) pair is re-checked exactly (certification paths
-# only). The sphere proxy over-covers the mesh by up to a few centimeters, and demanding proxy clearance outright
-# walls off every corridor the real geometry clears - random sampling then cannot grow trees through them. Against a
-# convex world geom the re-check is the collider's GJK distance on the sphere's own collision geom (see
-# func_gjk_clearance) - exact, so a clear pair reads its true clearance and a sphere-swept pair its true shallow
-# depth. The covering-sample sweep below remains the fallback for non-convex world geoms (grid signed distance
-# fields) and for depth when GJK only reports intersection: the whole surface lies within _EXACT_SAMPLE_COV of some
-# sample, so by the 1-Lipschitz world signed distance the true clearance is at least the sample minimum less that
-# covering radius; the rescued demand subtracts it, keeping the rescue a strict lower bound of the true clearance
-# (raw vertices alone are unsound: an obstacle edge can poke a face interior deeper than any of its vertices).
-# Overlaps deeper than the window are genuine collisions and skip the re-check, which bounds its cost. The sweep is
-# two-level: the coarse covering decides the clear-cut cases at a fraction of the samples - its minimum is an upper
-# bound of the fine one (fewer points), so a coarse sweep below the win threshold rules the rescue out, and a
-# non-negative coarse covering bound certifies positives whose sign no finer sweep could flip - and only the
-# marginal band pays the fine sweep.
+# Proxy overlap within which a failing (robot sphere, world geom) pair is re-checked exactly, on certification
+# paths only. The sphere proxy over-covers the mesh by centimeters, so demanding proxy clearance outright walls off
+# every corridor the real geometry clears and random sampling cannot grow trees through them. Against a convex
+# world geom the re-check is the collider's GJK distance on the sphere's own collision geom (see
+# func_gjk_clearance), exact for both a clear pair's true clearance and a swept pair's shallow depth. The
+# covering-sample sweep is the fallback for non-convex world geoms (grid signed distance fields) and for depth
+# where GJK resolves only intersection: the surface lies within _EXACT_SAMPLE_COV of some sample, so by the
+# 1-Lipschitz world signed distance the true clearance is at least the sample minimum less that covering radius,
+# and subtracting it keeps the rescue a strict lower bound (raw vertices alone are unsound, an obstacle edge poking
+# a face interior deeper than any vertex). Deeper overlaps are genuine collisions and skip the re-check, which
+# bounds its cost. The sweep is two-level: a coarse covering minimum is an upper bound of the fine one, so it rules
+# the rescue out below the win threshold and certifies positives whose sign no finer sweep could flip, leaving only
+# the marginal band to pay for the fine level.
 _EXACT_RESCUE_WINDOW = 0.08
 _EXACT_SAMPLE_COV = 0.005
 _EXACT_SAMPLE_COV_COARSE = 0.02
-# Real penetration budget of an accepted Cartesian goal hold. A hold's exact reading, plus the clearance it was
-# probed at, is a lower bound of the branch's true world clearance, so the acceptance gate charges this constant
-# against that bound and nothing else - it is what the hold may really penetrate, and every term added to either
-# side of that comparison widens it by as much again. It must NOT track the anchor plateau, whose width is set by
-# optimizer convergence, or widening the plateau would silently re-admit really-penetrating goals. It only applies
-# to the exact minimum: self and attached-entity pairs read raw proxy conservatism, which the acceptance gate
-# bounds by boundary excusability instead (_EXCL_DEPTH_MAX).
+# Real penetration budget of an accepted Cartesian goal hold. A hold's exact reading plus the clearance it was
+# probed at is a lower bound of the branch's true world clearance, and the acceptance gate charges this constant
+# against that bound alone - every term added to either side widens what the hold may really penetrate by as much
+# again. It is fixed independently of the anchor plateau, whose width answers to optimizer convergence: tying the
+# two would let a wider plateau re-admit really-penetrating goals. It applies to the exact minimum only, self and
+# attached-entity pairs reading raw proxy conservatism that the gate bounds by boundary excusability instead
+# (_EXCL_DEPTH_MAX).
 _GOAL_REAL_PEN_MAX = 0.002
 
 # Damped-least-squares budgets for the in-kernel Cartesian-goal solve (one Gauss-Newton solve per restart column):
 # more iterations trade compute for reaching tighter poses, the damping trades step aggressiveness for robustness
 # near singularities, and the step cap keeps a single update from overshooting. Tuned to the entity IK defaults.
 _GOAL_IK_ITERS = 20
-# Sub-batches of n_seeds restarts drawn per resolution pass (decouples goal-resolution restart depth from the
-# trajectory candidate count): 4 sub-batches x n_seeds gives the restart diversity a rare collision-free goal
-# branch needs, without inflating the trajectory-candidate pipeline.
-# Restart sub-batches a pass may draw for one env's Cartesian goal. An env stops drawing as soon as it holds a
-# collision-free branch, so this bounds the effort a hard goal may ask for rather than setting what every goal
-# pays: cluttered goals, where the acceptable branch is rare, are exactly the ones that need the extra draws.
+# Restart sub-batches of n_seeds a pass may draw for one env's Cartesian goal, which decouples the restart depth
+# from the trajectory candidate count. An env stops drawing as soon as it holds a collision-free branch, so this
+# bounds the effort a hard goal may ask for instead of setting what every goal pays: cluttered goals, where an
+# acceptable branch is rare, are the ones that need the depth.
 _GOAL_IK_BATCHES = 16
 _GOAL_IK_DAMPING = 0.01
 # One prime per degree of freedom, the radical-inverse bases of the goal restarts' low-discrepancy sequence.
@@ -1804,8 +1798,7 @@ def func_resolve_goal(
                 for i_dp in range(n_dp):
                     q = planner_state.fk.eval.qpos[i_dp, i_c]
                     planner_state.ik.qpos_best[i_dp, i_c] = q
-                    # A boundary configuration supplied beyond a limit is a boundary condition, so a restart is
-                    # only flagged when it exceeds the limit by more than the boundary conditions already do.
+                    # Flagged only past what the boundary conditions already exceed (see func_validate).
                     over_allow = qd.max(
                         planner_info.cost.boundary.qpos_start[i_dp, i_b] - planner_info.fk.dofs.q_limit_upper[i_dp],
                         planner_info.cost.boundary.qpos_goal[i_dp, i_b] - planner_info.fk.dofs.q_limit_upper[i_dp],

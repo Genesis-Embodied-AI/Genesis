@@ -146,24 +146,23 @@ def func_rrt_edge_is_free(
             / qd.cast(n_sub, gs.qd_float),
         )
 
-    # Lane i_lane takes a share of the segment's samples (see the visiting order below) and the lanes agree after
-    # every round, so an edge costs its samples spread across a subgroup rather than walked one by one and a
-    # blocked edge stops at the first round any lane rejects it, rather than each lane walking to its own blocker.
-    # The agreed verdict is what drives the loop, so the lanes stay convergent and all of them reach the round's
-    # reduction. The verdict itself cannot change: leaving early means a blocker was already found.
+    # Lane i_lane takes a share of the segment's samples and the lanes agree after every round, so an edge spreads
+    # its samples across a subgroup and a blocked edge stops at the first round any lane rejects it, instead of each
+    # lane walking to its own blocker. The agreed verdict drives the loop, keeping the lanes convergent through the
+    # round's reduction, and it cannot change once taken: leaving early means a blocker was found.
     n_lanes = qd.static(planner_config.n_cost_lanes)
     i_e_col = i_t * n_lanes + i_lane
-    # A lane walks its share in one of two orders, and either way the visited set is the same {1..n_sub}, so the
-    # verdict is the conjunction over identical samples and every edge decides identically - the choice only moves
-    # when a rejected edge meets its blocker. Both live in one loop because the body inlines the whole collision
-    # cost, so a second call site would duplicate it in every kernel that grows a tree.
-    #   serial arm: bit-reversed, so a blocked stretch is met after a number of samples set by its width as a
-    #     fraction of the edge rather than by the blocker's distance from the start. Long edges are the ones that
-    #     reject, so they stop paying for their length; the first index visited is the far endpoint, which for a
-    #     growth edge is the new node the check exists to qualify.
+    # Both walk orders visit the same set {1..n_sub}, so the verdict is a conjunction over identical samples and
+    # every edge decides identically - the order only moves when a rejected edge meets its blocker. They share one
+    # loop because the body inlines the whole collision cost, which a second call site would duplicate in every
+    # kernel that grows a tree.
+    #   serial arm: bit-reversed, so a blocked stretch is met after a sample count set by its width as a fraction
+    #     of the edge rather than by the blocker's distance from the start. Long edges are the ones that reject, so
+    #     they stop paying for their length, and the first index visited is the far endpoint - for a growth edge,
+    #     the new node the check exists to qualify.
     #   lane arm: start to end, strided. A lane holds only n_sub/n_cost_lanes samples, too few for the reordering
-    #     to save a pass over one, while its skipped indices - the bit-reversed walk covers a power-of-two range
-    #     and drops what overshoots - cost more than they buy.
+    #     to save a pass, and its skipped indices cost more than they buy (the bit-reversed walk covers a
+    #     power-of-two range and drops the overshoot).
     n_steps = (n_sub + n_lanes - 1) // n_lanes
     n_bits = gs.qd_int(1)
     n_perm = gs.qd_int(2)

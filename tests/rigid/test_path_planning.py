@@ -9,32 +9,9 @@ from genesis.utils.misc import qd_to_torch
 from ..utils import assert_allclose, assert_equal
 
 
-def _max_true_penetration(scene, entity, qpos_waypoints, obstacles, show_viewer):
-    # Ground truth through the real collider, independent of the planner's sphere proxy. Mutates the scene, so
-    # callers restore the configuration afterward. Doubles as the interactive replay of the returned path, since
-    # planning tests never step the scene.
-    collider_state = scene.rigid_solver.collider._collider_state
-    obstacle_geoms = {geom.idx for obstacle in obstacles for link in obstacle.links for geom in link.geoms}
-    max_penetration = 0.0
-    for waypoint in qpos_waypoints:
-        entity.set_qpos(waypoint, zero_velocity=False)
-        if show_viewer:
-            scene.visualizer.update()
-        scene.rigid_solver.collider.detection()
-        n_contacts = qd_to_torch(collider_state.n_contacts)
-        geom_a = qd_to_torch(collider_state.contact_data.geom_a)
-        geom_b = qd_to_torch(collider_state.contact_data.geom_b)
-        penetration = qd_to_torch(collider_state.contact_data.penetration)
-        for i_b in range(max(scene.n_envs, 1)):
-            for i_c in range(int(n_contacts[i_b])):
-                if int(geom_a[i_c, i_b]) in obstacle_geoms or int(geom_b[i_c, i_b]) in obstacle_geoms:
-                    max_penetration = max(max_penetration, float(penetration[i_c, i_b]))
-    return max_penetration
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_plan_to_qpos_goal_avoids_obstacles(n_envs, show_viewer, tol):
+def test_plan_to_qpos_goal_avoids_obstacles(n_envs, show_viewer, max_true_penetration, tol):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 1.5, 1.5),
@@ -127,7 +104,7 @@ def test_plan_to_qpos_goal_avoids_obstacles(n_envs, show_viewer, tol):
         assert path_sub.qpos.shape[1] == 1 and path_sub.is_valid.all()
 
     # Ground truth: sweeping the returned waypoints through the real collider never penetrates the obstacles.
-    max_penetration = _max_true_penetration(scene, franka, path.qpos, (pillar,), show_viewer)
+    max_penetration = max_true_penetration(scene, franka, path.qpos, (pillar,), show_viewer)
     assert max_penetration < 5e-3
 
 
@@ -249,7 +226,7 @@ def test_plan_path_with_attached_entity(n_envs, show_viewer):
 @pytest.mark.slow
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_plan_path_clearance_and_narrow_passage(n_envs, show_viewer):
+def test_plan_path_clearance_and_narrow_passage(n_envs, show_viewer, max_true_penetration):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 1.5, 1.5),
@@ -281,7 +258,7 @@ def test_plan_path_clearance_and_narrow_passage(n_envs, show_viewer):
     # sampling fallback; a couple of retries must be enough.
     path = franka.plan_path(qpos_goal, qpos_start=qpos_start, max_retry=2, seed=5)
     assert path.is_valid.all()
-    max_penetration = _max_true_penetration(scene, franka, path.qpos, (wall,), show_viewer)
+    max_penetration = max_true_penetration(scene, franka, path.qpos, (wall,), show_viewer)
     assert max_penetration < 5e-3
 
     # A requested clearance is honored along the whole path (up to the proxy conservatism), and an impossible
@@ -303,7 +280,7 @@ def test_plan_path_clearance_and_narrow_passage(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 16])
-def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer):
+def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer, max_true_penetration):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -1.3, 1.5),
@@ -417,7 +394,7 @@ def test_plan_to_pregrasp_goal_in_clutter(n_envs, show_viewer):
 
     # Ground truth on the last plan: the real collider reports no penetration of the fixed clutter anywhere
     # along the returned path, and the final waypoint reaches the pre-grasp pose in every env.
-    max_penetration = _max_true_penetration(scene, franka, path.qpos, obstacles, show_viewer)
+    max_penetration = max_true_penetration(scene, franka, path.qpos, obstacles, show_viewer)
     assert max_penetration < 5e-3
     franka.set_qpos(path.qpos[-1], zero_velocity=False)
     assert_allclose(hand.get_pos(), goal_pos, tol=6e-3)

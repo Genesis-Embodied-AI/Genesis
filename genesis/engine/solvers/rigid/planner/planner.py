@@ -858,11 +858,11 @@ class Planner:
             n_cost_lanes = 1 << (n_lanes_max.bit_length() - 1)
         # A goal-resolution block is one launch, and at n_seeds restarts per env it is far too narrow to fill a
         # device: the blocks then cost their own latency, once per block, and a pass walks all of them because an
-        # excusably-contacting goal never lets the sequence exit early. Widen a block by whatever multiple of the
-        # draw depth the device can still run at once - the same occupancy quantity n_cost_lanes uses - and walk
-        # proportionally fewer of them. The draw depth per pass is unchanged, so this only moves where the draws
-        # happen; the width is a power of two so the blocks divide it exactly, and it falls back to n_seeds (today's
-        # shape) on CPU and once the batch alone saturates the machine, which also bounds the per-restart scratch.
+        # excusably-contacting goal never lets the sequence exit early. A block is therefore as wide as the multiple
+        # of the draw depth the device still runs at once - the same occupancy quantity n_cost_lanes uses - and a
+        # pass walks proportionally fewer of them. The draw depth per pass is unchanged, so the width only moves
+        # where the draws happen; a power of two divides the blocks exactly, and it collapses to n_seeds on CPU and
+        # once the batch alone saturates the machine, which also bounds the per-restart scratch.
         goal_width = 1
         if gs.backend != gs.cpu:
             occupancy = max(get_gpu_core_count() // max(B * n_seeds, 1), 1)
