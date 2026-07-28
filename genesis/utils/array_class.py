@@ -2832,7 +2832,8 @@ class PlannerGeomsInfo:
     so certification paths can pose each geom at hypothetical forward-kinematics poses and query the collider's
     GJK distance (see func_gjk_clearance in cost.py); links_start ranges the geoms per entity-local link
     (geoms sorted by link). Each geom carries the link-frame bounding sphere of its collision mesh for a
-    query-free skip bound."""
+    query-free skip bound. is_polyhedron marks the geoms whose stored vertices ARE their surface extremes
+    (meshes and boxes), which is what lets the half-space rescue read an exact clearance off them."""
 
     geoms_idx: qd.Tensor
     links_start: qd.Tensor
@@ -2840,19 +2841,26 @@ class PlannerGeomsInfo:
     offset_quat: qd.Tensor
     bound_center_local: qd.Tensor
     bound_radius: qd.Tensor
+    is_polyhedron: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerVertsInfo:
-    """Covering surface samples of the robot collision meshes in link-local frames, partitioned per proxy sphere
-    through the compressed *_start ranges: the certification paths re-check a proxy-failing (sphere, world geom)
-    pair against the sphere's own samples, deciding on the small coarse covering whenever its bound is conclusive
-    and sweeping the fine one only in the marginal band (see _EXACT_RESCUE_WINDOW in cost.py)."""
+    """Points of the robot collision meshes in link-local frames, in one pool that three compressed ranges address.
+
+    A certification path re-checks a proxy-failing (sphere, world geom) pair against points of the robot surface:
+    spheres_coarse_start and spheres_start range the coarse and fine COVERING samples of each proxy sphere, and the
+    caller subtracts the level's covering radius to bound the surface between them - the coarse level decides
+    whenever its bound is conclusive and only the marginal band pays the fine one (see _EXACT_RESCUE_WINDOW in
+    cost.py). geoms_start instead ranges the collision meshes' OWN vertices, per geom: a half-space signed distance
+    is linear, so its minimum over a polyhedron is attained at a vertex, and against such an obstacle those few
+    points answer exactly, with no covering radius. One pool serves all three so the sweep has a single call site
+    and only its bounds vary."""
 
     pos_local: qd.Tensor
     spheres_start: qd.Tensor
-    coarse_pos_local: qd.Tensor
     spheres_coarse_start: qd.Tensor
+    geoms_start: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -3034,7 +3042,7 @@ class PlannerEntityInfo:
     cert: PlannerCertInfo
 
 
-def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts, n_coarse_verts, n_robot_geoms, B):
+def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts, n_robot_geoms, B):
     return PlannerEntityInfo(
         fk=PlannerFKInfo(
             dofs=PlannerDofsInfo(
@@ -3059,12 +3067,13 @@ def get_planner_entity_info(planner_config, n_self_pairs, n_link_pairs, n_verts,
                 offset_quat=V_VEC(4, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
                 bound_center_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
                 bound_radius=V(dtype=gs.qd_float, shape=(max(n_robot_geoms, 1),)),
+                is_polyhedron=V(dtype=gs.qd_bool, shape=(max(n_robot_geoms, 1),)),
             ),
             verts=PlannerVertsInfo(
                 pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_verts, 1),)),
                 spheres_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
-                coarse_pos_local=V_VEC(3, dtype=gs.qd_float, shape=(max(n_coarse_verts, 1),)),
                 spheres_coarse_start=V(dtype=gs.qd_int, shape=(planner_config.n_spheres + 1,)),
+                geoms_start=V(dtype=gs.qd_int, shape=(max(n_robot_geoms, 1) + 1,)),
             ),
             self_pairs=PlannerSelfPairsInfo(
                 spheres_idx=V_VEC(2, dtype=gs.qd_int, shape=(max(n_self_pairs, 1),)),
@@ -3170,6 +3179,9 @@ class PlannerWorldState:
     # Whether the geom is convex (analytic primitive or convex mesh), so the exact rescue can query the
     # collider's GJK distance against it; non-convex meshes and terrains keep the sample sweep on the grid SDF.
     geoms_is_convex: qd.Tensor
+    # Whether the geom is a half-space, whose linear signed distance the exact rescue minimizes over a robot
+    # geom's own vertices - the one unbounded obstacle shape, and the reason GJK cannot answer for it.
+    geoms_is_plane: qd.Tensor
 
 
 def get_planner_world_state(n_geoms, B):
@@ -3183,6 +3195,7 @@ def get_planner_world_state(n_geoms, B):
         geoms_is_active=V(dtype=gs.qd_bool, shape=(max(n_geoms, 1), B)),
         geoms_max_band=V(dtype=gs.qd_float, shape=(max(n_geoms, 1),)),
         geoms_is_convex=V(dtype=gs.qd_bool, shape=(max(n_geoms, 1),)),
+        geoms_is_plane=V(dtype=gs.qd_bool, shape=(max(n_geoms, 1),)),
     )
 
 

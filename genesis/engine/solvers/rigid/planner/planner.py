@@ -696,6 +696,7 @@ class Planner:
         spheres_link_idx, spheres_geom_idx, spheres_pos_local, spheres_radius = [], [], [], []
         rgeoms_idx, rgeoms_offset_pos, rgeoms_offset_quat = [], [], []
         rgeoms_bound_center, rgeoms_bound_radius, rgeoms_links_start = [], [], [0]
+        rgeoms_verts, rgeoms_is_polyhedron = [], []
         links_verts_extent = np.zeros(entity.n_links, dtype=gs.np_float)
         for i_l, link in enumerate(entity.links):
             for geom in link.geoms:
@@ -711,6 +712,11 @@ class Planner:
                 rgeoms_offset_quat.append(geom.init_quat)
                 rgeoms_bound_center.append(bound_center)
                 rgeoms_bound_radius.append(np.linalg.norm(verts - bound_center, axis=-1).max())
+                rgeoms_verts.append(verts)
+                # A mesh or a box is bounded by its own stored vertices, so a linear obstacle distance is minimized
+                # at one of them. The curved primitives are tessellated, and a tessellation lies INSIDE the surface
+                # it stands for, so reading their vertices would overstate the clearance: those keep the sweep.
+                rgeoms_is_polyhedron.append(geom.type in (gs.GEOM_TYPE.MESH, gs.GEOM_TYPE.BOX))
                 links_verts_extent[i_l] = max(links_verts_extent[i_l], np.linalg.norm(verts, axis=-1).max())
             rgeoms_links_start.append(len(rgeoms_idx))
         spheres_link_idx = np.array(spheres_link_idx, dtype=gs.np_int)
@@ -812,12 +818,16 @@ class Planner:
                     for i_s in range(len(proxy.radius)):
                         level_verts[i_sphere_base + i_s] = samples[assigned == i_s]
                 i_sphere_base += len(proxy.radius)
-        spheres_vert_start = np.zeros(len(spheres_radius) + 1, dtype=gs.np_int)
-        np.cumsum([len(samples) for samples in spheres_verts_fine], out=spheres_vert_start[1:])
-        verts_pos_local = np.concatenate(spheres_verts_fine, dtype=gs.np_float)
-        spheres_coarse_start = np.zeros(len(spheres_radius) + 1, dtype=gs.np_int)
-        np.cumsum([len(samples) for samples in spheres_verts_coarse], out=spheres_coarse_start[1:])
-        coarse_pos_local = np.concatenate(spheres_verts_coarse, dtype=gs.np_float)
+        # The three point sets share one pool so the level sweep keeps a single call site, each range addressing
+        # its own section of it: fine covering per sphere, coarse covering per sphere, own vertices per geom.
+        sections = (*spheres_verts_fine, *spheres_verts_coarse, *rgeoms_verts)
+        section_start = np.zeros(len(sections) + 1, dtype=gs.np_int)
+        np.cumsum([len(points) for points in sections], out=section_start[1:])
+        n_spheres_total = len(spheres_radius)
+        spheres_vert_start = section_start[: n_spheres_total + 1]
+        spheres_coarse_start = section_start[n_spheres_total : 2 * n_spheres_total + 1]
+        rgeoms_verts_start = section_start[2 * n_spheres_total :]
+        verts_pos_local = np.concatenate(sections, dtype=gs.np_float)
 
         # Attached-sphere capacity: every proxy sphere of every single-link free entity in the scene.
         n_attach_max = sum(
@@ -888,7 +898,6 @@ class Planner:
             len(self_pairs),
             len(self_link_pairs),
             len(verts_pos_local),
-            len(coarse_pos_local),
             len(rgeoms_idx),
             B,
         )
@@ -925,16 +934,17 @@ class Planner:
         rgeoms_bound_center_t[:] = torch.as_tensor(np.array(rgeoms_bound_center, dtype=gs.np_float), device=gs.device)
         rgeoms_bound_radius_t = qd_to_torch(planner_info.fk.geoms.bound_radius, copy=False)
         rgeoms_bound_radius_t[:] = torch.as_tensor(np.array(rgeoms_bound_radius, dtype=gs.np_float), device=gs.device)
+        rgeoms_is_polyhedron_t = qd_to_torch(planner_info.fk.geoms.is_polyhedron, copy=False)
+        rgeoms_is_polyhedron_t[:] = torch.as_tensor(np.array(rgeoms_is_polyhedron, dtype=gs.np_bool), device=gs.device)
         if len(verts_pos_local) > 0:
             verts_pos_local_t = qd_to_torch(planner_info.fk.verts.pos_local, copy=False)
             verts_pos_local_t[:] = torch.as_tensor(verts_pos_local, device=gs.device)
         spheres_vert_start_t = qd_to_torch(planner_info.fk.verts.spheres_start, copy=False)
         spheres_vert_start_t[:] = torch.as_tensor(spheres_vert_start, device=gs.device)
-        if len(coarse_pos_local) > 0:
-            coarse_pos_local_t = qd_to_torch(planner_info.fk.verts.coarse_pos_local, copy=False)
-            coarse_pos_local_t[:] = torch.as_tensor(coarse_pos_local, device=gs.device)
         spheres_coarse_start_t = qd_to_torch(planner_info.fk.verts.spheres_coarse_start, copy=False)
         spheres_coarse_start_t[:] = torch.as_tensor(spheres_coarse_start, device=gs.device)
+        rgeoms_verts_start_t = qd_to_torch(planner_info.fk.verts.geoms_start, copy=False)
+        rgeoms_verts_start_t[:] = torch.as_tensor(rgeoms_verts_start, device=gs.device)
         if self_pairs:
             self_pairs_idx_t = qd_to_torch(planner_info.fk.self_pairs.spheres_idx, copy=False)
             self_pairs_idx_t[:] = torch.as_tensor(np.array(self_pairs, dtype=gs.np_int), device=gs.device)
@@ -1333,9 +1343,11 @@ class Planner:
         )
         # Grid signed distance fields answer metrically only within their padded box; analytic primitives always.
         # Convex geoms (analytic primitives except the unbounded plane, and convex meshes) additionally answer
-        # the exact GJK re-checks (see geoms_is_convex in array_class.py).
+        # the exact GJK re-checks, and half-spaces answer exactly off a robot geom's own vertices (see
+        # geoms_is_convex and geoms_is_plane in array_class.py).
         max_band = qd_to_torch(planner_world.geoms_max_band, copy=False)
         is_convex = qd_to_torch(planner_world.geoms_is_convex, copy=False)
+        is_plane = qd_to_torch(planner_world.geoms_is_plane, copy=False)
         analytic_types = (
             gs.GEOM_TYPE.SPHERE,
             gs.GEOM_TYPE.PLANE,
@@ -1353,6 +1365,7 @@ class Planner:
             is_convex[i_gw] = (geom.type in analytic_types and geom.type != gs.GEOM_TYPE.PLANE) or (
                 geom.type == gs.GEOM_TYPE.MESH and geom.is_convex
             )
+            is_plane[i_gw] = geom.type == gs.GEOM_TYPE.PLANE
 
         sdf_info = solver.collider._sdf._sdf_info
         kernel_args = (

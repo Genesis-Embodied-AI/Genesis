@@ -175,32 +175,32 @@ def func_exclusion_self_anchor(i_p, i_bound, i_b, planner_info: array_class.Plan
 
 
 @qd.func
-def func_sphere_exact_signed_distance(
-    i_s,
+def func_verts_world_signed_distance(
+    i_l,
+    i_v_from,
+    i_v_to,
     i_gw,
     i_col,
     i_b,
     sd_stop,
     verts_pos: qd.Tensor,
-    verts_start: qd.Tensor,
     links_pos: qd.Tensor,
     links_quat: qd.Tensor,
     planner_world: array_class.PlannerWorldState,
-    planner_info: array_class.PlannerEntityInfo,
     dyn_info: array_class.DynInfo,
     sdf_info: array_class.SDFInfo,
 ):
-    """Exact clearance bound of proxy sphere i_s against world geom i_gw at forward-kinematics column i_col.
+    """Minimum world signed distance to geom i_gw over a vertex range of link i_l, at kinematics column i_col.
 
-    The bound is the minimum world signed distance over the sphere's own covering surface samples of one level,
-    verts_pos ranged by verts_start (see _EXACT_RESCUE_WINDOW); the caller subtracts the level's covering radius to
-    bound the sampled surface. The sweep stops early once the minimum drops below sd_stop, where the rescue can no
-    longer win.
+    The range picks what the caller is bounding out of the one point pool (see PlannerVertsInfo): a covering level
+    of one proxy sphere, whose covering radius the caller then subtracts, or the own vertices of one collision
+    geom, which against a half-space need no such correction. The walk stops early once the minimum drops below
+    sd_stop, past which the rescue can no longer win, so a truncated return is only ever too small - callers take a
+    maximum against it.
     """
-    i_l = planner_info.fk.spheres.link_idx[i_s]
     min_sd = gs.qd_float(qd.math.inf)
-    i_v = verts_start[i_s]
-    while i_v < verts_start[i_s + 1] and min_sd >= sd_stop:
+    i_v = i_v_from
+    while i_v < i_v_to and min_sd >= sd_stop:
         p = links_pos[i_l, i_col] + gu.qd_transform_by_quat(verts_pos[i_v], links_quat[i_l, i_col])
         min_sd = qd.min(min_sd, func_world_signed_distance(i_gw, i_b, p, planner_world, dyn_info, sdf_info))
         i_v = i_v + 1
@@ -396,11 +396,11 @@ def func_sphere_world_cost(
             # Borderline robot pair: the exact clearance replaces the proxy one (it is never smaller), which
             # admits corridors the proxy conservatism walls off. Against a convex world geom the collider's GJK
             # reads it directly on the sphere's own collision geom; a zero reading (intersecting, depth
-            # unresolved) and non-convex world geoms fall through to the covering-sample sweep.
+            # unresolved) and non-convex world geoms fall through to the vertex minimum below.
             is_exact_resolved = False
+            i_gr = planner_info.fk.spheres.geom_idx[i_s]
+            i_l_s = planner_info.fk.spheres.link_idx[i_s]
             if planner_world.geoms_is_convex[i_gw]:
-                i_gr = planner_info.fk.spheres.geom_idx[i_s]
-                i_l_s = planner_info.fk.spheres.link_idx[i_s]
                 geom_pos = links_pos[i_l_s, i_col] + gu.qd_transform_by_quat(
                     planner_info.fk.geoms.offset_pos[i_gr], links_quat[i_l_s, i_col]
                 )
@@ -426,25 +426,37 @@ def func_sphere_world_cost(
                     sd_eff = qd.max(sd_eff, d_exact - planner_info.cost.d_safe[None] - swp)
                     is_exact_resolved = True
             if not is_exact_resolved:
-                # Two-level covering sweep: the coarse screening level settles the clear-cut cases; only its
-                # marginal band pays the fine sweep (see _EXACT_RESCUE_WINDOW).
-                sd_stop = sd_eff + planner_info.cert.exact_sample_cov[None] + planner_info.cost.d_safe[None] + swp
-                sd_coarse = func_sphere_exact_signed_distance(
-                    i_s,
+                # A half-space signed distance is linear, so over a polyhedron it is minimized at a vertex: those
+                # vertices answer the pair exactly, no covering radius and a fraction of the points a covering
+                # level holds. Otherwise the coarse covering level screens - it settles the clear-cut cases and
+                # only its marginal band pays the fine one (see _EXACT_RESCUE_WINDOW).
+                is_vertex_exact = planner_world.geoms_is_plane[i_gw] and planner_info.fk.geoms.is_polyhedron[i_gr]
+                cov_level = planner_info.cert.exact_sample_cov[None]
+                i_v_from = planner_info.fk.verts.spheres_coarse_start[i_s]
+                i_v_to = planner_info.fk.verts.spheres_coarse_start[i_s + 1]
+                if is_vertex_exact:
+                    cov_level = gs.qd_float(0.0)
+                    i_v_from = planner_info.fk.verts.geoms_start[i_gr]
+                    i_v_to = planner_info.fk.verts.geoms_start[i_gr + 1]
+                sd_stop = sd_eff + cov_level + planner_info.cost.d_safe[None] + swp
+                sd_coarse = func_verts_world_signed_distance(
+                    i_l_s,
+                    i_v_from,
+                    i_v_to,
                     i_gw,
                     i_col,
                     i_b,
                     sd_stop,
-                    verts_pos=planner_info.fk.verts.coarse_pos_local,
-                    verts_start=planner_info.fk.verts.spheres_coarse_start,
+                    verts_pos=planner_info.fk.verts.pos_local,
                     links_pos=links_pos,
                     links_quat=links_quat,
                     planner_world=planner_world,
-                    planner_info=planner_info,
                     dyn_info=dyn_info,
                     sdf_info=sdf_info,
                 )
-                if sd_coarse >= sd_stop:
+                if is_vertex_exact:
+                    sd_eff = qd.max(sd_eff, sd_coarse - planner_info.cost.d_safe[None] - swp)
+                elif sd_coarse >= sd_stop:
                     bound_coarse = (
                         sd_coarse
                         - planner_info.cert.exact_sample_cov_coarse[None]
@@ -454,18 +466,18 @@ def func_sphere_world_cost(
                     if bound_coarse >= 0.0:
                         sd_eff = qd.max(sd_eff, bound_coarse)
                     else:
-                        sd_fine = func_sphere_exact_signed_distance(
-                            i_s,
+                        sd_fine = func_verts_world_signed_distance(
+                            i_l_s,
+                            planner_info.fk.verts.spheres_start[i_s],
+                            planner_info.fk.verts.spheres_start[i_s + 1],
                             i_gw,
                             i_col,
                             i_b,
                             sd_stop,
                             verts_pos=planner_info.fk.verts.pos_local,
-                            verts_start=planner_info.fk.verts.spheres_start,
                             links_pos=links_pos,
                             links_quat=links_quat,
                             planner_world=planner_world,
-                            planner_info=planner_info,
                             dyn_info=dyn_info,
                             sdf_info=sdf_info,
                         )
