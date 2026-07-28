@@ -2780,6 +2780,13 @@ class PlannerStaticConfig(metaclass=AutoInitMeta):
     flag_goal_tol: int
     flag_goal_in_collision: int
     # Cartesian-goal inverse-kinematics budgets (fixed): Gauss-Newton iterations, damped-least-squares damping,
+    # Restart columns one goal-resolution block draws at once, and the number of blocks a pass walks. Their product
+    # is the pass's draw depth (goal_ik_batches * n_seeds), which the width leaves untouched: a wider block draws
+    # the same restarts in fewer sequential launches, keyed on the draw's global position so the sequence is
+    # invariant to it. The width follows what the device runs at once, like n_cost_lanes, so it collapses back to
+    # n_seeds once the batch alone fills the machine - which is also what keeps the per-restart scratch bounded.
+    goal_restarts: int
+    goal_blocks: int
     # position / rotation convergence tolerances, and the per-step joint cap. goal_ik_batches decouples the goal
     # resolution restart depth from the trajectory candidate count: each pass draws goal_ik_batches sub-batches of
     # n_seeds restarts (reusing the candidate columns), so a rare collision-free goal branch is sampled reliably
@@ -3281,14 +3288,23 @@ class PlannerCostState:
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
 class PlannerCertState:
-    """Per-candidate certification outputs: the validity-flags bitfield, the optimization mask, and the min
-    clearances split by reading fidelity - exact = robot-sphere world pairs (rescue-bounded), proxy = self and
-    attached-entity pairs (raw proxy conservatism), see func_collision_cost."""
+    """Certification outputs, on two column axes.
+
+    The first four are per CANDIDATE: the validity-flags bitfield, the optimization mask, and the min clearances
+    split by reading fidelity - exact = robot-sphere world pairs (rescue-bounded), proxy = self and attached-entity
+    pairs (raw proxy conservatism), see func_collision_cost.
+
+    The goal_* three are per goal-resolution RESTART instead (B x goal_restarts). A restart is a hold at a candidate
+    goal, so it certifies one configuration rather than a trajectory, and giving it columns of its own is what lets
+    a block be as wide as the device can run - the candidate axis would otherwise cap it at n_seeds."""
 
     valid_flags: qd.Tensor
     is_active: qd.Tensor
     min_clearance_exact: qd.Tensor
     min_clearance_proxy: qd.Tensor
+    goal_flags: qd.Tensor
+    goal_clearance_exact: qd.Tensor
+    goal_clearance_proxy: qd.Tensor
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -3337,6 +3353,8 @@ class PlannerState:
 
 def get_planner_state(planner_config, B):
     n_candidates = B * planner_config.n_seeds
+    # Goal resolution runs its own restart columns, as many per env as a block is wide.
+    n_goal_cols = B * planner_config.goal_restarts
     n_knot_cols = n_candidates * planner_config.n_knots
     n_eval_cols = n_candidates * planner_config.n_eval_per_candidate
     n_spheres_with_attach = planner_config.n_spheres + planner_config.n_attach_max
@@ -3413,8 +3431,11 @@ def get_planner_state(planner_config, B):
             is_active=V(dtype=gs.qd_bool, shape=(n_candidates,)),
             min_clearance_exact=V(dtype=gs.qd_float, shape=(n_candidates,)),
             min_clearance_proxy=V(dtype=gs.qd_float, shape=(n_candidates,)),
+            goal_flags=V(dtype=gs.qd_int, shape=(n_goal_cols,)),
+            goal_clearance_exact=V(dtype=gs.qd_float, shape=(n_goal_cols,)),
+            goal_clearance_proxy=V(dtype=gs.qd_float, shape=(n_goal_cols,)),
         ),
-        ik=get_ik_state(planner_config.n_dp, planner_config.n_dp, 6, n_candidates),
+        ik=get_ik_state(planner_config.n_dp, planner_config.n_dp, 6, n_goal_cols),
         graph_counter=qd.ndarray(qd.i32, shape=()),
         goal_block_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),

@@ -855,6 +855,19 @@ class Planner:
         if gs.backend != gs.cpu and B * n_seeds <= get_gpu_core_count():
             n_lanes_max = min(_N_COST_LANES_MAX, solver._options.planner_n_knots)
             n_cost_lanes = 1 << (n_lanes_max.bit_length() - 1)
+        # A goal-resolution block is one launch, and at n_seeds restarts per env it is far too narrow to fill a
+        # device: the blocks then cost their own latency, once per block, and a pass walks all of them because an
+        # excusably-contacting goal never lets the sequence exit early. Widen a block by whatever multiple of the
+        # draw depth the device can still run at once - the same occupancy quantity n_cost_lanes uses - and walk
+        # proportionally fewer of them. The draw depth per pass is unchanged, so this only moves where the draws
+        # happen; the width is a power of two so the blocks divide it exactly, and it falls back to n_seeds (today's
+        # shape) on CPU and once the batch alone saturates the machine, which also bounds the per-restart scratch.
+        goal_width = 1
+        if gs.backend != gs.cpu:
+            occupancy = max(get_gpu_core_count() // max(B * n_seeds, 1), 1)
+            goal_width = 1 << (min(occupancy, cost_mod._GOAL_IK_BATCHES).bit_length() - 1)
+        goal_restarts = n_seeds * goal_width
+        goal_blocks = cost_mod._GOAL_IK_BATCHES // goal_width
         planner_config = array_class.PlannerStaticConfig(
             para_level=solver._para_level,
             is_batched_arm=arm == gs.planner_arm.BATCHED,
@@ -888,6 +901,8 @@ class Planner:
             flag_goal_in_collision=cost_mod.GOAL_IN_COLLISION,
             goal_ik_iters=cost_mod._GOAL_IK_ITERS,
             goal_ik_batches=cost_mod._GOAL_IK_BATCHES,
+            goal_restarts=goal_restarts,
+            goal_blocks=goal_blocks,
             goal_ik_damping=cost_mod._GOAL_IK_DAMPING,
             goal_ik_pos_tol=cost_mod._GOAL_IK_POS_TOL,
             goal_ik_rot_tol=cost_mod._GOAL_IK_ROT_TOL,
@@ -1461,7 +1476,7 @@ class Planner:
             if has_pose_goal:
                 # The pass's restart blocks are walked by the kernel itself; the count is set here, outside the
                 # loop that consumes it, as a device-side loop counter must be.
-                planner_state.goal_block_counter.from_numpy(np.array(planner_config.goal_ik_batches, dtype=np.int32))
+                planner_state.goal_block_counter.from_numpy(np.array(planner_config.goal_blocks, dtype=np.int32))
                 kernel_resolve_goal(
                     planner_state.goal_block_counter,
                     envs_idx_dev,

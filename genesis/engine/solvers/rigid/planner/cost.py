@@ -1647,9 +1647,9 @@ def func_resolve_goal(
     decrement-then-scan tail, as the constraint solver's iteration loop.
     """
     EPS = rigid_info.EPS[None]
-    n_blocks = qd.static(planner_config.goal_ik_batches)
-    n_seeds = qd.static(planner_config.n_seeds)
-    n_knots = qd.static(planner_config.n_knots)
+    n_blocks = qd.static(planner_config.goal_blocks)
+    n_restarts = qd.static(planner_config.goal_restarts)
+    n_draws = qd.static(planner_config.goal_ik_batches * planner_config.n_seeds)
     n_dp = qd.static(planner_config.n_dp)
     link_offset = qd.static(planner_config.link_offset)
     goal_link = planner_info.cost.boundary.goal_link_idx[None]
@@ -1662,22 +1662,25 @@ def func_resolve_goal(
     for i_b_reset in range(envs_idx.shape[0]):
         planner_state.goal_resolve_score[envs_idx[i_b_reset]] = 1e30
 
-    # Draw the pass's restarts in blocks of n_seeds, reusing the candidate columns: this decouples the
+    # Draw the pass's restarts in blocks, on restart columns of the resolution's own: this decouples the
     # goal-resolution restart depth from the trajectory candidate count, so a rare collision-free goal branch
     # is sampled reliably without inflating the far more expensive trajectory-candidate pipeline. Each
-    # block is validated as hold-at-goal candidates and its best acceptable restart competes for the
-    # env's goal (collision-free preferred), the pass keeping the best branch across all its blocks.
+    # block certifies its restarts as holds at their candidate goal and its best acceptable one competes for the
+    # env's goal (collision-free preferred), the pass keeping the best branch across all its blocks. A block is as
+    # wide as the device can run at once (see goal_restarts), which fixes the draw depth per pass rather than
+    # changing it: the same draws happen, in fewer launches.
     while qd.graph_do_while(goal_block_counter):
         # One damped-least-squares solve per restart column - all restarts of all envs run in parallel.
         qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
-        for i_c in range(envs_idx.shape[0] * n_seeds):
-            i_b = envs_idx[i_c // n_seeds]
+        for i_c in range(envs_idx.shape[0] * n_restarts):
+            i_b = envs_idx[i_c // n_restarts]
             # The counter counts the blocks left, so the pass walks its draws forward as it runs down.
-            attempt_key = planner_state.pass_index[None] * n_blocks + (n_blocks - goal_block_counter[()])
+            i_block = n_blocks - goal_block_counter[()]
             # Draw only for envs still without a collision-free branch. The flag holds for the whole plan, unlike
             # the score, which resets every pass: gating on the score would reopen the draw on the next pass and
-            # let a later, merely excusable branch overwrite a free goal the env had already earned.
-            planner_state.cert.is_active[i_c] = False
+            # let a later, merely excusable branch overwrite a free goal the env had already earned. A column that
+            # does not draw is marked unusable for the adoption below.
+            planner_state.cert.goal_flags[i_c] = -1
             if not planner_state.is_env_solved[i_b] and not planner_state.is_goal_free[i_b]:
                 # Restart from a low-discrepancy point of the joint box, indexed by the restart's global position
                 # in the plan (draw 0 is the plan's own start configuration). Random draws clump: sixteen of them
@@ -1685,8 +1688,8 @@ def func_resolve_goal(
                 # even though every restart converged on the pose. A radical-inverse sequence has no such
                 # clumping - every prefix of it is spread over the box - so coverage grows with the draw count
                 # instead of merely being resampled, and the same environment resolves the same way every run.
-                i_r = i_c % n_seeds
-                i_draw = attempt_key * n_seeds + i_r
+                i_r = i_c % n_restarts
+                i_draw = planner_state.pass_index[None] * n_draws + i_block * n_restarts + i_r
                 for i_dp in qd.static(range(n_dp)):
                     q = planner_info.cost.boundary.qpos_start[i_dp, i_b]
                     if i_draw > 0 and not planner_info.fk.dofs.is_locked[i_dp, i_b]:
@@ -1786,31 +1789,67 @@ def func_resolve_goal(
                                 planner_info.fk.dofs.q_limit_upper[i_dp],
                             )
 
-                # Store the restart's solution and lay it down as a hold-at-goal candidate for the shared validator.
+                # Certify the restart where it stands. A hold has no motion between its knots, so what the
+                # trajectory validator would do to it reduces to one configuration: the joint limits it must
+                # respect, the clearance of that single configuration, and whether it reaches the requested pose.
+                # Certifying it here rather than laying it down as a hold-at-goal candidate is what frees the
+                # restart columns from the candidate axis, and it spares the validator's densified sweep over
+                # knots that are all the same.
+                flags = gs.qd_int(0)
                 for i_dp in range(n_dp):
-                    planner_state.ik.qpos_best[i_dp, i_c] = planner_state.fk.eval.qpos[i_dp, i_c]
-                    for i_w in range(n_knots):
-                        planner_state.cost.qpos[i_dp, i_c, i_w] = planner_state.fk.eval.qpos[i_dp, i_c]
-                planner_state.cert.is_active[i_c] = True
-
-        func_validate(
-            envs_idx,
-            planner_state,
-            planner_world,
-            dyn_state,
-            collider_state,
-            gjk_state,
-            planner_info,
-            dyn_info,
-            rigid_info,
-            collider_info,
-            sdf_info,
-            rigid_config,
-            collider_static_config,
-            planner_config,
-            check_start=False,
-            is_swept=0,
-        )
+                    q = planner_state.fk.eval.qpos[i_dp, i_c]
+                    planner_state.ik.qpos_best[i_dp, i_c] = q
+                    # A boundary configuration supplied beyond a limit is a boundary condition, so a restart is
+                    # only flagged when it exceeds the limit by more than the boundary conditions already do.
+                    over_allow = qd.max(
+                        planner_info.cost.boundary.qpos_start[i_dp, i_b] - planner_info.fk.dofs.q_limit_upper[i_dp],
+                        planner_info.cost.boundary.qpos_goal[i_dp, i_b] - planner_info.fk.dofs.q_limit_upper[i_dp],
+                    )
+                    under_allow = qd.max(
+                        planner_info.fk.dofs.q_limit_lower[i_dp] - planner_info.cost.boundary.qpos_start[i_dp, i_b],
+                        planner_info.fk.dofs.q_limit_lower[i_dp] - planner_info.cost.boundary.qpos_goal[i_dp, i_b],
+                    )
+                    if (
+                        q > planner_info.fk.dofs.q_limit_upper[i_dp] + qd.max(over_allow, 0.0) + 1e-5
+                        or q < planner_info.fk.dofs.q_limit_lower[i_dp] - qd.max(under_allow, 0.0) - 1e-5
+                    ):
+                        flags = flags | planner_config.flag_joint_limit
+                min_sd_exact, min_sd_proxy = func_eval_clearance(
+                    i_c,
+                    i_b,
+                    0.0,
+                    0.0,
+                    planner_state,
+                    planner_world,
+                    dyn_state,
+                    collider_state,
+                    gjk_state,
+                    planner_info,
+                    dyn_info,
+                    rigid_info,
+                    collider_info,
+                    sdf_info,
+                    rigid_config,
+                    collider_static_config,
+                    planner_config,
+                )
+                if qd.min(min_sd_exact, min_sd_proxy) < 0.0:
+                    flags = flags | planner_config.flag_collision
+                # The pose is re-read off the kinematics the clearance call just placed, so the tolerance is
+                # checked against the configuration that was certified rather than against the solver's own last
+                # residual, and to the same tolerance the trajectory validator applies to an end knot.
+                i_l_goal = goal_link - link_offset
+                err_pos_cert = planner_state.fk.eval.links_pos[i_l_goal, i_c] - planner_info.cost.boundary.goal_pos[i_b]
+                quat_rel_cert = gu.qd_transform_quat_by_quat(
+                    planner_state.fk.eval.links_quat[i_l_goal, i_c],
+                    gu.qd_inv_quat(planner_info.cost.boundary.goal_quat[i_b]),
+                )
+                err_rot_cert = gu.qd_quat_to_rotvec(quat_rel_cert, EPS)
+                if err_pos_cert.norm() > 5e-3 or err_rot_cert.norm() > 5e-2:
+                    flags = flags | planner_config.flag_goal_tol
+                planner_state.cert.goal_flags[i_c] = flags
+                planner_state.cert.goal_clearance_exact[i_c] = min_sd_exact
+                planner_state.cert.goal_clearance_proxy[i_c] = min_sd_proxy
 
         # Adopt each env's goal: the closest-to-start certified restart, preferring collision-free over excusable.
         qd.loop_config(serialize=qd.static(planner_config.para_level < gs.PARA_LEVEL.PARTIAL))
@@ -1819,10 +1858,10 @@ def func_resolve_goal(
             if not planner_state.is_env_solved[i_b]:
                 best_c = gs.qd_int(-1)
                 best_score = gs.qd_float(1e30)
-                for i_r in range(n_seeds):
-                    i_c = i_b_ * n_seeds + i_r
-                    flags = planner_state.cert.valid_flags[i_c]
-                    is_acceptable = (flags & planner_config.flag_goal_tol) == 0
+                for i_r in range(n_restarts):
+                    i_c = i_b_ * n_restarts + i_r
+                    flags = planner_state.cert.goal_flags[i_c]
+                    is_acceptable = flags >= 0 and (flags & planner_config.flag_goal_tol) == 0
                     # With collision checking disabled, a converged restart is accepted regardless of clearance;
                     # otherwise a converged solution is acceptable only if collision-free or excusably contacting.
                     if qd.static(not ignore_collision):
@@ -1834,12 +1873,12 @@ def func_resolve_goal(
                             # time, or any headroom on top, widens what the branch may really penetrate by exactly
                             # as much as it adds (see _GOAL_REAL_PEN_MAX).
                             is_acceptable = (
-                                planner_state.cert.min_clearance_exact[i_c] + margin
+                                planner_state.cert.goal_clearance_exact[i_c] + margin
                                 > -planner_info.cert.goal_real_pen_max[None]
                             )
                         if is_acceptable:
                             is_acceptable = (
-                                planner_state.cert.min_clearance_proxy[i_c] + margin + 0.01
+                                planner_state.cert.goal_clearance_proxy[i_c] + margin + 0.01
                                 > -planner_info.cert.excl_depth_max[None]
                             )
                     if is_acceptable:
