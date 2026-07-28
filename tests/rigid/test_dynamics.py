@@ -1,4 +1,5 @@
 import math
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -268,6 +269,7 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     radius = 0.1
     n_steps = 400
     undamped_sol_params = [10.0, 0.001, 0.9, 0.95, 0.001, 0.5, 2.0]
+    stiffness = 20.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -296,7 +298,25 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
             pos=(0.5, 0, h0),
         ),
     )
+    # Undamped two-link arm on stiff springs, swinging clear of the ground and the spheres. Its mass matrix is
+    # configuration-dependent, so its energy only balances if the kinetic term tracks the current configuration and
+    # the potential term accounts for the springs holding the joints off their neutral pose.
+    mjcf = ET.Element("mujoco")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    upper = ET.SubElement(worldbody, "body", name="arm_upper", pos="0.25 0.5 0.8")
+    ET.SubElement(upper, "joint", name="shoulder", type="hinge", axis="0 1 0", stiffness=str(stiffness), damping="0")
+    ET.SubElement(upper, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
+    lower = ET.SubElement(upper, "body", name="arm_lower", pos="0.2 0 0")
+    ET.SubElement(lower, "joint", name="elbow", type="hinge", axis="0 1 0", stiffness=str(stiffness), damping="0")
+    ET.SubElement(lower, "geom", type="capsule", fromto="0 0 0 0.2 0 0", size="0.02", density="1000")
+    arm = scene.add_entity(
+        gs.morphs.MJCF(
+            file=ET.tostring(mjcf, encoding="unicode"),
+        ),
+    )
     scene.build()
+
+    arm.set_dofs_position([0.5, -0.8])
 
     # Nearly undamped contact for sphere_a: small dampratio gives very stiff elastic spring with minimal damping.
     # Contact sol_params are averaged: 0.5*(geom_a + geom_b), so both geoms must share the same params.
@@ -306,10 +326,11 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     mass = sphere_a.get_links_inertial_mass()
     te_initial = sphere_a.get_total_energy()
 
-    ke_a, pe_a, ke_b, pe_b = [], [], [], []
+    ke_a, pe_a, ke_b, pe_b, te_arm = [], [], [], [], []
     impact_step = -1
     for i in range(n_steps):
         scene.step()
+        te_arm.append(arm.get_total_energy())
         ke_a.append(sphere_a.get_kinetic_energy())
         pe_a.append(sphere_a.get_potential_energy())
         ke_b.append(sphere_b.get_kinetic_energy())
@@ -336,6 +357,13 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     # Damped sphere_b: energy strictly decreased
     te_b_final = ke_b[-1] + pe_b[-1]
     assert te_b_final < te_initial
+
+    # Spring-driven arm: nothing dissipates, so its energy holds throughout the swing to integration error
+    te_arm = torch.stack(te_arm)
+    assert_allclose(te_arm, te_arm[0], tol=0.01)
+    # The springs must carry a real share of that energy, otherwise the check above would hold with no spring term
+    spring_energy = 0.5 * torch.sum(arm.get_dofs_stiffness() * arm.get_dofs_position() ** 2)
+    assert spring_energy > 0.1 * te_arm[-1]
 
 
 @pytest.mark.slow  # ~250s
