@@ -29,8 +29,6 @@ DELTA_ROT = 0.02
 
 
 def main():
-    gs.init(backend=gs.cpu, logging_level="info")
-
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--coup-type",
@@ -40,6 +38,8 @@ def main():
         help="How the articulated robot is coupled to the IPC solver",
     )
     args = parser.parse_args()
+
+    gs.init(backend=gs.cpu, logging_level="info")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

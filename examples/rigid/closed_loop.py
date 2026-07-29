@@ -37,7 +37,6 @@ def main():
         gs.morphs.MJCF(
             file="xml/four_bar_linkage.xml" if args.constraint == "connect" else "xml/four_bar_linkage_weld.xml",
         ),
-        vis_mode="collision",
     )
 
     scene.build()

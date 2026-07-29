@@ -14,11 +14,11 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.cpu, logging_level="info")
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
+
+    gs.init(backend=gs.cpu, logging_level="info")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

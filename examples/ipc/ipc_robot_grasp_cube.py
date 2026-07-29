@@ -5,8 +5,6 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.cpu, logging_level="info")
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-ipc", action="store_true", help="Disable the IPC coupler")
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
@@ -18,6 +16,8 @@ def main():
         help="How the articulated robot is coupled to the IPC solver",
     )
     args = parser.parse_args()
+
+    gs.init(backend=gs.cpu, logging_level="info")
 
     coupler_options = None
     if not args.no_ipc:
