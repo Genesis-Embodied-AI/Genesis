@@ -1,0 +1,137 @@
+name: Nyx Plugin
+
+# The Nyx plugin repository is internal, so checking it out needs a token, and no secret is ever exposed to a
+# workflow triggered by a pull request coming from a fork. 'workflow_run' runs in the context of the base
+# repository, where secrets are available, so it is the only trigger able to validate such a pull request. As a
+# consequence, this file is always taken from the default branch, and the result is reported back on the commit
+# under test as a status rather than showing up as a check of the workflow itself.
+on:
+  workflow_run:
+    workflows: ["Production"]
+    types: [completed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+  PY_COLORS: "1"
+  # Revision of 'Genesis-Embodied-AI/nyx-genesis-plugin' whose unit tests must pass against Genesis. Bump it
+  # together with any Genesis change that the plugin must adapt to, so that both sides always move as a pair.
+  NYX_PLUGIN_COMMIT: "d0b3c6ec9a60b2c5fcb9351a2e013dda8f018323"
+  # The plugin only supports dynamic arrays, and its own CI covers the other backends and precisions.
+  GS_ENABLE_NDARRAY: "1"
+  GS_BACKEND: "gpu"
+  GS_PRECISION: "32"
+
+jobs:
+  unit-tests:
+    name: nyx_plugin-unit_tests
+
+    # The renderer bridges to Genesis through CUDA device pointers, so a GPU runner is required even though the
+    # simulation itself could run on CPU. This is the runner the plugin's own CI uses, which additionally makes its
+    # reference images comparable.
+    runs-on: gpu-t4-4-core
+
+    permissions:
+      contents: read
+      checks: write
+
+    steps:
+      - run: sudo apt-get update && sudo apt-get install -y git-lfs
+
+      - name: Checkout the revision of Genesis under test
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+          # The tests execute code from the revision under test, so no credential must outlive the checkout.
+          persist-credentials: false
+
+      # Git LFS carries every test asset and reference image of the plugin.
+      - name: Checkout the Nyx plugin
+        uses: actions/checkout@v5
+        with:
+          repository: Genesis-Embodied-AI/nyx-genesis-plugin
+          ref: ${{ env.NYX_PLUGIN_COMMIT }}
+          token: ${{ secrets.GENESIS_REPO_CONTENTS_READ_ONLY_ACCESS_TOKEN }}
+          path: nyx_plugin
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
+      - name: Install Mesa OpenGL driver
+        run: |
+          for retry in {1..10}; do
+            sudo add-apt-repository -y ppa:kisak/kisak-mesa && break || sleep 5;
+          done
+          sudo apt install -y \
+              libglu1-mesa \
+              libegl-mesa0 \
+              libgl1-mesa-dev
+      - name: Install Genesis and the Nyx plugin
+        # Process substitution feeds the overrides without writing a file, so bash is required.
+        shell: bash
+        run: |
+          uv pip install --system torch --index-url https://download.pytorch.org/whl/cu128
+
+          # The plugin requires a released 'genesis-world', which resolution would install over the revision under
+          # test, leaving the tests exercising something else entirely. Overriding that single requirement with the
+          # checkout keeps every other dependency of the plugin resolved from its own metadata. The plugin pins the
+          # renderer to an internal index that this repository has no credentials for, so that source alone is
+          # ignored in favour of the public one.
+          uv pip install --system \
+              --no-sources-package gs-nyx \
+              --overrides <(printf 'genesis-world @ file://%s\n' "$GITHUB_WORKSPACE") \
+              ".[dev]" ./nyx_plugin
+      - name: Run Nyx plugin unit tests
+        # Running from the plugin root keeps its own pytest configuration in charge, and makes the paths the tests
+        # derive from the working directory match those of the plugin's own CI.
+        working-directory: nyx_plugin
+        run: pytest -sv -ra -n auto --backend "${GS_BACKEND}" --precision "${GS_PRECISION}" ./tests
+
+      - name: Upload test data as artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyx-plugin-test-results
+          path: "nyx_plugin/tests/results"
+
+      # A 'workflow_run' job is not attached to the pull request that started it, so its outcome is published as a
+      # check on the commit under test. This is what makes it appear among the checks of that pull request, and
+      # therefore what allows requiring it before merging.
+      - name: Publish PR check
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          CHECK_NAME: Nyx Plugin Unit Tests
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const isSuccess = process.env.JOB_STATUS === 'success';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: context.payload.workflow_run.head_sha,
+              name: process.env.CHECK_NAME,
+              status: 'completed',
+              conclusion: isSuccess ? 'success' : 'failure',
+              details_url: process.env.RUN_URL,
+              output: {
+                title: process.env.CHECK_NAME,
+                summary: isSuccess
+                  ? `✅ The plugin unit tests pass at ${process.env.NYX_PLUGIN_COMMIT.slice(0, 7)}.`
+                  : `🔴 The plugin unit tests fail at ${process.env.NYX_PLUGIN_COMMIT.slice(0, 7)}.`
+              }
+            });
