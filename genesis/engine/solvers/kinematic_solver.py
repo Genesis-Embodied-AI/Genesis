@@ -10,24 +10,32 @@ from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.states.solvers import KinematicSolverState
 from genesis.options.solvers import RigidOptions, KinematicOptions
 from genesis.utils.misc import (
+    assign_indexed_tensor,
+    broadcast_tensor,
+    indices_to_mask,
+    qd_to_numpy,
     qd_to_torch,
     qd_zero_grad,
     sanitize_indexed_tensor,
-    indices_to_mask,
-    broadcast_tensor,
-    assign_indexed_tensor,
 )
 
 from .base_solver import MutatedLinks, Solver, StateChange, mutates
-from .rigid.abd.misc import (
-    kernel_init_dof_fields,
-    kernel_init_link_fields,
-    kernel_init_joint_fields,
-    kernel_init_vvert_fields,
-    kernel_init_vgeom_fields,
-    kernel_init_entity_fields,
-    kernel_update_heterogeneous_links_vgeom,
-    kernel_update_vgeoms_render_T,
+from .rigid.abd.accessor import (
+    kernel_get_kinematic_state,
+    kernel_get_links_vel,
+    kernel_get_state_grad,
+    kernel_set_dofs_force_grad,
+    kernel_set_dofs_position,
+    kernel_set_dofs_velocity,
+    kernel_set_dofs_velocity_grad,
+    kernel_set_dofs_zero_velocity,
+    kernel_set_kinematic_state,
+    kernel_set_links_pos,
+    kernel_set_links_pos_grad,
+    kernel_set_links_quat,
+    kernel_set_links_quat_grad,
+    kernel_set_qpos,
+    kernel_set_vverts,
 )
 from .rigid.abd.forward_kinematics import (
     kernel_forward_kinematics,
@@ -37,22 +45,15 @@ from .rigid.abd.forward_kinematics import (
     kernel_update_vgeoms,
     kernel_update_vverts_for_vgeoms,
 )
-from .rigid.abd.accessor import (
-    kernel_get_kinematic_state,
-    kernel_get_state_grad,
-    kernel_set_kinematic_state,
-    kernel_set_links_pos_grad,
-    kernel_set_links_quat_grad,
-    kernel_set_dofs_position,
-    kernel_set_dofs_velocity,
-    kernel_set_dofs_velocity_grad,
-    kernel_set_dofs_force_grad,
-    kernel_set_dofs_zero_velocity,
-    kernel_set_links_pos,
-    kernel_set_links_quat,
-    kernel_set_qpos,
-    kernel_set_vverts,
-    kernel_get_links_vel,
+from .rigid.abd.misc import (
+    kernel_init_dof_fields,
+    kernel_init_entity_fields,
+    kernel_init_joint_fields,
+    kernel_init_link_fields,
+    kernel_init_vgeom_fields,
+    kernel_init_vvert_fields,
+    kernel_update_heterogeneous_links_vgeom,
+    kernel_update_vgeoms_render_T,
 )
 
 if TYPE_CHECKING:
@@ -1074,6 +1075,22 @@ class KinematicSolver(Solver):
             offset_quat = self._vgeoms_offset_quat if vgeoms_idx is None else self._vgeoms_offset_quat[vgeoms_idx]
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_vfaces_raycast_mask(self) -> np.ndarray:
+        """Per-vface mask (int8, shape (n_vfaces,)) selecting the vfaces opted into visual raycasting.
+
+        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
+        Consumed by every visual raycast BVH (raycaster sensors, viewer plugins) to gate which vfaces contribute.
+        """
+        if self.dyn_info.vfaces.vgeom_idx.shape[0] == 0:
+            return np.zeros(0, dtype=np.int8)
+        vgeom_enabled = np.zeros(self.n_vgeoms, dtype=np.bool_)
+        for entity in self.entities:
+            if not entity.material.use_visual_raycasting:
+                continue
+            for vgeom in entity.vgeoms:
+                vgeom_enabled[vgeom.idx] = True
+        return vgeom_enabled[qd_to_numpy(self.dyn_info.vfaces.vgeom_idx)].astype(np.int8)
 
     def get_links_vel(self, links_idx=None, envs_idx=None):
         if gs.use_zerocopy:

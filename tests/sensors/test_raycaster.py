@@ -615,6 +615,21 @@ def test_heterogeneous_object(show_viewer, tol):
             gs.morphs.Sphere(radius=0.2, pos=(1.0, 0.0, 0.5), fixed=True),
             gs.morphs.Box(size=(0.6, 0.6, 0.6), pos=(1.0, 0.0, 0.5), fixed=True),
         ),
+        material=gs.materials.Rigid(
+            use_visual_raycasting=True,
+        ),
+    )
+    # Every link of the kinematic solver is fixed, so its visual BVH is static and groups envs by geometry. The
+    # variants share one link, hence identical vgeom poses, and are told apart only by their active vgeom range.
+    het_visual = scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(4.0, 0.0, 0.5), fixed=True),
+            gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(4.0, 0.0, 0.5), fixed=True),
+            gs.morphs.Box(size=(0.6, 0.6, 0.6), pos=(4.0, 0.0, 0.5), fixed=True),
+        ),
+        material=gs.materials.Kinematic(
+            use_visual_raycasting=True,
+        ),
     )
     # A movable entity parked off the ray's path: it makes the solver mixed, so the heterogeneous variants are served
     # through the static subset of the split collision BVH.
@@ -665,6 +680,14 @@ def test_heterogeneous_object(show_viewer, tol):
     movable_box.set_pos((3.0, 2.0, 0.5))
     scene.step()
     assert_allclose(lidar.read().distances[:, 0, 0], (0.9, 0.9, 0.8, 0.8, 0.7, 0.7), tol=5e-3)
+
+    # Sending the rigid variants out of range leaves the kinematic ones as the nearest hit, cast through one grouped
+    # static tree per distinct variant, so each env still reads its own.
+    het_obstacle.set_pos((10.0, 0.0, 0.5))
+    scene.step()
+    visual_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.solver is het_visual.solver)
+    assert visual_bvh.aabb.n_batches == 3
+    assert_allclose(lidar.read().distances[:, 0, 0], (3.9, 3.9, 3.8, 3.8, 3.7, 3.7), tol=5e-3)
 
 
 @pytest.mark.required

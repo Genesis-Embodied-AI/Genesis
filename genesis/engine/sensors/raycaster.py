@@ -121,24 +121,6 @@ class RaycastContext(SharedSensorContext):
         return [entry for entry in self.bvh_contexts if entry.raycast_mask is None]
 
     @staticmethod
-    def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
-        """Build a per-vface mask (int8, shape (n_vfaces,)) selecting vfaces opted into visual raycasting.
-
-        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
-        """
-        n_vfaces = solver.dyn_info.vfaces.vgeom_idx.shape[0]
-        if n_vfaces == 0:
-            return np.zeros(0, dtype=np.int8)
-        vgeom_enabled = np.zeros(solver.n_vgeoms, dtype=np.bool_)
-        for entity in solver.entities:
-            if not entity.material.use_visual_raycasting:
-                continue
-            for vgeom in entity.vgeoms:
-                vgeom_enabled[vgeom.idx] = True
-        vface_vgeom_idx = qd_to_numpy(solver.dyn_info.vfaces.vgeom_idx)
-        return vgeom_enabled[vface_vgeom_idx].astype(np.int8)
-
-    @staticmethod
     def _group_envs_by_parts(B: int, parts: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Group envs by exact equality of the (B, ...) signature parts.
 
@@ -231,6 +213,16 @@ class RaycastContext(SharedSensorContext):
                 vgeoms_pos = vgeoms_pos[:, vgeoms_mask]
                 vgeoms_quat = vgeoms_quat[:, vgeoms_mask]
             parts += [vgeoms_pos, vgeoms_quat]
+            if solver._options.batch_links_info:
+                # (B, n_links) active-vgeom range per env: variants of one link hold identical vgeom poses, so the
+                # range alone separates them, and the fit keeps only that of the env backing a tree.
+                links_mask_np = np.zeros(solver.n_links, dtype=np.bool_)
+                links_mask_np[qd_to_numpy(solver.dyn_info.vgeoms.link_idx)[vgeoms_mask_np]] = True
+                links_mask = torch.as_tensor(links_mask_np, device=gs.device)
+                parts += [
+                    qd_to_torch(solver.dyn_info.links.vgeom_start, transpose=True)[:, links_mask],
+                    qd_to_torch(solver.dyn_info.links.vgeom_end, transpose=True)[:, links_mask],
+                ]
             if solver.dyn_state.vverts.pos.shape[0] > 0:
                 # (B, n_vvert_slots, 3) per-env custom vvert positions (set_vverts overrides), restricted to the
                 # opted-in vgeoms' slots.
@@ -355,26 +347,23 @@ class RaycastContext(SharedSensorContext):
                             faces_idx=faces_idx,
                         )
                     self._bvh_contexts.append(entry)
-            n_vfaces = solver.dyn_info.vfaces.vgeom_idx.shape[0]
-            if n_vfaces > 0:
-                mask = self._compute_visual_raycast_mask(solver)
-                if mask.any():
-                    if maybe_static:
-                        # A static visual entry watches every GEOMETRY change: an explicit set_vverts can reshape
-                        # any opted-in vgeom, so its subscription carries no links filter. It is sized at first
-                        # update to one tree per distinct per-env visual geometry, like a static collision subset.
-                        rebuild_subscriber = Subscriber(to=frozenset({StateChange.GEOMETRY}))
-                        solver.subscribe(rebuild_subscriber)
-                        entry = BVHContext(
-                            solver, raycast_mask=mask, maybe_static=True, rebuild_subscriber=rebuild_subscriber
-                        )
-                    else:
-                        # A movable visual mesh rebuilds every step and may diverge per env: one tree per env.
-                        aabb = AABB(n_batches=n_envs, n_aabbs=n_vfaces)
-                        bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
-                        env_tree_identity = torch.arange(n_envs, dtype=gs.tc_int, device=gs.device)
-                        entry = BVHContext(solver, bvh, aabb, mask, env_bvh_idx=env_tree_identity)
-                    self._bvh_contexts.append(entry)
+            mask = solver.get_vfaces_raycast_mask()
+            if mask.any():
+                if maybe_static:
+                    # A static visual entry watches every GEOMETRY change: an explicit set_vverts can reshape any
+                    # opted-in vgeom, so its subscription carries no links filter.
+                    rebuild_subscriber = Subscriber(to=frozenset({StateChange.GEOMETRY}))
+                    solver.subscribe(rebuild_subscriber)
+                    entry = BVHContext(
+                        solver, raycast_mask=mask, maybe_static=True, rebuild_subscriber=rebuild_subscriber
+                    )
+                else:
+                    # A movable visual mesh rebuilds every step and may diverge per env: one tree per env.
+                    aabb = AABB(n_batches=n_envs, n_aabbs=mask.shape[0])
+                    bvh = LBVH(aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
+                    env_tree_identity = torch.arange(n_envs, dtype=gs.tc_int, device=gs.device)
+                    entry = BVHContext(solver, bvh, aabb, mask, env_bvh_idx=env_tree_identity)
+                self._bvh_contexts.append(entry)
 
         self.update()
 
@@ -465,10 +454,17 @@ class RaycastContext(SharedSensorContext):
                     self._sized_grouped_trees(entry, batch_repr_env.shape[0], solver.dyn_info.vfaces.vgeom_idx.shape[0])
                     entry.env_bvh_idx = env_bvh_idx
                     kernel_update_grouped_visual_aabbs(
-                        batch_repr_env, entry.raycast_mask, solver.dyn_state, entry.aabb, solver.dyn_info
+                        batch_repr_env,
+                        entry.raycast_mask,
+                        solver.dyn_state,
+                        entry.aabb,
+                        solver.dyn_info,
+                        solver.rigid_config,
                     )
                 else:
-                    kernel_update_visual_aabbs(entry.raycast_mask, solver.dyn_state, entry.aabb, solver.dyn_info)
+                    kernel_update_visual_aabbs(
+                        entry.raycast_mask, solver.dyn_state, entry.aabb, solver.dyn_info, solver.rigid_config
+                    )
                 entry.bvh.build()
             entry.needs_rebuild = False
 

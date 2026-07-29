@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 from typing_extensions import override
@@ -11,8 +11,22 @@ from genesis.ext.pyrender.camera import OrthographicCamera
 from .base import ViewerPlugin
 
 if TYPE_CHECKING:
+    from genesis.engine.bvh import AABB, LBVH
     from genesis.engine.scene import Scene
+    from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.ext.pyrender.node import Node
+    from genesis.utils.array_class import RaycastResult
+
+
+class RaycastTarget(NamedTuple):
+    """One BVH the viewer casts against, over a single solver's collision faces or visual vfaces."""
+
+    solver: "KinematicSolver"
+    aabb: "AABB"
+    bvh: "LBVH"
+    result: "RaycastResult"
+    # (n_vfaces,) int8 opt-in mask for a visual BVH; None for a collision BVH, which covers every face.
+    vfaces_mask: np.ndarray | None
 
 
 class Raycaster:
@@ -23,35 +37,58 @@ class Raycaster:
     reduces across envs in torch to pick the closest hit. Cross-env reduction is intentionally a viewer-side concern,
     not part of the kernel, because parallel envs are otherwise meant to be isolated.
 
+    `use_visual_geom` casts against the visual meshes instead of the collision meshes, so `RayHit.geom` is a
+    `RigidVisGeom`. The visual meshes of both the rigid and the kinematic solver are covered, restricted to the
+    entities opting in through `material.use_visual_raycasting` - the same opt-in the raycaster sensors use, so the
+    two describe the same pickable geometry.
+
     After each `cast()`, `last_hit_env_idx` exposes the env that produced the returned `RayHit` (None when no hit).
     """
 
-    def __init__(self, scene: "Scene"):
+    def __init__(self, scene: "Scene", use_visual_geom: bool = False):
         # NOTE: delayed imports to avoid pulling in rigid_solver / array_class before gs is fully initialized.
         import genesis.utils.array_class as array_class
         from genesis.engine.bvh import AABB, LBVH
 
         self.scene = scene
-        self.solver = scene.sim.rigid_solver
         self.envs_idx = scene._envs_idx
+        self.use_visual_geom = use_visual_geom
         self.last_hit_env_idx: int | None = None
-
-        n_faces = self.solver.dyn_info.faces.geom_idx.shape[0]
-        if n_faces == 0:
-            gs.logger.warning("No faces found in scene, viewer raycasting will not work.")
-            self.aabb = None
-            self.bvh = None
-            self.result = None
-            return
+        self.targets: list[RaycastTarget] = []
 
         n_envs_max = len(self.envs_idx)
-        self.aabb = AABB(n_batches=n_envs_max, n_aabbs=n_faces)
-        self.bvh = LBVH(
-            self.aabb,
-            max_n_query_result_per_aabb=0,  # Not used for ray queries
-            n_radix_sort_groups=min(64, n_faces),
-        )
-        self.result = array_class.get_raycast_result(n_envs_max)
+        # Visual meshes exist on both solvers, while collision geometry is the rigid solver's alone.
+        solvers = (scene.sim.rigid_solver, scene.sim.kinematic_solver) if use_visual_geom else (scene.sim.rigid_solver,)
+        for solver in solvers:
+            if not solver.is_active:
+                continue
+            vfaces_mask = None
+            if use_visual_geom:
+                vfaces_mask = solver.get_vfaces_raycast_mask()
+                if not vfaces_mask.any():
+                    continue
+                # The tree spans every vface, masked-out ones staying unhittable, so a leaf payload is the vface
+                # index itself (see kernel_update_visual_aabbs).
+                n_slots = vfaces_mask.shape[0]
+            else:
+                n_slots = solver.dyn_info.faces.geom_idx.shape[0]
+                if n_slots == 0:
+                    continue
+            aabb = AABB(n_batches=n_envs_max, n_aabbs=n_slots)
+            bvh = LBVH(
+                aabb,
+                max_n_query_result_per_aabb=0,  # Not used for ray queries
+                n_radix_sort_groups=min(64, n_slots),
+            )
+            result = array_class.get_raycast_result(n_envs_max)
+            self.targets.append(RaycastTarget(solver, aabb, bvh, result, vfaces_mask))
+
+        if not self.targets:
+            if use_visual_geom:
+                gs.logger.warning("No entity has material.use_visual_raycasting=True, viewer raycasting will not work.")
+            else:
+                gs.logger.warning("No collision faces found in scene, viewer raycasting will not work.")
+            return
 
         self.update()
 
@@ -59,19 +96,28 @@ class Raycaster:
         self.cast(ray_origin=np.zeros(3, dtype=gs.np_float), ray_direction=np.zeros(3, dtype=gs.np_float))
 
     def update(self) -> None:
-        """Refresh per-env vertex positions, AABBs and rebuild the BVH."""
-        if self.bvh is None:
-            return
-        from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs
+        """Refresh per-env vertex positions, AABBs and rebuild every BVH."""
+        from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs, kernel_update_visual_aabbs
 
-        kernel_update_verts_and_aabbs(self.solver.dyn_state, self.aabb, self.solver.dyn_info, self.solver.rigid_config)
-        self.bvh.build()
+        for target in self.targets:
+            solver = target.solver
+            if self.use_visual_geom:
+                # Visual vertices are derived from the vgeom poses on the fly, so refreshing those poses is enough;
+                # the custom vverts buffer the sensor path relies on stays untouched.
+                solver.update_forward_pos()
+                solver.update_vgeoms()
+                kernel_update_visual_aabbs(
+                    target.vfaces_mask, solver.dyn_state, target.aabb, solver.dyn_info, solver.rigid_config
+                )
+            else:
+                kernel_update_verts_and_aabbs(solver.dyn_state, target.aabb, solver.dyn_info, solver.rigid_config)
+            target.bvh.build()
 
     def cast(
         self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx=None
     ) -> RayHit | None:
         """
-        Cast a single ray against the BVH of each env in parallel and return the closest hit across envs.
+        Cast a single ray against the BVH of each env in parallel and return the closest hit across envs and solvers.
 
         Parameters
         ----------
@@ -86,52 +132,70 @@ class Raycaster:
         """
         from genesis.utils.raycast_qd import kernel_cast_ray
 
-        kernel_cast_ray(
-            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
-            envs_idx if envs_idx is not None else self.envs_idx,
-            self.bvh.nodes,
-            self.bvh.morton_codes,
-            np.ascontiguousarray(ray_direction, dtype=gs.np_float),
-            self.solver.dyn_state,
-            self.result,
-            self.solver.dyn_info,
-            self.solver.rigid_info,
-            max_range,
-            gs.EPS,
-        )
+        ray_origin = np.ascontiguousarray(ray_origin, dtype=gs.np_float)
+        ray_direction = np.ascontiguousarray(ray_direction, dtype=gs.np_float)
+        closest_hit: RayHit | None = None
+        self.last_hit_env_idx = None
+        for target in self.targets:
+            solver = target.solver
+            # Each pass caps its traversal at the best distance so far, so any hit it reports is closer by
+            # construction and the closest hit across targets needs no further comparison.
+            kernel_cast_ray(
+                ray_origin,
+                envs_idx if envs_idx is not None else self.envs_idx,
+                target.bvh.nodes,
+                target.bvh.morton_codes,
+                ray_direction,
+                solver.dyn_state,
+                target.result,
+                solver.dyn_info,
+                solver.rigid_info,
+                max_range if closest_hit is None else closest_hit.distance,
+                eps=gs.EPS,
+                is_visual=self.use_visual_geom,
+            )
 
-        # Reduce per-env hits to the closest one. Distance is +inf for envs that didn't hit, so argmin alone
-        # picks the closest hitting env; geom_idx then confirms the winner actually hit (argmin on all-inf
-        # would otherwise return env 0).
-        distances = qd_to_torch(self.result.distance, copy=None)
-        winner = int(distances.argmin())
-        geom_idx = int(qd_to_numpy(self.result.geom_idx, row_mask=winner, keepdim=False))
-        if geom_idx < 0:
-            self.last_hit_env_idx = None
-            return None
+            # A no-hit env holds +inf, so argmin lands on the closest hitting env; geom_idx then rejects the
+            # all-inf case, which would otherwise report env 0 as a hit.
+            distances = qd_to_torch(target.result.distance, copy=None)
+            winner = int(distances.argmin())
+            geom_idx = int(qd_to_numpy(target.result.geom_idx, row_mask=winner, keepdim=False))
+            if geom_idx < 0:
+                continue
 
-        distance = float(distances[winner])
-        position = qd_to_numpy(self.result.hit_point, row_mask=winner, keepdim=False, transpose=True)
-        normal = qd_to_numpy(self.result.normal, row_mask=winner, keepdim=False, transpose=True)
-        geom = self.solver.geoms[geom_idx] if 0 <= geom_idx < len(self.solver.geoms) else None
+            distance = float(distances[winner])
+            position = qd_to_numpy(target.result.hit_point, row_mask=winner, keepdim=False, transpose=True)
+            normal = qd_to_numpy(target.result.normal, row_mask=winner, keepdim=False, transpose=True)
+            geoms = solver.vgeoms if self.use_visual_geom else solver.geoms
+            geom = geoms[geom_idx] if 0 <= geom_idx < len(geoms) else None
 
-        self.last_hit_env_idx = winner if self.scene.n_envs > 0 else None
-        return RayHit(distance, position, normal, geom)
+            closest_hit = RayHit(distance, position, normal, geom)
+            self.last_hit_env_idx = winner if self.scene.n_envs > 0 else None
+        return closest_hit
 
 
 class RaycasterViewerPlugin(ViewerPlugin):
     """
     Base viewer plugins using mouse raycast
+
+    Parameters
+    ----------
+    use_visual_geom : bool
+        Cast against the visual meshes rather than the collision meshes. Picking then matches what is on screen, which
+        the collision meshes cannot do when they are coarser, larger or entirely absent, and it reaches entities with no
+        collision geometry at all. It costs casting against the finer visual triangles, it reports geometry the physics
+        ignores, and it only sees entities whose material sets use_visual_raycasting=True.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, use_visual_geom: bool = False) -> None:
         super().__init__()
+        self.use_visual_geom = bool(use_visual_geom)
         self._raycaster: "Raycaster | None" = None
 
     def build(self, viewer, camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
 
-        self._raycaster = Raycaster(self.scene)
+        self._raycaster = Raycaster(self.scene, self.use_visual_geom)
 
     @override
     def update_on_sim_step(self) -> None:
