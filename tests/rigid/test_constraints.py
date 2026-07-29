@@ -9,6 +9,7 @@ from genesis.utils.misc import tensor_to_array
 
 from ..utils import (
     assert_allclose,
+    assert_equal,
     simulate_and_check_mujoco_consistency,
 )
 
@@ -65,6 +66,7 @@ def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
 @pytest.mark.required
 def test_dynamic_weld(show_viewer, tol):
     CUBE_POS = (0.65, 0.0, 0.02)
+    HANGING_BOX_POS = (0.0, 1.0, 0.4)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -89,6 +91,19 @@ def test_dynamic_weld(show_viewer, tol):
     robot = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/universal_robots_ur5e/ur5e.xml",
+        ),
+    )
+    fixed_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.0, 1.0, 0.5),
+            fixed=True,
+        ),
+    )
+    hanging_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.04, 0.04, 0.04),
+            pos=(0.0, 1.0, 0.02),
         ),
     )
     scene.build(n_envs=4, env_spacing=(3.0, 3.0))
@@ -119,8 +134,11 @@ def test_dynamic_weld(show_viewer, tol):
     for i in range(70):
         scene.step()
 
-    # add weld constraint and move back up
+    # add weld constraint and move back up. The hanging box is welded in the air afterwards, so that deleting the
+    # cube weld goes through the swap-remove path and must preserve the full record of the hanging box weld.
     scene.sim.rigid_solver.add_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1, 2))
+    hanging_box.set_pos(HANGING_BOX_POS)
+    scene.sim.rigid_solver.add_weld_constraint(hanging_box.base_link.idx, fixed_box.base_link.idx)
     robot.control_dofs_position(qpos_up)
     for _ in range(60):
         scene.step()
@@ -129,15 +147,23 @@ def test_dynamic_weld(show_viewer, tol):
     assert_allclose(torch.diff(cubes_pos[[0, 1, 2]], dim=0), 0.0, tol=tol)
     assert_allclose(cubes_pos[3], CUBE_POS, tol=1e-3)
     assert_allclose(cubes_pos[-1] - cubes_pos[0], ee_pos_down - ee_pos_up, tol=1e-2)
+    assert_allclose(hanging_box.get_pos(), HANGING_BOX_POS, tol=1e-3)
 
     # drop
     scene.sim.rigid_solver.delete_weld_constraint(cube.base_link.idx, end_effector.idx, envs_idx=(0, 1))
+    weld_const_info = scene.sim.rigid_solver.get_weld_constraints(as_tensor=True, to_torch=True)
+    links_ab = torch.stack((weld_const_info["link_a"], weld_const_info["link_b"]), dim=-1)
+    box_weld = (hanging_box.base_link.idx, fixed_box.base_link.idx)
+    cube_weld = (cube.base_link.idx, end_effector.idx)
+    no_weld = (-1, -1)
+    assert_equal(links_ab, [[box_weld, no_weld], [box_weld, no_weld], [cube_weld, box_weld], [box_weld, no_weld]])
     for _ in range(110):
         scene.step()
     cubes_pos, cubes_quat = cube.get_pos(), tensor_to_array(cube.get_quat())
     assert_allclose(gu.quat_to_rotvec(cubes_quat), 0.0, tol=1e-3)
     assert_allclose(torch.diff(cubes_pos[[0, 1, 3]], dim=0), 0.0, tol=1e-2)
     assert_allclose(cubes_pos[2] - cubes_pos[0], ee_pos_up - ee_pos_down, tol=1e-3)
+    assert_allclose(hanging_box.get_pos(), HANGING_BOX_POS, tol=1e-3)
 
 
 @pytest.mark.slow  # ~200s
@@ -173,46 +199,6 @@ def test_dynamic_weld_scene_reset():
     scene.reset(state=scene.get_state(), envs_idx=[0])
     assert solver.constraint_solver.constraint_state.qd_n_equalities[0] == n_eq_base
     assert solver.constraint_solver.constraint_state.qd_n_equalities[1] == n_eq_base + 1
-
-
-@pytest.mark.required
-def test_dynamic_weld_delete_keeps_other_welds(show_viewer, tol):
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        show_FPS=False,
-    )
-    scene.add_entity(
-        gs.morphs.Plane(),
-    )
-    boxes = [
-        scene.add_entity(
-            gs.morphs.Box(
-                size=(0.05, 0.05, 0.05),
-                pos=(0.3 * i, 0.0, 0.5),
-            )
-        )
-        for i in range(4)
-    ]
-    scene.build()
-
-    solver = scene.sim.rigid_solver
-    link_a, link_b, link_c, link_d = (box.base_link.idx for box in boxes)
-    solver.add_weld_constraint(link_a, link_b)
-    solver.add_weld_constraint(link_c, link_d)
-
-    # Deleting a weld that is not the last dynamic equality must remove that weld and
-    # preserve the full record of the surviving one, not just its type.
-    solver.delete_weld_constraint(link_a, link_b)
-    weld_const_info = solver.get_weld_constraints(as_tensor=True, to_torch=True)
-    assert_allclose(weld_const_info["link_a"].flatten(), (link_c,), tol=0)
-    assert_allclose(weld_const_info["link_b"].flatten(), (link_d,), tol=0)
-
-    # The surviving weld must still act on its own links: c and d keep their relative
-    # pose while falling, which fails if the swap left behind the deleted weld's data.
-    rel_pos = boxes[3].get_pos() - boxes[2].get_pos()
-    for _ in range(100):
-        scene.step()
-    assert_allclose(boxes[3].get_pos() - boxes[2].get_pos(), rel_pos, tol=1e-3)
 
 
 @pytest.mark.required
