@@ -5298,16 +5298,17 @@ def func_cone_middle_cost(
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ):
-    """Coupled middle-zone cost 0.5*Dm*(N - con_mu*T)^2 of the elliptic cone whose head row is i_c; 0 outside.
+    """Middle-zone cost of the elliptic contact whose head row is i_c; 0 outside.
 
-    Shared by every linesearch/cost path so the coupled term is computed identically across arms.
+    Shared by every linesearch/cost path so the coupled term is computed identically across arms, and taken from
+    _func_cone_middle so the cost driving warm-start and convergence decisions is the one whose forces and Hessian
+    the solve actually applies, under either resolution.
     """
     rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(i_c, i_b, constraint_state, rigid_config)
     zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
     c = gs.qd_float(0.0)
     if zone == 2:
-        NmT = N - con_mu * T
-        c = 0.5 * _func_cone_Dm(rows_efc_D[0], con_mu) * NmT**2
+        _rows_force, c, _cone_H = _func_cone_middle(rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config)
     return c
 
 
@@ -5991,7 +5992,28 @@ def func_terminate_or_update_descent_batch(
     for i_d in range(n_dofs):
         grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
     grad_norm = qd.sqrt(grad_norm)
-    improved = grad_norm > tol_scaled and (improvement <= 0.0 or improvement >= tol_scaled)
+    is_flat = grad_norm <= tol_scaled
+    is_stalled = improvement > 0.0 and improvement < tol_scaled
+    # Pre-declared: a local first bound inside a qd.static branch does not propagate out of it.
+    improved = not (is_flat or is_stalled)
+
+    # Neither test above measures how far the solution still has to travel, only how flat it is where it stands. That
+    # is the same thing while the cost is equally curved in every direction, and a saturated friction block breaks it:
+    # its curvature is the disc radius over the tangential residual, which collapses as the contact slides faster, so
+    # the cost gains a valley orders of magnitude flatter than the stiff directions. A gradient well inside tolerance
+    # can then still sit a long way down that valley, and under 'signorini' every step along it relatches the radii
+    # and regenerates gradient, which is how a solve reports convergence and then moves the answer materially.
+    # grad . Mgrad is twice the descent the next step would realize, so half of it is that descent: Mgrad already
+    # carries the inverse curvature of this iterate's factor, which keeps it large exactly where the gradient norm
+    # looks converged. Being a property of the current iterate, it says the step ahead is negligible rather than that
+    # the step behind was, and it shares the cost tolerance since it is itself a cost decrease. The other resolutions
+    # keep the single-pass test unchanged: their cost holds still, and converging past the engine they are matched
+    # against is what breaks consistency with it.
+    if qd.static(rigid_config.enable_signorini_contact):
+        descent = gs.qd_float(0.0)
+        for i_d in range(n_dofs):
+            descent = descent + constraint_state.grad[i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+        improved = not (is_flat and 0.5 * descent <= tol_scaled)
     constraint_state.improved[i_b] = improved
 
     # Update search direction if necessary

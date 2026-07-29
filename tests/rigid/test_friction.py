@@ -277,11 +277,6 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
         ),
         rigid_options=gs.options.RigidOptions(
             friction_cone=gs.friction_cone.elliptic,
-            # 'signorini' relatches its friction discs from the current iterate, so the solve is a successive
-            # approximation whose exit test measures the residual of one pass while the error of the sequence is
-            # larger by a factor set by its contraction rate. The isotropy asserted below is a decade finer than
-            # the single-precision default stops at, so the tolerance is pinned rather than inherited.
-            tolerance=1e-6,
             sparse_solve=sparse_solve,
             use_contact_island=use_contact_island,
         ),
