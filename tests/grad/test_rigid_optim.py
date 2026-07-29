@@ -1,5 +1,3 @@
-import sys
-
 import numpy as np
 import pytest
 import torch
@@ -7,19 +5,12 @@ import torch
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
 
-from ..conftest import SKIP_METAL_GRAD
 from ..utils import assert_allclose
 from .utils import make_diff_scene_pair
 
 
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        pytest.param(gs.gpu, marks=pytest.mark.skipif(sys.platform == "darwin", reason=SKIP_METAL_GRAD)),
-    ],
-)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize("control_target", ["init_vel", "control_force"])
 @pytest.mark.debug(False)
 def test_reference_trajectory_recovery_converges(control_target, grad_cartpole, show_viewer):

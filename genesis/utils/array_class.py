@@ -522,7 +522,7 @@ class ConstraintState:
     use_full_hessian: qd.Tensor
     # Solver loop iteration counter (0-indexed, increments each iteration in the graph loop)
     solver_iter_counter: qd.Tensor
-    # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
+    # Always ndarray (not field): graph.do_while requires the same physical ndarray on every call.
     graph_counter: qd.types.ndarray()
     early_exit_flag: qd.Tensor
 

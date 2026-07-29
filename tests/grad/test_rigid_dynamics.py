@@ -1,25 +1,15 @@
 import math
-import sys
 
 import numpy as np
 import pytest
 
 import genesis as gs
 
-from ..conftest import SKIP_METAL_GRAD
 from .utils import assert_grad_matches_fd, make_diff_scene_pair
 
 
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        # FIXME: Quadrants' released native-Metal reverse-mode autodiff collapses per-env adjoints (fixed upstream,
-        # see Quadrants issue #805). Re-enable once the fix ships in a Quadrants release.
-        pytest.param(gs.gpu, marks=pytest.mark.skipif(sys.platform == "darwin", reason=SKIP_METAL_GRAD)),
-    ],
-)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
     "model_name",
     [
