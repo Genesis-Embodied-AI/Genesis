@@ -208,7 +208,6 @@ class FEMSolver(Solver):
         )
 
     def init_surface_fields(self):
-        n_vertices_max = self.n_vertices
         n_surfaces_max = self.n_surfaces
 
         # surface info (for coupling)
@@ -218,22 +217,37 @@ class FEMSolver(Solver):
             active=gs.qd_bool,
         )
 
-        # environment-offset vertex positions for rendering
-        vert_state_render = qd.types.struct(
-            pos=gs.qd_vec3,
-        )
-
         self.surface = surface_state.field(
             shape=(n_surfaces_max),
             needs_grad=False,
             layout=qd.Layout.SOA,
         )
 
-        self.verts_render = vert_state_render.field(
-            shape=(n_vertices_max, self._B),
-            needs_grad=False,
-            layout=qd.Layout.SOA,
+    def init_vvert_fields(self):
+        """Allocate the render geometry of every visual geom of every entity, laid out back-to-back.
+
+        Several vverts may stand for a single simulated vertex, so each one carries its own UVs and gathers its
+        position through 'vert_idx' (see 'FEMVisGeom'). A contiguous layout lets a renderer consume positions, UVs and
+        topology as three flat arrays.
+        """
+        struct_vvert_info = qd.types.struct(
+            vert_idx=gs.qd_int,  # simulated vertex standing for this vvert
         )
+        self.vverts_info = struct_vvert_info.field(shape=(max(self._n_vverts, 1),), layout=qd.Layout.SOA)
+
+        # environment-offset vvert positions
+        struct_vvert_state_render = qd.types.struct(
+            pos=gs.qd_vec3,
+        )
+        self.vverts_render = struct_vvert_state_render.field(
+            shape=(max(self._n_vverts, 1), self._B), layout=qd.Layout.SOA
+        )
+
+        # static, shared across all batch envs
+        self.vverts_uvs = qd.field(dtype=gs.qd_vec2, shape=(max(self._n_vverts, 1),))
+
+        # static, in the solver's global vvert space
+        self.vfaces_indices = qd.field(dtype=gs.qd_ivec3, shape=(max(self._n_vfaces, 1),))
 
     def _init_surface_info(self):
         self.vertices_on_surface = qd.field(dtype=gs.qd_bool, shape=(self.n_vertices,))
@@ -339,9 +353,12 @@ class FEMSolver(Solver):
         # elements and bodies
         self._n_elements_max = self.n_elements
         self._n_vertices_max = self.n_vertices
+        self._n_vverts = self.n_vverts
+        self._n_vfaces = self.n_vfaces
         if self.n_elements_max > 0:
             self.init_element_fields()
             self.init_surface_fields()
+            self.init_vvert_fields()
             self.init_ckpt()
 
             for entity in self._entities:
@@ -398,6 +415,8 @@ class FEMSolver(Solver):
             v_start=self.n_vertices,
             el_start=self.n_elements,
             s_start=self.n_surfaces,
+            vvert_start=self.n_vverts,
+            vface_start=self.n_vfaces,
             name=name,
         )
 
@@ -1090,9 +1109,20 @@ class FEMSolver(Solver):
         return state
 
     def get_state_render(self, f):
-        """Refresh and return the environment-offset vertex positions field, with shape (n_vertices, B)."""
+        """
+        Refresh and return the render geometry of every visual geom, laid out contiguously.
+
+        Returns
+        -------
+        tuple
+            (vverts_pos, vverts_uvs, vfaces_indices) - environment-offset render vertex positions with shape
+            (n_vverts, B), their UV coordinates, and the render triangles in global render vertex space.
+        """
+        if not self.is_active or self._n_vverts == 0:
+            return None, None, None
+
         self._kernel_get_state_render(f)
-        return self.verts_render.pos
+        return self.vverts_render.pos, self.vverts_uvs, self.vfaces_indices
 
     def get_forces(self):
         """
@@ -1364,10 +1394,33 @@ class FEMSolver(Solver):
 
     @qd.kernel
     def _kernel_get_state_render(self, f: qd.i32):
-        for i_v, i_b in qd.ndrange(self.n_vertices, self._B):
+        for i_vv, i_b in qd.ndrange(self._n_vverts, self._B):
+            i_v = self.vverts_info[i_vv].vert_idx
             for j in qd.static(range(3)):
                 pos_j = qd.cast(self.elements_v[f, i_v, i_b].pos[j], qd.f32)
-                self.verts_render[i_v, i_b].pos[j] = pos_j + self.envs_offset[i_b][j]
+                self.vverts_render[i_vv, i_b].pos[j] = pos_j + self.envs_offset[i_b][j]
+
+    @qd.kernel
+    def _kernel_add_vverts(
+        self,
+        vvert_start: qd.i32,
+        vface_start: qd.i32,
+        v_start: qd.i32,
+        verts_idx: qd.types.ndarray(),
+        uvs: qd.types.ndarray(element_dim=1),
+        vfaces: qd.types.ndarray(element_dim=1),
+    ):
+        n_vverts_local = verts_idx.shape[0]
+        for i_vv_ in range(n_vverts_local):
+            self.vverts_info[i_vv_ + vvert_start].vert_idx = verts_idx[i_vv_] + v_start
+
+        n_uvs = uvs.shape[0]
+        for i_vv_ in range(n_uvs):
+            self.vverts_uvs[i_vv_ + vvert_start] = uvs[i_vv_]
+
+        n_vfaces_local = vfaces.shape[0]
+        for i_vf_ in range(n_vfaces_local):
+            self.vfaces_indices[i_vf_ + vface_start] = vfaces[i_vf_] + vvert_start
 
     @qd.kernel
     def _kernel_set_state(
@@ -1420,6 +1473,14 @@ class FEMSolver(Solver):
     @property
     def n_surfaces(self):
         return sum([entity.n_surfaces for entity in self.entities])
+
+    @property
+    def n_vverts(self):
+        return sum([entity.n_vverts for entity in self._entities])
+
+    @property
+    def n_vfaces(self):
+        return sum([entity.n_vfaces for entity in self._entities])
 
     @property
     def n_vertices_max(self):
