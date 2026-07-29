@@ -158,8 +158,6 @@ class VideoEncoder:
 
     def _open(self, frame):
         is_color = frame.ndim == 3 and frame.shape[-1] == 3
-        if frame.ndim != 2 + is_color or not np.issubdtype(frame.dtype, np.integer):
-            gs.raise_exception("Frames must be either grayscale [H, W] or color [H, W, RGB] of integer type.")
         height, width, *_ = frame.shape
         # 4:2:0 chroma subsampling halves both axes, so encoders reject an odd width or height. The frame is padded to
         # the next even size rather than cropped, keeping every pixel the camera rendered.
@@ -219,6 +217,13 @@ class VideoEncoder:
         on the thread owning the rendering context rather than on the encoding thread. When threaded, the frame must
         not be mutated after this call, since it is encoded asynchronously.
         """
+        # Every frame is validated, not just the first one: the reusable frame storage is 8-bit, so anything else
+        # would be truncated on assignment instead of raising. Validating here rather than at encoding time also
+        # reports the error on the calling thread, where it can propagate, rather than on the encoding thread.
+        is_color = frame.ndim == 3 and frame.shape[-1] == 3
+        if frame.ndim != 2 + is_color or not np.issubdtype(frame.dtype, np.integer):
+            gs.raise_exception("Frames must be either grayscale [H, W] or color [H, W, RGB] of integer type.")
+
         if self._is_threaded:
             if self._thread is None:
                 self._is_encoding_over = False

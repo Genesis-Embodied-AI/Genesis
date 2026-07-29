@@ -4269,14 +4269,9 @@ class RigidEntity(KinematicEntity):
     def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
         """Get the total kinetic energy of the entity in Joules [J] (translational + rotational).
 
-        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``.
-        The mass matrix is recomputed to include motor armature on the diagonal.
-
-        Note
-        ----
-        When the ``approximate_implicitfast`` integrator is used, this method forces recomputation of the
-        mass matrix to exclude implicit damping terms added during integration. Other integrators do not
-        require this recomputation.
+        Summed over the entity's links, each contributing ``0.5 * V^T * I * V`` for its spatial velocity ``V`` and
+        spatial inertia ``I`` about the center of mass (COM) of its kinematic tree, plus the motor armature
+        contribution ``0.5 * sum_d(armature_d * dq_d^2)`` of its DOFs.
 
         Parameters
         ----------
@@ -4287,27 +4282,18 @@ class RigidEntity(KinematicEntity):
         -------
         kinetic_energy : torch.Tensor, shape () or (n_envs,)
         """
-        if self._solver.rigid_config.integrator == gs.integrator.approximate_implicitfast:
-            from genesis.engine.solvers.rigid.abd.forward_dynamics import kernel_compute_mass_matrix
-
-            kernel_compute_mass_matrix(
-                self._solver.dyn_state,
-                self._solver.dyn_info,
-                self._solver.rigid_info,
-                self._solver.rigid_config,
-                decompose=False,
-            )
-        mass_mat = self.get_mass_mat(envs_idx=envs_idx)
-        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
-        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)
-        return 0.5 * torch.sum(dofs_vel * Mv, dim=-1)
+        links_idx = self._get_global_idx(None, self.n_links, self._link_start, unsafe=True)
+        dofs_idx = self._get_global_idx(None, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_kinetic_energy(links_idx, dofs_idx, envs_idx)
 
     @gs.assert_built
     def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
-        """Get the total gravitational potential energy of the entity in Joules [J].
+        """Get the total potential energy of the entity in Joules [J] (gravitational + joint springs).
 
-        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``, where ``p_i`` is the
-        center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver.
+        Gravity contributes ``-sum_i(m_i * g^T * p_i)`` over the entity's links, where ``p_i`` is the center-of-mass
+        position of link *i* and ``g`` is the gravity vector obtained from the solver. Its joint springs contribute
+        ``0.5 * sum_d(stiffness_d * (q_d - q0_d)^2)``, the elastic energy stored by holding each DOF away from its
+        neutral position.
 
         Parameters
         ----------
@@ -4318,16 +4304,9 @@ class RigidEntity(KinematicEntity):
         -------
         potential_energy : torch.Tensor, shape () or (n_envs,)
         """
-        gravity = self._solver.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
-        links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
-        # Link masses are static properties (not batched per environment),
-        # so always fetch without envs_idx to avoid indexing conflicts.
-        links_mass = self.get_links_inertial_mass()  # (n_links,)
-
-        # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
-        # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
-        g_dot_p = torch.sum(gravity.unsqueeze(-2) * links_pos, dim=-1)  # (..., n_links)
-        return -torch.sum(links_mass * g_dot_p, dim=-1)
+        links_idx = self._get_global_idx(None, self.n_links, self._link_start, unsafe=True)
+        dofs_idx = self._get_global_idx(None, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_potential_energy(links_idx, dofs_idx, envs_idx)
 
     @gs.assert_built
     def get_total_energy(self, envs_idx=None) -> torch.Tensor:

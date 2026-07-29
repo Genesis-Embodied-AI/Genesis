@@ -1606,6 +1606,11 @@ class Scene(RBC):
         if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
         if isinstance(envs_idx, (int, np.integer)):
+            n_envs = self.n_envs
+            if not -n_envs <= envs_idx < n_envs:
+                gs.raise_exception(f"`envs_idx` out of range: {envs_idx} not in [{-n_envs}, {n_envs}).")
+            if envs_idx < 0:
+                envs_idx = envs_idx + n_envs
             return self._envs_idx[envs_idx : envs_idx + 1]
 
         return sanitize_index(envs_idx, -1, self.n_envs, 0, "envs_idx")
