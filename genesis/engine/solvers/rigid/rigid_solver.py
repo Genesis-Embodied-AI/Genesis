@@ -293,6 +293,29 @@ class RigidSolver(KinematicSolver):
         if options.friction_cone == gs.friction_cone.elliptic and self._requires_grad:
             gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
 
+        # Bounding friction against the developed normal force needs the contact to split into a normal row and a
+        # friction disc, which only the elliptic cone provides. MuJoCo compatibility keeps the joint cone regardless,
+        # since letting sliding inflate the normal force is part of the behaviour being reproduced. The disc radius is
+        # relatched every iteration, making the solve a successive approximation whose objective moves underneath the
+        # solver; only Newton re-derives its curvature each iteration and lands on the fixed point, while conjugate
+        # gradient carries a search history that the moving objective invalidates, leaving friction short.
+        signorini_blocker = ""
+        if self._enable_mujoco_compatibility:
+            signorini_blocker = "'enable_mujoco_compatibility' is True"
+        elif options.friction_cone != gs.friction_cone.elliptic:
+            signorini_blocker = "it requires 'friction_cone' to be 'gs.friction_cone.elliptic'"
+        elif options.constraint_solver != gs.constraint_solver.Newton:
+            signorini_blocker = "it requires 'constraint_solver' to be 'gs.constraint_solver.Newton'"
+        if options.contact_resolution is None:
+            options.contact_resolution = (
+                gs.contact_resolution.impedance if signorini_blocker else gs.contact_resolution.signorini
+            )
+        elif options.contact_resolution == gs.contact_resolution.signorini and signorini_blocker:
+            gs.raise_exception(
+                f"'contact_resolution' cannot be 'gs.contact_resolution.signorini' when {signorini_blocker}."
+            )
+        self._contact_resolution = options.contact_resolution
+
         # A high tangential-to-normal impedance ratio suppresses the tangential creep of regularized friction that
         # lets resting structures slowly slide apart under their own weight. With the elliptic cone the tangential
         # rows are stiffened independently, so it resolves to a high ratio - except under MuJoCo compatibility, where
@@ -556,6 +579,7 @@ class RigidSolver(KinematicSolver):
             batch_joints_info=self._options.batch_joints_info,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_elliptic_friction=self._options.friction_cone == gs.friction_cone.elliptic,
+            enable_signorini_contact=self._contact_resolution == gs.contact_resolution.signorini,
             enable_torsional_friction=self._options.enable_torsional_friction,
             enable_rolling_friction=self._options.enable_rolling_friction,
             enable_multi_contact=self._enable_multi_contact,

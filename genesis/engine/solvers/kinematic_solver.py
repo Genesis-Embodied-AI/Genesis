@@ -354,6 +354,7 @@ class KinematicSolver(Solver):
             batch_joints_info=False,
             enable_mujoco_compatibility=False,
             enable_elliptic_friction=False,
+            enable_signorini_contact=False,
             enable_multi_contact=False,
             enable_collision=False,
             enable_joint_limit=False,

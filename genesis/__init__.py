@@ -495,6 +495,7 @@ from .constants import (
     integrator,
     constraint_solver,
     friction_cone,
+    contact_resolution,
     broadphase_traversal,
 )
 

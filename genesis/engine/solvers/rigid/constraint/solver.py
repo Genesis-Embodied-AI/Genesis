@@ -797,17 +797,21 @@ def _add_friction_constraint(
         efc_frictionloss = contact_data_friction if i_friction == 0 else gs.qd_float(0.0)
         if qd.static(rigid_config.enable_torsional_friction):
             # The mu ratio lives in the spin row's regularization (jacobian unscaled), matching MuJoCo's elliptic
-            # cone: it bounds the torsional torque at friction_torsional times the normal force. A zero coefficient
-            # keeps the shared regularization: the row is zeroed at the source, so the value just has to stay finite.
+            # cone: it is what bounds the torsional torque at friction_torsional times the normal force once every
+            # axis shares one ellipsoid. The 'signorini' resolution bounds each block by its own coefficient
+            # explicitly, so rescaling there would only distort the row's stick stiffness. A zero coefficient keeps
+            # the shared regularization: the row is zeroed at the source, so the value just has to stay finite.
             if i_friction == 3:
-                if contact_data_friction_torsional > 0.0:
-                    diag = diag * contact_data_friction**2 / contact_data_friction_torsional**2
+                if qd.static(not rigid_config.enable_signorini_contact):
+                    if contact_data_friction_torsional > 0.0:
+                        diag = diag * contact_data_friction**2 / contact_data_friction_torsional**2
                 efc_frictionloss = contact_data_friction_torsional
         if qd.static(rigid_config.enable_rolling_friction):
             # The rolling rows carry the mu ratio in their regularization like the spin row.
             if i_friction >= 4:
-                if contact_data_friction_rolling > 0.0:
-                    diag = diag * contact_data_friction**2 / contact_data_friction_rolling**2
+                if qd.static(not rigid_config.enable_signorini_contact):
+                    if contact_data_friction_rolling > 0.0:
+                        diag = diag * contact_data_friction**2 / contact_data_friction_rolling**2
                 efc_frictionloss = contact_data_friction_rolling
         constraint_state.efc_frictionloss[n_con, i_b] = efc_frictionloss
     else:
@@ -1036,14 +1040,16 @@ def _add_collision_constraints_per_contact(
                     if qd.static(rigid_config.enable_torsional_friction):
                         # Spin-row regularization and torsional coefficient storage: see _add_friction_constraint.
                         if i_friction == 3:
-                            if contact_data_friction_torsional > 0.0:
-                                diag = diag * contact_data_friction**2 / contact_data_friction_torsional**2
+                            if qd.static(not rigid_config.enable_signorini_contact):
+                                if contact_data_friction_torsional > 0.0:
+                                    diag = diag * contact_data_friction**2 / contact_data_friction_torsional**2
                             efc_frictionloss = contact_data_friction_torsional
                     if qd.static(rigid_config.enable_rolling_friction):
                         # Rolling-row regularization and coefficient storage: see _add_friction_constraint.
                         if i_friction >= 4:
-                            if contact_data_friction_rolling > 0.0:
-                                diag = diag * contact_data_friction**2 / contact_data_friction_rolling**2
+                            if qd.static(not rigid_config.enable_signorini_contact):
+                                if contact_data_friction_rolling > 0.0:
+                                    diag = diag * contact_data_friction**2 / contact_data_friction_rolling**2
                             efc_frictionloss = contact_data_friction_rolling
                     constraint_state.efc_frictionloss[n_con, i_b] = efc_frictionloss
                 else:
@@ -2125,9 +2131,11 @@ def func_add_cone_hessian_block(
         if qd.static(rigid_config.backend == gs.cpu):
             for i_r in qd.static(range(n_rows)):
                 constraint_state.cone_prev_jaref[i_cone * n_rows + i_r, i_b] = rows_jaref[i_r]
-        zone, N, T = _func_cone_zone(rows_jaref, con_mu, rows_friction)
+        zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
         if zone == 2:
-            _rows_force, _cost, cone_H = _func_cone_middle(rows_jaref, rows_efc_D[0], con_mu, rows_friction, N, T)
+            _rows_force, _cost, cone_H = _func_cone_middle(
+                rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+            )
             jac_n = constraint_state.jac_n_dofs[i_head, i_b]
             for i_d1_ in range(jac_n):
                 i_d1 = constraint_state.jac_dofs_idx[i_head, i_d1_, i_b]
@@ -2181,9 +2189,11 @@ def func_add_cone_hessian_block_island(
                 i_cone_row = i_c - nef
                 for i_r in qd.static(range(n_rows)):
                     constraint_state.cone_prev_jaref[i_cone_row + i_r, i_b] = rows_jaref[i_r]
-            zone, N, T = _func_cone_zone(rows_jaref, con_mu, rows_friction)
+            zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
             if zone == 2:
-                _rows_force, _cost, cone_H = _func_cone_middle(rows_jaref, rows_efc_D[0], con_mu, rows_friction, N, T)
+                _rows_force, _cost, cone_H = _func_cone_middle(
+                    rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+                )
                 jac_n = constraint_state.jac_n_dofs[i_c, i_b]
                 for i_d1_ in range(jac_n):
                     i_d1 = constraint_state.jac_dofs_idx[i_c, i_d1_, i_b]
@@ -3717,18 +3727,18 @@ def func_cone_rank_update_island(
                 rows_efc_D, rows_friction, con_mu, rows_jaref_cur = _func_cone_head_load(
                     i_c, i_b, constraint_state, rigid_config
                 )
-                cur_zone, cN, cT = _func_cone_zone(rows_jaref_cur, con_mu, rows_friction)
+                cur_zone, cN, cT = _func_cone_zone(rows_jaref_cur, rows_efc_D, con_mu, rows_friction, rigid_config)
                 rows_jaref_prev = qd.Vector.zero(gs.qd_float, n_rows)
                 for i_r in qd.static(range(n_rows)):
                     rows_jaref_prev[i_r] = constraint_state.cone_prev_jaref[i_cone_row + i_r, i_b]
-                prev_zone, pN, pT = _func_cone_zone(rows_jaref_prev, con_mu, rows_friction)
+                prev_zone, pN, pT = _func_cone_zone(rows_jaref_prev, rows_efc_D, con_mu, rows_friction, rigid_config)
 
                 if cur_zone == 2 or prev_zone == 2:
                     cone_L_cur = _func_cone_block_chol(
-                        rows_jaref_cur, rows_efc_D[0], con_mu, rows_friction, cur_zone, cN, cT, EPS
+                        rows_jaref_cur, rows_efc_D, con_mu, rows_friction, cur_zone, cN, cT, EPS, rigid_config
                     )
                     cone_L_prev = _func_cone_block_chol(
-                        rows_jaref_prev, rows_efc_D[0], con_mu, rows_friction, prev_zone, pN, pT, EPS
+                        rows_jaref_prev, rows_efc_D, con_mu, rows_friction, prev_zone, pN, pT, EPS, rigid_config
                     )
                     ld_start = n
                     jac_n = constraint_state.jac_n_dofs[i_c, i_b]
@@ -3796,18 +3806,18 @@ def func_cone_rank_update_whole_env(
                 rows_efc_D, rows_friction, con_mu, rows_jaref_cur = _func_cone_head_load(
                     i_head, i_b, constraint_state, rigid_config
                 )
-                cur_zone, cN, cT = _func_cone_zone(rows_jaref_cur, con_mu, rows_friction)
+                cur_zone, cN, cT = _func_cone_zone(rows_jaref_cur, rows_efc_D, con_mu, rows_friction, rigid_config)
                 rows_jaref_prev = qd.Vector.zero(gs.qd_float, n_rows)
                 for i_r in qd.static(range(n_rows)):
                     rows_jaref_prev[i_r] = constraint_state.cone_prev_jaref[i_cone_row + i_r, i_b]
-                prev_zone, pN, pT = _func_cone_zone(rows_jaref_prev, con_mu, rows_friction)
+                prev_zone, pN, pT = _func_cone_zone(rows_jaref_prev, rows_efc_D, con_mu, rows_friction, rigid_config)
 
                 if cur_zone == 2 or prev_zone == 2:
                     cone_L_cur = _func_cone_block_chol(
-                        rows_jaref_cur, rows_efc_D[0], con_mu, rows_friction, cur_zone, cN, cT, EPS
+                        rows_jaref_cur, rows_efc_D, con_mu, rows_friction, cur_zone, cN, cT, EPS, rigid_config
                     )
                     cone_L_prev = _func_cone_block_chol(
-                        rows_jaref_prev, rows_efc_D[0], con_mu, rows_friction, prev_zone, pN, pT, EPS
+                        rows_jaref_prev, rows_efc_D, con_mu, rows_friction, prev_zone, pN, pT, EPS, rigid_config
                     )
                     # Term t stages column t of the previous factor, term n_rows + t of the current one (downdate
                     # first, see the docstring); an all-zero term (side outside the middle zone) stages a zero vector
@@ -4330,7 +4340,7 @@ def func_ls_init_and_eval_p0(
             for i_r in qd.static(range(n_rows)):
                 rows_jv[i_r] = constraint_state.jv[i_head + i_r, i_b]
             _cost_c, grad_c, hess_c = _func_cone_cost_along_alpha(
-                rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction
+                rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction, rigid_config
             )
             quad_total_1 = quad_total_1 + grad_c
             quad_total_2 = quad_total_2 + 0.5 * hess_c
@@ -4452,7 +4462,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
             for k in qd.static(range(n_alphas)):
                 alpha_k = alphas[k]
                 cost_diff_c, grad_c, hess_c = _func_cone_cost_diff_along_alpha(
-                    rows_jaref, rows_jv, alpha_k, rows_efc_D, con_mu, rows_friction
+                    rows_jaref, rows_jv, alpha_k, rows_efc_D, con_mu, rows_friction, rigid_config
                 )
                 t_0[k] = t_0[k] + cost_diff_c - grad_c * alpha_k + 0.5 * hess_c * alpha_k * alpha_k
                 t_1[k] = t_1[k] + grad_c - hess_c * alpha_k
@@ -4629,7 +4639,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
             for k in qd.static(range(n_alphas)):
                 alpha_k = alphas[k]
                 cost_diff_c, grad_c, hess_c = _func_cone_cost_diff_along_alpha(
-                    rows_jaref, rows_jv, alpha_k, rows_efc_D, con_mu, rows_friction
+                    rows_jaref, rows_jv, alpha_k, rows_efc_D, con_mu, rows_friction, rigid_config
                 )
                 t_0[k] = t_0[k] + cost_diff_c - grad_c * alpha_k + 0.5 * hess_c * alpha_k * alpha_k
                 t_1[k] = t_1[k] + grad_c - hess_c * alpha_k
@@ -5015,25 +5025,54 @@ def _tri_idx(i, j, dim):
     return i * dim - i * (i - 1) // 2 + (j - i)
 
 
-@qd.func
-def _func_cone_zone(rows_jaref, con_mu, rows_friction):
-    """Classify one elliptic contact into MuJoCo's three cone zones from the per-row residuals rows_jaref.
+def _friction_blocks(rigid_config):
+    """Row offset and width of each independently-bounded friction block of one elliptic contact, at trace time.
 
-    Returns (zone, N, T): zone 0 = top (dual-cone interior, inactive), 1 = bottom (polar cone, plain quadratic),
-    2 = middle (cone boundary). N and T are the rescaled normal/tangential magnitudes reused by the middle-zone
-    force/cost/Hessian; con_mu and rows_friction as returned by _func_cone_head_load.
+    Sliding friction spans the two tangent axes, torsional friction the spin axis and rolling friction the two
+    tangent axes again, laid out as described in efc_frictionloss (see array_class.py). Only the 'signorini'
+    resolution bounds them separately; 'impedance' couples every axis into one ellipsoid.
     """
-    N = con_mu * rows_jaref[0]
-    T_sq = gs.qd_float(0.0)
-    for i_r in qd.static(range(1, rows_jaref.n)):
-        u = rows_friction[i_r] * rows_jaref[i_r]
-        T_sq = T_sq + u**2
-    T = qd.sqrt(T_sq)
+    blocks = [(1, 2)]
+    if rigid_config.enable_torsional_friction:
+        blocks.append((3, 1))
+    if rigid_config.enable_rolling_friction:
+        blocks.append((4, 2))
+    return tuple(blocks)
+
+
+@qd.func
+def _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config: qd.template()):
+    """Classify one elliptic contact from its per-row residuals rows_jaref, for the resolution in force.
+
+    Returns (zone, N, T). Under 'impedance' these are MuJoCo's three cone zones - 0 = top (dual-cone interior,
+    inactive), 1 = bottom (polar cone, plain quadratic), 2 = middle (cone boundary) - with N and T the rescaled
+    normal/tangential magnitudes the middle-zone force/cost/Hessian reuses.
+
+    Under 'signorini' a contact only ever separates (zone 0) or carries force (zone 2), since friction is bounded
+    against the normal force rather than traded against it: N carries that latched normal force, the radius scale of
+    every friction disc, and T is unused because each block has its own tangential magnitude. Zone 1 never occurs -
+    a sticking block is a plain quadratic within the zone-2 block, not a whole-contact state.
+
+    con_mu, rows_efc_D and rows_friction as returned by _func_cone_head_load.
+    """
     zone = 2
-    if N >= con_mu * T or (T <= 0.0 and N >= 0.0):
-        zone = 0
-    elif con_mu * N + T <= 0.0 or (T <= 0.0 and N < 0.0):
-        zone = 1
+    N = gs.qd_float(0.0)
+    T = gs.qd_float(0.0)
+    if qd.static(rigid_config.enable_signorini_contact):
+        N = qd.max(-rows_efc_D[0] * rows_jaref[0], 0.0)
+        if N <= 0.0:
+            zone = 0
+    else:
+        N = con_mu * rows_jaref[0]
+        T_sq = gs.qd_float(0.0)
+        for i_r in qd.static(range(1, rows_jaref.n)):
+            u = rows_friction[i_r] * rows_jaref[i_r]
+            T_sq = T_sq + u**2
+        T = qd.sqrt(T_sq)
+        if N >= con_mu * T or (T <= 0.0 and N >= 0.0):
+            zone = 0
+        elif con_mu * N + T <= 0.0 or (T <= 0.0 and N < 0.0):
+            zone = 1
     return zone, N, T
 
 
@@ -5077,20 +5116,20 @@ def _func_cone_head_is_middle(
     constraint_state: array_class.ConstraintState,
     rigid_config: qd.template(),
 ) -> bool:
-    """Whether elliptic cone contact head i_c sits in the middle (cone-boundary) zone this iteration or last.
+    """Whether elliptic cone contact head i_c sits in the middle (force-carrying) zone this iteration or last.
 
-    The coupled cone block only fires its downdate/update when the current or previous residual is in the middle
-    zone; top/bottom zones leave the factor untouched. The incremental-vs-rebuild cost model uses this to charge only
-    the cone contacts whose update actually runs.
+    The coupled block only fires its downdate/update when the current or previous residual is in the middle zone;
+    the other zones leave the factor untouched. The incremental-vs-rebuild cost model uses this to charge only the
+    cone contacts whose update actually runs.
     """
     i_cone_row = i_c - nef
     n_rows = qd.static(rigid_config.rows_per_contact)
-    _rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(i_c, i_b, constraint_state, rigid_config)
-    cur_zone, cur_N, cur_T = _func_cone_zone(rows_jaref, con_mu, rows_friction)
+    rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(i_c, i_b, constraint_state, rigid_config)
+    cur_zone, cur_N, cur_T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
     rows_jaref_prev = qd.Vector.zero(gs.qd_float, n_rows)
     for i_r in qd.static(range(n_rows)):
         rows_jaref_prev[i_r] = constraint_state.cone_prev_jaref[i_cone_row + i_r, i_b]
-    prev_zone, prev_N, prev_T = _func_cone_zone(rows_jaref_prev, con_mu, rows_friction)
+    prev_zone, prev_N, prev_T = _func_cone_zone(rows_jaref_prev, rows_efc_D, con_mu, rows_friction, rigid_config)
     return cur_zone == 2 or prev_zone == 2
 
 
@@ -5102,7 +5141,66 @@ def _func_cone_Dm(D0, con_mu):
 
 
 @qd.func
-def _func_cone_middle(rows_jaref, D0, con_mu, rows_friction, N, T):
+def _func_disc_middle(rows_jaref, rows_efc_D, rows_friction, f_n, rigid_config: qd.template()):
+    """Force, cost and packed symmetric local Hessian of one elliptic contact under the 'signorini' resolution.
+
+    The normal row keeps its plain unilateral quadratic. Each friction block (see _friction_blocks) is the Huber of
+    the disc of radius coefficient * f_n, with f_n latched from the normal row at the current iterate: quadratic
+    while the block sticks, conical once it saturates, the two agreeing in value, force and slope at the transition.
+    Freezing the radius is what stops tangential demand from buying normal force, and makes the local Hessian
+    block-diagonal - no block sees another's curvature, nor the normal row's.
+
+    Returns (rows_force, cost, cone_H), cone_H packed row-major upper-triangle (see _tri_idx). Both Huber branches
+    are positive semi-definite, so the assembled Hessian stays SPD as the coupled cone's does.
+    """
+    n_rows = qd.static(rigid_config.rows_per_contact)
+    rows_force = qd.Vector.zero(gs.qd_float, n_rows)
+    cone_H = qd.Vector.zero(gs.qd_float, n_rows * (n_rows + 1) // 2)
+    rows_force[0] = f_n
+    cone_H[0] = rows_efc_D[0]
+    cost = 0.5 * rows_efc_D[0] * rows_jaref[0] ** 2
+    for i_0, width in qd.static(_friction_blocks(rigid_config)):
+        # The rows of a block share one impedance and one coefficient, both carried on its leading row.
+        D = rows_efc_D[i_0]
+        radius = rows_friction[i_0] * f_n
+        T_sq = gs.qd_float(0.0)
+        for i_r in qd.static(range(i_0, i_0 + width)):
+            T_sq = T_sq + rows_jaref[i_r] ** 2
+        T = qd.sqrt(T_sq)
+        if D * T <= radius:
+            cost = cost + 0.5 * D * T_sq
+            for i_r in qd.static(range(i_0, i_0 + width)):
+                rows_force[i_r] = -D * rows_jaref[i_r]
+                cone_H[qd.static(_tri_idx(i_r, i_r, n_rows))] = D
+        else:
+            # T > 0 here: a saturated block has D * T above a radius that is never negative.
+            cost = cost + radius * (T - 0.5 * radius / D)
+            curvature = radius / T
+            for i_r in qd.static(range(i_0, i_0 + width)):
+                rows_force[i_r] = -curvature * rows_jaref[i_r]
+                cone_H[qd.static(_tri_idx(i_r, i_r, n_rows))] = curvature * (1.0 - (rows_jaref[i_r] / T) ** 2)
+                for j_r in qd.static(range(i_r + 1, i_0 + width)):
+                    cone_H[qd.static(_tri_idx(i_r, j_r, n_rows))] = (
+                        -curvature * rows_jaref[i_r] * rows_jaref[j_r] / T_sq
+                    )
+    return rows_force, cost, cone_H
+
+
+@qd.func
+def _func_cone_middle(rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config: qd.template()):
+    """Middle-zone force, cost and packed symmetric local Hessian of one elliptic contact, for the resolution in
+    force: MuJoCo's coupled cone under 'impedance', the latched-radius friction discs under 'signorini'.
+
+    Returns (rows_force, cost, cone_H), cone_H packed row-major upper-triangle (see _tri_idx). N and T carry what
+    _func_cone_zone returned for this contact; only valid in the middle zone.
+    """
+    if qd.static(rigid_config.enable_signorini_contact):
+        return _func_disc_middle(rows_jaref, rows_efc_D, rows_friction, N, rigid_config)
+    return _func_cone_middle_impedance(rows_jaref, rows_efc_D[0], con_mu, rows_friction, N, T)
+
+
+@qd.func
+def _func_cone_middle_impedance(rows_jaref, D0, con_mu, rows_friction, N, T):
     """Middle-zone (cone-boundary) force, cost, and packed symmetric local Hessian for one elliptic contact.
 
     Returns (rows_force, cost, cone_H): the per-row forces, the coupled cost, and the row-major upper-triangle
@@ -5160,8 +5258,8 @@ def _func_cone_block_product(cone_H, rows_jac_row, rows_jac_col):
 
 
 @qd.func
-def _func_cone_block_chol(rows_jaref, D0, con_mu, rows_friction, zone, N, T, EPS):
-    """Packed lower-triangular Cholesky factor of one contact's middle-zone cone Hessian H_c, entry L[i][j] stored
+def _func_cone_block_chol(rows_jaref, rows_efc_D, con_mu, rows_friction, zone, N, T, EPS, rigid_config: qd.template()):
+    """Packed lower-triangular Cholesky factor of one contact's middle-zone Hessian H_c, entry L[i][j] stored
     column-major at _tri_idx(j, i).
 
     All entries are zero outside the middle zone. Diagonals are floored at EPS so a near-degenerate block cannot
@@ -5171,7 +5269,9 @@ def _func_cone_block_chol(rows_jaref, D0, con_mu, rows_friction, zone, N, T, EPS
     n_rows = qd.static(rows_jaref.n)
     cone_L = qd.Vector.zero(gs.qd_float, n_rows * (n_rows + 1) // 2)
     if zone == 2:
-        _rows_force, _cost, cone_H = _func_cone_middle(rows_jaref, D0, con_mu, rows_friction, N, T)
+        _rows_force, _cost, cone_H = _func_cone_middle(
+            rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+        )
         for j_r in qd.static(range(n_rows)):
             pivot_sq = cone_H[qd.static(_tri_idx(j_r, j_r, n_rows))]
             for k_r in qd.static(range(j_r)):
@@ -5203,7 +5303,7 @@ def func_cone_middle_cost(
     Shared by every linesearch/cost path so the coupled term is computed identically across arms.
     """
     rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(i_c, i_b, constraint_state, rigid_config)
-    zone, N, T = _func_cone_zone(rows_jaref, con_mu, rows_friction)
+    zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
     c = gs.qd_float(0.0)
     if zone == 2:
         NmT = N - con_mu * T
@@ -5212,16 +5312,63 @@ def func_cone_middle_cost(
 
 
 @qd.func
-def _func_cone_cost_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction):
-    """Exact elliptic-cone cost and its first/second derivatives in the linesearch step alpha (matching MuJoCo).
+def _func_disc_cost_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, rows_friction, rigid_config: qd.template()):
+    """Latched-radius contact cost and its first/second derivatives in the linesearch step alpha ('signorini').
 
-    Evaluated at rows_jaref + alpha * rows_jv, returning (cost, dcost/dalpha, d2cost/dalpha2). The zone is
-    re-classified at this alpha, so the cost is exact along the whole search line (top: 0; bottom: plain quadratic;
-    middle: the cone potential 0.5*Dm*(N - con_mu*T)^2 differentiated through T = ||rows_friction[1:] *
+    Evaluated at rows_jaref + alpha * rows_jv, returning (cost, dcost/dalpha, d2cost/dalpha2). The disc radii are
+    latched at the alpha=0 residuals and stay fixed along the whole search line, so cost, gradient and curvature all
+    describe the one frozen objective the Newton step was computed from - the linesearch cannot then accept a step
+    against a cost the step did not descend. The normal row's activity and each block's stick/slip regime are
+    re-classified at this alpha, exactly as every other unilateral and Huber row is.
+    """
+    f_n = qd.max(-rows_efc_D[0] * rows_jaref[0], 0.0)
+    rows_jaref_alpha = rows_jaref + alpha * rows_jv
+    cost = gs.qd_float(0.0)
+    grad = gs.qd_float(0.0)
+    hess = gs.qd_float(0.0)
+    if rows_jaref_alpha[0] < 0.0:
+        cost = 0.5 * rows_efc_D[0] * rows_jaref_alpha[0] ** 2
+        grad = rows_efc_D[0] * rows_jaref_alpha[0] * rows_jv[0]
+        hess = rows_efc_D[0] * rows_jv[0] ** 2
+    for i_0, width in qd.static(_friction_blocks(rigid_config)):
+        D = rows_efc_D[i_0]
+        radius = rows_friction[i_0] * f_n
+        T_sq = gs.qd_float(0.0)
+        dT_sum = gs.qd_float(0.0)
+        d2T_sum = gs.qd_float(0.0)
+        for i_r in qd.static(range(i_0, i_0 + width)):
+            T_sq = T_sq + rows_jaref_alpha[i_r] ** 2
+            dT_sum = dT_sum + rows_jaref_alpha[i_r] * rows_jv[i_r]
+            d2T_sum = d2T_sum + rows_jv[i_r] ** 2
+        T = qd.sqrt(T_sq)
+        if D * T <= radius:
+            cost = cost + 0.5 * D * T_sq
+            grad = grad + D * dT_sum
+            hess = hess + D * d2T_sum
+        else:
+            dT = dT_sum / T
+            cost = cost + radius * (T - 0.5 * radius / D)
+            grad = grad + radius * dT
+            hess = hess + radius * (d2T_sum - dT**2) / T
+    return cost, grad, hess
+
+
+@qd.func
+def _func_cone_cost_along_alpha(
+    rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction, rigid_config: qd.template()
+):
+    """Exact elliptic-contact cost and its first/second derivatives in the linesearch step alpha, for the resolution
+    in force: MuJoCo's coupled cone under 'impedance', the latched-radius friction discs under 'signorini'.
+
+    Evaluated at rows_jaref + alpha * rows_jv, returning (cost, dcost/dalpha, d2cost/dalpha2). Under 'impedance' the
+    zone is re-classified at this alpha, so the cost is exact along the whole search line (top: 0; bottom: plain
+    quadratic; middle: the cone potential 0.5*Dm*(N - con_mu*T)^2 differentiated through T = ||rows_friction[1:] *
     rows_jaref[1:]||).
     """
+    if qd.static(rigid_config.enable_signorini_contact):
+        return _func_disc_cost_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, rows_friction, rigid_config)
     rows_jaref_alpha = rows_jaref + alpha * rows_jv
-    zone, N, T = _func_cone_zone(rows_jaref_alpha, con_mu, rows_friction)
+    zone, N, T = _func_cone_zone(rows_jaref_alpha, rows_efc_D, con_mu, rows_friction, rigid_config)
     cost = gs.qd_float(0.0)
     grad = gs.qd_float(0.0)
     hess = gs.qd_float(0.0)
@@ -5253,8 +5400,60 @@ def _func_cone_cost_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, 
 
 
 @qd.func
-def _func_cone_cost_diff_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction):
-    """Shifted elliptic-cone cost cost(alpha) - cost(0) and its first/second derivatives in alpha.
+def _func_disc_cost_diff_along_alpha(
+    rows_jaref, rows_jv, alpha, rows_efc_D, rows_friction, rigid_config: qd.template()
+):
+    """Shifted latched-radius contact cost cost(alpha) - cost(0) and its derivatives in alpha ('signorini').
+
+    Derivatives match _func_disc_cost_along_alpha exactly. Each term cancels its own shared constant analytically
+    whenever its regime is unchanged - the normal row and a sticking block as a pure quadratic in alpha, a saturated
+    block as the radius times the change in tangential magnitude - rather than subtracting two large absolute costs,
+    which rounds the delta to zero in float32 near convergence. Only a term that changed regime pays the absolute
+    subtraction, and there the two costs genuinely differ.
+    """
+    f_n = qd.max(-rows_efc_D[0] * rows_jaref[0], 0.0)
+    rows_jaref_alpha = rows_jaref + alpha * rows_jv
+    _cost_alpha, grad, hess = _func_disc_cost_along_alpha(
+        rows_jaref, rows_jv, alpha, rows_efc_D, rows_friction, rigid_config
+    )
+    cost_diff = gs.qd_float(0.0)
+    is_normal_active = rows_jaref_alpha[0] < 0.0
+    if is_normal_active == (rows_jaref[0] < 0.0):
+        if is_normal_active:
+            cost_diff = rows_efc_D[0] * (alpha * rows_jv[0] * rows_jaref[0] + 0.5 * alpha**2 * rows_jv[0] ** 2)
+    elif is_normal_active:
+        cost_diff = 0.5 * rows_efc_D[0] * rows_jaref_alpha[0] ** 2
+    else:
+        cost_diff = -0.5 * rows_efc_D[0] * rows_jaref[0] ** 2
+    for i_0, width in qd.static(_friction_blocks(rigid_config)):
+        D = rows_efc_D[i_0]
+        radius = rows_friction[i_0] * f_n
+        T_sq = gs.qd_float(0.0)
+        T0_sq = gs.qd_float(0.0)
+        for i_r in qd.static(range(i_0, i_0 + width)):
+            T_sq = T_sq + rows_jaref_alpha[i_r] ** 2
+            T0_sq = T0_sq + rows_jaref[i_r] ** 2
+        T = qd.sqrt(T_sq)
+        T0 = qd.sqrt(T0_sq)
+        is_stick = D * T <= radius
+        if is_stick == (D * T0 <= radius):
+            if is_stick:
+                cost_diff = cost_diff + 0.5 * D * (T_sq - T0_sq)
+            else:
+                cost_diff = cost_diff + radius * (T - T0)
+        elif is_stick:
+            cost_diff = cost_diff + 0.5 * D * T_sq - radius * (T0 - 0.5 * radius / D)
+        else:
+            cost_diff = cost_diff + radius * (T - 0.5 * radius / D) - 0.5 * D * T0_sq
+    return cost_diff, grad, hess
+
+
+@qd.func
+def _func_cone_cost_diff_along_alpha(
+    rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction, rigid_config: qd.template()
+):
+    """Shifted elliptic-contact cost cost(alpha) - cost(0) and its first/second derivatives in alpha, for the
+    resolution in force.
 
     Derivatives match _func_cone_cost_along_alpha exactly; the value is the delta from alpha=0, computed zone-aware so
     the same-zone cases cancel the shared constant analytically (both-bottom: pure quadratic in alpha; both-middle:
@@ -5262,10 +5461,14 @@ def _func_cone_cost_diff_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, con
     zero in float32 near convergence. Mixed-zone pairs fall back to the absolute subtraction, where the two costs
     genuinely differ.
     """
-    cost_alpha, grad, hess = _func_cone_cost_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction)
+    if qd.static(rigid_config.enable_signorini_contact):
+        return _func_disc_cost_diff_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, rows_friction, rigid_config)
+    cost_alpha, grad, hess = _func_cone_cost_along_alpha(
+        rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction, rigid_config
+    )
     rows_jaref_alpha = rows_jaref + alpha * rows_jv
-    zone, N, T = _func_cone_zone(rows_jaref_alpha, con_mu, rows_friction)
-    zone0, N0, T0 = _func_cone_zone(rows_jaref, con_mu, rows_friction)
+    zone, N, T = _func_cone_zone(rows_jaref_alpha, rows_efc_D, con_mu, rows_friction, rigid_config)
+    zone0, N0, T0 = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
     cost_diff = gs.qd_float(0.0)
     if zone == zone0:
         if zone == 1:
@@ -5282,7 +5485,7 @@ def _func_cone_cost_diff_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, con
             cost_diff = 0.5 * Dm * (g - g0) * (g + g0)
     else:
         cost_0, _grad_0, _hess_0 = _func_cone_cost_along_alpha(
-            rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction
+            rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction, rigid_config
         )
         cost_diff = cost_alpha - cost_0
     return cost_diff, grad, hess
@@ -5306,7 +5509,7 @@ def func_cone_update_rows(
     """
     n_rows = qd.static(rigid_config.rows_per_contact)
     rows_efc_D, rows_friction, con_mu, rows_jaref = _func_cone_head_load(i_c, i_b, constraint_state, rigid_config)
-    zone, N, T = _func_cone_zone(rows_jaref, con_mu, rows_friction)
+    zone, N, T = _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config)
     cost = gs.qd_float(0.0)
     if zone == 0:  # top: inactive
         for i_r in qd.static(range(n_rows)):
@@ -5317,7 +5520,9 @@ def func_cone_update_rows(
             constraint_state.active[i_c + i_r, i_b] = True
             constraint_state.efc_force[i_c + i_r, i_b] = -rows_jaref[i_r] * rows_efc_D[i_r]
     else:  # middle: cone boundary. Excluded from the per-row cost/Hessian; handled coupled.
-        rows_force, cost_middle, _cone_H = _func_cone_middle(rows_jaref, rows_efc_D[0], con_mu, rows_friction, N, T)
+        rows_force, cost_middle, _cone_H = _func_cone_middle(
+            rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config
+        )
         for i_r in qd.static(range(n_rows)):
             constraint_state.active[i_c + i_r, i_b] = False
             constraint_state.efc_force[i_c + i_r, i_b] = rows_force[i_r]
