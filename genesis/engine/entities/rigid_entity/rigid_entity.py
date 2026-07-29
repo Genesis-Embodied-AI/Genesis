@@ -158,6 +158,9 @@ class KinematicEntity(Entity):
         self._variant_offset_pos: list[np.ndarray] | None = None
         self._variant_offset_quat: list[np.ndarray] | None = None
 
+        self.terrain_hf: np.ndarray | None = None
+        self.terrain_scale: np.ndarray | None = None
+
         self._load_model()
 
         # Initialize target variables and checkpoint
@@ -2504,6 +2507,10 @@ class RigidEntity(KinematicEntity):
         self._visualize_contact: bool = visualize_contact
 
         self._batch_fixed_verts: bool = morph.batch_fixed_verts
+        self._terrain_height_field: torch.Tensor | None = None
+        self._terrain_horizontal_scale: torch.Tensor | None = None
+        self._terrain_row_boundaries: torch.Tensor | None = None
+        self._terrain_col_boundaries: torch.Tensor | None = None
 
         super().__init__(
             scene,
@@ -3614,6 +3621,60 @@ class RigidEntity(KinematicEntity):
 
     def get_aabb(self):
         raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
+
+    @gs.assert_built
+    def get_height(self, positions, envs_idx=None):
+        """
+        Return terrain surface heights in meters at world-frame XY positions.
+
+        Heights match the piecewise-planar surface on which rigid bodies rest. Terrain translation, yaw, and
+        environment-specific poses are applied to the query.
+
+        Parameters
+        ----------
+        positions : array_like
+            World-frame XY positions in meters, with shape (2,), (n_points, 2), or (n_envs, n_points, 2). A 2D array
+            is shared across the selected environments; use a 3D array for environment-specific positions. A leading
+            dimension of 1 in the 3D form is also treated as shared.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        heights : torch.Tensor
+            World-frame surface heights in meters. The point dimensions match `positions`, with an environment
+            dimension prepended in a parallelized scene.
+
+        Raises
+        ------
+        GenesisException
+            If this entity is not a terrain, the positions are malformed, non-finite, or outside the terrain, or the
+            terrain has roll or pitch.
+        """
+        if self.terrain_hf is None or self.terrain_scale is None:
+            gs.raise_exception("`get_height()` is only supported for terrain entities.")
+        if self._terrain_height_field is None or self._terrain_horizontal_scale is None:
+            height_field = self.terrain_hf * self.terrain_scale[1]
+            self._terrain_height_field = torch.as_tensor(height_field, dtype=gs.tc_float, device=gs.device).contiguous()
+            self._terrain_horizontal_scale = torch.as_tensor(
+                self.terrain_scale[:1], dtype=gs.tc_float, device=gs.device
+            ).contiguous()
+            self._terrain_row_boundaries = torch.arange(
+                1, self.terrain_hf.shape[0] - 1, dtype=gs.tc_float, device=gs.device
+            )
+            self._terrain_col_boundaries = torch.arange(
+                1, self.terrain_hf.shape[1] - 1, dtype=gs.tc_float, device=gs.device
+            )
+
+        return self._solver.get_terrain_height(
+            positions,
+            self.base_link_idx,
+            self._terrain_height_field,
+            self._terrain_horizontal_scale,
+            self._terrain_row_boundaries,
+            self._terrain_col_boundaries,
+            envs_idx,
+        )
 
     @gs.assert_built
     def get_links_pos(

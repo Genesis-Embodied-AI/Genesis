@@ -166,6 +166,7 @@ from .abd.accessor import (
     kernel_control_dofs_position_velocity,
     kernel_get_links_vel,
     kernel_get_links_acc,
+    kernel_get_terrain_height,
     kernel_get_dofs_control_force,
     kernel_set_drone_rpm,
     kernel_update_drone_propeller_vgeoms,
@@ -211,6 +212,25 @@ IMP_MAX = 0.9999
 
 # Minimum ratio between simulation timestep `_substep_dt` and time constant of constraints
 TIME_CONSTANT_SAFETY_FACTOR = 2.0
+
+
+def _interpolate_terrain_height(height_field, row, col, row_boundaries, col_boundaries):
+    row_max = height_field.shape[0] - 1
+    col_max = height_field.shape[1] - 1
+    row = row.clamp(0.0, float(row_max))
+    col = col.clamp(0.0, float(col_max))
+    i_row = torch.bucketize(row, row_boundaries, right=True)
+    i_col = torch.bucketize(col, col_boundaries, right=True)
+    frac_row = row - i_row
+    frac_col = col - i_col
+
+    h00 = height_field[i_row, i_col]
+    h10 = height_field[i_row + 1, i_col]
+    h01 = height_field[i_row, i_col + 1]
+    h11 = height_field[i_row + 1, i_col + 1]
+    first = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00)
+    second = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11)
+    return torch.where(frac_row + frac_col <= 1.0, first, second)
 
 
 def _sanitize_sol_params(sol_params, min_timeconst: float, default_timeconst: float | None = None):
@@ -2820,6 +2840,113 @@ class RigidSolver(KinematicSolver):
     def get_links_acc_ang(self, links_idx=None, envs_idx=None):
         tensor = qd_to_torch(self.dyn_state.links.cacc_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_terrain_height(
+        self,
+        positions,
+        link_idx,
+        height_field,
+        horizontal_scale,
+        row_boundaries,
+        col_boundaries,
+        envs_idx=None,
+    ):
+        positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
+        if positions.ndim == 0 or positions.shape[-1] != 2:
+            gs.raise_exception(f"`positions` must have shape (..., 2), got {tuple(positions.shape)}.")
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        n_envs = len(envs_idx)
+        is_single_position = positions.ndim == 1
+        is_per_env = False
+
+        if positions.ndim == 1:
+            positions = positions[None, None]
+        elif positions.ndim == 2:
+            positions = positions[None]
+        elif positions.ndim == 3:
+            if positions.shape[0] not in (1, n_envs):
+                gs.raise_exception(
+                    f"The leading dimension of `positions` must be 1 or {n_envs}, got {positions.shape[0]}."
+                )
+            is_per_env = positions.shape[0] == n_envs
+        else:
+            gs.raise_exception("`positions` must have shape (2,), (n_points, 2), or (n_envs, n_points, 2).")
+
+        if positions.shape[-2] == 0:
+            gs.raise_exception("`positions` must contain at least one position.")
+
+        positions = positions.contiguous()
+        n_points = positions.shape[-2]
+        if gs.backend == gs.metal:
+            # Quadrants launch and error-flag synchronization overhead dominates this gather-heavy query on Metal.
+            link_pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)[envs_idx, link_idx : link_idx + 1]
+            link_quat = qd_to_torch(self.dyn_state.links.quat, transpose=True)[envs_idx, link_idx : link_idx + 1]
+            delta_x = positions[..., 0] - link_pos[..., 0]
+            delta_y = positions[..., 1] - link_pos[..., 1]
+            quat_w = link_quat[..., 0]
+            quat_x = link_quat[..., 1]
+            quat_y = link_quat[..., 2]
+            quat_z = link_quat[..., 3]
+            quat_norm = quat_w.square() + quat_x.square() + quat_y.square() + quat_z.square()
+            local_x = (
+                delta_x * (quat_x.square() + quat_w.square() - quat_y.square() - quat_z.square())
+                + delta_y * (2.0 * quat_x * quat_y + 2.0 * quat_w * quat_z)
+            ) / quat_norm
+            local_y = (
+                delta_x * (2.0 * quat_x * quat_y - 2.0 * quat_w * quat_z)
+                + delta_y * (quat_w.square() - quat_x.square() + quat_y.square() - quat_z.square())
+            ) / quat_norm
+            row = local_x / horizontal_scale[0]
+            col = local_y / horizontal_scale[0]
+            row_max = height_field.shape[0] - 1
+            col_max = height_field.shape[1] - 1
+
+            has_invalid_query = (
+                (link_quat[..., 1:3].abs() > gs.EPS).any()
+                | (~torch.isfinite(row)).any()
+                | (~torch.isfinite(col)).any()
+                | (row < -gs.EPS).any()
+                | (row > row_max + gs.EPS).any()
+                | (col < -gs.EPS).any()
+                | (col > col_max + gs.EPS).any()
+            )
+            if has_invalid_query:
+                gs.raise_exception(
+                    "`positions` must be finite and inside the terrain bounds, and the terrain must not have roll or "
+                    "pitch."
+                )
+
+            heights = (
+                _interpolate_terrain_height(height_field, row, col, row_boundaries, col_boundaries) + link_pos[..., 2]
+            )
+        else:
+            heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
+            invalid = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
+            kernel_get_terrain_height(
+                envs_idx,
+                link_idx,
+                positions,
+                height_field,
+                horizontal_scale,
+                heights,
+                invalid,
+                self.dyn_state,
+                self.rigid_info,
+                self.rigid_config,
+                is_per_env,
+            )
+            if invalid[0]:
+                gs.raise_exception(
+                    "`positions` must be finite and inside the terrain bounds, and the terrain must not have roll or "
+                    "pitch."
+                )
+
+        if self.n_envs == 0:
+            heights = heights[0]
+        if is_single_position or (is_per_env and n_points == 1):
+            heights = heights[..., 0]
+        return heights
 
     def get_links_root_COM(self, links_idx=None, envs_idx=None):
         """
