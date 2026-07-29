@@ -164,6 +164,7 @@ def test_get_height(n_envs, tol):
             vertical_scale=0.01,
             collision=False,
         ),
+        material=gs.materials.Kinematic(),
     )
     box = scene.add_entity(
         morph=gs.morphs.Box(
