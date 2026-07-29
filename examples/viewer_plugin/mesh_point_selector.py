@@ -191,7 +191,7 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
 
         output_file = self.output_file
         try:
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
             with open(output_file, "w", newline="") as csvfile:
                 writer = csv.writer(csvfile)
 
