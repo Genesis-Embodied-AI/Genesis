@@ -1,5 +1,42 @@
 # Genesis Release Note
 
+## 1.3.0
+
+This release extends differentiable rigid body simulation, which is no longer considered experimental. Moreover, torsional and rolling friction have been added, as part of a broader ongoing effort to bridge the sim2real gap.
+
+### Breaking
+
+* [BUG FIX] Record camera videos of any length at a chosen framerate. (@duburcqa) (#3107, #3120)
+
+### New Features
+
+* Add torsional and rolling friction to the rigid solver. (@duburcqa) (#3069)
+* Add explicit mounting transform in RigidEntity.attach. (@Kashu7100) (#3041)
+* Add link filtering to contact sensors. (@jsw7460) (#2772)
+* Add torque visualization for tactile sensor examples. (@Milotrince) (#3085)
+* Extend differentiable rigid body simulation. (@SonSang, @duburcqa) (#2842, #3087, #3089)
+
+### Bug Fixes
+
+* Fix missing buoyancy on rigid bodies submerged in SPH fluid. (@yeezhouyi) (#2857)
+* Fix rendering assets pairing base color with emissive map. (@duburcqa) (#3088)
+* Fix camera sensor not being refreshed after scene reset. (@thanyu-hub) (#3100)
+* Fix transparency not deterministic in Rasterizer. (@duburcqa) (#3108)
+* Fix per-environment queries of link inertial properties and energies. (@duburcqa) (#3114)
+* Fix wrong mechanical energy and speed up computations. (@duburcqa) (#3121)
+* Fix handling of negative index for rigid accessor filter 'envs_idx'. (@jeetrex17) (#3117)
+
+### Miscellaneous
+
+* Clarify IPC vertex constraint error (@coyaSONG) (#3056)
+* Decouple visual from physics geometry for FEM entities. (@ACMLCZH) (#2904)
+* Safer kernel caching. (@hughperkins) (#3071)
+* Speed up raycast sensors by splitting the rigid collision BVH into static and dynamic subsets. (@duburcqa) (#3078)
+* Add full support of AMD GPU to unit test and benchmark infra. (@v01dXYZ) (#2680)
+* Reduce memory footprint of ray casting-based sensors via cross-env memory sharing. (@Kashu7100) (#2914)
+* Move to gs-madrona 0.0.10. (@duburcqa) (#3093, #3097)
+* Fix reverse-mode autodiff on Apple Metal. (@duburcqa) (#3119)
+
 ## 1.2.3
 
 This small release introduces elliptic friction cone with high-impedance option to accurately model static function. In addition, the convergence of the constraint solver under fp32 accuracy has been improved.
