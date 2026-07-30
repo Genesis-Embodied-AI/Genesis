@@ -2,10 +2,9 @@ import torch
 
 import genesis as gs
 
-########################## init ##########################
+# The benchmark measures throughput at 30000 parallel environments, which needs a GPU.
 gs.init(backend=gs.gpu, performance_mode=True)
 
-########################## create a scene ##########################
 scene = gs.Scene(
     rigid_options=gs.options.RigidOptions(
         dt=0.01,
@@ -19,7 +18,6 @@ scene = gs.Scene(
     show_viewer=False,
 )
 
-########################## entities ##########################
 plane = scene.add_entity(
     gs.morphs.Plane(),
 )
@@ -28,7 +26,6 @@ franka = scene.add_entity(
     gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
 )
 
-########################## build ##########################
 
 # create 20 parallel environments
 B = 30000

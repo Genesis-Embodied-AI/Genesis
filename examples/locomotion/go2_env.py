@@ -32,7 +32,6 @@ class Go2Env:
         self.obs_scales: dict[str, float] = obs_cfg["obs_scales"]
         self.reward_scales: dict[str, float] = reward_cfg["reward_scales"]
 
-        # create scene
         self.scene = gs.Scene(
             sim_options=gs.options.SimOptions(
                 dt=self.dt,
@@ -62,7 +61,6 @@ class Go2Env:
             )
         )
 
-        # add robot
         self.robot = self.scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/go2/urdf/go2.urdf",
@@ -71,7 +69,6 @@ class Go2Env:
             ),
         )
 
-        # build
         self.scene.build(n_envs=num_envs)
 
         # names to indices
@@ -181,7 +178,6 @@ class Go2Env:
             self.rew_buf += rew
             self.episode_sums[name] += rew
 
-        # resample commands
         self._resample_commands(self.episode_length_buf % int(self.env_cfg["resampling_time_s"] / self.dt) == 0)
 
         # check termination and reset
@@ -276,7 +272,7 @@ class Go2Env:
         self._update_observation()
         return self.get_observations()
 
-    # ------------ reward functions----------------
+    # Reward functions.
     def _reward_tracking_lin_vel(self):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)

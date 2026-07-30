@@ -10,7 +10,7 @@ from genesis.utils.misc import tensor_to_array
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
@@ -21,8 +21,8 @@ def main():
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=1,  # Translation strength ratio
-            constraint_strength_rotation=1,  # Rotation strength ratio
+            constraint_strength_translation=1,
+            constraint_strength_rotation=1,
             enable_rigid_rigid_contact=False,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -34,7 +34,6 @@ def main():
 
     # Both FEM and Rigid bodies will be added to IPC for unified contact simulation
     # FEM bodies use StableNeoHookean constitution, Rigid bodies use ABD constitution
-
     # FEM entities (added to IPC as deformable bodies)
     blob = scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -68,7 +67,6 @@ def main():
     )
     scene.build()
 
-    # Set initial velocity
     rigid_cube.set_dofs_velocity((4.0, 0, 0, 0, 0, 0))  # Initial velocity in x direction
 
     # Storage for previous positions to compute velocity
@@ -76,7 +74,7 @@ def main():
     rigid_prev_pos = None
 
     # Get FEM blob total mass from material properties
-    # For a sphere: mass = (4/3) * π * r³ * ρ
+    # For a sphere: mass = (4/3) * pi * r^3 * rho
     blob_radius = blob.morph.radius
     blob_rho = blob.material.rho
     blob_mass = (4.0 / 3.0) * np.pi * (blob_radius**3) * blob_rho
@@ -91,11 +89,11 @@ def main():
 
         rigid_solver = scene.sim.rigid_solver
 
-        # === Rigid body linear momentum ===
+        # Rigid body linear momentum.
         cube_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
         rigid_linear_momentum = cube_mass * cube_vel
 
-        # === FEM body linear momentum ===
+        # FEM body linear momentum.
         # Get FEM vertex data from IPC using libuipc API
         from uipc.backend import SceneVisitor
         from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
@@ -119,7 +117,6 @@ def main():
                         if geom.instances().size() >= 1:
                             geom = merge(apply_transform(geom))
 
-                        # Get vertex positions
                         fem_vertex_positions = geom.positions().view().squeeze(axis=-1)
 
                         # Get vertex masses (mass = volume * mass_density)
@@ -157,10 +154,10 @@ def main():
 
     print("\n=== Linear Momentum Conservation Test (Zero Gravity) ===")
     print(f"Rigid cube mass: {cube_mass:.4f} kg")
-    print(f"FEM blob mass: {blob_mass:.4f} kg (estimated from V*ρ)")
+    print(f"FEM blob mass: {blob_mass:.4f} kg (estimated from V*rho)")
     print("Rigid initial velocity: [4.0, 0, 0, 0, 0, 0] m/s")
     print("FEM initial velocity: [0, 0, 0] m/s")
-    print(f"Expected total momentum: [{initial_momentum:.4f}, 0, 0] kg·m/s")
+    print(f"Expected total momentum: [{initial_momentum:.4f}, 0, 0] kg*m/s")
 
     # Storage for plotting
     time_history = []
@@ -192,14 +189,14 @@ def main():
             print(f"{'-' * 70}")
             print(f"Rigid mass:   {rigid_m:8.4f} kg")
             print(f"Rigid velocity: [{rigid_v[0]:9.5f}, {rigid_v[1]:9.5f}, {rigid_v[2]:9.5f}] m/s")
-            print(f"Rigid momemtum: [{rigid_p[0]:9.5f}, {rigid_p[1]:9.5f}, {rigid_p[2]:9.5f}] kg·m/s")
+            print(f"Rigid momemtum: [{rigid_p[0]:9.5f}, {rigid_p[1]:9.5f}, {rigid_p[2]:9.5f}] kg*m/s")
             print("")
             print(f"FEM   mass:   {fem_m:8.4f} kg")
             print(f"FEM   velocity: [{fem_v[0]:9.5f}, {fem_v[1]:9.5f}, {fem_v[2]:9.5f}] m/s")
-            print(f"FEM   momemtum: [{fem_p[0]:9.5f}, {fem_p[1]:9.5f}, {fem_p[2]:9.5f}] kg·m/s")
+            print(f"FEM   momemtum: [{fem_p[0]:9.5f}, {fem_p[1]:9.5f}, {fem_p[2]:9.5f}] kg*m/s")
             print("")
-            print(f"TOTAL momemtum: [{total_p[0]:9.5f}, {total_p[1]:9.5f}, {total_p[2]:9.5f}] kg·m/s")
-            print(f"|p_total|: {np.linalg.norm(total_p):.6f} kg·m/s")
+            print(f"TOTAL momemtum: [{total_p[0]:9.5f}, {total_p[1]:9.5f}, {total_p[2]:9.5f}] kg*m/s")
+            print(f"|p_total|: {np.linalg.norm(total_p):.6f} kg*m/s")
 
         scene.step()
 
@@ -222,7 +219,7 @@ def main():
     ax.plot(time_history, total_p_history[:, 0], "k", linestyle="--", label="Total px", linewidth=2)
     ax.axhline(y=initial_momentum, color="tab:green", linestyle=":", label=f"Expected: {initial_momentum:.4f}")
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Momentum (kg·m/s)")
+    ax.set_ylabel("Momentum (kg*m/s)")
     ax.set_title("Linear Momentum X-component")
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -233,7 +230,7 @@ def main():
     ax.plot(time_history, total_p_mag, "k-", linewidth=2, label="|p_total|")
     ax.axhline(y=initial_momentum, color="tab:red", linestyle="--", label=f"Expected: {initial_momentum:.4f}")
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("|p| (kg·m/s)")
+    ax.set_ylabel("|p| (kg*m/s)")
     ax.set_title("Total Momentum Magnitude")
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -259,7 +256,9 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+    # Showing the figure blocks until the window is closed, so skip it when nobody is there to close it.
+    if "PYTEST_VERSION" not in os.environ:
+        plt.show()
 
 
 if __name__ == "__main__":

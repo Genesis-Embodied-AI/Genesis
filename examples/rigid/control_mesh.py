@@ -5,13 +5,11 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
-    ########################## create a scene ##########################
     viewer_options = gs.options.ViewerOptions(
         camera_pos=(0, -3.5, 2.5),
         camera_lookat=(0.0, 0.0, 0.5),
@@ -30,7 +28,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     duck = scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
@@ -38,7 +35,6 @@ def main():
             pos=(0, 0, 0.0),
         ),
     )
-    ########################## build ##########################
     scene.build()
 
     dofs_idx = duck.base_joint.dofs_idx

@@ -106,10 +106,12 @@ class BackflipEnv(Go2Env):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="single")
+    parser.add_argument(
+        "-e", "--exp-name", type=str, default="single", help="Experiment name; also the log directory under logs/"
+    )
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
 

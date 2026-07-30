@@ -3,19 +3,18 @@ import math
 import os
 
 import genesis as gs
-import genesis.vis.keybindings as kb
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
-if __name__ == "__main__":
+
+def main():
     parser = argparse.ArgumentParser(description="Mouse interaction viewer plugin example.")
+    parser.add_argument("--use-force", action="store_true", help="Apply spring forces instead of setting position")
     parser.add_argument(
-        "--use_force", "-f", action="store_true", help="Apply spring forces instead of setting position"
-    )
-    parser.add_argument(
-        "--use_visual_geom",
+        "--use-visual-geom",
         action="store_true",
         help="Grab entities by their visual mesh instead of their collision one",
     )
-    parser.add_argument("--num_envs", "-b", type=int, default=1, help="Number of environments to create")
+    parser.add_argument("-b", "--num-envs", type=int, default=1, help="Number of parallel environments")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu)
@@ -26,21 +25,20 @@ if __name__ == "__main__":
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
-        ),
         show_viewer=True,
     )
 
-    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
 
-    # Only entities opting into visual raycasting can be grabbed with --use_visual_geom.
+    # Only entities opting into visual raycasting can be grabbed with --use-visual-geom.
     raycastable = gs.materials.Rigid(
         use_visual_raycasting=True,
     )
     vis_mode = "visual" if args.use_visual_geom else "collision"
 
-    sphere = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(-0.3, -0.3, 0),
             radius=0.1,
@@ -48,7 +46,7 @@ if __name__ == "__main__":
         material=raycastable,
         vis_mode=vis_mode,
     )
-    duck = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Mesh(
             file="meshes/duck/duck.obj",
             pos=(0.0, 0.0, 0.5),
@@ -60,7 +58,7 @@ if __name__ == "__main__":
     for i in range(6):
         angle = i * (2 * math.pi / 6)
         radius = 0.5 + i * 0.1
-        cube = scene.add_entity(
+        scene.add_entity(
             morph=gs.morphs.Box(
                 pos=(radius * math.cos(angle), radius * math.sin(angle), 0.1 + i * 0.1),
                 size=(0.2, 0.2, 0.2),
@@ -82,11 +80,11 @@ if __name__ == "__main__":
     is_running = True
 
     def stop():
-        global is_running
+        nonlocal is_running
         is_running = False
 
     scene.viewer.register_keybinds(
-        kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.RELEASE, callback=stop),
+        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
     )
 
     try:
@@ -99,3 +97,7 @@ if __name__ == "__main__":
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
         gs.logger.info("Simulation finished.")
+
+
+if __name__ == "__main__":
+    main()

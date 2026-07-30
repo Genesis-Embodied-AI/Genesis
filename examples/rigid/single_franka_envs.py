@@ -5,22 +5,20 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
-    parser.add_argument("-s", "--sep", action="store_true", default=False)
-    parser.add_argument("-r", "--record", action="store_true", default=False)
-    parser.add_argument("-n", "--num_env", type=int, default=1)
-    parser.add_argument("--horizon", type=int, default=100)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("--sep", action="store_true", help="Simulate each environment as a separate island")
+    parser.add_argument("-r", "--record", action="store_true", help="Record the scene to video")
+    parser.add_argument("-b", "--num-envs", type=int, default=1, help="Number of parallel environments")
+    parser.add_argument("-s", "--steps", type=int, default=100, help="Number of simulation steps")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             plane_reflection=True,
-            rendered_envs_idx=list(range(args.num_env)),
+            rendered_envs_idx=list(range(args.num_envs)),
             env_separate_rigid=args.sep,
             show_world_frame=True,
             show_link_frame=True,
@@ -30,13 +28,9 @@ def main():
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        rigid_options=gs.options.RigidOptions(
-            # constraint_solver=gs.constraint_solver.Newton,
-        ),
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -45,7 +39,6 @@ def main():
         visualize_contact=True,
     )
 
-    ########################## cameras ##########################
     cam_0 = scene.add_camera(
         res=(1280, 960),
         pos=(3.5, 0.0, 2.5),
@@ -53,19 +46,18 @@ def main():
         fov=30,
         GUI=args.vis,
     )
-    ########################## build ##########################
-    scene.build(n_envs=args.num_env, env_spacing=(0.5, 0.5))
+    scene.build(n_envs=args.num_envs, env_spacing=(0.5, 0.5))
 
     if args.record:
-        cam_0.start_recording(save_to_filename="video.mp4")
+        cam_0.start_recording(save_to_filename="out/single_franka_envs.mp4")
 
-    for i in range(args.horizon):
+    for i in range(args.steps):
         scene.step()
 
         color, depth, seg, normal = cam_0.render(
             rgb=True, depth=True, segmentation=True, colorize_seg=True, normal=True
         )
-        print(f"Step {i}:", args.num_env, color.shape, depth.shape, seg.shape, normal.shape)
+        print(f"Step {i}:", args.num_envs, color.shape, depth.shape, seg.shape, normal.shape)
 
     if args.record:
         cam_0.stop_recording()

@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""
-Multi-node / multi-GPU Genesis ✕ PyTorch DDP demo
-=================================================
+"""Data-parallel training across GPUs with PyTorch DistributedDataParallel.
+
+Each rank owns a full scene with its own batch of environments, so the effective batch is the per-rank
+``--num-envs`` times the number of ranks: adding GPUs lowers gradient noise rather than changing any scene.
 
 Single machine, 2 GPUs:
-    torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/ddp_multi_gpu.py
-
-Expectation:
-    - In nvidia-smi, you will see multiple GPUs are being used.
-    - As you increase the number of GPUs, the gradient will be less noisy and the loss decreases faster.
+    torchrun --standalone --nnodes=1 --nproc_per_node=2 examples/rigid/ddp_multi_gpu.py
 """
 
 import os
@@ -41,6 +38,8 @@ def run_worker(args: argparse.Namespace) -> None:
     os.environ["QD_VISIBLE_DEVICE"] = str(local_rank)
     # FIXME: Forcing rendering device is not working reliably on all machines
     # os.environ["EGL_DEVICE_ID"] = str(local_rank)
+
+    # Each rank owns a full batch of environments, so this only makes sense on GPU.
     gs.init(backend=gs.gpu, seed=local_rank)
 
     # sim
@@ -50,7 +49,7 @@ def run_worker(args: argparse.Namespace) -> None:
             camera_lookat=(0.0, 0.0, 0.5),
             camera_fov=40,
         ),
-        show_viewer=False,
+        show_viewer=args.vis and local_rank == 0,
         show_FPS=False,
     )
     scene.add_entity(gs.morphs.Plane())
@@ -58,7 +57,7 @@ def run_worker(args: argparse.Namespace) -> None:
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
         visualize_contact=True,
     )
-    scene.build(n_envs=args.n_envs)
+    scene.build(n_envs=args.num_envs)
 
     # model
     gpu_id = 0
@@ -98,13 +97,13 @@ def run_worker(args: argparse.Namespace) -> None:
     gs.destroy()
 
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--steps", type=int, default=1000, help="simulation / training steps")
-    p.add_argument("--vis", action="store_true", help="open viewer on rank-0")
-    p.add_argument("--n_envs", type=int, default=2048, help="number of environments")
-    return p.parse_args()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v", "--vis", action="store_true", help="Open the viewer on rank 0")
+    parser.add_argument("-b", "--num-envs", type=int, default=2048, help="Number of parallel environments")
+    parser.add_argument("-s", "--steps", type=int, default=1000, help="Number of training steps")
+    run_worker(parser.parse_args())
 
 
 if __name__ == "__main__":
-    run_worker(parse_args())
+    main()

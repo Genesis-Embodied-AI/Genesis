@@ -9,36 +9,26 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--solver", choices=["explicit", "implicit"], default="implicit", help="FEM solver type (default: explicit)"
-    )
-    parser.add_argument("--dt", type=float, help="Time step (auto-selected based on solver if not specified)")
-    parser.add_argument(
-        "--substeps", type=int, help="Number of substeps (auto-selected based on solver if not specified)"
-    )
-    parser.add_argument("--vis", "-v", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", default="PYTEST_VERSION" in os.environ)
+    parser.add_argument("--dt", type=float, default=1e-3, help="Simulation time step")
+    parser.add_argument("--substeps", type=int, default=1, help="Number of solver substeps per step")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, logging_level=None)
 
-    if args.solver == "explicit":
-        dt = args.dt if args.dt is not None else 1e-4
-        substeps = args.substeps if args.substeps is not None else 5
-    else:  # implicit
-        dt = args.dt if args.dt is not None else 1e-3
-        substeps = args.substeps if args.substeps is not None else 1
-
-    steps = int(1.0 / dt if "PYTEST_VERSION" not in os.environ else 5)
+    steps = int(1.0 / args.dt if "PYTEST_VERSION" not in os.environ else 5)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
-            substeps=substeps,
+            dt=args.dt,
+            substeps=args.substeps,
             gravity=(0, 0, -9.81),
         ),
+        # The linear corotated model the cube uses only supplies the energy derivatives the implicit solver needs,
+        # so the explicit solver cannot integrate this scene.
         fem_options=gs.options.FEMOptions(
-            use_implicit_solver=args.solver == "implicit",
+            use_implicit_solver=True,
             enable_vertex_constraints=True,
         ),
         profiling_options=gs.options.ProfilingOptions(
@@ -70,7 +60,7 @@ def main():
     )
 
     # Recording every simulation step would be far denser than any player needs, and the step size here is tiny.
-    video_fps = min(100.0, 1.0 / dt)
+    video_fps = min(100.0, 1.0 / args.dt)
     cam = scene.add_camera(
         res=(640, 480),
         pos=(-2.0, 3.0, 2.0),
@@ -80,14 +70,13 @@ def main():
 
     scene.build()
 
-    video_filename = f"cube_link_arm_{args.solver}_dt={dt}_substeps={substeps}.mp4"
+    video_filename = f"out/cube_link_arm_dt={args.dt}_substeps={args.substeps}.mp4"
     cam.start_recording(save_to_filename=video_filename, fps=video_fps)
 
     try:
         joint_names = [j.name for j in arm.joints]
         dofs_idx_local = []
         for j in arm.joints:
-            # print("joint name:", j.name, "dofs_idx_local:", j.dofs_idx_local)
             dofs_idx_local += j.dofs_idx_local
         end_joint = arm.get_joint(joint_names[-1])
 

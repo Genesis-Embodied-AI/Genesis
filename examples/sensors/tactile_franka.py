@@ -201,15 +201,15 @@ def _print_sensor_reading(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Franka fingertip tactile with selectable sensor type")
-    parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     parser.add_argument(
         "--sensor",
         choices=("elastomer", "depth", "kinematic", "proximity"),
         default="elastomer",
         help="Tactile sensor implementation",
     )
-    parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
-    parser.add_argument("--seconds", "-t", type=float, default=4.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("-t", "--seconds", type=float, default=4.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
     gs.init(

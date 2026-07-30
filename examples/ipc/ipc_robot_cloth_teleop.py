@@ -1,9 +1,9 @@
 """
 Keyboard Controls:
-↑	- Move Forward (North)
-↓	- Move Backward (South)
-←	- Move Left (West)
-→	- Move Right (East)
+Up	- Move Forward (North)
+Down	- Move Backward (South)
+Left	- Move Left (West)
+Right	- Move Right (East)
 n	- Move Up
 m	- Move Down
 j/k	- Yaw Left/Right (Rotate around Z axis)
@@ -29,16 +29,17 @@ DELTA_ROT = 0.02
 
 
 def main():
-    gs.init(backend=gs.cpu, logging_level="info")
-
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--coup_type",
+        "--coup-type",
         type=str,
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
+        help="How the articulated robot is coupled to the IPC solver",
     )
     args = parser.parse_args()
+
+    gs.init(backend=gs.cpu, logging_level="info")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -81,7 +82,6 @@ def main():
             pos=(0.0, 0.0, 0.005),
         ),
         material=gs.materials.Rigid(**franka_material_kwargs),
-        # vis_mode="collision",
     )
 
     # Add cloths
@@ -171,7 +171,6 @@ def main():
 
     # Setting initial configuration is not supported by coupling mode "external_articulation"
     if args.coup_type != "external_articulation":
-        # qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
         qpos = (2.2116, -1.5328, -0.7347, -1.7235, -1.3377, 0.7519, -1.4410, 0.04, 0.04)
         franka.set_qpos(qpos)
         franka.control_dofs_position(qpos)
@@ -245,8 +244,7 @@ def main():
             franka.control_dofs_position(qpos[motor_dofs_idx], motor_dofs_idx)
 
             if gripper_close[()]:
-                # FIXME: Force control is acting weird...
-                # franka.control_dofs_force(-0.1, dofs_idx_local=finger_dofs_idx)
+                # FIXME: The grip closes on position because force control on the fingers behaves erratically here.
                 franka.control_dofs_position(-0.03, dofs_idx_local=finger_dofs_idx)
             else:
                 franka.control_dofs_position(0.04, dofs_idx_local=finger_dofs_idx)

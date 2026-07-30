@@ -141,10 +141,10 @@ def measure_stiction(friction_cone, show_viewer):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
     for friction_cone in (gs.friction_cone.pyramidal, gs.friction_cone.elliptic):
         is_load_held = measure_stiction(friction_cone, args.vis)

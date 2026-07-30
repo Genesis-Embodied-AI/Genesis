@@ -3,10 +3,8 @@ import numpy as np
 import genesis as gs
 
 
-########################## init ##########################
-gs.init(precision="32", logging_level="info")
+gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
-########################## create a scene ##########################
 dt = 5e-4
 scene = gs.Scene(
     sim_options=gs.options.SimOptions(
@@ -33,7 +31,6 @@ scene = gs.Scene(
     show_viewer=True,
 )
 
-########################## entities ##########################
 scene.add_entity(morph=gs.morphs.Plane())
 
 E, nu = 3.0e4, 0.45
@@ -65,10 +62,8 @@ robot_fem = scene.add_entity(
     ),
 )
 
-########################## build ##########################
 scene.build(n_envs=0)
 
-########################## run ##########################
 horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 scene.reset()
 for i in range(horizon):

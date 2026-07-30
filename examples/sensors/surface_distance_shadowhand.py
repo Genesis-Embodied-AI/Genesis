@@ -31,9 +31,9 @@ BOX_QUAT = (1, 0, 0, 0)
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive SurfaceDistanceProbe with Shadow Hand")
-    parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("--gpu", action="store_true", default=False, help="Run on GPU instead of CPU")
-    parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
     gs.init(
@@ -149,7 +149,7 @@ def main():
     print("\n=== SurfaceDistanceProbe with Shadow Hand ===")
     print("Surface distance probes on hand palm and fingertips, tracking duck and box links")
     if args.vis:
-        print("Keyboard: [↑/↓/←/→] move hand XY, [n/m] up/down, [\\] reset, [ESC] quit")
+        print("Keyboard: [Up/Down/Left/Right] move hand XY, [n/m] up/down, [\\] reset, [ESC] quit")
     else:
         print(f"Running headless for {args.seconds}s ...")
     print()

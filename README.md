@@ -53,11 +53,11 @@ Three sections, mirroring the Genesis layers that ship runnable demos: **Physics
 |---|---|---|
 | [Rigid: franka cube](./examples/rigid/franka_cube.py) | [Rigid: collision tower](./examples/collision/tower.py) | [Rigid: contype](./examples/collision/contype.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/rigid_franka_cube.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/collision_tower.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/collision_contype.webp" width="240"> |
-| [FEM: hard & soft constraint](./examples/fem_hard_and_soft_constraint.py) | [MPM: tutorial](./examples/tutorials/mpm.py) | [MPM: sand wheel](./examples/coupling/sand_wheel.py) |
+| [FEM: hard & soft constraint](./examples/deformable/fem_hard_and_soft_constraint.py) | [MPM: tutorial](./examples/tutorials/mpm.py) | [MPM: sand wheel](./examples/coupling/sand_wheel.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/fem_hard_and_soft_constraint.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_mpm.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_sand_wheel.webp" width="240"> |
-| [SPH: rigid](./examples/coupling/sph_rigid.py) | [SPH: + MPM](./examples/coupling/sph_mpm.py) | [PBD: liquid](./examples/pbd_liquid.py) |
+| [SPH: rigid](./examples/coupling/sph_rigid.py) | [SPH: + MPM](./examples/coupling/sph_mpm.py) | [PBD: liquid](./examples/deformable/pbd_liquid.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_sph_rigid.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_sph_mpm.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/pbd_liquid.webp" width="240"> |
-| [PBD: cloth](./examples/tutorials/pbd_cloth.py) | [Stable Fluid: smoke](./examples/smoke.py) | [IPC: robot cloth teleop](./examples/IPC_Solver/ipc_robot_cloth_teleop.py) |
+| [PBD: cloth](./examples/tutorials/pbd_cloth.py) | [Stable Fluid: smoke](./examples/fluid/smoke.py) | [IPC: robot cloth teleop](./examples/ipc/ipc_robot_cloth_teleop.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_pbd_cloth.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/smoke.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/ipc_cloth_teleop.webp" width="240"> |
 | [Coupler: cloth on rigid](./examples/coupling/cloth_on_rigid.py) | [Coupler: rigid + MPM](./examples/coupling/rigid_mpm_attachment.py) | [Coupler: cut dragon](./examples/coupling/cut_dragon.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_cloth_on_rigid.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_rigid_mpm_attachment.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_cut_dragon.webp" width="240"> |
@@ -274,7 +274,7 @@ Catalogue entries pruned from the Physics grid. Kept here as a reference so
 they can be reinstated later. The links and thumbnail paths are all still
 valid in the repo; just paste any pair of rows back into the Physics table.
 
-| [Rigid: grasp bottle](./examples/rigid/grasp_bottle.py) | [Rigid: collision pyramid](./examples/collision/pyramid.py) | [FEM: elastic dragon](./examples/elastic_dragon.py) |
+| [Rigid: grasp bottle](./examples/rigid/grasp_bottle.py) | [Rigid: collision pyramid](./examples/collision/pyramid.py) | [FEM: elastic dragon](./examples/deformable/elastic_dragon.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/rigid_grasp_bottle.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/collision_pyramid.png" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/elastic_dragon.webp" width="240"> |
 | [FEM: SAP fixed constraint](./examples/sap_coupling/fem_fixed_constraint.py) | [SPH: liquid](./examples/tutorials/sph_liquid.py) | [Coupler: grasp soft cube](./examples/coupling/grasp_soft_cube.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/sap_fem_fixed_constraint.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_sph_liquid.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/coupling_grasp_soft_cube.webp" width="240"> |
@@ -283,7 +283,7 @@ valid in the repo; just paste any pair of rows back into the Physics table.
 
 Pruned from Simulation Interface (same logic — labels/paths still valid):
 
-| [Entity name](./examples/tutorials/entity_name.py) | [Select rendered envs](./examples/tutorials/selecting_rendered_envs.py) | [GUI: keyboard teleop](./examples/keyboard_teleop.py) |
+| [Entity name](./examples/tutorials/entity_name.py) | [Select rendered envs](./examples/tutorials/selecting_rendered_envs.py) | [GUI: keyboard teleop](./examples/viewer_plugin/keyboard_teleop.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_entity_name.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_selecting_rendered_envs.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/keyboard_teleop.webp" width="240"> |
 | [Control franka](./examples/rigid/control_franka.py) | [Position control comparison](./examples/tutorials/position_control_comparison.py) | [IK + motion planning](./examples/tutorials/IK_motion_planning_grasp.py) |
 | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/rigid_control_franka.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_position_control_comparison.webp" width="240"> | <img src="https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/tutorials_IK_motion_planning_grasp.webp" width="240"> |

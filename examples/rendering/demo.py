@@ -2,10 +2,8 @@ import genesis as gs
 
 
 def main():
-    ########################## init ##########################
-    gs.init(precision="32", logging_level="info")
+    gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(enable_collision=False, gravity=(0, 0, 0)),
         viewer_options=gs.options.ViewerOptions(
@@ -28,9 +26,6 @@ def main():
         ),
     )
 
-    ########################## materials ##########################
-
-    ########################## entities ##########################
     # floor
     plane = scene.add_entity(
         morph=gs.morphs.Plane(
@@ -139,7 +134,6 @@ def main():
             )
         ),
     )
-    ########################## cameras ##########################
     cam_0 = scene.add_camera(
         res=(1600, 900),
         pos=(8.5, 0.0, 1.5),

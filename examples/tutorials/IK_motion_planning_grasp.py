@@ -3,10 +3,8 @@ import numpy as np
 import genesis as gs
 
 
-########################## init ##########################
-gs.init(backend=gs.gpu)
+gs.init(backend=gs.cpu)
 
-########################## create a scene ##########################
 scene = gs.Scene(
     viewer_options=gs.options.ViewerOptions(
         camera_pos=(3, -1, 1.5),
@@ -19,7 +17,6 @@ scene = gs.Scene(
     show_viewer=True,
 )
 
-########################## entities ##########################
 plane = scene.add_entity(
     gs.morphs.Plane(),
 )
@@ -32,7 +29,6 @@ cube = scene.add_entity(
 franka = scene.add_entity(
     gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
 )
-########################## build ##########################
 scene.build()
 
 motors_dof = np.arange(7)

@@ -8,13 +8,10 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(precision="32", logging_level="warning")
-
-    ########################## create a scene ##########################
+    gs.init(backend=gs.cpu, precision="32", logging_level="warning")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -33,7 +30,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
     stick = scene.add_entity(
         material=gs.materials.Tool(friction=8.0),
@@ -72,7 +68,6 @@ def main():
         vis_mode="particle",
     )
 
-    ########################## cameras ##########################
     cam_0 = scene.add_camera(
         pos=(1.5, 0.5, 2.42),
         lookat=(0.5, 0.5, 0.1),
@@ -86,10 +81,9 @@ def main():
         GUI=True,
     )
 
-    ########################## build ##########################
     scene.build(n_envs=2)
 
-    ########################## forward + backward twice ##########################
+    # Two independent forward/backward passes, each restarting from the same initial state.
     horizon = 150 if "PYTEST_VERSION" not in os.environ else 5
     v_list = [gs.tensor([[0.0, 1.0, 0.0], [0.0, 1.0, 0.0]], requires_grad=True) for _ in range(horizon)]
     for _ in range(2):
@@ -106,16 +100,9 @@ def main():
         timer = gs.tools.Timer()
         loss = 0.0
         for i, v_i in enumerate(v_list):
-            # uncomment this to set an angular velocity
-            # w_i = gs.tensor([2.0, 0.0, 0.0], requires_grad=True)
-            # stick.set_velocity(vel=v_i, ang=w_i)
             stick.set_velocity(vel=v_i)
 
             scene.step()
-
-            # uncomment this to render images
-            # img0 = cam_0.render()
-            # img1 = cam_1.render()
 
             # you can use a scene_state
             if i == 25:

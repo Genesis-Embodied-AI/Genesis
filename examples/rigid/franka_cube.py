@@ -6,12 +6,10 @@ import genesis as gs
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.gpu, precision="32")
-    ########################## create a scene ##########################
+    gs.init(backend=gs.cpu, precision="32")
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -28,7 +26,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(
         gs.morphs.Plane(),
     )
@@ -42,7 +39,6 @@ def main():
             pos=(0.65, 0.0, 0.02),
         )
     )
-    ########################## build ##########################
     scene.build()
 
     motors_dof = np.arange(7)

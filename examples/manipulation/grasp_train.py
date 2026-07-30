@@ -157,26 +157,31 @@ def load_teacher_policy(env, rl_train_cfg, exp_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--exp_name", type=str, default="grasp")
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("-B", "--num_envs", type=int, default=2048)
-    parser.add_argument("--max_iterations", type=int, default=300)
-    parser.add_argument("--stage", type=str, default="rl")
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "-e", "--exp-name", type=str, default="grasp", help="Experiment name; also the log directory under logs/"
+    )
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
+    parser.add_argument("-b", "--num-envs", type=int, default=2048, help="Number of parallel environments")
+    parser.add_argument("--max-iterations", type=int, default=300, help="Number of learning iterations")
+    parser.add_argument(
+        "--stage",
+        type=str,
+        default="rl",
+        choices=("rl", "bc"),
+        help="Training stage: 'rl' for reinforcement learning, 'bc' for behavior cloning",
+    )
+    parser.add_argument("--seed", type=int, default=1, help="Random seed")
     args = parser.parse_args()
 
-    # === init ===
+    # Training throughput comes from the 2048 parallel environments, which need a GPU.
     gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=args.seed, performance_mode=True)
 
-    # === task cfgs and trainning algos cfgs ===
     env_cfg, reward_scales, robot_cfg = get_task_cfgs()
     rl_train_cfg, bc_train_cfg = get_train_cfg(args.exp_name)
 
-    # === log dir ===
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # === env ===
     # BC only needs a small number of envs, e.g., 10
     env_cfg["num_envs"] = args.num_envs if args.stage == "rl" else 10
 
@@ -189,7 +194,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    # === runner ===
     if args.stage == "bc":
         teacher_policy = load_teacher_policy(env, rl_train_cfg, args.exp_name)
         runner = BehaviorCloning(env, bc_train_cfg, teacher_policy, device=gs.device)

@@ -4,10 +4,8 @@ import numpy as np
 import genesis as gs
 
 
-########################## init ##########################
-gs.init(precision="32", logging_level="info")
+gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
-######################## create a scene ##########################
 scene = gs.Scene(
     sim_options=gs.options.SimOptions(
         dt=3e-3,
@@ -41,7 +39,6 @@ scene = gs.Scene(
     show_FPS=False,
 )
 
-########################## entities ##########################
 scene.add_entity(morph=gs.morphs.Plane())
 
 robot = scene.add_entity(
@@ -75,10 +72,8 @@ ball = scene.add_entity(
     material=gs.materials.Rigid(rho=1000, friction=0.5),
 )
 
-########################## build ##########################
 scene.build()
 
-########################## run ##########################
 horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
 scene.reset()
 for i in range(horizon):

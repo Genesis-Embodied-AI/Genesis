@@ -8,6 +8,7 @@ import quadrants as qd
 import cv2
 
 import genesis as gs
+from genesis.utils.misc import qd_to_numpy
 
 
 @qd.data_oriented
@@ -75,19 +76,17 @@ class Jet(object):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--num_steps", type=int, default=200)
-    parser.add_argument("-c", "--cpu", action="store_true", default=False)
+    parser.add_argument("-s", "--steps", type=int, default=200, help="Number of simulation steps")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
-    args.num_steps = 1 if "PYTEST_VERSION" in os.environ else args.num_steps
+    args.steps = 1 if "PYTEST_VERSION" in os.environ else args.steps
     substeps = 1 if "PYTEST_VERSION" in os.environ else 10
     res = 32 if "PYTEST_VERSION" in os.environ else 384
-    args.cpu = True if "PYTEST_VERSION" in os.environ else args.cpu
 
-    ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="info")
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, seed=0, precision="32", logging_level="info")
 
-    video_path = Path(__file__).parent / "video"
+    video_path = Path("out/smoke")
     video_path.mkdir(exist_ok=True, parents=True)
 
     scene = gs.Scene(
@@ -126,12 +125,10 @@ def main():
     ]
     scene.sim.solvers[-1].set_jets(jets)
 
-    ########################## entities ##########################
-
     scene.build()
 
-    for i in range(args.num_steps):
-        scalars = scene.sim.solvers[-1].grid.q.to_numpy().astype(np.float32)  # (res, res, res, 3)
+    for i in range(args.steps):
+        scalars = qd_to_numpy(scene.sim.solvers[-1].grid.q).astype(np.float32)
         scalars[scalars < 1e-4] = 0
         layer = scalars[:, res // 2, :]
 

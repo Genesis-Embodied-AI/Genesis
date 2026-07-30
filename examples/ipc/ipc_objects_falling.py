@@ -14,11 +14,11 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.cpu, logging_level="info")
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
+
+    gs.init(backend=gs.cpu, logging_level="info")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -58,7 +58,7 @@ def main():
         material=gs.materials.FEM.Cloth(
             E=1e5,  # Young's modulus (Pa) - soft cloth (100 kPa)
             nu=0.499,  # Poisson's ratio - nearly incompressible
-            rho=200,  # Density (kg/m³)
+            rho=200,  # Density (kg/m^3)
             thickness=0.001,  # Shell thickness (m) - 1mm
             bending_stiffness=50.0,  # Bending resistance
         ),

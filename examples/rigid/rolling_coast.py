@@ -45,13 +45,11 @@ def checkered_ball_mjcf():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
-    ########################## create a scene ##########################
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -4.5, 2.0),
@@ -65,7 +63,6 @@ def main():
         show_viewer=args.vis,
     )
 
-    ########################## entities ##########################
     # The contact coefficient is the maximum over the pair, so the zero-coefficient plane leaves each ball coasting
     # at its own rate.
     scene.add_entity(
@@ -88,7 +85,6 @@ def main():
         for i_ball, friction_rolling in enumerate((0.0, 0.005))
     ]
 
-    ########################## build ##########################
     scene.build()
 
     # Launch both balls rolling without slipping: v = w * r.

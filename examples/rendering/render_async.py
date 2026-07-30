@@ -12,10 +12,7 @@ def run_sim(scene):
 
 
 def main():
-    ########################## init ##########################
-    gs.init()
-
-    ########################## create a scene ##########################
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -32,13 +29,11 @@ def main():
         show_FPS=True,
     )
 
-    ########################## entities ##########################
     plane = scene.add_entity(gs.morphs.Plane())
     r0 = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
 
-    ########################## build ##########################
     scene.build()
 
     threading.Thread(target=run_sim, args=(scene,)).start()

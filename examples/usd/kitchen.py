@@ -18,8 +18,8 @@ import os
 from huggingface_hub import snapshot_download
 
 import genesis as gs
-import genesis.vis.keybindings as kb
 from genesis.utils.misc import tensor_to_array
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 SAMPLE_ASSETS = {
     "dishwasher": ("Lightwheel_Kitchen/Dishwasher054/Dishwasher054.usd", ["Lightwheel_Kitchen/Dishwasher054/*"]),
@@ -37,12 +37,12 @@ def main():
         "--asset",
         default="bottle" if "PYTEST_VERSION" in os.environ else "all",
         choices=[*SAMPLE_ASSETS, "all"],
-        help="Which sample asset(s) to load.",
+        help="Which sample asset(s) to load",
     )
-    parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples.")
-    parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show the interactive viewer.")
+    parser.add_argument("--full", action="store_true", help="Load the entire kitchen scene instead of the samples")
+    parser.add_argument("-v", "--vis", action="store_true", help="Show the interactive viewer")
     parser.add_argument(
-        "--collision", action="store_true", help="Visualize collision geometry instead of the visual meshes."
+        "--collision", action="store_true", help="Visualize collision geometry instead of the visual meshes"
     )
     args = parser.parse_args()
 
@@ -135,7 +135,7 @@ def main():
             is_running = False
 
         scene.viewer.register_keybinds(
-            kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.RELEASE, callback=stop),
+            Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
 
     try:

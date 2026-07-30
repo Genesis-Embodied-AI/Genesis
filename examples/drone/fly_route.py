@@ -39,7 +39,6 @@ def fly_to_point(target, controller: "DronePIDController", scene: gs.Scene, cam:
         M3 = clamp(M3)
         M4 = clamp(M4)
         drone.set_propellers_rpm([M1, M2, M3, M4])
-        # print("point =", drone.get_pos())
         drone_pos = drone.get_pos()
         drone_pos = drone_pos.cpu().numpy()
         x = drone_pos[0]
@@ -56,12 +55,10 @@ def fly_to_point(target, controller: "DronePIDController", scene: gs.Scene, cam:
 
 
 def main():
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
-    ##### scene #####
     scene = gs.Scene(show_viewer=False, sim_options=gs.options.SimOptions(dt=0.01))
 
-    ##### entities #####
     plane = scene.add_entity(morph=gs.morphs.Plane())
 
     drone = scene.add_entity(morph=gs.morphs.Drone(file="urdf/drones/cf2x.urdf", pos=(0, 0, 0.2)))
@@ -84,11 +81,9 @@ def main():
 
     cam = scene.add_camera(pos=(1, 1, 1), lookat=drone.morph.pos, GUI=False, res=(640, 480), fov=30)
 
-    ##### build #####
-
     scene.build()
 
-    cam.start_recording(save_to_filename="../../videos/fly_route.mp4")
+    cam.start_recording(save_to_filename="out/fly_route.mp4")
 
     points = [(1, 1, 2), (-1, 2, 1), (0, 0, 0.5)]
 
