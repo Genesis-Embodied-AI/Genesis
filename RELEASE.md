@@ -1,5 +1,22 @@
 # Genesis Release Note
 
+## 1.3.1
+
+This small release fixes support of the Nyx rendering plugin. Besides, contact normal forces no longer depend on the friction coefficient nor the sliding speed, thanks to the new rigid solver option 'contact_resolution' that bounds friction against the normal force actually developed by the contact.
+
+### Breaking
+
+* [FEATURE] Support decoupling contact normal forces from friction coef and sliding speed. (@duburcqa) (#3126, #3139)
+
+### New Features
+
+* Support raycasting against visual meshes in viewer plugins. (@Milotrince) (#3132)
+
+### Miscellaneous
+
+* Fix support of FEM entities in Nyx plugin. (@duburcqa) (#3131)
+* Add CI for Nyx renderer plugin. (@duburcqa) (#3130, #3133, #3135, #3136, #3137, #3138)
+
 ## 1.3.0
 
 This release extends differentiable rigid body simulation, which is no longer considered experimental. Moreover, torsional and rolling friction have been added, as part of a broader ongoing effort to bridge the sim2real gap.
