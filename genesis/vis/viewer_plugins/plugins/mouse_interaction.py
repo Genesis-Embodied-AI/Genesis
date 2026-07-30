@@ -252,7 +252,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             self._debug_interact_nodes.clear()
 
             # Hover arrow: only show for pickable (non-fixed, sufficient mass) entities
-            closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
+            closest_hit: RayHit | None = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
             link = closest_hit.geom.link if closest_hit is not None and closest_hit.geom is not None else None
             is_pickable = (
                 self._sim_running

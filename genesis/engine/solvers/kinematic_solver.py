@@ -8,12 +8,11 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.entities.rigid_entity import KinematicEntity
 from genesis.engine.states.solvers import KinematicSolverState
-from genesis.options.solvers import RigidOptions, KinematicOptions
+from genesis.options.solvers import KinematicOptions, RigidOptions
 from genesis.utils.misc import (
     assign_indexed_tensor,
     broadcast_tensor,
     indices_to_mask,
-    qd_to_numpy,
     qd_to_torch,
     qd_zero_grad,
     sanitize_indexed_tensor,
@@ -1076,21 +1075,22 @@ class KinematicSolver(Solver):
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_vfaces_raycast_mask(self) -> np.ndarray:
+    def get_vfaces_raycast_mask(self) -> torch.Tensor:
         """Per-vface mask (int8, shape (n_vfaces,)) selecting the vfaces opted into visual raycasting.
 
         A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
         Consumed by every visual raycast BVH (raycaster sensors, viewer plugins) to gate which vfaces contribute.
+        The int8 dtype is what the AABB-update kernels take for the mask.
         """
         if self.dyn_info.vfaces.vgeom_idx.shape[0] == 0:
-            return np.zeros(0, dtype=np.int8)
-        vgeom_enabled = np.zeros(self.n_vgeoms, dtype=np.bool_)
+            return torch.zeros(0, dtype=torch.int8, device=gs.device)
+        vgeom_enabled = torch.zeros(self.n_vgeoms, dtype=torch.int8, device=gs.device)
         for entity in self.entities:
             if not entity.material.use_visual_raycasting:
                 continue
             for vgeom in entity.vgeoms:
-                vgeom_enabled[vgeom.idx] = True
-        return vgeom_enabled[qd_to_numpy(self.dyn_info.vfaces.vgeom_idx)].astype(np.int8)
+                vgeom_enabled[vgeom.idx] = 1
+        return vgeom_enabled[qd_to_torch(self.dyn_info.vfaces.vgeom_idx)]
 
     def get_links_vel(self, links_idx=None, envs_idx=None):
         if gs.use_zerocopy:

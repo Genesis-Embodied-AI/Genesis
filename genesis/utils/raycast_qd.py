@@ -535,7 +535,7 @@ def update_visual_face_aabb(
     treat as a definitive miss: either face_mask holds 0, meaning its entity did not opt into raycasting, or its vgeom
     falls outside env i_b's active vgeom range (links_info.vgeom_start / vgeom_end). For a homogeneous solver every
     vgeom is always in range. For a heterogeneous solver, where all envs share one visual mesh but activate different
-    per-env vgeom ranges, this makes each env cast against only its own variant instead of the union of every variant.
+    per-env vgeom ranges, this keeps each env casting against its own variant alone.
     """
     aabb_state.aabbs[i_t, i_f].min.fill(qd.math.inf)
     aabb_state.aabbs[i_t, i_f].max.fill(-qd.math.inf)
@@ -604,7 +604,7 @@ def kernel_cast_ray(
     that env is written to result[i_b]; envs not in envs_idx are left as no-hit (geom_idx == -1, distance == +inf).
     Aggregation across envs is intentionally out of scope, because cross-env reduction has no use beyond the viewer.
 
-    ``is_visual`` selects the mesh the BVH covers: the visual mesh (vfaces, result.geom_idx holds the hit vgeom) or
+    `is_visual` selects the mesh the BVH covers: the visual mesh (vfaces, result.geom_idx holds the hit vgeom) or
     the collision mesh (faces, result.geom_idx holds the hit geom).
     """
     ray_start_world = qd.math.vec3(ray_start[0], ray_start[1], ray_start[2])

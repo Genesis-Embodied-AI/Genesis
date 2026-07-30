@@ -10,7 +10,6 @@ import genesis as gs
 from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
-from genesis.vis.viewer_plugins.raycast import Raycaster
 
 from ..conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
 from ..utils import assert_allclose
@@ -279,15 +278,16 @@ def test_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot)
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize(
-    "n_envs, env_spacing, n_envs_per_row, target_env_idx, target_offset",
+    "n_envs, env_spacing, n_envs_per_row, target_env_idx, target_offset, use_visual_geom",
     [
-        (0, (0.0, 0.0), None, None, (0.0, 0.0, 0.0)),
+        (0, (0.0, 0.0), None, None, (0.0, 0.0, 0.0), False),
         # Two envs spaced along x so envs_offset is non-zero. Camera is positioned over env 1, so a viewport-center
         # click must pick env 1 (exercising kernel_cast_ray's per-env offset transform) and leave env 0 untouched.
-        (2, (0.5, 0.0), 1, 1, (0.25, 0.0, 0.0)),
+        (2, (0.5, 0.0), 1, 1, (0.25, 0.0, 0.0), False),
+        (2, (0.5, 0.0), 1, 1, (0.25, 0.0, 0.0), True),
     ],
 )
-def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_env_idx, target_offset):
+def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_env_idx, target_offset, use_visual_geom):
     DT = 0.01
     MASS = 100.0
     BOX_LENGTH = 0.2
@@ -295,6 +295,15 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     DRAG_DY = 8
     SPRING_CONST = 1000.0
     CAM_FOV = 30
+    # Probe lanes parked along y, clear of the drag: envs are spaced along x only, so a lane is one env's alone.
+    DECOY_SIZE = 0.4
+    DECOY_Z = 0.5
+    TARGET_SIZE = 0.2
+    TARGET_Z = 1.5
+    STACK_LANE_Y = 1.5
+    KINEMATIC_LANE_Y = 2.0
+    OPTOUT_LANE_Y = 2.5
+    PROBE_Z = 3.0
     target_offset = np.asarray(target_offset, dtype=gs.np_float)
     CAM_POS = (target_offset[0], 0.6, 1.2)
 
@@ -324,21 +333,53 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
         ),
         material=gs.materials.Rigid(
             rho=MASS / (BOX_LENGTH**3),
+            use_visual_raycasting=True,
         ),
     )
+    # One lane stacks a collision-only box under a visual-only one, so the two cast modes land on different entities.
+    decoy = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, STACK_LANE_Y, DECOY_Z),
+            size=(DECOY_SIZE,) * 3,
+            fixed=True,
+            visualization=False,
+        ),
+    )
+    target = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, STACK_LANE_Y, TARGET_Z),
+            size=(TARGET_SIZE,) * 3,
+            fixed=True,
+            collision=False,
+        ),
+        material=gs.materials.Rigid(
+            use_visual_raycasting=True,
+        ),
+    )
+    # A kinematic entity carries visual meshes only, in a separate solver from the rigid entities above.
     kinematic = scene.add_entity(
         morph=gs.morphs.Box(
-            pos=(0.0, 2.0, BOX_LENGTH / 2),
+            pos=(0.0, KINEMATIC_LANE_Y, BOX_LENGTH / 2),
             size=(BOX_LENGTH,) * 3,
         ),
         material=gs.materials.Kinematic(
             use_visual_raycasting=True,
         ),
     )
+    # Without the opt-in material, an entity stays unpickable.
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, OPTOUT_LANE_Y, TARGET_Z),
+            size=(TARGET_SIZE,) * 3,
+            fixed=True,
+            collision=False,
+        ),
+    )
     scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
             spring_const=SPRING_CONST,
+            use_visual_geom=use_visual_geom,
         )
     )
     scene.build(
@@ -387,6 +428,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
 
     viewport_size = pyrender_viewer._viewport_size
     x, y = viewport_size[0] // 2, viewport_size[1] // 2
+    plugin = next(p for p in scene.viewer.plugins if isinstance(p, gs.vis.viewer_plugins.MouseInteractionPlugin))
 
     # Press mouse to grab the box
     pyrender_viewer.dispatch_event("on_mouse_press", x, y, MouseButton.LEFT, 0)
@@ -395,7 +437,6 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
 
     # Confirm the raycaster picked the expected env
     if target_env_idx is not None:
-        plugin = next(p for p in scene.viewer.plugins if isinstance(p, gs.vis.viewer_plugins.MouseInteractionPlugin))
         assert plugin._interact_env_idx == target_env_idx, (
             f"Expected mouse to pick env {target_env_idx}, got env {plugin._interact_env_idx}"
         )
@@ -471,113 +512,45 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
         err_msg="Final z velocity does not match expected value based on spring dynamics.",
     )
 
-    # A visual-mesh cast also reaches the kinematic solver, so hovering and pressing on a movable kinematic link must
-    # leave the plugin idle instead of raising inside the viewer callbacks.
-    visual_plugin = scene.viewer.add_plugin(
-        gs.vis.viewer_plugins.MouseInteractionPlugin(
-            use_force=True,
-            spring_const=SPRING_CONST,
-            use_visual_geom=True,
-        )
+    # Each mode follows the geometry it is meant to: the collision cast stops on the hull it can see, the visual cast
+    # reaches through it to the rendered mesh, spans the kinematic solver too, and skips entities without the opt-in.
+    probe_dir = np.array((0.0, 0.0, -1.0), dtype=gs.np_float)
+    stack_hit = plugin._raycaster.cast(
+        np.array((target_offset[0], STACK_LANE_Y, PROBE_Z), dtype=gs.np_float), probe_dir
     )
-    kinematic.set_pos((target_offset[0], target_offset[1], target_offset[2] + BOX_LENGTH))
+    if not use_visual_geom:
+        assert stack_hit.geom.entity is decoy
+        assert_allclose(stack_hit.distance, PROBE_Z - (DECOY_Z + 0.5 * DECOY_SIZE), tol=1e-6)
+        return
+
+    assert stack_hit.geom.entity is target
+    assert_allclose(stack_hit.distance, PROBE_Z - (TARGET_Z + 0.5 * TARGET_SIZE), tol=1e-6)
+    kinematic_origin = np.array((target_offset[0], KINEMATIC_LANE_Y, PROBE_Z), dtype=gs.np_float)
+    kinematic_hit = plugin._raycaster.cast(kinematic_origin, probe_dir)
+    assert kinematic_hit.geom.entity is kinematic
+    assert_allclose(kinematic_hit.distance, PROBE_Z - BOX_LENGTH, tol=1e-6)
+    optout_origin = np.array((target_offset[0], OPTOUT_LANE_Y, PROBE_Z), dtype=gs.np_float)
+    assert plugin._raycaster.cast(optout_origin, probe_dir) is None
+
+    # A kinematic entity carries no mass or inertia, so dragging it is forbidden: hovering, pressing and dragging on
+    # one must leave it exactly where it stands and the plugin holding nothing, instead of raising inside the viewer
+    # callbacks. Park it on the camera ray at a fraction RAY_T of the way from the camera to what it looks at, ahead
+    # of anything the box can reach, so the cursor lands on it rather than on the box.
+    RAY_T = 0.35
+    parked_pos = (0.0, CAM_POS[1] * (1.0 - RAY_T), CAM_POS[2] - RAY_T * (CAM_POS[2] - BOX_LENGTH))
+    kinematic.set_pos(parked_pos)
     scene.step()
     x, y = viewport_size[0] // 2, viewport_size[1] // 2
     pyrender_viewer.dispatch_event("on_mouse_motion", x, y, 0, 0)
     pyrender_viewer.dispatch_event("on_mouse_press", x, y, MouseButton.LEFT, 0)
     wait_for_viewer_events(pyrender_viewer, check_event_count())
+    pyrender_viewer.dispatch_event("on_mouse_drag", x, y + DRAG_DY, 0, DRAG_DY, MouseButton.LEFT, 0)
+    wait_for_viewer_events(pyrender_viewer, check_event_count())
     scene.step()
 
     assert pyrender_viewer.is_active
-    assert visual_plugin._held_link is None
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_raycast_visual_geom(n_envs, show_viewer):
-    DECOY_SIZE = 0.4
-    DECOY_Z = 0.5
-    TARGET_SIZE = 0.2
-    TARGET_Z = 1.5
-    KINEMATIC_SIZE = 0.3
-    KINEMATIC_Z = 1.0
-    LANE_X = 1.0
-    RAY_Z = -1.0
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            res=CAM_RES,
-            camera_pos=(2.0, -1.5, 1.0),
-            camera_lookat=(0.25, 0.0, 1.0),
-            camera_fov=60,
-        ),
-        show_viewer=show_viewer,
-    )
-    decoy = scene.add_entity(
-        morph=gs.morphs.Box(
-            pos=(0.0, 0.0, DECOY_Z),
-            size=(DECOY_SIZE,) * 3,
-            fixed=True,
-            visualization=False,
-        ),
-    )
-    target = scene.add_entity(
-        morph=gs.morphs.Box(
-            pos=(0.0, 0.0, TARGET_Z),
-            size=(TARGET_SIZE,) * 3,
-            fixed=True,
-            collision=False,
-        ),
-        material=gs.materials.Rigid(
-            use_visual_raycasting=True,
-        ),
-    )
-    # A kinematic entity carries visual meshes only, in a separate solver from the rigid entities above.
-    kinematic = scene.add_entity(
-        morph=gs.morphs.Box(
-            pos=(-LANE_X, 0.0, KINEMATIC_Z),
-            size=(KINEMATIC_SIZE,) * 3,
-            fixed=True,
-        ),
-        material=gs.materials.Kinematic(
-            use_visual_raycasting=True,
-        ),
-    )
-    # Without the opt-in material, an entity stays unpickable.
-    scene.add_entity(
-        morph=gs.morphs.Box(
-            pos=(LANE_X, 0.0, TARGET_Z),
-            size=(TARGET_SIZE,) * 3,
-            fixed=True,
-            collision=False,
-        ),
-    )
-    scene.build(n_envs=n_envs)
-    scene.step()
-
-    ray_direction = np.array((0.0, 0.0, 1.0), dtype=gs.np_float)
-    collision_raycaster = Raycaster(scene)
-    visual_raycaster = Raycaster(scene, use_visual_geom=True)
-
-    ray_origin = np.array((0.0, 0.0, RAY_Z), dtype=gs.np_float)
-    collision_hit = collision_raycaster.cast(ray_origin, ray_direction)
-    assert collision_hit.geom.entity is decoy
-    assert_allclose(collision_hit.distance, DECOY_Z - 0.5 * DECOY_SIZE - RAY_Z, tol=1e-6)
-    assert_allclose(collision_hit.normal, (0.0, 0.0, -1.0), tol=gs.EPS)
-
-    visual_hit = visual_raycaster.cast(ray_origin, ray_direction)
-    assert visual_hit.geom.entity is target
-    assert_allclose(visual_hit.distance, TARGET_Z - 0.5 * TARGET_SIZE - RAY_Z, tol=1e-6)
-    assert_allclose(visual_hit.normal, (0.0, 0.0, -1.0), tol=gs.EPS)
-
-    kinematic_hit = visual_raycaster.cast(np.array((-LANE_X, 0.0, RAY_Z), dtype=gs.np_float), ray_direction)
-    assert kinematic_hit.geom.entity is kinematic
-    assert_allclose(kinematic_hit.distance, KINEMATIC_Z - 0.5 * KINEMATIC_SIZE - RAY_Z, tol=1e-6)
-
-    assert visual_raycaster.cast(np.array((LANE_X, 0.0, RAY_Z), dtype=gs.np_float), ray_direction) is None
+    assert plugin._held_link is None
+    assert_allclose(kinematic.get_pos(), parked_pos, tol=gs.EPS)
 
 
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)

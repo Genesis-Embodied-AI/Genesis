@@ -21,7 +21,7 @@ ALLOW_PATTERNS = {
     "sensors/**/*.py",
     "tutorials/**/*.py",
     "usd/**/*.py",
-    "viewer_plugins/**/*.py",
+    "viewer_plugin/**/*.py",
     "gui/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {

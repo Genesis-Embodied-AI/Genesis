@@ -52,9 +52,9 @@ class BVHContext:
     # per distinct per-env geometry); allocated per env up front for movable entries.
     bvh: LBVH | None = None
     aabb: AABB | None = None
-    # None for a collision BVH (faces_info / verts_info, no per-face mask), else an int8 (n_vfaces,) array selecting
+    # None for a collision BVH (faces_info / verts_info, no per-face mask), else an int8 (n_vfaces,) tensor selecting
     # which visual faces contribute.
-    raycast_mask: np.ndarray | None = None
+    raycast_mask: torch.Tensor | None = None
 
     # True when the physics cannot move any of the geometry this BVH covers (every covered collision face sits on a
     # fixed link; for a visual BVH, all links in the solver are fixed), so that geometry only ever changes through an
@@ -202,7 +202,8 @@ class RaycastContext(SharedSensorContext):
                 parts.append(free_verts_pos)
         else:
             vgeoms_mask_np = np.zeros(solver.n_vgeoms, dtype=np.bool_)
-            vgeoms_mask_np[qd_to_numpy(solver.dyn_info.vfaces.vgeom_idx)[entry.raycast_mask != 0]] = True
+            raycast_mask_np = tensor_to_array(entry.raycast_mask)
+            vgeoms_mask_np[qd_to_numpy(solver.dyn_info.vfaces.vgeom_idx)[raycast_mask_np != 0]] = True
             vgeoms_mask = None
             if not vgeoms_mask_np.all():
                 vgeoms_mask = torch.as_tensor(vgeoms_mask_np, device=gs.device)

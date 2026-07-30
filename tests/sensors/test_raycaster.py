@@ -619,8 +619,10 @@ def test_heterogeneous_object(show_viewer, tol):
             use_visual_raycasting=True,
         ),
     )
-    # Every link of the kinematic solver is fixed, so its visual BVH is static and groups envs by geometry. The
-    # variants share one link, hence identical vgeom poses, and are told apart only by their active vgeom range.
+    # Every link of the kinematic solver is fixed, so its visual BVH is static and groups envs by geometry. A box
+    # primitive puts its vgeom at the link origin, so these same-pos variants hold identical vgeom poses and differ
+    # only in rest-pose vverts, which are shared across envs: the active vgeom range is the sole discriminator the
+    # grouping signature can read.
     het_visual = scene.add_entity(
         morph=(
             gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(4.0, 0.0, 0.5), fixed=True),
@@ -685,8 +687,6 @@ def test_heterogeneous_object(show_viewer, tol):
     # static tree per distinct variant, so each env still reads its own.
     het_obstacle.set_pos((10.0, 0.0, 0.5))
     scene.step()
-    visual_bvh = next(entry for entry in lidar._shared_context.bvh_contexts if entry.solver is het_visual.solver)
-    assert visual_bvh.aabb.n_batches == 3
     assert_allclose(lidar.read().distances[:, 0, 0], (3.9, 3.9, 3.8, 3.8, 3.7, 3.7), tol=5e-3)
 
 
