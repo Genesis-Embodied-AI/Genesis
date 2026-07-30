@@ -12,7 +12,7 @@ def run_sim(scene):
 
 
 def main():
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

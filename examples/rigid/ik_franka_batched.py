@@ -10,7 +10,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    gs.init(precision="32", logging_level="info")
+    # Batched inverse kinematics over 64 environments is what this example times, so it needs a GPU.
+    gs.init(backend=gs.gpu, precision="32", logging_level="info")
     np.set_printoptions(precision=7, suppress=True)
 
     scene = gs.Scene(

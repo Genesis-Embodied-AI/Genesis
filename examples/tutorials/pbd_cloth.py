@@ -2,7 +2,7 @@ import os
 
 import genesis as gs
 
-gs.init()
+gs.init(backend=gs.cpu)
 
 
 scene = gs.Scene(

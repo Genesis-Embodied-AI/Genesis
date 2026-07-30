@@ -11,6 +11,7 @@ def main():
     parser.add_argument("-b", "--num-envs", type=int, default=49, help="Number of parallel environments")
     args = parser.parse_args()
 
+    # The 49 parallel grasps are the point of this example, so it needs a GPU.
     gs.init(backend=gs.gpu)
 
     viewer_options = gs.options.ViewerOptions(

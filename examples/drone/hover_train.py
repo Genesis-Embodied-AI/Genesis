@@ -126,6 +126,7 @@ def main():
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     args = parser.parse_args()
 
+    # Training throughput comes from the 8192 parallel environments, which need a GPU.
     gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=args.seed, performance_mode=True)
 
     log_dir = f"logs/{args.exp_name}"

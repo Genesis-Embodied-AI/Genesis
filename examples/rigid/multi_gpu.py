@@ -14,6 +14,7 @@ def main():
 
     gpu_id = torch.cuda.current_device()
     print("gpu_id:", gpu_id)
+    # Selecting the CUDA device to simulate on is the whole point of this example.
     gs.init(backend=gs.gpu, logger_verbose_time=True)
 
     scene = gs.Scene(

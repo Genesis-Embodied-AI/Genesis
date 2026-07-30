@@ -160,6 +160,7 @@ def main():
     with open(f"{log_dir}/cfgs.pkl", "wb") as f:
         pickle.dump([env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg], f)
 
+    # Training throughput comes from the 4096 parallel environments, which need a GPU.
     gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=args.seed, performance_mode=True)
 
     env = Go2Env(

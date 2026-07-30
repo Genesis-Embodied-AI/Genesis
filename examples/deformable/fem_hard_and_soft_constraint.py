@@ -19,7 +19,7 @@ def main():
     args = parser.parse_args()
     args.seconds = 0.01 if "PYTEST_VERSION" in os.environ else args.seconds
 
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

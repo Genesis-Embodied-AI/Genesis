@@ -9,7 +9,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(

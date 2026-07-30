@@ -13,6 +13,7 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.options.sensors import RasterizerCameraOptions, RaytracerCameraOptions, BatchRendererCameraOptions
 
+# The batch renderer compared here requires CUDA, so this example has no CPU backend to offer.
 gs.init(seed=0, precision="32", backend=gs.gpu, logging_level="info")
 
 # Try to import LuisaRenderPy to determine if raytracer is available

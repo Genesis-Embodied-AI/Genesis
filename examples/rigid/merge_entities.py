@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--comb", type=str, default="urdf2urdf", choices=COMB, help="Entities to merge")
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

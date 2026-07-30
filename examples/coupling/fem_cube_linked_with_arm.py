@@ -12,10 +12,10 @@ def main():
     parser.add_argument("--dt", type=float, default=1e-3, help="Simulation time step")
     parser.add_argument("--substeps", type=int, default=1, help="Number of solver substeps per step")
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level=None)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, logging_level=None)
 
     steps = int(1.0 / args.dt if "PYTEST_VERSION" not in os.environ else 5)
 

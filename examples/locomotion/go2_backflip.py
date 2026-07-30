@@ -111,7 +111,7 @@ def main():
     )
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     env_cfg, obs_cfg, reward_cfg, command_cfg = get_cfgs()
 

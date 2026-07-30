@@ -4,7 +4,7 @@ import numpy as np
 
 import genesis as gs
 
-gs.init(backend=gs.gpu)
+gs.init(backend=gs.cpu)
 
 scene = gs.Scene(
     viewer_options=gs.options.ViewerOptions(

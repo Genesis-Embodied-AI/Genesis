@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--profiling", action="store_true", help="Enable the Genesis profiler")
     args = parser.parse_args()
 
+    # The benchmark measures per-environment timings across 128 environments, which needs a GPU.
     gs.init(backend=gs.gpu, precision="32", performance_mode=True, seed=0, logging_level="warning")
 
     scene = gs.Scene(

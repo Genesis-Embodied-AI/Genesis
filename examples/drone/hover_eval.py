@@ -30,7 +30,7 @@ def main():
     parser.add_argument("-r", "--record", action="store_true", help="Record the rollout to video")
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     log_dir = f"logs/{args.exp_name}"
     with open(f"logs/{args.exp_name}/cfgs.pkl", "rb") as f:

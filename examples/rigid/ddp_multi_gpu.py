@@ -38,6 +38,8 @@ def run_worker(args: argparse.Namespace) -> None:
     os.environ["QD_VISIBLE_DEVICE"] = str(local_rank)
     # FIXME: Forcing rendering device is not working reliably on all machines
     # os.environ["EGL_DEVICE_ID"] = str(local_rank)
+
+    # Each rank owns a full batch of environments, so this only makes sense on GPU.
     gs.init(backend=gs.gpu, seed=local_rank)
 
     # sim

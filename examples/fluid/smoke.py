@@ -77,15 +77,14 @@ class Jet(object):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-s", "--steps", type=int, default=200, help="Number of simulation steps")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
     args.steps = 1 if "PYTEST_VERSION" in os.environ else args.steps
     substeps = 1 if "PYTEST_VERSION" in os.environ else 10
     res = 32 if "PYTEST_VERSION" in os.environ else 384
-    args.cpu = True if "PYTEST_VERSION" in os.environ else args.cpu
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, seed=0, precision="32", logging_level="info")
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, seed=0, precision="32", logging_level="info")
 
     video_path = Path("out/smoke")
     video_path.mkdir(exist_ok=True, parents=True)

@@ -11,7 +11,7 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
     args = parser.parse_args()
 
-    gs.init(precision="32", logging_level="warning")
+    gs.init(backend=gs.cpu, precision="32", logging_level="warning")
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

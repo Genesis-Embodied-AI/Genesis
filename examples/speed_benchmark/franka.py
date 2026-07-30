@@ -2,6 +2,7 @@ import torch
 
 import genesis as gs
 
+# The benchmark measures throughput at 30000 parallel environments, which needs a GPU.
 gs.init(backend=gs.gpu, performance_mode=True)
 
 scene = gs.Scene(

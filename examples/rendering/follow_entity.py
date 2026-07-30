@@ -9,7 +9,7 @@ def main():
     parser.add_argument("--fix", action="store_true", help="Keep the camera orientation fixed while following")
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(

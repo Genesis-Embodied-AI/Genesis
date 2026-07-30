@@ -42,7 +42,7 @@ def main():
     parser.add_argument("-b", "--num-envs", type=int, default=4, help="Number of parallel environments")
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, precision="32")
+    gs.init(backend=gs.cpu, precision="32")
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),

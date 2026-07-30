@@ -9,10 +9,10 @@ import genesis as gs
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", seed=0)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, precision="32", seed=0)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

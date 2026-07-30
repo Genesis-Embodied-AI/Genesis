@@ -4,7 +4,7 @@ import torch
 import genesis as gs
 
 
-gs.init(precision="32", logging_level="info")
+gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
 scene = gs.Scene(
     sim_options=gs.options.SimOptions(

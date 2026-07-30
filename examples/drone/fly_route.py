@@ -55,7 +55,7 @@ def fly_to_point(target, controller: "DronePIDController", scene: gs.Scene, cam:
 
 
 def main():
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(show_viewer=False, sim_options=gs.options.SimOptions(dt=0.01))
 

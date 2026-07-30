@@ -3,7 +3,7 @@ import numpy as np
 import genesis as gs
 
 
-gs.init(precision="32", logging_level="info")
+gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
 dt = 5e-4
 scene = gs.Scene(

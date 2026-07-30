@@ -173,6 +173,7 @@ def main():
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
     args = parser.parse_args()
 
+    # Training throughput comes from the 2048 parallel environments, which need a GPU.
     gs.init(backend=gs.gpu, precision="32", logging_level="warning", seed=args.seed, performance_mode=True)
 
     env_cfg, reward_scales, robot_cfg = get_task_cfgs()

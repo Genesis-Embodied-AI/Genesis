@@ -10,7 +10,7 @@ import genesis.utils.geom as gu
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     parser.add_argument(
         "-s",
         "--steps",
@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--num-teleports", type=int, default=5, help="Number of times the attachment is teleported")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, precision="32", logging_level="info")
 
     dt: float = 2e-2
     particle_size: float = 1e-2

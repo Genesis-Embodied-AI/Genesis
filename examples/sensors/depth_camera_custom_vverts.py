@@ -15,7 +15,7 @@ from genesis.utils.misc import tensor_to_array
 def main():
     parser = argparse.ArgumentParser(description="Multi-solver depth camera demo")
     parser.add_argument("-v", "--vis", action="store_true", help="Open Genesis 3D viewer")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     parser.add_argument("-b", "--num-envs", type=int, default=0, help="Number of parallel envs (0 = unbatched)")
     parser.add_argument("-s", "--steps", type=int, default=300, help="Number of simulation steps")
     parser.add_argument("--save-every", type=int, default=10, help="Save depth PNG every N steps")
@@ -27,7 +27,7 @@ def main():
     for old in out_dir.glob("depth_*.png"):
         old.unlink()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(

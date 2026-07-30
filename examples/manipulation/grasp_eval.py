@@ -70,7 +70,7 @@ def main():
     )
     args = parser.parse_args()
 
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     run_name = f"{args.exp_name}_{args.stage}"
     log_dir = Path("logs") / run_name

@@ -237,7 +237,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

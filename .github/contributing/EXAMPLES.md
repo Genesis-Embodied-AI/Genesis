@@ -19,7 +19,7 @@ that is not in this table gets no short form.
 | Short | Long | Type | Default |
 |-------|------|------|---------|
 | `-v` | `--vis` | `store_true` | off |
-| `-c` | `--cpu` | `store_true` | off (GPU) |
+| `-g` | `--gpu` | `store_true` | off (CPU) |
 | `-b` | `--num-envs` | `int` | per script |
 | `-s` | `--steps` | `int` | per script |
 | `-t` | `--seconds` | `float` | per script |
@@ -43,8 +43,16 @@ Rules:
 8. The parser is named `parser`, built as the first statements of `main()`, with
    `if __name__ == "__main__": main()` at the bottom.
 
-A script whose physics only works on one backend hardcodes it and says why in a comment, rather than
-exposing a flag with a single usable value (see `rigid/hibernation.py`).
+## Backend
+
+Every example runs on CPU unless it has a stated reason not to, so a bare `python examples/...` works on any
+machine. A GPU only pays off past roughly fifty parallel environments, which almost no example builds, and
+`gs.init()` left to itself prefers a GPU, so the backend is always spelled out rather than left implicit.
+
+A script that genuinely needs a GPU - a batched training or benchmark run, or a renderer that only exists on
+CUDA - hardcodes `backend=gs.gpu` and says why in a comment, rather than exposing a flag with a single usable
+value. Everything else takes `-g/--gpu` as an opt-in, or hardcodes `backend=gs.cpu` when it has no parser.
+The same rule covers a script that only works on CPU (see `rigid/hibernation.py`).
 
 Long-running scripts cut their horizon under `"PYTEST_VERSION" in os.environ` so the examples CI stays cheap.
 

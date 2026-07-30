@@ -2,7 +2,7 @@ import genesis as gs
 
 
 def main():
-    gs.init(precision="32", logging_level="info")
+    gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(enable_collision=False, gravity=(0, 0, 0)),

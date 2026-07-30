@@ -2,7 +2,7 @@ import torch
 
 import genesis as gs
 
-gs.init(backend=gs.gpu)
+gs.init(backend=gs.cpu)
 
 scene = gs.Scene(
     show_viewer=False,

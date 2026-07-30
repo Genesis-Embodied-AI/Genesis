@@ -3,7 +3,7 @@ import numpy as np
 import genesis as gs
 import genesis.utils.geom as gu
 
-gs.init(precision="32", logging_level="info")
+gs.init(backend=gs.cpu, precision="32", logging_level="info")
 
 scene = gs.Scene(
     viewer_options=gs.options.ViewerOptions(

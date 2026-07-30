@@ -26,13 +26,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dt", type=float, default=1e-2, help="Simulation time step")
     parser.add_argument("-v", "--vis", action="store_true", help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-g", "--gpu", action="store_true", help="Run on GPU instead of CPU")
     parser.add_argument("-t", "--seconds", type=float, default=5.0, help="Number of seconds to simulate")
     args = parser.parse_args()
 
     steps = int(args.seconds / args.dt) if "PYTEST_VERSION" not in os.environ else 5
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
