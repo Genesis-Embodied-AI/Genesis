@@ -59,8 +59,17 @@ jobs:
       - name: Resolve the pinned Nyx plugin revision
         id: plugin
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          COMMIT=$(tr -d '[:space:]' < .github/nyx_plugin_commit)
+          # A revision branched before the pin was introduced carries none, so the default branch stands in for it.
+          if [[ -f .github/nyx_plugin_commit ]] ; then
+            COMMIT=$(tr -d '[:space:]' < .github/nyx_plugin_commit)
+          else
+            COMMIT=$(gh api "/repos/${GITHUB_REPOSITORY}/contents/.github/nyx_plugin_commit?ref=${DEFAULT_BRANCH}" \
+                         -H "Accept: application/vnd.github.raw" | tr -d '[:space:]')
+          fi
           if [[ ! "${COMMIT}" =~ ^[0-9a-f]{40}$ ]] ; then
             echo "::error::'.github/nyx_plugin_commit' must hold a full 40-character commit hash."
             exit 1
