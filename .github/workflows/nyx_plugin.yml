@@ -100,6 +100,11 @@ jobs:
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "${HOME}/.local/bin" >> $GITHUB_PATH
+      # Remeshing goes through 'pymeshlab', which loads it from a plugin linked against GLU, and drops the filter
+      # without a word when that library is missing, leaving it to fail much later as a missing attribute.
+      - name: Install the GLU library
+        run: sudo apt-get install -y libglu1-mesa
+
       - name: Install Genesis and the Nyx plugin
         # Process substitution feeds the overrides without writing a file, so bash is required.
         shell: bash
