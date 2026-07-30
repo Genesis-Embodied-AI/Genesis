@@ -294,7 +294,7 @@ class RigidSolver(KinematicSolver):
             gs.raise_exception("The elliptic friction cone is not supported yet when 'requires_grad' is True.")
 
         # Bounding friction against the developed normal force needs the contact to split into a normal row and a
-        # friction disc, which only the elliptic cone provides. MuJoCo compatibility keeps the joint cone regardless,
+        # friction disc, which only the elliptic cone provides. MuJoCo compatibility keeps the coupled cone regardless,
         # since letting sliding inflate the normal force is part of the behaviour being reproduced. The disc radius is
         # relatched every iteration, making the solve a successive approximation whose objective moves underneath the
         # solver; only Newton re-derives its curvature each iteration and lands on the fixed point, while conjugate
@@ -308,7 +308,7 @@ class RigidSolver(KinematicSolver):
             signorini_blocker = "it requires 'constraint_solver' to be 'gs.constraint_solver.Newton'"
         if options.contact_resolution is None:
             options.contact_resolution = (
-                gs.contact_resolution.impedance if signorini_blocker else gs.contact_resolution.signorini
+                gs.contact_resolution.convex if signorini_blocker else gs.contact_resolution.signorini
             )
         elif options.contact_resolution == gs.contact_resolution.signorini and signorini_blocker:
             gs.raise_exception(

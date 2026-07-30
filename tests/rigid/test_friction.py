@@ -521,7 +521,7 @@ def test_rolling_friction_deceleration_rate(friction_cone, n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("contact_resolution", [gs.contact_resolution.impedance, gs.contact_resolution.signorini])
+@pytest.mark.parametrize("contact_resolution", [gs.contact_resolution.convex, gs.contact_resolution.signorini])
 def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer):
     N_ENVS = 8
     FRICTION = 0.5
@@ -529,13 +529,12 @@ def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer):
     # Pusher path in the box's local frame; the shared +y offset gives the push a lever arm that spins the box.
     PUSH_START_LOCAL = (-0.15, 0.03, 0.05)
     PUSH_END_LOCAL = (0.02, 0.03, 0.05)
-    # FIXME(#3127): the box-cylinder manifold places its interior contact point at a yaw-dependent height, so the
-    # push carries an orientation-dependent lever arm that the friction model cannot undo. 'impedance' keeps
-    # bouncing the box off the plane, which makes that contact intermittent and averages the bias away, while
-    # 'signorini' holds the box down and feels it every step - hence the looser bound here. Restore the shared
-    # tolerance once the manifold is isotropic; a sphere, whose manifold is a single point, already brings both
-    # resolutions to 1e-6.
-    POSE_TOL = 2e-4 if contact_resolution == gs.contact_resolution.impedance else 1e-3
+    # FIXME(#3127): the box-cylinder manifold places its interior contact point at a yaw-dependent height, so the push
+    # carries an orientation-dependent lever arm that the friction model cannot undo. 'convex' keeps bouncing the box
+    # off the plane, which makes that contact intermittent and averages the bias away, while 'signorini' holds the box
+    # down and feels it every step - hence the looser bound here. Restore the shared tolerance once the manifold is
+    # isotropic; a sphere, whose manifold is a single point, already brings both resolutions to 1e-6.
+    POSE_TOL = 2e-4 if contact_resolution == gs.contact_resolution.convex else 1e-3
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(

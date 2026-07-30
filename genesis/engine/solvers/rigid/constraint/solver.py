@@ -5028,9 +5028,9 @@ def _tri_idx(i, j, dim):
 def _friction_blocks(rigid_config):
     """Row offset and width of each independently-bounded friction block of one elliptic contact, at trace time.
 
-    Sliding friction spans the two tangent axes, torsional friction the spin axis and rolling friction the two
-    tangent axes again, laid out as described in efc_frictionloss (see array_class.py). Only the 'signorini'
-    resolution bounds them separately; 'impedance' couples every axis into one ellipsoid.
+    Sliding friction spans the two tangent axes, torsional friction the spin axis and rolling friction the two tangent
+    axes again, laid out as described in efc_frictionloss (see array_class.py). Only the 'signorini' resolution bounds
+    them separately; 'convex' couples every axis into one ellipsoid.
     """
     blocks = [(1, 2)]
     if rigid_config.enable_torsional_friction:
@@ -5044,9 +5044,9 @@ def _friction_blocks(rigid_config):
 def _func_cone_zone(rows_jaref, rows_efc_D, con_mu, rows_friction, rigid_config: qd.template()):
     """Classify one elliptic contact from its per-row residuals rows_jaref, for the resolution in force.
 
-    Returns (zone, N, T). Under 'impedance' these are MuJoCo's three cone zones - 0 = top (dual-cone interior,
-    inactive), 1 = bottom (polar cone, plain quadratic), 2 = middle (cone boundary) - with N and T the rescaled
-    normal/tangential magnitudes the middle-zone force/cost/Hessian reuses.
+    Returns (zone, N, T). Under 'convex' these are MuJoCo's three cone zones - 0 = top (dual-cone interior, inactive),
+    1 = bottom (polar cone, plain quadratic), 2 = middle (cone boundary) - with N and T the rescaled normal/tangential
+    magnitudes the middle-zone force/cost/Hessian reuses.
 
     Under 'signorini' a contact only ever separates (zone 0) or carries force (zone 2), since friction is bounded
     against the normal force rather than traded against it: N carries that latched normal force, the radius scale of
@@ -5188,19 +5188,19 @@ def _func_disc_middle(rows_jaref, rows_efc_D, rows_friction, f_n, rigid_config: 
 
 @qd.func
 def _func_cone_middle(rows_jaref, rows_efc_D, con_mu, rows_friction, N, T, rigid_config: qd.template()):
-    """Middle-zone force, cost and packed symmetric local Hessian of one elliptic contact, for the resolution in
-    force: MuJoCo's coupled cone under 'impedance', the latched-radius friction discs under 'signorini'.
+    """Middle-zone force, cost and packed symmetric local Hessian of one elliptic contact, for the resolution in force:
+    MuJoCo's coupled cone under 'convex', the latched-radius friction discs under 'signorini'.
 
     Returns (rows_force, cost, cone_H), cone_H packed row-major upper-triangle (see _tri_idx). N and T carry what
     _func_cone_zone returned for this contact; only valid in the middle zone.
     """
     if qd.static(rigid_config.enable_signorini_contact):
         return _func_disc_middle(rows_jaref, rows_efc_D, rows_friction, N, rigid_config)
-    return _func_cone_middle_impedance(rows_jaref, rows_efc_D[0], con_mu, rows_friction, N, T)
+    return _func_cone_middle_convex(rows_jaref, rows_efc_D[0], con_mu, rows_friction, N, T)
 
 
 @qd.func
-def _func_cone_middle_impedance(rows_jaref, D0, con_mu, rows_friction, N, T):
+def _func_cone_middle_convex(rows_jaref, D0, con_mu, rows_friction, N, T):
     """Middle-zone (cone-boundary) force, cost, and packed symmetric local Hessian for one elliptic contact.
 
     Returns (rows_force, cost, cone_H): the per-row forces, the coupled cost, and the row-major upper-triangle
@@ -5358,12 +5358,12 @@ def _func_disc_cost_along_alpha(rows_jaref, rows_jv, alpha, rows_efc_D, rows_fri
 def _func_cone_cost_along_alpha(
     rows_jaref, rows_jv, alpha, rows_efc_D, con_mu, rows_friction, rigid_config: qd.template()
 ):
-    """Exact elliptic-contact cost and its first/second derivatives in the linesearch step alpha, for the resolution
-    in force: MuJoCo's coupled cone under 'impedance', the latched-radius friction discs under 'signorini'.
+    """Exact elliptic-contact cost and its first/second derivatives in the linesearch step alpha, for the resolution in
+    force: MuJoCo's coupled cone under 'convex', the latched-radius friction discs under 'signorini'.
 
-    Evaluated at rows_jaref + alpha * rows_jv, returning (cost, dcost/dalpha, d2cost/dalpha2). Under 'impedance' the
-    zone is re-classified at this alpha, so the cost is exact along the whole search line (top: 0; bottom: plain
-    quadratic; middle: the cone potential 0.5*Dm*(N - con_mu*T)^2 differentiated through T = ||rows_friction[1:] *
+    Evaluated at rows_jaref + alpha * rows_jv, returning (cost, dcost/dalpha, d2cost/dalpha2). Under 'convex' the zone
+    is re-classified at this alpha, so the cost is exact along the whole search line (top: 0; bottom: plain quadratic;
+    middle: the cone potential 0.5*Dm*(N - con_mu*T)^2 differentiated through T = ||rows_friction[1:] *
     rows_jaref[1:]||).
     """
     if qd.static(rigid_config.enable_signorini_contact):
