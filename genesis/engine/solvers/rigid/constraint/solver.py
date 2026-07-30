@@ -1928,9 +1928,14 @@ def kernel_delete_weld_constraint(
                 and dyn_info.equalities.eq_obj2id[i_e, i_b] == link2_idx
             ):
                 if i_e < constraint_state.qd_n_equalities[i_b] - 1:
-                    dyn_info.equalities.eq_type[i_e, i_b] = dyn_info.equalities.eq_type[
-                        constraint_state.qd_n_equalities[i_b] - 1, i_b
-                    ]
+                    # Swap-remove must move the whole constraint record, not just its type,
+                    # otherwise the surviving slot keeps the deleted constraint's links/data.
+                    i_last = constraint_state.qd_n_equalities[i_b] - 1
+                    dyn_info.equalities.eq_type[i_e, i_b] = dyn_info.equalities.eq_type[i_last, i_b]
+                    dyn_info.equalities.eq_obj1id[i_e, i_b] = dyn_info.equalities.eq_obj1id[i_last, i_b]
+                    dyn_info.equalities.eq_obj2id[i_e, i_b] = dyn_info.equalities.eq_obj2id[i_last, i_b]
+                    dyn_info.equalities.eq_data[i_e, i_b] = dyn_info.equalities.eq_data[i_last, i_b]
+                    dyn_info.equalities.sol_params[i_e, i_b] = dyn_info.equalities.sol_params[i_last, i_b]
                 constraint_state.qd_n_equalities[i_b] = constraint_state.qd_n_equalities[i_b] - 1
 
 
