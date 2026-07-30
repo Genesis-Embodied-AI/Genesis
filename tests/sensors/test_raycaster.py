@@ -11,8 +11,11 @@ from ..utils import assert_allclose, assert_equal
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_hits(show_viewer, n_envs):
+# A raycast consumer refreshes the solver's forward kinematics before casting; under MuJoCo compatibility the
+# solver relies on redoing that itself, geoms included, so the arm below pins that a raycaster leaves the physics
+# alone - obstacle_1 falls onto the ground plane and the grid rays must still find its top face where it rests.
+@pytest.mark.parametrize("n_envs, enable_mujoco_compatibility", [(0, False), (2, True)])
+def test_hits(show_viewer, n_envs, enable_mujoco_compatibility):
     NUM_RAYS_XY = (3, 5)
     SPHERE_POS = (2.5, 0.5, 1.0)
     BOX_SIZE = 0.05
@@ -21,6 +24,9 @@ def test_hits(show_viewer, n_envs):
     RAYCAST_HEIGHT = 1.0
 
     scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_mujoco_compatibility=enable_mujoco_compatibility,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-3.0, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), 2 * RAYCAST_HEIGHT),
             camera_lookat=(1.5, RAYCAST_GRID_SIZE_X * (NUM_RAYS_XY[1] / NUM_RAYS_XY[0]), RAYCAST_HEIGHT),
@@ -106,6 +112,9 @@ def test_hits(show_viewer, n_envs):
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
             pos=(grid_res, grid_res, 0.5 * BOX_SIZE),
+        ),
+        material=gs.materials.Rigid(
+            use_visual_raycasting=True,
         ),
     )
     obstacle_2 = scene.add_entity(

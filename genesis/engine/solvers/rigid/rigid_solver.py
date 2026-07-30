@@ -1219,6 +1219,20 @@ class RigidSolver(KinematicSolver):
         # Islands are a per-island Newton solve inside ConstraintSolver.resolve, gated on use_contact_island.
         self.constraint_solver = ConstraintSolver(self)
 
+    def update_forward_pos(self):
+        """Run forward kinematics over links and geoms if they are not already up to date for the current pose.
+
+        Geoms are refreshed alongside links, unlike the geom-less base solver: the flag this sets also authorizes the
+        next step to skip its own Cartesian-space update, which covers geoms too. Refreshing links alone would leave
+        collision - and any raycast deriving its vertices from geom poses - reading a one-step-stale pose.
+        """
+        if self._is_forward_pos_updated:
+            return
+        kernel_forward_kinematics_links_geoms(
+            self.scene._envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config
+        )
+        self._is_forward_pos_updated = True
+
     def substep(self, f):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
