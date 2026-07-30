@@ -12,7 +12,7 @@ class Kinematic(Material[EntityT]):
     ----------
     use_visual_raycasting : bool, optional
         Expose this entity's visual mesh to every consumer that casts against visual geometry: raycaster sensors, and
-        viewer plugins built on RaycasterViewerPlugin with use_visual_geom set. Each such consumer then spans the
-        entity's visual triangles in its BVH, rebuilt as the entity moves, so reserve it for the entities that are
-        meant to be sensed or picked. Default is False.
+        viewer plugins built on RaycasterViewerPlugin with use_visual_geom set. Each such consumer then re-scans the
+        entity's visual triangles as it moves, so reserve it for the entities meant to be sensed or picked.
+        Default is False.
     """

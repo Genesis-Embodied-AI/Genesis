@@ -167,6 +167,8 @@ class KinematicSolver(Solver):
         self._is_forward_pos_updated: bool = False
         self._is_forward_vel_updated: bool = False
 
+        self._vfaces_raycast_mask: torch.Tensor | None = None
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- add_entity -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -324,6 +326,7 @@ class KinematicSolver(Solver):
         self._init_vgeom_fields()
         self._init_link_fields()
         self._init_entity_fields()
+        self._init_vfaces_raycast_mask()
 
         self._init_envs_offset()
         self._init_vverts_state()
@@ -551,6 +554,20 @@ class KinematicSolver(Solver):
                 self.dyn_info,
                 self.rigid_config,
             )
+
+    def _init_vfaces_raycast_mask(self):
+        """Fit the static per-vface visual-raycasting opt-in mask; see the vfaces_raycast_mask property.
+
+        Sized over the padded vgeom count so the gather also covers a solver holding no vgeom at all, whose vface
+        fields still carry one padding slot: nothing opts in there, so every entry stays 0.
+        """
+        vgeom_enabled = torch.zeros(self.n_vgeoms_, dtype=gs.tc_bool, device=gs.device)
+        for entity in self.entities:
+            if not entity.material.use_visual_raycasting:
+                continue
+            for vgeom in entity.vgeoms:
+                vgeom_enabled[vgeom.idx] = 1
+        self._vfaces_raycast_mask = vgeom_enabled[qd_to_torch(self.dyn_info.vfaces.vgeom_idx)]
 
     def _init_entity_fields(self):
         if self._entities:
@@ -1075,23 +1092,6 @@ class KinematicSolver(Solver):
             tensor = gu.transform_quat_by_quat(gu.inv_quat(offset_quat), tensor)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_vfaces_raycast_mask(self) -> torch.Tensor:
-        """Per-vface mask (int8, shape (n_vfaces,)) selecting the vfaces opted into visual raycasting.
-
-        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
-        Consumed by every visual raycast BVH (raycaster sensors, viewer plugins) to gate which vfaces contribute.
-        The int8 dtype is what the AABB-update kernels take for the mask.
-        """
-        if self.dyn_info.vfaces.vgeom_idx.shape[0] == 0:
-            return torch.zeros(0, dtype=torch.int8, device=gs.device)
-        vgeom_enabled = torch.zeros(self.n_vgeoms, dtype=torch.int8, device=gs.device)
-        for entity in self.entities:
-            if not entity.material.use_visual_raycasting:
-                continue
-            for vgeom in entity.vgeoms:
-                vgeom_enabled[vgeom.idx] = 1
-        return vgeom_enabled[qd_to_torch(self.dyn_info.vfaces.vgeom_idx)]
-
     def get_links_vel(self, links_idx=None, envs_idx=None):
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
@@ -1236,6 +1236,17 @@ class KinematicSolver(Solver):
         if self.is_built:
             return self._vgeoms
         return gs.List(vgeom for entity in self._entities for vgeom in entity.vgeoms)
+
+    @property
+    def vfaces_raycast_mask(self) -> torch.Tensor:
+        """Per-vface mask, shape (n_vfaces,), selecting the vfaces opted into visual raycasting.
+
+        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
+        Both the entity materials and the vface-to-vgeom mapping are fixed once the scene is built, so the mask is
+        fitted at build time and shared by every visual raycast BVH (raycaster sensors, viewer plugins) to gate which
+        vfaces contribute.
+        """
+        return self._vfaces_raycast_mask
 
     @property
     def n_links(self):

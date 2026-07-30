@@ -304,6 +304,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     KINEMATIC_LANE_Y = 2.0
     OPTOUT_LANE_Y = 2.5
     PROBE_Z = 3.0
+    RAY_T = 0.35
     target_offset = np.asarray(target_offset, dtype=gs.np_float)
     CAM_POS = (target_offset[0], 0.6, 1.2)
 
@@ -512,12 +513,8 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
         err_msg="Final z velocity does not match expected value based on spring dynamics.",
     )
 
-    # Each mode follows the geometry it is meant to: the collision cast stops on the hull it can see, the visual cast
-    # reaches through it to the rendered mesh, spans the kinematic solver too, and skips entities without the opt-in.
-    probe_dir = np.array((0.0, 0.0, -1.0), dtype=gs.np_float)
-    stack_hit = plugin._raycaster.cast(
-        np.array((target_offset[0], STACK_LANE_Y, PROBE_Z), dtype=gs.np_float), probe_dir
-    )
+    probe_dir = (0.0, 0.0, -1.0)
+    stack_hit = plugin._raycaster.cast((target_offset[0], STACK_LANE_Y, PROBE_Z), probe_dir)
     if not use_visual_geom:
         assert stack_hit.geom.entity is decoy
         assert_allclose(stack_hit.distance, PROBE_Z - (DECOY_Z + 0.5 * DECOY_SIZE), tol=1e-6)
@@ -525,18 +522,13 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
 
     assert stack_hit.geom.entity is target
     assert_allclose(stack_hit.distance, PROBE_Z - (TARGET_Z + 0.5 * TARGET_SIZE), tol=1e-6)
-    kinematic_origin = np.array((target_offset[0], KINEMATIC_LANE_Y, PROBE_Z), dtype=gs.np_float)
-    kinematic_hit = plugin._raycaster.cast(kinematic_origin, probe_dir)
+    kinematic_hit = plugin._raycaster.cast((target_offset[0], KINEMATIC_LANE_Y, PROBE_Z), probe_dir)
     assert kinematic_hit.geom.entity is kinematic
     assert_allclose(kinematic_hit.distance, PROBE_Z - BOX_LENGTH, tol=1e-6)
-    optout_origin = np.array((target_offset[0], OPTOUT_LANE_Y, PROBE_Z), dtype=gs.np_float)
-    assert plugin._raycaster.cast(optout_origin, probe_dir) is None
+    assert plugin._raycaster.cast((target_offset[0], OPTOUT_LANE_Y, PROBE_Z), probe_dir) is None
 
-    # A kinematic entity carries no mass or inertia, so dragging it is forbidden: hovering, pressing and dragging on
-    # one must leave it exactly where it stands and the plugin holding nothing, instead of raising inside the viewer
-    # callbacks. Park it on the camera ray at a fraction RAY_T of the way from the camera to what it looks at, ahead
-    # of anything the box can reach, so the cursor lands on it rather than on the box.
-    RAY_T = 0.35
+    # A kinematic entity carries no mass or inertia, so dragging it is forbidden. RAY_T places it that fraction of the
+    # way from the camera to what it looks at, which puts it on the centre ray ahead of anything the box can reach.
     parked_pos = (0.0, CAM_POS[1] * (1.0 - RAY_T), CAM_POS[2] - RAY_T * (CAM_POS[2] - BOX_LENGTH))
     kinematic.set_pos(parked_pos)
     scene.step()

@@ -5,9 +5,9 @@ import torch
 from typing_extensions import override
 
 import genesis as gs
+from genesis.ext.pyrender.camera import OrthographicCamera
 from genesis.utils.misc import qd_to_numpy, qd_to_torch
 from genesis.utils.raycast import Ray, RayHit
-from genesis.ext.pyrender.camera import OrthographicCamera
 
 from .base import ViewerPlugin
 
@@ -20,20 +20,19 @@ if TYPE_CHECKING:
 
 
 class RaycastTarget(NamedTuple):
-    """One BVH the viewer casts against, over a single solver's collision faces or visual vfaces."""
+    """One bounding volume hierarchy (BVH) the viewer casts against, over one solver's collision or visual mesh."""
 
     solver: "KinematicSolver"
     aabb: "AABB"
     bvh: "LBVH"
     result: "RaycastResult"
-    # (n_vfaces,) int8 opt-in mask for a visual BVH; None for a collision BVH, which covers every face. This is what
-    # tells the two kinds of target apart, in `update` and in `cast` alike.
+    # (n_vfaces,) opt-in mask for a visual BVH; None for a collision BVH, which covers every face.
     vfaces_mask: torch.Tensor | None
 
 
 class Raycaster:
     """
-    BVH-accelerated single-ray cast for the viewer.
+    Bounding volume hierarchy (BVH) accelerated single-ray cast for the viewer.
 
     The per-env raycast (`kernel_cast_ray`) writes one hit per env into a batched `RaycastResult`; this class then
     reduces across envs in torch to pick the closest hit. Cross-env reduction is intentionally a viewer-side concern,
@@ -45,11 +44,11 @@ class Raycaster:
     ----------
     scene : Scene
         Scene whose geometry the rays are cast against.
-    use_visual_geom : bool
+    use_visual_geom : bool, optional
         Cast against the visual meshes of both the rigid and the kinematic solver, restricted to the entities opting
         in through `material.use_visual_raycasting` - the same opt-in the raycaster sensors use, so the two describe
         the same pickable geometry. `RayHit.geom` is then a `RigidVisGeom`. See `RaycasterViewerPlugin` for the
-        tradeoff this carries for the user.
+        tradeoff this carries for the user. Default is False.
     """
 
     def __init__(self, scene: "Scene", use_visual_geom: bool = False):
@@ -59,7 +58,6 @@ class Raycaster:
 
         self.scene = scene
         self.envs_idx = scene._envs_idx
-        self.use_visual_geom = use_visual_geom
         self.last_hit_env_idx: int | None = None
         self.targets: list[RaycastTarget] = []
 
@@ -71,7 +69,7 @@ class Raycaster:
                 continue
             vfaces_mask = None
             if use_visual_geom:
-                vfaces_mask = solver.get_vfaces_raycast_mask()
+                vfaces_mask = solver.vfaces_raycast_mask
                 if not vfaces_mask.any():
                     continue
                 # The tree spans every vface, masked-out ones staying unhittable, so a leaf payload is the vface
@@ -109,8 +107,9 @@ class Raycaster:
         for target in self.targets:
             solver = target.solver
             if target.vfaces_mask is not None:
-                # Visual vertices are derived from the vgeom poses on the fly, so refreshing those poses is enough;
-                # the custom vverts buffer the sensor path relies on stays untouched.
+                # A visual vertex follows its vgeom pose, except on an entity opting into custom vverts, where it
+                # follows the vverts buffer instead (see get_visual_vvert_pos). Refreshing the poses therefore covers
+                # every vertex this pass owns, the buffer moving only when the user calls set_vverts.
                 solver.update_forward_pos()
                 solver.update_vgeoms()
                 kernel_update_visual_aabbs(
@@ -188,17 +187,17 @@ class RaycasterViewerPlugin(ViewerPlugin):
 
     Parameters
     ----------
-    use_visual_geom : bool
+    use_visual_geom : bool, optional
         Cast against the visual meshes rather than the collision meshes, so picking follows what is drawn on screen and
-        reaches entities carrying visual geometry alone. The cost is a per-step rebuild of a BVH spanning every visual
-        triangle, several times the price of the collision-mesh rebuild on detailed meshes, and the reported geometry is
-        the visual one, which the physics ignores. Only entities whose material sets use_visual_raycasting=True are
-        visible to the cast.
+        reaches entities carrying visual geometry alone. The cost is re-scanning every visual triangle on each step,
+        several times the price of the collision meshes on detailed geometry, and the geometry reported back is the
+        visual one, which the physics ignores. Only entities whose material sets use_visual_raycasting=True are visible
+        to the cast. Default is False.
     """
 
     def __init__(self, use_visual_geom: bool = False) -> None:
         super().__init__()
-        self.use_visual_geom = bool(use_visual_geom)
+        self.use_visual_geom = use_visual_geom
         self._raycaster: "Raycaster | None" = None
 
     def build(self, viewer, camera: "Node", scene: "Scene"):

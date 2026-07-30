@@ -43,7 +43,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self.color = tuple(color)
 
         self._lock: Lock = Lock()
-        self._held_link: "RigidLink | None" = None
+        self._held_link: RigidLink | None = None
         # The plugin is active only while the simulation advances (scene.t increases). _last_step_t is the step
         # counter seen at the previous sim-step callback; _sim_running caches whether it advanced so on_draw and the
         # mouse handlers, which run off the step loop, share the same paused/running verdict.

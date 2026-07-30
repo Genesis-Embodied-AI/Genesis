@@ -623,7 +623,7 @@ def test_heterogeneous_object(show_viewer, tol):
     # primitive puts its vgeom at the link origin, so these same-pos variants hold identical vgeom poses and differ
     # only in rest-pose vverts, which are shared across envs: the active vgeom range is the sole discriminator the
     # grouping signature can read.
-    het_visual = scene.add_entity(
+    scene.add_entity(
         morph=(
             gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(4.0, 0.0, 0.5), fixed=True),
             gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(4.0, 0.0, 0.5), fixed=True),

@@ -112,7 +112,7 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
             ray = self._screen_position_to_ray(x, y)
             ray_hit = self._raycaster.cast(*ray)
 
-            if ray_hit is not None and ray_hit.geom:
+            if ray_hit is not None and ray_hit.geom is not None:
                 link = ray_hit.geom.link
                 world_pos = ray_hit.position
                 world_normal = ray_hit.normal
