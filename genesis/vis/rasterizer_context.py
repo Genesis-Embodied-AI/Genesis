@@ -881,24 +881,19 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_all = qd_to_numpy(
-                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
-                self.rendered_envs_idx,
-                transpose=True,
-            )
+            vverts_pos, _, _ = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vverts_all = qd_to_numpy(vverts_pos, self.rendered_envs_idx, transpose=True)
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode != "visual":
                     continue
 
-                sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for i_g, vgeom in enumerate(fem_entity.vgeoms):
-                    visual = mu.surface_uvs_to_trimesh_visual(
-                        vgeom.surface, uvs=vgeom.uvs, n_verts=len(vgeom.sim_verts_idx)
-                    )
+                    visual = mu.surface_uvs_to_trimesh_visual(vgeom.surface, uvs=vgeom.uvs, n_verts=vgeom.n_vverts)
                     seg_key = (fem_entity.idx, i_g) if self.segmentation_level == "geom" else fem_entity.idx
+                    vverts = vverts_all[:, vgeom.vvert_start : vgeom.vvert_end]
                     for env_i, i_b in enumerate(self.rendered_envs_idx):
-                        mesh = trimesh.Trimesh(sim_verts[env_i, vgeom.sim_verts_idx], vgeom.vmesh.faces, process=False)
+                        mesh = trimesh.Trimesh(vverts[env_i], vgeom.vmesh.faces, process=False)
                         mesh.visual = visual
                         node = pyrender.Mesh.from_trimesh(
                             mesh, smooth=vgeom.surface.smooth, double_sided=vgeom.surface.double_sided
@@ -909,21 +904,18 @@ class RasterizerContext:
 
     def update_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_all = qd_to_numpy(
-                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
-                self.rendered_envs_idx,
-                transpose=True,
-            )
+            vverts_pos, _, _ = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vverts_all = qd_to_numpy(vverts_pos, self.rendered_envs_idx, transpose=True)
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode != "visual":
                     continue
 
-                sim_verts = vertices_all[:, fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for vgeom in fem_entity.vgeoms:
+                    vverts = vverts_all[:, vgeom.vvert_start : vgeom.vvert_end]
                     for env_i, i_b in enumerate(self.rendered_envs_idx):
                         node = self.static_nodes[(i_b, vgeom.uid)]
-                        render_verts = sim_verts[env_i, vgeom.sim_verts_idx].astype(np.float32, copy=False)
+                        render_verts = vverts[env_i].astype(np.float32, copy=False)
                         update_data = self._scene.reorder_vertices(node, render_verts)
                         self.jit.update_buffer(node, "pos", update_data)
                         normal_data = self.jit.update_normal(node, update_data)

@@ -29,9 +29,11 @@ class FEMVisGeom(RBC):
     geoms or duplicated by texture seams share a single simulated vertex).
     """
 
-    def __init__(self, entity, vmesh, sim_verts_idx):
+    def __init__(self, entity, vvert_start, vface_start, vmesh, sim_verts_idx):
         self._uid = gs.UID()
         self._entity = entity
+        self._vvert_start = vvert_start
+        self._vface_start = vface_start
         self._vmesh = vmesh
         self._sim_verts_idx = sim_verts_idx
 
@@ -84,6 +86,26 @@ class FEMVisGeom(RBC):
         """Number of render faces of the vgeom."""
         return len(self._vmesh.faces)
 
+    @property
+    def vvert_start(self):
+        """Starting index of the vgeom's render vertices in the FEM solver."""
+        return self._vvert_start
+
+    @property
+    def vface_start(self):
+        """Starting index of the vgeom's render faces in the FEM solver."""
+        return self._vface_start
+
+    @property
+    def vvert_end(self):
+        """Ending index of the vgeom's render vertices in the FEM solver."""
+        return self._vvert_start + self.n_vverts
+
+    @property
+    def vface_end(self):
+        """Ending index of the vgeom's render faces in the FEM solver."""
+        return self._vface_start + self.n_vfaces
+
 
 def assert_muscle(method):
     @wraps(method)
@@ -124,16 +146,34 @@ class FEMEntity(Entity):
         Starting index of this entity's elements in the global element array (default is 0).
     s_start : int, optional
         Starting index of this entity's surface triangles in the global surface array (default is 0).
+    vvert_start : int, optional
+        Starting index of this entity's render vertices in the global render vertex array (default is 0).
+    vface_start : int, optional
+        Starting index of this entity's render faces in the global render face array (default is 0).
     """
 
     def __init__(
-        self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0, name: str | None = None
+        self,
+        scene,
+        solver,
+        material,
+        morph,
+        surface,
+        idx,
+        v_start=0,
+        el_start=0,
+        s_start=0,
+        vvert_start=0,
+        vface_start=0,
+        name: str | None = None,
     ):
         super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._v_start = v_start  # offset for vertex index of elements
         self._el_start = el_start  # offset for element index
         self._s_start = s_start  # offset for surface triangles
+        self._vvert_start = vvert_start  # offset for render vertices
+        self._vface_start = vface_start  # offset for render faces
         self._step_global_added = None
         self.sample()
 
@@ -461,9 +501,20 @@ class FEMEntity(Entity):
         surface_verts, surface_faces, verts_maps = mu.merge_submeshes(
             [mesh.verts for mesh in meshes], [mesh.faces for mesh in meshes]
         )
-        self._vgeoms = gs.List(
-            FEMVisGeom(entity=self, vmesh=mesh, sim_verts_idx=verts_idx) for mesh, verts_idx in zip(meshes, verts_maps)
-        )
+        self._vgeoms = gs.List()
+        vvert_start, vface_start = self._vvert_start, self._vface_start
+        for mesh, verts_idx in zip(meshes, verts_maps):
+            self._vgeoms.append(
+                FEMVisGeom(
+                    entity=self,
+                    vvert_start=vvert_start,
+                    vface_start=vface_start,
+                    vmesh=mesh,
+                    sim_verts_idx=verts_idx,
+                )
+            )
+            vvert_start += len(mesh.verts)
+            vface_start += len(mesh.faces)
 
         if isinstance(self.material, gs.materials.FEM.Cloth):
             # Cloth needs no tetrahedralization: the welded surface triangles are the simulation elements.
@@ -518,6 +569,20 @@ class FEMEntity(Entity):
                 elems=elems_np,
                 tri2v=self._surface_tri_np,
                 tri2el=self._surface_el_np,
+            )
+
+        for vgeom in self._vgeoms:
+            # A vgeom without a texture carries no UVs; an empty array leaves its slice of the solver buffer zeroed.
+            uvs = vgeom.uvs
+            if uvs is None:
+                uvs = np.zeros((0, 2), dtype=gs.np_float)
+            self._solver._kernel_add_vverts(
+                vvert_start=vgeom.vvert_start,
+                vface_start=vgeom.vface_start,
+                v_start=self._v_start,
+                verts_idx=vgeom.sim_verts_idx,
+                uvs=uvs,
+                vfaces=vgeom.vmesh.faces.astype(gs.np_int, copy=False),
             )
 
         self.active = True
@@ -1118,6 +1183,36 @@ class FEMEntity(Entity):
     def s_start(self):
         """Global surface triangle index offset for this entity."""
         return self._s_start
+
+    @property
+    def n_vverts(self):
+        """Number of render vertices in the FEM entity, summed over its visual geoms."""
+        return sum(vgeom.n_vverts for vgeom in self._vgeoms)
+
+    @property
+    def n_vfaces(self):
+        """Number of render faces in the FEM entity, summed over its visual geoms."""
+        return sum(vgeom.n_vfaces for vgeom in self._vgeoms)
+
+    @property
+    def vvert_start(self):
+        """Global render vertex index offset for this entity."""
+        return self._vvert_start
+
+    @property
+    def vface_start(self):
+        """Global render face index offset for this entity."""
+        return self._vface_start
+
+    @property
+    def vvert_end(self):
+        """Global render vertex index past this entity's last one."""
+        return self._vvert_start + self.n_vverts
+
+    @property
+    def vface_end(self):
+        """Global render face index past this entity's last one."""
+        return self._vface_start + self.n_vfaces
 
     @property
     def n_surface_vertices(self):

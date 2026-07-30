@@ -785,20 +785,15 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all = miscu.qd_to_numpy(
-                self.sim.fem_solver.get_state_render(self.sim.cur_substep_local),
-                self.rendered_envs_idx[0],
-                keepdim=False,
-                transpose=True,
-            )
+            vverts_pos, _, _ = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vverts_all = miscu.qd_to_numpy(vverts_pos, self.rendered_envs_idx[0], keepdim=False, transpose=True)
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode != "visual":
                     continue
 
-                sim_verts = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                 for vgeom in fem_entity.vgeoms:
-                    render_verts = sim_verts[vgeom.sim_verts_idx]
+                    render_verts = vverts_all[vgeom.vvert_start : vgeom.vvert_end]
                     vertex_normals = trimesh.Trimesh(
                         vertices=render_verts, faces=vgeom.vmesh.faces, process=False
                     ).vertex_normals
