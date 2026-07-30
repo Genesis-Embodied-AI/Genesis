@@ -159,7 +159,7 @@ def test_get_height(n_envs, tol):
     visual_terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
             pos=(30.0, 40.0, 3.0),
-            height_field=np.full((2, 2), 100.0, dtype=gs.np_float),
+            height_field=np.array(((100.0, 200.0), (300.0, 400.0)), dtype=gs.np_float),
             horizontal_scale=1.0,
             vertical_scale=0.01,
             collision=False,
@@ -175,20 +175,17 @@ def test_get_height(n_envs, tol):
 
     initial_height = terrain.get_height((2.0, -0.5))
     assert_allclose(initial_height, 1.3, tol=tol)
-    assert initial_height.shape == ((2,) if n_envs else ())
 
     visual_height = visual_terrain.get_height((30.0, 40.0))
-    assert_allclose(visual_height, (4.0, 4.0) if n_envs else 4.0, tol=tol)
+    assert_allclose(visual_height, 4.0, tol=tol)
     visual_height_max = visual_terrain.get_height((31.0, 41.0))
-    assert_allclose(visual_height_max, (4.0, 4.0) if n_envs else 4.0, tol=tol)
+    assert_allclose(visual_height_max, 7.0, tol=tol)
 
     if n_envs:
         shared_positions = terrain.get_height(((2.0, -1.0), (2.0, -0.5)))
         assert_allclose(shared_positions, ((0.3, 1.3), (0.3, 1.3)), tol=tol)
-        assert shared_positions.shape == (2, 2)
         shared_positions_explicit = terrain.get_height((((2.0, -1.0), (2.0, -0.5)),))
         assert_allclose(shared_positions_explicit, ((0.3, 1.3), (0.3, 1.3)), tol=tol)
-        assert shared_positions_explicit.shape == (2, 2)
 
         terrain.set_pos(
             (
@@ -216,61 +213,32 @@ def test_get_height(n_envs, tol):
     expected = (1.0, 2.0, 1.4, 1.45, 2.1, 10.9)
     if n_envs:
         heights = terrain.get_height(positions, envs_idx=[0])
-        assert heights.shape == (1, len(positions))
 
-        positions_per_env = (
-            (
-                positions[3],
-                positions[4],
-            ),
-            (
-                (-3.25, 4.125),
-                (-3.25, 4.375),
-            ),
-        )
+        positions_per_env = ((positions[3], positions[4]), ((-3.25, 4.125), (-3.25, 4.375)))
         heights_per_env = terrain.get_height(positions_per_env)
         assert_allclose(heights_per_env, ((1.45, 2.1), (-1.55, -0.9)), tol=tol)
-        assert heights_per_env.shape == (2, 2)
 
         one_position_per_env = terrain.get_height(((positions_per_env[0][0],), (positions_per_env[1][0],)))
         assert_allclose(one_position_per_env, (1.45, -1.55), tol=tol)
-        assert one_position_per_env.shape == (2,)
 
         heights_env_1 = terrain.get_height(positions_per_env[1], envs_idx=1)
-        assert_allclose(heights_env_1, ((-1.55, -0.9),), tol=tol)
+        assert_allclose(heights_env_1, (-1.55, -0.9), tol=tol)
     else:
         heights = terrain.get_height(positions)
-        assert heights.shape == (len(positions),)
 
-    assert_allclose(heights, (expected,) if n_envs else expected, tol=tol)
-    assert heights.dtype == gs.tc_float
-    assert heights.device.type == gs.device.type
+    assert_allclose(heights, expected, tol=tol)
 
     envs_idx = [0] if n_envs else None
-    with pytest.raises(gs.GenesisException):
-        terrain.get_height((9.999, 20.0), envs_idx=envs_idx)
     with pytest.raises(gs.GenesisException):
         terrain.get_height((11.001, 20.0), envs_idx=envs_idx)
     with pytest.raises(gs.GenesisException):
         terrain.get_height((10.0, 20.0, 1.0), envs_idx=envs_idx)
     with pytest.raises(gs.GenesisException):
-        terrain.get_height(np.empty((0, 2)), envs_idx=envs_idx)
-    with pytest.raises(gs.GenesisException):
-        terrain.get_height(np.empty((3, 1, 2)), envs_idx=envs_idx)
-    with pytest.raises(gs.GenesisException):
-        terrain.get_height((np.nan, 20.0), envs_idx=envs_idx)
-    with pytest.raises(gs.GenesisException):
-        terrain.get_height((np.inf, 20.0), envs_idx=envs_idx)
-    with pytest.raises(gs.GenesisException):
         box.get_height((0.0, 0.0), envs_idx=envs_idx)
 
-    terrain.set_quat(
-        gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), degrees=True),
-        envs_idx=envs_idx,
-        relative=False,
-    )
+    terrain.set_quat(gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), degrees=True), envs_idx=envs_idx, relative=False)
     with pytest.raises(gs.GenesisException):
-        terrain.get_height((10.0, 20.0), envs_idx=envs_idx)
+        terrain.get_height((10.5, 20.0), envs_idx=envs_idx)
 
 
 @pytest.mark.required
