@@ -1,5 +1,5 @@
 from itertools import starmap
-from typing import TYPE_CHECKING, NamedTuple, Sequence
+from typing import TYPE_CHECKING, Literal, NamedTuple, Sequence
 
 import numpy as np
 import torch
@@ -984,6 +984,68 @@ class RigidLink(KinematicLink):
 
         verts = self.get_verts()
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def apply_external_force(
+        self,
+        force,
+        envs_idx=None,
+        *,
+        pos=None,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        local: bool = False,
+    ):
+        """
+        Apply external linear force over one simulation step on the link.
+
+        Parameters
+        ----------
+        force : array_like
+            The force to apply.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        pos : None | array_like, optional
+            The point at which the force is applied, which sets the moment arm of the induced torque. None to apply it
+            at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from that
+            origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
+            Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
+            of `force`. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame on which the linear force will be applied. "link_origin" refers to the origin of the
+            link, "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
+            the entire kinematic tree to which the link belongs.
+        local: bool, optional
+            Whether the force and the application point are expressed in the local coordinates associated with the
+            reference frame instead of world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
+        self._solver.apply_links_external_force(force, (self._idx,), envs_idx, pos=pos, ref=ref, local=local)
+
+    @gs.assert_built
+    def apply_external_torque(
+        self,
+        torque,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        local: bool = False,
+    ):
+        """
+        Apply external torque over one simulation step on the link.
+
+        Parameters
+        ----------
+        torque : array_like
+            The torque to apply.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame whose coordinates the torque is expressed in. This argument has no effect unless
+            `local=True`, a torque being a couple that acts the same wherever it is attached.
+        local: bool, optional
+            Whether the torque is expressed in the local coordinates associated with the reference frame instead of
+            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
+        self._solver.apply_links_external_torque(torque, (self._idx,), envs_idx, ref=ref, local=local)
 
     @gs.assert_built
     def set_mass(self, mass: LaxPositiveFArrayType):

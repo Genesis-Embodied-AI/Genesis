@@ -227,12 +227,19 @@ def test_apply_external_forces(xml_path, show_viewer):
     rigid_solver = scene.rigid_solver
 
     end_effector_link_idx = robot.links[-1].idx
+    end_effector_link_idx_local = robot.links[-1].idx_local
     duck_link_idx = duck.links[0].idx
     duck_mass = duck.get_mass()
     duck_init_link_pos, duck_init_link_R = duck.base_link.pos, gu.quat_to_R(duck.base_link.quat)
+    # The duck is held at rest by cancelling gravity, but the cancelling force is applied away from its center of mass
+    # so that the moment arm of 'pos' is exercised: the spurious torque it generates is undone by an opposite torque
+    # about the very same frame, hence any error in the arm leaves the duck accelerating.
+    duck_lever_arm = (0.2, -0.15, 0.1)
+    duck_force_local = duck_mass * GRAVITY * duck_init_link_R[2]
     for step in range(801):
         ee_pos = rigid_solver.get_links_pos([end_effector_link_idx])[0]
         duck_pos = rigid_solver.get_links_pos([duck_link_idx])[0]
+        duck_quat = rigid_solver.get_links_quat([duck_link_idx])[0]
         if step == 0:
             assert_allclose(ee_pos, (0.8, 0.0, 0.02), tol=1e-4)
         elif step in (500, 600):
@@ -240,6 +247,7 @@ def test_apply_external_forces(xml_path, show_viewer):
         elif step == 800:
             assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=0.02)
         assert_allclose(duck_pos, duck_init_link_pos, tol=1e-3)
+        assert_allclose(duck_quat, duck.base_link.quat, tol=1e-3)
 
         if step >= 600:
             force = [-4.0, 4.0, 0.0]
@@ -254,14 +262,15 @@ def test_apply_external_forces(xml_path, show_viewer):
             force = [0.0, 0.0, 0.0]
             torque = [0.0, 0.0, 0.0]
 
-        rigid_solver.apply_links_external_force(
-            force=duck_mass * GRAVITY * duck_init_link_R[2], links_idx=[duck_link_idx], ref="link_com", local=True
+        duck.base_link.apply_external_force(force=duck_force_local, pos=duck_lever_arm, ref="link_com", local=True)
+        duck.base_link.apply_external_torque(
+            torque=-np.cross(duck_lever_arm, duck_force_local), ref="link_com", local=True
         )
-        rigid_solver.apply_links_external_force(
-            force=force, links_idx=[end_effector_link_idx], ref="link_origin", local=False
+        robot.apply_links_external_force(
+            force=force, links_idx_local=[end_effector_link_idx_local], ref="link_origin", local=False
         )
-        rigid_solver.apply_links_external_torque(
-            torque=torque, links_idx=[end_effector_link_idx], ref="link_origin", local=False
+        robot.apply_links_external_torque(
+            torque=torque, links_idx_local=[end_effector_link_idx_local], ref="link_origin", local=False
         )
         scene.step()
 
@@ -269,6 +278,55 @@ def test_apply_external_forces(xml_path, show_viewer):
     assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[duck_link_idx, 0], 0, tol=gs.EPS)
     assert_allclose(
         rigid_solver.dyn_state.links.cfrc_applied_ang[duck_link_idx, 0], -duck_init_link_R[:, 1], tol=gs.EPS
+    )
+
+    # A local force and a local application point are both expressed in the frame that 'ref' designates, which only
+    # shows on a link whose inertial frame is rotated with respect to its own frame.
+    base_link = robot.get_link("base")
+    assert not np.allclose(base_link.inertial_quat, (1.0, 0.0, 0.0, 0.0))
+    base_link_pos = tensor_to_array(rigid_solver.get_links_pos([base_link.idx])[0])
+    base_link_quat = tensor_to_array(rigid_solver.get_links_quat([base_link.idx])[0])
+    base_link_com = tensor_to_array(rigid_solver.get_links_pos([base_link.idx], ref="link_com")[0])
+    base_root_COM = tensor_to_array(rigid_solver.get_links_root_COM([base_link.idx])[0])
+    base_link_R = gu.quat_to_R(base_link_quat)
+    base_inertial_R = gu.quat_to_R(gu.transform_quat_by_quat(base_link.inertial_quat, base_link_quat))
+    lever_arm = (0.0, 0.0, 0.1)
+    force_local = (0.0, 1.0, 0.0)
+
+    rigid_solver.clear_external_force()
+    rigid_solver.apply_links_external_force(
+        force=force_local, links_idx=[base_link.idx], pos=lever_arm, ref="link_origin", local=True
+    )
+    force_world = base_link_R @ force_local
+    point_world = base_link_pos + base_link_R @ lever_arm
+    assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -force_world, tol=gs.EPS)
+    assert_allclose(
+        rigid_solver.dyn_state.links.cfrc_applied_ang[base_link.idx, 0],
+        -np.cross(point_world - base_root_COM, force_world),
+        tol=gs.EPS,
+    )
+
+    # A world application point locates the point on its own, so it reproduces the local one it is derived from.
+    rigid_solver.clear_external_force()
+    rigid_solver.apply_links_external_force(force=force_world, links_idx=[base_link.idx], pos=point_world)
+    assert_allclose(rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -force_world, tol=gs.EPS)
+    assert_allclose(
+        rigid_solver.dyn_state.links.cfrc_applied_ang[base_link.idx, 0],
+        -np.cross(point_world - base_root_COM, force_world),
+        tol=gs.EPS,
+    )
+
+    rigid_solver.clear_external_force()
+    rigid_solver.apply_links_external_force(
+        force=force_local, links_idx=[base_link.idx], pos=lever_arm, ref="link_com", local=True
+    )
+    assert_allclose(
+        rigid_solver.dyn_state.links.cfrc_applied_vel[base_link.idx, 0], -base_inertial_R @ force_local, tol=gs.EPS
+    )
+    assert_allclose(
+        rigid_solver.dyn_state.links.cfrc_applied_ang[base_link.idx, 0],
+        -np.cross(base_link_com + base_inertial_R @ lever_arm - base_root_COM, base_inertial_R @ force_local),
+        tol=gs.EPS,
     )
 
     with np.testing.assert_raises(ValueError):

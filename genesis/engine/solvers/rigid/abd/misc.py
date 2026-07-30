@@ -748,15 +748,20 @@ def kernel_apply_links_external_force(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
     force: qd.types.ndarray(),
+    pos: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     ref: qd.template(),
     local: qd.template(),
+    has_pos: qd.template(),
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
         force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
-        func_apply_link_external_force(links_idx[i_l_], envs_idx[i_b_], force_i, dyn_state, ref, local)
+        pos_i = qd.Vector.zero(gs.qd_float, 3)
+        if qd.static(has_pos):
+            pos_i = qd.Vector([pos[i_b_, i_l_, 0], pos[i_b_, i_l_, 1], pos[i_b_, i_l_, 2]], dt=gs.qd_float)
+        func_apply_link_external_force(links_idx[i_l_], envs_idx[i_b_], pos_i, force_i, dyn_state, ref, local, has_pos)
 
 
 @qd.kernel(fastcache=True)
@@ -817,20 +822,40 @@ def kernel_wakeup_coupled_links(
 
 @qd.func
 def func_apply_link_external_force(
-    link_idx, env_idx, force, dyn_state: array_class.DynState, ref: qd.template(), local: qd.template()
+    link_idx,
+    env_idx,
+    pos,
+    force,
+    dyn_state: array_class.DynState,
+    ref: qd.template(),
+    local: qd.template(),
+    has_pos: qd.template(),
 ):
-    torque = qd.Vector.zero(gs.qd_float, 3)
+    # The generalized force is expressed about the root COM, so every case reduces to the lever arm going from the root
+    # COM to the point where the force is applied.
+    arm = qd.Vector.zero(gs.qd_float, 3)
     if qd.static(ref == 1):  # link's CoM
         if qd.static(local):
             force = gu.qd_transform_by_quat(force, dyn_state.links.i_quat[link_idx, env_idx])
-        torque = dyn_state.links.i_pos[link_idx, env_idx].cross(force)
+            if qd.static(has_pos):
+                pos = gu.qd_transform_by_quat(pos, dyn_state.links.i_quat[link_idx, env_idx])
+        arm = dyn_state.links.i_pos[link_idx, env_idx]
     if qd.static(ref == 2):  # link's origin
         if qd.static(local):
-            force = gu.qd_transform_by_quat(force, dyn_state.links.i_quat[link_idx, env_idx])
-        torque = (dyn_state.links.pos[link_idx, env_idx] - dyn_state.links.root_COM[link_idx, env_idx]).cross(force)
+            force = gu.qd_transform_by_quat(force, dyn_state.links.quat[link_idx, env_idx])
+            if qd.static(has_pos):
+                pos = gu.qd_transform_by_quat(pos, dyn_state.links.quat[link_idx, env_idx])
+        arm = dyn_state.links.pos[link_idx, env_idx] - dyn_state.links.root_COM[link_idx, env_idx]
+    if qd.static(has_pos):
+        # A local point is an offset from the reference frame origin, whose own arm has just been computed, while a
+        # world point already locates the application point and makes the reference frame irrelevant.
+        if qd.static(local):
+            arm = arm + pos
+        else:
+            arm = pos - dyn_state.links.root_COM[link_idx, env_idx]
 
     dyn_state.links.cfrc_applied_vel[link_idx, env_idx] -= force
-    dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= torque
+    dyn_state.links.cfrc_applied_ang[link_idx, env_idx] -= arm.cross(force)
 
 
 @qd.func

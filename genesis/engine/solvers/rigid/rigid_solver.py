@@ -1605,11 +1605,12 @@ class RigidSolver(KinematicSolver):
         links_idx=None,
         envs_idx=None,
         *,
+        pos=None,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
         local: bool = False,
     ):
         """
-        Apply some external linear force on a set of links.
+        Apply external linear force over one simulation step on a set of links.
 
         Parameters
         ----------
@@ -1619,19 +1620,36 @@ class RigidSolver(KinematicSolver):
             The indices of the links on which to apply force. None to specify all links. Default to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        pos : None | array_like, optional
+            The point at which the force is applied, which sets the moment arm of the induced torque. None to apply it
+            at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from that
+            origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
+            Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
+            of `force`. Defaults to None.
         ref: "link_origin" | "link_com" | "root_com", optional
             The reference frame on which the linear force will be applied. "link_origin" refers to the origin of the
             link, "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
             the entire kinematic tree to which a link belong (see `get_links_root_COM` for details).
         local: bool, optional
-            Whether the force is expressed in the local coordinates associated with the reference frame instead of
-            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+            Whether the force and the application point are expressed in the local coordinates associated with the
+            reference frame instead of world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
         """
+        has_pos = pos is not None
+        if has_pos:
+            pos, _, _ = self._sanitize_io_variables(
+                pos, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
+            )
+            if self.n_envs == 0:
+                pos = pos[None]
         force, links_idx, envs_idx = self._sanitize_io_variables(
             force, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
         )
         if self.n_envs == 0:
             force = force[None]
+        if not has_pos:
+            # The kernel cannot fabricate the array it only reads when an application point is provided, so hand it a
+            # zero-length view rather than paying for a fresh allocation on every call.
+            pos = force[:0]
 
         if ref == "root_com" and local:
             raise ValueError("'local=True' not compatible with ref='root_com'.")
@@ -1650,7 +1668,15 @@ class RigidSolver(KinematicSolver):
             )
 
         kernel_apply_links_external_force(
-            links_idx, envs_idx, force, self.dyn_state, self.rigid_config, ref_idx, 1 if local else 0
+            links_idx,
+            envs_idx,
+            force,
+            pos,
+            self.dyn_state,
+            self.rigid_config,
+            ref_idx,
+            1 if local else 0,
+            1 if has_pos else 0,
         )
 
     def apply_links_external_torque(
@@ -1663,7 +1689,7 @@ class RigidSolver(KinematicSolver):
         local: bool = False,
     ):
         """
-        Apply some external torque on a set of links.
+        Apply external torque over one simulation step on a set of links.
 
         Parameters
         ----------
@@ -1677,7 +1703,8 @@ class RigidSolver(KinematicSolver):
             The reference frame on which the torque will be applied. "link_origin" refers to the origin of the link,
             "link_com" refers to the center of mass of the link, and "root_com" refers to the center of mass of
             the entire kinematic tree to which a link belong (see `get_links_root_COM` for details). Note that this
-            argument has no effect unless `local=True`.
+            argument has no effect unless `local=True`, a torque being a couple that acts the same wherever it is
+            attached.
         local: bool, optional
             Whether the torque is expressed in the local coordinates associated with the reference frame instead of
             world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.

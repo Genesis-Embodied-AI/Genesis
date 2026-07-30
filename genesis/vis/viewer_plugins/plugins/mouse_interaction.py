@@ -355,7 +355,6 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         inv_mass = 1.0 / float(self._held_link.get_mass())
 
         total_impulse = np.zeros(3, dtype=gs.np_float)
-        total_torque_impulse = np.zeros(3, dtype=gs.np_float)
 
         # Approximate spring-damper in each axis
         for i in range(3):
@@ -382,20 +381,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             ang_vel += inv_inertia_world @ (arm_x_dir * impulse)
 
             total_impulse[i % 3] += impulse
-            total_torque_impulse += arm_x_dir * impulse
 
-        # Apply the new force
+        # The force acts at the grabbed point, so its moment about the center of mass swings the body to the cursor.
         self._held_link.solver.apply_links_external_force(
             total_impulse / dt,
             (self._held_link.idx,),
             envs_idx=envs_idx,
-            ref="link_com",
-            local=False,
-        )
-        self._held_link.solver.apply_links_external_torque(
-            total_torque_impulse / dt,
-            (self._held_link.idx,),
-            envs_idx=envs_idx,
-            ref="link_com",
-            local=False,
+            pos=held_point_env_local,
         )

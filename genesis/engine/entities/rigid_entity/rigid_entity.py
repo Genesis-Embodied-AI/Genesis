@@ -3526,6 +3526,76 @@ class RigidEntity(KinematicEntity):
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
         return self._solver.get_links_acc_ang(links_idx, envs_idx)
 
+    @gs.assert_built
+    def apply_links_external_force(
+        self,
+        force,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        pos=None,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        local: bool = False,
+    ):
+        """
+        Apply external linear force over one simulation step on a set of the entity's links.
+
+        Parameters
+        ----------
+        force : array_like
+            The force to apply.
+        links_idx_local : None | array_like, optional
+            The indices of the links. None to specify all the entity's links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        pos : None | array_like, optional
+            The point at which the force is applied, which sets the moment arm of the induced torque. None to apply it
+            at the origin of the reference frame designated by `ref`. With `local=True`, it is an offset from that
+            origin expressed in the coordinates of that frame, hence a point that follows the link as it moves.
+            Otherwise, it is a world position that locates the point on its own, leaving `ref` to only select the frame
+            of `force`. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame on which the linear force will be applied. "link_origin" refers to the origin of each
+            link, "link_com" refers to the center of mass of each link, and "root_com" refers to the center of mass of
+            the entire kinematic tree to which a link belongs.
+        local: bool, optional
+            Whether the force and the application point are expressed in the local coordinates associated with the
+            reference frame instead of world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        self._solver.apply_links_external_force(force, links_idx, envs_idx, pos=pos, ref=ref, local=local)
+
+    @gs.assert_built
+    def apply_links_external_torque(
+        self,
+        torque,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        local: bool = False,
+    ):
+        """
+        Apply external torque over one simulation step on a set of the entity's links.
+
+        Parameters
+        ----------
+        torque : array_like
+            The torque to apply.
+        links_idx_local : None | array_like, optional
+            The indices of the links. None to specify all the entity's links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com", optional
+            The reference frame whose coordinates the torque is expressed in. This argument has no effect unless
+            `local=True`, a torque being a couple that acts the same wherever it is attached.
+        local: bool, optional
+            Whether the torque is expressed in the local coordinates associated with the reference frame instead of
+            world frame. Only supported for `ref="link_origin"` or `ref="link_com"`.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        self._solver.apply_links_external_torque(torque, links_idx, envs_idx, ref=ref, local=local)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------- links mass properties --------------------------------
     # ------------------------------------------------------------------------------------
