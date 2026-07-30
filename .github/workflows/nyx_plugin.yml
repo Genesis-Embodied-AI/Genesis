@@ -6,7 +6,7 @@ name: Nyx Plugin
 # outcome has to be published as a check on the commit under test to show up on it at all.
 on:
   workflow_run:
-    workflows: ["Production"]
+    workflows: ["Precommit Checks (Lint and Format)"]
     types: [completed]
 
 concurrency:
@@ -60,6 +60,12 @@ jobs:
         id: plugin
         shell: bash
         run: |
+          # The pin has to come from the revision under test, so a revision branched before it was introduced is
+          # rejected rather than tested against something it never chose.
+          if [[ ! -f .github/nyx_plugin_commit ]] ; then
+            echo "::error::'.github/nyx_plugin_commit' is missing. Rebase onto the default branch."
+            exit 1
+          fi
           COMMIT=$(tr -d '[:space:]' < .github/nyx_plugin_commit)
           if [[ ! "${COMMIT}" =~ ^[0-9a-f]{40}$ ]] ; then
             echo "::error::'.github/nyx_plugin_commit' must hold a full 40-character commit hash."
