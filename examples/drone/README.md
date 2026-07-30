@@ -6,10 +6,10 @@ This directory contains examples of drone simulations using the Genesis framewor
 
 ### 1. Interactive Drone (`interactive_drone.py`)
 A real-time interactive drone simulation where you can control the drone using keyboard inputs:
-- ↑ (Up Arrow): Move Forward (North)
-- ↓ (Down Arrow): Move Backward (South)
-- ← (Left Arrow): Move Left (West)
-- → (Right Arrow): Move Right (East)
+- Up: Move Forward (North)
+- Down: Move Backward (South)
+- Left: Move Left (West)
+- Right: Move Right (East)
 - Space: Increase Thrust (Accelerate)
 - Left Shift: Decrease Thrust (Decelerate)
 - ESC: Quit
