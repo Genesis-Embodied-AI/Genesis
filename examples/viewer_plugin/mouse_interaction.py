@@ -10,6 +10,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_force", "-f", action="store_true", help="Apply spring forces instead of setting position"
     )
+    parser.add_argument(
+        "--use_visual_geom",
+        action="store_true",
+        help="Grab entities by their visual mesh instead of their collision one",
+    )
     parser.add_argument("--num_envs", "-b", type=int, default=1, help="Number of environments to create")
     args = parser.parse_args()
 
@@ -29,11 +34,28 @@ if __name__ == "__main__":
 
     scene.add_entity(gs.morphs.Plane())
 
+    # Only entities opting into visual raycasting can be grabbed with --use_visual_geom.
+    raycastable = gs.materials.Rigid(
+        use_visual_raycasting=True,
+    )
+    vis_mode = "visual" if args.use_visual_geom else "collision"
+
     sphere = scene.add_entity(
         morph=gs.morphs.Sphere(
             pos=(-0.3, -0.3, 0),
             radius=0.1,
         ),
+        material=raycastable,
+        vis_mode=vis_mode,
+    )
+    duck = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck/duck.obj",
+            pos=(0.0, 0.0, 0.5),
+            scale=0.001,
+        ),
+        material=raycastable,
+        vis_mode=vis_mode,
     )
     for i in range(6):
         angle = i * (2 * math.pi / 6)
@@ -43,12 +65,15 @@ if __name__ == "__main__":
                 pos=(radius * math.cos(angle), radius * math.sin(angle), 0.1 + i * 0.1),
                 size=(0.2, 0.2, 0.2),
             ),
+            material=raycastable,
+            vis_mode=vis_mode,
         )
 
     scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=args.use_force,
             color=(0.1, 0.6, 0.8, 0.6),
+            use_visual_geom=args.use_visual_geom,
         )
     )
 

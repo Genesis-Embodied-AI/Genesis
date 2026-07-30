@@ -5,7 +5,7 @@ import numpy as np
 import genesis as gs
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom
+    from genesis.engine.entities.rigid_entity.rigid_geom import RigidGeom, RigidVisGeom
 
 
 class Ray(NamedTuple):
@@ -17,7 +17,7 @@ class RayHit(NamedTuple):
     distance: float
     position: np.ndarray  # (3,)
     normal: np.ndarray  # (3,)
-    geom: "RigidGeom | None"
+    geom: "RigidGeom | RigidVisGeom | None"
 
 
 def plane_raycast(normal: np.ndarray, distance: float, ray: Ray) -> RayHit | None:

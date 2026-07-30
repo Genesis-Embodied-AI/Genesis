@@ -527,20 +527,28 @@ def update_visual_face_aabb(
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
 ):
     """Fit the AABB of vface i_f in tree slot i_t from env i_b's visual mesh (i_t == i_b for a per-env BVH).
 
-    face_mask gates inclusion: 0 keeps the AABB inverted (unhittable) so vfaces from entities not opted into
-    raycasting are skipped by ray queries.
+    A vface that does not contribute to env i_b is left with an inverted AABB (min=+inf, max=-inf), which ray queries
+    treat as a definitive miss: either face_mask holds 0, meaning its entity did not opt into raycasting, or its vgeom
+    falls outside env i_b's active vgeom range (links_info.vgeom_start / vgeom_end). For a homogeneous solver every
+    vgeom is always in range. For a heterogeneous solver, where all envs share one visual mesh but activate different
+    per-env vgeom ranges, this keeps each env casting against its own variant alone.
     """
     aabb_state.aabbs[i_t, i_f].min.fill(qd.math.inf)
     aabb_state.aabbs[i_t, i_f].max.fill(-qd.math.inf)
     if face_mask[i_f] != 0:
-        for i in qd.static(range(3)):
-            i_vv = dyn_info.vfaces.vverts_idx[i_f][i]
-            pos_v = get_visual_vvert_pos(i_vv, i_b, dyn_state, dyn_info)
-            aabb_state.aabbs[i_t, i_f].min = qd.min(aabb_state.aabbs[i_t, i_f].min, pos_v)
-            aabb_state.aabbs[i_t, i_f].max = qd.max(aabb_state.aabbs[i_t, i_f].max, pos_v)
+        i_vg = dyn_info.vfaces.vgeom_idx[i_f]
+        i_l = dyn_info.vgeoms.link_idx[i_vg]
+        I_l = [i_l, i_b] if qd.static(rigid_config.batch_links_info) else i_l
+        if dyn_info.links.vgeom_start[I_l] <= i_vg and i_vg < dyn_info.links.vgeom_end[I_l]:
+            for i in qd.static(range(3)):
+                i_vv = dyn_info.vfaces.vverts_idx[i_f][i]
+                pos_v = get_visual_vvert_pos(i_vv, i_b, dyn_state, dyn_info)
+                aabb_state.aabbs[i_t, i_f].min = qd.min(aabb_state.aabbs[i_t, i_f].min, pos_v)
+                aabb_state.aabbs[i_t, i_f].max = qd.max(aabb_state.aabbs[i_t, i_f].max, pos_v)
 
 
 @qd.kernel
@@ -549,12 +557,13 @@ def kernel_update_visual_aabbs(
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
 ):
     """Update the per-vface AABBs of a per-env visual BVH (one tree slot per env). See update_visual_face_aabb."""
     _B = dyn_state.vgeoms.pos.shape[1]
     n_vfaces = dyn_info.vfaces.vverts_idx.shape[0]
     for i_b, i_f in qd.ndrange(_B, n_vfaces):
-        update_visual_face_aabb(i_b, i_f, i_b, face_mask, dyn_state, aabb_state, dyn_info)
+        update_visual_face_aabb(i_b, i_f, i_b, face_mask, dyn_state, aabb_state, dyn_info, rigid_config)
 
 
 @qd.kernel
@@ -564,11 +573,12 @@ def kernel_update_grouped_visual_aabbs(
     dyn_state: array_class.DynState,
     aabb_state: qd.template(),
     dyn_info: array_class.DynInfo,
+    rigid_config: qd.template(),
 ):
     """Build the per-vface AABBs of a grouped static visual BVH: one tree slot per distinct per-env visual geometry,
     each built from its representative env (see RaycastContext update)."""
     for i_t, i_f in qd.ndrange(aabb_state.aabbs.shape[0], dyn_info.vfaces.vverts_idx.shape[0]):
-        update_visual_face_aabb(i_t, i_f, batch_repr_env[i_t], face_mask, dyn_state, aabb_state, dyn_info)
+        update_visual_face_aabb(i_t, i_f, batch_repr_env[i_t], face_mask, dyn_state, aabb_state, dyn_info, rigid_config)
 
 
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
@@ -585,6 +595,7 @@ def kernel_cast_ray(
     rigid_info: array_class.RigidInfo,
     max_range: float,
     eps: float,
+    is_visual: qd.template(),
 ):
     """
     Cast a single ray against each env's BVH in parallel.
@@ -592,6 +603,9 @@ def kernel_cast_ray(
     Per-env: the ray is shifted by -envs_offset[i_b] (each BVH is in env-local coordinates) and the closest hit on
     that env is written to result[i_b]; envs not in envs_idx are left as no-hit (geom_idx == -1, distance == +inf).
     Aggregation across envs is intentionally out of scope, because cross-env reduction has no use beyond the viewer.
+
+    `is_visual` selects the mesh the BVH covers: the visual mesh (vfaces, result.geom_idx holds the hit vgeom) or
+    the collision mesh (faces, result.geom_idx holds the hit geom).
     """
     ray_start_world = qd.math.vec3(ray_start[0], ray_start[1], ray_start[2])
     ray_direction_world = qd.math.vec3(ray_direction[0], ray_direction[1], ray_direction[2])
@@ -605,21 +619,42 @@ def kernel_cast_ray(
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
         env_offset = rigid_info.envs_offset[i_b]
-        cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
-            i_b,
-            i_b,
-            ray_start_world - env_offset,
-            ray_direction_world,
-            max_range,
-            bvh_nodes,
-            bvh_morton_codes,
-            dyn_state,
-            dyn_info,
-            eps,
-        )
+        # Declared before the compile-time branch, whose body is a nested scope in quadrants.
+        cur_hit_face = -1
+        cur_distance = gs.qd_float(max_range)
+        cur_hit_normal = qd.math.vec3(0.0, 0.0, 0.0)
+        if qd.static(is_visual):
+            cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast_visual(
+                i_b,
+                i_b,
+                ray_start_world - env_offset,
+                ray_direction_world,
+                max_range,
+                bvh_nodes,
+                bvh_morton_codes,
+                dyn_state,
+                dyn_info,
+                eps,
+            )
+        else:
+            cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
+                i_b,
+                i_b,
+                ray_start_world - env_offset,
+                ray_direction_world,
+                max_range,
+                bvh_nodes,
+                bvh_morton_codes,
+                dyn_state,
+                dyn_info,
+                eps,
+            )
         if cur_hit_face >= 0:
             result.distance[i_b] = cur_distance
-            result.geom_idx[i_b] = dyn_info.faces.geom_idx[cur_hit_face]
+            if qd.static(is_visual):
+                result.geom_idx[i_b] = dyn_info.vfaces.vgeom_idx[cur_hit_face]
+            else:
+                result.geom_idx[i_b] = dyn_info.faces.geom_idx[cur_hit_face]
             result.normal[i_b] = cur_hit_normal
             result.hit_point[i_b] = ray_start_world + cur_distance * ray_direction_world
 

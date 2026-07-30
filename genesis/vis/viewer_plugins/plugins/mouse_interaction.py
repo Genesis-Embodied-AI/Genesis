@@ -6,6 +6,7 @@ from typing_extensions import override
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.engine.entities.rigid_entity import RigidLink
 from genesis.utils.mesh import create_cylinder, create_plane
 from genesis.utils.misc import tensor_to_array, with_lock
 from genesis.utils.raycast import Ray, RayHit, plane_raycast
@@ -15,7 +16,6 @@ from ..base import EVENT_HANDLE_STATE, EVENT_HANDLED
 from ..raycast import RaycasterViewerPlugin
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity import RigidLink
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
 
@@ -26,6 +26,8 @@ MIN_PICKABLE_MASS = 1e-3  # kg - links below this threshold are skipped to avoid
 class MouseInteractionPlugin(RaycasterViewerPlugin):
     """
     Basic interactive viewer plugin that enables using mouse to apply spring force on rigid entities.
+
+    See RaycasterViewerPlugin for `use_visual_geom`.
     """
 
     def __init__(
@@ -33,14 +35,15 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         use_force: bool = True,
         spring_const: float = 1000.0,
         color: tuple[float, float, float, float] = (0.2, 0.8, 0.8, 0.6),
+        use_visual_geom: bool = False,
     ) -> None:
-        super().__init__()
+        super().__init__(use_visual_geom)
         self.use_force = bool(use_force)
         self.spring_const = float(spring_const)
         self.color = tuple(color)
 
         self._lock: Lock = Lock()
-        self._held_link: "RigidLink | None" = None
+        self._held_link: RigidLink | None = None
         # The plugin is active only while the simulation advances (scene.t increases). _last_step_t is the step
         # counter seen at the previous sim-step callback; _sim_running caches whether it advanced so on_draw and the
         # mouse handlers, which run off the step loop, share the same paused/running verdict.
@@ -102,7 +105,9 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             if ray_hit is None:
                 return
 
-            if ray_hit.geom and ray_hit.geom.link is not None and not ray_hit.geom.link.is_fixed:
+            # Dragging applies forces, so only a movable rigid link qualifies: a visual cast also reaches the
+            # kinematic solver, whose links carry no mass.
+            if ray_hit.geom is not None and isinstance(ray_hit.geom.link, RigidLink) and not ray_hit.geom.link.is_fixed:
                 link = ray_hit.geom.link
                 hit_env_idx = self._get_last_raycast_env_idx()
                 mass = float(link.get_mass())
@@ -247,11 +252,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             self._debug_interact_nodes.clear()
 
             # Hover arrow: only show for pickable (non-fixed, sufficient mass) entities
-            closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
+            closest_hit: RayHit | None = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
             link = closest_hit.geom.link if closest_hit is not None and closest_hit.geom is not None else None
             is_pickable = (
                 self._sim_running
-                and link is not None
+                and isinstance(link, RigidLink)
                 and not link.is_fixed
                 and float(link.get_mass()) >= MIN_PICKABLE_MASS
             )

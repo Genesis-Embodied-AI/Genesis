@@ -24,6 +24,8 @@ class Rigid(Kinematic["RigidEntity"]):
 
     Parameters
     ----------
+    use_visual_raycasting : bool, optional
+        See Kinematic. Default is False.
     rho : float or None, optional
         The density of the material used to estimate mass if necessary. When None, the default depends on context:
         1000 kg/m^3 if MuJoCo compatibility is enabled (``RigidOptions.enable_mujoco_compatibility``),

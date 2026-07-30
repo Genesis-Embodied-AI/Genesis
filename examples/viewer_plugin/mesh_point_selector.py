@@ -1,3 +1,4 @@
+import argparse
 import csv
 import os
 from typing import TYPE_CHECKING, NamedTuple
@@ -40,6 +41,8 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
     """
     Interactive viewer plugin that enables using mouse clicks to select points on rigid meshes.
     Selected points are stored in local coordinates relative to their link's frame.
+
+    See RaycasterViewerPlugin for `use_visual_geom`.
     """
 
     def __init__(
@@ -49,8 +52,9 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
         hover_color: tuple = (0.3, 0.5, 1.0, 1.0),
         grid_snap: tuple[float, float, float] = (-1.0, -1.0, -1.0),
         output_file: str = "selected_points.csv",
+        use_visual_geom: bool = False,
     ) -> None:
-        super().__init__()
+        super().__init__(use_visual_geom)
         self.sphere_radius = sphere_radius
         self.sphere_color = sphere_color
         self.hover_color = hover_color
@@ -108,7 +112,7 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
             ray = self._screen_position_to_ray(x, y)
             ray_hit = self._raycaster.cast(*ray)
 
-            if ray_hit is not None and ray_hit.geom:
+            if ray_hit is not None and ray_hit.geom is not None:
                 link = ray_hit.geom.link
                 world_pos = ray_hit.position
                 world_normal = ray_hit.normal
@@ -226,6 +230,12 @@ class MeshPointSelectorPlugin(RaycasterViewerPlugin):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Mesh point selector viewer plugin example.")
+    parser.add_argument(
+        "--use_visual_geom", action="store_true", help="Select points on the visual mesh instead of the collision one"
+    )
+    args = parser.parse_args()
+
     gs.init(backend=gs.gpu)
 
     scene = gs.Scene(
@@ -246,6 +256,12 @@ if __name__ == "__main__":
         show_viewer=True,
     )
 
+    # Only entities opting into visual raycasting can be selected with --use_visual_geom.
+    raycastable = gs.materials.Rigid(
+        use_visual_raycasting=True,
+    )
+    vis_mode = "visual" if args.use_visual_geom else "collision"
+
     hand = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/shadow_hand/shadow_hand.urdf",
@@ -255,6 +271,18 @@ if __name__ == "__main__":
             fixed=True,
             merge_fixed_links=False,
         ),
+        material=raycastable,
+        vis_mode=vis_mode,
+    )
+    duck = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck/duck.obj",
+            pos=(0.0, 0.3, 0.0),
+            scale=0.001,
+            fixed=True,
+        ),
+        material=raycastable,
+        vis_mode=vis_mode,
     )
 
     scene.viewer.add_plugin(
@@ -262,6 +290,7 @@ if __name__ == "__main__":
             sphere_radius=0.004,
             grid_snap=(-1.0, 0.01, 0.01),
             output_file="selected_points.csv",
+            use_visual_geom=args.use_visual_geom,
         )
     )
 
