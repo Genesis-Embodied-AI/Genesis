@@ -338,6 +338,10 @@ def test_elliptic_cone_coulomb_isotropy(sparse_solve, use_contact_island, show_v
         scene.step()
     vel_1 = box.get_dofs_velocity(dofs_idx_local=[0, 1])
     accel = torch.linalg.norm(vel_1 - vel_0, dim=1) / (20 * DT)
+    # Coulomb caps the friction opposing the 1.5x push at mu * N, leaving exactly half the weight to accelerate the
+    # box. A contact whose normal force answers the tangential demand instead brakes harder than that and lands
+    # short, which the spread below cannot see since it scales with its own mean.
+    assert_allclose(accel, 0.5 * MU * (-GRAVITY), rtol=0.01)
     # The elliptic spread measures ~1e-5 relative; the pyramidal cone's anisotropy spreads it to ~0.5.
     assert accel.std() < 5e-5 * accel.mean()
 
@@ -517,14 +521,21 @@ def test_rolling_friction_deceleration_rate(friction_cone, n_envs, show_viewer):
 
 
 @pytest.mark.required
-def test_elliptic_cone_push_isotropy(show_viewer):
+@pytest.mark.parametrize("contact_resolution", [gs.contact_resolution.impedance, gs.contact_resolution.signorini])
+def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer):
     N_ENVS = 8
     FRICTION = 0.5
     BOX_POS = (0.0, 0.0, 0.05)
     # Pusher path in the box's local frame; the shared +y offset gives the push a lever arm that spins the box.
     PUSH_START_LOCAL = (-0.15, 0.03, 0.05)
     PUSH_END_LOCAL = (0.02, 0.03, 0.05)
-    POSE_TOL = 2e-4
+    # FIXME(#3127): the box-cylinder manifold places its interior contact point at a yaw-dependent height, so the
+    # push carries an orientation-dependent lever arm that the friction model cannot undo. 'impedance' keeps
+    # bouncing the box off the plane, which makes that contact intermittent and averages the bias away, while
+    # 'signorini' holds the box down and feels it every step - hence the looser bound here. Restore the shared
+    # tolerance once the manifold is isotropic; a sphere, whose manifold is a single point, already brings both
+    # resolutions to 1e-6.
+    POSE_TOL = 2e-4 if contact_resolution == gs.contact_resolution.impedance else 1e-3
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -532,6 +543,7 @@ def test_elliptic_cone_push_isotropy(show_viewer):
         ),
         rigid_options=gs.options.RigidOptions(
             friction_cone=gs.friction_cone.elliptic,
+            contact_resolution=contact_resolution,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.7, 0.7, 0.45),
@@ -596,3 +608,97 @@ def test_elliptic_cone_push_isotropy(show_viewer):
     rel_yaw = gu.quat_to_xyz(gu.transform_quat_by_quat(box.get_quat(), gu.inv_quat(box_quat)), rpy=True)[:, 2]
     assert_allclose(rel_pos, rel_pos.mean(dim=0), atol=POSE_TOL)
     assert_allclose(rel_yaw, rel_yaw.mean(), atol=POSE_TOL)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_kinetic_friction(n_envs, show_viewer):
+    GRAVITY = 9.81
+    SIZE = 0.1
+    # A cube resting flat tips once friction can torque it over its leading edge, from mu = width / (2 * com_height).
+    TIP_FRICTION = SIZE / (2.0 * 0.5 * SIZE)
+    # Friction coefficient and launch speed per box, spanning both sides of that threshold. 0.01 is the smallest
+    # coefficient the contact model applies, and the plane wears it so the pairwise max leaves each box its own.
+    BOXES = ((0.01, 6.0), (0.25, 6.0), (0.5, 2.0), (0.5, 6.0), (0.5, 20.0), (0.9, 6.0), (1.2, 6.0), (2.0, 6.0))
+    N_SETTLE = 40
+    N_SLIDE = 40
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.005,
+            gravity=(0.0, 0.0, -GRAVITY),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            friction_cone=gs.friction_cone.elliptic,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -1.5, 0.6),
+            camera_lookat=(1.0, 0.3, 0.05),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            friction=0.01,
+        ),
+    )
+    # Spaced far enough apart never to interact, so each box is its own contact island.
+    boxes = [
+        scene.add_entity(
+            gs.morphs.Box(
+                pos=(0.0, 4.0 * SIZE * i_box, 0.5 * SIZE),
+                size=(SIZE, SIZE, SIZE),
+            ),
+            material=gs.materials.Rigid(
+                friction=friction,
+            ),
+        )
+        for i_box, (friction, _) in enumerate(BOXES)
+    ]
+    scene.build(n_envs=n_envs)
+
+    for _ in range(N_SETTLE):
+        scene.step()
+
+    height_0 = torch.stack([box.get_pos()[..., 2] for box in boxes])
+    for box, (_, speed) in zip(boxes, BOXES):
+        velocity = box.get_dofs_velocity()
+        velocity[..., 0] = speed
+        box.set_dofs_velocity(velocity)
+    speed_0 = torch.stack([box.get_dofs_velocity()[..., 0] for box in boxes])
+
+    height_min, height_max, tilt_max = height_0, height_0, torch.zeros_like(height_0)
+    for _ in range(N_SLIDE):
+        scene.step()
+        height = torch.stack([box.get_pos()[..., 2] for box in boxes])
+        height_min = torch.minimum(height_min, height)
+        height_max = torch.maximum(height_max, height)
+        # Angle between the body up-axis and world up, from the quaternion's rotation of e_z.
+        quat = torch.stack([box.get_quat() for box in boxes])
+        up_z = 1.0 - 2.0 * (quat[..., 1] ** 2 + quat[..., 2] ** 2)
+        tilt_max = torch.maximum(tilt_max, torch.rad2deg(torch.arccos(up_z.clamp(-1.0, 1.0))))
+    speed_1 = torch.stack([box.get_dofs_velocity()[..., 0] for box in boxes])
+
+    friction = torch.tensor([friction for friction, _ in BOXES], device=gs.device).reshape(-1, *(1,) * (n_envs > 0))
+    is_sliding = (friction < TIP_FRICTION).expand_as(height_0)
+
+    # Below the threshold the box slides flat; above it, friction torques it over its leading edge.
+    assert_allclose(tilt_max[is_sliding], 0.0, atol=0.1)
+    assert (tilt_max[~is_sliding] > 45.0).all()
+
+    # Penetration answers to the load alone, so a sliding box sits exactly as deep as a resting one. Every box here
+    # carries the same weight, so holding all of them to their common resting height pins the penetration against
+    # both the friction coefficient and the sliding speed at once. The bound is set by the box closest to the
+    # tipping threshold, whose contact force genuinely leans toward its leading edge and lifts the centre of mass.
+    assert_allclose(height_min[is_sliding], height_0[is_sliding], atol=5e-7)
+    assert_allclose(height_max[is_sliding], height_0[is_sliding], atol=5e-7)
+
+    # The height above measures this through the geometry; the contact force states it directly. A sliding contact
+    # carries the weight and nothing more, however much tangential force the slide is asking of it.
+    normal_force = torch.stack([box.get_links_net_contact_force().sum(dim=-2)[..., 2] for box in boxes])
+    assert_allclose(normal_force[is_sliding], boxes[0].get_mass() * GRAVITY, rtol=0.01)
+
+    # Each box decelerates at its own mu * g, independently of how fast it was launched.
+    deceleration = (speed_0 - speed_1) / (N_SLIDE * scene.sim.dt)
+    assert_allclose(deceleration[is_sliding], (friction * GRAVITY).expand_as(height_0)[is_sliding], rtol=0.01)

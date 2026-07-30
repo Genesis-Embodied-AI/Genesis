@@ -79,6 +79,35 @@ class friction_cone(IntEnum):
     elliptic = 1
 
 
+# rigid solver contact resolution
+class contact_resolution(IntEnum):
+    """
+    How a contact's normal force and friction force are resolved against each other.
+
+    'impedance' poses the whole contact as a single cost and lets the solver trade the normal residual against the
+    tangential one. Because the friction limit mu * f_n bounds the pair jointly, a contact sliding fast enough that
+    its friction rows demand more force than the cone allows can be answered by raising f_n instead: a body launched
+    horizontally then lifts off a flat floor, by more the faster it slides. In exchange the cost is smooth and the
+    solve is one convex program, which converges predictably on stiff articulated chains and high mass ratios.
+
+    'signorini' bounds friction against the normal force the contact has actually developed, so the normal force is
+    set by penetration alone and sliding can never inflate it - a sliding body decelerates at mu * g and stays down at
+    any speed. Contacts are resolved by successive approximation, costing extra solver iterations and giving up the
+    single-convex-program guarantee. Prefer it whenever sliding contact matters; choose 'impedance' for parity with
+    engines built on that formulation, or if a stiff scene converges better under it.
+
+    'signorini' requires the elliptic friction cone, whose rows separate into a normal row and a friction disc - the
+    pyramidal cone mixes the normal direction into every row and admits no such split - and the Newton constraint
+    solver, the only one that reaches the fixed point of the resulting successive approximation. It implements the
+    Coulomb complementarity problem eq. (C.22) of Alexis Duburcq, "Learning and Optimization of the Locomotion with
+    an Exoskeleton for Paraplegic People", PhD thesis, Universite Paris Sciences et Lettres, 2022 (HAL tel-04166955),
+    Appendix C, whose Signorini condition is what forbids the normal force from absorbing tangential demand.
+    """
+
+    impedance = 0
+    signorini = 1
+
+
 # rigid solver broadphase traversal strategy
 class broadphase_traversal(IntEnum):
     """

@@ -465,6 +465,16 @@ class RigidOptions(Options):
         (default) is robust and easy to solve; 'gs.friction_cone.elliptic' is the exact isotropic cone, harder to solve
         but paired with a high 'impratio' it holds resting stacks without slow tangential creep. See 'gs.friction_cone'
         for the description of each model. Unsupported with the noslip solver or differentiable simulation.
+    contact_resolution : gs.contact_resolution, optional
+        How a contact's normal force and friction force are resolved against each other.
+        'gs.contact_resolution.signorini' bounds friction against the normal force the contact has developed, so
+        sliding never inflates it and a body launched horizontally decelerates at mu * g instead of lifting off, at
+        the cost of extra solver iterations. 'gs.contact_resolution.impedance' poses the contact as a single convex
+        program, which converges more predictably on stiff scenes but lets fast sliding buy normal force. See
+        'gs.contact_resolution' for the description of each model. Defaults to None, resolving to 'signorini' with
+        the elliptic cone and the Newton solver, and 'impedance' otherwise - the pyramidal cone's rows do not
+        separate, and the conjugate gradient solver does not reach the fixed point. Always 'impedance' when
+        'enable_mujoco_compatibility' is set.
     enable_torsional_friction : bool, optional
         Whether contacts also resist relative spin about their normal, with strength set per geometry by the material
         option 'friction_torsional' (see 'gs.materials.Rigid'). Enable it when spin resistance matters - a grasped
@@ -554,6 +564,7 @@ class RigidOptions(Options):
     noslip_iterations: NonNegativeInt = 0
     noslip_tolerance: PositiveFloat = 1e-6
     friction_cone: gs.friction_cone = gs.friction_cone.pyramidal
+    contact_resolution: gs.contact_resolution | None = None
     enable_torsional_friction: StrictBool = False
     enable_rolling_friction: StrictBool = False
     impratio: PositiveFloat | None = None

@@ -2397,6 +2397,10 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_joints_info: bool
     enable_mujoco_compatibility: bool
     enable_elliptic_friction: bool
+    # Whether contact friction is bounded by the disc of radius mu * f_n taken from the normal force developed at the
+    # current iterate, instead of jointly with it through the coupled cone (see gs.contact_resolution). Implies
+    # enable_elliptic_friction: the pyramidal rows do not separate into a normal row and a friction disc.
+    enable_signorini_contact: bool
     enable_multi_contact: bool
     enable_joint_limit: bool
     box_box_detection: bool

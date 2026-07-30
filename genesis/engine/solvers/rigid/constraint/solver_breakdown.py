@@ -164,7 +164,7 @@ def _func_decomp_linesearch_p0(
                             for i_r in qd.static(range(n_rows)):
                                 rows_jv[i_r] = constraint_state.jv[i_c + i_r, i_b]
                             _c_cost, c_grad, c_hess = solver._func_cone_cost_along_alpha(
-                                rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction
+                                rows_jaref, rows_jv, 0.0, rows_efc_D, con_mu, rows_friction, rigid_config
                             )
                             local_constraint_grad += c_grad
                             local_constraint_hess += 0.5 * c_hess
