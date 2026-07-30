@@ -96,9 +96,46 @@ def _offset_world_shift(offset_pos, offset_quat, world_quat):
     return gu.transform_by_quat(offset_pos, user_quat)
 
 
-def _interpolate_terrain_height(height_field, row, col, row_boundaries, col_boundaries):
+@torch.jit.script
+def _tc_get_terrain_height(
+    positions: torch.Tensor,
+    height_field: torch.Tensor,
+    horizontal_scale: torch.Tensor,
+    row_boundaries: torch.Tensor,
+    col_boundaries: torch.Tensor,
+    link_pos: torch.Tensor,
+    link_quat: torch.Tensor,
+    eps: float,
+):
+    delta_x = positions[..., 0] - link_pos[..., 0]
+    delta_y = positions[..., 1] - link_pos[..., 1]
+    quat_w = link_quat[..., 0]
+    quat_x = link_quat[..., 1]
+    quat_y = link_quat[..., 2]
+    quat_z = link_quat[..., 3]
+    quat_norm = quat_w.square() + quat_x.square() + quat_y.square() + quat_z.square()
+    local_x = (
+        delta_x * (quat_x.square() + quat_w.square() - quat_y.square() - quat_z.square())
+        + delta_y * (2.0 * quat_x * quat_y + 2.0 * quat_w * quat_z)
+    ) / quat_norm
+    local_y = (
+        delta_x * (2.0 * quat_x * quat_y - 2.0 * quat_w * quat_z)
+        + delta_y * (quat_w.square() - quat_x.square() + quat_y.square() - quat_z.square())
+    ) / quat_norm
+    row = local_x / horizontal_scale[0]
+    col = local_y / horizontal_scale[0]
     row_max = height_field.shape[0] - 1
     col_max = height_field.shape[1] - 1
+    has_invalid_query = (
+        (link_quat[..., 1:3].abs() > eps).any()
+        | (~torch.isfinite(row)).any()
+        | (~torch.isfinite(col)).any()
+        | (row < -eps).any()
+        | (row > row_max + eps).any()
+        | (col < -eps).any()
+        | (col > col_max + eps).any()
+    )
+
     row = row.clamp(0.0, float(row_max))
     col = col.clamp(0.0, float(col_max))
     i_row = torch.bucketize(row, row_boundaries, right=True)
@@ -112,7 +149,8 @@ def _interpolate_terrain_height(height_field, row, col, row_boundaries, col_boun
     h11 = height_field[i_row + 1, i_col + 1]
     first = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00)
     second = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11)
-    return torch.where(frac_row + frac_col <= 1.0, first, second)
+    heights = torch.where(frac_row + frac_col <= 1.0, first, second) + link_pos[..., 2]
+    return heights, has_invalid_query
 
 
 def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges):
@@ -1114,38 +1152,18 @@ class KinematicSolver(Solver):
 
         positions = positions.contiguous()
         n_points = positions.shape[-2]
-        if gs.backend == gs.metal:
-            # Quadrants launch and error-flag synchronization overhead dominates this gather-heavy query on Metal.
+        if gs.use_zerocopy:
             link_pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)[envs_idx, link_idx : link_idx + 1]
             link_quat = qd_to_torch(self.dyn_state.links.quat, transpose=True)[envs_idx, link_idx : link_idx + 1]
-            delta_x = positions[..., 0] - link_pos[..., 0]
-            delta_y = positions[..., 1] - link_pos[..., 1]
-            quat_w = link_quat[..., 0]
-            quat_x = link_quat[..., 1]
-            quat_y = link_quat[..., 2]
-            quat_z = link_quat[..., 3]
-            quat_norm = quat_w.square() + quat_x.square() + quat_y.square() + quat_z.square()
-            local_x = (
-                delta_x * (quat_x.square() + quat_w.square() - quat_y.square() - quat_z.square())
-                + delta_y * (2.0 * quat_x * quat_y + 2.0 * quat_w * quat_z)
-            ) / quat_norm
-            local_y = (
-                delta_x * (2.0 * quat_x * quat_y - 2.0 * quat_w * quat_z)
-                + delta_y * (quat_w.square() - quat_x.square() + quat_y.square() - quat_z.square())
-            ) / quat_norm
-            row = local_x / horizontal_scale[0]
-            col = local_y / horizontal_scale[0]
-            row_max = height_field.shape[0] - 1
-            col_max = height_field.shape[1] - 1
-
-            has_invalid_query = (
-                (link_quat[..., 1:3].abs() > gs.EPS).any()
-                | (~torch.isfinite(row)).any()
-                | (~torch.isfinite(col)).any()
-                | (row < -gs.EPS).any()
-                | (row > row_max + gs.EPS).any()
-                | (col < -gs.EPS).any()
-                | (col > col_max + gs.EPS).any()
+            heights, has_invalid_query = _tc_get_terrain_height(
+                positions,
+                height_field,
+                horizontal_scale,
+                row_boundaries,
+                col_boundaries,
+                link_pos,
+                link_quat,
+                gs.EPS,
             )
             if has_invalid_query:
                 gs.raise_exception(
@@ -1153,9 +1171,6 @@ class KinematicSolver(Solver):
                     "pitch."
                 )
 
-            heights = (
-                _interpolate_terrain_height(height_field, row, col, row_boundaries, col_boundaries) + link_pos[..., 2]
-            )
         else:
             heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
             invalid = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
