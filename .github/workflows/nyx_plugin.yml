@@ -111,10 +111,11 @@ jobs:
           # test, leaving the tests exercising something else entirely. Overriding that single requirement with the
           # checkout keeps every other dependency of the plugin resolved from its own metadata. The plugin pins the
           # renderer to an internal index that this repository has no credentials for, so that source alone is
-          # ignored in favour of the public one.
+          # ignored in favour of the public one. The override has to carry the extra providing the test runner, since
+          # it replaces the requirement it overrides in full, extras included.
           uv pip install --system \
               --no-sources-package gs-nyx \
-              --overrides <(printf 'genesis-world @ file://%s\n' "$GITHUB_WORKSPACE") \
+              --overrides <(printf 'genesis-world[dev] @ file://%s\n' "$GITHUB_WORKSPACE") \
               ".[dev]" ./nyx_plugin
       - name: Run Nyx plugin unit tests
         # Running from the plugin root keeps its own pytest configuration in charge, and makes the paths the tests
