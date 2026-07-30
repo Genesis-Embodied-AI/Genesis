@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import genesis as gs
 
@@ -34,7 +35,8 @@ def main():
     )
     scene.build()
 
-    for i in range(1000):
+    horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
+    for i in range(horizon):
         scene.step()
         cam_0.set_pose(pos=(i / 100, 0, 2.5))
         cam_0.render(

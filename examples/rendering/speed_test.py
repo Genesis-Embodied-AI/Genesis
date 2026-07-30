@@ -1,4 +1,6 @@
 import argparse
+import os
+from time import time
 
 import genesis as gs
 
@@ -37,13 +39,11 @@ def main():
     )
     scene.build()
 
-    from time import time
-
+    horizon = 2000 if "PYTEST_VERSION" not in os.environ else 5
     t = time()
-    for i in range(2000):
+    for i in range(horizon):
         cam_0.render(rgb=True, depth=True)
-    print(2000 / (time() - t), "FPS")
-    exit()
+    print(horizon / (time() - t), "FPS")
 
 
 if __name__ == "__main__":
