@@ -37,11 +37,11 @@ class TensorRingBuffer:
             self.buffer = buffer
         self.N = N
         if idx is None:
-            self._idx = torch.tensor(-1, dtype=torch.int64, device=gs.device)
+            # Host memory is critical for performance and must be preserved: this index only ever selects a slot, and
+            # reading a device-resident one back on the host would block on the device queue at every access
+            self._idx = torch.tensor(-1, dtype=gs.tc_int, device="cpu")
         else:  # torch.Tensor
-            assert idx.ndim == 0 and idx.dtype in (torch.int32, torch.int64)
-            self._idx = idx.to(device=gs.device)
-            assert self._idx is idx
+            self._idx = idx
 
     def at(
         self,
@@ -71,6 +71,8 @@ class TensorRingBuffer:
             the second buffer dimension. `others_idx` applies to the remaining dimensions. Result shape:
             (self.buffer.shape[1], *trailing_slice_shape). Always allocates memory.
         """
+        # 'idx' is free to be a device tensor: a 0-dim host tensor is a valid scalar operand of a device tensor, so the
+        # result follows the device of 'idx' and the selection below stays where the buffer lives
         rel_idx = (self._idx - idx) % self.N
         if per_row:
             sub = self.buffer[(slice(None), slice(None), *others_idx)] if others_idx else self.buffer

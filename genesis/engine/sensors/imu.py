@@ -1,17 +1,18 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, Type
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import quadrants as qd
 import torch
 
 import genesis as gs
+import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 from genesis.options.sensors import IMU as IMUOptions
 from genesis.options.sensors import CrossCouplingAxisType
-from genesis.utils.geom import inv_transform_by_quat, transform_by_quat, transform_quat_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
-from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensorMetadata
+from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, SimpleSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
@@ -19,6 +20,62 @@ if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
 
     from .sensor_manager import SensorManager
+
+
+@qd.kernel(fastcache=True)
+def _kernel_update_imu_raw_data(
+    links_idx: qd.types.ndarray(),
+    offsets_pos: qd.types.ndarray(),
+    offsets_quat: qd.types.ndarray(),
+    magnetic_field_vector: qd.types.ndarray(),
+    raw_data_T: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_info: array_class.RigidInfo,
+):
+    """
+    Compute the raw (linear acceleration, angular velocity, magnetic field) triplet of every IMU in its own frame.
+
+    Reading the link state directly keeps the whole per-step update to a single launch, which is what the cost of the
+    sensor is made of: the arithmetic itself is negligible next to a simulation step.
+    """
+    for i_s, i_b in qd.ndrange(links_idx.shape[0], raw_data_T.shape[-1]):
+        i_l = links_idx[i_s]
+
+        offset_pos = qd.Vector.zero(gs.qd_float, 3)
+        mag = qd.Vector.zero(gs.qd_float, 3)
+        for j in qd.static(range(3)):
+            offset_pos[j] = offsets_pos[i_b, i_s, j]
+            mag[j] = magnetic_field_vector[i_b, i_s, j]
+        offset_quat = qd.Vector.zero(gs.qd_float, 4)
+        for j in qd.static(range(4)):
+            offset_quat[j] = offsets_quat[i_b, i_s, j]
+
+        # Spatial velocity and acceleration are expressed at the root of the kinematic tree, hence the transport to the
+        # link origin before converting the spatial acceleration to the classical one.
+        cpos = dyn_state.links.pos[i_l, i_b] - dyn_state.links.root_COM[i_l, i_b]
+        acc_ang = dyn_state.links.cacc_ang[i_l, i_b]
+        ang = dyn_state.links.cd_ang[i_l, i_b]
+        vel = dyn_state.links.cd_vel[i_l, i_b] + ang.cross(cpos)
+        acc = dyn_state.links.cacc_lin[i_l, i_b] + acc_ang.cross(cpos) + ang.cross(vel)
+
+        # Rigid-body transport from the link origin to the measurement point: a_imu = a + alpha x r + w x (w x r). A
+        # zero mounting offset contributes nothing, so this stays unconditional.
+        quat = dyn_state.links.quat[i_l, i_b]
+        offset_pos_world = gu.qd_transform_by_quat(offset_pos, quat)
+        acc = acc + acc_ang.cross(offset_pos_world) + ang.cross(ang.cross(offset_pos_world))
+
+        # An accelerometer measures proper acceleration, so gravity is subtracted before rotating into the sensor frame
+        sensor_quat = gu.qd_transform_quat_by_quat(quat, offset_quat)
+        local_acc = gu.qd_inv_transform_by_quat(acc - rigid_info.gravity[i_b], sensor_quat)
+        local_ang = gu.qd_inv_transform_by_quat(ang, sensor_quat)
+        local_mag = gu.qd_inv_transform_by_quat(mag, sensor_quat)
+
+        # Raw buffer layout: (n_imus * 9, B), one contiguous (acc, ang, mag) triplet per sensor
+        i_cache_start = i_s * 9
+        for j in qd.static(range(3)):
+            raw_data_T[i_cache_start + j, i_b] = local_acc[j]
+            raw_data_T[i_cache_start + 3 + j, i_b] = local_ang[j]
+            raw_data_T[i_cache_start + 6 + j, i_b] = local_mag[j]
 
 
 def _get_cross_axis_coupling_to_alignment_matrix(
@@ -152,41 +209,15 @@ class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, No
 
     @classmethod
     def _update_raw_data(cls, shared_context: None, shared_metadata: IMUSharedMetadata, raw_data_T: torch.Tensor):
-        assert shared_metadata.solver is not None
-        # Extract acceleration and gravity in world frame.
-        gravity = shared_metadata.solver.get_gravity()
-        quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
-        acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
-        ang = shared_metadata.solver.get_links_ang(links_idx=shared_metadata.links_idx)
-        if acc.ndim == 2:  # n_envs = 0
-            acc = acc[None]
-            ang = ang[None]
-            quats = quats[None]
-
-        offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
-
-        # Additional acceleration if offset: a_imu = a_link + α × r + ω × (ω × r)
-        if torch.any(torch.abs(shared_metadata.offsets_pos) > gs.EPS):
-            ang_acc = shared_metadata.solver.get_links_acc_ang(links_idx=shared_metadata.links_idx)
-            if ang_acc.ndim == 2:  # n_envs = 0
-                ang_acc = ang_acc[None]
-            offset_pos_world = transform_by_quat(shared_metadata.offsets_pos, quats)
-            tangential_acc = torch.cross(ang_acc, offset_pos_world, dim=-1)
-            centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
-            acc += tangential_acc + centripetal_acc
-
-        # Subtract gravity then move to local frame. acc/ang shape: (B, n_imus, 3); local_mag is already (B, n_imus, 3)
-        # after the inverse transform, no reshape needed.
-        local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
-        local_ang = inv_transform_by_quat(ang, offset_quats)
-        local_mag = inv_transform_by_quat(shared_metadata.magnetic_field_vector, offset_quats)
-
-        # Raw-data buffer layout: (n_imus * 9, B). View into (n_imus, 3, 3, *batch_size) for the per-channel writes.
-        *batch_size, n_imus, _ = local_acc.shape
-        strided_raw = raw_data_T.view(n_imus, 3, 3, *batch_size)
-        strided_raw[:, 0].copy_(local_acc.permute(1, 2, 0))
-        strided_raw[:, 1].copy_(local_ang.permute(1, 2, 0))
-        strided_raw[:, 2].copy_(local_mag.permute(1, 2, 0))
+        _kernel_update_imu_raw_data(
+            shared_metadata.links_idx,
+            shared_metadata.offsets_pos,
+            shared_metadata.offsets_quat,
+            shared_metadata.magnetic_field_vector,
+            raw_data_T,
+            shared_metadata.solver.dyn_state,
+            shared_metadata.solver.rigid_info,
+        )
 
     @classmethod
     def _apply_transform(cls, shared_metadata: IMUSharedMetadata, data: torch.Tensor, timeline, *, is_measured: bool):
@@ -205,7 +236,7 @@ class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, No
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
         quat = self._link.get_quat(env_idx, relative=False).reshape((4,))
-        pos = self._link.get_pos(env_idx, relative=False).reshape((3,)) + transform_by_quat(self.pos_offset, quat)
+        pos = self._link.get_pos(env_idx, relative=False).reshape((3,)) + gu.transform_by_quat(self.pos_offset, quat)
 
         # cannot specify envs_idx for read() when n_envs=0
         data = self.read(env_idx)
@@ -214,10 +245,10 @@ class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, No
         mag_vec = data.mag.reshape((3,)) * self._options.debug_mag_scale
 
         # transform from local frame to world frame
-        offset_quat = transform_quat_by_quat(self.quat_offset, quat)
-        acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
-        gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat))
-        mag_vec = tensor_to_array(transform_by_quat(mag_vec, offset_quat))
+        offset_quat = gu.transform_quat_by_quat(self.quat_offset, quat)
+        acc_vec = tensor_to_array(gu.transform_by_quat(acc_vec, offset_quat))
+        gyro_vec = tensor_to_array(gu.transform_by_quat(gyro_vec, offset_quat))
+        mag_vec = tensor_to_array(gu.transform_by_quat(mag_vec, offset_quat))
 
         for debug_object in self.debug_objects:
             context.clear_debug_object(debug_object)
