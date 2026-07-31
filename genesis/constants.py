@@ -104,19 +104,20 @@ class CTRL_MODE(IntEnum):
 # rigid solver intergrator
 class integrator(IntEnum):
     """
-    Time integration scheme of the rigid solver.
+    Time integration scheme of the rigid solver. Every scheme treats joint damping implicitly, by folding it into the
+    effective mass, and they differ in what else they correct.
 
     Attributes
     ----------
     Euler : int
-        Semi-implicit Euler: positions advance with the velocity the step just produced. Cheapest per step, and needs
-        the smallest timestep to stay stable under stiff damping.
+        Semi-implicit Euler: positions advance with the velocity the step just produced. Cheapest, and free bodies take
+        that plain update.
     implicitfast : int
-        Folds damping and velocity-actuator bias into the effective mass, tolerating stiffer damping at a larger
-        timestep for the cost of inverting the mass matrix twice per step.
+        Also folds velocity-actuator bias into the effective mass and advances standalone free bodies by the implicit
+        midpoint rule, for the cost of a second mass-matrix factorization per step.
     approximate_implicitfast : int
-        Carries that same correction into the constraint and external-force accelerations, sparing the second inverse.
-        Wrong in theory, adequate in practice.
+        Carries that same correction into the constraint and external-force accelerations, so one factorization serves
+        the step. Not exact, and adequate in practice.
     """
 
     Euler = 0
