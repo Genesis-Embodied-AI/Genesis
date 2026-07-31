@@ -57,7 +57,6 @@ from .rigid.abd.misc import (
 )
 
 if TYPE_CHECKING:
-    from genesis.engine.entities import KinematicEntity
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
@@ -107,23 +106,11 @@ def _tc_get_terrain_height(
     link_quat: torch.Tensor,
     eps: float,
 ):
-    delta_x = positions[..., 0] - link_pos[..., 0]
-    delta_y = positions[..., 1] - link_pos[..., 1]
-    quat_w = link_quat[..., 0]
-    quat_x = link_quat[..., 1]
-    quat_y = link_quat[..., 2]
-    quat_z = link_quat[..., 3]
-    quat_norm = quat_w.square() + quat_x.square() + quat_y.square() + quat_z.square()
-    local_x = (
-        delta_x * (quat_x.square() + quat_w.square() - quat_y.square() - quat_z.square())
-        + delta_y * (2.0 * quat_x * quat_y + 2.0 * quat_w * quat_z)
-    ) / quat_norm
-    local_y = (
-        delta_x * (2.0 * quat_x * quat_y - 2.0 * quat_w * quat_z)
-        + delta_y * (quat_w.square() - quat_x.square() + quat_y.square() - quat_z.square())
-    ) / quat_norm
-    row = local_x / horizontal_scale
-    col = local_y / horizontal_scale
+    query_pos = torch.nn.functional.pad(positions, (0, 1))
+    query_origin = torch.nn.functional.pad(link_pos[..., :2], (0, 1))
+    local_pos = gu._tc_inv_transform_by_trans_quat(query_pos, query_origin, link_quat)
+    row = local_pos[..., 0] / horizontal_scale
+    col = local_pos[..., 1] / horizontal_scale
     row_max = height_field.shape[0] - 1
     col_max = height_field.shape[1] - 1
     is_row_finite = torch.isfinite(row)
@@ -1118,48 +1105,35 @@ class KinematicSolver(Solver):
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
 
-    def get_terrain_height(
-        self, positions, link_idx, height_field, horizontal_scale, row_boundaries, col_boundaries, envs_idx=None
-    ):
+    def get_terrain_height(self, positions, link_idx, envs_idx=None):
+        terrain = self._links[link_idx].entity
+        height_field = terrain._terrain_height_field
+        horizontal_scale = terrain._morph.horizontal_scale
+        row_boundaries = terrain._terrain_row_boundaries
+        col_boundaries = terrain._terrain_col_boundaries
+
         positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
-        if positions.ndim == 0 or positions.shape[-1] != 2:
-            gs.raise_exception(f"`positions` must have shape (..., 2), got {tuple(positions.shape)}.")
+        if positions.ndim == 0 or positions.ndim > 3 or positions.shape[-1] != 2:
+            gs.raise_exception("`positions` must have shape (2,), (n_points, 2), or (n_envs, n_points, 2).")
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         n_envs = len(envs_idx)
         is_single_position = positions.ndim == 1
-        is_per_env = False
-
-        if positions.ndim == 1:
-            positions = positions[None, None]
-        elif positions.ndim == 2:
-            positions = positions[None]
-        elif positions.ndim == 3:
-            if positions.shape[0] not in (1, n_envs):
-                gs.raise_exception(
-                    f"The leading dimension of `positions` must be 1 or {n_envs}, got {positions.shape[0]}."
-                )
-            is_per_env = positions.shape[0] == n_envs
-        else:
-            gs.raise_exception("`positions` must have shape (2,), (n_points, 2), or (n_envs, n_points, 2).")
-
-        if positions.shape[-2] == 0:
+        n_points = 1 if is_single_position else positions.shape[-2]
+        if n_points == 0:
             gs.raise_exception("`positions` must contain at least one position.")
 
-        positions = positions.contiguous()
-        n_points = positions.shape[-2]
+        is_per_env = positions.ndim == 3 and positions.shape[0] != 1
+        n_position_envs = n_envs if is_per_env else 1
+        positions = broadcast_tensor(
+            positions, gs.tc_float, (n_position_envs, n_points, 2), ("envs_idx", "positions", "")
+        ).contiguous()
+
         if gs.use_zerocopy:
             link_pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)[envs_idx, link_idx : link_idx + 1]
             link_quat = qd_to_torch(self.dyn_state.links.quat, transpose=True)[envs_idx, link_idx : link_idx + 1]
             heights = _tc_get_terrain_height(
-                positions,
-                height_field,
-                horizontal_scale,
-                row_boundaries,
-                col_boundaries,
-                link_pos,
-                link_quat,
-                gs.EPS,
+                positions, height_field, horizontal_scale, row_boundaries, col_boundaries, link_pos, link_quat, gs.EPS
             )
 
         else:

@@ -141,7 +141,6 @@ def test_get_terrain_height(n_envs, tol):
             [10.0, 20.0, 33.0, 49.0],
             [30.0, 50.0, 73.0, 99.0],
         ],
-        dtype=gs.np_float,
     )
     quat_yaw = gu.xyz_to_quat(np.array((0.0, 0.0, 90.0)), degrees=True)
 
@@ -150,20 +149,20 @@ def test_get_terrain_height(n_envs, tol):
         morph=gs.morphs.Terrain(
             pos=(2.0, -1.0, 0.3),
             quat=quat_yaw,
-            height_field=height_field,
+            batch_fixed_verts=True,
             horizontal_scale=0.5,
             vertical_scale=0.1,
-            batch_fixed_verts=True,
+            height_field=height_field,
         ),
     )
     visual_terrain = scene.add_entity(
         morph=gs.morphs.Terrain(
             pos=(30.0, 40.0, 3.0),
             quat=gu.xyz_to_quat(np.array((0.0, 0.0, 37.0)), degrees=True),
-            height_field=np.add.outer(np.arange(145), 2 * np.arange(145)).astype(gs.np_float),
+            collision=False,
             horizontal_scale=0.25,
             vertical_scale=0.01,
-            collision=False,
+            height_field=np.add.outer(np.arange(3), 2 * np.arange(3)),
         ),
         material=gs.materials.Kinematic(),
     )
@@ -178,9 +177,9 @@ def test_get_terrain_height(n_envs, tol):
     assert_allclose(initial_height, 1.3, tol=tol)
 
     visual_pose = gu.trans_quat_to_T(np.array(visual_terrain.morph.pos), np.array(visual_terrain.morph.quat))
-    visual_far_corner = visual_pose @ np.array((36.0, 36.0, 0.0, 1.0))
-    visual_height = visual_terrain.get_terrain_height(visual_far_corner[:2])
-    assert_allclose(visual_height, 7.32, tol=tol)
+    visual_position = visual_pose @ np.array((0.5, 0.25, 0.0, 1.0))
+    visual_height = visual_terrain.get_terrain_height(visual_position[:2])
+    assert_allclose(visual_height, 3.04, tol=tol)
 
     if n_envs:
         shared_positions = terrain.get_terrain_height(((2.0, -1.0), (2.0, -0.5)))

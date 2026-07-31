@@ -160,6 +160,9 @@ class KinematicEntity(Entity):
 
         self.terrain_hf: np.ndarray | None = None
         self.terrain_scale: np.ndarray | None = None
+        self._terrain_height_field: torch.Tensor | None = None
+        self._terrain_row_boundaries: torch.Tensor | None = None
+        self._terrain_col_boundaries: torch.Tensor | None = None
 
         self._load_model()
 
@@ -589,8 +592,7 @@ class KinematicEntity(Entity):
         self._terrain_height_field = torch.as_tensor(
             self.terrain_hf * self.terrain_scale[1], dtype=gs.tc_float, device=gs.device
         )
-        self._terrain_horizontal_scale = float(morph.horizontal_scale)
-        # Bucketize boundaries produce native 64-bit integer cell indices without a runtime dtype cast.
+        # Bucketization produces native 64-bit integer cell indices for advanced indexing
         self._terrain_row_boundaries = torch.arange(
             1, self.terrain_hf.shape[0] - 1, dtype=gs.tc_float, device=gs.device
         )
@@ -1972,16 +1974,16 @@ class KinematicEntity(Entity):
 
         Heights match the piecewise-planar surface on which rigid bodies rest. Terrain translation, yaw, and
         environment-specific poses are applied to the query. Positions up to one grid cell outside the terrain are
-        clamped to its edge. Non-finite positions, positions farther outside, and terrains with roll or pitch produce
-        not-a-number (NaN) heights.
+        clamped to its edge. The query returns not-a-number (NaN) heights for positions containing NaN or infinity,
+        positions farther outside, and terrains with roll or pitch.
 
         Parameters
         ----------
         positions : array_like
-            World-frame x-y positions in meters, with shape (2,), (n_points, 2), or (n_envs, n_points, 2). A
-            two-dimensional array is shared across the selected environments; use a three-dimensional array for
-            environment-specific positions. A leading dimension of 1 in the three-dimensional form is also treated as
-            shared.
+            World-frame x-y positions in meters, with shape (2,), (n_points, 2), or
+            (n_selected_envs, n_points, 2). A two-dimensional array is shared across the selected environments; use a
+            three-dimensional array for environment-specific positions. A leading dimension of 1 in the
+            three-dimensional form is also treated as shared.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
 
@@ -1994,20 +1996,12 @@ class KinematicEntity(Entity):
         Raises
         ------
         GenesisException
-            If this entity is not a terrain or `positions` is malformed.
+            If the entity type or the shape of `positions` is unsupported.
         """
-        if self.terrain_hf is None or self.terrain_scale is None:
+        if self.terrain_hf is None:
             gs.raise_exception("`get_terrain_height()` is only supported for terrain entities.")
 
-        return self._solver.get_terrain_height(
-            positions,
-            self.base_link_idx,
-            self._terrain_height_field,
-            self._terrain_horizontal_scale,
-            self._terrain_row_boundaries,
-            self._terrain_col_boundaries,
-            envs_idx,
-        )
+        return self._solver.get_terrain_height(positions, self.base_link_idx, envs_idx)
 
     @gs.assert_built
     def get_links_vel(self, links_idx_local=None, envs_idx=None):
