@@ -8,6 +8,8 @@ import pytest
 import trimesh
 from PIL import Image
 
+import coacd
+
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
@@ -842,20 +844,21 @@ def test_splashsurf_surface_reconstruction(show_viewer):
 
 
 # FIXME: This test is taking too much time on some platform (~1200s)
+# Counting the decompositions requires a cache that no earlier run has populated.
+@pytest.mark.cache(False)
 # @pytest.mark.required
-def test_convex_decompose_cache(monkeypatch):
-    # Check if the convex decomposition cache is correctly tracked regardless of the scale
+def test_convex_decompose_cache(monkeypatch, asset_tmp_path):
+    # A single decomposition must serve every mesh describing the same shape, whatever its placement: rescaled copies,
+    # and re-exports of the model whose coordinates differ only in their last significant digits.
+    n_coacd_runs = 0
+    real_run_coacd = coacd.run_coacd
 
-    # Monkeypatch the get_cvx_path function to track the cache path
-    seen_paths = []
-    real_get_cvx_path = mu.get_cvx_path
+    def counted_run_coacd(*args, **kwargs):
+        nonlocal n_coacd_runs
+        n_coacd_runs += 1
+        return real_run_coacd(*args, **kwargs)
 
-    def wrapped_get_cvx_path(verts, faces, opts):
-        path = real_get_cvx_path(verts, faces, opts)
-        seen_paths.append(path)
-        return path
-
-    monkeypatch.setattr(mu, "get_cvx_path", wrapped_get_cvx_path)
+    monkeypatch.setattr(coacd, "run_coacd", counted_run_coacd)
 
     # Monkeypatch the convex_decompose function to track the convex decomposition result
     seen_results = []
@@ -868,48 +871,44 @@ def test_convex_decompose_cache(monkeypatch):
 
     monkeypatch.setattr(mu, "convex_decompose", wrapped_convex_decompose)
 
-    # First scene building to create the cache
-    scene = gs.Scene(
-        show_viewer=False,
-    )
-    first_scale = 2.0
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/duck.obj",
-            scale=first_scale,
-            pos=(0, 0, 1.0),
-            quat=(0, 0, 0, 1),
-        ),
-    )
-    scene.build()
+    # Stretching the duck along one axis gives a shape the rest of the suite never builds, so the decomposition
+    # counted here cannot be one the in-process cache already holds. Perturbing by a fraction of the coordinate
+    # resolution of the file format then reproduces what re-exporting the model from an authoring tool does to it,
+    # while leaving the vertices welded exactly as the original ones are.
+    authored = trimesh.load_mesh(mu.get_asset_path("meshes/duck.obj"), force="mesh")
+    authored.vertices *= (1.0, 1.0, 1.37)
+    authored_path = str(asset_tmp_path / "duck_stretched.obj")
+    authored.export(authored_path)
+    reexported = authored.copy()
+    reexported.vertices += np.random.uniform(-1e-7, 1e-7, reexported.vertices.shape)
+    reexported_path = str(asset_tmp_path / "duck_stretched_reexported.obj")
+    reexported.export(reexported_path)
 
-    # Second scene building, duck with different scale, translation, and rotation
-    scene = gs.Scene(
-        show_viewer=False,
-    )
-    second_scale = 4.0
-    scene.add_entity(
-        morph=gs.morphs.Mesh(
-            file="meshes/duck.obj",
-            scale=second_scale,
-            pos=(1.0, 0, 1.0),
-            quat=(1, 0, 0, 0),
-        ),
-    )
-    scene.build()
+    SCALES = (2.0, 4.0, 8.0)
+    files = (authored_path, authored_path, reexported_path)
+    POSES = ((0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (0.0, 1.0, 1.0))
+    QUATS = ((0.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0))
+    for file, scale, pos, quat in zip(files, SCALES, POSES, QUATS):
+        scene = gs.Scene(
+            show_viewer=False,
+        )
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file=file,
+                scale=scale,
+                pos=pos,
+                quat=quat,
+            ),
+        )
+        scene.build()
 
-    assert len(seen_paths) == 2
-    assert len(seen_results) == 2
+    assert n_coacd_runs == 1
+    assert len(seen_results) == len(SCALES)
 
-    # scaled mesh should have the same cache path as the original mesh
-    cached_path = seen_paths[0]
-    scaled_path = seen_paths[-1]
-    assert cached_path == scaled_path
-
-    # check if the scaled parts match the scaled version of the original parts
+    # check if the parts of every reused decomposition match the scaled version of the original parts
     cached_parts = seen_results[0]
-    scaled_parts = seen_results[-1]
-    assert len(scaled_parts) == len(cached_parts)
-    for scaled_part, cached_part in zip(scaled_parts, cached_parts):
-        assert_allclose(scaled_part.vertices, cached_part.vertices * (second_scale / first_scale), rtol=1e-6)
-        assert_equal(scaled_part.faces, cached_part.faces)
+    for scale, parts in zip(SCALES[1:], seen_results[1:]):
+        assert len(parts) == len(cached_parts)
+        for part, cached_part in zip(parts, cached_parts):
+            assert_allclose(part.vertices, cached_part.vertices * (scale / SCALES[0]), rtol=1e-6)
+            assert_equal(part.faces, cached_part.faces)

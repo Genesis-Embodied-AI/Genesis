@@ -317,26 +317,25 @@ def test_fps_mesh_sampling_end_to_end():
     assert_allclose(np.abs(normals).max(axis=1), 1.0, tol=1e-4)
 
 
+@pytest.mark.cache(False)
 @pytest.mark.required
 def test_fps_cache_round_trip():
     mesh = trimesh.creation.box((1.0, 1.0, 1.0))
-    # Run both `return_normals` paths: first call writes the cache; second call hits it; outputs identical.
+    # Samples lie on the surface, so they follow any move of the vertices. Perturbing the mesh the way re-exporting it
+    # would, then getting the very samples of the original back, is what proves they were read from the cache.
+    reexported_verts = mesh.vertices + np.random.uniform(-1e-7, 1e-7, mesh.vertices.shape)
+    # Run both `return_normals` paths: first call writes the cache; the others hit it; outputs identical.
     for return_normals in (True, False):
         kwargs = dict(
-            verts=mesh.vertices,
             faces=mesh.faces,
             n_points=5,
             n_candidates=10,
             return_normals=return_normals,
             seed=7,
         )
-        path = pc.get_fps_pc_path(**kwargs)
-        if os.path.exists(path):
-            os.remove(path)
-        first = pc.sample_mesh_point_cloud(**kwargs, use_cache=True)
-        assert os.path.exists(path)
-        cached = pc.sample_mesh_point_cloud(**kwargs, use_cache=True)
-        assert_equal(first, cached)
+        first = pc.sample_mesh_point_cloud(verts=mesh.vertices, **kwargs, use_cache=True)
+        assert_equal(first, pc.sample_mesh_point_cloud(verts=mesh.vertices, **kwargs, use_cache=True))
+        assert_equal(first, pc.sample_mesh_point_cloud(verts=reexported_verts, **kwargs, use_cache=True))
 
 
 @pytest.mark.required
