@@ -439,6 +439,19 @@ class RigidOptions(Options):
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
+    batch_links_info : bool, optional
+        Whether link model information, such as mass and inertia, is stored separately for every parallel environment.
+        When enabled, related getters and setters include a leading environment dimension and accept environment-specific
+        values. Leave disabled when all environments share link properties to reduce memory usage. Defaults to False.
+    batch_joints_info : bool, optional
+        Whether joint model information, such as solver parameters, is stored separately for every parallel environment.
+        When enabled, related getters and setters include a leading environment dimension and accept environment-specific
+        values. Leave disabled when all environments share joint properties to reduce memory usage. Defaults to False.
+    batch_dofs_info : bool, optional
+        Whether degree-of-freedom model information, such as gains, damping, and force ranges, is stored separately for
+        every parallel environment. When enabled, related getters and setters include a leading environment dimension and
+        accept environment-specific values. Leave disabled when all environments share DOF properties to reduce memory
+        usage. Defaults to False.
     constraint_solver : gs.constraint_solver, optional
         Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
         and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.
