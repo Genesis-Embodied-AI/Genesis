@@ -1,6 +1,7 @@
 import io
 import os
 import xml.etree.ElementTree as ET
+from functools import partial
 
 import numpy as np
 import pygltflib
@@ -45,6 +46,13 @@ USD_COLOR_TOL = 1e-07
 
 
 USD_NORMALS_TOL = 1e-02
+
+
+# UsdPhysics declares every joint attribute as single precision, so an anchor, a limit or a drive gain authored in
+# double comes back rounded from a USD file and no parser can recover it. Comparing joints against the model they were
+# authored from is bounded by that rounding, whatever precision the simulation itself runs at, which is why they are
+# the only quantities not held to the session tolerance.
+USD_PHYSICS_TOL = 5e-07
 
 
 def extract_mesh(gs_mesh):
@@ -245,8 +253,8 @@ def compare_links(compared_links, usd_links, tol):
             assert_allclose(compared_link.inertial_i, usd_link.inertial_i, atol=tol, err_msg=err_msg)
 
 
-def compare_joints(compared_joints, usd_joints, tol):
-    """Compare joints between two scenes."""
+def compare_joints(compared_joints, usd_joints):
+    """Compare joints between two scenes, within what UsdPhysics can represent (see USD_PHYSICS_TOL)."""
     # Check number of joints
     assert len(compared_joints) == len(usd_joints)
 
@@ -267,34 +275,33 @@ def compare_joints(compared_joints, usd_joints, tol):
         # Compare joint properties
         assert compared_joint.type == usd_joint.type
         err_msg = f"Properties mismatched for joint type {compared_joint.type}"
+        assert_joint_allclose = partial(assert_allclose, tol=USD_PHYSICS_TOL, err_msg=err_msg)
 
-        assert_allclose(compared_joint.pos, usd_joint.pos, tol=tol, err_msg=err_msg)
-        assert_allclose(compared_joint.quat, usd_joint.quat, tol=tol, err_msg=err_msg)
+        assert_joint_allclose(compared_joint.pos, usd_joint.pos)
+        assert_joint_allclose(compared_joint.quat, usd_joint.quat)
         assert compared_joint.n_qs == usd_joint.n_qs, err_msg
         assert compared_joint.n_dofs == usd_joint.n_dofs, err_msg
 
         # Compare initial qpos
-        assert_allclose(compared_joint.init_qpos, usd_joint.init_qpos, tol=tol, err_msg=err_msg)
+        assert_joint_allclose(compared_joint.init_qpos, usd_joint.init_qpos)
 
         # Skip mass/inertia-dependent property checks for fixed joints - they're not used in simulation
         if compared_joint.type != gs.JOINT_TYPE.FIXED:
             # Compare dof limits
-            assert_allclose(compared_joint.dofs_limit, usd_joint.dofs_limit, tol=tol, err_msg=err_msg)
+            assert_joint_allclose(compared_joint.dofs_limit, usd_joint.dofs_limit)
 
             # Compare dof motion properties
-            assert_allclose(compared_joint.dofs_motion_ang, usd_joint.dofs_motion_ang, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_motion_vel, usd_joint.dofs_motion_vel, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_damping, usd_joint.dofs_damping, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature, tol=tol, err_msg=err_msg)
+            assert_joint_allclose(compared_joint.dofs_motion_ang, usd_joint.dofs_motion_ang)
+            assert_joint_allclose(compared_joint.dofs_motion_vel, usd_joint.dofs_motion_vel)
+            assert_joint_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss)
+            assert_joint_allclose(compared_joint.dofs_stiffness, usd_joint.dofs_stiffness)
+            assert_joint_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range)
+            assert_joint_allclose(compared_joint.dofs_damping, usd_joint.dofs_damping)
+            assert_joint_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature)
 
             # Compare dof control properties
-            assert_allclose(compared_joint.dofs_act_gain, usd_joint.dofs_act_gain, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_act_bias, usd_joint.dofs_act_bias, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol, err_msg=err_msg)
+            assert_joint_allclose(compared_joint.dofs_act_gain, usd_joint.dofs_act_gain)
+            assert_joint_allclose(compared_joint.dofs_act_bias, usd_joint.dofs_act_bias)
 
 
 def compare_geoms(compared_geoms, usd_geoms, tol):
@@ -355,7 +362,7 @@ def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
 
     compared_joints = [joint for entity in compared_entities for joint in entity.joints]
     usd_joints = [joint for entity in usd_entities for joint in entity.joints]
-    compare_joints(compared_joints, usd_joints, tol=tol)
+    compare_joints(compared_joints, usd_joints)
 
     compared_links = [link for entity in compared_entities for link in entity.links]
     usd_links = [link for entity in usd_entities for link in entity.links]
@@ -903,6 +910,7 @@ def all_joints_mjcf():
         name="/worldbody/base/prismatic_box_joint",
         type="slide",
         axis="0. 0. 1.",
+        pos="0.03 -0.02 0.05",
         range="-0.1 0.4",
         stiffness="50.0",
         damping="5.0",
@@ -921,6 +929,7 @@ def all_joints_mjcf():
         name="/worldbody/base/revolute_box_joint",
         type="hinge",
         axis="0. 0. 1.",
+        pos="-0.04 0.06 -0.01",
         range="-45 45",
         stiffness="50.0",
         damping="5.0",
@@ -999,6 +1008,8 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
     prismatic_box_size = to_array(prismatic_box_geom.get("size"))
     prismatic_joint = prismatic_box_body.find("joint[@name='/worldbody/base/prismatic_box_joint']")
     prismatic_range = to_array(prismatic_joint.get("range"))
+    # MJCF anchors the joint in the child body frame; USD wants that same point in each of the two body frames.
+    prismatic_anchor = to_array(prismatic_joint.get("pos"))
 
     # Revolute box
     revolute_box_body = base_body.find("body[@name='/worldbody/base/revolute_box']")
@@ -1008,6 +1019,7 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
     revolute_box_size = to_array(revolute_box_geom.get("size"))
     revolute_joint = revolute_box_body.find("joint[@name='/worldbody/base/revolute_box_joint']")
     revolute_range = to_array(revolute_joint.get("range"))
+    revolute_anchor = to_array(revolute_joint.get("pos"))
 
     # Spherical box
     spherical_box_body = base_body.find("body[@name='/worldbody/base/spherical_box']")
@@ -1073,8 +1085,8 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
     prismatic_joint_prim.CreateAxisAttr().Set("Z")
     prismatic_joint_prim.CreateLowerLimitAttr().Set(prismatic_range[0])
     prismatic_joint_prim.CreateUpperLimitAttr().Set(prismatic_range[1])
-    prismatic_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    prismatic_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    prismatic_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(*(prismatic_box_pos + prismatic_anchor)))
+    prismatic_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(*prismatic_anchor))
     prismatic_joint_prim.GetPrim().CreateAttribute("linear:stiffness", Sdf.ValueTypeNames.Float).Set(50.0)
     prismatic_joint_prim.GetPrim().CreateAttribute("linear:damping", Sdf.ValueTypeNames.Float).Set(5.0)
     prismatic_drive_api = UsdPhysics.DriveAPI.Apply(prismatic_joint_prim.GetPrim(), "linear")
@@ -1095,8 +1107,8 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
     revolute_joint_prim.CreateAxisAttr().Set("Z")
     revolute_joint_prim.CreateLowerLimitAttr().Set(revolute_range[0])
     revolute_joint_prim.CreateUpperLimitAttr().Set(revolute_range[1])
-    revolute_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
-    revolute_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    revolute_joint_prim.CreateLocalPos0Attr().Set(Gf.Vec3f(*(revolute_box_pos + revolute_anchor)))
+    revolute_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(*revolute_anchor))
     revolute_joint_prim.GetPrim().CreateAttribute("stiffness", Sdf.ValueTypeNames.Float).Set(50.0)
     revolute_joint_prim.GetPrim().CreateAttribute("angular:damping", Sdf.ValueTypeNames.Float).Set(5.0)
     revolute_drive_api = UsdPhysics.DriveAPI.Apply(revolute_joint_prim.GetPrim(), "angular")

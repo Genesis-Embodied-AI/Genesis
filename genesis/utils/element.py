@@ -1,6 +1,3 @@
-import os
-import pickle as pkl
-
 import numpy as np
 import igl
 
@@ -11,28 +8,18 @@ from . import mesh as mu
 
 def mesh_to_elements(mesh, tet_cfg=dict()):
     """Tetrahedralize a surface trimesh, with the result cached on disk keyed on vertices, faces and configuration."""
-    tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
+    cache = mu.get_tet_cache(mesh.vertices, mesh.faces, tet_cfg)
 
     # loading pre-computed cache if available
-    is_cached_loaded = False
-    if os.path.exists(tet_file_path):
+    elements = cache.load()
+    if elements is not None:
         gs.logger.debug("Tetrahedra file (`.tet`) found in cache.")
-        try:
-            with open(tet_file_path, "rb") as tet_file:
-                verts, elems = pkl.load(tet_file)
-            is_cached_loaded = True
-        except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
-            gs.logger.info("Ignoring corrupted cache.")
+        return elements
 
-    if not is_cached_loaded:
-        with gs.logger.timer(f"Tetrahedralization with configuration {tet_cfg} and generating `.tet` file:"):
-            verts, elems = mu.tetrahedralize_mesh(mesh, tet_cfg)
-
-            os.makedirs(os.path.dirname(tet_file_path), exist_ok=True)
-            with open(tet_file_path, "wb") as tet_file:
-                pkl.dump((verts, elems), tet_file)
-
-    return verts, elems
+    with gs.logger.timer(f"Tetrahedralization with configuration {tet_cfg} and generating `.tet` file:"):
+        elements = mu.tetrahedralize_mesh(mesh, tet_cfg)
+        cache.save(elements)
+    return elements
 
 
 def split_all_surface_tets(verts, elems):
