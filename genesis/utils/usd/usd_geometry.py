@@ -292,7 +292,7 @@ def parse_prim_geoms(
             elif prim.IsA(UsdGeom.Cube):
                 cube_prim = UsdGeom.Cube(prim)
                 size = cube_prim.GetSizeAttr().Get()
-                extents = np.array([size, size, size], dtype=np.float32)
+                extents = np.array([size, size, size])
                 tmesh = trimesh.creation.box(extents=extents)
                 geom_data = extents * geom_S_diag
                 geom_surface.smooth = False

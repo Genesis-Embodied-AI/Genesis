@@ -248,7 +248,9 @@ class UsdContext:
         Compute the local-to-world transformation matrix for a prim.
         """
         transform = self._xform_cache.GetLocalToWorldTransform(prim)
-        T_usd = np.asarray(transform, dtype=np.float32)  # translation on the bottom row
+        # USD composes transforms in double precision, so the matrix is kept as authored and only narrowed to the
+        # simulation precision once the pose reaches the entity: rounding it here costs the pose its last digits.
+        T_usd = np.asarray(transform)  # translation on the bottom row
         if self._is_yup:
             T_usd @= mu.Y_UP_TRANSFORM
         T_usd[:, :3] *= self._meter_scale
