@@ -1,5 +1,6 @@
 import re
 import sys
+import threading
 import time
 
 import numpy as np
@@ -304,6 +305,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     KINEMATIC_LANE_Y = 2.0
     OPTOUT_LANE_Y = 2.5
     PROBE_Z = 3.0
+    CONCURRENT_PROBES = 200
     RAY_T = 0.35
     target_offset = np.asarray(target_offset, dtype=gs.np_float)
     CAM_POS = (target_offset[0], 0.6, 1.2)
@@ -514,14 +516,46 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     )
 
     probe_dir = (0.0, 0.0, -1.0)
-    stack_hit = plugin._raycaster.cast((target_offset[0], STACK_LANE_Y, PROBE_Z), probe_dir)
+    stack_probe = (target_offset[0], STACK_LANE_Y, PROBE_Z)
+    stack_entity = target if use_visual_geom else decoy
+    stack_distance = PROBE_Z - ((TARGET_Z + 0.5 * TARGET_SIZE) if use_visual_geom else (DECOY_Z + 0.5 * DECOY_SIZE))
+    stack_position = (*stack_probe[:2], PROBE_Z - stack_distance)
+    stack_hit = plugin._raycaster.cast(stack_probe, probe_dir)
+    assert stack_hit.geom.entity is stack_entity
+    assert_allclose(stack_hit.distance, stack_distance, tol=1e-6)
+    assert_allclose(stack_hit.position, stack_position, tol=1e-6)
+
+    # A hit stays the answer to its own ray once a later cast has run, both reading the same buffers.
+    plugin._raycaster.cast((target_offset[0], OPTOUT_LANE_Y, PROBE_Z), probe_dir)
+    assert_allclose(stack_hit.position, stack_position, tol=1e-6)
+    assert stack_hit.env_idx == target_env_idx
+
+    # The plugin casts a hover ray of its own on every frame the viewer draws, which overlaps a cast issued from here
+    # wherever the viewer runs in a thread. Casting the opt-out lane alongside reproduces that overlap on every
+    # platform: it answers with another entity in one cast mode and with nothing in the other, both of which the probes
+    # below report should two casts share the hit they read back.
+    is_hovering = True
+
+    def hover():
+        while is_hovering:
+            plugin._raycaster.cast((target_offset[0], OPTOUT_LANE_Y, PROBE_Z), probe_dir)
+
+    hover_thread = threading.Thread(target=hover)
+    hover_thread.start()
+    try:
+        for _ in range(CONCURRENT_PROBES):
+            stack_hit = plugin._raycaster.cast(stack_probe, probe_dir)
+            assert stack_hit.geom.entity is stack_entity
+            assert_allclose(stack_hit.distance, stack_distance, tol=1e-6)
+        # A hover cast raising would leave the probes above running alone, hence unable to catch anything.
+        assert hover_thread.is_alive()
+    finally:
+        is_hovering = False
+        hover_thread.join()
+
     if not use_visual_geom:
-        assert stack_hit.geom.entity is decoy
-        assert_allclose(stack_hit.distance, PROBE_Z - (DECOY_Z + 0.5 * DECOY_SIZE), tol=1e-6)
         return
 
-    assert stack_hit.geom.entity is target
-    assert_allclose(stack_hit.distance, PROBE_Z - (TARGET_Z + 0.5 * TARGET_SIZE), tol=1e-6)
     kinematic_hit = plugin._raycaster.cast((target_offset[0], KINEMATIC_LANE_Y, PROBE_Z), probe_dir)
     assert kinematic_hit.geom.entity is kinematic
     assert_allclose(kinematic_hit.distance, PROBE_Z - BOX_LENGTH, tol=1e-6)

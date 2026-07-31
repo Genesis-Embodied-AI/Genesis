@@ -1,3 +1,4 @@
+from threading import Lock
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
@@ -6,7 +7,7 @@ from typing_extensions import override
 
 import genesis as gs
 from genesis.ext.pyrender.camera import OrthographicCamera
-from genesis.utils.misc import qd_to_numpy, qd_to_torch
+from genesis.utils.misc import qd_to_numpy, qd_to_torch, with_lock
 from genesis.utils.raycast import Ray, RayHit
 
 from .base import ViewerPlugin
@@ -38,7 +39,9 @@ class Raycaster:
     reduces across envs in torch to pick the closest hit. Cross-env reduction is intentionally a viewer-side concern,
     not part of the kernel, because parallel envs are otherwise meant to be isolated.
 
-    After each `cast()`, `last_hit_env_idx` exposes the env that produced the returned `RayHit` (None when no hit).
+    Casts are serialized and each outcome travels entirely in the returned `RayHit`: all callers share the result
+    buffers the kernel writes into, so the viewer thread picking under the cursor and the stepping thread casting its
+    own rays would otherwise read each other's hit.
 
     Parameters
     ----------
@@ -58,8 +61,8 @@ class Raycaster:
 
         self.scene = scene
         self.envs_idx = scene._envs_idx
-        self.last_hit_env_idx: int | None = None
         self.targets: list[RaycastTarget] = []
+        self._lock = Lock()
 
         n_envs_max = len(self.envs_idx)
         # Visual meshes exist on both solvers, while collision geometry is the rigid solver's alone.
@@ -100,6 +103,7 @@ class Raycaster:
         # Pre-compile to avoid a race condition with Quadrants on the first interactive cast.
         self.cast(ray_origin=np.zeros(3, dtype=gs.np_float), ray_direction=np.zeros(3, dtype=gs.np_float))
 
+    @with_lock
     def update(self) -> None:
         """Refresh per-env vertex positions, AABBs and rebuild every BVH."""
         from genesis.utils.raycast_qd import kernel_update_verts_and_aabbs, kernel_update_visual_aabbs
@@ -119,11 +123,14 @@ class Raycaster:
                 kernel_update_verts_and_aabbs(solver.dyn_state, target.aabb, solver.dyn_info, solver.rigid_config)
             target.bvh.build()
 
+    @with_lock
     def cast(
         self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx=None
     ) -> RayHit | None:
         """
         Cast a single ray against the BVH of each env in parallel and return the closest hit across envs and solvers.
+
+        `RayHit.env_idx` reports the env the hit comes from, None when the scene holds no parallel envs.
 
         Parameters
         ----------
@@ -141,7 +148,6 @@ class Raycaster:
         ray_origin = np.ascontiguousarray(ray_origin, dtype=gs.np_float)
         ray_direction = np.ascontiguousarray(ray_direction, dtype=gs.np_float)
         closest_hit: RayHit | None = None
-        self.last_hit_env_idx = None
         for target in self.targets:
             solver = target.solver
             is_visual = target.vfaces_mask is not None
@@ -171,13 +177,14 @@ class Raycaster:
                 continue
 
             distance = float(distances[winner])
-            position = qd_to_numpy(target.result.hit_point, row_mask=winner, keepdim=False, transpose=True)
-            normal = qd_to_numpy(target.result.normal, row_mask=winner, keepdim=False, transpose=True)
+            # These two escape into the returned hit, which outlives the lock, while the buffers they come from are
+            # rewritten by the next cast.
+            position = qd_to_numpy(target.result.hit_point, row_mask=winner, keepdim=False, transpose=True, copy=True)
+            normal = qd_to_numpy(target.result.normal, row_mask=winner, keepdim=False, transpose=True, copy=True)
             geoms = solver.vgeoms if is_visual else solver.geoms
             geom = geoms[geom_idx] if 0 <= geom_idx < len(geoms) else None
 
-            closest_hit = RayHit(distance, position, normal, geom)
-            self.last_hit_env_idx = winner if self.scene.n_envs > 0 else None
+            closest_hit = RayHit(distance, position, normal, geom, winner if self.scene.n_envs > 0 else None)
         return closest_hit
 
 
