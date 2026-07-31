@@ -85,7 +85,6 @@ def _compute_surface_mask(nx: int, ny: int, nz: int, device: torch.device) -> to
 
 @torch.jit.script
 def _apply_diffusion_and_heat_generation(
-    sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
     grid_size: torch.Tensor,
     heat_generation: list[torch.Tensor | None],
@@ -100,10 +99,9 @@ def _apply_diffusion_and_heat_generation(
     output: torch.Tensor,
 ) -> None:
     """Batched FFT semi-implicit diffusion with mirror padding (Neumann BC, no wrap-around)."""
-    n_sensors = sensor_cache_start.shape[0]
     n_batches = output.shape[-1]
-    for i_s in range(n_sensors):
-        start = sensor_cache_start[i_s]
+    start = 0
+    for i_s in range(len(cache_sizes)):
         size = cache_sizes[i_s]
         nx, ny, nz = int(grid_size[i_s][0]), int(grid_size[i_s][1]), int(grid_size[i_s][2])
         mat_idx = link_to_material_idx[links_idx[i_s]]
@@ -128,6 +126,7 @@ def _apply_diffusion_and_heat_generation(
             Q_vol = q.reshape(-1) / dz
             delta_T = dt * Q_vol / rcp
             output[start : start + size] += delta_T.unsqueeze(-1).expand(-1, n_batches)
+        start += size
 
 
 @qd.func
@@ -413,7 +412,6 @@ def _radiation_convection_delta_T(
 
 
 def _apply_radiation_convection(
-    sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
     sensor_surface_mask: list[torch.Tensor],
     voxel_volume: torch.Tensor,
@@ -432,8 +430,8 @@ def _apply_radiation_convection(
     For link_temps, links with link_to_material_idx == -1 are treated as material index 0 (default properties) for
     emissivity/rho_cp; only links with valid material are updated.
     """
-    for i_s in range(sensor_cache_start.shape[0]):
-        start = sensor_cache_start[i_s].item()
+    start = 0
+    for i_s in range(len(cache_sizes)):
         size = cache_sizes[i_s]
         mask = sensor_surface_mask[i_s].reshape(-1)
         vol = max(voxel_volume[i_s].item(), gs.EPS)
@@ -444,6 +442,7 @@ def _apply_radiation_convection(
         T_flat = output[start : start + size]
         delta = _radiation_convection_delta_T(T_flat, emiss, convection_coeff, ambient_temp, denom, dt)
         output[start : start + size] -= delta * mask.unsqueeze(-1)
+        start += size
 
     if link_temps.numel() > 0:
         valid = link_to_material_idx >= 0  # (n_links,)
@@ -456,7 +455,6 @@ def _apply_radiation_convection(
 
 
 def _apply_T_measured_filter(
-    sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
     sensor_time_const: torch.Tensor,
     dt: float,
@@ -464,8 +462,8 @@ def _apply_T_measured_filter(
     T_measured: torch.Tensor,
 ) -> None:
     """T_measured += (dt/tau)*(T - T_measured); if tau<=0 then T_measured = T. Batched over envs."""
-    for i_s in range(sensor_cache_start.shape[0]):
-        start = sensor_cache_start[i_s].item()
+    start = 0
+    for i_s in range(len(cache_sizes)):
         size = cache_sizes[i_s]
         tau = sensor_time_const[i_s].item()
         T_slice = T_actual[:, start : start + size]
@@ -475,6 +473,7 @@ def _apply_T_measured_filter(
             T_measured[:, start : start + size] = T_meas_slice + alpha * (T_slice - T_meas_slice)
         else:
             T_measured[:, start : start + size] = T_slice
+        start += size
 
 
 @dataclass
@@ -672,12 +671,12 @@ class TemperatureGridSensor(
     @classmethod
     def reset(cls, shared_metadata: TemperatureGridSensorMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
         super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
-        for i_s in range(shared_metadata.sensor_cache_start.shape[0]):
-            link_idx = shared_metadata.links_idx[i_s].item()
-            mat_idx = shared_metadata.link_to_material_idx[link_idx].item()
-            base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP][mat_idx].item()
-            start = shared_metadata.sensor_cache_start[i_s].item()
-            current_ground_truth_data_T[start : start + shared_metadata.cache_sizes[i_s], envs_idx] = base_T
+        sensors_mat_idx = shared_metadata.link_to_material_idx[shared_metadata.links_idx]
+        sensors_base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP][sensors_mat_idx]
+        start = 0
+        for i_s, size in enumerate(shared_metadata.cache_sizes):
+            current_ground_truth_data_T[start : start + size, envs_idx] = sensors_base_T[i_s]
+            start += size
         if shared_metadata.link_temps.numel() > 0:
             ambient_T = shared_metadata.ambient_temperature
             link_base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP]
@@ -704,7 +703,6 @@ class TemperatureGridSensor(
 
         # 1) Batched FFT semi-implicit diffusion + 2) Heat generation
         _apply_diffusion_and_heat_generation(
-            shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.grid_size,
             shared_metadata.heat_generation,
@@ -752,7 +750,6 @@ class TemperatureGridSensor(
         raw_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection
         _apply_radiation_convection(
-            shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.sensor_surface_mask,
             shared_metadata.voxel_volume,
@@ -787,7 +784,6 @@ class TemperatureGridSensor(
         raw = data.clone()
         previous = timeline.at(1).clone()
         _apply_T_measured_filter(
-            shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.sensor_time_const,
             shared_metadata.solver._sim.dt,
