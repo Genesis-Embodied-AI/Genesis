@@ -45,6 +45,7 @@ from .rigid_link import (
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
+    from genesis.engine.sensors.base_sensor import Sensor
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
 
@@ -157,6 +158,13 @@ class KinematicEntity(Entity):
         # Per-variant base-link offset for heterogeneous entities, primary first and aligned with '_variant_init_qpos'
         self._variant_offset_pos: list[np.ndarray] | None = None
         self._variant_offset_quat: list[np.ndarray] | None = None
+
+        # Per-env active variant index (heterogeneous only), shape (B,).
+        self._variant_idx_per_env: np.ndarray | None = None
+
+        # Sensors that sample this entity's geometry once at build (e.g. a point-cloud tactile sensor) and cannot
+        # follow a runtime variant switch; a non-empty list makes set_entity_variant raise. Populated from their build.
+        self._variant_switch_blockers: list["Sensor"] = []
 
         self.terrain_hf: np.ndarray | None = None
         self.terrain_scale: np.ndarray | None = None
@@ -2120,6 +2128,71 @@ class KinematicEntity(Entity):
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
+
+    @gs.assert_built
+    def set_entity_variant(self, variants_idx, envs_idx=None):
+        """
+        Switch which declared variant this heterogeneous entity shows per environment, at runtime.
+
+        Only valid for an entity built from a list of morphs (`scene.add_entity(morph=[m0, m1, ...])`). All
+        variants share the same kinematic tree; only their collision/visual geometry and inertial differ.
+
+        Parameters
+        ----------
+        variants_idx : int | array_like
+            Variant index/indices, like `envs_idx`: a single index (0 is the first/primary morph) switches every
+            selected environment to that variant, while an array of one index per selected environment switches
+            each independently.
+        envs_idx : None | array_like, optional
+            The environments to switch. If None, all environments are switched. Defaults to None.
+        """
+        if not self._enable_heterogeneous:
+            gs.raise_exception("`set_entity_variant` requires a heterogeneous entity built with a list of morphs.")
+        if self._scene.requires_grad:
+            gs.raise_exception(
+                "`set_entity_variant` is not supported in a differentiable simulation (`requires_grad=True`): the "
+                "variant change is not checkpointed, so backward replay would use the wrong dynamics."
+            )
+        if self._scene.visualizer.batch_renderer is not None or self._scene.visualizer.raytracer is not None:
+            gs.raise_exception(
+                "`set_entity_variant` is not supported with the batch renderer or ray tracer, whose per-variant "
+                "visibility is fixed at build time. Use the interactive viewer or a rasterizer camera for runtime "
+                "switching."
+            )
+        if self._variant_switch_blockers:
+            blocker = type(self._variant_switch_blockers[0]).__name__
+            gs.raise_exception(
+                f"`set_entity_variant` is not supported: a {blocker} samples this entity's geometry at build and "
+                "would read stale values after a switch."
+            )
+        if self._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "`set_entity_variant` is not supported with `enable_custom_vverts=True`: the custom visual vertex "
+                "buffer is tied to the build-time variant and cannot follow a switch."
+            )
+        n_variants = len(self._morph_heterogeneous) + 1
+        variants_idx = np.atleast_1d(np.asarray(variants_idx, dtype=gs.np_int))
+        if ((variants_idx < 0) | (variants_idx >= n_variants)).any():
+            gs.raise_exception(f"`variants_idx` must be in range [0, {n_variants}), got {variants_idx.tolist()}.")
+        self._solver.set_entity_variant(self, variants_idx, envs_idx)
+
+    @gs.assert_built
+    def get_entity_variant(self, envs_idx=None):
+        """
+        Return the currently-active variant index for each selected environment, shape `(n_envs,)`.
+
+        Only valid for a heterogeneous entity built from a list of morphs.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The environments to query. If None, all environments are returned. Defaults to None.
+        """
+        if not self._enable_heterogeneous:
+            gs.raise_exception("`get_entity_variant` requires a heterogeneous entity built with a list of morphs.")
+        if envs_idx is None:
+            return self._variant_idx_per_env.copy()
+        return self._variant_idx_per_env[tensor_to_array(self._scene._sanitize_envs_idx(envs_idx))]
 
     @gs.assert_built
     @tracked

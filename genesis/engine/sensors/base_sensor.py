@@ -645,6 +645,20 @@ class RigidSensorMixin(_LinkAttachedSensorMixin, Generic[RigidSensorMetadataMixi
     def _register_link(self, entity, link_idx: int):
         self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, link_idx)
 
+    def _block_variant_switch_on_tracked_heterogeneous(self, track_link_idx) -> None:
+        """
+        Register this sensor as a variant-switch blocker on the heterogeneous entity owning any of `track_link_idx`.
+
+        A sensor that samples its tracked geometry once at build (a point cloud, a link-local triangle BVH) cannot
+        follow a runtime variant switch, so it makes the entity's set_entity_variant raise instead of returning
+        readings against the outgoing variant.
+        """
+        solver = self._shared_metadata.solver
+        for link_idx in track_link_idx:
+            entity = solver.links[link_idx].entity
+            if entity._enable_heterogeneous and self not in entity._variant_switch_blockers:
+                entity._variant_switch_blockers.append(self)
+
 
 class KinematicSensorMixin(_LinkAttachedSensorMixin, Generic[KinematicSensorMetadataMixinT]):
     """

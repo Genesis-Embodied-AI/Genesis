@@ -6,6 +6,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
+from genesis.engine.solvers.base_solver import StateChange, Subscriber
 from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
 from genesis.utils.misc import tensor_to_array, qd_to_numpy
@@ -110,6 +111,9 @@ class RasterizerContext:
         self.external_nodes = dict()  # nodes added by external user
         self.seg_node_map = dict()
         self.seg_color_map = SegmentationColorMap()
+        # Wakes update_rigid when a heterogeneous entity switches variant, the one runtime change to which geom is
+        # active in which environment. Lazy, so a switch during a frame is picked up by the next render.
+        self._topology_subscriber = Subscriber(to=frozenset({StateChange.TOPOLOGY}))
 
         self.init_meshes()
 
@@ -158,6 +162,9 @@ class RasterizerContext:
             self.on_link_frame()
         if self.show_cameras:
             self.on_camera_frustum()
+
+        for solver in self._rigid_solvers():
+            solver.subscribe(self._topology_subscriber)
 
         self.on_tool()
         self.on_rigid()
@@ -422,7 +429,10 @@ class RasterizerContext:
                 for geom in geoms:
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
                     geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-                    if len(geom_envs_idx) == 0:
+                    # A heterogeneous variant inactive in every rendered env at build still gets a node (masked to no
+                    # env, via the branch below) so a later set_entity_variant can reveal it. A non-heterogeneous
+                    # geom with no rendered env is genuinely absent and skipped.
+                    if len(geom_envs_idx) == 0 and (geom.active_envs_idx is None or len(self.rendered_envs_idx) == 0):
                         continue
 
                     if "sdf" in entity.surface.vis_mode:
@@ -472,6 +482,8 @@ class RasterizerContext:
                         self.set_reflection_mat(geom_T)
 
     def update_rigid(self):
+        is_topology_changed = StateChange.TOPOLOGY in self._topology_subscriber.pending
+        self._topology_subscriber.clear()
         for solver in self._rigid_solvers():
             for entity in solver.entities:
                 if entity.surface.vis_mode == "visual":
@@ -555,14 +567,24 @@ class RasterizerContext:
 
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
                     geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-                    if len(geom_envs_idx) == 0:
-                        continue
 
-                    # Mirror on_rigid: full per-env poses for env-masked variants, compacted otherwise.
-                    if len(geom_envs_idx) < len(self.rendered_envs_idx):
+                    node = self.rigid_nodes[geom.uid]
+                    primitive = node.mesh.primitives[0]
+
+                    # A geom driven to zero active envs still takes the masked path here, to clear its stale mask.
+                    is_env_masked = len(geom_envs_idx) < len(self.rendered_envs_idx)
+                    if is_env_masked:
                         geom_T = geoms_T[geom.idx][self.rendered_envs_idx]
                     else:
                         geom_T = geoms_T[geom.idx][geom_envs_idx]
+
+                    # active_envs reaches the jit env_active buffer only through a meshes_updated rebuild, so flag one
+                    # whenever a variant switch may have moved which env each geom belongs to.
+                    if is_topology_changed:
+                        primitive.active_envs = (
+                            np.isin(self.rendered_envs_idx, geom_envs_idx) if is_env_masked else None
+                        )
+                        self._scene._meshes_updated = True
 
                     # Keep single-instance for z-axis normal planes (see on_rigid)
                     if isinstance(entity.main_morph, gs.morphs.Plane):
@@ -575,10 +597,11 @@ class RasterizerContext:
                         ):
                             geom_T = geom_T[:1]
 
-                    node = self.rigid_nodes[geom.uid]
                     node.mesh._bounds = None
-                    node.mesh.primitives[0].poses = geom_T
-                    self.jit.update_buffer(node, "model", geom_T.transpose((0, 2, 1)))
+                    primitive.poses = geom_T
+                    # A pending rebuild re-reads primitive.poses, so skip the now-redundant push.
+                    if not self._scene.meshes_updated:
+                        self.jit.update_buffer(node, "model", geom_T.transpose((0, 2, 1)))
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 

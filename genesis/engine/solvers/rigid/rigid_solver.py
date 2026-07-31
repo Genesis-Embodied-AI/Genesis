@@ -19,6 +19,7 @@ from genesis.utils.misc import (
     qd_to_torch,
     qd_to_numpy,
     qd_zero_grad,
+    tensor_to_array,
     indices_to_mask,
     broadcast_tensor,
     sanitize_indexed_tensor,
@@ -1003,61 +1004,66 @@ class RigidSolver(KinematicSolver):
 
         self.rigid_info.gravity.from_numpy(self.gravity)
 
-    def _dispatch_heterogeneous_vgeoms(self):
+    def _bind_heterogeneous_variant(self, link, variants_idx, envs_idx):
         """
-        Dispatch per-environment geom/vgeom ranges and inertial properties for heterogeneous links.
+        Extend the base vgeom bind with link's per-env collision-geom ranges and per-variant inertial.
 
-        Extends the base class (which handles vgeom-only dispatch) to also dispatch collision geom
-        ranges and per-variant inertial properties. Per-variant inertial is pre-computed during
-        link._build() from actual geom objects, using analytic formulas for primitives.
+        variants_idx is aligned with envs_idx (one target variant index per selected env). Per-variant inertial is
+        pre-computed during link._build() from the variant's geoms. A link with visual-only variants (no collision
+        geoms) falls back to the base vgeom-only bind.
         """
-        from genesis.engine.solvers.kinematic_solver import _balanced_variant_mapping
+        if link._variant_geom_ranges is None:
+            super()._bind_heterogeneous_variant(link, variants_idx, envs_idx)
+            return
 
-        for link in self.links:
-            if link._variant_vgeom_ranges is None:
-                continue
+        geom_starts = np.array([link._variant_geom_ranges[v][0] for v in variants_idx], dtype=gs.np_int)
+        geom_ends = np.array([link._variant_geom_ranges[v][1] for v in variants_idx], dtype=gs.np_int)
+        vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variants_idx], dtype=gs.np_int)
+        vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variants_idx], dtype=gs.np_int)
+        links_inertial_mass = np.array([link._variant_inertial[v][0] for v in variants_idx], dtype=gs.np_float)
+        links_inertial_pos = np.array([link._variant_inertial[v][1] for v in variants_idx], dtype=gs.np_float)
+        links_inertial_quat = np.array([link._variant_inertial[v][2] for v in variants_idx], dtype=gs.np_float)
+        links_inertial_i = np.array([link._variant_inertial[v][3] for v in variants_idx], dtype=gs.np_float)
 
-            n_variants = len(link._variant_vgeom_ranges)
-            variant_idx = _balanced_variant_mapping(n_variants, self._B)
+        kernel_update_heterogeneous_link_info(
+            link.idx,
+            envs_idx,
+            geom_starts,
+            geom_ends,
+            vgeom_starts,
+            vgeom_ends,
+            links_inertial_mass,
+            links_inertial_pos,
+            links_inertial_quat,
+            links_inertial_i,
+            self.dyn_info,
+        )
 
-            # Build per-env arrays from link's variant data
-            geom_starts = np.array([link._variant_geom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
-            geom_ends = np.array([link._variant_geom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
-            vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
-            vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
+        self._set_variant_active_envs(link.geoms, geom_starts, geom_ends, envs_idx)
+        self._set_variant_active_envs(link.vgeoms, vgeom_starts, vgeom_ends, envs_idx)
 
-            # Build per-env inertial arrays from pre-computed per-variant inertial
-            links_inertial_mass = np.array([link._variant_inertial[v][0] for v in variant_idx], dtype=gs.np_float)
-            links_inertial_pos = np.array([link._variant_inertial[v][1] for v in variant_idx], dtype=gs.np_float)
-            links_inertial_quat = np.array([link._variant_inertial[v][2] for v in variant_idx], dtype=gs.np_float)
-            links_inertial_i = np.array([link._variant_inertial[v][3] for v in variant_idx], dtype=gs.np_float)
+    def _on_variant_rebound(self, envs_idx):
+        """
+        Refresh the collider and inertia-dependent caches after a runtime variant rebind.
 
-            # Update links_info with per-environment values
-            # Note: when batch_links_info is True, the shape is (n_links, B)
-            kernel_update_heterogeneous_link_info(
-                link.idx,
-                geom_starts,
-                geom_ends,
-                vgeom_starts,
-                vgeom_ends,
-                links_inertial_mass,
-                links_inertial_pos,
-                links_inertial_quat,
-                links_inertial_i,
-                self.dyn_info,
-            )
-
-            # Set active_envs on geoms — indicates which environments each geom is active in
-            for geom in link.geoms:
-                active_envs_mask = (geom_starts <= geom.idx) & (geom.idx < geom_ends)
-                geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
-                (geom.active_envs_idx,) = np.where(active_envs_mask)
-
-            # Set active_envs on vgeoms
-            for vgeom in link.vgeoms:
-                active_envs_mask = (vgeom_starts <= vgeom.idx) & (vgeom.idx < vgeom_ends)
-                vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
-                (vgeom.active_envs_idx,) = np.where(active_envs_mask)
+        Recomputes the rest-state constraint caches (which depend on link mass/inertia a variant can change) for
+        the rebound envs, preserving the running qpos, then re-poses the newly-active geoms (including fixed ones)
+        and rebuilds the broadphase sort buffer, which the pose-only cache reset done by set_qpos leaves stale
+        after a geom-set change. Also refreshes the hibernation DOF lengths, whose rotational radius follows the
+        variant's body extent.
+        """
+        # The batched qpos/inertia caches and the collider reset sanitize their envs_idx, which rejects an explicit
+        # one on a non-parallelized scene; pass None there. `_func_update_geoms` feeds a kernel directly, so it keeps
+        # the concrete index tensor.
+        envs_idx_batched = envs_idx if self.n_envs > 0 else None
+        qs_idx = torch.arange(self.n_qs, dtype=gs.tc_int, device=gs.device)
+        qpos_cur = self.get_qpos(qs_idx=qs_idx, envs_idx=envs_idx_batched)
+        self._init_invweight_and_meaninertia(envs_idx=envs_idx_batched, force_update=True)
+        self.set_qpos(qpos_cur, qs_idx=qs_idx, envs_idx=envs_idx_batched)
+        self._func_update_geoms(envs_idx, force_update_fixed_geoms=True)
+        self.collider.reset(envs_idx_batched, cache_only=False)
+        # Reads the per-geom active-env masks the rebind just updated; a no-op unless hibernation is on.
+        self._init_dof_length()
 
     def _init_vert_fields(self):
         if self.n_verts > 0:

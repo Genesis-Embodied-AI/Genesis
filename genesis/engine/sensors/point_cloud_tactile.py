@@ -633,6 +633,11 @@ class PointCloudTactileSensorMixin(ProbeSensorMixin[PointCloudTactileSensorMetad
         # row into the just-grown pc_pos_link.
         self._shared_metadata.pc_bvh.append_sensor(pc_start_row=pc_start_row, idx_cat=idx_cat, pos_cat=pos_cat)
 
+        # TODO: Add support for tactile sensors following a runtime variant switch (subscribe and rebuild the sampled
+        # point cloud). Until then, the point cloud above is sampled from the tracked geometry as it stands at build,
+        # so block a switch of any tracked heterogeneous entity rather than silently reading the outgoing variant.
+        self._block_variant_switch_on_tracked_heterogeneous(self._options.track_link_idx)
+
     def _draw_debug_probes(
         self, context: "RasterizerContext", color_groups_fn: Callable[[list[int] | None], list[tuple]] | None = None
     ) -> tuple[list[int] | None, int, np.ndarray | None]:
@@ -1999,6 +2004,9 @@ class ElastomerTaxelSensor(
         self._shared_metadata.elastomer_geom_active_envs_mask = concat_with_tensor(
             self._shared_metadata.elastomer_geom_active_envs_mask, elastomer_geom_active_envs_mask
         )
+        # The elastomer geom indices and masks above are snapshot from the attached link's build-time variant, so
+        # block a runtime switch of its entity too (the tracked-link block comes from the point-cloud mixin build).
+        self._block_variant_switch_on_tracked_heterogeneous((self._link.idx,))
         self._shared_metadata.sensor_elastomer_geom_start = concat_with_tensor(
             self._shared_metadata.sensor_elastomer_geom_start, elastomer_geom_start_row, expand=(1,)
         )

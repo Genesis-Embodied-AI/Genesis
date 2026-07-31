@@ -8,6 +8,7 @@ from genesis.utils.misc import tensor_to_array
 
 from ..utils import (
     assert_allclose,
+    assert_equal,
     get_hf_dataset,
 )
 
@@ -69,6 +70,25 @@ def test_physics_parity(show_viewer, tol):
         )
         assert_allclose(het_obj.get_quat(relative=relative), ref_quats, tol=tol)
 
+    # Switching every environment onto the first variant rebinds both the inertial and the user frame. Mass collapses
+    # onto the first reference's, and driving the user frame to identity must land every environment on that same
+    # reference's world orientation: a user frame left on the outgoing variant would carry its offset into the world.
+    variants_idx = list(range(len(VARIANTS)))
+    assert_equal(het_obj.get_entity_variant(), variants_idx)
+    world_pos, world_quat = het_obj.get_pos(relative=False), het_obj.get_quat(relative=False)
+    het_obj.set_entity_variant(0)
+    assert_equal(het_obj.get_entity_variant(), 0)
+    assert_allclose(het_obj.get_mass(), ref_objs[0].get_mass(), tol=tol)
+    het_obj.set_quat(gu.identity_quat(), relative=True)
+    assert_allclose(het_obj.get_quat(relative=False), ref_objs[0].get_quat(relative=False), tol=tol)
+
+    # Restoring the variants and the world pose the switch was measured from puts the dynamics below back at build.
+    het_obj.set_entity_variant(variants_idx)
+    het_obj.set_quat(world_quat, relative=False)
+    het_obj.set_pos(world_pos, relative=False)
+    assert_allclose(gu.quat_to_xyz(het_obj.get_quat(relative=True)), 0.0, tol=tol)
+    assert_allclose(het_obj.get_pos(), POSITIONS, tol=tol)
+
     for _ in range(N_STEPS):
         scene.step()
 
@@ -90,7 +110,7 @@ def test_fewer_envs_than_variants():
     scene = gs.Scene(
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Plane())
+    plane = scene.add_entity(gs.morphs.Plane())
 
     # 4 variants with different positions but only 2 environments
     morphs_heterogeneous = [
@@ -100,6 +120,12 @@ def test_fewer_envs_than_variants():
         gs.morphs.Sphere(radius=0.02, pos=(0.3, 0.0, 0.25)),
     ]
     het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    # A Kinematic-material entity carries visual geometry only, so its variant rebind goes through the base solver
+    # without any collision or inertia refresh: no rigid entity can reach that path.
+    het_kinematic = scene.add_entity(
+        morph=morphs_heterogeneous,
+        material=gs.materials.Kinematic(),
+    )
 
     # Building with only 2 environments should work - each env gets a unique variant
     scene.build(n_envs=2)
@@ -109,6 +135,34 @@ def test_fewer_envs_than_variants():
     assert mass.shape == (scene.n_envs,)
     # Different box sizes should have different masses
     assert mass[0] != mass[1]
+
+    # A variant no environment was built with is still reachable at runtime, and each environment switches on its own.
+    het_obj.set_entity_variant(3, envs_idx=[0])
+    assert_equal(het_obj.get_entity_variant(), [3, 1])
+    mass_sphere_variant = het_obj.get_mass()
+    assert mass_sphere_variant[1] == mass[1]
+    assert mass_sphere_variant[0] != mass[0]
+    geom_sphere = het_obj.links[0].geoms[3]
+    assert_equal(geom_sphere.active_envs_idx, [0])
+
+    # One index per environment switches them independently, in a single call.
+    het_obj.set_entity_variant([2, 0])
+    assert_equal(het_obj.get_entity_variant(), [2, 0])
+    assert len(geom_sphere.active_envs_idx) == 0
+    assert het_obj.get_mass()[1] == mass[0]
+
+    het_kinematic.set_entity_variant(3)
+    assert_equal(het_kinematic.get_entity_variant(), 3)
+    assert_equal(het_kinematic.links[0].vgeoms[3].active_envs_idx, [0, 1])
+    assert len(het_kinematic.links[0].vgeoms[0].active_envs_idx) == 0
+
+    # A homogeneous entity declares no variant, and an index past the declared ones is out of range.
+    with pytest.raises(gs.GenesisException):
+        plane.set_entity_variant(0)
+    with pytest.raises(gs.GenesisException):
+        plane.get_entity_variant()
+    with pytest.raises(gs.GenesisException):
+        het_obj.set_entity_variant(len(morphs_heterogeneous))
 
 
 @pytest.mark.slow  # ~200s
@@ -165,6 +219,14 @@ def test_aabb(tol):
     aabb_size_sphere = aabb[2, 1] - aabb[2, 0]
     vaabb_size_sphere = vaabb[2, 1] - vaabb[2, 0]
     assert_allclose(aabb_size_sphere, vaabb_size_sphere, tol=1e-3)  # Allow small tolerance for decimation
+
+    # Switching the box environments onto the sphere variant re-poses their geoms right away, without a step: their
+    # extent becomes the sphere's while the world placement they already hold stays put.
+    het_obj.set_entity_variant(1, envs_idx=[0, 1])
+    aabb_switched = het_obj.get_AABB()
+    assert_allclose(aabb_switched[[0, 1], 1] - aabb_switched[[0, 1], 0], aabb_size_sphere, tol=gs.EPS)
+    assert_allclose(aabb_switched[[0, 1]].mean(axis=1), aabb[[0, 1]].mean(axis=1), tol=gs.EPS)
+    assert_allclose(aabb_switched[2:], aabb[2:], tol=gs.EPS)
 
 
 # 30s

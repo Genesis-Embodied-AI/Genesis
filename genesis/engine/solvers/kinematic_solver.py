@@ -16,6 +16,7 @@ from genesis.utils.misc import (
     qd_to_torch,
     qd_zero_grad,
     sanitize_indexed_tensor,
+    tensor_to_array,
 )
 
 from .base_solver import MutatedLinks, Solver, StateChange, mutates
@@ -270,12 +271,12 @@ class KinematicSolver(Solver):
         vgeoms_offset_quat = np.tile(gu.identity_quat(), (self.n_vgeoms, 1))
         for entity in self._entities:
             if links_offset_per_env and entity._variant_offset_pos is not None:
-                variant_idx = _balanced_variant_mapping(len(entity._variant_offset_pos), self._B)
+                variants_idx = _balanced_variant_mapping(len(entity._variant_offset_pos), self._B)
                 links_offset_pos[np.arange(self._B), entity.base_link_idx] = np.stack(
-                    [entity._variant_offset_pos[v] for v in variant_idx]
+                    [entity._variant_offset_pos[v] for v in variants_idx]
                 )
                 links_offset_quat[np.arange(self._B), entity.base_link_idx] = np.stack(
-                    [entity._variant_offset_quat[v] for v in variant_idx]
+                    [entity._variant_offset_quat[v] for v in variants_idx]
                 )
                 vgeoms_ranges = entity.base_link._variant_vgeom_ranges
             else:
@@ -293,6 +294,20 @@ class KinematicSolver(Solver):
             np.isclose(gu.quat_to_xyz(links_offset_quat), 0.0, atol=gs.EPS), axis=2
         ).all(axis=0)
         self._links_offset_pos_is_identity = np.all(np.isclose(links_offset_pos, 0.0, atol=gs.EPS), axis=2).all(axis=0)
+        # A heterogeneous entity can switch to any variant at runtime, so its base-link offset counts as identity only
+        # when every variant's offset is; the arrays above hold just the build-assigned subset (and none when the env
+        # count is below the variant count). set_entity_variant rebinds the values; this keeps the gate conservative.
+        for entity in self._entities:
+            if entity._variant_offset_pos is None:
+                continue
+            base_link_idx = entity.base_link_idx
+            self._links_offset_pos_is_identity[base_link_idx] &= all(
+                np.allclose(offset_pos, 0.0, atol=gs.EPS) for offset_pos in entity._variant_offset_pos
+            )
+            self._links_offset_quat_is_identity[base_link_idx] &= all(
+                np.allclose(gu.quat_to_xyz(offset_quat), 0.0, atol=gs.EPS)
+                for offset_quat in entity._variant_offset_quat
+            )
         self._links_offset_pos = self._links_offset_quat = None
         if not (self._links_offset_pos_is_identity.all() and self._links_offset_quat_is_identity.all()):
             self._links_offset_pos = torch.from_numpy(links_offset_pos).to(device=gs.device, dtype=gs.tc_float)
@@ -481,10 +496,10 @@ class KinematicSolver(Solver):
                 if entity._variant_init_qpos is None:
                     continue
                 n_variants = len(entity._variant_init_qpos)
-                variant_idx = _balanced_variant_mapping(n_variants, self._B)
+                variants_idx = _balanced_variant_mapping(n_variants, self._B)
                 q_s, q_e = entity.q_start, entity.q_start + entity.n_qs
                 for i_b in range(self._B):
-                    init_qpos[q_s:q_e, i_b] = entity._variant_init_qpos[variant_idx[i_b]]
+                    init_qpos[q_s:q_e, i_b] = entity._variant_init_qpos[variants_idx[i_b]]
 
             self.qpos0.from_numpy(init_qpos)
             is_init_qpos_out_of_bounds = False
@@ -502,23 +517,87 @@ class KinematicSolver(Solver):
         self._dispatch_heterogeneous_vgeoms()
 
     def _dispatch_heterogeneous_vgeoms(self):
-        """Override per-link vgeom ranges for heterogeneous variants. RigidSolver extends this."""
+        """Assign each env its build-time variant. RigidSolver extends the per-link bind with geoms + inertial."""
+        envs_idx = torch.arange(self._B, device=gs.device)
         for link in self.links:
             if link._variant_vgeom_ranges is None:
                 continue
+            variants_idx = _balanced_variant_mapping(len(link._variant_vgeom_ranges), self._B)
+            self._bind_heterogeneous_variant(link, variants_idx, envs_idx)
+            # All of an entity's links share one mapping; record it once for get_entity_variant.
+            link.entity._variant_idx_per_env = variants_idx
 
-            n_variants = len(link._variant_vgeom_ranges)
-            variant_idx = _balanced_variant_mapping(n_variants, self._B)
+    def _bind_heterogeneous_variant(self, link, variants_idx, envs_idx):
+        """
+        Bind link's per-env vgeom ranges to the variants in variants_idx (aligned with envs_idx).
 
-            vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
-            vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
+        Shared by build-time dispatch (all envs) and runtime `set_entity_variant` (a subset). RigidSolver extends
+        it with collision-geom ranges and per-variant inertial.
+        """
+        vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variants_idx], dtype=gs.np_int)
+        vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variants_idx], dtype=gs.np_int)
+        kernel_update_heterogeneous_links_vgeom(link.idx, envs_idx, vgeom_starts, vgeom_ends, self.dyn_info)
+        self._set_variant_active_envs(link.vgeoms, vgeom_starts, vgeom_ends, envs_idx)
 
-            kernel_update_heterogeneous_links_vgeom(link.idx, vgeom_starts, vgeom_ends, self.dyn_info)
+    def _set_variant_active_envs(self, geoms, starts, ends, envs_idx):
+        """
+        Refresh each (v)geom's per-env active mask/idx for the rebound envs; starts/ends are aligned with envs_idx.
 
-            for vgeom in link.vgeoms:
-                active_envs_mask = (vgeom_starts <= vgeom.idx) & (vgeom.idx < vgeom_ends)
-                vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
-                (vgeom.active_envs_idx,) = np.where(active_envs_mask)
+        A (v)geom is active in a rebound env when its global index falls in that env's newly-bound range. Only the
+        rebound entries of the full-B mask are overwritten, so a subset rebind leaves the other envs untouched.
+        """
+        for geom in geoms:
+            active_envs = torch.as_tensor((starts <= geom.idx) & (geom.idx < ends), device=gs.device)
+            if geom.active_envs_mask is None:
+                geom.active_envs_mask = torch.zeros(self._B, dtype=torch.bool, device=gs.device)
+            geom.active_envs_mask[envs_idx] = active_envs
+            (geom.active_envs_idx,) = np.where(tensor_to_array(geom.active_envs_mask))
+
+    @mutates(StateChange.GEOMETRY, StateChange.TOPOLOGY, links=MutatedLinks.ALL)
+    def set_entity_variant(self, entity, variants_idx, envs_idx):
+        """
+        Rebind a heterogeneous entity's active morph variant for the given envs, at runtime.
+
+        `variants_idx` is a 1D array of variant indices: a single entry (applied to every selected env) or one per
+        selected env. Reuses the build-time per-link bind, then lets `_on_variant_rebound` refresh any solver
+        caches invalidated by the swapped geometry. Announces the change over all links (a fixed link's geometry can
+        swap too), so subscribers such as the raycaster's static BVH rebuild for the new variant.
+        """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        if len(variants_idx) == 1:
+            variants_idx = np.broadcast_to(variants_idx, (len(envs_idx),))
+        elif len(variants_idx) != len(envs_idx):
+            gs.raise_exception(
+                f"`variants_idx` has length {len(variants_idx)}; expected a single index or one per selected "
+                f"environment ({len(envs_idx)})."
+            )
+        for link in entity.links:
+            if link._variant_vgeom_ranges is None:
+                continue
+            self._bind_heterogeneous_variant(link, variants_idx, envs_idx)
+        entity._variant_idx_per_env[tensor_to_array(envs_idx)] = variants_idx
+        # Rebind the base link's per-env relative-pose offset to each newly-active variant: a variant with a
+        # different morph offset or inertial-alignment frame has a different user<-world frame, and relative
+        # get/set would otherwise keep the outgoing variant's. Only divergent-offset entities have per-env storage
+        # (self._B rows); an offset-invariant entity has no per-env row to update.
+        if (
+            self._links_offset_pos is not None
+            and self._links_offset_pos.shape[0] == self._B
+            and entity._variant_offset_pos is not None
+        ):
+            base_link_idx = entity.base_link_idx
+            offset_pos = np.stack([entity._variant_offset_pos[v] for v in variants_idx])
+            offset_quat = np.stack([entity._variant_offset_quat[v] for v in variants_idx])
+            self._links_offset_pos[envs_idx, base_link_idx] = torch.as_tensor(
+                offset_pos, dtype=gs.tc_float, device=gs.device
+            )
+            self._links_offset_quat[envs_idx, base_link_idx] = torch.as_tensor(
+                offset_quat, dtype=gs.tc_float, device=gs.device
+            )
+        self._on_variant_rebound(envs_idx)
+
+    def _on_variant_rebound(self, envs_idx):
+        """Refresh solver caches invalidated by a variant rebind. Base solver has none; RigidSolver overrides."""
 
     def _init_vvert_fields(self):
         if self.n_vverts == 0:
