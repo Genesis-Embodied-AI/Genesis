@@ -23,9 +23,9 @@ class GEOM_TYPE(IntEnum):
     PLANE : int
         Half-space bounded by an infinite plane.
     SPHERE : int
-        Sphere, parameterized by a radius.
+        Sphere.
     ELLIPSOID : int
-        Ellipsoid, with one radius per axis.
+        Ellipsoid, one radius per axis.
     CYLINDER : int
         Cylinder with flat caps.
     CAPSULE : int
@@ -35,7 +35,7 @@ class GEOM_TYPE(IntEnum):
     MESH : int
         Triangle mesh, convex or decomposed into convex parts.
     TERRAIN : int
-        Heightfield sampled on a regular grid.
+        Heightfield on a regular grid.
     """
 
     # Beware PLANE must be the first geometry type as this is assumed by MPR collision detection.
@@ -59,13 +59,13 @@ class JOINT_TYPE(IntEnum):
     FIXED : int
         Rigid attachment, 0 dofs.
     REVOLUTE : int
-        Rotation about a single axis, 1 dof. Also called a hinge.
+        Hinge, 1 rotational dof.
     PRISMATIC : int
-        Translation along a single axis, 1 dof. Also called a slider.
+        Slider, 1 translational dof.
     SPHERICAL : int
-        Rotation about all three axes, 3 dofs. Also called a ball joint.
+        Ball joint, 3 rotational dofs.
     FREE : int
-        Unconstrained motion of a floating base, 6 dofs.
+        Floating base, 6 dofs.
     """
 
     FIXED = 0
@@ -77,18 +77,16 @@ class JOINT_TYPE(IntEnum):
 
 class EQUALITY_TYPE(IntEnum):
     """
-    Kind of holonomic equality constraint tying two objects together, as reported by ``RigidEquality.type``.
+    Kind of equality constraint tying two objects together, as reported by ``RigidEquality.type``.
 
     Attributes
     ----------
     CONNECT : int
-        Pins two points on different links to the same world position, removing 3 translational dofs, as a
-        ball-and-socket joint does.
+        Pins two points to the same world position, removing 3 translational dofs.
     WELD : int
         Holds two frames at a fixed relative pose, removing all 6 dofs.
     JOINT : int
-        Couples two scalar joints so that one follows the other through a quartic polynomial, removing 1 dof, as a
-        geared or linked mechanism does.
+        Couples two scalar joints through a quartic polynomial, removing 1 dof.
     """
 
     CONNECT = 0
@@ -111,14 +109,14 @@ class integrator(IntEnum):
     Attributes
     ----------
     Euler : int
-        Explicit Euler. Cheapest per step, and the scheme whose acceleration matches a finite difference of the
-        velocity exactly, at the cost of needing a smaller timestep to stay stable under stiff damping.
+        Semi-implicit Euler: positions advance with the velocity the step just produced. Cheapest per step, and needs
+        the smallest timestep to stay stable under stiff damping.
     implicitfast : int
-        Treats damping and the other passive forces implicitly in velocity, which stays stable under stiff damping at
-        a larger timestep for the cost of inverting the mass matrix twice per step.
+        Folds damping and velocity-actuator bias into the effective mass, tolerating stiffer damping at a larger
+        timestep for the cost of inverting the mass matrix twice per step.
     approximate_implicitfast : int
-        Carries the first-order implicit correction into the constraint and external-force accelerations as well, which
-        spares the second mass-matrix inverse. The approximation is wrong in theory and works well in practice.
+        Carries that same correction into the constraint and external-force accelerations, sparing the second inverse.
+        Wrong in theory, adequate in practice.
     """
 
     Euler = 0
@@ -134,11 +132,11 @@ class constraint_solver(IntEnum):
     Attributes
     ----------
     CG : int
-        Preconditioned conjugate gradient in acceleration space. Needs only matrix-vector products, never the explicit
-        Hessian, keeping its memory footprint low on scenes with very many degrees of freedom (dofs) or constraints.
+        Preconditioned conjugate gradient. Needs only matrix-vector products, never the explicit Hessian, keeping
+        memory low on scenes with very many degrees of freedom (dofs) or constraints.
     Newton : int
-        Newton steps, each solving a Cholesky factorization of the Hessian. Converges in a handful of iterations and is
-        the better choice up to moderate dof counts.
+        Newton steps on the explicit Hessian, each a Cholesky factorization. Converges in a handful of iterations and
+        is the better choice up to moderate dof counts.
     """
 
     CG = 0
@@ -241,13 +239,14 @@ class backend(IntEnum):
     cpu : int
         The host processor.
     gpu : int
-        Whichever GPU backend the platform provides: CUDA on Linux, Metal on macOS.
+        The first of ``cuda``, ``amdgpu`` and ``metal`` available on the machine, falling back to ``cpu`` with a
+        warning when none is.
     cuda : int
-        NVIDIA GPU through CUDA.
+        NVIDIA GPU.
     amdgpu : int
         AMD GPU through ROCm.
     metal : int
-        Apple GPU through Metal.
+        Apple GPU.
     """
 
     cpu = 0
