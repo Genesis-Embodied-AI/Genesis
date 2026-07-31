@@ -109,7 +109,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             # kinematic solver, whose links carry no mass.
             if ray_hit.geom is not None and isinstance(ray_hit.geom.link, RigidLink) and not ray_hit.geom.link.is_fixed:
                 link = ray_hit.geom.link
-                hit_env_idx = self._get_last_raycast_env_idx()
+                hit_env_idx = ray_hit.env_idx
                 mass = float(link.get_mass())
 
                 # Validate mass is not too small to prevent numerical instability
@@ -321,9 +321,6 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
         # Set the drag plane (perpendicular to surface normal)
         self._mouse_drag_plane = (plane_normal, -np.dot(plane_normal, self._prev_mouse_scene_pos))
-
-    def _get_last_raycast_env_idx(self) -> int | None:
-        return self._raycaster.last_hit_env_idx
 
     def _apply_spring_force(self, control_point: np.ndarray, dt: float) -> None:
         if not self._held_link:
