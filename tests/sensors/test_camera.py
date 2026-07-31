@@ -335,9 +335,9 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
 
     # Verify camera pose matches the analytical formula
     offset_T = pos_lookat_up_to_T(
-        np.array(cam_pos, dtype=np.float32),
-        np.array(cam_lookat, dtype=np.float32),
-        np.array(cam_up, dtype=np.float32),
+        np.array(cam_pos, dtype=gs.np_float),
+        np.array(cam_lookat, dtype=gs.np_float),
+        np.array(cam_up, dtype=gs.np_float),
     )
     sphere_pos = tensor_to_array(sphere.get_pos())
     sphere_quat = tensor_to_array(sphere.get_quat())
@@ -577,11 +577,11 @@ def test_raytracer_attached_without_offset_T():
     scene.build()
 
     # Attach scene-level camera with equivalent offset_T
-    cam_lookat = np.array(camera_common_options["lookat"], dtype=np.float32)
-    cam_up = np.array(camera_common_options["up"], dtype=np.float32)
+    cam_lookat = np.array(camera_common_options["lookat"], dtype=gs.np_float)
+    cam_up = np.array(camera_common_options["up"], dtype=gs.np_float)
     scene_camera.attach(
         sphere.base_link,
-        offset_T=pos_lookat_up_to_T(np.array(CAM_POS, dtype=np.float32), cam_lookat, cam_up),
+        offset_T=pos_lookat_up_to_T(np.array(CAM_POS, dtype=gs.np_float), cam_lookat, cam_up),
     )
 
     scene.step()
