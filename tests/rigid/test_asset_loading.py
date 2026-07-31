@@ -11,6 +11,7 @@ import genesis.utils.geom as gu
 from genesis.ext import urdfpy
 from genesis.utils import urdf as uu
 from genesis.utils.misc import get_assets_dir, qd_to_numpy, tensor_to_array
+from genesis.utils.procedural import build_articulated_chain
 
 from ..utils import (
     assert_allclose,
@@ -44,6 +45,44 @@ def test_depth_first_link_ordering(xml_path, model_name, show_viewer):
             subtree.append(link)
             stack.extend(children[link])
         assert sorted(subtree) == list(range(i, i + len(subtree))), f"subtree at link {i} is not contiguous"
+
+
+@pytest.mark.required
+def test_build_articulated_chain(show_viewer, tol):
+    L, R = 0.2, 0.04
+    xml_2link_mjcf = build_articulated_chain(n_links=2, link_radius=R, link_length=L, format="mjcf")
+    xml_2link_urdf = build_articulated_chain(n_links=2, link_radius=R, link_length=L, format="urdf")
+    xml_3link_mjcf = build_articulated_chain(n_links=3, link_radius=R, link_length=L, format="mjcf")
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 0.5),
+            camera_lookat=(1.0, 0.0, -0.3),
+        ),
+    )
+    arm_mjcf = scene.add_entity(gs.morphs.MJCF(file=xml_2link_mjcf))
+    # Genesis floats a URDF root and adds default joint armature; override both to match the fixed-base MJCF arm.
+    arm_urdf = scene.add_entity(
+        gs.morphs.URDF(file=xml_2link_urdf, pos=(1.0, 0.0, 0.0), fixed=True, default_armature=0.0)
+    )
+    arm_3link = scene.add_entity(gs.morphs.MJCF(file=xml_3link_mjcf, pos=(2.0, 0.0, 0.0)))
+    scene.build(n_envs=0)
+
+    # The URDF and MJCF forms load to the same links: one hinge DOF per link and equal total mass.
+    assert arm_mjcf.n_dofs == 2
+    assert arm_urdf.n_dofs == 2
+    assert_allclose(arm_urdf.get_mass(), arm_mjcf.get_mass(), tol=tol)
+    # A longer chain is heavier.
+    assert arm_3link.get_mass() > arm_mjcf.get_mass()
+
+    # Start the arm horizontal; under gravity it swings below -1.5*L, only reachable if the second link swings too.
+    arm_mjcf.set_dofs_position([np.pi / 2, 0.0], zero_velocity=True)
+    lowest_z = tensor_to_array(arm_mjcf.get_AABB())[0, 2]
+    for _ in range(60):
+        scene.step()
+        lowest_z = min(lowest_z, tensor_to_array(arm_mjcf.get_AABB())[0, 2])
+    assert lowest_z < -1.5 * L
 
 
 @pytest.mark.slow  # ~250s
