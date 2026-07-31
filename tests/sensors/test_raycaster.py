@@ -22,6 +22,8 @@ def test_hits(show_viewer, n_envs, enable_mujoco_compatibility):
     RAYCAST_BOX_SIZE = 0.1
     RAYCAST_GRID_SIZE_X = 1.0
     RAYCAST_HEIGHT = 1.0
+    GRAZE_FACE_Z = 1.0
+    GRAZE_RANGE = 1.0
 
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -108,6 +110,37 @@ def test_hits(show_viewer, n_envs, enable_mujoco_compatibility):
         ),
     )
 
+    # A ray grazing a face from just below must still find it. The face sits on a power of two, so a mount one float
+    # under it starts within half an eps, and the ray rises through the face only ten hit-distances later.
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, GRAZE_FACE_Z),
+            pos=(0.0, -RAYCAST_GRID_SIZE_X, 0.5 * GRAZE_FACE_Z),
+            fixed=True,
+        ),
+    )
+    graze_origin_z = np.nextafter(gs.np_float(GRAZE_FACE_Z), gs.np_float(0.0))
+    graze_sensor = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(-(GRAZE_RANGE + 0.5 * BOX_SIZE), -RAYCAST_GRID_SIZE_X, graze_origin_z),
+            collision=False,
+            fixed=True,
+        ),
+    )
+    graze_raycaster = scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(
+                resolution=1.0,
+                size=(0.0, 0.0),
+                direction=(1.0, 0.0, 0.1 * (GRAZE_FACE_Z - graze_origin_z) / GRAZE_RANGE),
+            ),
+            entity_idx=graze_sensor.idx,
+            max_range=2.0 * GRAZE_RANGE,
+            no_hit_value=-1.0,
+        )
+    )
+
     obstacle_1 = scene.add_entity(
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
@@ -166,6 +199,8 @@ def test_hits(show_viewer, n_envs, enable_mujoco_compatibility):
         grid_distances_ref = torch.full((*batch_shape, *NUM_RAYS_XY), RAYCAST_HEIGHT)
         grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - obstacle_pos[..., 2] - 0.5 * BOX_SIZE
         assert_allclose(grid_distances, grid_distances_ref, tol=gs.EPS)
+
+    assert_allclose(graze_raycaster.read().distances, GRAZE_RANGE, tol=gs.EPS)
 
     # Validate spherical raycast
     spherical_distances = spherical_raycaster.read().distances

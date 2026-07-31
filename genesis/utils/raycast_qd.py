@@ -73,10 +73,15 @@ def bvh_ray_cast(
     closest_distance = gs.qd_float(max_range)
     hit_normal = qd.math.vec3(0.0, 0.0, 0.0)
 
+    axes, shear, is_valid_dir = ray_projection(ray_dir, eps)
+
     # Stack for non-recursive BVH traversal
     node_stack = qd.Vector.zero(gs.qd_int, qd.static(STACK_SIZE))
     node_stack[0] = 0  # Start at root node
     stack_idx = 1
+    if not is_valid_dir:
+        # A direction too short to define a ray leaves the stack empty, reporting no hit.
+        stack_idx = 0
 
     while stack_idx > 0:
         stack_idx -= 1
@@ -98,10 +103,10 @@ def bvh_ray_cast(
                 v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
                 # Perform ray-triangle intersection
-                hit_result = ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2, eps)
+                hit_distance = ray_triangle_intersection(axes, ray_start, shear, v0, v1, v2, eps)
 
-                if hit_result.w > 0.0 and hit_result.x < closest_distance and hit_result.x >= 0.0:
-                    closest_distance = hit_result.x
+                if hit_distance >= 0.0 and hit_distance < closest_distance:
+                    closest_distance = hit_distance
                     hit_face = i_f
                     hit_normal = triangle_face_normal(v0, v1, v2)
             else:  # Internal node
@@ -115,72 +120,96 @@ def bvh_ray_cast(
 
 
 @qd.func
+def ray_projection(ray_dir: qd.types.vector(3), eps: float):
+    """
+    Axis permutation and shear mapping a ray onto +Z, shared by every triangle test of that ray.
+
+    The transform is a function of the ray alone, so two triangles sharing an edge project that edge's vertices to
+    bit-identical coordinates, leaving their tests of it identical up to the order of the two products. Permuting the
+    largest absolute direction component last bounds the shear, and swapping the first two axes when that component is
+    negative preserves the triangle winding.
+
+    Returns
+    -------
+    axes : gs.qd_ivec3
+        Permuted axis indices: the last one carries the ray, the first two span the plane the edge tests run in.
+    shear : qd.math.vec3
+        Shear along the first two axes, then the 1 / ray_dir[axes[2]] scale keeping hit distances in ray_dir units.
+    is_valid : bool
+        False for a direction too short to define a ray, whose traversal must report no hit.
+    """
+    dir_abs = qd.abs(ray_dir)
+    kz = 0
+    if dir_abs[1] > dir_abs[0]:
+        kz = 1
+    if dir_abs[2] > dir_abs[kz]:
+        kz = 2
+    kx = (kz + 1) % 3
+    ky = (kx + 1) % 3
+    if ray_dir[kz] < 0.0:
+        k_swap = kx
+        kx = ky
+        ky = k_swap
+
+    shear = qd.math.vec3(0.0, 0.0, 0.0)
+    is_valid = dir_abs[kz] > eps
+    if is_valid:
+        shear = qd.math.vec3(ray_dir[kx], ray_dir[ky], 1.0) / ray_dir[kz]
+
+    return gs.qd_ivec3(kx, ky, kz), shear, is_valid
+
+
+@qd.func
 def ray_triangle_intersection(
+    axes: qd.types.vector(3),
     ray_start: qd.types.vector(3),
-    ray_dir: qd.types.vector(3),
+    shear: qd.types.vector(3),
     v0: qd.types.vector(3),
     v1: qd.types.vector(3),
     v2: qd.types.vector(3),
     eps: float,
 ):
     """
-    Moller-Trumbore ray-triangle intersection.
+    Watertight ray-triangle intersection in the ray frame produced by ray_projection.
+
+    The ray is inside the triangle when its three edge tests agree in sign, a test within its own rounding bound
+    counting for either side. A ray crossing an edge shared by two triangles is therefore taken by both of them rather
+    than dropped through the surface, which is what an inside test on barycentric coordinates does whenever rounding
+    places the ray just outside both neighbours at once. The triangles are widened by the uncertainty of their own edge
+    tests, and by no more than that.
 
     Returns
     -------
-    result : qd.math.vec4
-        (t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
+    hit_distance : gs.qd_float
+        Distance along the ray to the intersection, -1.0 if the ray misses the triangle.
     """
-    result = qd.Vector.zero(gs.qd_float, 4)
+    hit_distance = gs.qd_float(-1.0)
 
-    edge1 = v1 - v0
-    edge2 = v2 - v0
+    # Vertices relative to the ray origin, sheared so the ray becomes +Z and the edge tests become 2D. Each of the
+    # three vectors below holds one projected coordinate of all three vertices.
+    verts_rel = qd.Matrix.cols([v0 - ray_start, v1 - ray_start, v2 - ray_start])
+    verts_along = verts_rel[axes[2], :]
+    verts_x = verts_rel[axes[0], :] - shear[0] * verts_along
+    verts_y = verts_rel[axes[1], :] - shear[1] * verts_along
+    verts_z = shear[2] * verts_along
 
-    # Begin calculating determinant - also used to calculate u parameter
-    h = ray_dir.cross(edge2)
-    a = edge1.dot(h)
+    # Twice the signed area the ray forms with each edge, weighting the vertex that edge faces and vanishing when the
+    # ray crosses it, together with the bound its two products may cancel down to. That cancellation reaches the point
+    # where the sign comes from rounding alone: each of the two triangles holding an edge rounds its own copy of the
+    # value, all the more freely as the backend compiler may contract either product into a fused multiply-add. Hence
+    # the bound, which lets an area within it count as a crossing - the verdict both triangles then reach.
+    edge_areas = verts_y.cross(verts_x)
+    edge_bound = 2.0 * eps * verts_x.norm() * verts_y.norm()
 
-    # Check all conditions in sequence without early returns
-    valid = True
+    is_crossing = not ((edge_areas < -edge_bound).any() and (edge_areas > edge_bound).any())
+    det = edge_areas.sum()
+    if is_crossing and det != 0.0:
+        # A zero determinant means the ray runs within the triangle plane, where it has no single crossing point.
+        t = edge_areas.dot(verts_z) / det
+        if t > eps:
+            hit_distance = t
 
-    t = gs.qd_float(0.0)
-    u = gs.qd_float(0.0)
-    v = gs.qd_float(0.0)
-    f = gs.qd_float(0.0)
-    s = qd.Vector.zero(gs.qd_float, 3)
-    q = qd.Vector.zero(gs.qd_float, 3)
-
-    # If determinant is near zero, ray lies in plane of triangle
-    if qd.abs(a) < eps:
-        valid = False
-
-    if valid:
-        f = gs.qd_float(1.0) / a
-        s = ray_start - v0
-        u = f * s.dot(h)
-
-        if u < 0.0 or u > 1.0:
-            valid = False
-
-    if valid:
-        q = s.cross(edge1)
-        v = f * ray_dir.dot(q)
-
-        if v < 0.0 or u + v > 1.0:
-            valid = False
-
-    if valid:
-        # At this stage we can compute t to find out where the intersection point is on the line
-        t = f * edge2.dot(q)
-
-        # Ray intersection
-        if t <= eps:
-            valid = False
-
-    if valid:
-        result = qd.math.vec4(t, u, v, gs.qd_float(1.0))
-
-    return result
+    return hit_distance
 
 
 @qd.func
@@ -194,14 +223,18 @@ def ray_aabb_intersection(
     """
     Fast ray-AABB intersection test.
 
+    Culling stays conservative, i.e. a box the ray does touch is never rejected, so that the watertight triangle test
+    of ray_triangle_intersection is reached for every crossing of the surface.
+
     Returns the t value of intersection, or -1.0 if no intersection.
     """
     result = -1.0
 
-    # Use the slab method for ray-AABB intersection
+    # Use the slab method for ray-AABB intersection. The direction is floored only to keep its reciprocal finite, at a
+    # magnitude far below any meaningful direction component: flooring at a comparable magnitude instead would
+    # overstate how fast the ray leaves the slab of a near-parallel axis, cutting the interval short of a real hit.
     sign = qd.select(ray_dir >= 0.0, 1.0, -1.0)
-    ray_dir = sign * qd.max(qd.abs(ray_dir), eps)
-    inv_dir = 1.0 / ray_dir
+    inv_dir = sign / qd.max(qd.abs(ray_dir), eps * eps)
 
     t1 = (aabb_min - ray_start) * inv_dir
     t2 = (aabb_max - ray_start) * inv_dir
@@ -216,7 +249,10 @@ def ray_aabb_intersection(
     # treats that as covering all space (t_near=0 <= t_far=+inf), so the box must be checked non-empty for the sentinel
     # to be a definitive miss regardless of platform NaN/inf comparison behavior.
     is_non_empty = aabb_min.x <= aabb_max.x and aabb_min.y <= aabb_max.y and aabb_min.z <= aabb_max.z
-    if is_non_empty and t_near <= t_far:
+    # The slab bounds carry the rounding of two operations each, so widening the interval by that much keeps culling
+    # conservative: a triangle grazed at a corner of its own box stays a candidate, which is what makes the watertight
+    # triangle test of ray_triangle_intersection reach every crossing of the surface.
+    if is_non_empty and t_near * (1.0 - 2.0 * eps) <= t_far * (1.0 + 2.0 * eps):
         result = t_near
 
     return result
@@ -484,9 +520,13 @@ def bvh_ray_cast_visual(
     closest_distance = gs.qd_float(max_range)
     hit_normal = qd.math.vec3(0.0, 0.0, 0.0)
 
+    axes, shear, is_valid_dir = ray_projection(ray_dir, eps)
+
     node_stack = qd.Vector.zero(gs.qd_int, qd.static(STACK_SIZE))
     node_stack[0] = 0
     stack_idx = 1
+    if not is_valid_dir:
+        stack_idx = 0
 
     while stack_idx > 0:
         stack_idx -= 1
@@ -503,10 +543,10 @@ def bvh_ray_cast_visual(
                 tri_vertices = get_visual_triangle_vertices(i_f, i_b, dyn_state, dyn_info)
                 v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
-                hit_result = ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2, eps)
+                hit_distance = ray_triangle_intersection(axes, ray_start, shear, v0, v1, v2, eps)
 
-                if hit_result.w > 0.0 and hit_result.x < closest_distance and hit_result.x >= 0.0:
-                    closest_distance = hit_result.x
+                if hit_distance >= 0.0 and hit_distance < closest_distance:
+                    closest_distance = hit_distance
                     hit_face = i_f
                     hit_normal = triangle_face_normal(v0, v1, v2)
             else:
