@@ -1,6 +1,6 @@
 import math
 from pathlib import PurePath
-from typing import TYPE_CHECKING, Annotated, Any, Mapping, Sequence, TypeVar, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Mapping, Sequence, TypeVar, get_args
 
 import numpy as np
 from frozendict import frozendict
@@ -205,3 +205,8 @@ else:
     ]
     PathType = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, PurePath) else v)]
     FrozenDictType = Annotated[frozendict[_K, _V], _FrozenDictValidator]
+
+
+# The frame at which a per-link quantity is expressed: the origin of the link, the center of mass of the link, or the
+# center of mass of the whole kinematic tree the link belongs to (see 'RigidSolver.get_links_root_COM').
+LinkRefFrameType = Literal["link_origin", "link_com", "root_com"]

@@ -1,5 +1,5 @@
 from itertools import starmap
-from typing import TYPE_CHECKING, Literal, NamedTuple, Sequence
+from typing import TYPE_CHECKING, NamedTuple, Sequence
 
 import numpy as np
 import torch
@@ -7,7 +7,7 @@ import torch
 import genesis as gs
 from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
-from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
+from genesis.typing import LaxPositiveFArrayType, LinkRefFrameType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
@@ -992,7 +992,7 @@ class RigidLink(KinematicLink):
         envs_idx=None,
         *,
         pos=None,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: LinkRefFrameType = "link_origin",
         local: bool = False,
     ):
         """
@@ -1026,7 +1026,7 @@ class RigidLink(KinematicLink):
         torque,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: LinkRefFrameType = "link_origin",
         local: bool = False,
     ):
         """

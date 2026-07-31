@@ -1,27 +1,30 @@
 import inspect
 import math
 import os
-from itertools import chain
-from typing import TYPE_CHECKING, Literal, Any, Hashable
 from functools import wraps
+from itertools import chain
+from typing import TYPE_CHECKING, Any, Hashable
 
 import numpy as np
 import torch
 import trimesh
 
+import quadrants as qd
+
 import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.engine.mesh import InertialProperties
+from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
+from genesis.typing import LinkRefFrameType, UnitVec4FType, Vec3FType
+from genesis.utils import array_class
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
-from genesis.typing import UnitVec4FType, Vec3FType
-from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
@@ -3462,7 +3465,7 @@ class RigidEntity(KinematicEntity):
         links_idx_local=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: LinkRefFrameType = "link_origin",
         relative=True,
     ):
         """
@@ -3493,9 +3496,7 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_links_pos(links_idx, envs_idx, ref=ref, relative=relative)
 
     @gs.assert_built
-    def get_links_vel(
-        self, links_idx_local=None, envs_idx=None, *, ref: Literal["link_origin", "link_com"] = "link_origin"
-    ):
+    def get_links_vel(self, links_idx_local=None, envs_idx=None, *, ref: LinkRefFrameType = "link_origin"):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -3505,7 +3506,7 @@ class RigidEntity(KinematicEntity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com"
+        ref: "link_origin" | "link_com" | "root_com"
             The reference point being used to expressed the velocity of each link.
 
         Returns
@@ -3534,7 +3535,7 @@ class RigidEntity(KinematicEntity):
         envs_idx=None,
         *,
         pos=None,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: LinkRefFrameType = "link_origin",
         local: bool = False,
     ):
         """
@@ -3572,7 +3573,7 @@ class RigidEntity(KinematicEntity):
         links_idx_local=None,
         envs_idx=None,
         *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        ref: LinkRefFrameType = "link_origin",
         local: bool = False,
     ):
         """
