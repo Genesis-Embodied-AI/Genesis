@@ -100,7 +100,7 @@ def _offset_world_shift(offset_pos, offset_quat, world_quat):
 def _tc_get_terrain_height(
     positions: torch.Tensor,
     height_field: torch.Tensor,
-    horizontal_scale: torch.Tensor,
+    horizontal_scale: float,
     row_boundaries: torch.Tensor,
     col_boundaries: torch.Tensor,
     link_pos: torch.Tensor,
@@ -122,22 +122,25 @@ def _tc_get_terrain_height(
         delta_x * (2.0 * quat_x * quat_y - 2.0 * quat_w * quat_z)
         + delta_y * (quat_w.square() - quat_x.square() + quat_y.square() - quat_z.square())
     ) / quat_norm
-    row = local_x / horizontal_scale[0]
-    col = local_y / horizontal_scale[0]
+    row = local_x / horizontal_scale
+    col = local_y / horizontal_scale
     row_max = height_field.shape[0] - 1
     col_max = height_field.shape[1] - 1
-    has_invalid_query = (
-        (link_quat[..., 1:3].abs() > eps).any()
-        | (~torch.isfinite(row)).any()
-        | (~torch.isfinite(col)).any()
-        | (row < -eps).any()
-        | (row > row_max + eps).any()
-        | (col < -eps).any()
-        | (col > col_max + eps).any()
+    is_row_finite = torch.isfinite(row)
+    is_col_finite = torch.isfinite(col)
+    is_valid = (
+        (link_quat[..., 1].abs() <= eps)
+        & (link_quat[..., 2].abs() <= eps)
+        & is_row_finite
+        & is_col_finite
+        & (row >= -1.0)
+        & (row <= float(row_max + 1))
+        & (col >= -1.0)
+        & (col <= float(col_max + 1))
     )
 
-    row = row.clamp(0.0, float(row_max))
-    col = col.clamp(0.0, float(col_max))
+    row = torch.where(is_row_finite, row, torch.zeros_like(row)).clamp(0.0, float(row_max))
+    col = torch.where(is_col_finite, col, torch.zeros_like(col)).clamp(0.0, float(col_max))
     i_row = torch.bucketize(row, row_boundaries, right=True)
     i_col = torch.bucketize(col, col_boundaries, right=True)
     frac_row = row - i_row
@@ -150,7 +153,7 @@ def _tc_get_terrain_height(
     first = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00)
     second = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11)
     heights = torch.where(frac_row + frac_col <= 1.0, first, second) + link_pos[..., 2]
-    return heights, has_invalid_query
+    return heights.masked_fill(~is_valid, float("nan"))
 
 
 def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges):
@@ -1116,14 +1119,7 @@ class KinematicSolver(Solver):
         self._is_forward_vel_updated = True
 
     def get_terrain_height(
-        self,
-        positions,
-        link_idx,
-        height_field,
-        horizontal_scale,
-        row_boundaries,
-        col_boundaries,
-        envs_idx=None,
+        self, positions, link_idx, height_field, horizontal_scale, row_boundaries, col_boundaries, envs_idx=None
     ):
         positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
         if positions.ndim == 0 or positions.shape[-1] != 2:
@@ -1155,7 +1151,7 @@ class KinematicSolver(Solver):
         if gs.use_zerocopy:
             link_pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)[envs_idx, link_idx : link_idx + 1]
             link_quat = qd_to_torch(self.dyn_state.links.quat, transpose=True)[envs_idx, link_idx : link_idx + 1]
-            heights, has_invalid_query = _tc_get_terrain_height(
+            heights = _tc_get_terrain_height(
                 positions,
                 height_field,
                 horizontal_scale,
@@ -1165,37 +1161,25 @@ class KinematicSolver(Solver):
                 link_quat,
                 gs.EPS,
             )
-            if has_invalid_query:
-                gs.raise_exception(
-                    "`positions` must be finite and inside the terrain bounds, and the terrain must not have roll or "
-                    "pitch."
-                )
 
         else:
             heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
-            invalid = torch.zeros(1, dtype=gs.tc_int, device=gs.device)
             kernel_get_terrain_height(
                 envs_idx,
                 link_idx,
+                horizontal_scale,
                 positions,
                 height_field,
-                horizontal_scale,
                 heights,
-                invalid,
                 self.dyn_state,
                 self.rigid_info,
                 self.rigid_config,
                 is_per_env,
             )
-            if invalid[0]:
-                gs.raise_exception(
-                    "`positions` must be finite and inside the terrain bounds, and the terrain must not have roll or "
-                    "pitch."
-                )
 
         if self.n_envs == 0:
             heights = heights[0]
-        if is_single_position or (is_per_env and n_points == 1):
+        if is_single_position:
             heights = heights[..., 0]
         return heights
 

@@ -160,10 +160,6 @@ class KinematicEntity(Entity):
 
         self.terrain_hf: np.ndarray | None = None
         self.terrain_scale: np.ndarray | None = None
-        self._terrain_height_field: torch.Tensor | None = None
-        self._terrain_horizontal_scale: torch.Tensor | None = None
-        self._terrain_row_boundaries: torch.Tensor | None = None
-        self._terrain_col_boundaries: torch.Tensor | None = None
 
         self._load_model()
 
@@ -590,6 +586,17 @@ class KinematicEntity(Entity):
     def _load_terrain(self, morph, surface):
         vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
+        self._terrain_height_field = torch.as_tensor(
+            self.terrain_hf * self.terrain_scale[1], dtype=gs.tc_float, device=gs.device
+        )
+        self._terrain_horizontal_scale = float(morph.horizontal_scale)
+        # Bucketize boundaries produce native 64-bit integer cell indices without a runtime dtype cast.
+        self._terrain_row_boundaries = torch.arange(
+            1, self.terrain_hf.shape[0] - 1, dtype=gs.tc_float, device=gs.device
+        )
+        self._terrain_col_boundaries = torch.arange(
+            1, self.terrain_hf.shape[1] - 1, dtype=gs.tc_float, device=gs.device
+        )
 
         g_infos = []
         if morph.visualization:
@@ -1959,48 +1966,38 @@ class KinematicEntity(Entity):
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def get_height(self, positions, envs_idx=None):
+    def get_terrain_height(self, positions, envs_idx=None):
         """
-        Return terrain surface heights in meters at world-frame XY positions.
+        Return terrain surface heights in meters at world-frame x-y positions.
 
         Heights match the piecewise-planar surface on which rigid bodies rest. Terrain translation, yaw, and
-        environment-specific poses are applied to the query.
+        environment-specific poses are applied to the query. Positions up to one grid cell outside the terrain are
+        clamped to its edge. Non-finite positions, positions farther outside, and terrains with roll or pitch produce
+        not-a-number (NaN) heights.
 
         Parameters
         ----------
         positions : array_like
-            World-frame XY positions in meters, with shape (2,), (n_points, 2), or (n_envs, n_points, 2). A 2D array
-            is shared across the selected environments; use a 3D array for environment-specific positions. A leading
-            dimension of 1 in the 3D form is also treated as shared.
+            World-frame x-y positions in meters, with shape (2,), (n_points, 2), or (n_envs, n_points, 2). A
+            two-dimensional array is shared across the selected environments; use a three-dimensional array for
+            environment-specific positions. A leading dimension of 1 in the three-dimensional form is also treated as
+            shared.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
         heights : torch.Tensor
-            World-frame surface heights in meters. The point dimensions match `positions`, with an environment
-            dimension prepended in a parallelized scene.
+            World-frame surface heights in meters. The point dimension is preserved except for an explicit `(2,)`
+            input, and an environment dimension is prepended in a parallelized scene.
 
         Raises
         ------
         GenesisException
-            If this entity is not a terrain, the positions are malformed, non-finite, or outside the terrain, or the
-            terrain has roll or pitch.
+            If this entity is not a terrain or `positions` is malformed.
         """
         if self.terrain_hf is None or self.terrain_scale is None:
-            gs.raise_exception("`get_height()` is only supported for terrain entities.")
-        if self._terrain_height_field is None or self._terrain_horizontal_scale is None:
-            height_field = self.terrain_hf * self.terrain_scale[1]
-            self._terrain_height_field = torch.as_tensor(height_field, dtype=gs.tc_float, device=gs.device).contiguous()
-            self._terrain_horizontal_scale = torch.as_tensor(
-                self.terrain_scale[:1], dtype=gs.tc_float, device=gs.device
-            ).contiguous()
-            self._terrain_row_boundaries = torch.arange(
-                1, self.terrain_hf.shape[0] - 1, dtype=gs.tc_float, device=gs.device
-            )
-            self._terrain_col_boundaries = torch.arange(
-                1, self.terrain_hf.shape[1] - 1, dtype=gs.tc_float, device=gs.device
-            )
+            gs.raise_exception("`get_terrain_height()` is only supported for terrain entities.")
 
         return self._solver.get_terrain_height(
             positions,

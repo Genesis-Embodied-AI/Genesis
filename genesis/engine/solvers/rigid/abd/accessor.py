@@ -1044,11 +1044,10 @@ def kernel_get_links_acc(
 def kernel_get_terrain_height(
     envs_idx: qd.types.ndarray(),
     link_idx: qd.i32,
+    horizontal_scale: float,
     positions: qd.types.ndarray(),
     height_field: qd.types.ndarray(),
-    horizontal_scale: qd.types.ndarray(),
     heights: qd.types.ndarray(),
-    invalid: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
@@ -1063,21 +1062,19 @@ def kernel_get_terrain_height(
         link_quat = dyn_state.links.quat[link_idx, i_b]
         query_pos = qd.Vector([positions[i_b_pos, i_p, 0], positions[i_b_pos, i_p, 1], link_pos[2]], dt=gs.qd_float)
         local_pos = gu.qd_inv_transform_by_trans_quat(query_pos, link_pos, link_quat)
-        row = local_pos[0] / horizontal_scale[0]
-        col = local_pos[1] / horizontal_scale[0]
+        row = local_pos[0] / horizontal_scale
+        col = local_pos[1] / horizontal_scale
         row_max = height_field.shape[0] - 1
         col_max = height_field.shape[1] - 1
 
         is_valid = (
             qd.abs(link_quat[1]) <= EPS
             and qd.abs(link_quat[2]) <= EPS
-            and row >= -EPS
-            and row <= row_max + EPS
-            and col >= -EPS
-            and col <= col_max + EPS
+            and row >= -1.0
+            and row <= row_max + 1
+            and col >= -1.0
+            and col <= col_max + 1
         )
-        if not is_valid:
-            qd.atomic_or(invalid[0], 1)
         if is_valid:
             row = qd.min(qd.max(row, 0.0), qd.cast(row_max, gs.qd_float))
             col = qd.min(qd.max(col, 0.0), qd.cast(col_max, gs.qd_float))
@@ -1090,14 +1087,12 @@ def kernel_get_terrain_height(
             h10 = height_field[i_row + 1, i_col]
             h01 = height_field[i_row, i_col + 1]
             h11 = height_field[i_row + 1, i_col + 1]
-            height = gs.qd_float(0.0)
             if frac_row + frac_col <= 1.0:
-                height = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00)
+                heights[i_b_, i_p] = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00) + link_pos[2]
             else:
-                height = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11)
-            heights[i_b_, i_p] = height + link_pos[2]
+                heights[i_b_, i_p] = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11) + link_pos[2]
         else:
-            heights[i_b_, i_p] = 0.0
+            heights[i_b_, i_p] = qd.math.nan
 
 
 @qd.kernel(fastcache=True)
