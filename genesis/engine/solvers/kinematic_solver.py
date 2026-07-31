@@ -1107,10 +1107,6 @@ class KinematicSolver(Solver):
 
     def get_terrain_height(self, positions, link_idx, envs_idx=None):
         terrain = self._links[link_idx].entity
-        height_field = terrain._terrain_height_field
-        horizontal_scale = terrain._morph.horizontal_scale
-        row_boundaries = terrain._terrain_row_boundaries
-        col_boundaries = terrain._terrain_col_boundaries
 
         positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
         if positions.ndim == 0 or positions.ndim > 3 or positions.shape[-1] != 2:
@@ -1127,13 +1123,20 @@ class KinematicSolver(Solver):
         n_position_envs = n_envs if is_per_env else 1
         positions = broadcast_tensor(
             positions, gs.tc_float, (n_position_envs, n_points, 2), ("envs_idx", "positions", "")
-        ).contiguous()
+        )
 
         if gs.use_zerocopy:
-            link_pos = qd_to_torch(self.dyn_state.links.pos, transpose=True)[envs_idx, link_idx : link_idx + 1]
-            link_quat = qd_to_torch(self.dyn_state.links.quat, transpose=True)[envs_idx, link_idx : link_idx + 1]
+            link_pos = qd_to_torch(self.dyn_state.links.pos, envs_idx, link_idx, transpose=True)
+            link_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, link_idx, transpose=True)
             heights = _tc_get_terrain_height(
-                positions, height_field, horizontal_scale, row_boundaries, col_boundaries, link_pos, link_quat, gs.EPS
+                positions,
+                terrain._terrain_height_field,
+                terrain._morph.horizontal_scale,
+                terrain._terrain_row_boundaries,
+                terrain._terrain_col_boundaries,
+                link_pos,
+                link_quat,
+                gs.EPS,
             )
 
         else:
@@ -1141,9 +1144,9 @@ class KinematicSolver(Solver):
             kernel_get_terrain_height(
                 envs_idx,
                 link_idx,
-                horizontal_scale,
-                positions,
-                height_field,
+                terrain._morph.horizontal_scale,
+                positions.contiguous(),
+                terrain._terrain_height_field,
                 heights,
                 self.dyn_state,
                 self.rigid_info,

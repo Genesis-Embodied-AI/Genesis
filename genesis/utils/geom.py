@@ -1367,6 +1367,7 @@ def inv_transform_by_quat(pos, quat):
 
 
 def inv_transform_by_trans_quat(pos, trans, quat):
+    # FIXME: Compile chains of public geometry helpers without dedicated backend-specific wrappers
     if all(isinstance(e, torch.Tensor) for e in (pos, trans, quat)):
         return _tc_inv_transform_by_trans_quat(pos, trans, quat)
     return inv_transform_by_quat(pos - trans, quat)
