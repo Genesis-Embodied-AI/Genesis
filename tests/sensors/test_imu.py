@@ -173,13 +173,15 @@ def test_sensor(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_resolution_only_quantizes(show_viewer, n_envs):
+def test_lone_sensor_resolution_and_offset_setter(show_viewer, n_envs):
     # IMU with only `*_resolution` set (no other noise/delay) returns acceleration components quantized to that
-    # resolution.
+    # resolution. Being the only sensor of its class, this scene also covers the per-sensor metadata tables in the
+    # configuration where a single entry spans the whole batch.
+    GRAVITY = -10.0
     RESOLUTION = 0.5
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, -10.0),
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -192,7 +194,7 @@ def test_resolution_only_quantizes(show_viewer, n_envs):
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
-            pos=(0.0, 0.0, 0.2),
+            pos=(0.0, 0.0, 0.05),
         ),
     )
     imu = scene.add_sensor(
@@ -202,9 +204,17 @@ def test_resolution_only_quantizes(show_viewer, n_envs):
         ),
     )
     scene.build(n_envs=n_envs)
-    for _ in range(3):
+    # Step until the contact force balances gravity: a free-falling sensor reads zero, which quantizes trivially
+    for _ in range(8):
         scene.step()
 
     measured = imu.read().lin_acc
     remainders = (measured / RESOLUTION) - torch.round(measured / RESOLUTION)
     assert_allclose(remainders, 0.0, tol=gs.EPS)
+
+    # At rest the accelerometer measures proper acceleration, i.e. gravity reversed and expressed in the sensor frame,
+    # so rotating the sensor frame by 90 degrees about X moves it from +Z to +Y.
+    assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=RESOLUTION)
+    imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
+    scene.step()
+    assert_allclose(imu.read().lin_acc, (0.0, -GRAVITY, 0.0), tol=RESOLUTION)

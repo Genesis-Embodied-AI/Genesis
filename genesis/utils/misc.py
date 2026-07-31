@@ -477,7 +477,9 @@ def concat_with_tensor(
         and all(e_1 == e_2 for i, (e_1, e_2) in enumerate(zip(tensor.shape, value.shape)) if e_1 > 0 and i != dim)
     )
     if tensor.numel() == 0:
-        return value
+        # 'expand' leaves a zero stride on the broadcast dimensions, so materialize to get a real table supporting
+        # in-place writes on a subset of the rows and usable as a kernel argument
+        return value.contiguous()
     return torch.cat([tensor, value], dim=dim)
 
 
