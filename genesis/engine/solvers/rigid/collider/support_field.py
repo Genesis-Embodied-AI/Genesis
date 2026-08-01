@@ -20,6 +20,14 @@ class SupportField:
         self._is_active = False
 
     def _get_direction_grid(self):
+        """
+        Unit direction of every cell of the two spherical charts, as [chart, azimuth, polar].
+
+        A spherical chart cannot resolve the azimuth of a direction along its own polar axis, and which of the tied
+        support vertices of such a direction wins then depends on the signs of zeros, hence on how the whole scene is
+        oriented. The second chart carries its poles a quarter turn away, so every direction is at least 45 degrees
+        off the poles of whichever chart answers for it, and no lookup is ever resolved by a chart degenerate there.
+        """
         support_res = self._support_res
         theta = np.arange(support_res) / support_res * 2 * math.pi - math.pi
         phi = np.arange(support_res) / support_res * math.pi
@@ -32,7 +40,18 @@ class SupportField:
         y = np.sin(spherical_coords[:, :, 1]) * np.sin(spherical_coords[:, :, 0])
         z = np.cos(spherical_coords[:, :, 1])
         v = np.stack((x, y, z), axis=-1)
-        return v
+
+        # The second chart is the first one turned a quarter turn about x, which carries its poles onto +/- y. A chart
+        # answers only for the directions it is at least 45 degrees off its own poles for, so only that equatorial
+        # band of rows is ever read and only it is stored, one guard row either side for the neighbours the lookup
+        # reads. The two bands together hold about as many cells as the single full chart they replace.
+        band_start, band_rows = self._polar_band()
+        band = slice(band_start, band_start + band_rows)
+        return np.stack((v[:, band], np.stack((x, z, -y), axis=-1)[:, band]))
+
+    def _polar_band(self):
+        """First stored polar row of a chart, and how many rows it stores."""
+        return self._support_res // 4 - 1, self._support_res // 2 + 3
 
     def activate(self) -> None:
         if self.is_active:
@@ -121,10 +140,35 @@ def _func_support_world(
     support position for a world direction
     """
 
-    d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
     v_, vid = _func_support_mesh(i_g, d_mesh, collider_info)
-    v = gu.qd_transform_by_trans_quat(v_, pos, quat)
+    v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
     return v, v_, vid
+
+
+@qd.func
+def _func_direction_grid_coords(d_mesh, support_res):
+    """
+    Chart of a mesh-frame direction and its continuous cell coordinates within that chart.
+
+    The chart whose polar axis the direction is least aligned with answers, which leaves it at least 45 degrees off
+    that chart's poles since the smaller of the two alignments never exceeds one over root two. The azimuth is then
+    always well conditioned, so a direction along one of the geom's own axes - the normal of a face resting flat,
+    whose support vertices tie - is resolved by a chart that has no degeneracy there, and a geom and any rotated copy
+    of it pick the same vertex.
+    """
+    i_chart = gs.qd_int(0)
+    d_chart = d_mesh
+    if qd.abs(d_mesh[2]) > qd.abs(d_mesh[1]):
+        # The first chart's poles sit on +/- z, so a direction closer to them is handed to the second chart, whose
+        # own coordinates see it a quarter turn away.
+        i_chart = 1
+        d_chart = qd.Vector([d_mesh[0], -d_mesh[2], d_mesh[1]], dt=gs.qd_float)
+
+    theta = qd.atan2(d_chart[1], d_chart[0])  # [-pi, pi]
+    phi = qd.acos(d_chart[2])  # [0, pi]
+
+    return i_chart, (theta + math.pi) / math.pi / 2 * support_res, phi / math.pi * support_res
 
 
 @qd.func
@@ -132,16 +176,14 @@ def _func_support_mesh(i_g, d_mesh, collider_info: array_class.ColliderInfo):
     """
     support point at mesh frame coordinate.
     """
-    theta = qd.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
-    phi = qd.acos(d_mesh[2])  # [0, pi]
-
     support_res = collider_info.support_field.support_res[None]
     dot_max = gs.qd_float(-1e20)
     v = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
     vid = 0
 
-    ii = (theta + math.pi) / math.pi / 2 * support_res
-    jj = phi / math.pi * support_res
+    band_start, band_rows = support_res // 4 - 1, support_res // 2 + 3
+    i_chart, ii, jj = _func_direction_grid_coords(d_mesh, support_res)
+    chart_start = gs.qd_int(collider_info.support_field.support_cell_start[i_g] + i_chart * support_res * band_rows)
 
     for i4 in range(4):
         i, j = gs.qd_int(0), gs.qd_int(0)
@@ -151,15 +193,11 @@ def _func_support_mesh(i_g, d_mesh, collider_info: array_class.ColliderInfo):
             i = gs.qd_int(qd.math.floor(ii)) % support_res
 
         if i4 // 2 > 0:
-            j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
-            if j == support_res - 1:
-                j = support_res - 2
+            j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj) - band_start, 0, band_rows - 1))
         else:
-            j = gs.qd_int(qd.math.clamp(qd.math.floor(jj), 0, support_res - 1))
-            if j == 0:
-                j = 1
+            j = gs.qd_int(qd.math.clamp(qd.math.floor(jj) - band_start, 0, band_rows - 1))
 
-        support_idx = gs.qd_int(collider_info.support_field.support_cell_start[i_g] + i * support_res + j)
+        support_idx = gs.qd_int(chart_start + i * band_rows + j)
         _vid = collider_info.support_field.support_vid[support_idx]
         pos = collider_info.support_field.support_v[support_idx]
         dot = pos.dot(d_mesh)
@@ -295,7 +333,7 @@ def _func_support_box(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4),
     )
     vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
     vid += dyn_info.geoms.vert_start[i_g]
-    v = gu.qd_transform_by_trans_quat(v_, pos, quat)
+    v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
     return v, v_, vid
 
 
@@ -305,7 +343,7 @@ def _func_count_supports_world(i_g, d, quat: qd.types.vector(4), collider_info: 
     Count the number of valid support points for the given world direction.
     Only needs quat since counting doesn't depend on position.
     """
-    d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
     return _func_count_supports_mesh(i_g, d_mesh, collider_info)
 
 
@@ -320,14 +358,12 @@ def _func_count_supports_mesh(i_g, d_mesh, collider_info: array_class.ColliderIn
     deduplication the same vertex is counted multiple times, inflating the count and triggering
     unnecessary perturbation in safe_gjk_support.
     """
-    theta = qd.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
-    phi = qd.acos(d_mesh[2])  # [0, pi]
-
     support_res = collider_info.support_field.support_res[None]
     dot_max = gs.qd_float(-1e20)
 
-    ii = (theta + math.pi) / math.pi / 2 * support_res
-    jj = phi / math.pi * support_res
+    band_start, band_rows = support_res // 4 - 1, support_res // 2 + 3
+    i_chart, ii, jj = _func_direction_grid_coords(d_mesh, support_res)
+    chart_start = gs.qd_int(collider_info.support_field.support_cell_start[i_g] + i_chart * support_res * band_rows)
 
     # Collect unique cells, deduplicating floor == ceil collisions
     cell_idx = qd.Vector([-1, -1, -1, -1], dt=gs.qd_int)
@@ -342,15 +378,11 @@ def _func_count_supports_mesh(i_g, d_mesh, collider_info: array_class.ColliderIn
             i = gs.qd_int(qd.math.floor(ii)) % support_res
 
         if i4 // 2 > 0:
-            j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
-            if j == support_res - 1:
-                j = support_res - 2
+            j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj) - band_start, 0, band_rows - 1))
         else:
-            j = gs.qd_int(qd.math.clamp(qd.math.floor(jj), 0, support_res - 1))
-            if j == 0:
-                j = 1
+            j = gs.qd_int(qd.math.clamp(qd.math.floor(jj) - band_start, 0, band_rows - 1))
 
-        support_idx = gs.qd_int(collider_info.support_field.support_cell_start[i_g] + i * support_res + j)
+        support_idx = gs.qd_int(chart_start + i * band_rows + j)
 
         # Skip duplicate cells (from floor == ceil on integer indices).
         is_dup = False

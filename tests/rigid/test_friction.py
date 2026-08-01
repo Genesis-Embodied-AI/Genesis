@@ -8,6 +8,7 @@ import genesis.utils.geom as gu
 
 from ..utils import (
     assert_allclose,
+    assert_equal,
     get_hf_dataset,
     simulate_and_check_mujoco_consistency,
 )
@@ -522,19 +523,29 @@ def test_rolling_friction_deceleration_rate(friction_cone, n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("contact_resolution", [gs.contact_resolution.convex, gs.contact_resolution.signorini])
-def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer):
+def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer, tol):
     N_ENVS = 8
     FRICTION = 0.5
     BOX_POS = (0.0, 0.0, 0.05)
+    BOX_SIZE = (0.1, 0.2, 0.1)
+    # The pillar pushes the box below its centre of mass so the box slides rather than tipping: pushing level with it
+    # leaves the box on the verge of lifting a leading corner, where each env's own rounding decides where it settles.
+    PILLAR_HEIGHT = 0.04
+    PILLAR_RADIUS = 0.0316
     # Pusher path in the box's local frame; the shared +y offset gives the push a lever arm that spins the box.
-    PUSH_START_LOCAL = (-0.15, 0.03, 0.05)
-    PUSH_END_LOCAL = (0.02, 0.03, 0.05)
-    # FIXME(#3127): the box-cylinder manifold places its interior contact point at a yaw-dependent height, so the push
-    # carries an orientation-dependent lever arm that the friction model cannot undo. 'convex' keeps bouncing the box
-    # off the plane, which makes that contact intermittent and averages the bias away, while 'signorini' holds the box
-    # down and feels it every step - hence the looser bound here. Restore the shared tolerance once the manifold is
-    # isotropic; a sphere, whose manifold is a single point, already brings both resolutions to 1e-6.
-    POSE_TOL = 2e-4 if contact_resolution == gs.contact_resolution.convex else 1e-3
+    PUSH_START_LOCAL = (-0.15, 0.03, 0.5 * PILLAR_HEIGHT)
+    PUSH_END_LOCAL = (0.02, 0.03, 0.5 * PILLAR_HEIGHT)
+    # Single precision sets these: one ulp of a coordinate this far off the rotation axis is 1.5e-08, and the contact
+    # stiffness carries it into a milli-newton of force, so each bound sits a few times over what rounding alone
+    # reaches. Double precision agrees to 1e-15 throughout, well inside them, and anything that is not rounding - a
+    # detection branch reading the world orientation, say - exceeds them by orders of magnitude at either precision.
+    CONTACT_TOL = tol
+    VEL_TOL = 10.0 * tol
+    # Force also carries the stiffness gain, and coplanar contacts of one pair share the load with a null space the
+    # solve may resolve anywhere inside.
+    FORCE_TOL = 1000.0 * tol
+    # How far either body may be from the plane: being pressed into it, or lifted by the bouncier contact resolution.
+    GROUND_TOL = 5e-3
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -559,17 +570,19 @@ def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer):
     box = scene.add_entity(
         gs.morphs.Box(
             pos=BOX_POS,
-            size=(0.1, 0.2, 0.1),
+            size=BOX_SIZE,
         ),
         material=gs.materials.Rigid(
             friction=FRICTION,
         ),
     )
+    # The pusher is a pillar with a triangular cross-section, so it stands on three corners fixed in its own frame. A
+    # circular cross-section rests on a degenerate manifold instead, one whose sampled points follow the world frame,
+    # and that alone makes the push anisotropic before the box is ever touched.
     pusher = scene.add_entity(
-        gs.morphs.Cylinder(
+        gs.morphs.MeshSet(
+            files=(trimesh.creation.cylinder(radius=PILLAR_RADIUS, height=PILLAR_HEIGHT, sections=3),),
             pos=PUSH_START_LOCAL,
-            height=0.1,
-            radius=0.02,
         ),
         material=gs.materials.Rigid(
             friction=FRICTION,
@@ -578,35 +591,109 @@ def test_elliptic_cone_push_isotropy(contact_resolution, show_viewer):
     scene.build(n_envs=N_ENVS)
 
     yaw = 2.0 * torch.pi * torch.arange(N_ENVS, device=gs.device) / N_ENVS
-    box_quat = gu.xyz_to_quat(torch.stack((torch.zeros_like(yaw), torch.zeros_like(yaw), yaw), dim=1), rpy=True)
+    yaw_euler = torch.stack((torch.zeros_like(yaw), torch.zeros_like(yaw), yaw), dim=1)
+    box_quat = gu.xyz_to_quat(yaw_euler, rpy=True)
     box.set_quat(box_quat)
 
     # Rotate the local pusher path into each env's world frame by the box yaw, and PD-control the pusher's full pose.
     push_start = gu.transform_by_quat(torch.tensor(PUSH_START_LOCAL, device=gs.device).repeat(N_ENVS, 1), box_quat)
     push_end = gu.transform_by_quat(torch.tensor(PUSH_END_LOCAL, device=gs.device).repeat(N_ENVS, 1), box_quat)
     pusher.set_pos(push_start)
+    pusher.set_quat(box_quat)
     pusher.set_dofs_kp(
-        pusher.get_mass() * torch.tensor((2000.0, 2000.0, 2000.0, 500.0, 500.0, 500.0), device=gs.device)
+        pusher.get_mass() * torch.tensor((2000.0, 2000.0, 2000.0, 5000.0, 5000.0, 5000.0), device=gs.device)
     )
-    pusher.set_dofs_kv(pusher.get_mass() * torch.tensor((200.0, 200.0, 200.0, 50.0, 50.0, 50.0), device=gs.device))
+    pusher.set_dofs_kv(pusher.get_mass() * torch.tensor((200.0, 200.0, 200.0, 500.0, 500.0, 500.0), device=gs.device))
 
     # Let the box resolve its initial ground contact before the push starts, so the two transients do not couple.
     scene.step()
 
     # Drive the pusher forward through the box while holding its height and orientation.
     pusher.control_dofs_position(push_end, dofs_idx_local=[0, 1, 2])
-    pusher.control_dofs_position(0.0, dofs_idx_local=[3, 4, 5])
-    for _ in range(160):
+    # The pillar is held at its env's own yaw, so every env simulates one rigidly rotated copy of the same scene.
+    pusher.control_dofs_position(yaw_euler, dofs_idx_local=[3, 4, 5])
+    # Every quantity is compared at every step rather than only the pose the box settles in: a difference that appears
+    # once is amplified by the steps that follow, so the end state cannot say which quantity broke first.
+    box_quat_inv = gu.inv_quat(box_quat)
+    for i_step in range(160):
         scene.step()
+
+        contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=True)
+        counts = [len(positions) for positions in contacts["position"]]
+        assert counts == counts[:1] * N_ENVS, f"contact count differs across envs at step {i_step}: {counts}"
+        blocks = []
+        for i_env in range(N_ENVS):
+            quat = box_quat_inv[i_env].expand(counts[i_env], 4)
+            columns = (
+                gu.transform_by_quat(contacts["position"][i_env], quat),
+                gu.transform_by_quat(contacts["normal"][i_env], quat),
+                gu.transform_by_quat(contacts["force"][i_env], quat),
+                contacts["penetration"][i_env][:, None],
+                contacts["geom_a"][i_env][:, None],
+                contacts["geom_b"][i_env][:, None],
+            )
+            block = torch.cat([column.to(gs.tc_float) for column in columns], dim=1)
+            if i_env == 0:
+                blocks.append(block)
+                continue
+            # Matched to env 0 by nearest de-rotated position within the same geom pair, which is unambiguous because
+            # contacts sit millimetres apart while they agree to a fraction of that. Ordering by coordinate instead
+            # lets rounding swap two contacts that share one.
+            is_same_pair = (block[:, None, 10:12] == blocks[0][None, :, 10:12]).all(dim=-1)
+            distance = torch.linalg.norm(block[:, None, :3] - blocks[0][None, :, :3], dim=-1)
+            blocks.append(block[torch.where(is_same_pair, distance, torch.inf).argmin(dim=0)])
+        paired = torch.stack(blocks)
+        assert_equal(paired[:, :, 10:], paired[0, :, 10:], err_msg=f"geom pairs differ at step {i_step}")
+        for key, columns, atol in (
+            ("position", slice(0, 3), CONTACT_TOL),
+            ("normal", slice(3, 6), CONTACT_TOL),
+            ("penetration", slice(9, 10), CONTACT_TOL),
+            ("force", slice(6, 9), FORCE_TOL),
+        ):
+            values = paired[:, :, columns]
+            assert_allclose(values, values[0], atol=atol, err_msg=f"contact {key} differs at step {i_step}")
+        # Net wrench per geom pair about the world origin. Coplanar contacts of one pair share the load with a null
+        # space the solve may resolve anywhere inside, so the individual forces are not determined while their
+        # resultant is: comparing both says which of the two any difference lives in.
+        for pair in ((0, 1), (0, 2), (1, 2)):
+            rows = (paired[0, :, 10] == pair[0]) & (paired[0, :, 11] == pair[1])
+            if not rows.any():
+                continue
+            force = paired[:, rows, 6:9]
+            torque = torch.cross(paired[:, rows, 0:3], force, dim=-1)
+            wrench = torch.cat((force.sum(dim=1), torque.sum(dim=1)), dim=1)
+            assert_allclose(wrench, wrench[0], atol=FORCE_TOL, err_msg=f"net wrench differs at step {i_step}")
+        # Dropping through the plane, or leaving it altogether, would leave eight envs identically wrong with every
+        # comparison above still green.
+        for entity in (box, pusher):
+            assert_allclose(entity.get_AABB()[:, 0, 2], 0.0, atol=GROUND_TOL, err_msg=f"off the ground, step {i_step}")
+
+        # Every free joint carries a linear half in world axes and an angular half in its own body frame, so only
+        # the former is de-rotated; the latter is already invariant under a rotation of the whole scene.
+        velocity = scene.rigid_solver.get_dofs_velocity().reshape((N_ENVS, -1, 6))
+        quat = box_quat_inv[:, None].expand(N_ENVS, velocity.shape[1], 4)
+        linear = gu.transform_by_quat(velocity[:, :, :3], quat)
+        assert_allclose(linear, linear[0], atol=VEL_TOL, err_msg=f"linear velocity differs at step {i_step}")
+        angular = velocity[:, :, 3:]
+        assert_allclose(angular, angular[0], atol=VEL_TOL, err_msg=f"angular velocity differs at step {i_step}")
 
     # The box and pusher settle at rest by the end.
     assert_allclose(scene.rigid_solver.get_dofs_velocity(), 0.0, atol=0.01)
 
+    # The pusher holds the height and orientation it was commanded to, so the push it applies is the one intended:
+    # sinking would bury it in the plane and tilting would lift a corner of its stance clear of it.
+    assert_allclose(pusher.get_pos()[:, 2], 0.5 * PILLAR_HEIGHT, atol=1e-3)
+    assert_allclose(
+        gu.transform_quat_by_quat(pusher.get_quat(), gu.inv_quat(box_quat)), (1.0, 0.0, 0.0, 0.0), atol=1e-3
+    )
+
     # The final box pose in its own initial frame is identical across every initial yaw.
     rel_pos = gu.transform_by_quat(box.get_pos() - torch.tensor(BOX_POS, device=gs.device), gu.inv_quat(box_quat))
     rel_yaw = gu.quat_to_xyz(gu.transform_quat_by_quat(box.get_quat(), gu.inv_quat(box_quat)), rpy=True)[:, 2]
-    assert_allclose(rel_pos, rel_pos.mean(dim=0), atol=POSE_TOL)
-    assert_allclose(rel_yaw, rel_yaw.mean(), atol=POSE_TOL)
+    # A push that moved the box hardly at all would satisfy the comparison below without exercising anything.
+    assert (rel_pos[:, 0] > 0.01).all() and (rel_yaw.abs() > 0.05).all()
+    assert_allclose(rel_pos, rel_pos.mean(dim=0), atol=CONTACT_TOL)
+    assert_allclose(rel_yaw, rel_yaw.mean(), atol=CONTACT_TOL)
 
 
 @pytest.mark.required

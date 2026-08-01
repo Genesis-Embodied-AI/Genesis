@@ -118,7 +118,7 @@ def func_plane_box_contact(
     plane_dir = qd.Vector(
         [dyn_info.geoms.data[i_ga][0], dyn_info.geoms.data[i_ga][1], dyn_info.geoms.data[i_ga][2]], dt=gs.qd_float
     )
-    plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
+    plane_dir = gu.qd_transform_by_quat_fast(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
     v1, _, _ = support_field._func_support_box(i_gb, normal, gb_pos, gb_quat, dyn_info)
@@ -152,7 +152,7 @@ def func_plane_box_contact(
                 # Plane-box pairs are sized with the convex cap (they are not in the large-contact mask), so the
                 # emission must stay within it to avoid overflowing a buffer allocated as a convex pair.
                 if n_con < qd.static(collider_static_config.n_contacts_per_convex_pair):
-                    pos_corner = gu.qd_transform_by_trans_quat(dyn_info.verts.init_pos[i_v], gb_pos, gb_quat)
+                    pos_corner = gu.qd_transform_by_trans_quat_fast(dyn_info.verts.init_pos[i_v], gb_pos, gb_quat)
                     penetration = normal.dot(pos_corner - ga_pos)
                     if penetration > 0.0:
                         contact_pos = pos_corner - 0.5 * penetration * normal

@@ -902,6 +902,7 @@ def test_align_urdf(show_viewer, tol):
     fork_morph = gs.morphs.URDF(
         file=f"{asset_path}/fork/fork.urdf",
         pos=INIT_POS,
+        euler=(0.0, 90.0, 0.0),
     )
     fork = scene.add_entity(
         fork_morph,

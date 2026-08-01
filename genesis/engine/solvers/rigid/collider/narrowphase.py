@@ -1579,7 +1579,8 @@ def func_recompute_perturbed_contact(
     Instead the MPR portal - the triangle of support-point pairs bounding the contact - is un-rotated back to the
     unperturbed pose (each support point by the inverse of its own geom's perturbation), and the face normal of the
     resulting Minkowski triangle gives the exact contact normal, with the penetration as the portal's distance to the
-    Minkowski origin. The position is reconstructed analytically on the smooth side.
+    Minkowski origin. The position comes last, from the recovered normal and penetration, since only those say how far
+    apart the two surfaces are.
     """
     # qrot is applied to geom A and its inverse to geom B; precompute the rotation matrix once (R for qrot, its
     # transpose for the inverse) and reuse it for every un-rotation below instead of re-deriving it per call.
@@ -1587,7 +1588,6 @@ def func_recompute_perturbed_contact(
     R_inv = R.transpose()
     contact_point_a = R_inv @ ((contact_pos - 0.5 * penetration * normal) - contact_pos_0) + contact_pos_0
     contact_point_b = R @ ((contact_pos + 0.5 * penetration * normal) - contact_pos_0) + contact_pos_0
-    contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
     # The unperturbed contact normal is recovered per detection method, using only the data that method exposes. The
     # multi-contact perturbation is symmetric (geom A by +qrot, geom B by -qrot, over +/- axis pairs), so methods that
@@ -1666,6 +1666,14 @@ def func_recompute_perturbed_contact(
         normal = normal + twist_rotvec.cross(normal)
     if not is_exact:
         penetration = normal.dot(contact_point_b - contact_point_a)
+
+    # Each un-rotated witness point is an exact material point of its own geom, but the two un-rotations turn in
+    # opposite directions and so slide the pair tangentially past each other, by twice the perturbation angle times
+    # their distance from contact 0. Only their separation along the recovered normal carries contact information, so
+    # the position steps back from geom B's witness by half of it, landing on the feature the perturbation found.
+    # Averaging the two witnesses instead subtracts the whole separation, sliding the contact off that feature by an
+    # amount that grows with the square of the perturbation angle, which no precision reaches.
+    contact_pos = contact_point_b - 0.5 * penetration * normal
 
     # Apply the smooth-primitive position reconstruction here, after the perturbation has been reverted, so it uses the
     # final (corrected) normal and the unperturbed pose - the canonical state the solver stores.
