@@ -33,6 +33,15 @@ def qd_k_cross_vec(vec):
 @qd.func
 def qd_transform_by_quat_fast(v, quat):
     """
+    Rotate a vector by a quaternion that is already normalized.
+
+    Prefer this over the general form whenever the quaternion is known to be a unit one, for exactness rather than for
+    speed: the general form divides by the squared norm, which is a no-op for a unit quaternion in exact arithmetic
+    yet leaves a component that should be untouched a few units in the last place off, by an amount that depends on
+    the rotation. A body resting flat on a plane then reports a height that varies with its orientation about the
+    plane's normal, and the sign of that variation decides whether it is in contact at all. The two cross products
+    here contribute exactly zero to a component the rotation preserves, so it comes back bit for bit.
+
     Assumptions:
     - quat must be normalized
     """
@@ -40,6 +49,14 @@ def qd_transform_by_quat_fast(v, quat):
     u = qd.Vector([q_x, q_y, q_z])
     t = 2.0 * u.cross(v)
     return v + q_w * t + u.cross(t)
+
+
+@qd.func
+def qd_transform_by_trans_quat_fast(pos, trans, quat):
+    """
+    Place a point by a translation and a quaternion that is already normalized. See qd_transform_by_quat_fast.
+    """
+    return qd_transform_by_quat_fast(pos, quat) + trans
 
 
 @qd.func
