@@ -521,20 +521,16 @@ def func_contact_orthogonals(
             volume_gb = size_gb[0] * size_gb[1] * size_gb[2]
             i_g = i_ga if volume_ga < volume_gb else i_gb
 
-        # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
-        i_l = dyn_info.geoms.link_idx[i_g]
-        rot = gu.qd_quat_to_R(dyn_state.links.i_quat[i_l, i_b], EPS)
-        axis_idx = gs.qd_int(0)
-        axis_angle_max = gs.qd_float(0.0)
-        for i in qd.static(range(3)):
-            axis_angle = qd.abs(rot[:, i].dot(normal))
-            if axis_angle > axis_angle_max:
-                axis_angle_max = axis_angle
-                axis_idx = i
-        axis_idx = (axis_idx + 1) % 3
-        axis_0 = rot[:, axis_idx]
-        axis_0 = (axis_0 - normal.dot(axis_0) * normal).normalized()
-        axis_1 = normal.cross(axis_0)
+        # The basis is built in the reference geom's own frame - the frame its support lookup is indexed in, which a
+        # geom offset from the link makes distinct from the inertial one - and rotated back to world, so a scene and any rigidly
+        # rotated copy of it perturb along the same directions relative to the geometry, and the manifold they find is
+        # the same. Selecting an axis by comparing the world normal against world axes instead makes the choice depend
+        # on the orientation of the whole scene, and it ties outright for a geom with no preferred axis, where two
+        # equal principal moments leave the selection to rounding and the manifold jumps between two sets.
+        rot = gu.qd_quat_to_R(dyn_state.geoms.quat[i_g, i_b], EPS)
+        axis_0_local, axis_1_local = gu.qd_orthogonals(rot.transpose() @ normal)
+        axis_0 = rot @ axis_0_local
+        axis_1 = rot @ axis_1_local
 
     return axis_0, axis_1
 
