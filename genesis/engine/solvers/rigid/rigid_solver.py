@@ -1672,8 +1672,8 @@ class RigidSolver(KinematicSolver):
         kernel_apply_links_external_force(
             links_idx,
             envs_idx,
-            force,
             pos,
+            force,
             self.dyn_state,
             self.rigid_config,
             ref_idx,

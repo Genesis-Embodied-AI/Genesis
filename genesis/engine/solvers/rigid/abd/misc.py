@@ -747,8 +747,8 @@ def kernel_init_equality_fields(
 def kernel_apply_links_external_force(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
-    force: qd.types.ndarray(),
     pos: qd.types.ndarray(),
+    force: qd.types.ndarray(),
     dyn_state: array_class.DynState,
     rigid_config: qd.template(),
     ref: qd.template(),
@@ -757,10 +757,10 @@ def kernel_apply_links_external_force(
 ):
     qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
     for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-        force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
         pos_i = qd.Vector.zero(gs.qd_float, 3)
         if qd.static(has_pos):
             pos_i = qd.Vector([pos[i_b_, i_l_, 0], pos[i_b_, i_l_, 1], pos[i_b_, i_l_, 2]], dt=gs.qd_float)
+        force_i = qd.Vector([force[i_b_, i_l_, 0], force[i_b_, i_l_, 1], force[i_b_, i_l_, 2]], dt=gs.qd_float)
         func_apply_link_external_force(links_idx[i_l_], envs_idx[i_b_], pos_i, force_i, dyn_state, ref, local, has_pos)
 
 
