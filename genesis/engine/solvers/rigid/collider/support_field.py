@@ -140,9 +140,9 @@ def _func_support_world(
     support position for a world direction
     """
 
-    d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
     v_, vid = _func_support_mesh(i_g, d_mesh, collider_info)
-    v = gu.qd_transform_by_trans_quat(v_, pos, quat)
+    v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
     return v, v_, vid
 
 
@@ -333,7 +333,7 @@ def _func_support_box(i_g, d, pos: qd.types.vector(3), quat: qd.types.vector(4),
     )
     vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
     vid += dyn_info.geoms.vert_start[i_g]
-    v = gu.qd_transform_by_trans_quat(v_, pos, quat)
+    v = gu.qd_transform_by_trans_quat_fast(v_, pos, quat)
     return v, v_, vid
 
 
@@ -343,7 +343,7 @@ def _func_count_supports_world(i_g, d, quat: qd.types.vector(4), collider_info: 
     Count the number of valid support points for the given world direction.
     Only needs quat since counting doesn't depend on position.
     """
-    d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat_fast(d, gu.qd_inv_quat(quat))
     return _func_count_supports_mesh(i_g, d_mesh, collider_info)
 
 
