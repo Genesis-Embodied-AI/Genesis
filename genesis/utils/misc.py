@@ -567,7 +567,7 @@ def has_display() -> bool:
 
 
 def indices_to_mask(
-    *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = False, raise_if_fancy: bool = False
+    *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = False, require_view: bool = False
 ) -> tuple[slice | int | torch.Tensor, ...]:
     """Converts a sequence of slice-like objects into a multi-dimensional mask corresponding to their cross-product.
 
@@ -575,9 +575,10 @@ def indices_to_mask(
         keepdim (bool): Whether to keep all dimensions even if masks are integers. Defaults to True.
         to_torch (bool): Whether to force casting collections to torch.Tensor.
         boolean_mask (bool): Whether boolean mask are supported more must be converted to indices via `torch.nonzero`.
-        raise_if_fancy (bool): Whether fancy indexing is supported for should raise an exception.
-        copy (bool, optional): Wether to raise an exception if the resulting mask requires advanced indexing (aka. fancy
-        indexing), which would trigger a copy when extracting slice.
+        require_view (bool): Whether the caller rules out a copy, advanced indexing (aka. fancy indexing) triggering
+        one when extracting the slice. A single index is then collapsed to a slice even when reading its value stalls
+        on the device queue, that being the only extract that stays a view, and a mask that advanced indexing alone
+        can serve raises instead.
     """
     mask: list[slice | int | torch.Tensor] = []
 
@@ -601,22 +602,29 @@ def indices_to_mask(
                     arg = slice(arg, arg + 1)
             else:  # np.ndarray, torch.tensor, list, tuple, np.int32...
                 try:
-                    is_torch_, is_numpy_ = False, False
+                    is_torch_, is_numpy_, is_on_host_ = False, False, True
                     if isinstance(arg, torch.Tensor):
                         if not boolean_mask and arg.dtype == torch.bool:
                             arg = arg.nonzero()[:, 0]
                         is_scalar_ = arg.dtype != torch.bool and arg.numel() == 1
                         is_torch_ = True
+                        is_on_host_ = arg.device.type == "cpu"
                     elif isinstance(arg, np.ndarray):
                         is_scalar_ = arg.size == 1
                         is_numpy_ = True
                     else:
                         is_scalar_ = len(arg) == 1
-                    if is_scalar_:
+                    # Collapsing to a slice keeps the index out of advanced indexing, where every tensor index
+                    # broadcasts into one shared block rather than contributing its own dimension, which is what the
+                    # reshape below has to undo, and it spares a host-side index from being uploaded as a device
+                    # tensor. Holding a single element only makes the collapse possible, since it reads the index
+                    # value: free on the host, but a stall on the device queue otherwise. That stall buys nothing
+                    # unless the caller rules out a copy, a slice being the only extract that stays a view.
+                    if is_scalar_ and (is_on_host_ or require_view):
                         arg = slice(idx := arg.item() if is_torch_ or is_numpy_ else arg[0], idx + 1)
                     else:
-                        if raise_if_fancy:
-                            gs.raise_exception("This mask requires advanced indexing but 'raise_if_fancy=True'.")
+                        if require_view:
+                            gs.raise_exception("This mask requires advanced indexing, which cannot return a view.")
                         if not is_torch_ and to_torch:
                             # Must convert masks to torch if not slice or int since torch will do it anyway.
                             # Note that being contiguous is not required and does not affect performance.
@@ -662,7 +670,7 @@ def _maybe_transpose_np(arr, value, transpose):
 def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
     if row_mask is None and col_mask is None:
         return out
-    raise_if_fancy = copy is False
+    require_view = copy is False
     if len(value.shape) < 2:
         if row_mask is not None and col_mask is not None:
             gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
@@ -670,10 +678,10 @@ def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
             row_mask if col_mask is None else col_mask,
             to_torch=to_torch,
             keepdim=keepdim,
-            raise_if_fancy=raise_if_fancy,
+            require_view=require_view,
         )
     else:
-        mask = indices_to_mask(row_mask, col_mask, to_torch=to_torch, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
+        mask = indices_to_mask(row_mask, col_mask, to_torch=to_torch, keepdim=keepdim, require_view=require_view)
     return out[mask]
 
 
