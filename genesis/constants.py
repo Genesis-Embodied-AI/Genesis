@@ -15,6 +15,29 @@ class IntEnum(enum.IntEnum):
 
 # geom type in rigid solver
 class GEOM_TYPE(IntEnum):
+    """
+    Collision shape of a rigid geom, as reported by ``RigidGeom.type``.
+
+    Attributes
+    ----------
+    PLANE : int
+        Half-space bounded by an infinite plane.
+    SPHERE : int
+        Sphere, parameterized by a radius.
+    ELLIPSOID : int
+        Ellipsoid, with one radius per axis.
+    CYLINDER : int
+        Cylinder with flat caps.
+    CAPSULE : int
+        Cylinder with hemispherical caps.
+    BOX : int
+        Rectangular cuboid.
+    MESH : int
+        Triangle mesh, convex or decomposed into convex parts.
+    TERRAIN : int
+        Heightfield sampled on a regular grid.
+    """
+
     # Beware PLANE must be the first geometry type as this is assumed by MPR collision detection.
     PLANE = 0
     SPHERE = 1
@@ -28,6 +51,23 @@ class GEOM_TYPE(IntEnum):
 
 # joint type in rigid solver, ranked by number of dofs
 class JOINT_TYPE(IntEnum):
+    """
+    Kinematic type of a rigid joint, as reported by ``RigidJoint.type``, ranked by degree-of-freedom (dof) count.
+
+    Attributes
+    ----------
+    FIXED : int
+        Rigid attachment, 0 dofs.
+    REVOLUTE : int
+        Rotation about a single axis, 1 dof. Also called a hinge.
+    PRISMATIC : int
+        Translation along a single axis, 1 dof. Also called a slider.
+    SPHERICAL : int
+        Rotation about all three axes, 3 dofs. Also called a ball joint.
+    FREE : int
+        Unconstrained motion of a floating base, 6 dofs.
+    """
+
     FIXED = 0
     REVOLUTE = 1
     PRISMATIC = 2
@@ -36,6 +76,21 @@ class JOINT_TYPE(IntEnum):
 
 
 class EQUALITY_TYPE(IntEnum):
+    """
+    Kind of holonomic equality constraint tying two objects together, as reported by ``RigidEquality.type``.
+
+    Attributes
+    ----------
+    CONNECT : int
+        Pins two points on different links to the same world position, removing 3 translational dofs, as a
+        ball-and-socket joint does.
+    WELD : int
+        Holds two frames at a fixed relative pose, removing all 6 dofs.
+    JOINT : int
+        Couples two scalar joints so that one follows the other through a quartic polynomial, removing 1 dof, as a
+        geared or linked mechanism does.
+    """
+
     CONNECT = 0
     WELD = 1
     JOINT = 2
@@ -50,6 +105,22 @@ class CTRL_MODE(IntEnum):
 ######### User accessible constants do not capitalize #########
 # rigid solver intergrator
 class integrator(IntEnum):
+    """
+    Time integration scheme of the rigid solver.
+
+    Attributes
+    ----------
+    Euler : int
+        Explicit Euler. Cheapest per step, and the scheme whose acceleration matches a finite difference of the
+        velocity exactly, at the cost of needing a smaller timestep to stay stable under stiff damping.
+    implicitfast : int
+        Treats damping and the other passive forces implicitly in velocity, which stays stable under stiff damping at
+        a larger timestep for the cost of inverting the mass matrix twice per step.
+    approximate_implicitfast : int
+        Carries the first-order implicit correction into the constraint and external-force accelerations as well, which
+        spares the second mass-matrix inverse. The approximation is wrong in theory and works well in practice.
+    """
+
     Euler = 0
     implicitfast = 1
     approximate_implicitfast = 2
@@ -57,6 +128,19 @@ class integrator(IntEnum):
 
 # rigid solver constraint solver
 class constraint_solver(IntEnum):
+    """
+    Numerical method that solves the constraint system of the rigid solver.
+
+    Attributes
+    ----------
+    CG : int
+        Preconditioned conjugate gradient in acceleration space. Needs only matrix-vector products, never the explicit
+        Hessian, keeping its memory footprint low on scenes with very many degrees of freedom (dofs) or constraints.
+    Newton : int
+        Newton steps, each solving a Cholesky factorization of the Hessian. Converges in a handful of iterations and is
+        the better choice up to moderate dof counts.
+    """
+
     CG = 0
     Newton = 1
 
@@ -148,6 +232,24 @@ class broadphase_traversal(IntEnum):
 
 # backend
 class backend(IntEnum):
+    """
+    Compute backend the simulation runs on, selected with ``gs.init(backend=...)``. ``gs.backend`` holds the resolved
+    value once initialization returns.
+
+    Attributes
+    ----------
+    cpu : int
+        The host processor.
+    gpu : int
+        Whichever GPU backend the platform provides: CUDA on Linux, Metal on macOS.
+    cuda : int
+        NVIDIA GPU through CUDA.
+    amdgpu : int
+        AMD GPU through ROCm.
+    metal : int
+        Apple GPU through Metal.
+    """
+
     cpu = 0
     gpu = 1
     cuda = 2
