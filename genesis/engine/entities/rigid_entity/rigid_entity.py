@@ -161,8 +161,6 @@ class KinematicEntity(Entity):
         self.terrain_hf: np.ndarray | None = None
         self.terrain_scale: np.ndarray | None = None
         self._terrain_height_field: torch.Tensor | None = None
-        self._terrain_row_boundaries: torch.Tensor | None = None
-        self._terrain_col_boundaries: torch.Tensor | None = None
 
         self._load_model()
 
@@ -591,13 +589,6 @@ class KinematicEntity(Entity):
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
         self._terrain_height_field = torch.as_tensor(
             self.terrain_hf * self.terrain_scale[1], dtype=gs.tc_float, device=gs.device
-        )
-        # Bucketization produces native 64-bit integer cell indices for advanced indexing
-        self._terrain_row_boundaries = torch.arange(
-            1, self.terrain_hf.shape[0] - 1, dtype=gs.tc_float, device=gs.device
-        )
-        self._terrain_col_boundaries = torch.arange(
-            1, self.terrain_hf.shape[1] - 1, dtype=gs.tc_float, device=gs.device
         )
 
         g_infos = []

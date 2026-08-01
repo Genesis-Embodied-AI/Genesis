@@ -100,8 +100,6 @@ def _tc_get_terrain_height(
     positions: torch.Tensor,
     height_field: torch.Tensor,
     horizontal_scale: float,
-    row_boundaries: torch.Tensor,
-    col_boundaries: torch.Tensor,
     link_pos: torch.Tensor,
     link_quat: torch.Tensor,
     eps: float,
@@ -128,8 +126,8 @@ def _tc_get_terrain_height(
 
     row = torch.where(is_row_finite, row, torch.zeros_like(row)).clamp(0.0, float(row_max))
     col = torch.where(is_col_finite, col, torch.zeros_like(col)).clamp(0.0, float(col_max))
-    i_row = torch.bucketize(row, row_boundaries, right=True)
-    i_col = torch.bucketize(col, col_boundaries, right=True)
+    i_row = torch.bucketize(row, torch.arange(1, row_max, device=row.device), right=True)
+    i_col = torch.bucketize(col, torch.arange(1, col_max, device=col.device), right=True)
     frac_row = row - i_row
     frac_col = col - i_col
 
@@ -1128,14 +1126,7 @@ class KinematicSolver(Solver):
             link_pos = qd_to_torch(self.dyn_state.links.pos, envs_idx, link_idx, transpose=True)
             link_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, link_idx, transpose=True)
             heights = _tc_get_terrain_height(
-                positions,
-                terrain._terrain_height_field,
-                terrain._morph.horizontal_scale,
-                terrain._terrain_row_boundaries,
-                terrain._terrain_col_boundaries,
-                link_pos,
-                link_quat,
-                gs.EPS,
+                positions, terrain._terrain_height_field, terrain._morph.horizontal_scale, link_pos, link_quat, gs.EPS
             )
 
         else:
