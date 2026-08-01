@@ -1120,9 +1120,8 @@ class KinematicSolver(Solver):
             gs.raise_exception("`positions` must contain at least one position.")
 
         is_per_env = positions.ndim == 3 and positions.shape[0] != 1
-        n_position_envs = n_envs if is_per_env else 1
         positions = broadcast_tensor(
-            positions, gs.tc_float, (n_position_envs, n_points, 2), ("envs_idx", "positions", "")
+            positions, gs.tc_float, (n_envs if is_per_env else 1, n_points, 2), ("envs_idx", "positions", "")
         )
 
         if gs.use_zerocopy:

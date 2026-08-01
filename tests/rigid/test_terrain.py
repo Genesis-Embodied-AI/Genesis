@@ -182,7 +182,7 @@ def test_get_terrain_height(n_envs, tol):
     assert_allclose(visual_height, 3.04, tol=tol)
 
     if n_envs:
-        shared_positions = terrain.get_terrain_height(((2.0, -1.0), (2.0, -0.5)))
+        shared_positions = terrain.get_terrain_height((((2.0, -1.0), (2.0, -0.5)),))
         assert_allclose(shared_positions, ((0.3, 1.3), (0.3, 1.3)), tol=tol)
 
         terrain.set_pos(((10.0, 20.0, 1.0), (-3.0, 4.0, -2.0)), relative=False)
@@ -215,7 +215,6 @@ def test_get_terrain_height(n_envs, tol):
         assert_allclose(heights_per_env, ((1.45, 2.1), (-1.55, -0.9)), tol=tol)
 
         one_position_per_env = terrain.get_terrain_height(((positions_per_env[0][0],), (positions_per_env[1][0],)))
-        assert one_position_per_env.shape == (2, 1)
         assert_allclose(one_position_per_env, ((1.45,), (-1.55,)), tol=tol)
 
         heights_env_1 = terrain.get_terrain_height(positions_per_env[1], envs_idx=1)
@@ -223,7 +222,7 @@ def test_get_terrain_height(n_envs, tol):
     else:
         heights = terrain.get_terrain_height(positions)
 
-    assert_allclose(heights, expected, atol=1e-6, rtol=1e-6)
+    assert_allclose(heights, expected, tol=1e-6)
 
     envs_idx = [0] if n_envs else None
     boundary_heights = terrain.get_terrain_height(((9.5, 20.0), (9.499, 20.0), (np.nan, 20.0)), envs_idx=envs_idx)

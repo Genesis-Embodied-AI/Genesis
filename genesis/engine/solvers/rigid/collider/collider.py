@@ -725,7 +725,7 @@ class Collider:
 
             scale = entity.terrain_scale.astype(gs.np_float)
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
-            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
+            hf = entity.terrain_hf * scale[1]
             xyz_maxmin = np.array(
                 [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0], dtype=gs.np_float
             )
