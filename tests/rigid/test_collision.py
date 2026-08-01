@@ -343,7 +343,11 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
         singular_mask = np.arange(N_ENVS) >= N_ENVS // 2
         angle_pitch = 0.5 * np.pi
     else:
-        singular_mask = np.zeros((N_ENVS,), dtype=np.bool_)
+        # A tessellated ball has the resting face aligned above, so it keeps its body axis up and randomises only the
+        # yaw, as every other entity here does. Orienting it freely instead stands the polytope on a vertex, which
+        # topples into a facet basin and walks the ball an order of magnitude further than the settling it measures.
+        is_tessellated = entity_type in ("mesh", "nonconvex")
+        singular_mask = np.full((N_ENVS,), is_tessellated)
         angle_pitch = 0.0
     n_singulars = np.sum(singular_mask)
     angle_yaw = np.random.uniform(low=-np.pi, high=np.pi, size=(n_singulars, 1))
@@ -361,12 +365,13 @@ def test_no_drift(gjk_collision, entity_kind, entity_type, ground_type, show_vie
     if show_viewer:
         scene.visualizer.update()
 
-    for _ in range(400):
+    for i_step in range(400):
         scene.step()
 
     pos_local = tensor_to_array(entity.get_pos()) @ R
-    # The tolerance must be large enough to accomate small numerical error for mesh-mesh.
-    assert_allclose(pos_local[..., :2], smooth_xy_local, atol=1e-3)
+    # A tessellated ball settles into the basin of whichever facet it rests on, which is what this bound covers: it
+    # sits a little over twice the largest displacement any entity here needs, in either precision.
+    assert_allclose(pos_local[..., :2], smooth_xy_local, atol=5e-4)
 
 
 @pytest.mark.required
