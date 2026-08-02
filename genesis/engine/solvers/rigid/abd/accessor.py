@@ -1049,11 +1049,13 @@ def kernel_get_terrain_height(
     height_field: qd.types.ndarray(),
     heights: qd.types.ndarray(),
     dyn_state: array_class.DynState,
-    rigid_info: array_class.RigidInfo,
     rigid_config: qd.template(),
+    tilt_tolerance: float,
     is_per_env: qd.template(),
 ):
-    EPS = rigid_info.EPS[None]
+    # For a normalized quaternion, qx^2 + qy^2 equals sin(tilt / 2)^2, independent of yaw
+    tilt_sin_half = qd.sin(0.5 * tilt_tolerance)
+    tilt_sin_half_sq = tilt_sin_half * tilt_sin_half
     qd.loop_config(serialize=qd.static(rigid_config.para_level == gs.PARA_LEVEL.NEVER))
     for i_b_, i_p in qd.ndrange(heights.shape[0], heights.shape[1]):
         i_b = envs_idx[i_b_]
@@ -1068,8 +1070,7 @@ def kernel_get_terrain_height(
         col_max = height_field.shape[1] - 1
 
         is_valid = (
-            qd.abs(link_quat[1]) <= EPS
-            and qd.abs(link_quat[2]) <= EPS
+            link_quat[1] * link_quat[1] + link_quat[2] * link_quat[2] <= tilt_sin_half_sq
             and row >= -1.0
             and row <= row_max + 1
             and col >= -1.0
@@ -1186,17 +1187,17 @@ def kernel_update_drone_propeller_vgeoms(
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction: qd.f32):
+def kernel_set_geom_friction(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction: float):
     dyn_info.geoms.friction[geoms_idx] = friction
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction_torsional(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_torsional: qd.f32):
+def kernel_set_geom_friction_torsional(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_torsional: float):
     dyn_info.geoms.friction_torsional[geoms_idx] = friction_torsional
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction_rolling(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_rolling: qd.f32):
+def kernel_set_geom_friction_rolling(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_rolling: float):
     dyn_info.geoms.friction_rolling[geoms_idx] = friction_rolling
 
 

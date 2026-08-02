@@ -234,8 +234,12 @@ def test_get_terrain_height(n_envs, tol):
     with pytest.raises(gs.GenesisException):
         box.get_terrain_height((0.0, 0.0), envs_idx=envs_idx)
 
-    terrain.set_quat(gu.xyz_to_quat(np.array((90.0, 0.0, 0.0)), degrees=True), envs_idx=envs_idx, relative=False)
-    height = terrain.get_terrain_height((10.5, 20.0), envs_idx=envs_idx)
+    terrain.set_quat(gu.xyz_to_quat(np.array((5e-4, 0.0, 0.0))), envs_idx=envs_idx, relative=False)
+    height = terrain.get_terrain_height((10.0, 20.0), envs_idx=envs_idx)
+    assert_allclose(height, 1.0, tol=tol)
+
+    terrain.set_quat(gu.xyz_to_quat(np.array((2e-3, 0.0, 0.0))), envs_idx=envs_idx, relative=False)
+    height = terrain.get_terrain_height((10.0, 20.0), envs_idx=envs_idx)
     assert torch.isnan(height).all()
 
 

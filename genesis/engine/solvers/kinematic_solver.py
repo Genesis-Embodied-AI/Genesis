@@ -61,6 +61,9 @@ if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
 
 
+TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE = 1e-3
+
+
 def _balanced_variant_mapping(n_variants, B):
     """Map N variants to B environments using balanced block assignment."""
     if B >= n_variants:
@@ -1085,9 +1088,9 @@ class KinematicSolver(Solver):
             terrain._terrain_height_field,
             heights,
             self.dyn_state,
-            self.rigid_info,
             self.rigid_config,
-            is_per_env,
+            tilt_tolerance=TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE,
+            is_per_env=is_per_env,
         )
 
         if self.n_envs == 0:

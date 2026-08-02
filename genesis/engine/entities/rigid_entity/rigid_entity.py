@@ -585,11 +585,12 @@ class KinematicEntity(Entity):
         return g_infos
 
     def _load_terrain(self, morph, surface):
-        vmesh, mesh, self.terrain_hf = tu.parse_terrain(morph, surface)
+        vmesh, mesh, terrain_hf = tu.parse_terrain(morph, surface)
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
-        self._terrain_height_field = torch.as_tensor(
-            self.terrain_hf * self.terrain_scale[1], dtype=gs.tc_float, device=gs.device
-        )
+        self.terrain_hf = terrain_hf * self.terrain_scale[1]
+        # Collider storage covers only the first collision terrain; height queries support every terrain entity,
+        # including kinematic ones.
+        self._terrain_height_field = torch.as_tensor(self.terrain_hf, dtype=gs.tc_float, device=gs.device)
 
         g_infos = []
         if morph.visualization:
@@ -1965,8 +1966,9 @@ class KinematicEntity(Entity):
 
         Heights match the piecewise-planar surface on which rigid bodies rest. Terrain translation, yaw, and
         environment-specific poses are applied to the query. Positions up to one grid cell outside the terrain are
-        clamped to its edge. The query returns not-a-number (NaN) heights for positions containing NaN or infinity,
-        positions farther outside, and terrains with roll or pitch.
+        clamped to its edge. Terrain tilt up to 0.001 radians from world vertical is treated as numerical noise. The
+        query returns not-a-number (NaN) heights for positions containing NaN or infinity, positions farther outside,
+        and terrains with greater tilt.
 
         Parameters
         ----------
