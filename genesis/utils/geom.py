@@ -1331,13 +1331,6 @@ def _tc_transform_by_quat(v, quat, out: torch.Tensor | None = None):
     return out
 
 
-@torch.jit.script
-def _tc_inv_transform_by_trans_quat(pos: torch.Tensor, trans: torch.Tensor, quat: torch.Tensor) -> torch.Tensor:
-    quat_inv = quat.clone()
-    quat_inv[..., 1:].neg_()
-    return _tc_transform_by_quat(pos - trans, quat_inv)
-
-
 def transform_by_quat(v, quat):
     """
     This method transforms quat_v by quat_u.
@@ -1384,9 +1377,6 @@ def inv_transform_by_quat(pos, quat):
 
 
 def inv_transform_by_trans_quat(pos, trans, quat):
-    # FIXME: Compile chains of public geometry helpers without dedicated backend-specific wrappers
-    if all(isinstance(e, torch.Tensor) for e in (pos, trans, quat)):
-        return _tc_inv_transform_by_trans_quat(pos, trans, quat)
     return inv_transform_by_quat(pos - trans, quat)
 
 

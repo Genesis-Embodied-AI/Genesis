@@ -95,52 +95,6 @@ def _offset_world_shift(offset_pos, offset_quat, world_quat):
     return gu.transform_by_quat(offset_pos, user_quat)
 
 
-@torch.jit.script
-def _tc_get_terrain_height(
-    positions: torch.Tensor,
-    height_field: torch.Tensor,
-    horizontal_scale: float,
-    link_pos: torch.Tensor,
-    link_quat: torch.Tensor,
-    eps: float,
-):
-    query_pos = torch.nn.functional.pad(positions, (0, 1))
-    query_origin = torch.nn.functional.pad(link_pos[..., :2], (0, 1))
-    local_pos = gu._tc_inv_transform_by_trans_quat(query_pos, query_origin, link_quat)
-    row = local_pos[..., 0] / horizontal_scale
-    col = local_pos[..., 1] / horizontal_scale
-    row_max = height_field.shape[0] - 1
-    col_max = height_field.shape[1] - 1
-    is_row_finite = torch.isfinite(row)
-    is_col_finite = torch.isfinite(col)
-    is_valid = (
-        (link_quat[..., 1].abs() <= eps)
-        & (link_quat[..., 2].abs() <= eps)
-        & is_row_finite
-        & is_col_finite
-        & (row >= -1.0)
-        & (row <= float(row_max + 1))
-        & (col >= -1.0)
-        & (col <= float(col_max + 1))
-    )
-
-    row = torch.where(is_row_finite, row, torch.zeros_like(row)).clamp(0.0, float(row_max))
-    col = torch.where(is_col_finite, col, torch.zeros_like(col)).clamp(0.0, float(col_max))
-    i_row = torch.bucketize(row, torch.arange(1, row_max, device=row.device), right=True)
-    i_col = torch.bucketize(col, torch.arange(1, col_max, device=col.device), right=True)
-    frac_row = row - i_row
-    frac_col = col - i_col
-
-    h00 = height_field[i_row, i_col]
-    h10 = height_field[i_row + 1, i_col]
-    h01 = height_field[i_row, i_col + 1]
-    h11 = height_field[i_row + 1, i_col + 1]
-    first = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00)
-    second = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11)
-    heights = torch.where(frac_row + frac_col <= 1.0, first, second) + link_pos[..., 2]
-    return heights.masked_fill(~is_valid, float("nan"))
-
-
 def _fill_base_link_geom_offsets(offset_pos, offset_quat, entity, geoms, ranges):
     """Fill the per-geom forward offset for an entity's collision or visual geoms.
 
@@ -1122,27 +1076,19 @@ class KinematicSolver(Solver):
             positions, gs.tc_float, (n_envs if is_per_env else 1, n_points, 2), ("envs_idx", "positions", "")
         )
 
-        if gs.use_zerocopy:
-            link_pos = qd_to_torch(self.dyn_state.links.pos, envs_idx, link_idx, transpose=True)
-            link_quat = qd_to_torch(self.dyn_state.links.quat, envs_idx, link_idx, transpose=True)
-            heights = _tc_get_terrain_height(
-                positions, terrain._terrain_height_field, terrain._morph.horizontal_scale, link_pos, link_quat, gs.EPS
-            )
-
-        else:
-            heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
-            kernel_get_terrain_height(
-                envs_idx,
-                link_idx,
-                terrain._morph.horizontal_scale,
-                positions.contiguous(),
-                terrain._terrain_height_field,
-                heights,
-                self.dyn_state,
-                self.rigid_info,
-                self.rigid_config,
-                is_per_env,
-            )
+        heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
+        kernel_get_terrain_height(
+            envs_idx,
+            link_idx,
+            terrain._morph.horizontal_scale,
+            positions.contiguous(),
+            terrain._terrain_height_field,
+            heights,
+            self.dyn_state,
+            self.rigid_info,
+            self.rigid_config,
+            is_per_env,
+        )
 
         if self.n_envs == 0:
             heights = heights[0]

@@ -1054,7 +1054,7 @@ def kernel_get_terrain_height(
     is_per_env: qd.template(),
 ):
     EPS = rigid_info.EPS[None]
-    qd.loop_config(serialize=qd.static(rigid_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(rigid_config.para_level == gs.PARA_LEVEL.NEVER))
     for i_b_, i_p in qd.ndrange(heights.shape[0], heights.shape[1]):
         i_b = envs_idx[i_b_]
         i_b_pos = i_b_ if qd.static(is_per_env) else 0
