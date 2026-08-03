@@ -454,7 +454,7 @@ class Viewer(RBC):
 
     @property
     def plugins(self):
-        """The registered viewer plugins, read-only; use ``add_plugin`` to register one."""
+        """The registered viewer plugins, read-only; use `add_plugin` to register one."""
         return tuple(self._plugins)
 
     @property
