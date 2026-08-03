@@ -2578,13 +2578,13 @@ class RigidEntity(KinematicEntity):
         # Add collision geometries
         coup_links = self.material.coup_links
         for g_info in cg_infos:
-            friction = self.material.friction
+            friction = self.material.options.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
-            friction_torsional = self.material.friction_torsional
+            friction_torsional = self.material.options.friction_torsional
             if friction_torsional is None:
                 friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
-            friction_rolling = self.material.friction_rolling
+            friction_rolling = self.material.options.friction_rolling
             if friction_rolling is None:
                 friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
@@ -2844,13 +2844,13 @@ class RigidEntity(KinematicEntity):
         # Add collision geometries
         coup_links = self.material.coup_links
         for g_info in cg_infos:
-            friction = self.material.friction
+            friction = self.material.options.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
-            friction_torsional = self.material.friction_torsional
+            friction_torsional = self.material.options.friction_torsional
             if friction_torsional is None:
                 friction_torsional = g_info.get("friction_torsional", gu.default_friction_torsional())
-            friction_rolling = self.material.friction_rolling
+            friction_rolling = self.material.options.friction_rolling
             if friction_rolling is None:
                 friction_rolling = g_info.get("friction_rolling", gu.default_friction_rolling())
             needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)

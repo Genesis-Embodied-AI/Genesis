@@ -158,12 +158,13 @@ class RigidMaterial(MaterialHandle[Rigid]):
     A rigid material registered on a scene, as returned by 'Scene.add_material' and held by 'entity.material'.
 
     Every entity built from the same handle shares one material identity, which is the granularity contact parameters
-    resolved between two materials are keyed on. The 'Rigid' options the handle was built from stay readable through
-    it, so 'entity.material.friction' and friends keep reading the declared value.
-    """
+    resolved between two materials are keyed on.
 
-    def _repr_brief(self):
-        return f"{self.__repr_name__()}: idx={self._idx}, friction={self.friction}"
+    The options the handle was built from are readable through it, except for the friction coefficients: what a
+    contact resolves to depends on the other material and on per-environment ratios, so a single number on one
+    material would misreport it. Read 'options.friction' for the declared value, 'geom.friction' for what a geom
+    carries, and 'entity.get_contacts()' for what a contact developed.
+    """
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -182,27 +183,6 @@ class RigidMaterial(MaterialHandle[Rigid]):
         Get the density used to estimate mass (see 'gs.materials.Rigid').
         """
         return self._options.rho
-
-    @property
-    def friction(self):
-        """
-        Get the friction coefficient (see 'gs.materials.Rigid').
-        """
-        return self._options.friction
-
-    @property
-    def friction_torsional(self):
-        """
-        Get the torsional friction coefficient (see 'gs.materials.Rigid').
-        """
-        return self._options.friction_torsional
-
-    @property
-    def friction_rolling(self):
-        """
-        Get the rolling friction coefficient (see 'gs.materials.Rigid').
-        """
-        return self._options.friction_rolling
 
     @property
     def needs_coup(self) -> bool:
