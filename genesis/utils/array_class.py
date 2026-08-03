@@ -1556,6 +1556,10 @@ class ColliderInfo:
     # Post-pruning contact-point budget per environment, which sizes the contact constraint buffers (4 constraints per
     # contact point). Smaller than max_candidate_contacts when contact pruning is enabled or 'max_contacts' is set.
     max_contacts: qd.Tensor
+    # Friction coefficients declared for a pair of geoms, indexed by the dense pair index of collision_pair_idx and
+    # packed like GeomsInfo.friction. A component holds -1 where nothing was declared, so a pair may pin the sliding
+    # coefficient and leave the torsional and rolling ones to the maximum over the two geoms.
+    friction_override: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
     n_valid_pairs: qd.Tensor
     valid_collision_pairs: qd.Tensor
@@ -1611,6 +1615,7 @@ def get_collider_info(
         max_candidate_contacts=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
         max_contacts=V(dtype=gs.qd_int, shape=()),
+        friction_override=V(dtype=gs.qd_vec3, shape=(max(n_valid_pairs, 1),)),
         n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
         valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),
@@ -2051,7 +2056,7 @@ def get_geoms_state(solver, is_active=True):
         min_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         is_hibernated=V(dtype=gs.qd_int, shape=shape),
-        friction_ratio=V(dtype=gs.qd_float, shape=shape),
+        friction_ratio=V(dtype=gs.qd_vec3, shape=shape),
     )
 
 

@@ -200,9 +200,8 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
-        # Registered materials, in registration order, and the id() of the options each was registered from.
-        # Registration is keyed on the options object rather than its field values, so two materials that happen to
-        # carry the same friction and density stay distinct identities.
+        # Keyed on the identity of the options object, so two materials carrying the same friction and density
+        # stay distinct. See add_material for the registration contract.
         self._materials: list[MaterialHandle] = []
         self._material_idx: dict[int, int] = {}
 
@@ -317,6 +316,44 @@ class Scene(RBC):
             self._sim.destroy()
             self._sim = None
 
+    @gs.assert_built
+    def set_friction_ratio(
+        self,
+        sliding_ratio=None,
+        links_idx=None,
+        envs_idx=None,
+        *,
+        torsional_ratio=None,
+        rolling_ratio=None,
+    ):
+        """
+        Scale the friction coefficients of every geom of the addressed links.
+
+        Each coefficient answers to its own ratio: giving one leaves the other two as they are. Addressing no link
+        scales every link in the scene, which is the whole-scene randomization sweep.
+
+        Parameters
+        ----------
+        sliding_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the sliding friction. If None, the sliding ratio keeps its current value. Defaults to
+            None.
+        links_idx : array_like | None, optional
+            The global indices of the links to scale. If None, every link in the scene is scaled. Defaults to None.
+        envs_idx : array_like | None, optional
+            The indices of the environments. If None, all environments are considered. Defaults to None.
+        torsional_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the torsional friction. If None, it keeps its current value. Defaults to None.
+        rolling_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the rolling friction. If None, it keeps its current value. Defaults to None.
+        """
+        self._sim.rigid_solver.set_links_friction_ratio(
+            sliding_ratio,
+            links_idx,
+            envs_idx,
+            torsional_ratio=torsional_ratio,
+            rolling_ratio=rolling_ratio,
+        )
+
     @overload
     def add_material(self, material: Rigid) -> RigidMaterial: ...
 
@@ -339,7 +376,7 @@ class Scene(RBC):
         Parameters
         ----------
         material : gs.materials.Rigid
-            The options describing the material. Rigid materials are the ones carrying a handle today.
+            The options describing the material. Rigid materials are the ones that carry a handle.
 
         Returns
         -------

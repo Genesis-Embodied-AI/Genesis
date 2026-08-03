@@ -1035,6 +1035,9 @@ class RigidLink(KinematicLink):
     def set_friction(self, friction):
         """
         Set the friction of all the link's geoms.
+
+        A contact takes the larger of the two geoms' coefficients, so it follows this one where this one is the
+        larger. See 'RigidMaterial.set_friction_pair' to fix it for a pair of materials outright.
         """
         for geom in self._geoms:
             geom.set_friction(friction)

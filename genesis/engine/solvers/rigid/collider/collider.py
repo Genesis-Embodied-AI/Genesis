@@ -254,6 +254,7 @@ class Collider:
             prune_deep_penetration_ratio=self._prune_deep_penetration_ratio,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
+        self.update_friction_override()
         self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_verts_spatial_grid()
@@ -654,6 +655,25 @@ class Collider:
             self._collider_info.collision_pair_idx.fill(-1)
             return
         self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
+
+    def update_friction_override(self):
+        """Expand the declared material pairs onto the collision pairs whose two geoms carry those materials.
+
+        The runtime resolves a contact from this array alone, so materials exist only here and in the authoring
+        API. Re-runs whenever a pair's coefficients change.
+        """
+        friction_override = np.full((max(self._n_possible_pairs, 1), 3), fill_value=-1.0, dtype=gs.np_float)
+        geoms_idx_by_material = {}
+        for geom in self._solver.geoms:
+            geoms_idx_by_material.setdefault(geom.material.idx, []).append(geom.idx)
+        for pair in self._solver._friction_pairs:
+            coeffs = [-1.0 if coeff is None else coeff for coeff in pair.coefficients]
+            for i_ga in geoms_idx_by_material.get(pair.material_a.idx, ()):
+                for i_gb in geoms_idx_by_material.get(pair.material_b.idx, ()):
+                    i_pair = self._collision_pair_idx[min(i_ga, i_gb), max(i_ga, i_gb)]
+                    if i_pair >= 0:
+                        friction_override[i_pair] = coeffs
+        self._collider_info.friction_override.from_numpy(friction_override)
 
     def _init_valid_pairs(self):
         if len(self._valid_collision_pairs) > 0:

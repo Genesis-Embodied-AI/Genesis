@@ -124,7 +124,8 @@ def kernel_get_state(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b in qd.ndrange(n_geoms, _B):
-        friction_ratio[i_b, i_l] = dyn_state.geoms.friction_ratio[i_l, i_b]
+        for j in qd.static(range(3)):
+            friction_ratio[i_b, i_l, j] = dyn_state.geoms.friction_ratio[i_l, i_b][j]
 
 
 @qd.kernel(fastcache=True)
@@ -172,7 +173,8 @@ def kernel_set_state(
 
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_l, i_b_ in qd.ndrange(n_geoms, _B):
-        dyn_state.geoms.friction_ratio[i_l, envs_idx[i_b_]] = friction_ratio[envs_idx[i_b_], i_l]
+        for j in qd.static(range(3)):
+            dyn_state.geoms.friction_ratio[i_l, envs_idx[i_b_]][j] = friction_ratio[envs_idx[i_b_], i_l, j]
 
 
 @qd.kernel(fastcache=True)
@@ -533,7 +535,8 @@ def kernel_set_geoms_friction_ratio(
 ):
     qd.loop_config(serialize=rigid_config.para_level < gs.PARA_LEVEL.ALL)
     for i_g_, i_b_ in qd.ndrange(geoms_idx.shape[0], envs_idx.shape[0]):
-        dyn_state.geoms.friction_ratio[geoms_idx[i_g_], envs_idx[i_b_]] = friction_ratio[i_b_, i_g_]
+        for j in qd.static(range(3)):
+            dyn_state.geoms.friction_ratio[geoms_idx[i_g_], envs_idx[i_b_]][j] = friction_ratio[i_b_, i_g_, j]
 
 
 @qd.kernel(fastcache=True)

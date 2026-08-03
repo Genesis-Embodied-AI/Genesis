@@ -4497,31 +4497,43 @@ class RigidEntity(KinematicEntity):
     # ----------------------------------- friction ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None):
+    def set_friction_ratio(
+        self,
+        sliding_ratio=None,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        torsional_ratio=None,
+        rolling_ratio=None,
+    ):
         """
-        Set the friction ratio of the geoms of the specified links.
+        Scale the friction coefficients of the geoms of the specified links.
+
+        Each coefficient answers to its own ratio: giving one leaves the other two as they are, so lowering sliding
+        friction never disturbs the torsional or rolling resistance.
 
         Parameters
         ----------
-        friction_ratio : torch.Tensor, shape (n_envs, n_links)
-            The friction ratio
+        sliding_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the sliding friction. If None, the sliding ratio keeps its current value. Defaults to
+            None.
         links_idx_local : array_like
-            The indices of the links to set friction ratio.
+            The indices of the links to scale.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        torsional_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the torsional friction. If None, it keeps its current value. Defaults to None.
+        rolling_ratio : float | array_like, shape (n_envs, n_links), optional
+            Ratio applied to the rolling friction. If None, it keeps its current value. Defaults to None.
         """
-        links_idx_local = self._get_global_idx(links_idx_local, self.n_links, 0, unsafe=True)
-
-        links_n_geoms = torch.tensor(
-            [self._links[i_l].n_geoms for i_l in links_idx_local], dtype=gs.tc_int, device=gs.device
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        self._solver.set_links_friction_ratio(
+            sliding_ratio,
+            links_idx,
+            envs_idx,
+            torsional_ratio=torsional_ratio,
+            rolling_ratio=rolling_ratio,
         )
-        links_friction_ratio = torch.as_tensor(friction_ratio, dtype=gs.tc_float, device=gs.device)
-        geoms_friction_ratio = torch.repeat_interleave(links_friction_ratio, links_n_geoms, dim=-1)
-        geoms_idx = [
-            i_g for i_l in links_idx_local for i_g in range(self._links[i_l].geom_start, self._links[i_l].geom_end)
-        ]
-
-        self._solver.set_geoms_friction_ratio(geoms_friction_ratio, geoms_idx, envs_idx)
 
     def set_friction(self, friction):
         """
@@ -4531,6 +4543,8 @@ class RigidEntity(KinematicEntity):
         ----
         The friction coefficient associated with a pair of geometries in contact is defined as the maximum between
         their respective values, so one must be careful the set the friction coefficient properly for both of them.
+        Declaring it for the two materials through 'RigidMaterial.set_friction_pair' fixes it for their contacts
+        instead, whatever either geometry carries.
 
         Warning
         -------

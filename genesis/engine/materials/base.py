@@ -69,6 +69,13 @@ class MaterialHandle(RBC, Generic[MaterialT]):
         return self._idx
 
     @property
+    def scene(self) -> "Scene":
+        """
+        Get the scene the material is registered on, which its index is numbered within.
+        """
+        return self._scene
+
+    @property
     def options(self) -> MaterialT:
         """
         Get the options this material was registered from.

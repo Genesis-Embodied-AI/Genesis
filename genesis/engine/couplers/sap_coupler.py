@@ -3901,7 +3901,10 @@ class RigidRigidTetContactHandler(RigidRigidContactHandler):
                 pairs[i_p].link_idx1 = i_l1
                 sap_info[i_p].k = rigid_k
                 sap_info[i_p].phi0 = rigid_phi0
-                sap_info[i_p].mu = qd.sqrt(geoms_info.friction[i_g0] * geoms_info.friction[i_g1])
+                sap_info[i_p].mu = qd.sqrt(
+                    geoms_info.friction[i_g0][array_class.FrictionIdx.SLIDING]
+                    * geoms_info.friction[i_g1][array_class.FrictionIdx.SLIDING]
+                )
             else:
                 overflow = True
         return overflow

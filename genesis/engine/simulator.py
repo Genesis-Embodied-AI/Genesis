@@ -163,8 +163,8 @@ class Simulator(RBC):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.Rigid):
-            # Rigid entities hold the registered material rather than its options, so contact parameters resolved
-            # between two materials have a shared identity to key on.
+            # Rigid entities hold the registered material, which is the identity contact parameters are keyed
+            # on. See RigidMaterial.
             entity = self.rigid_solver.add_entity(
                 self.n_entities, self.scene.add_material(material), morph, surface, visualize_contact, name=name
             )
