@@ -33,7 +33,7 @@ class GEOM_TYPE(IntEnum):
     BOX : int
         Rectangular cuboid.
     MESH : int
-        Triangle mesh, convex or decomposed into convex parts.
+        Triangle mesh of any shape, convex or not, as `RigidGeom.is_convex` reports.
     TERRAIN : int
         Heightfield on a regular grid.
     """

@@ -441,8 +441,8 @@ class RigidOptions(Options):
         (see `contact_pruning_tolerance`), 32 contact points per candidate link pair but no less than 512, whichever
         is smaller.
     integrator : gs.integrator, optional
-        Time integration scheme. See `~genesis.constants.integrator` for descriptions of each available type. `Euler`
-        and `implicitfast` are consistent with their Mujoco counterparts. Defaults to `approximate_implicitfast`.
+        Time integration scheme. See `~genesis.constants.integrator` for the description of each scheme. Defaults to
+        `approximate_implicitfast`.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
@@ -513,8 +513,11 @@ class RigidOptions(Options):
         Please note that this option will be deprecated in a future version. Use `constraint_timeconst`
         instead.
     constraint_timeconst : float
-        Lower-bound of the default time to resolve the constraint (2*dt). The smaller the value, the more stiff the
-        constraint. This parameter is called `timeconst` in Mujoco
+        Time over which a constraint drives its violation to zero, in seconds. A shorter time makes contacts and joint
+        limits stiffer, so bodies penetrate less and stacks settle faster, at the cost of a worse-conditioned solve that
+        needs more iterations and tolerates a large timestep less well. Raised to twice the substep timestep when set
+        below it, since no constraint can resolve faster than the step that integrates it. A model may override it per
+        constraint. Defaults to 0.01.
         (https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters). Defaults to 0.01.
     use_contact_island : bool, optional
         Whether to partition the constraint solve into independent per-island blocks. It has no effect on a scene that
