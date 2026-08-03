@@ -166,6 +166,7 @@ def parse_terrain(morph: Terrain, surface):
             with open(gnd_file_path, "wb") as file:
                 pkl.dump(heightfield, file)
 
+    heightfield = np.asarray(heightfield, dtype=gs.np_float)
     need_uvs = getattr(surface, "diffuse_texture", None) is not None
     tmesh, sdf_tmesh = convert_heightfield_to_watertight_trimesh(
         heightfield,

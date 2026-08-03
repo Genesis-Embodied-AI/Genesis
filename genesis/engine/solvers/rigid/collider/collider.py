@@ -723,16 +723,22 @@ class Collider:
                 entity_idx = entity_idx[0]
             entity = solver._entities[entity_idx]
 
-            scale = entity.terrain_scale.astype(gs.np_float)
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
-            hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
             xyz_maxmin = np.array(
-                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0], dtype=gs.np_float
+                [
+                    rc[0] * entity.terrain_scale[0],
+                    rc[1] * entity.terrain_scale[0],
+                    entity.terrain_hf.max(),
+                    0,
+                    0,
+                    entity.terrain_hf.min() - 1.0,
+                ],
+                dtype=gs.np_float,
             )
 
-            self._collider_info.terrain_hf.from_numpy(hf)
+            self._collider_info.terrain_hf.from_numpy(entity.terrain_hf)
             self._collider_info.terrain_rc.from_numpy(rc)
-            self._collider_info.terrain_scale.from_numpy(scale)
+            self._collider_info.terrain_scale.from_numpy(entity.terrain_scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def activate_sdf(self) -> None:

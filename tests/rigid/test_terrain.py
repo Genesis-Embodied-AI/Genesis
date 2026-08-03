@@ -11,9 +11,7 @@ import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
 from genesis.utils.misc import get_assets_dir, tensor_to_array
 
-from ..utils import (
-    assert_allclose,
-)
+from ..utils import assert_allclose
 
 
 @pytest.mark.parametrize(
@@ -132,6 +130,117 @@ def test_discrete_obstacles():
     assert height_field.max() == 2.0
     assert height_field.min() == -2.0
     assert (platform < gs.EPS).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_get_terrain_height(n_envs, tol):
+    height_field = np.array(
+        [
+            [0.0, 4.0, 9.0, 15.0],
+            [10.0, 20.0, 33.0, 49.0],
+            [30.0, 50.0, 73.0, 99.0],
+        ],
+    )
+    quat_yaw = gu.xyz_to_quat(np.array((0.0, 0.0, 90.0)), degrees=True)
+
+    scene = gs.Scene(show_viewer=False)
+    terrain = scene.add_entity(
+        morph=gs.morphs.Terrain(
+            pos=(2.0, -1.0, 0.3),
+            quat=quat_yaw,
+            batch_fixed_verts=True,
+            horizontal_scale=0.5,
+            vertical_scale=0.1,
+            height_field=height_field,
+        ),
+    )
+    visual_terrain = scene.add_entity(
+        morph=gs.morphs.Terrain(
+            pos=(30.0, 40.0, 3.0),
+            quat=gu.xyz_to_quat(np.array((0.0, 0.0, 37.0)), degrees=True),
+            collision=False,
+            horizontal_scale=0.25,
+            vertical_scale=0.01,
+            height_field=np.add.outer(np.arange(3), 2 * np.arange(3)),
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+    )
+    scene.build(n_envs=n_envs)
+
+    initial_height = terrain.get_terrain_height((2.0, -0.5))
+    assert_allclose(initial_height, 1.3, tol=tol)
+
+    visual_pose = gu.trans_quat_to_T(np.array(visual_terrain.morph.pos), np.array(visual_terrain.morph.quat))
+    visual_position = visual_pose @ np.array((0.5, 0.25, 0.0, 1.0))
+    visual_height = visual_terrain.get_terrain_height(visual_position[:2])
+    assert_allclose(visual_height, 3.04, tol=tol)
+
+    if n_envs:
+        shared_positions = terrain.get_terrain_height((((2.0, -1.0), (2.0, -0.5)),))
+        assert_allclose(shared_positions, ((0.3, 1.3), (0.3, 1.3)), tol=tol)
+
+        terrain.set_pos(((10.0, 20.0, 1.0), (-3.0, 4.0, -2.0)), relative=False)
+        terrain.set_quat(np.stack((gu.identity_quat(), quat_yaw)), relative=False)
+    else:
+        terrain.set_pos((10.0, 20.0, 1.0), relative=False)
+        terrain.set_quat((1.0, 0.0, 0.0, 0.0), relative=False)
+
+    positions = (
+        (10.0, 20.0),
+        (10.5, 20.0),
+        (10.0, 20.5),
+        (10.125, 20.25),
+        (10.375, 20.25),
+        (11.0, 21.5),
+    )
+    terrain_mesh = terrain.geoms[0].get_trimesh().copy()
+    terrain_mesh.apply_transform(gu.trans_quat_to_T(np.array((10.0, 20.0, 1.0)), gu.identity_quat()))
+    ray_origins = np.column_stack((positions, np.full(len(positions), terrain_mesh.bounds[1, 2] + 1.0)))
+    ray_directions = np.tile((0.0, 0.0, -1.0), (len(positions), 1))
+    locations, ray_ids, _ = terrain_mesh.ray.intersects_location(
+        ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False
+    )
+    expected = locations[np.argsort(ray_ids), 2]
+    if n_envs:
+        heights = terrain.get_terrain_height(positions, envs_idx=[0])
+
+        positions_per_env = ((positions[3], positions[4]), ((-3.25, 4.125), (-3.25, 4.375)))
+        heights_per_env = terrain.get_terrain_height(positions_per_env)
+        assert_allclose(heights_per_env, ((1.45, 2.1), (-1.55, -0.9)), tol=tol)
+
+        one_position_per_env = terrain.get_terrain_height(((positions_per_env[0][0],), (positions_per_env[1][0],)))
+        assert_allclose(one_position_per_env, ((1.45,), (-1.55,)), tol=tol)
+
+        heights_env_1 = terrain.get_terrain_height(positions_per_env[1], envs_idx=1)
+        assert_allclose(heights_env_1, (-1.55, -0.9), tol=tol)
+    else:
+        heights = terrain.get_terrain_height(positions)
+
+    assert_allclose(heights, expected, tol=1e-6)
+
+    envs_idx = [0] if n_envs else None
+    boundary_heights = terrain.get_terrain_height(((9.5, 20.0), (9.499, 20.0), (np.nan, 20.0)), envs_idx=envs_idx)
+    assert_allclose(boundary_heights[..., 0], 1.0, tol=tol)
+    assert torch.isnan(boundary_heights[..., 1:]).all()
+
+    with pytest.raises(gs.GenesisException):
+        terrain.get_terrain_height((10.0, 20.0, 1.0), envs_idx=envs_idx)
+    with pytest.raises(gs.GenesisException):
+        box.get_terrain_height((0.0, 0.0), envs_idx=envs_idx)
+
+    terrain.set_quat(gu.xyz_to_quat(np.array((5e-4, 0.0, 0.0))), envs_idx=envs_idx, relative=False)
+    height = terrain.get_terrain_height((10.0, 20.0), envs_idx=envs_idx)
+    assert_allclose(height, 1.0, tol=tol)
+
+    terrain.set_quat(gu.xyz_to_quat(np.array((2e-3, 0.0, 0.0))), envs_idx=envs_idx, relative=False)
+    height = terrain.get_terrain_height((10.0, 20.0), envs_idx=envs_idx)
+    assert torch.isnan(height).all()
 
 
 @pytest.mark.required

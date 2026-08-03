@@ -23,6 +23,7 @@ from .rigid.abd.accessor import (
     kernel_get_kinematic_state,
     kernel_get_links_vel,
     kernel_get_state_grad,
+    kernel_get_terrain_height,
     kernel_set_dofs_force_grad,
     kernel_set_dofs_position,
     kernel_set_dofs_velocity,
@@ -56,9 +57,11 @@ from .rigid.abd.misc import (
 )
 
 if TYPE_CHECKING:
-    from genesis.engine.entities import KinematicEntity
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
+
+
+TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE = 1e-3
 
 
 def _balanced_variant_mapping(n_variants, B):
@@ -1056,6 +1059,45 @@ class KinematicSolver(Solver):
         kernel_forward_kinematics(envs_idx, self.dyn_state, self.dyn_info, self.rigid_info, self.rigid_config)
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
+
+    def get_terrain_height(self, positions, link_idx, envs_idx=None):
+        terrain = self._links[link_idx].entity
+
+        positions = torch.as_tensor(positions, dtype=gs.tc_float, device=gs.device)
+        if positions.ndim == 0 or positions.ndim > 3 or positions.shape[-1] != 2:
+            gs.raise_exception("`positions` must have shape (2,), (n_points, 2), or (n_envs, n_points, 2).")
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        n_envs = len(envs_idx)
+        is_single_position = positions.ndim == 1
+        n_points = 1 if is_single_position else positions.shape[-2]
+        if n_points == 0:
+            gs.raise_exception("`positions` must contain at least one position.")
+
+        is_per_env = positions.ndim == 3 and positions.shape[0] != 1
+        positions = broadcast_tensor(
+            positions, gs.tc_float, (n_envs if is_per_env else 1, n_points, 2), ("envs_idx", "positions", "")
+        )
+
+        heights = torch.empty((n_envs, n_points), dtype=gs.tc_float, device=gs.device)
+        kernel_get_terrain_height(
+            envs_idx,
+            link_idx,
+            terrain._morph.horizontal_scale,
+            positions.contiguous(),
+            terrain._terrain_height_field,
+            heights,
+            self.dyn_state,
+            self.rigid_config,
+            tilt_tolerance=TERRAIN_HEIGHT_QUERY_TILT_TOLERANCE,
+            is_per_env=is_per_env,
+        )
+
+        if self.n_envs == 0:
+            heights = heights[0]
+        if is_single_position:
+            heights = heights[..., 0]
+        return heights
 
     def get_links_pos(self, links_idx=None, envs_idx=None, *, relative=False):
         if not gs.use_zerocopy:
