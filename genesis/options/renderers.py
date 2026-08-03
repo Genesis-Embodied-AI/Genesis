@@ -55,7 +55,7 @@ class Rasterizer(RendererOptions):
     Note
     ----
     You can set which renderer to use for cameras, but the interactive viewer always uses the rasterizer rendering
-    backend. If you want to configure properties like shadow, lights, etc., you should use ``gs.options.VisOptions``
+    backend. If you want to configure properties like shadow, lights, etc., you should use `gs.options.VisOptions`
     instead.
     """
 
@@ -91,7 +91,7 @@ class RayTracer(RendererOptions):
     env_pos : tuple of float, optional
         Environment position. Defaults to (0.0, 0.0, 0.0).
     env_euler : tuple of float, optional
-        Environment Euler angles in degrees. Shortcut for ``env_quat``. Defaults to (0.0, 0.0, 0.0).
+        Environment Euler angles in degrees. Shortcut for `env_quat`. Defaults to (0.0, 0.0, 0.0).
     env_quat : tuple of float | None, optional
         Environment quaternion. Defaults to None.
     lights : list of SphereLight, optional

@@ -86,32 +86,32 @@ class Morph(Options):
         rotation convention. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
         The initial quaternion (w-x-y-z convention) of the entity at creation time.
-        If specified, ``euler`` will be ignored. Defaults to None.
+        If specified, `euler` will be ignored. Defaults to None.
     offset_pos : tuple, shape (3,), optional
-        A fixed pose offset applied in the entity's own body frame on top of the ``pos``/``euler`` (or ``pos``/``quat``)
+        A fixed pose offset applied in the entity's own body frame on top of the `pos`/`euler` (or `pos`/`quat`)
         pose. It shifts the world pose used internally by the solver but is stripped back out by the relative getters,
-        so ``get_pos``/``get_quat`` (which are relative by default) still report ``pos``/``quat``. The morph pose and
+        so `get_pos`/`get_quat` (which are relative by default) still report `pos`/`quat`. The morph pose and
         the offset compound exactly like a parent and a child frame: the world pose is
         ``transform_pos_quat_by_trans_quat(offset_pos, offset_quat, pos, quat)``, i.e. the offset is expressed in the
-        body frame defined by ``pos``/``quat``. So ``offset_pos`` rotates together with the orientation rather than
-        being a world-frame shift, and when the orientation is identity it simply adds to ``pos``.
+        body frame defined by `pos`/`quat`. So `offset_pos` rotates together with the orientation rather than
+        being a world-frame shift, and when the orientation is identity it simply adds to `pos`.
         Defaults to (0.0, 0.0, 0.0).
     offset_euler : tuple, shape (3,), optional
-        The orientation offset ``offset_quat`` given as an euler angle in degrees (scipy extrinsic x-y-z convention).
-        Mutually exclusive with ``offset_quat``. Defaults to None.
+        The orientation offset `offset_quat` given as an euler angle in degrees (scipy extrinsic x-y-z convention).
+        Mutually exclusive with `offset_quat`. Defaults to None.
     offset_quat : tuple, shape (4,), optional
-        A fixed orientation offset (w-x-y-z convention); see ``offset_pos`` for how it compounds with ``pos``/``quat``
+        A fixed orientation offset (w-x-y-z convention); see `offset_pos` for how it compounds with `pos`/`quat`
         to form the world pose. Up-axis conversions (e.g. loading a Z-up asset) are stored here. Mutually exclusive with
-        ``offset_euler``. Defaults to None.
+        `offset_euler`. Defaults to None.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     is_free : bool, optional
         This parameter is deprecated.
@@ -194,16 +194,16 @@ class Primitive(Morph):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics.
         Defaults to False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
@@ -231,7 +231,7 @@ class Box(Primitive, TetGenMixin):
 
     Note
     ----
-    Either [``pos`` and ``size``] or [``lower`` and ``upper``] should be specified. The latter has a higher priority.
+    Either [`pos` and `size`] or [`lower` and `upper`] should be specified. The latter has a higher priority.
 
     Parameters
     ----------
@@ -241,7 +241,7 @@ class Box(Primitive, TetGenMixin):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     lower : tuple, shape (3,), optional
         The lower corner of the box in meters. Defaults to None.
     upper : tuple, shape (3,), optional
@@ -250,13 +250,13 @@ class Box(Primitive, TetGenMixin):
         The size of the box in meters. Defaults to None.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
@@ -335,20 +335,20 @@ class Cylinder(Primitive, TetGenMixin):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     height : float, optional
         The height of the cylinder in meters. Defaults to 1.0.
     radius : float, optional
         The radius of the cylinder in meters. Defaults to 0.5.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
@@ -402,18 +402,18 @@ class Sphere(Primitive, TetGenMixin):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     radius : float, optional
         The radius of the sphere in meters. Defaults to 0.5.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the primitive should be fixed. Defaults to False. **This is only used for RigidEntity.**
@@ -460,7 +460,7 @@ class Plane(Primitive):
 
     Note
     ----
-    Plane is a primitive with infinite size. Note that the ``pos`` is the center of the plane,
+    Plane is a primitive with infinite size. Note that the `pos` is the center of the plane,
     but essentially only defines a point where the plane passes through.
 
     Parameters
@@ -471,16 +471,16 @@ class Plane(Primitive):
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     normal : tuple, shape (3,), optional
         The normal normal of the plane in its local frame. Defaults to (0, 0, 1).
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     fixed : bool, optional
         Whether the plane is fixed in world. The mass of a plane being ill-defined, this parameter is kept only for
         consistency but must be True, otherwise it will raise an exception.
@@ -529,14 +529,14 @@ class FileMorph(Morph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
         since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
@@ -550,7 +550,7 @@ class FileMorph(Morph):
         **This is only used for RigidEntity.**
     watertighten : int, optional
         Aggressiveness of the watertight wrap built for a non-convex (``convexify=False``) collision mesh, as an
-        integer from 0 to 8 on the same scale as ``decimate_aggressiveness``. The wrap closes an open or
+        integer from 0 to 8 on the same scale as `decimate_aggressiveness`. The wrap closes an open or
         self-intersecting mesh into the single watertight surface a grid signed distance field requires, decimating
         it under a feature-preserving cost cutoff. 0 bypasses the wrap (mesh kept as-is), higher values collapse more
         of it, and 8 is the strongest decimation the cutoff still allows (every level stays watertight and preserves
@@ -560,10 +560,10 @@ class FileMorph(Morph):
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to
         a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
         sufficient to met the desired accuracy (see ``decompose_(robot|object)_error_threshold`` documentation). The
-        module ``coacd`` is used for this decomposition process. If not given, it defaults to ``True`` for
-        ``RigidEntity`` and ``False`` for other deformable entities.
+        module `coacd` is used for this decomposition process. If not given, it defaults to ``True`` for
+        `RigidEntity` and ``False`` for other deformable entities.
     decompose_nonconvex : bool, optional
-        This parameter is deprecated. Please use ``convexify`` and ``decompose_(robot|object)_error_threshold`` instead.
+        This parameter is deprecated. Please use `convexify` and ``decompose_(robot|object)_error_threshold`` instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
         volume of original mesh and its convex hull is lower than this threshold.
@@ -573,7 +573,7 @@ class FileMorph(Morph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a ``gs.options.CoacdOptions`` object.
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -590,16 +590,16 @@ class FileMorph(Morph):
         where the original coordinates are transformed as follows: (X, Y, Z) -> (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     """
 
@@ -715,7 +715,7 @@ class Mesh(FileMorph, TetGenMixin):
     ----
     In order to speed up simulation, the loaded mesh will first be decimated (simplified) to a target number of faces,
     followed by convexification (for collision mesh only).
-    Such process can be disabled by setting ``decimate`` and ``convexify`` to False.
+    Such process can be disabled by setting `decimate` and `convexify` to False.
 
     Parameters
     ----------
@@ -724,14 +724,14 @@ class Mesh(FileMorph, TetGenMixin):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
         since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
@@ -745,7 +745,7 @@ class Mesh(FileMorph, TetGenMixin):
         **This is only used for RigidEntity.**
     watertighten : int, optional
         Aggressiveness of the watertight wrap built for a non-convex (``convexify=False``) collision mesh, as an
-        integer from 0 to 8 on the same scale as ``decimate_aggressiveness``. The wrap closes an open or
+        integer from 0 to 8 on the same scale as `decimate_aggressiveness`. The wrap closes an open or
         self-intersecting mesh into the single watertight surface a grid signed distance field requires, decimating
         it under a feature-preserving cost cutoff. 0 bypasses the wrap (mesh kept as-is), higher values collapse more
         of it, and 8 is the strongest decimation the cutoff still allows (every level stays watertight and preserves
@@ -755,10 +755,10 @@ class Mesh(FileMorph, TetGenMixin):
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to
         a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
         sufficient to met the desired accuracy (see ``decompose_(robot|object)_error_threshold`` documentation). The
-        module ``coacd`` is used for this decomposition process. If not given, it defaults to ``True`` for
-        ``RigidEntity`` and ``False`` for other deformable entities.
+        module `coacd` is used for this decomposition process. If not given, it defaults to ``True`` for
+        `RigidEntity` and ``False`` for other deformable entities.
     decompose_nonconvex : bool, optional
-        This parameter is deprecated. Please use ``convexify`` and ``decompose_(robot|object)_error_threshold`` instead.
+        This parameter is deprecated. Please use `convexify` and ``decompose_(robot|object)_error_threshold`` instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
         volume of original mesh and its convex hull is lower than this threshold.
@@ -768,7 +768,7 @@ class Mesh(FileMorph, TetGenMixin):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a ``gs.options.CoacdOptions`` object.
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -776,13 +776,13 @@ class Mesh(FileMorph, TetGenMixin):
         Whether to merge submeshes for collision. Defaults to False. **This is only used for RigidEntity.**
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
@@ -886,12 +886,12 @@ class MeshSet(Mesh):
 
 class MJCF(FileMorph):
     """
-    Morph loaded from a MJCF file. This morph only supports ``RigidEntity``
+    Morph loaded from a MJCF file. This morph only supports `RigidEntity`
 
     Note
     ----
     MJCF file always contains a ``world`` body. Although this body is added to the kinematic tree, it is used to define
-    the initial pose of the root link. If ``pos``, ``euler``, or ``quat`` is specified, it will override the root pose
+    the initial pose of the root link. If `pos`, `euler`, or `quat` is specified, it will override the root pose
     that was originally specified in the MJCF file.
 
     Note
@@ -917,16 +917,16 @@ class MJCF(FileMorph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters as a translational offset. Mathematically, ``pos`` and ``euler`` options
+        The position of the entity in meters as a translational offset. Mathematically, `pos` and `euler` options
         correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
         original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
         The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
-        convention. See ``pos`` option documentation for details. Defaults to (0.0, 0.0, 0.0).
+        convention. See `pos` option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity's baselink. If specified, ``euler`` will be ignored.
+        The quaternion (w-x-y-z convention) of the entity's baselink. If specified, `euler` will be ignored.
         Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
@@ -941,7 +941,7 @@ class MJCF(FileMorph):
         **This is only used for RigidEntity.**
     watertighten : int, optional
         Aggressiveness of the watertight wrap built for a non-convex (``convexify=False``) collision mesh, as an
-        integer from 0 to 8 on the same scale as ``decimate_aggressiveness``. The wrap closes an open or
+        integer from 0 to 8 on the same scale as `decimate_aggressiveness`. The wrap closes an open or
         self-intersecting mesh into the single watertight surface a grid signed distance field requires, decimating
         it under a feature-preserving cost cutoff. 0 bypasses the wrap (mesh kept as-is), higher values collapse more
         of it, and 8 is the strongest decimation the cutoff still allows (every level stays watertight and preserves
@@ -951,10 +951,10 @@ class MJCF(FileMorph):
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to
         a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
         sufficient to met the desired accuracy (see ``decompose_(robot|object)_error_threshold`` documentation). The
-        module ``coacd`` is used for this decomposition process. If not given, it defaults to ``True`` for
-        ``RigidEntity`` and ``False`` for other deformable entities.
+        module `coacd` is used for this decomposition process. If not given, it defaults to ``True`` for
+        `RigidEntity` and ``False`` for other deformable entities.
     decompose_nonconvex : bool, optional
-        This parameter is deprecated. Please use ``convexify`` and ``decompose_(robot|object)_error_threshold`` instead.
+        This parameter is deprecated. Please use `convexify` and ``decompose_(robot|object)_error_threshold`` instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
         volume of original mesh and its convex hull is lower than this threshold.
@@ -964,7 +964,7 @@ class MJCF(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a ``gs.options.CoacdOptions`` object.
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -976,12 +976,12 @@ class MJCF(FileMorph):
         where the original coordinates are transformed as follows: (X, Y, Z) -> (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False.
+        `visualization` and `collision` cannot both be False.
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to True.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
@@ -1026,22 +1026,22 @@ class MJCF(FileMorph):
 
 class URDF(FileMorph):
     """
-    Morph loaded from a URDF or XACRO file. This morph only supports ``RigidEntity``.
-    If you need to create a ``Drone`` entity, use ``gs.morphs.Drone`` instead.
+    Morph loaded from a URDF or XACRO file. This morph only supports `RigidEntity`.
+    If you need to create a `Drone` entity, use `gs.morphs.Drone` instead.
 
-    XACRO files (``.urdf.xacro`` or ``.xacro``) are automatically preprocessed into plain URDF using the ``xacro``
+    XACRO files (``.urdf.xacro`` or ``.xacro``) are automatically preprocessed into plain URDF using the `xacro`
     package. All standard xacro features (macros, properties, includes, conditionals, substitution args) are supported.
-    Use ``xacro_args`` to override ``xacro:arg`` declarations at load time. The only limitation is that
-    ``$(find package_name)`` substitutions require ROS's ``ament_index_python``; without ROS, these will raise an error.
+    Use `xacro_args` to override ``xacro:arg`` declarations at load time. The only limitation is that
+    ``$(find package_name)`` substitutions require ROS's `ament_index_python`; without ROS, these will raise an error.
 
     Note
     ----
-    As part of performance optimization, links connected via a fixed joint are merged if ``merge_fixed_links`` is True.
+    As part of performance optimization, links connected via a fixed joint are merged if `merge_fixed_links` is True.
     This is turned on by default, and can help improve simulation speed without affecting any dynamics and rendering
     behaviors. However, in cases where certain links are still needed as independent links, such as virtual
     end-effector links created for being used as IK targets, these links will not be merged if their names are added
-    to ``links_to_keep``. You can also completely turn off link merging by setting ``merge_fixed_links`` to False,
-    but it's recommended to use ``merge_fixed_links=True`` in combination with ``links_to_keep`` for better performance.
+    to `links_to_keep`. You can also completely turn off link merging by setting `merge_fixed_links` to False,
+    but it's recommended to use ``merge_fixed_links=True`` in combination with `links_to_keep` for better performance.
 
     Parameters
     ----------
@@ -1050,16 +1050,16 @@ class URDF(FileMorph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters as a translational offset. Mathematically, ``pos`` and ``euler`` options
+        The position of the entity in meters as a translational offset. Mathematically, `pos` and `euler` options
         correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
         original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
         The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
-        convention. See ``pos`` option documentation for details. Defaults to (0.0, 0.0, 0.0).
+        convention. See `pos` option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
         since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
@@ -1073,7 +1073,7 @@ class URDF(FileMorph):
         **This is only used for RigidEntity.**
     watertighten : int, optional
         Aggressiveness of the watertight wrap built for a non-convex (``convexify=False``) collision mesh, as an
-        integer from 0 to 8 on the same scale as ``decimate_aggressiveness``. The wrap closes an open or
+        integer from 0 to 8 on the same scale as `decimate_aggressiveness`. The wrap closes an open or
         self-intersecting mesh into the single watertight surface a grid signed distance field requires, decimating
         it under a feature-preserving cost cutoff. 0 bypasses the wrap (mesh kept as-is), higher values collapse more
         of it, and 8 is the strongest decimation the cutoff still allows (every level stays watertight and preserves
@@ -1083,10 +1083,10 @@ class URDF(FileMorph):
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to
         a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
         sufficient to met the desired accuracy (see ``decompose_(robot|object)_error_threshold`` documentation). The
-        module ``coacd`` is used for this decomposition process. If not given, it defaults to ``True`` for
-        ``RigidEntity`` and ``False`` for other deformable entities.
+        module `coacd` is used for this decomposition process. If not given, it defaults to ``True`` for
+        `RigidEntity` and ``False`` for other deformable entities.
     decompose_nonconvex : bool, optional
-        This parameter is deprecated. Please use ``convexify`` and ``decompose_(robot|object)_error_threshold`` instead.
+        This parameter is deprecated. Please use `convexify` and ``decompose_(robot|object)_error_threshold`` instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
         volume of original mesh and its convex hull is lower than this threshold.
@@ -1096,7 +1096,7 @@ class URDF(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a ``gs.options.CoacdOptions`` object.
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -1108,12 +1108,12 @@ class URDF(FileMorph):
         where the original coordinates are transformed as follows: (X, Y, Z) -> (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False.
+        `visualization` and `collision` cannot both be False.
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to True.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to True.
     fixed : bool, optional
         Whether the baselink of the entity should be fixed. Defaults to False.
     batch_fixed_verts : bool, optional
@@ -1180,7 +1180,7 @@ class URDF(FileMorph):
 
 class Drone(FileMorph):
     """
-    Morph loaded from a URDF file for creating a ``DroneEntity``.
+    Morph loaded from a URDF file for creating a `DroneEntity`.
 
     Note
     ----
@@ -1192,16 +1192,16 @@ class Drone(FileMorph):
         The path to the file.
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly. If a 3-tuple, it scales along
-        each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        each axis. Defaults to 1.0. Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
-        The position of the entity in meters as a translational offset. Mathematically, ``pos`` and ``euler`` options
+        The position of the entity in meters as a translational offset. Mathematically, `pos` and `euler` options
         correspond respectively to the translational and rotational part of a transform that it is (left) applied on the
         original pose of all floating base links in the kinematic tree indiscriminately. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
         The euler angles of the entity in degrees as a rotational offset. This follows scipy's extrinsic x-y-z rotation
-        convention. See ``pos`` option documentation for details. Defaults to (0.0, 0.0, 0.0).
+        convention. See `pos` option documentation for details. Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
         since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
@@ -1215,7 +1215,7 @@ class Drone(FileMorph):
         **This is only used for RigidEntity.**
     watertighten : int, optional
         Aggressiveness of the watertight wrap built for a non-convex (``convexify=False``) collision mesh, as an
-        integer from 0 to 8 on the same scale as ``decimate_aggressiveness``. The wrap closes an open or
+        integer from 0 to 8 on the same scale as `decimate_aggressiveness`. The wrap closes an open or
         self-intersecting mesh into the single watertight surface a grid signed distance field requires, decimating
         it under a feature-preserving cost cutoff. 0 bypasses the wrap (mesh kept as-is), higher values collapse more
         of it, and 8 is the strongest decimation the cutoff still allows (every level stays watertight and preserves
@@ -1225,10 +1225,10 @@ class Drone(FileMorph):
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to
         a set of convex hulls. The mesh with be decomposed into multiple convex components if a single one is not
         sufficient to met the desired accuracy (see ``decompose_(robot|object)_error_threshold`` documentation). The
-        module ``coacd`` is used for this decomposition process. If not given, it defaults to ``True`` for
-        ``RigidEntity`` and ``False`` for other deformable entities.
+        module `coacd` is used for this decomposition process. If not given, it defaults to ``True`` for
+        `RigidEntity` and ``False`` for other deformable entities.
     decompose_nonconvex : bool, optional
-        This parameter is deprecated. Please use ``convexify`` and ``decompose_(robot|object)_error_threshold`` instead.
+        This parameter is deprecated. Please use `convexify` and ``decompose_(robot|object)_error_threshold`` instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
         volume of original mesh and its convex hull is lower than this threshold.
@@ -1238,7 +1238,7 @@ class Drone(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a ``gs.options.CoacdOptions`` object.
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -1250,7 +1250,7 @@ class Drone(FileMorph):
         where the original coordinates are transformed as follows: (X, Y, Z) -> (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
         **NB**: Drone doesn't support collision checking for now.
     prioritize_urdf_material : bool, optional
@@ -1263,7 +1263,7 @@ class Drone(FileMorph):
         This option is deprecated. The true Center of Mass (CoM) will be used instead of requesting the user to manually
         specify the name of the link that represents the center of mass.
     propellers_link_names : sequence of str, optional
-        This option is deprecated and will be removed in the future. Please use ``propellers_link_name`` instead.
+        This option is deprecated and will be removed in the future. Please use `propellers_link_name` instead.
     propellers_link_name : sequence of str, optional
         The names of the links that represent the propellers. Defaults to
         (``"prop0_link"``, ``"prop1_link"``, ``"prop2_link"``, ``"prop3_link"``).
@@ -1328,9 +1328,9 @@ class Terrain(Morph):
     If randomize is True, subterrain type that involves randomness will have random parameters.
     Otherwise, they will use fixed random seed 0.
 
-    Users can easily configure the subterrain types by specifying the ``subterrain_types`` parameter.
+    Users can easily configure the subterrain types by specifying the `subterrain_types` parameter.
     If using a single string, it will be repeated for all subterrains. If it's a 2D list, it should have the same shape
-    as ``n_subterrains``. The supported subterrain types are:
+    as `n_subterrains`. The supported subterrain types are:
 
     - ``"flat_terrain"``: flat terrain
     - ``"random_uniform_terrain"``: random uniform terrain
@@ -1354,15 +1354,15 @@ class Terrain(Morph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False.
+        `visualization` and `collision` cannot both be False.
     randomize : bool, optional
         Whether to randomize the subterrains that involve randomness. Defaults to False.
     n_subterrains : tuple of int, optional
@@ -1377,14 +1377,14 @@ class Terrain(Morph):
         The scale of the UV mapping for the terrain. Defaults to 1.0.
     subterrain_types : str or 2D list of str, optional
         The types of subterrains to generate. If a string, it will be repeated for all subterrains.
-        If a 2D list, it should have the same shape as ``n_subterrains``.
+        If a 2D list, it should have the same shape as `n_subterrains`.
     height_field : array-like, optional
         The height field to generate the terrain. If specified, all other configurations will be ignored.
         Defaults to None.
     name : str, optional
         The name of the terrain. If specified, the terrain will only be generated once for a given set of options and
         later loaded from cache, instead of being re-generated systematically when building the scene. This holds true
-        no matter if ``randomize`` is True.
+        no matter if `randomize` is True.
     from_stored : str, optional
         This parameter is deprecated.
     subterrain_parameters : dictionary, optional
@@ -1545,14 +1545,14 @@ class USD(FileMorph):
     scale : float or tuple, optional
         The scaling factor for the size of the entity. If a float, it scales uniformly.
         If a 3-tuple, it scales along each axis. Defaults to 1.0.
-        Note that 3-tuple scaling is only supported for ``gs.morphs.Mesh``.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
     pos : tuple, shape (3,), optional
         The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
     euler : tuple, shape (3,), optional
         The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
         Defaults to (0.0, 0.0, 0.0).
     quat : tuple, shape (4,), optional
-        The quaternion (w-x-y-z convention) of the entity. If specified, ``euler`` will be ignored. Defaults to None.
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
     decimate : bool, optional
         Whether to decimate (simplify) the collision mesh. Defaults to True when convexify is True and False otherwise,
         since decimation removes the surface detail a non-convex collision mesh is kept for. **This is only used for
@@ -1566,7 +1566,7 @@ class USD(FileMorph):
         **This is only used for RigidEntity.**
     watertighten : int, optional
         Aggressiveness of the watertight wrap built for a non-convex (``convexify=False``) collision mesh, as an
-        integer from 0 to 8 on the same scale as ``decimate_aggressiveness``. The wrap closes an open or
+        integer from 0 to 8 on the same scale as `decimate_aggressiveness`. The wrap closes an open or
         self-intersecting mesh into the single watertight surface a grid signed distance field requires, decimating
         it under a feature-preserving cost cutoff. 0 bypasses the wrap (mesh kept as-is), higher values collapse more
         of it, and 8 is the strongest decimation the cutoff still allows (every level stays watertight and preserves
@@ -1576,10 +1576,10 @@ class USD(FileMorph):
         Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted to
         a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
         sufficient to met the desired accuracy (see ``decompose_(robot|object)_error_threshold`` documentation). The
-        module ``coacd`` is used for this decomposition process. If not given, it defaults to ``True`` for
-        ``RigidEntity`` and ``False`` for other deformable entities.
+        module `coacd` is used for this decomposition process. If not given, it defaults to ``True`` for
+        `RigidEntity` and ``False`` for other deformable entities.
     decompose_nonconvex : bool, optional
-        This parameter is deprecated. Please use ``convexify`` and ``decompose_(robot|object)_error_threshold`` instead.
+        This parameter is deprecated. Please use `convexify` and ``decompose_(robot|object)_error_threshold`` instead.
     decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
         volume of original mesh and its convex hull is lower than this threshold.
@@ -1589,7 +1589,7 @@ class USD(FileMorph):
         original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a ``gs.options.CoacdOptions`` object.
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
@@ -1603,16 +1603,16 @@ class USD(FileMorph):
         where the original coordinates are transformed as follows: (X, Y, Z) -> (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
-        purposes. Defaults to True. ``visualization`` and ``collision`` cannot both be False.
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
         **This is only used for RigidEntity.**
     collision : bool, optional
         Whether the entity needs to be considered for collision checking. Defaults to True.
-        ``visualization`` and ``collision`` cannot both be False. **This is only used for RigidEntity.**
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
     requires_jac_and_IK : bool, optional
-        Whether this morph, if created as ``RigidEntity``, requires jacobian and inverse kinematics. Defaults to False.
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
     default_armature : float, optional
         Default rotor inertia of the actuators, applied to every joint whose armature is not specified in the model

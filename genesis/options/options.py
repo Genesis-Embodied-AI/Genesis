@@ -11,7 +11,7 @@ from genesis.styles import colors, formats
 
 class Options(RBC, BaseModel):
     """
-    This is the base class for all ``gs.options.*`` classes. An ``Options`` object is a group of parameters for setting
+    This is the base class for all ``gs.options.*`` classes. An `Options` object is a group of parameters for setting
     a specific component in the scene.
 
     Note
@@ -20,9 +20,9 @@ class Options(RBC, BaseModel):
 
     Tip
     ----
-    We build multiple classes based on this concept throughout Genesis, such as ``gs.options.morphs``, ``gs.renderers``,
-    ``gs.surfaces``, and ``gs.textures``. Note that some of them, although inheriting from ``Options``, are accessible
-    directly under the ``gs`` namespace for convenience.
+    We build multiple classes based on this concept throughout Genesis, such as `gs.options.morphs`, `gs.renderers`,
+    `gs.surfaces`, and `gs.textures`. Note that some of them, although inheriting from `Options`, are accessible
+    directly under the `gs` namespace for convenience.
     """
 
     model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)

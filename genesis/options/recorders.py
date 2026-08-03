@@ -99,7 +99,7 @@ class VideoFile(BaseFileWriterOptions):
 
 class CSVFile(BaseFileWriterOptions):
     """
-    Writes to a .csv file using ``csv.writer``.
+    Writes to a .csv file using `csv.writer`.
 
     Can handle any array-like or dict[str, array-like] output, e.g. from sensors.
     Values must be N-dimensional tensors, arrays or scalars (np.generic, int, float, str)
@@ -306,17 +306,17 @@ class MPLVectorFieldPlot(BasePlotterOptions):
         Maximum magnitude for the colorbar (colors are fixed to [0, max_magnitude]). Defaults to 1.0.
     subplot_titles: StrArrayType | None, optional
         If provided, the figure holds one subplot per title (K subplots in a near-square grid), all sharing
-        ``positions``; the data_func then returns shape ``(K, N, 3)`` -- one vector field per subplot. ``None``
+        `positions`; the data_func then returns shape ``(K, N, 3)`` -- one vector field per subplot. ``None``
         (default) is a single plot whose data_func returns ``(N, 3)``.
     twist_scale_factor: float | None, optional
-        When set, overlays a curved rotation arrow at each position showing the twist about the view ``normal``
+        When set, overlays a curved rotation arrow at each position showing the twist about the view `normal`
         (the ``twist_vectors . normal`` component), with arc radius scaled by this factor -- useful for reading a
         rotational quantity (e.g. per-taxel torque) alongside the straight vectors. The data_func then returns a
         pair ``(vectors, twist_vectors)`` instead of a single array, each shaped as above. The cost is a busier plot
         and a second colorbar. ``None`` (default) draws only the straight vectors.
     twist_max_magnitude: float, optional
         Range for the diverging twist colorbar (colors fixed to [-twist_max_magnitude, +twist_max_magnitude], centered
-        at zero). Only used when ``twist_scale_factor`` is set. Defaults to 1.0.
+        at zero). Only used when `twist_scale_factor` is set. Defaults to 1.0.
     save_to_filename: str | None
         If provided, the animation will be saved to a file with the given filename.
     show_window: bool | None

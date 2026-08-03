@@ -22,14 +22,14 @@ class Surface(Options):
     """
     Base class for all surfaces types in Genesis.
 
-    A ``Surface`` object encapsulates all visual information used for rendering an entity or its sub-components (links,
+    A `Surface` object encapsulates all visual information used for rendering an entity or its sub-components (links,
     geoms, ...). The surface contains different types of textures depending on the surface type (e.g. diffuse, specular,
-    roughness, metallic, normal, emissive). Each one of them is a ``gs.textures.Texture`` object.
+    roughness, metallic, normal, emissive). Each one of them is a `gs.textures.Texture` object.
 
     Tip
     ---
     If any of the textures only has single value (instead of a map), you can use the shortcut parameter (e.g.,
-    ``color``, ``roughness``, ``metallic``, ``emissive``) instead of creating a texture object.
+    `color`, `roughness`, `metallic`, `emissive`) instead of creating a texture object.
 
     Note
     ----
@@ -40,17 +40,17 @@ class Surface(Options):
     color : tuple | None, optional
         Color of the surface. Shortcut for the primary texture with a single color.
     opacity : float | None, optional
-        Opacity of the surface. Shortcut for ``opacity_texture`` with a single value.
+        Opacity of the surface. Shortcut for `opacity_texture` with a single value.
     roughness : float | None, optional
-        Roughness of the surface. Shortcut for ``roughness_texture`` with a single value.
+        Roughness of the surface. Shortcut for `roughness_texture` with a single value.
     metallic : float | None, optional
-        Metalness of the surface. Shortcut for ``metallic_texture`` with a single value.
+        Metalness of the surface. Shortcut for `metallic_texture` with a single value.
     emissive : tuple | None, optional
-        Emissive color of the surface. Shortcut for ``emissive_texture`` with a single color.
+        Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     ior : float, optional
         Index of Refraction.
     default_roughness : float, optional
-        Default roughness value when ``roughness`` is not set and the asset does not have a roughness texture. Defaults
+        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults
         to 1.0.
     vis_mode : str | None, optional
         How the entity should be visualized, e.g.
@@ -323,7 +323,7 @@ class Glass(Surface):
     Parameters
     ----------
     color : tuple | None, optional
-        Specular color of the surface. Shortcut for ``specular_texture`` with a single color.
+        Specular color of the surface. Shortcut for `specular_texture` with a single color.
     roughness : float, optional
         Roughness of the surface. Defaults to 0.0.
     ior : float, optional
@@ -331,7 +331,7 @@ class Glass(Surface):
     subsurface : bool
         Whether to apply a simple BSSRDF subsurface to the glass material.
     thickness : float | None, optional
-        The thickness of the top surface when ``subsurface`` is set to True. Shortcut for ``thickness_texture``.
+        The thickness of the top surface when `subsurface` is set to True. Shortcut for `thickness_texture`.
     specular_texture : gs.textures.Texture | None, optional
         Specular texture of the surface.
     diffuse_texture : gs.textures.Texture | None, optional
@@ -426,7 +426,7 @@ class Metal(Surface):
     Parameters
     ----------
     color : tuple | None, optional
-        Diffuse color of the surface. Shortcut for ``diffuse_texture`` with a single color.
+        Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
     metal_type : str, optional
         Type of metal, indicating a specific index of refraction (IOR). Possible values are [``"aluminium"``,
         ``"gold"``, ``"copper"``, ``"brass"``, ``"iron"``, ``"titanium"``, ``"vanadium"``, ``"lithium"``]. Defaults to
@@ -515,7 +515,7 @@ class Plastic(Surface):
     Parameters
     ----------
     color : tuple | None, optional
-        Diffuse color of the surface. Shortcut for ``diffuse_texture`` with a single color.
+        Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
     ior : float, optional
         Index of Refraction. Defaults to 1.0.
     diffuse_texture : gs.textures.Texture | None, optional
@@ -605,7 +605,7 @@ class BSDF(Surface):
     Parameters
     ----------
     color : tuple | None, optional
-        Diffuse color of the surface. Shortcut for ``diffuse_texture`` with a single color.
+        Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
     ior : float, optional
         Index of Refraction. Defaults to 1.0.
     specular_trans : float, optional
@@ -704,9 +704,9 @@ class Emission(Surface):
     Parameters
     ----------
     color : tuple | None, optional
-        Emissive color. Shortcut for ``emissive_texture`` with a single color.
+        Emissive color. Shortcut for `emissive_texture` with a single color.
     emissive : tuple | None, optional
-        Emissive color. Shortcut for ``emissive_texture`` with a single color.
+        Emissive color. Shortcut for `emissive_texture` with a single color.
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
     """
@@ -745,7 +745,7 @@ class Emission(Surface):
 ############################ Handy shortcuts ############################
 class Default(BSDF):
     """
-    The default surface type used in Genesis. This is an alias for ``BSDF``.
+    The default surface type used in Genesis. This is an alias for `BSDF`.
     """
 
     pass
@@ -771,7 +771,7 @@ class Smooth(Plastic):
 
 class Reflective(Plastic):
     """
-    Shortcut for a reflective (smoother than ``Smooth``) plastic surface.
+    Shortcut for a reflective (smoother than `Smooth`) plastic surface.
     """
 
     roughness: UnitInterval | None = Field(default=0.01, exclude=True, repr=False)

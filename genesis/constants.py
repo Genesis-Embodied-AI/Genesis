@@ -16,7 +16,7 @@ class IntEnum(enum.IntEnum):
 # geom type in rigid solver
 class GEOM_TYPE(IntEnum):
     """
-    Collision shape of a rigid geom, as reported by ``RigidGeom.type``.
+    Collision shape of a rigid geom, as reported by `RigidGeom.type`.
 
     Attributes
     ----------
@@ -52,7 +52,7 @@ class GEOM_TYPE(IntEnum):
 # joint type in rigid solver, ranked by number of dofs
 class JOINT_TYPE(IntEnum):
     """
-    Kinematic type of a rigid joint, as reported by ``RigidJoint.type``, ranked by degree-of-freedom (dof) count.
+    Kinematic type of a rigid joint, as reported by `RigidJoint.type`, ranked by degree-of-freedom (dof) count.
 
     Attributes
     ----------
@@ -77,7 +77,7 @@ class JOINT_TYPE(IntEnum):
 
 class EQUALITY_TYPE(IntEnum):
     """
-    Kind of equality constraint tying two objects together, as reported by ``RigidEquality.type``.
+    Kind of equality constraint tying two objects together, as reported by `RigidEquality.type`.
 
     Attributes
     ----------
@@ -122,9 +122,9 @@ class integrator(IntEnum):
     and every scheme folds joint damping into the effective mass so that a stiff damping force cannot overshoot. They
     differ in what else is folded in, and in when.
 
-    ``Euler`` and ``implicitfast`` apply the correction in a second factorization of the mass matrix, performed for the
-    entities that need it: those carrying damping, and under ``implicitfast`` those also carrying actuator bias.
-    Setting ``enable_mujoco_compatibility`` skips that selection and refactors unconditionally.
+    `Euler` and `implicitfast` apply the correction in a second factorization of the mass matrix, performed for the
+    entities that need it: those carrying damping, and under `implicitfast` those also carrying actuator bias.
+    Setting `enable_mujoco_compatibility` skips that selection and refactors unconditionally.
 
     Attributes
     ----------
@@ -166,8 +166,8 @@ class constraint_solver(IntEnum):
 # rigid solver contact friction cone
 class friction_cone(IntEnum):
     """
-    Contact friction cone model, trading numerical robustness for physical accuracy. Prefer ``pyramidal`` for
-    robustness; choose ``elliptic`` when isotropic friction or firm static friction matters - e.g. objects that must
+    Contact friction cone model, trading numerical robustness for physical accuracy. Prefer `pyramidal` for
+    robustness; choose `elliptic` when isotropic friction or firm static friction matters - e.g. objects that must
     stay put at rest instead of slowly creeping.
 
     Attributes
@@ -177,7 +177,7 @@ class friction_cone(IntEnum):
         whose effective limit depends on the sliding direction.
     elliptic : int
         The exact cone: friction is isotropic and bounded by its true Euclidean limit sqrt(f_t1^2 + f_t2^2) <= mu * f_n
-        in every direction, and with a high ``impratio`` it holds resting stacks without the slow tangential creep of
+        in every direction, and with a high `impratio` it holds resting stacks without the slow tangential creep of
         regularized friction, in return for being harder to solve and more sensitive numerically.
     """
 
@@ -188,8 +188,8 @@ class friction_cone(IntEnum):
 # rigid solver contact resolution
 class contact_resolution(IntEnum):
     """
-    How a contact's normal force and friction force are resolved against each other. Prefer ``signorini`` whenever
-    sliding contact matters; choose ``convex`` for parity with engines built on that formulation, or if a stiff scene
+    How a contact's normal force and friction force are resolved against each other. Prefer `signorini` whenever
+    sliding contact matters; choose `convex` for parity with engines built on that formulation, or if a stiff scene
     converges better under it.
 
     Attributes
@@ -208,7 +208,7 @@ class contact_resolution(IntEnum):
 
     Notes
     -----
-    ``signorini`` requires the elliptic friction cone, whose rows separate into a normal row and a friction disc - the
+    `signorini` requires the elliptic friction cone, whose rows separate into a normal row and a friction disc - the
     pyramidal cone mixes the normal direction into every row and admits no such split - and the Newton constraint
     solver, the only one that reaches the fixed point of the resulting successive approximation. It implements the
     Coulomb complementarity problem eq. (C.22) of Alexis Duburcq, "Learning and Optimization of the Locomotion with an
@@ -245,9 +245,9 @@ class broadphase_traversal(IntEnum):
 
     Notes
     -----
-    ``RigidOptions.broadphase_traversal`` defaults to ``None``, which selects ``ALL_VS_ALL`` on a GPU backend, and
-    ``SAP`` on the CPU backend, where the sequential sweep is efficient, and whenever hibernation or heterogeneous
-    entities rule ``ALL_VS_ALL`` out.
+    `RigidOptions.broadphase_traversal` defaults to ``None``, which selects `ALL_VS_ALL` on a GPU backend, and
+    `SAP` on the CPU backend, where the sequential sweep is efficient, and whenever hibernation or heterogeneous
+    entities rule `ALL_VS_ALL` out.
     """
 
     SAP = 0
@@ -257,7 +257,7 @@ class broadphase_traversal(IntEnum):
 # backend
 class backend(IntEnum):
     """
-    Compute backend the simulation runs on, selected with ``gs.init(backend=...)``. ``gs.backend`` holds the resolved
+    Compute backend the simulation runs on, selected with ``gs.init(backend=...)``. `gs.backend` holds the resolved
     value once initialization returns.
 
     Attributes
@@ -265,7 +265,7 @@ class backend(IntEnum):
     cpu : int
         The host processor.
     gpu : int
-        The first of ``cuda``, ``amdgpu`` and ``metal`` available on the machine, falling back to ``cpu`` with a
+        The first of `cuda`, `amdgpu` and `metal` available on the machine, falling back to `cpu` with a
         warning when none is.
     cuda : int
         NVIDIA GPU.
@@ -288,7 +288,7 @@ class backend(IntEnum):
 # image types for visualization
 class IMAGE_TYPE(IntEnum):
     """
-    Image channel a camera renders, in the order ``Camera.render`` returns them.
+    Image channel a camera renders, in the order `Camera.render` returns them.
 
     Attributes
     ----------
@@ -297,7 +297,7 @@ class IMAGE_TYPE(IntEnum):
     DEPTH : int
         Distance from the camera along the view direction, in meters.
     SEGMENTATION : int
-        Integer index per pixel, at the level set by ``VisOptions.segmentation_level``.
+        Integer index per pixel, at the level set by `VisOptions.segmentation_level`.
     NORMAL : int
         Surface normal at the visible point.
     """
@@ -320,7 +320,7 @@ class PARA_LEVEL(IntEnum):
     Attributes
     ----------
     NEVER : int
-        Runs every loop sequentially, as the ``cpu`` backend does, where parallelism only pays off from as many
+        Runs every loop sequentially, as the `cpu` backend does, where parallelism only pays off from as many
         environments as there are threads.
     PARTIAL : int
         Parallelizes the loops whose size fills the device, as a GPU backend does for a scene holding one environment.
