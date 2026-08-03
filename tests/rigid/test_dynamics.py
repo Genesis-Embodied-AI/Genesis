@@ -24,9 +24,9 @@ def test_gravity(show_viewer, tol):
     scene.build(n_envs=3)
 
     scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]))
-    scene.sim.set_gravity(torch.tensor([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
+    scene.sim.set_gravity(torch.tensor([[9.0, 0.0, 0.0], [0.0, 2.0, 0.0]]), envs_idx=[0, 1])
     scene.sim.set_gravity(torch.tensor([1.0, 0.0, 0.0]), envs_idx=np.int64(-3))
-    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=-1)
+    scene.sim.set_gravity(torch.tensor([0.0, 0.0, 3.0]), envs_idx=[-1])
     for envs_idx in (-4, 3, np.int64(-4), np.int64(3)):
         with pytest.raises(gs.GenesisException, match="`envs_idx` out of range"):
             scene.sim.set_gravity(torch.tensor([0.0, 0.0, 0.0]), envs_idx=envs_idx)

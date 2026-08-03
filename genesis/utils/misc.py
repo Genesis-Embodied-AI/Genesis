@@ -853,18 +853,19 @@ def sanitize_index(
     dim: int,
     name: str,
 ) -> torch.Tensor:
+    # Quadrants kernels address buffers directly, so negative values must be wrapped. Only a collection can hold them,
+    # every other form yielding indices that are non-negative by construction.
+    is_negative_wrap_required = False
     if index is None:
         index = range(max_size)
     elif isinstance(index, slice):
-        index = range(
-            index.start or 0,
-            index.stop if index.stop is not None else max_size,
-            index.step or 1,
-        )
+        index = range(*index.indices(max_size))
     elif isinstance(index, (int, np.integer)):
-        index = [index]
+        index = [index + max_size if index < 0 else index]
     elif isinstance(index, torch.Tensor) and index.dtype == torch.bool:
         index, *_ = torch.where(index)
+    else:
+        is_negative_wrap_required = True
 
     index = torch.as_tensor(index, dtype=gs.tc_int, device=gs.device)
 
@@ -880,6 +881,9 @@ def sanitize_index(
         gs.raise_exception(
             f"Invalid shape: {index.shape}. Expecting 1D tensor of length {expected_size} for {dim}-th index{dim_info}."
         )
+
+    if is_negative_wrap_required:
+        index = torch.where(index < 0, index + max_size, index)
 
     # FIXME: This check is too expensive
     # if not (0 <= dim_idx & dim_idx < size).all():

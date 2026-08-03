@@ -699,7 +699,7 @@ def test_setters(show_viewer, tol):
     assert_allclose(ghost_box.get_vAABB()[0], ((-0.20, -0.05, -0.10), (0.20, 0.05, 0.1)), tol=tol)
     assert_allclose(ghost_box.get_vAABB()[1], ((-0.05, -0.10, -0.2), (0.05, 0.10, 0.2)), tol=tol)
 
-    ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=-1)
+    ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=[-1])
     assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
     assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)), tol=tol)
 
