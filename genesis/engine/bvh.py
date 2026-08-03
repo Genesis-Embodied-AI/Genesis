@@ -8,6 +8,13 @@ from genesis.repr_base import RBC
 # https://forums.developer.nvidia.com/t/thinking-parallel-part-ii-tree-traversal-on-the-gpu/148342
 STACK_SIZE = 64
 
+# Launch geometry of the scene-extent reduction in `LBVH.compute_aabb_centers_and_scales`, widest first. Each width
+# is a multiple of 64, hence of every supported subgroup size (32 on CUDA / Metal / Vulkan-on-NVIDIA, 64 on AMDGPU)
+# as `block.reduce_*` requires, and a power of two, which Quadrants demands of `block_dim` outside CUDA / Vulkan /
+# AMDGPU. A block reduction costs the same whatever its slice is worth, hence the floor on lane workload.
+EXTENT_REDUCE_BLOCK_DIMS = (256, 128, 64)
+EXTENT_REDUCE_MIN_AABBS_PER_LANE = 32
+
 
 @qd.data_oriented
 class AABB(RBC):
@@ -151,6 +158,15 @@ class LBVH(RBC):
         self.aabb_min = qd.field(gs.qd_vec3, shape=(self.n_batches,))
         self.aabb_max = qd.field(gs.qd_vec3, shape=(self.n_batches,))
         self.scale = qd.field(gs.qd_vec3, shape=(self.n_batches,))
+        # Block-cooperative scene-extent reduction: GPU-only (it goes through subgroup shuffles) and only worth it
+        # for a tree wide enough to fill a block. Anything smaller keeps the flat atomic reduction below, which is
+        # barely contended at that size anyway.
+        self.extent_reduce_block_dim = next((bd for bd in EXTENT_REDUCE_BLOCK_DIMS if bd <= self.n_aabbs), 0)
+        self.extent_reduce_coop = gs.backend != gs.cpu and self.extent_reduce_block_dim > 0
+        self.n_extent_reduce_threads = 0
+        if self.extent_reduce_coop:
+            n_blocks = max(1, self.n_aabbs // (self.extent_reduce_block_dim * EXTENT_REDUCE_MIN_AABBS_PER_LANE))
+            self.n_extent_reduce_threads = n_blocks * self.extent_reduce_block_dim
         self.morton_codes = qd.field(qd.types.vector(2, qd.u32), shape=(self.n_batches, self.n_aabbs))
 
         # Histogram for radix sort
@@ -233,9 +249,40 @@ class LBVH(RBC):
             self.aabb_min[i_b] = self.aabb_centers[i_b, 0]
             self.aabb_max[i_b] = self.aabb_centers[i_b, 0]
 
-        for i_b, i_a in qd.ndrange(self.n_batches, self.n_aabbs):
-            qd.atomic_min(self.aabb_min[i_b], self.aabbs[i_b, i_a].min)
-            qd.atomic_max(self.aabb_max[i_b], self.aabbs[i_b, i_a].max)
+        if qd.static(self.extent_reduce_coop):
+            # One atomic per block instead of one per AABB: each lane folds a strided (hence coalesced) slice in
+            # registers and `block.reduce_*` collapses the block. Bit-identical to the flat reduction below, min /
+            # max being exact, associative and commutative.
+            _BD = qd.static(self.extent_reduce_block_dim)
+            _T = qd.static(self.n_extent_reduce_threads)
+            qd.loop_config(name="reduce_aabb_extent", block_dim=_BD)
+            for i_flat in range(self.n_batches * _T):
+                i_b = i_flat // _T
+                tid = i_flat % _T
+                # A real AABB of the batch as seed keeps lanes that run out of work neutral, so no identity value
+                # is needed and no lane is left uninitialized.
+                lane_min = self.aabbs[i_b, 0].min
+                lane_max = self.aabbs[i_b, 0].max
+                i_a = tid
+                while i_a < self.n_aabbs:
+                    lane_min = qd.min(lane_min, self.aabbs[i_b, i_a].min)
+                    lane_max = qd.max(lane_max, self.aabbs[i_b, i_a].max)
+                    i_a += _T
+
+                # `block.reduce_*` is scalar, so fold the vec3 component-wise. Result is valid on thread 0 only.
+                block_min = lane_min
+                block_max = lane_max
+                for i in qd.static(range(3)):
+                    block_min[i] = qd.simt.block.reduce_min(lane_min[i], _BD, gs.qd_float)
+                    block_max[i] = qd.simt.block.reduce_max(lane_max[i], _BD, gs.qd_float)
+
+                if qd.simt.block.thread_idx() == 0:
+                    qd.atomic_min(self.aabb_min[i_b], block_min)
+                    qd.atomic_max(self.aabb_max[i_b], block_max)
+        else:
+            for i_b, i_a in qd.ndrange(self.n_batches, self.n_aabbs):
+                qd.atomic_min(self.aabb_min[i_b], self.aabbs[i_b, i_a].min)
+                qd.atomic_max(self.aabb_max[i_b], self.aabbs[i_b, i_a].max)
 
         for i_b in qd.ndrange(self.n_batches):
             scale = self.aabb_max[i_b] - self.aabb_min[i_b]

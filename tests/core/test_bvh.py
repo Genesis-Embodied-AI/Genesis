@@ -4,7 +4,7 @@ import pytest
 import genesis as gs
 from genesis.engine.bvh import LBVH, AABB
 
-from ..utils.assertions import assert_allclose
+from ..utils.assertions import assert_allclose, assert_equal
 
 
 @pytest.fixture(scope="function")
@@ -66,6 +66,47 @@ def test_expand_bits():
         assert str_expanded_x == "".join(f"00{bit}" for bit in str_x), (
             f"Expected {str_expanded_x}, got {''.join(f'00{bit}' for bit in str_x)}"
         )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "n_aabbs, n_batches",
+    [(1, 1), (63, 4), (64, 4), (65, 3), (255, 2), (256, 8), (1776, 64), (12345, 2)],
+)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_scene_extent_reduction(n_aabbs, n_batches):
+    """The block-cooperative scene-extent reduction must agree with the flat atomic one, bit for bit.
+
+    The sizes cover every branch of its launch geometry: no cooperative path at all, a block narrower than the
+    maximum, a block width that does not divide the AABB count, and several blocks per batch.
+    """
+    aabbs_min = (np.random.rand(n_batches, n_aabbs, 3).astype(gs.np_float) - 0.5) * 20.0
+    aabbs_max = aabbs_min + np.random.rand(n_batches, n_aabbs, 3).astype(gs.np_float)
+
+    def scene_extent(cooperative):
+        aabb = AABB(n_batches=n_batches, n_aabbs=n_aabbs)
+        aabb.aabbs.min.from_numpy(aabbs_min)
+        aabb.aabbs.max.from_numpy(aabbs_max)
+        lbvh = LBVH(aabb)
+        # Quadrants only accepts a non-power-of-two `block_dim` on CUDA / Vulkan / AMDGPU, and `block.reduce_*` needs
+        # a multiple of the subgroup size (64 on AMDGPU). Assert it here so a bad width fails on every backend.
+        block_dim = lbvh.extent_reduce_block_dim
+        if lbvh.extent_reduce_coop:
+            assert block_dim & (block_dim - 1) == 0 and block_dim % 64 == 0 and block_dim <= n_aabbs
+        # The kernel branches on this at compile time, so it has to be set before the first call.
+        lbvh.extent_reduce_coop = lbvh.extent_reduce_coop and cooperative
+        lbvh.compute_aabb_centers_and_scales()
+        return lbvh.aabb_min.to_numpy(), lbvh.aabb_max.to_numpy(), lbvh.scale.to_numpy()
+
+    flat_min, flat_max, flat_scale = scene_extent(cooperative=False)
+    assert_equal(flat_min, aabbs_min.min(axis=1))
+    assert_equal(flat_max, aabbs_max.max(axis=1))
+
+    # min / max are exact and associative, so folding in a different order cannot change a single bit.
+    coop_min, coop_max, coop_scale = scene_extent(cooperative=True)
+    assert_equal(coop_min, flat_min)
+    assert_equal(coop_max, flat_max)
+    assert_equal(coop_scale, flat_scale)
 
 
 @pytest.mark.required
