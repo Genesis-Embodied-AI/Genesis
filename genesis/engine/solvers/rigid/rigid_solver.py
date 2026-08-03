@@ -1212,33 +1212,6 @@ class RigidSolver(KinematicSolver):
     def _init_collider(self):
         self.collider = Collider(self)
 
-        if self.collider._collider_static_config.has_terrain:
-            link_idx_ = next(
-                i for i, _type in enumerate(qd_to_numpy(self.dyn_info.geoms.type)) if _type == gs.GEOM_TYPE.TERRAIN
-            )
-            link_idx = qd_to_numpy(self.dyn_info.geoms.link_idx, link_idx_, keepdim=False)
-            entity_idx = qd_to_numpy(self.dyn_info.links.entity_idx, link_idx, keepdim=False)
-            if self._options.batch_links_info:
-                entity_idx = entity_idx[0]
-            entity = self._entities[entity_idx]
-
-            scale = np.asarray(entity.terrain_scale, dtype=gs.np_float)
-            rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
-            hf = entity.terrain_hf.astype(gs.np_float, copy=False) * scale[1]
-            xyz_maxmin = np.array(
-                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0], dtype=gs.np_float
-            )
-
-            self.terrain_hf = qd.field(dtype=gs.qd_float, shape=hf.shape)
-            self.terrain_rc = qd.field(dtype=gs.qd_int, shape=(2,))
-            self.terrain_scale = qd.field(dtype=gs.qd_float, shape=(2,))
-            self.terrain_xyz_maxmin = qd.field(dtype=gs.qd_float, shape=(6,))
-
-            self.terrain_hf.from_numpy(hf)
-            self.terrain_rc.from_numpy(rc)
-            self.terrain_scale.from_numpy(scale)
-            self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
-
     def _init_constraint_solver(self):
         # Islands are a per-island Newton solve inside ConstraintSolver.resolve, gated on use_contact_island.
         self.constraint_solver = ConstraintSolver(self)

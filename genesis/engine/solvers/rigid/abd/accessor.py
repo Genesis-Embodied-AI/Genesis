@@ -1041,6 +1041,62 @@ def kernel_get_links_acc(
 
 
 @qd.kernel(fastcache=True)
+def kernel_get_terrain_height(
+    envs_idx: qd.types.ndarray(),
+    link_idx: qd.i32,
+    horizontal_scale: float,
+    positions: qd.types.ndarray(),
+    height_field: qd.types.ndarray(),
+    heights: qd.types.ndarray(),
+    dyn_state: array_class.DynState,
+    rigid_config: qd.template(),
+    tilt_tolerance: float,
+    is_per_env: qd.template(),
+):
+    # For a normalized quaternion, qx^2 + qy^2 equals sin(tilt / 2)^2, independent of yaw
+    tilt_sin_half = qd.sin(0.5 * tilt_tolerance)
+    tilt_sin_half_sq = tilt_sin_half * tilt_sin_half
+    qd.loop_config(serialize=qd.static(rigid_config.para_level == gs.PARA_LEVEL.NEVER))
+    for i_b_, i_p in qd.ndrange(heights.shape[0], heights.shape[1]):
+        i_b = envs_idx[i_b_]
+        i_b_pos = i_b_ if qd.static(is_per_env) else 0
+        link_pos = dyn_state.links.pos[link_idx, i_b]
+        link_quat = dyn_state.links.quat[link_idx, i_b]
+        query_pos = qd.Vector([positions[i_b_pos, i_p, 0], positions[i_b_pos, i_p, 1], link_pos[2]], dt=gs.qd_float)
+        local_pos = gu.qd_inv_transform_by_trans_quat(query_pos, link_pos, link_quat)
+        row = local_pos[0] / horizontal_scale
+        col = local_pos[1] / horizontal_scale
+        row_max = height_field.shape[0] - 1
+        col_max = height_field.shape[1] - 1
+
+        is_valid = (
+            link_quat[1] * link_quat[1] + link_quat[2] * link_quat[2] <= tilt_sin_half_sq
+            and row >= -1.0
+            and row <= row_max + 1
+            and col >= -1.0
+            and col <= col_max + 1
+        )
+        if is_valid:
+            row = qd.min(qd.max(row, 0.0), qd.cast(row_max, gs.qd_float))
+            col = qd.min(qd.max(col, 0.0), qd.cast(col_max, gs.qd_float))
+            i_row = qd.min(qd.cast(qd.floor(row), gs.qd_int), row_max - 1)
+            i_col = qd.min(qd.cast(qd.floor(col), gs.qd_int), col_max - 1)
+            frac_row = row - i_row
+            frac_col = col - i_col
+
+            h00 = height_field[i_row, i_col]
+            h10 = height_field[i_row + 1, i_col]
+            h01 = height_field[i_row, i_col + 1]
+            h11 = height_field[i_row + 1, i_col + 1]
+            if frac_row + frac_col <= 1.0:
+                heights[i_b_, i_p] = h00 + frac_row * (h10 - h00) + frac_col * (h01 - h00) + link_pos[2]
+            else:
+                heights[i_b_, i_p] = h11 + (1.0 - frac_col) * (h10 - h11) + (1.0 - frac_row) * (h01 - h11) + link_pos[2]
+        else:
+            heights[i_b_, i_p] = qd.math.nan
+
+
+@qd.kernel(fastcache=True)
 def kernel_get_dofs_control_force(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -1131,17 +1187,17 @@ def kernel_update_drone_propeller_vgeoms(
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction: qd.f32):
+def kernel_set_geom_friction(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction: float):
     dyn_info.geoms.friction[geoms_idx] = friction
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction_torsional(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_torsional: qd.f32):
+def kernel_set_geom_friction_torsional(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_torsional: float):
     dyn_info.geoms.friction_torsional[geoms_idx] = friction_torsional
 
 
 @qd.kernel(fastcache=True)
-def kernel_set_geom_friction_rolling(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_rolling: qd.f32):
+def kernel_set_geom_friction_rolling(geoms_idx: qd.i32, dyn_info: array_class.DynInfo, friction_rolling: float):
     dyn_info.geoms.friction_rolling[geoms_idx] = friction_rolling
 
 
