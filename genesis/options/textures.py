@@ -105,10 +105,10 @@ class ImageTexture(Texture):
     image_color : float or list of float, optional
         The factor that will be multiplied with the base color, stored as tuple. Default is None.
     encoding : str, optional
-        The encoding way of the image. Possible values are ['srgb', 'linear']. Default is 'srgb'.
+        The encoding way of the image. Possible values are [``"srgb"``, ``"linear"``]. Default is ``"srgb"``.
 
-        - 'srgb': Encoding of some RGB images.
-        - 'linear': All generic images, such as opacity, roughness and normal, should be encoded with 'linear'.
+        - ``"srgb"``: Encoding of some RGB images.
+        - ``"linear"``: All generic images, such as opacity, roughness and normal, should be encoded with ``"linear"``.
     """
 
     image_path: str | None = None
@@ -288,10 +288,11 @@ class BatchTexture(Texture):
         image_colors : List[Union[float, List[float]]], optional
             List of color factors that will be multiplied with the base color, stored as tuple. Default is None.
         encoding : str, optional
-            The encoding way of the image. Possible values are ['srgb', 'linear']. Default is 'srgb'.
+            The encoding way of the image. Possible values are [``"srgb"``, ``"linear"``]. Default is ``"srgb"``.
 
-            - 'srgb': Encoding of some RGB images.
-            - 'linear': All generic images, such as opacity, roughness and normal, should be encoded with 'linear'.
+            - ``"srgb"``: Encoding of some RGB images.
+            - ``"linear"``: All generic images, such as opacity, roughness and normal, should be encoded with
+              ``"linear"``.
         """
         image_sources = (image_paths, image_folder, image_arrays)
         if sum(x is not None for x in image_sources) != 1:

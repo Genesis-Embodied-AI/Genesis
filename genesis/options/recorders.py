@@ -99,7 +99,7 @@ class VideoFile(BaseFileWriterOptions):
 
 class CSVFile(BaseFileWriterOptions):
     """
-    Writes to a .csv file using `csv.writer`.
+    Writes to a .csv file using ``csv.writer``.
 
     Can handle any array-like or dict[str, array-like] output, e.g. from sensors.
     Values must be N-dimensional tensors, arrays or scalars (np.generic, int, float, str)
@@ -286,8 +286,8 @@ class MPLVectorFieldPlot(BasePlotterOptions):
     """
     Live visualization of 3D vectors projected onto a 2D plane, colored by magnitude.
 
-    At initialization, provide the normal direction (view axis) and the 3D positions of each vector.
-    The data_func should return an array of shape (N, 3) with the 3D vector at each position (e.g. displacement or force).
+    At initialization, provide the normal direction (view axis) and the 3D positions of each vector. The data_func
+    should return an array of shape (N, 3) with the 3D vector at each position (e.g. displacement or force).
 
     Parameters
     ----------

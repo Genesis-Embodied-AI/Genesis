@@ -22,7 +22,7 @@ class ViewerOptions(Options):
 
     Note
     ----
-    The viewer's camera uses the `Rasterizer` backend regardless of `gs.renderers.*` when creating the scene.
+    The viewer's camera uses the ``Rasterizer`` backend regardless of ``gs.renderers.*`` when creating the scene.
 
     Parameters
     ----------
@@ -34,11 +34,11 @@ class ViewerOptions(Options):
     refresh_rate : int
         The rate (in frames per second) at which the viewer repaints on screen, and the framerate the video recorded
         from the viewer window is encoded at. Independent of the physics timestep, and of the framerate passed to
-        `camera.start_recording`.
+        ``camera.start_recording``.
     realtime_factor : float | None
         Multiple of wall-clock real time that one second of playback stands for (1.0 is real time, 2.0 is twice as
         fast). When the viewer is shown, the simulation is paced to it, falling behind gracefully when it cannot keep
-        up. It also sets the speed of the videos recorded by `camera.start_recording`, viewer or not. Set to None to
+        up. It also sets the speed of the videos recorded by ``camera.start_recording``, viewer or not. Set to None to
         run as fast as possible, which recordings treat as real time since there is no pace to follow. Defaults
         to 1.0.
     camera_pos : tuple of float, shape (3,)
@@ -154,10 +154,11 @@ class VisOptions(Options):
     visualize_pbd_boundary : bool
         Whether to visualize the boundary of the PBD Solver.
     segmentation_level : str
-        The segmentation level used for segmentation mask rendering. Should be one of ['entity', 'link', 'geom'].
-        Defaults to 'link'.
+        The segmentation level used for segmentation mask rendering. Should be one of [``"entity"``, ``"link"``,
+        ``"geom"``]. Defaults to ``"link"``.
     render_particle_as : str
-        How particles in the scene should be rendered. Should be one of ['sphere', 'tet']. Defaults to 'sphere'.
+        How particles in the scene should be rendered. Should be one of [``"sphere"``, ``"tet"``]. Defaults to
+        ``"sphere"``.
     particle_size_scale : float
         Scale applied to actual particle size for rendering. Defaults to 1.0.
     contact_force_scale : float = 0.02
@@ -170,7 +171,7 @@ class VisOptions(Options):
         Indices of the environments that will be rendered. If not provided, all the environments will be considered.
         Defaults to None.
     n_rendered_envs : int, optional
-        This option is deprecated. Please use `rendered_envs_idx` instead.
+        This option is deprecated. Please use ``rendered_envs_idx`` instead.
     lights : list of dict.
         Lights added to the scene.
     """

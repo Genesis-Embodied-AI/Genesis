@@ -20,9 +20,14 @@ class SimOptions(Options):
 
     Note
     ----
-    1. `SimOptions` specifies the global settings for the simulator. Some parameters exist both in `SimOptions` and `SolverOptions`. In this case, if such parameters are given in `SolverOptions`, it will override the one specified in `SimOptions` for this specific solver. For example, if `dt` is only given in `SimOptions`, it will be shared by all the solvers, but it's also possible to let a solver run at a different temporal speed by setting its own `dt` to be a different value.
+    1. ``SimOptions`` specifies the global settings for the simulator. Some parameters exist both in ``SimOptions`` and
+       ``SolverOptions``. In this case, if such parameters are given in ``SolverOptions``, it will override the one
+       specified in ``SimOptions`` for this specific solver. For example, if ``dt`` is only given in ``SimOptions``, it
+       will be shared by all the solvers, but it's also possible to let a solver run at a different temporal speed by
+       setting its own ``dt`` to be a different value.
 
-    2. In differentiable mode, `substeps_local` must be divisible by `substeps`, as external command is input per `step`, but `substep`. If `requires_grad` is False, we can use arbitrary `substeps_local`.
+    2. In differentiable mode, ``substeps_local`` must be divisible by ``substeps``, as external command is input per
+       ``step``, but ``substep``. If ``requires_grad`` is False, we can use arbitrary ``substeps_local``.
 
     Parameters
     ----------
@@ -222,7 +227,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     Linear System Options
     ---------------------
     linear_system_solver : str, optional
-        Linear system solver type. Options: 'linear_pcg', 'direct', etc. Defaults to None (use libuipc default: 'linear_pcg').
+        Linear system solver type. Options: ``"linear_pcg"``, ``"direct"``, etc. Defaults to None (use libuipc default:
+        ``"linear_pcg"``).
     linear_system_tolerance : float, optional
         Tolerance for linear system solver. Defaults to None (use libuipc default: 1e-3).
 
@@ -242,12 +248,14 @@ class IPCCouplerOptions(BaseCouplerOptions):
     contact_eps_velocity : float, optional
         Epsilon velocity for contact. Defaults to None (use libuipc default: 0.01).
     contact_constitution : str, optional
-        Contact constitution model. Options: 'ipc', 'isometric'. Defaults to None (use libuipc default: 'ipc').
+        Contact constitution model. Options: ``"ipc"``, ``"isometric"``. Defaults to None (use libuipc default:
+        ``"ipc"``).
 
     Collision Detection Options
     ---------------------------
     collision_detection_method : str, optional
-        Collision detection method. Options: 'linear_bvh', 'spatial_hash', etc. Defaults to None (use libuipc default: 'linear_bvh').
+        Collision detection method. Options: ``"linear_bvh"``, ``"spatial_hash"``, etc. Defaults to None (use libuipc
+        default: ``"linear_bvh"``).
 
     CFL Options
     -----------
@@ -360,7 +368,8 @@ class KinematicOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from ``SimOptions``. Defaults to
+        None.
     batch_links_info : bool, optional
         Whether to batch link info. Automatically enabled for heterogeneous simulation. Defaults to False.
     batch_dofs_info : bool, optional
@@ -379,7 +388,9 @@ class ToolOptions(Options):
 
     Note
     ----
-    ToolEntity is a simplified form of RigidEntity. It supports one way tool->other coupling, but has *no* internal dynamics and can only be created from a single mesh. This is a temporal workaround for differentiable rigid-soft interaction. This solver will be removed once differentiable mode is supported by the RigidSolver.
+    ToolEntity is a simplified form of RigidEntity. It supports one way tool->other coupling, but has *no* internal
+    dynamics and can only be created from a single mesh. This is a temporal workaround for differentiable rigid-soft
+    interaction. This solver will be removed once differentiable mode is supported by the RigidSolver.
 
     Parameters
     ----------
@@ -614,16 +625,23 @@ class MPMOptions(Options):
 
     Note
     ----
-    MPM is a hybrid lagrangian-eulerian method for simulating soft materials. In the eulerian phase, it uses a grid representation. The `upper_bound` and `lower_bound` specify the simulation domain, but a safety padding will be added to the actual grid boundary. Therefore, the actual boundary could be slightly tighter than the specified one. Note that the size of the domain affects the performance of the simulation, hence you should set it as tight as possible.
+    MPM is a hybrid lagrangian-eulerian method for simulating soft materials. In the eulerian phase, it uses a grid
+    representation. The ``upper_bound`` and ``lower_bound`` specify the simulation domain, but a safety padding will be
+    added to the actual grid boundary. Therefore, the actual boundary could be slightly tighter than the specified one.
+    Note that the size of the domain affects the performance of the simulation, hence you should set it as tight as
+    possible.
 
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from ``SimOptions``. Defaults to
+        None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Gravity force in N/kg. If none, it will inherit from ``SimOptions``. Defaults to None.
     particle_size : float, optional
-        Particle diameter in meters. If not given, we will compute `particle_size` based on `grid_density`, where `particle_size` will be linearly proportional to the grid cell size. A reference value is `particle_size = 0.01` for `grid_density = 64`. Defaults to None.
+        Particle diameter in meters. If not given, we will compute ``particle_size`` based on ``grid_density``, where
+        ``particle_size`` will be linearly proportional to the grid cell size. A reference value is
+        ``particle_size = 0.01`` for ``grid_density = 64``. Defaults to None.
     grid_density : float, optional
         Number of grid cells per meter. Defaults to 64.
     enable_CPIC : bool, optional
@@ -673,26 +691,33 @@ class SPHOptions(Options):
 
     Note
     ----
-    If spatial hashing parameters are not given, we will compute them automatically this way: For `hash_grid_cell_size`, we will set it to be the `support_radius`, which is essentially 2 * `particle_size`. For `hash_grid_res`, if a small bound is given, it's used for the hash grid; otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
+    If spatial hashing parameters are not given, we will compute them automatically this way: For
+    ``hash_grid_cell_size``, we will set it to be the ``support_radius``, which is essentially 2 * ``particle_size``.
+    For ``hash_grid_res``, if a small bound is given, it's used for the hash grid; otherwise, we use a default value of
+    a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
 
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from ``SimOptions``. Defaults to
+        None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Gravity force in N/kg. If none, it will inherit from ``SimOptions``. Defaults to None.
     particle_size : float, optional
         Particle diameter in meters. Defaults to 0.02.
     pressure_solver : str, optional
-        Pressure solver type. Current supported pressure solvers are 'WCSPH' and 'DFSPH'. Defaults to 'WCSPH'.
+        Pressure solver type. Current supported pressure solvers are ``"WCSPH"`` and ``"DFSPH"``. Defaults to
+        ``"WCSPH"``.
     lower_bound : tuple, shape (3,), optional
         Lower bound of the simulation domain. Defaults to (-100.0, -100.0, 0.0).
     upper_bound : tuple, shape (3,), optional
         Upper bound of the simulation domain. Defaults to (100.0, 100.0, 100.0).
     hash_grid_res : tuple, optional
-        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically. Defaults to None.
+        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically.
+        Defaults to None.
     hash_grid_cell_size : float, optional
-        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 2 * `particle_size`. If none, it will be computed automatically. Defaults to None.
+        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 2 * ``particle_size``. If
+        none, it will be computed automatically. Defaults to None.
     max_divergence_error : float, optional
         Maximum divergence error for DFSPH. Defaults to 0.1.
     max_density_error_percent : float, optional
@@ -757,14 +782,18 @@ class PBDOptions(Options):
 
     Note
     ----
-    If spatial hashing parameters are not given, we will compute them automatically this way: For `hash_grid_cell_size`, we will set it to be 1.25 * `particle_size`. For `hash_grid_res`, if a small bound is given, it's used for the hash grid; otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
+    If spatial hashing parameters are not given, we will compute them automatically this way: For
+    ``hash_grid_cell_size``, we will set it to be 1.25 * ``particle_size``. For ``hash_grid_res``, if a small bound is
+    given, it's used for the hash grid; otherwise, we use a default value of a 150^3 cube. Any grid bigger than that
+    will results in too many cells hence not ideal.
 
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from ``SimOptions``. Defaults to
+        None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Gravity force in N/kg. If none, it will inherit from ``SimOptions``. Defaults to None.
     max_stretch_solver_iterations : int, optional
         Maximum number of iterations for the solving stretch constraints. Defaults to 4.
     max_bending_solver_iterations : int, optional
@@ -778,9 +807,11 @@ class PBDOptions(Options):
     particle_size : float, optional
         Particle diameter in meters. Defaults to 1e-2.
     hash_grid_res : tuple, optional
-        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically. Defaults to None.
+        Size of the spatially-repetitive spatial hashing grid in meters. If none, it will be computed automatically.
+        Defaults to None.
     hash_grid_cell_size : float, optional
-        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 1.25 * `particle_size`. If none, it will be computed automatically. Defaults to None.
+        Size of the lattic cell of the spatial hashing grid in meters. This should be at least 1.25 * ``particle_size``.
+        If none, it will be computed automatically. Defaults to None.
     lower_bound : tuple, shape (3,), optional
         Lower bound of the simulation domain. Defaults to (-100.0, -100.0, 0.0).
     upper_bound : tuple, shape (3,), optional
@@ -850,34 +881,37 @@ class FEMOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from ``SimOptions``. Defaults to
+        None.
     gravity : tuple, optional
-        Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
+        Gravity force in N/kg. If none, it will inherit from ``SimOptions``. Defaults to None.
     damping : float, optional
         Damping factor. Defaults to 0.0.
     floor_height : float, optional
-        Height of the floor in meters. If none, it will inherit from `SimOptions`. Defaults to None.
+        Height of the floor in meters. If none, it will inherit from ``SimOptions``. Defaults to None.
     use_implicit_solver : bool, optional
         Whether to use the implicit solver. Defaults to False.
         Implicit solver is a more stable solver for FEM. It can be used with a large time step.
     n_newton_iterations : int, optional
-        Maximum number of Newton iterations. Defaults to 1. Only used when `use_implicit_solver` is True.
+        Maximum number of Newton iterations. Defaults to 1. Only used when ``use_implicit_solver`` is True.
     n_pcg_iterations : int, optional
-        Maximum number of PCG iterations. Defaults to 500. Only used when `use_implicit_solver` is True.
+        Maximum number of PCG iterations. Defaults to 500. Only used when ``use_implicit_solver`` is True.
     n_linesearch_iterations : int, optional
-        Maximum number of line search iterations. Defaults to 0. Only used when `use_implicit_solver` is True.
+        Maximum number of line search iterations. Defaults to 0. Only used when ``use_implicit_solver`` is True.
     newton_dx_threshold : float, optional
-        Threshold for the Newton solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
+        Threshold for the Newton solver. Defaults to 1e-6. Only used when ``use_implicit_solver`` is True.
     pcg_threshold : float, optional
-        Threshold for the PCG solver. Defaults to 1e-6. Only used when `use_implicit_solver` is True.
+        Threshold for the PCG solver. Defaults to 1e-6. Only used when ``use_implicit_solver`` is True.
     linesearch_c : float, optional
-        Line search sufficient decrease parameter. Defaults to 1e-4. Only used when `use_implicit_solver` is True.
+        Line search sufficient decrease parameter. Defaults to 1e-4. Only used when ``use_implicit_solver`` is True.
     linesearch_tau : float, optional
-        Line search step size reduction factor. Defaults to 0.5. Only used when `use_implicit_solver` is True.
+        Line search step size reduction factor. Defaults to 0.5. Only used when ``use_implicit_solver`` is True.
     damping_alpha : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 0.5. Only used when ``use_implicit_solver`` is
+        True.
     damping_beta : float, optional
-        Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when `use_implicit_solver` is True.
+        Rayleigh Damping factor for the implicit solver. Defaults to 5e-4. Only used when ``use_implicit_solver`` is
+        True.
     enable_vertex_constraints : bool, optional
         Whether to enable vertex constraints. Defaults to False.
     """
@@ -906,7 +940,8 @@ class SFOptions(Options):
     Parameters
     ----------
     dt : float, optional
-        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+        Time duration for each simulation step in seconds. If none, it will inherit from ``SimOptions``. Defaults to
+        None.
     """
 
     dt: PositiveFloat | None = None
