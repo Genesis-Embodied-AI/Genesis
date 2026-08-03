@@ -689,7 +689,7 @@ def _add_friction_constraint(
 
     contact_data_pos = collider_state.contact_data.pos[i_col, i_b]
     contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
-    contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+    contact_data_friction = collider_state.contact_data.friction[i_col, i_b][array_class.FrictionIdx.SLIDING]
     contact_data_sol_params = collider_state.contact_data.sol_params[i_col, i_b]
     contact_data_penetration = collider_state.contact_data.penetration[i_col, i_b]
 
@@ -712,10 +712,14 @@ def _add_friction_constraint(
 
     contact_data_friction_torsional = gs.qd_float(0.0)
     if qd.static(rigid_config.enable_torsional_friction):
-        contact_data_friction_torsional = collider_state.contact_data.friction_torsional[i_col, i_b]
+        contact_data_friction_torsional = collider_state.contact_data.friction[i_col, i_b][
+            array_class.FrictionIdx.TORSIONAL
+        ]
     contact_data_friction_rolling = gs.qd_float(0.0)
     if qd.static(rigid_config.enable_rolling_friction):
-        contact_data_friction_rolling = collider_state.contact_data.friction_rolling[i_col, i_b]
+        contact_data_friction_rolling = collider_state.contact_data.friction[i_col, i_b][
+            array_class.FrictionIdx.ROLLING
+        ]
     n, n_ang = _func_contact_row_direction(
         i_friction,
         contact_data_normal,
@@ -899,7 +903,7 @@ def _add_collision_constraints_per_contact(
 
             contact_data_pos = collider_state.contact_data.pos[i_col, i_b]
             contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
-            contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+            contact_data_friction = collider_state.contact_data.friction[i_col, i_b][array_class.FrictionIdx.SLIDING]
             contact_data_sol_params = collider_state.contact_data.sol_params[i_col, i_b]
             contact_data_penetration = collider_state.contact_data.penetration[i_col, i_b]
 
@@ -956,10 +960,14 @@ def _add_collision_constraints_per_contact(
 
             contact_data_friction_torsional = gs.qd_float(0.0)
             if qd.static(rigid_config.enable_torsional_friction):
-                contact_data_friction_torsional = collider_state.contact_data.friction_torsional[i_col, i_b]
+                contact_data_friction_torsional = collider_state.contact_data.friction[i_col, i_b][
+                    array_class.FrictionIdx.TORSIONAL
+                ]
             contact_data_friction_rolling = gs.qd_float(0.0)
             if qd.static(rigid_config.enable_rolling_friction):
-                contact_data_friction_rolling = collider_state.contact_data.friction_rolling[i_col, i_b]
+                contact_data_friction_rolling = collider_state.contact_data.friction[i_col, i_b][
+                    array_class.FrictionIdx.ROLLING
+                ]
 
             for i_friction in range(rows_per_contact):
                 n, n_ang = _func_contact_row_direction(
@@ -6626,7 +6634,7 @@ def func_update_contact_force(
         for i_c in range(collider_state.n_contacts[i_b]):
             i_col = collider_state.contact_sort_idx[i_c, i_b]
             contact_data_normal = collider_state.contact_data.normal[i_col, i_b]
-            contact_data_friction = collider_state.contact_data.friction[i_col, i_b]
+            contact_data_friction = collider_state.contact_data.friction[i_col, i_b][array_class.FrictionIdx.SLIDING]
             contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
             contact_data_link_b = collider_state.contact_data.link_b[i_col, i_b]
 

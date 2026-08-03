@@ -76,6 +76,18 @@ def V_SCALAR_FROM(dtype, value):
     return data
 
 
+# ======================================= Friction packing ========================================
+
+
+class FrictionIdx(IntEnum):
+    """Component order of every packed friction vector: GeomsInfo.friction, GeomsState.friction_ratio and
+    ContactData.friction all carry the coefficients in this order."""
+
+    SLIDING = 0
+    TORSIONAL = 1
+    ROLLING = 2
+
+
 # =========================================== ErrorCode ===========================================
 
 
@@ -694,9 +706,8 @@ class ContactData:
     penetration: qd.Tensor
     normal: qd.Tensor
     pos: qd.Tensor
+    # Sliding, torsional and rolling coefficients of the contact, packed in that order.
     friction: qd.Tensor
-    friction_torsional: qd.Tensor
-    friction_rolling: qd.Tensor
     sol_params: qd.Tensor
     force: qd.Tensor
     link_a: qd.Tensor
@@ -714,9 +725,7 @@ def get_contact_data(solver, max_candidate_contacts, requires_grad):
         normal=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         pos=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
         penetration=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B), needs_grad=requires_grad),
-        friction=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
-        friction_torsional=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
-        friction_rolling=V(dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
+        friction=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
         sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_candidate_contacts_, _B)),
         force=V(dtype=gs.qd_vec3, shape=(max_candidate_contacts_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_candidate_contacts_, _B)),
@@ -1954,9 +1963,8 @@ class GeomsInfo:
     data: qd.Tensor
     link_idx: qd.Tensor
     type: qd.Tensor
+    # Sliding, torsional and rolling coefficients of the geom, packed in that order.
     friction: qd.Tensor
-    friction_torsional: qd.Tensor
-    friction_rolling: qd.Tensor
     sol_params: qd.Tensor
     vert_num: qd.Tensor
     vert_start: qd.Tensor
@@ -1991,9 +1999,7 @@ def get_geoms_info(solver, is_active=True):
         data=V(dtype=gs.qd_vec7, shape=shape),
         link_idx=V(dtype=gs.qd_int, shape=shape),
         type=V(dtype=gs.qd_int, shape=shape),
-        friction=V(dtype=gs.qd_float, shape=shape),
-        friction_torsional=V(dtype=gs.qd_float, shape=shape),
-        friction_rolling=V(dtype=gs.qd_float, shape=shape),
+        friction=V(dtype=gs.qd_vec3, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         vert_num=V(dtype=gs.qd_int, shape=shape),
         vert_start=V(dtype=gs.qd_int, shape=shape),

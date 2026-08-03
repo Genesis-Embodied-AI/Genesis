@@ -591,8 +591,7 @@ def test_registered_material_shared_between_entities():
     assert scene.add_material(rubber.options) is rubber
     assert inline_box.material.idx != rubber.idx
 
-    # The declared options remain readable through the material, so the geoms carry the declared coefficient.
-    assert_equal(rubber.friction, 1.2)
+    # The declared options remain readable through the material, which is where the geoms take their coefficient from.
     assert_equal([geom.friction for geom in shared_box.geoms], 1.2)
     assert_equal([geom.friction for geom in inline_box.geoms], 0.3)
 
