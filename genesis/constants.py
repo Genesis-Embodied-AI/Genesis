@@ -118,10 +118,10 @@ class CTRL_MODE(IntEnum):
 # rigid solver intergrator
 class integrator(IntEnum):
     """
-    Time integration scheme of the rigid solver. Positions always advance with the velocity the step just produced,
-    and every scheme folds joint damping into the effective mass so that a stiff damping force cannot overshoot. They
-    differ in what else is folded in, and in when.
+    Time integration scheme of the rigid solver.
 
+    Positions always advance with the velocity the step just produced, and every scheme folds joint damping into the
+    effective mass so that a stiff damping force cannot overshoot. They differ in what else is folded in, and in when.
     `Euler` and `implicitfast` apply the correction in a second factorization of the mass matrix, performed for the
     entities that need it: those carrying damping, and under `implicitfast` those also carrying actuator bias.
     Setting `enable_mujoco_compatibility` skips that selection and refactors unconditionally.
@@ -219,10 +219,10 @@ class contact_resolution(IntEnum):
 # rigid solver broadphase traversal strategy
 class broadphase_traversal(IntEnum):
     """
-    Search strategy of the broad phase of collision detection in the rigid solver, which discards the geom pairs that
-    cannot collide before the more expensive narrow phase runs.
+    Search strategy of the broad phase of collision detection in the rigid solver.
 
-    The pairs that can never collide are filtered out once at build time, such as those sharing a link, made of two
+    The broad phase discards the geom pairs that cannot collide before the more expensive narrow phase runs. The pairs
+    that can never collide are filtered out once at build time, such as those sharing a link, made of two
     fixed geoms, or mismatched on contype / conaffinity. That leaves the valid pairs, up to ``O(n_geoms^2)`` of them and
     typically far fewer, which the strategies below search differently at every step.
 
@@ -231,9 +231,8 @@ class broadphase_traversal(IntEnum):
     SAP : int
         Sweep-and-prune. Sorts the geom axis-aligned bounding boxes (AABBs) along one axis in
         ``O(n_geoms log n_geoms)``, then checks only the pairs overlapping on that axis, for a cost per step of
-        ``O(n_geoms log n_geoms + k)`` in the
-        number k of such pairs, typically far below the full set of valid pairs. The sort and the sweep are
-        single-threaded, which uses GPU cores poorly.
+        ``O(n_geoms log n_geoms + k)`` in the number k of such pairs, typically far below the full set of valid pairs.
+        The sort and the sweep are single-threaded, which uses GPU cores poorly.
     ALL_VS_ALL : int
         Tests the AABBs of every valid pair at every step, dispatched in parallel across GPU threads, for a cost per
         step of ``O(n_valid_pairs)``. Efficient on GPU while the pair count stays moderate, and expensive in scenes with
@@ -254,8 +253,9 @@ class broadphase_traversal(IntEnum):
 # backend
 class backend(IntEnum):
     """
-    Compute backend the simulation runs on, selected with ``gs.init(backend=...)``. `gs.backend` holds the resolved
-    value once initialization returns.
+    Compute backend the simulation runs on, selected with ``gs.init(backend=...)``.
+
+    `gs.backend` holds the resolved value once initialization returns.
 
     Attributes
     ----------
@@ -311,8 +311,10 @@ class IMAGE_TYPE(IntEnum):
 # parallelize
 class PARA_LEVEL(IntEnum):
     """
-    Extent to which the solvers parallelize their loops, selected from the backend and the environment count, and
-    overridable through the ``GS_PARA_LEVEL`` environment variable.
+    Extent to which the solvers parallelize their loops.
+
+    Selected from the backend and the environment count, and overridable through the ``GS_PARA_LEVEL`` environment
+    variable.
 
     Attributes
     ----------
