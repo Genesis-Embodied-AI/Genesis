@@ -166,9 +166,7 @@ class constraint_solver(IntEnum):
 # rigid solver contact friction cone
 class friction_cone(IntEnum):
     """
-    Contact friction cone model, trading numerical robustness for physical accuracy. Prefer `pyramidal` for
-    robustness; choose `elliptic` when isotropic friction or firm static friction matters - e.g. objects that must
-    stay put at rest instead of slowly creeping.
+    Contact friction cone model, trading numerical robustness for physical accuracy.
 
     Attributes
     ----------
@@ -176,9 +174,9 @@ class friction_cone(IntEnum):
         Approximates the friction cone by a pyramid: robust and easy to solve, at the price of anisotropic friction,
         whose effective limit depends on the sliding direction.
     elliptic : int
-        The exact cone: friction is isotropic and bounded by its true Euclidean limit sqrt(f_t1^2 + f_t2^2) <= mu * f_n
-        in every direction, and with a high `impratio` it holds resting stacks without the slow tangential creep of
-        regularized friction, in return for being harder to solve and more sensitive numerically.
+        The exact cone: friction is isotropic and bounded in every direction by its true Euclidean limit
+        ``sqrt(f_t1^2 + f_t2^2) <= mu * f_n``, and with a high `impratio` it holds resting stacks without the slow
+        tangential creep of regularized friction, in return for being harder to solve and more sensitive numerically.
     """
 
     pyramidal = 0
@@ -188,23 +186,21 @@ class friction_cone(IntEnum):
 # rigid solver contact resolution
 class contact_resolution(IntEnum):
     """
-    How a contact's normal force and friction force are resolved against each other. Prefer `signorini` whenever
-    sliding contact matters; choose `convex` for parity with engines built on that formulation, or if a stiff scene
-    converges better under it.
+    How a contact's normal force and friction force are resolved against each other.
 
     Attributes
     ----------
     convex : int
         Poses the whole contact as a single smooth convex cost and lets the solver trade the normal residual against
-        the tangential one. Because the friction limit mu * f_n bounds the pair jointly, a contact sliding fast enough
-        that its friction rows demand more force than the cone allows can be answered by raising f_n instead: a body
+        the tangential one. Because the friction limit ``mu * f_n`` bounds the pair jointly, a contact sliding fast
+        enough that its friction rows demand more force than the cone allows can be answered by raising ``f_n``: a body
         launched horizontally then lifts off a flat floor, by more the faster it slides. In exchange the whole problem
         stays one convex program, which converges predictably on stiff articulated chains and high mass ratios.
     signorini : int
         Bounds friction against the normal force the contact has actually developed, so that force is set by the
         contact's own normal state rather than by tangential demand, and sliding can never inflate it - a sliding body
-        decelerates at mu * g and stays down at any speed. Contacts are resolved by successive approximation, costing
-        extra solver iterations and giving up the single-convex-program guarantee.
+        decelerates at ``mu * g`` and stays down at any speed. Contacts are resolved by successive approximation,
+        costing extra solver iterations and giving up the single-convex-program guarantee.
 
     Notes
     -----
@@ -227,19 +223,20 @@ class broadphase_traversal(IntEnum):
     cannot collide before the more expensive narrow phase runs.
 
     The pairs that can never collide are filtered out once at build time, such as those sharing a link, made of two
-    fixed geoms, or mismatched on contype / conaffinity. That leaves the valid pairs, up to O(n_geoms^2) of them and
+    fixed geoms, or mismatched on contype / conaffinity. That leaves the valid pairs, up to ``O(n_geoms^2)`` of them and
     typically far fewer, which the strategies below search differently at every step.
 
     Attributes
     ----------
     SAP : int
-        Sweep-and-prune. Sorts the geom axis-aligned bounding boxes (AABBs) along one axis in O(n_geoms log n_geoms),
-        then checks only the pairs overlapping on that axis, for a cost per step of O(n_geoms log n_geoms + k) in the
+        Sweep-and-prune. Sorts the geom axis-aligned bounding boxes (AABBs) along one axis in
+        ``O(n_geoms log n_geoms)``, then checks only the pairs overlapping on that axis, for a cost per step of
+        ``O(n_geoms log n_geoms + k)`` in the
         number k of such pairs, typically far below the full set of valid pairs. The sort and the sweep are
         single-threaded, which uses GPU cores poorly.
     ALL_VS_ALL : int
         Tests the AABBs of every valid pair at every step, dispatched in parallel across GPU threads, for a cost per
-        step of O(n_valid_pairs). Efficient on GPU while the pair count stays moderate, and expensive in scenes with
+        step of ``O(n_valid_pairs)``. Efficient on GPU while the pair count stays moderate, and expensive in scenes with
         many geoms, where that count grows quadratically. Requires a scene free of hibernation and of heterogeneous
         entities.
 
