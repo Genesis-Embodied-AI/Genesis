@@ -3,12 +3,14 @@ import os
 import pickle
 import sys
 import time
-import trimesh
 import weakref
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
 import torch
+
+import trimesh
+
 import quadrants as qd
 from quadrants.lang import impl
 
@@ -36,15 +38,15 @@ from genesis.options import (
     VisOptions,
 )
 from genesis.options.morphs import Morph
-from genesis.options.surfaces import Surface
-from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.options.recorders import RecorderOptions
+from genesis.options.renderers import Rasterizer, RendererOptions
+from genesis.options.surfaces import Surface
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
+from genesis.utils.misc import sanitize_index, tensor_to_array
 from genesis.utils.tools import FPSTracker
-from genesis.utils.misc import tensor_to_array, sanitize_index
-from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+from genesis.vis import Visualizer
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity

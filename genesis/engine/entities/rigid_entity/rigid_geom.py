@@ -2,10 +2,11 @@ import os
 import pickle as pkl
 from typing import TYPE_CHECKING
 
-import igl
 import numpy as np
-import skimage
 import torch
+
+import igl
+import skimage
 import trimesh
 
 import genesis as gs

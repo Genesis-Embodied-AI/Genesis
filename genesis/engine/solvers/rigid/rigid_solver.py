@@ -3,9 +3,10 @@ import os
 import sys
 from typing import TYPE_CHECKING, Literal
 
-import quadrants as qd
 import numpy as np
 import torch
+
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class

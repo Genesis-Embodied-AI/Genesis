@@ -1,21 +1,25 @@
 import inspect
 import math
 import os
+from functools import wraps
 from itertools import chain
 from typing import TYPE_CHECKING, Literal, Any, Hashable
-from functools import wraps
 
-import quadrants as qd
 import numpy as np
 import torch
+
 import trimesh
+
+import quadrants as qd
 
 import genesis as gs
 from genesis.engine.materials.base import Material
 from genesis.engine.materials.rigid import RigidMaterial
 from genesis.engine.mesh import InertialProperties
+from genesis.engine.states.entities import RigidEntityState
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
+from genesis.typing import UnitVec4FType, Vec3FType
 from genesis.utils import array_class
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
@@ -23,8 +27,6 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch, tensor_to_array
-from genesis.typing import UnitVec4FType, Vec3FType
-from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
 from .rigid_equality import RigidEquality
