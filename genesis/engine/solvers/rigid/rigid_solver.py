@@ -1670,15 +1670,7 @@ class RigidSolver(KinematicSolver):
             )
 
         kernel_apply_links_external_force(
-            links_idx,
-            envs_idx,
-            pos,
-            force,
-            self.dyn_state,
-            self.rigid_config,
-            ref_idx,
-            1 if local else 0,
-            1 if has_pos else 0,
+            links_idx, envs_idx, pos, force, self.dyn_state, self.rigid_config, ref_idx, local, has_pos
         )
 
     def apply_links_external_torque(
@@ -1734,7 +1726,7 @@ class RigidSolver(KinematicSolver):
             )
 
         kernel_apply_links_external_torque(
-            links_idx, envs_idx, torque, self.dyn_state, self.rigid_config, ref_idx, 1 if local else 0
+            links_idx, envs_idx, torque, self.dyn_state, self.rigid_config, ref_idx, local
         )
 
     def substep_pre_coupling(self, f):
