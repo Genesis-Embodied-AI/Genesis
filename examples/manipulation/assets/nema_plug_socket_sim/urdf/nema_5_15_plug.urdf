@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<robot name="nema_5_15_plug">
+  <link name="nema_5_15_plug">
+    <visual><geometry><mesh filename="../mesh/nema_5_15/asset_plug.obj"/></geometry></visual>
+    <collision><geometry><mesh filename="../mesh/nema_5_15/asset_plug.obj"/></geometry></collision>
+  </link>
+</robot>

@@ -1,0 +1,12 @@
+{
+  "clearance_mm": 3.0,
+  "min_sampled_gap_mm": 2.0,
+  "disassembly_dist_m": 0.018,
+  "blade": {
+    "w_mm": 6.35,
+    "t_mm": 1.524,
+    "l_mm": 16.0,
+    "spacing_mm": 12.7
+  },
+  "frame": "shared assembled frame; socket base at z=0; units meters"
+}

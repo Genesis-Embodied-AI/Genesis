@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<robot name="nema_1_15_socket">
+  <link name="nema_1_15_socket">
+    <visual><geometry><mesh filename="../mesh/nema_1_15/asset_socket.obj"/></geometry></visual>
+    <collision><geometry><mesh filename="../mesh/nema_1_15/asset_socket.obj"/></geometry></collision>
+  </link>
+</robot>
