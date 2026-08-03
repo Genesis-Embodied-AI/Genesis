@@ -427,21 +427,16 @@ class RigidOptions(Options):
         collision detection can emit (see 'max_collision_pairs'). Exceeding it at runtime halts the simulation with
         an error. None resolves it automatically: the pre-pruning worst case or, when contact pruning is enabled
         (see 'contact_pruning_tolerance'), 32 contact points per candidate link pair but no less than 512, whichever
-        is smaller.
+        is smaller.        
     integrator : gs.integrator, optional
-        Time integration scheme. Every scheme folds joint damping into the effective mass; they differ in what else is
-        folded in, and in whether that costs a second factorization of the mass matrix per step.
-        'gs.integrator.approximate_implicitfast' (default) never factorizes twice, at the price of applying the
-        correction to constraint and external-force accelerations it does not model. See 'gs.integrator' for the
-        description of each scheme.
+        Time integration scheme. See 'gs.integrator' for descriptions of each available type. 'Euler' and
+        'implicitfast' are consistent with their Mujoco counterparts. Defaults to 'approximate_implicitfast'.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
     constraint_solver : gs.constraint_solver, optional
-        Numerical method that solves the constraint system. 'gs.constraint_solver.Newton' (default) converges in few
-        iterations, each paying for a Cholesky factorization of the Hessian; 'gs.constraint_solver.CG' replaces that
-        factorization with a matrix-vector product per iteration and needs more iterations. See
-        'gs.constraint_solver' for the description of each method.
+        Numerical method that solves the constraint system. See 'gs.constraint_solver' for descriptions of each method.
+        Defaults to 'Newton'
     iterations : int, optional
         Maximum number of iterations for the constraint solver; the solve exits early once its convergence tolerance
         is met, so this bound only binds on hard steps. Defaults to 50.
