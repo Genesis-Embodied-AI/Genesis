@@ -163,8 +163,10 @@ class Simulator(RBC):
         if isinstance(material, gs.materials.Tool):
             entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.Rigid):
+            # Rigid entities hold the registered material rather than its options, so contact parameters resolved
+            # between two materials have a shared identity to key on.
             entity = self.rigid_solver.add_entity(
-                self.n_entities, material, morph, surface, visualize_contact, name=name
+                self.n_entities, self.scene.add_material(material), morph, surface, visualize_contact, name=name
             )
         elif isinstance(material, gs.materials.Kinematic):
             entity = self.kinematic_solver.add_entity(

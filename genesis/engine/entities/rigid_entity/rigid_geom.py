@@ -15,7 +15,7 @@ from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 if TYPE_CHECKING:
-    from genesis.engine.materials.rigid import Rigid as RigidMaterial
+    from genesis.engine.materials.rigid import RigidMaterial
     from genesis.engine.mesh import Mesh
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 

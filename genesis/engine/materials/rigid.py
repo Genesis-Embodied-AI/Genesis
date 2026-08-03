@@ -5,6 +5,7 @@ from pydantic import Field, StrictBool, model_validator
 import genesis as gs
 from genesis.typing import NonNegativeFloat, PositiveFloat, StrictInt, StrArrayType, ValidFloat
 
+from .base import MaterialHandle
 from .kinematic import Kinematic
 
 if TYPE_CHECKING:
@@ -150,3 +151,146 @@ class Rigid(Kinematic["RigidEntity"]):
 
         if self.coup_restitution != 0:
             gs.logger.warning("Non-zero `coup_restitution` could lead to instability. Use with caution.")
+
+
+class RigidMaterial(MaterialHandle[Rigid]):
+    """
+    A rigid material registered on a scene, as returned by 'Scene.add_material' and held by 'entity.material'.
+
+    Every entity built from the same handle shares one material identity, which is the granularity contact parameters
+    resolved between two materials are keyed on. The 'Rigid' options the handle was built from stay readable through
+    it, so 'entity.material.friction' and friends keep reading the declared value.
+    """
+
+    def _repr_brief(self):
+        return f"{self.__repr_name__()}: idx={self._idx}, friction={self.friction}"
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- properties -------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @property
+    def use_visual_raycasting(self) -> bool:
+        """
+        Whether the visual mesh is exposed to raycasting consumers (see 'gs.materials.Rigid').
+        """
+        return self._options.use_visual_raycasting
+
+    @property
+    def rho(self):
+        """
+        Get the density used to estimate mass (see 'gs.materials.Rigid').
+        """
+        return self._options.rho
+
+    @property
+    def friction(self):
+        """
+        Get the friction coefficient (see 'gs.materials.Rigid').
+        """
+        return self._options.friction
+
+    @property
+    def friction_torsional(self):
+        """
+        Get the torsional friction coefficient (see 'gs.materials.Rigid').
+        """
+        return self._options.friction_torsional
+
+    @property
+    def friction_rolling(self):
+        """
+        Get the rolling friction coefficient (see 'gs.materials.Rigid').
+        """
+        return self._options.friction_rolling
+
+    @property
+    def needs_coup(self) -> bool:
+        """
+        Whether the material participates in coupling with other solvers (see 'gs.materials.Rigid').
+        """
+        return self._options.needs_coup
+
+    @property
+    def coup_friction(self) -> float:
+        """
+        Get the friction used during coupling (see 'gs.materials.Rigid').
+        """
+        return self._options.coup_friction
+
+    @property
+    def coup_softness(self) -> float:
+        """
+        Get the softness of the coupling interaction (see 'gs.materials.Rigid').
+        """
+        return self._options.coup_softness
+
+    @property
+    def coup_restitution(self) -> float:
+        """
+        Get the restitution coefficient in collision coupling (see 'gs.materials.Rigid').
+        """
+        return self._options.coup_restitution
+
+    @property
+    def sdf_cell_size(self) -> float:
+        """
+        Get the target cell size of the SDF grid in meters (see 'gs.materials.Rigid').
+        """
+        return self._options.sdf_cell_size
+
+    @property
+    def sdf_min_res(self) -> int:
+        """
+        Get the minimum resolution of the SDF grid (see 'gs.materials.Rigid').
+        """
+        return self._options.sdf_min_res
+
+    @property
+    def sdf_max_res(self) -> int:
+        """
+        Get the maximum resolution of the SDF grid (see 'gs.materials.Rigid').
+        """
+        return self._options.sdf_max_res
+
+    @property
+    def gravity_compensation(self) -> float:
+        """
+        Get the gravity compensation factor (see 'gs.materials.Rigid').
+        """
+        return self._options.gravity_compensation
+
+    @property
+    def coup_type(self):
+        """
+        Get the IPC coupling mode (see 'gs.materials.Rigid').
+        """
+        return self._options.coup_type
+
+    @property
+    def coup_links(self):
+        """
+        Get the names of the links participating in coupling (see 'gs.materials.Rigid').
+        """
+        return self._options.coup_links
+
+    @property
+    def enable_coup_collision(self) -> bool:
+        """
+        Whether coupler collision is enabled for this material's links (see 'gs.materials.Rigid').
+        """
+        return self._options.enable_coup_collision
+
+    @property
+    def coup_collision_links(self):
+        """
+        Get the names of the links whose geoms participate in coupler collision (see 'gs.materials.Rigid').
+        """
+        return self._options.coup_collision_links
+
+    @property
+    def contact_resistance(self):
+        """
+        Get the IPC coupling contact resistance override (see 'gs.materials.Rigid').
+        """
+        return self._options.contact_resistance

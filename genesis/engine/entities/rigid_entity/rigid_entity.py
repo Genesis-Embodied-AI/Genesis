@@ -12,6 +12,7 @@ import trimesh
 
 import genesis as gs
 from genesis.engine.materials.base import Material
+from genesis.engine.materials.rigid import RigidMaterial
 from genesis.engine.mesh import InertialProperties
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
@@ -1241,7 +1242,7 @@ class KinematicEntity(Entity):
         # An explicitly set material density overrides any asset-authored per-geom density, as material friction does
         # for authored frictions. Dropping the keys up front keeps the align anchor, its all-or-none source check,
         # and the build-time inertial estimate consistently uniform-density.
-        if isinstance(self.material, gs.materials.Rigid) and self.material.rho is not None:
+        if isinstance(self.material, RigidMaterial) and self.material.rho is not None:
             for g_info in g_infos:
                 g_info.pop("density", None)
 
@@ -1340,7 +1341,7 @@ class KinematicEntity(Entity):
                 is_mass_explicit = None
 
         dynamics_hint = None
-        if isinstance(self.material, gs.materials.Rigid):
+        if isinstance(self.material, RigidMaterial):
             rho = self.material.rho
             if rho is None:
                 if self._solver._enable_mujoco_compatibility:

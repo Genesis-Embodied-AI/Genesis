@@ -16,7 +16,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.force_fields import ForceField
-from genesis.engine.materials.base import EntityT, Material
+from genesis.engine.materials.base import EntityT, Material, MaterialHandle, MaterialT
+from genesis.engine.materials.rigid import Rigid, RigidMaterial
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
     KinematicOptions,
@@ -197,6 +198,12 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
+        # Registered materials, in registration order, and the id() of the options each was registered from.
+        # Registration is keyed on the options object rather than its field values, so two materials that happen to
+        # carry the same friction and density stay distinct identities.
+        self._materials: list[MaterialHandle] = []
+        self._material_idx: dict[int, int] = {}
+
         self._backward_ready = False
         self._forward_ready = False
 
@@ -309,6 +316,45 @@ class Scene(RBC):
             self._sim = None
 
     @overload
+    def add_material(self, material: Rigid) -> RigidMaterial: ...
+
+    @overload
+    def add_material(self, material: MaterialT) -> MaterialHandle[MaterialT]: ...
+
+    @gs.assert_unbuilt
+    def add_material(self, material):
+        """
+        Register a material on the scene and get back the handle to pass to `add_entity`.
+
+        Registration is idempotent: passing the same options object again returns the same handle, so every entity
+        built from it shares one material identity. Passing a freshly constructed material to `add_entity` instead
+        registers one of its own, which is why a material declared inline stays private to its entity.
+
+        A shared handle also shares the per-morph tuning `add_entity` applies to its options: a rigid material used by
+        both a `gs.morphs.Primitive` and another morph type carries the reduced SDF resolution of the primitive
+        throughout.
+
+        Parameters
+        ----------
+        material : gs.materials.Rigid
+            The options describing the material. Rigid materials are the ones carrying a handle today.
+
+        Returns
+        -------
+        material : RigidMaterial
+            The registered material.
+        """
+        if not isinstance(material, Rigid):
+            gs.raise_exception(f"Only 'gs.materials.Rigid' materials can be registered. Got {material}.")
+
+        idx = self._material_idx.get(id(material))
+        if idx is None:
+            idx = len(self._materials)
+            self._material_idx[id(material)] = idx
+            self._materials.append(RigidMaterial(self, idx, material))
+        return self._materials[idx]
+
+    @overload
     def add_entity(
         self,
         morph: Morph | Iterable[Morph],
@@ -318,6 +364,28 @@ class Scene(RBC):
         vis_mode: str | None = ...,
         name: str | None = ...,
     ) -> "RigidEntity": ...
+
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: RigidMaterial = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> "RigidEntity": ...
+
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: MaterialHandle[Material[EntityT]] = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> EntityT: ...
 
     @overload
     def add_entity(
@@ -334,7 +402,7 @@ class Scene(RBC):
     def add_entity(
         self,
         morph: Morph | Iterable[Morph],
-        material: Material | None = None,
+        material: Material | MaterialHandle | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: str | None = None,
@@ -349,8 +417,9 @@ class Scene(RBC):
             The morph of the entity. If a list of morphs is provided, the entity will be heterogeneous
             (rigid only, single-link entities only). Each parallel environment will simulate a different
             geometry variant from the list.
-        material : gs.materials.Material | None, optional
-            The material of the entity. If None, use ``gs.materials.Rigid()``.
+        material : gs.materials.Material | MaterialHandle | None, optional
+            The material of the entity, either the options describing it or a material registered through
+            ``add_material`` and thereby shareable with other entities. If None, use ``gs.materials.Rigid()``.
         surface : gs.surfaces.Surface | None, optional
             The surface of the entity. If None, use ``gs.surfaces.Default()``.
         visualize_contact : bool
@@ -370,6 +439,11 @@ class Scene(RBC):
         """
         if material is None:
             material = gs.materials.Rigid()
+
+        # Every check and dispatch below keys on the material options, so an already-registered material is unwrapped
+        # here. The registration downstream is idempotent, restoring the very same handle for the entity.
+        if isinstance(material, MaterialHandle):
+            material = material.options
 
         if surface is None:
             # assign a local surface, otherwise modification will apply on global default surface
