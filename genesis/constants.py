@@ -121,10 +121,10 @@ class integrator(IntEnum):
     Time integration scheme of the rigid solver.
 
     Positions always advance with the velocity the step just produced, and every scheme folds joint damping into the
-    effective mass so that a stiff damping force cannot overshoot. They differ in what else is folded in, and in when.
-    `Euler` and `implicitfast` apply the correction in a second factorization of the mass matrix, performed for the
-    entities that need it: those carrying damping, and under `implicitfast` those also carrying actuator bias.
-    Setting `enable_mujoco_compatibility` skips that selection and refactors unconditionally.
+    effective mass so that a stiff damping force cannot overshoot. The schemes differ in which other forces they fold in
+    and at what point of the step. `Euler` and `implicitfast` apply the correction in a second factorization of the mass
+    matrix, performed for the entities that need it: those carrying damping, and under `implicitfast` those also
+    carrying actuator bias. Setting `enable_mujoco_compatibility` skips that selection and refactors unconditionally.
 
     Attributes
     ----------
@@ -136,7 +136,7 @@ class integrator(IntEnum):
     approximate_implicitfast : int
         Folds the same two corrections into the mass matrix as it is built, so one factorization serves the step. The
         correction then also reaches the accelerations produced by constraints and external forces, which it does not
-        model, in exchange for never factorizing twice.
+        model.
     """
 
     Euler = 0
@@ -155,8 +155,8 @@ class constraint_solver(IntEnum):
         Preconditioned conjugate gradient. Each iteration costs a matrix-vector product rather than a factorization,
         and the solve needs more of them to converge.
     Newton : int
-        Newton steps on the explicit Hessian, each a Cholesky factorization. Converges in a handful of iterations,
-        every one of them paying for that factorization.
+        Newton steps on the explicit Hessian, each a Cholesky factorization. Converges in a handful of iterations, each
+        paying for that factorization.
     """
 
     CG = 0
