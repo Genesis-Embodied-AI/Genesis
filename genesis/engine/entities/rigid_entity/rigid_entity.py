@@ -4510,7 +4510,7 @@ class RigidEntity(KinematicEntity):
         return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
 
     @gs.assert_built
-    def detect_collision(self, env_idx=0):
+    def detect_collision(self, env_idx: int = 0):
         """
         Detects collision for the entity. This only supports a single environment.
 

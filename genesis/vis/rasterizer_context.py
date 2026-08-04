@@ -943,7 +943,13 @@ class RasterizerContext:
         return node
 
     def draw_debug_arrow(
-        self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True, env_idx=None
+        self,
+        pos: "np.typing.ArrayLike",
+        vec: "np.typing.ArrayLike" = (0.0, 0.0, 1.0),
+        radius: float = 0.006,
+        color: "np.typing.ArrayLike" = (1.0, 0.0, 0.0, 0.5),
+        persistent: bool = True,
+        env_idx: int | None = None,
     ):
         vec = tensor_to_array(vec, dtype=np.float32)
         length = np.linalg.norm(vec)
@@ -1010,7 +1016,14 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0), env_idx=None):
+    def draw_contact_arrow(
+        self,
+        pos: "np.typing.ArrayLike",
+        radius: float = 0.005,
+        force: "np.typing.ArrayLike" = (0, 0, 1),
+        color: "np.typing.ArrayLike" = (0.0, 0.9, 0.8, 1.0),
+        env_idx: int | None = None,
+    ):
         length = (tensor_to_array(force) * self.contact_force_scale,)
         self.draw_debug_arrow(pos, length, radius, color=color, persistent=False, env_idx=env_idx)
 

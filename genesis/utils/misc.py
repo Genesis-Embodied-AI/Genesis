@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import field
 from importlib import import_module
 from itertools import combinations
-from typing import Any, NoReturn, Optional, Sequence
+from typing import Any, NoReturn, Sequence
 
 import cpuinfo
 import quadrants as qd
@@ -169,7 +169,7 @@ def set_random_seed(seed):
 
 
 def get_device(
-    backend: gs.constants.backend, device_idx: Optional[int] = None
+    backend: gs.constants.backend, device_idx: int | None = None
 ) -> tuple[torch.device, str, float, gs.constants.backend]:
     if backend == gs.gpu:
         if torch.cuda.is_available():

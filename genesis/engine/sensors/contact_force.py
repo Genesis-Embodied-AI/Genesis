@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING, Sequence, Type
 
 import numpy as np
 import quadrants as qd
@@ -115,7 +115,7 @@ class ContactFilterMetadataMixin:
     filter_links_idx: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
     filtered_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
-    def append_filter(self, filter_link_idx) -> None:
+    def append_filter(self, filter_link_idx: Sequence[int]) -> None:
         """Append one sensor's filter links as a new table row.
 
         Grows the column count to fit and back-fills unused slots (and empty filters) with ``-1``. The table keeps at

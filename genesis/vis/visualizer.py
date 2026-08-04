@@ -1,6 +1,7 @@
 import sys
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pyglet
 
 import genesis as gs
@@ -143,7 +144,22 @@ class Visualizer(RBC):
         self._renderer = None
 
     def add_camera(
-        self, res, pos, lookat, up, model, fov, aperture, focus_dist, GUI, spp, denoise, near, far, env_idx, debug
+        self,
+        res: tuple[int, int],
+        pos: "np.typing.ArrayLike",
+        lookat: "np.typing.ArrayLike",
+        up: "np.typing.ArrayLike",
+        model: str,
+        fov: float,
+        aperture: float,
+        focus_dist: float | None,
+        GUI: bool,
+        spp: int,
+        denoise: bool | None,
+        near: float,
+        far: float,
+        env_idx: int | None,
+        debug: bool,
     ):
         cam_idx = len([camera for camera in self._cameras if camera.debug == debug])
         camera = Camera(
