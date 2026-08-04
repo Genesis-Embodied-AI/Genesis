@@ -31,7 +31,7 @@ class MPMEntity(ParticleEntity):
         Scene object this entity belongs to.
     solver : Solver
         The solver responsible for simulating this entity.
-    material : Material
+    material : MaterialOptions
         Material used to determine physical behavior (e.g., Snow, Sand, Muscle).
     morph : Morph
         Shape description used for particle sampling.

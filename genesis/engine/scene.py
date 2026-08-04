@@ -18,7 +18,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.force_fields import ForceField
-from genesis.engine.materials.base import EntityT, Material, MaterialHandle
+from genesis.engine.materials.base import EntityT, Material, MaterialOptions
 from genesis.engine.materials.rigid import Rigid, RigidMaterial
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
@@ -200,7 +200,7 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
-        self._materials: list[MaterialHandle] = []
+        self._materials: list[Material] = []
         # Keyed on the identity of the options object, so two materials carrying the same friction and density
         # stay distinct. See add_material for the registration contract.
         self._material_idx: dict[int, int] = {}
@@ -413,7 +413,7 @@ class Scene(RBC):
     def add_entity(
         self,
         morph: Morph | Iterable[Morph],
-        material: Material[EntityT] = ...,
+        material: MaterialOptions[EntityT] = ...,
         surface: Surface | None = ...,
         visualize_contact: bool = ...,
         vis_mode: str | None = ...,
@@ -424,7 +424,7 @@ class Scene(RBC):
     def add_entity(
         self,
         morph: Morph | Iterable[Morph],
-        material: Material | MaterialHandle | None = None,
+        material: MaterialOptions | Material | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: str | None = None,
@@ -439,7 +439,7 @@ class Scene(RBC):
             The morph of the entity. If a list of morphs is provided, the entity will be heterogeneous
             (rigid only, single-link entities only). Each parallel environment will simulate a different
             geometry variant from the list.
-        material : gs.materials.Material | MaterialHandle | None, optional
+        material : gs.materials.MaterialOptions | gs.materials.Material | None, optional
             The material of the entity, either the options describing it or a material registered through
             ``add_material`` and thereby shareable with other entities. If None, use ``gs.materials.Rigid()``.
         surface : gs.surfaces.Surface | None, optional
@@ -464,7 +464,7 @@ class Scene(RBC):
 
         # Every check and dispatch below keys on the material options, so an already-registered material is unwrapped
         # here. The registration downstream is idempotent, restoring the very same handle for the entity.
-        if isinstance(material, MaterialHandle):
+        if isinstance(material, Material):
             material = material.options
 
         if surface is None:
@@ -610,7 +610,7 @@ class Scene(RBC):
     def add_stage(
         self,
         morph: gs.morphs.USD,
-        material: Material | None = None,
+        material: MaterialOptions | None = None,
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: Literal["visual", "collision"] = "visual",
@@ -622,7 +622,7 @@ class Scene(RBC):
         ----------
         morph : gs.morphs.USD
             The stage to add to the scene.
-        material : gs.materials.Material | None, optional
+        material : gs.materials.MaterialOptions | None, optional
             The material of the stage. If None, use ``gs.materials.Rigid()`` for all morphs.
         surface : gs.surfaces.Surface | None, optional
             The surface of the stage. If None, use ``gs.surfaces.Default()`` for all morphs.
@@ -884,7 +884,7 @@ class Scene(RBC):
     @gs.assert_unbuilt
     def add_emitter(
         self,
-        material: Material,
+        material: MaterialOptions,
         max_particles=20000,
         surface: Surface | None = None,
     ):
@@ -893,7 +893,7 @@ class Scene(RBC):
 
         Parameters
         ----------
-        material : gs.materials.Material
+        material : gs.materials.MaterialOptions
             The material of the fluid to be emitted. Must be an instance of `gs.materials.MPM.Base`,
             `gs.materials.SPH.Base`, `gs.materials.PBD.Particle` or `gs.materials.PBD.Liquid`.
         max_particles : int

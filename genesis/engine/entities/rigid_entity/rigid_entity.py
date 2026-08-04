@@ -13,7 +13,7 @@ import trimesh
 import quadrants as qd
 
 import genesis as gs
-from genesis.engine.materials.base import Material
+from genesis.engine.materials.base import MaterialOptions
 from genesis.engine.materials.rigid import RigidMaterial
 from genesis.engine.mesh import InertialProperties
 from genesis.engine.states.entities import RigidEntityState
@@ -102,7 +102,7 @@ class KinematicEntity(Entity):
         self,
         scene: "Scene",
         solver: "KinematicSolver",
-        material: Material,
+        material: MaterialOptions,
         morph: Morph,
         surface: Surface,
         idx: int,
@@ -2513,7 +2513,7 @@ class RigidEntity(KinematicEntity):
         self,
         scene: "Scene",
         solver: "RigidSolver",
-        material: Material,
+        material: MaterialOptions,
         morph: Morph,
         surface: Surface,
         idx: int,

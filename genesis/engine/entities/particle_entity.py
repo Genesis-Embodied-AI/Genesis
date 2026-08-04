@@ -37,7 +37,7 @@ class ParticleEntity(Entity):
         The scene object that this entity belongs to.
     solver : Solver
         The physics solver responsible for simulating the entity's particles.
-    material : Material
+    material : MaterialOptions
         The material definition, including sampling strategy and physical properties.
     morph : Morph
         Geometry or volumetric shape used for sampling particles (e.g., mesh, primitive).

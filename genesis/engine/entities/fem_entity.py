@@ -132,7 +132,7 @@ class FEMEntity(Entity):
         The simulation scene that this entity belongs to.
     solver : Solver
         The physics solver instance used for simulation.
-    material : Material
+    material : MaterialOptions
         The material properties defining elasticity, density, etc.
     morph : Morph
         The morph specification that defines the entity's shape.

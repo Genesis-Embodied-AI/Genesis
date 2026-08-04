@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 EntityT = TypeVar("EntityT", bound="Entity")
 
 
-class Material(Options, Generic[EntityT]):
+class MaterialOptions(Options, Generic[EntityT]):
     """
     The base class of materials.
 
@@ -25,10 +25,10 @@ class Material(Options, Generic[EntityT]):
     use_visual_raycasting: StrictBool = False
 
 
-MaterialT = TypeVar("MaterialT", bound=Material)
+MaterialOptionsT = TypeVar("MaterialOptionsT", bound=MaterialOptions)
 
 
-class MaterialHandle(RBC, Generic[MaterialT]):
+class Material(RBC, Generic[MaterialOptionsT]):
     """
     The base class of the materials registered on a scene through 'Scene.add_material'.
 
@@ -41,10 +41,10 @@ class MaterialHandle(RBC, Generic[MaterialT]):
     This class should *not* be instantiated directly.
     """
 
-    def __init__(self, scene: "Scene", idx: int, options: MaterialT):
+    def __init__(self, scene: "Scene", idx: int, options: MaterialOptionsT):
         self._scene: "Scene" = scene
         self._idx: int = idx
-        self._options: MaterialT = options
+        self._options: MaterialOptionsT = options
         self._uid = gs.UID()
 
     def _repr_brief(self):
@@ -76,7 +76,7 @@ class MaterialHandle(RBC, Generic[MaterialT]):
         return self._scene
 
     @property
-    def options(self) -> MaterialT:
+    def options(self) -> MaterialOptionsT:
         """
         Get the options this material was registered from.
         """

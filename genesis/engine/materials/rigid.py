@@ -5,7 +5,7 @@ from pydantic import Field, StrictBool, model_validator
 import genesis as gs
 from genesis.typing import NonNegativeFloat, PositiveFloat, StrictInt, StrArrayType, ValidFloat
 
-from .base import MaterialHandle
+from .base import Material
 from .kinematic import Kinematic
 
 if TYPE_CHECKING:
@@ -155,7 +155,7 @@ class Rigid(Kinematic["RigidEntity"]):
             gs.logger.warning("Non-zero `coup_restitution` could lead to instability. Use with caution.")
 
 
-class RigidMaterial(MaterialHandle[Rigid]):
+class RigidMaterial(Material[Rigid]):
     """
     A rigid material registered on a scene, as returned by 'Scene.add_material' and held by 'entity.material'.
 
