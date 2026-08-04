@@ -1259,7 +1259,6 @@ class RigidSolver(KinematicSolver):
         f : int
             Index of the substep within the current step.
         """
-        # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
 
         if self._requires_grad and f == 0:
