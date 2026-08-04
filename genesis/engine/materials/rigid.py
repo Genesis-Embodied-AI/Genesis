@@ -38,14 +38,15 @@ class Rigid(Kinematic["RigidEntity"]):
         'RigidMaterial.set_friction_pair'. If None, a default of 1.0 may be used or parsed from file.
     friction_torsional : float, optional
         Torsional friction coefficient, resisting relative spin about the contact normal. Expressed in meters, as it
-        stands for the effective contact patch radius over which sliding friction acts. Only effective when torsional
-        friction is enabled at the scene level (see 'RigidOptions.enable_torsional_friction'). If None, parsed from
-        file when available (MJCF), otherwise 0.005. Default is None.
+        stands for the effective contact patch radius over which sliding friction acts. Resolved for a contact as the
+        sliding coefficient is. Only effective when torsional friction is enabled at the scene level (see
+        'RigidOptions.enable_torsional_friction'). If None, parsed from file when available (MJCF), otherwise 0.005.
+        Default is None.
     friction_rolling : float, optional
         Rolling friction coefficient, resisting rolling about the two contact tangent axes. Expressed in meters, like
-        the torsional coefficient. Only effective when rolling friction is enabled at the scene level (see
-        'RigidOptions.enable_rolling_friction'). If None, parsed from file when available (MJCF), otherwise 0.0001.
-        Default is None.
+        the torsional coefficient, and resolved for a contact the same way. Only effective when rolling friction is
+        enabled at the scene level (see 'RigidOptions.enable_rolling_friction'). If None, parsed from file when
+        available (MJCF), otherwise 0.0001. Default is None.
     needs_coup : bool, optional
         Whether the material participates in coupling with other solvers. Default is True.
     coup_friction : float, optional
