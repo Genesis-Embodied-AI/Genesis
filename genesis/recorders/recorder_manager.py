@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any, Callable
 
 import genesis as gs
+from genesis.typing import IndexType
 
 if TYPE_CHECKING:
     from .base_recorder import Recorder, RecorderOptions
@@ -68,7 +69,7 @@ class RecorderManager:
             self._recorders.clear()
 
     @gs.assert_built
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         for recorder in self._recorders:
             recorder.reset(envs_idx)
             recorder.start()

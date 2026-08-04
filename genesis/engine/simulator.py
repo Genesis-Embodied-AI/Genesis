@@ -20,6 +20,7 @@ from genesis.options.solvers import (
     ToolOptions,
 )
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 
 from .entities import HybridEntity
 from .solvers import (
@@ -220,7 +221,7 @@ class Simulator(RBC):
     def destroy(self):
         self._sensor_manager.destroy()
 
-    def reset(self, state: SimState, envs_idx=None):
+    def reset(self, state: SimState, envs_idx: IndexType = None):
         for solver, solver_state in zip(self._solvers, state):
             if solver.n_entities > 0:
                 solver.set_state(0, solver_state, envs_idx)
@@ -430,7 +431,7 @@ class Simulator(RBC):
 
         return state
 
-    def set_gravity(self, gravity, envs_idx=None):
+    def set_gravity(self, gravity, envs_idx: IndexType = None):
         for solver in self._solvers:
             if solver.is_active:
                 solver.set_gravity(gravity, envs_idx)

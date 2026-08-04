@@ -208,7 +208,5 @@ else:
     FrozenDictType = Annotated[frozendict[_K, _V], _FrozenDictValidator]
 
 
-# Selection accepted by every index argument of the public API - environments, links, dofs, geoms and generalized
-# coordinates alike - as `sanitize_index` and `Scene._sanitize_envs_idx` declare it. This alias annotates signatures
-# instead of validating an option, so it carries no pydantic form and reads the same under either branch above.
-IndexType = int | range | slice | Sequence[int] | np.ndarray | torch.Tensor
+# Accepted types for selecting indices through public methods, used together with `sanitize_index`.
+IndexType = int | range | slice | Sequence[int] | np.ndarray | torch.Tensor | None

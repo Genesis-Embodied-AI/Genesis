@@ -18,6 +18,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.engine.materials.rigid import Rigid
+from genesis.typing import IndexType
 from genesis.utils.misc import assign_indexed_tensor, tensor_to_array, qd_to_torch, qd_to_numpy, indices_to_mask
 from genesis.utils.sdf import SDF
 
@@ -745,7 +746,7 @@ class Collider:
         """Enable SDF queries against this collider's geometry. Idempotent."""
         self._sdf.activate()
 
-    def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
+    def reset(self, envs_idx: IndexType = None, *, cache_only: bool = True) -> None:
         self._contact_data_cache.clear()
         if gs.use_zerocopy and self._contact_data is not None:
             envs_idx = slice(None) if envs_idx is None else envs_idx
@@ -779,7 +780,7 @@ class Collider:
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         collider_kernel_reset(envs_idx, self._collider_state, self._solver.rigid_config, cache_only)
 
-    def clear(self, envs_idx=None):
+    def clear(self, envs_idx: IndexType = None):
         self.reset(envs_idx, cache_only=False)
 
         if (

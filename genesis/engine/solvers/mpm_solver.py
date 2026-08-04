@@ -12,6 +12,7 @@ from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
+from genesis.typing import IndexType
 from genesis.utils.misc import DeprecationError, qd_to_torch
 
 from .base_solver import Solver
@@ -822,7 +823,7 @@ class MPMSolver(Solver):
             for entity in self._entities:
                 entity.load_ckpt(ckpt_name=ckpt_name)
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f, state, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.C, state.F, state.Jp, state.active)
 

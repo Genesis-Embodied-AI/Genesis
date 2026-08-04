@@ -4,6 +4,7 @@ import torch
 
 import genesis as gs
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -117,7 +118,7 @@ class Entity(RBC):
         return self._sim._sensor_manager.get_sensors_by_entity(self._idx)
 
     @gs.assert_built
-    def read_sensors(self, envs_idx=None) -> "dict[type[Sensor], torch.Tensor]":
+    def read_sensors(self, envs_idx: IndexType = None) -> "dict[type[Sensor], torch.Tensor]":
         """
         Read every sensor attached to this entity as a tensor per sensor class.
 

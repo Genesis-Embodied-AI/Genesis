@@ -11,6 +11,7 @@ import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.engine.states.cache import QueriedStates
+from genesis.typing import IndexType
 from genesis.utils.misc import to_gs_tensor, broadcast_tensor
 
 from .base_entity import Entity
@@ -110,7 +111,7 @@ class ParticleEntity(Entity):
         # Note that this attribute must only be used in forward pass
         self.active = False
 
-    def _sanitize_particles_idx_local(self, particles_idx_local=None, envs_idx=None):
+    def _sanitize_particles_idx_local(self, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         if particles_idx_local is None:
             particles_idx_local = range(self._n_particles)
 
@@ -128,7 +129,14 @@ class ParticleEntity(Entity):
         return particles_idx_local_.contiguous()
 
     def _sanitize_particles_tensor(
-        self, tensor, dtype, particles_idx=None, envs_idx=None, element_shape=(), *, batched=True
+        self,
+        tensor,
+        dtype,
+        particles_idx: IndexType = None,
+        envs_idx: IndexType = None,
+        element_shape=(),
+        *,
+        batched=True,
     ):
         n_particles = particles_idx.shape[-1] if particles_idx is not None else self._n_particles
         if batched:
@@ -495,7 +503,7 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @assert_active
-    def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx=None):
+    def _set_particles_target_state(self, key, name, element_shape, dtype, tensor, envs_idx: IndexType = None):
         if self.sim.requires_grad and self.sim.cur_t > 0.0:
             gs.logger.warning(
                 f"Manually setting particle '{name}'. This is not recommended because it breaks gradient flow."
@@ -504,7 +512,7 @@ class ParticleEntity(Entity):
         vel_ = self._sanitize_particles_tensor(tensor, dtype, None, envs_idx, element_shape)
         self._tgt[key] = to_gs_tensor(vel_)
 
-    def set_position(self, value, envs_idx=None):
+    def set_position(self, value, envs_idx: IndexType = None):
         """
         Set the position of all the particles individually, or the center of mass wrt the initial configuration of the
         particles as a whole.
@@ -524,7 +532,7 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("pos", "position", (3,), gs.tc_float, poss, envs_idx)
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None):
+    def set_particles_pos(self, poss, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the position of some particles.
 
@@ -552,7 +560,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_particles_pos(self, envs_idx=None):
+    def get_particles_pos(self, envs_idx: IndexType = None):
         """
         Retrieve current particle positions from the solver.
 
@@ -568,7 +576,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_velocity(self, vels, envs_idx=None):
+    def set_velocity(self, vels, envs_idx: IndexType = None):
         """
         Set the velocity of all the particles individually.
 
@@ -582,7 +590,7 @@ class ParticleEntity(Entity):
         self._set_particles_target_state("vel", "velocity", (3,), gs.tc_float, vels, envs_idx)
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None):
+    def set_particles_vel(self, vels, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the velocity of some particles.
 
@@ -610,7 +618,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_particles_vel(self, envs_idx=None):
+    def get_particles_vel(self, envs_idx: IndexType = None):
         """
         Retrieve current particle velocities from the solver.
 
@@ -626,7 +634,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def set_active(self, actives, envs_idx=None):
+    def set_active(self, actives, envs_idx: IndexType = None):
         """
         Set the activeness state of all the particles individually.
 
@@ -655,7 +663,7 @@ class ParticleEntity(Entity):
         self.set_active(gs.INACTIVE)
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None):
+    def set_particles_active(self, actives, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Set the velocity of some particles.
 
@@ -670,7 +678,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
-    def get_particles_active(self, envs_idx=None):
+    def get_particles_active(self, envs_idx: IndexType = None):
         """
         Retrieve current particle activeness boolean flags from the solver.
 
@@ -687,7 +695,7 @@ class ParticleEntity(Entity):
         raise NotImplementedError
 
     @gs.assert_built
-    def get_mass(self, envs_idx=None):
+    def get_mass(self, envs_idx: IndexType = None):
         """
         Return the total mass of the entity.
 
@@ -711,7 +719,7 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def find_closest_particle(self, pos, envs_idx=None):
+    def find_closest_particle(self, pos, envs_idx: IndexType = None):
         """
         Find the index of the particle closest to a given position.
 

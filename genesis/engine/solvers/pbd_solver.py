@@ -15,6 +15,7 @@ from genesis.engine.entities import (
 )
 from genesis.engine.entities.pbd_entity import PBDTetEntity
 from genesis.engine.states.solvers import PBDSolverState
+from genesis.typing import IndexType
 from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
 
@@ -819,7 +820,7 @@ class PBDSolver(Solver):
     def load_ckpt(self, ckpt_name):
         pass
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f, state, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.free)
 
@@ -949,7 +950,7 @@ class PBDSolver(Solver):
         particles_idx,
         link_idx: int,
         links_state: LinksState,
-        envs_idx=None,
+        envs_idx: IndexType = None,
     ) -> None:
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         self._sim._coupler.kernel_attach_pbd_to_rigid_link(particles_idx, envs_idx, link_idx, links_state)

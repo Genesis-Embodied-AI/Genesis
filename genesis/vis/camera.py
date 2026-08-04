@@ -10,6 +10,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.constants import IMAGE_TYPE
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils.image_exporter import as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.video_encoder import VideoEncoder
@@ -580,7 +581,7 @@ class Camera(RBC):
         point_cloud = point_cloud[..., :3].reshape((*depth_arr.shape, 3))
         return point_cloud, mask
 
-    def set_pose(self, transform=None, pos=None, lookat=None, up=None, envs_idx=None):
+    def set_pose(self, transform=None, pos=None, lookat=None, up=None, envs_idx: IndexType = None):
         """
         Set the pose of the camera.
         Note that `transform` has a higher priority than `pos`, `lookat`, and `up`.
@@ -829,7 +830,7 @@ class Camera(RBC):
         if error is not None:
             raise error
 
-    def get_pos(self, envs_idx=None):
+    def get_pos(self, envs_idx: IndexType = None):
         """The current position of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
@@ -838,7 +839,7 @@ class Camera(RBC):
             pos = pos + self._envs_offset[envs_idx]
         return pos
 
-    def get_lookat(self, envs_idx=None):
+    def get_lookat(self, envs_idx: IndexType = None):
         """The current lookat point of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
@@ -847,19 +848,19 @@ class Camera(RBC):
             lookat = lookat + self._envs_offset[envs_idx]
         return lookat
 
-    def get_up(self, envs_idx=None):
+    def get_up(self, envs_idx: IndexType = None):
         """The current up vector of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         return self._up[envs_idx]
 
-    def get_quat(self, envs_idx=None):
+    def get_quat(self, envs_idx: IndexType = None):
         """The current quaternion of the camera."""
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         return self._quat[envs_idx]
 
-    def get_transform(self, envs_idx=None):
+    def get_transform(self, envs_idx: IndexType = None):
         """
         The current transform matrix of the camera.
         """

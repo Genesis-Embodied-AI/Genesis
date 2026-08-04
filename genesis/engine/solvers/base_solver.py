@@ -14,6 +14,7 @@ from genesis.utils.misc import qd_to_torch, sanitize_index, tensor_to_array
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 
 
 if TYPE_CHECKING:
@@ -238,7 +239,7 @@ class Solver(RBC):
             self._gravity.from_numpy(gravity)
 
     @gs.assert_built
-    def set_gravity(self, gravity, envs_idx=None):
+    def set_gravity(self, gravity, envs_idx: IndexType = None):
         if self._gravity is None:
             gs.logger.debug("Gravity is not defined, skipping `set_gravity`.")
             return
@@ -249,7 +250,7 @@ class Solver(RBC):
         gravity_arg = self._gravity if type(self._gravity) is qd.VectorTensor else qd.wrap(self._gravity)
         _kernel_set_gravity(gravity, envs_idx, gravity_arg)
 
-    def get_gravity(self, envs_idx=None):
+    def get_gravity(self, envs_idx: IndexType = None):
         tensor = qd_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 

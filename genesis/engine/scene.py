@@ -40,6 +40,7 @@ from genesis.options.renderers import Rasterizer, RendererOptions
 from genesis.options.recorders import RecorderOptions
 from genesis.recorders import RecorderManager
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array, sanitize_index
 from genesis.vis import Visualizer
@@ -655,7 +656,7 @@ class Scene(RBC):
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
     @gs.assert_built
-    def read_sensors(self, envs_idx=None) -> "dict[type[Sensor], torch.Tensor]":
+    def read_sensors(self, envs_idx: IndexType = None) -> "dict[type[Sensor], torch.Tensor]":
         """
         Read every sensor in the scene as a tensor per sensor class.
 
@@ -979,7 +980,7 @@ class Scene(RBC):
         self._para_level = int(os.environ.get("GS_PARA_LEVEL", para_level))
 
     @gs.assert_built
-    def reset(self, state: SimState | None = None, envs_idx=None):
+    def reset(self, state: SimState | None = None, envs_idx: IndexType = None):
         """
         Resets the scene to its initial state.
 
@@ -995,7 +996,7 @@ class Scene(RBC):
         self._reset(state, envs_idx=envs_idx)
         self._recorder_manager.reset(envs_idx)
 
-    def _reset(self, state: SimState | None = None, *, envs_idx=None, keep_init: bool = False):
+    def _reset(self, state: SimState | None = None, *, envs_idx: IndexType = None, keep_init: bool = False):
         if self._is_built:
             if state is None:
                 state = self._init_state

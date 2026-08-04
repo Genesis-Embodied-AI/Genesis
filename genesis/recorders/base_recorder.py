@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Callable, Generic, TypeVar
 
 import genesis as gs
 from genesis.options.recorders import RecorderOptions
+from genesis.typing import IndexType
 from genesis.utils import data_to_array
 
 if TYPE_CHECKING:
@@ -76,7 +77,7 @@ class Recorder(Generic[T]):
         raise NotImplementedError(f"[{type(self).__name__}] cleanup() is not implemented.")
 
     @gs.assert_built
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         """
         Reset the recorder, e.g. by flushing stored data.
 

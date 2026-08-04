@@ -8,6 +8,7 @@ import torch
 import genesis as gs
 from genesis.options.sensors import types as _sensor_types_namespace
 from genesis.options.sensors.options import SensorOptions
+from genesis.typing import IndexType
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 from .base_sensor import Sensor, SharedSensorContext, SharedSensorMetadata
@@ -272,7 +273,7 @@ class SensorManager:
         self._sensors_metadata.clear()
         self._sensors_by_type.clear()
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         if not self._sensors_by_type:
             return
 
@@ -414,7 +415,7 @@ class SensorManager:
         return ring.at(hist_idx).transpose(0, 1)
 
     def read_sensors(
-        self, entity_idx: int | None = None, envs_idx=None, is_ground_truth: bool = False
+        self, entity_idx: int | None = None, envs_idx: IndexType = None, is_ground_truth: bool = False
     ) -> dict[int, torch.Tensor]:
         """
         Read the latest data of every sensor class in scope as a single tensor per class.

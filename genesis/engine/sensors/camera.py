@@ -18,6 +18,7 @@ from genesis.options.sensors import (
     SensorOptions,
 )
 from genesis.options.vis import VisOptions
+from genesis.typing import IndexType
 from genesis.utils.geom import (
     T_to_quat,
     T_to_trans,
@@ -355,7 +356,7 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, None, SharedSensor
         return np.asarray(envs_idx)
 
     @gs.assert_built
-    def read(self, envs_idx=None) -> CameraReturnType:
+    def read(self, envs_idx: IndexType = None) -> CameraReturnType:
         """Render if needed, then read the cached image from the backend-specific cache."""
         self._ensure_rendered_for_current_state()
         cached_image = self._get_image_cache_entry()

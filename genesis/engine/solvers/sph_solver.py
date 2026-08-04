@@ -8,6 +8,7 @@ import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import SPHEntity
 from genesis.engine.states.solvers import SPHSolverState
+from genesis.typing import IndexType
 
 from .base_solver import Solver
 
@@ -771,7 +772,7 @@ class SPHSolver(Solver):
     def load_ckpt(self, ckpt_name):
         pass
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f, state, envs_idx: IndexType = None):
         if self.is_active:
             self._kernel_set_state(f, state.pos, state.vel, state.active)
 

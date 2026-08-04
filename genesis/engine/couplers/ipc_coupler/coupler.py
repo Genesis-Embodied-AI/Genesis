@@ -14,6 +14,7 @@ from genesis.engine.entities.rigid_entity.rigid_link import RHO_MUJOCO, RHO_OBJE
 from genesis.engine.materials.FEM.cloth import Cloth
 from genesis.options.solvers import IPCCouplerOptions, RigidOptions
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils.misc import geometric_mean, harmonic_mean, qd_to_numpy, tensor_to_array
 
 if TYPE_CHECKING:
@@ -830,7 +831,7 @@ class IPCCoupler(RBC):
         # IPC doesn't support gradients yet
         pass
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         """Reset coupling state"""
         assert gs.logger is not None
         assert self._ipc_world is not None

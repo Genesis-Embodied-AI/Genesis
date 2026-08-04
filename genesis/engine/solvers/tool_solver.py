@@ -5,6 +5,7 @@ import quadrants as qd
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.states.solvers import ToolSolverState
 from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
+from genesis.typing import IndexType
 from genesis.utils.misc import *
 
 from .base_solver import Solver
@@ -72,7 +73,7 @@ class ToolSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None):
+    def set_state(self, f, state, envs_idx: IndexType = None):
         if state is not None:
             assert len(state) == len(self._entities)
             for i, entity in enumerate(self._entities):

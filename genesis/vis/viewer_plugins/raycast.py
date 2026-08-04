@@ -7,6 +7,7 @@ from typing_extensions import override
 
 import genesis as gs
 from genesis.ext.pyrender.camera import OrthographicCamera
+from genesis.typing import IndexType
 from genesis.utils.misc import qd_to_numpy, qd_to_torch, with_lock
 from genesis.utils.raycast import Ray, RayHit
 
@@ -125,7 +126,7 @@ class Raycaster:
 
     @with_lock
     def cast(
-        self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx=None
+        self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx: IndexType = None
     ) -> RayHit | None:
         """
         Cast a single ray against the BVH of each env in parallel and return the closest hit across envs and solvers.

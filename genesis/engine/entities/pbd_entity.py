@@ -6,6 +6,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.engine.entities.particle_entity import ParticleEntity
+from genesis.typing import IndexType
 
 
 class PBDBaseEntity(ParticleEntity):
@@ -46,14 +47,14 @@ class PBDBaseEntity(ParticleEntity):
             )
 
     @gs.assert_built
-    def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None):
+    def set_particles_pos(self, poss, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         poss = self._sanitize_particles_tensor(poss, gs.tc_float, particles_idx, envs_idx, (3,))
         self.solver._kernel_set_particles_pos(particles_idx, envs_idx, poss)
 
-    def get_particles_pos(self, envs_idx=None):
+    def get_particles_pos(self, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         poss = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_pos(self._particle_start, self.n_particles, envs_idx, poss)
@@ -62,14 +63,14 @@ class PBDBaseEntity(ParticleEntity):
         return poss
 
     @gs.assert_built
-    def set_particles_vel(self, vels, particles_idx_local=None, envs_idx=None):
+    def set_particles_vel(self, vels, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         vels = self._sanitize_particles_tensor(vels, gs.tc_float, particles_idx, envs_idx, (3,))
         self.solver._kernel_set_particles_vel(particles_idx, envs_idx, vels)
 
-    def get_particles_vel(self, envs_idx=None):
+    def get_particles_vel(self, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         vels = self._sanitize_particles_tensor(None, gs.tc_float, None, envs_idx, (3,))
         self.solver._kernel_get_particles_vel(self._particle_start, self.n_particles, envs_idx, vels)
@@ -78,14 +79,14 @@ class PBDBaseEntity(ParticleEntity):
         return vels
 
     @gs.assert_built
-    def set_particles_active(self, actives, particles_idx_local=None, envs_idx=None):
+    def set_particles_active(self, actives, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
         actives = self._sanitize_particles_tensor(actives, gs.tc_bool, particles_idx, envs_idx)
         self.solver._kernel_set_particles_active(particles_idx, envs_idx, actives)
 
-    def get_particles_active(self, envs_idx=None):
+    def get_particles_active(self, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         actives = self._sanitize_particles_tensor(None, gs.tc_bool, None, envs_idx)
         self.solver._kernel_get_particles_active(self._particle_start, self.n_particles, envs_idx, actives)
@@ -94,7 +95,7 @@ class PBDBaseEntity(ParticleEntity):
         return actives
 
     @gs.assert_built
-    def fix_particles_to_link(self, link_idx, particles_idx_local=None, envs_idx=None):
+    def fix_particles_to_link(self, link_idx, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         particles_idx_local = self._sanitize_particles_idx_local(particles_idx_local, envs_idx)
         particles_idx = particles_idx_local + self._particle_start
@@ -103,7 +104,7 @@ class PBDBaseEntity(ParticleEntity):
         )
 
     @gs.assert_built
-    def fix_particles(self, particles_idx_local=None, envs_idx=None, zero_velocity=True):
+    def fix_particles(self, particles_idx_local: IndexType = None, envs_idx: IndexType = None, zero_velocity=True):
         """
         Fix the position of some particles in the simulation.
 
@@ -124,7 +125,7 @@ class PBDBaseEntity(ParticleEntity):
         self.solver._kernel_fix_particles(particles_idx, envs_idx)
 
     @gs.assert_built
-    def release_particle(self, particles_idx_local=None, envs_idx=None):
+    def release_particle(self, particles_idx_local: IndexType = None, envs_idx: IndexType = None):
         """
         Release some of the attached particles, allowing them to move freely again.
 

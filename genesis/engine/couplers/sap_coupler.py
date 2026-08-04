@@ -13,6 +13,7 @@ from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
@@ -284,7 +285,7 @@ class SAPCoupler(RBC):
         self._init_pcg_fields()
         self._init_linesearch_fields()
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         pass
 
     def _init_tet_tables(self):

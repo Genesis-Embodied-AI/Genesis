@@ -8,6 +8,7 @@ import genesis.utils.sdf as sdf
 
 from genesis.options.solvers import LegacyCouplerOptions
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils import array_class
 from genesis.utils.array_class import LinksState
 from genesis.utils.geom import qd_inv_transform_by_trans_quat, qd_transform_by_trans_quat
@@ -101,7 +102,7 @@ class LegacyCoupler(RBC):
 
         self.reset(envs_idx=self.sim.scene._envs_idx)
 
-    def reset(self, envs_idx=None) -> None:
+    def reset(self, envs_idx: IndexType = None) -> None:
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             if envs_idx is None:
                 self.mpm_rigid_normal.fill(0)

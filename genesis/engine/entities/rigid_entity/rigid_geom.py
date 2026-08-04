@@ -12,6 +12,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 if TYPE_CHECKING:
@@ -383,7 +384,7 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
         """
         Get the position of the geom.
 
@@ -393,7 +394,7 @@ class RigidGeom(RBC):
         return self._solver.get_geoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
         """
         Get the quaternion of the geom.
 
@@ -918,7 +919,7 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
         """
         Get the position of the visual geom.
 
@@ -928,7 +929,7 @@ class RigidVisGeom(RBC):
         return self._solver.get_vgeoms_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
         """
         Get the quaternion of the visual geom.
 
@@ -938,7 +939,7 @@ class RigidVisGeom(RBC):
         return self._solver.get_vgeoms_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vAABB(self, envs_idx=None):
+    def get_vAABB(self, envs_idx: IndexType = None):
         """
         Get the axis-aligned bounding box (AABB) of the geom in world frame.
 
@@ -962,7 +963,7 @@ class RigidVisGeom(RBC):
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def set_vverts(self, vverts, envs_idx=None):
+    def set_vverts(self, vverts, envs_idx: IndexType = None):
         """Override this vgeom's visual vertex positions for rendering and sensors. See
         :meth:`KinematicEntity.set_vverts` for the full behavior; this method writes only this vgeom's slice.
 
@@ -982,7 +983,7 @@ class RigidVisGeom(RBC):
         )
 
     @gs.assert_built
-    def get_vverts(self, envs_idx=None):
+    def get_vverts(self, envs_idx: IndexType = None):
         """Return a copy of this vgeom's visual vertex positions in world space.
 
         Entities created with 'morph.enable_custom_vverts=True' read from the engine-owned 'vverts_state.pos' buffer.

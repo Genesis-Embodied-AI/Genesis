@@ -11,6 +11,7 @@ from genesis.options.recorders import (
     NPZFile as NPZFileWriterOptions,
     VideoFile as VideoFileWriterOptions,
 )
+from genesis.typing import IndexType
 from genesis.utils.video_encoder import VideoEncoder
 
 from .base_recorder import Recorder
@@ -33,7 +34,7 @@ class BaseFileWriter(Recorder):
         os.makedirs(os.path.abspath(os.path.dirname(self._options.filename)), exist_ok=True)
         self._initialize_writer()
 
-    def reset(self, envs_idx=None):
+    def reset(self, envs_idx: IndexType = None):
         super().reset(envs_idx)
 
         # no envs specific saving supported

@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.typing import IndexType
 from genesis.utils import array_class
 
 if TYPE_CHECKING:
@@ -252,7 +253,7 @@ class PathPlanner(ABC):
         path,
         iterations=50,
         ignore_geom_pairs=None,
-        envs_idx=None,
+        envs_idx: IndexType = None,
         is_plan_with_obj=False,
         obj_geom_start=-1,
         obj_geom_end=-1,
@@ -483,7 +484,7 @@ class RRT(PathPlanner):
         ignore_collision=False,
         ee_link_idx=None,
         obj_entity=None,
-        envs_idx=None,
+        envs_idx: IndexType = None,
     ):
         assert self._solver.n_envs > 0 or envs_idx is None
 
@@ -847,7 +848,7 @@ class RRTConnect(PathPlanner):
         ignore_collision=False,
         ee_link_idx=None,
         obj_entity=None,
-        envs_idx=None,
+        envs_idx: IndexType = None,
     ):
         assert self._solver.n_envs > 0 or envs_idx is None
 

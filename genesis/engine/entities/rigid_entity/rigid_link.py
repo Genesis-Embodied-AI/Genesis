@@ -7,7 +7,7 @@ import torch
 import genesis as gs
 from genesis.engine.mesh import InertialProperties
 from genesis.repr_base import RBC
-from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
+from genesis.typing import IndexType, LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
 from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
@@ -319,7 +319,7 @@ class KinematicLink(RBC):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
-    def get_pos(self, envs_idx=None, *, relative=True):
+    def get_pos(self, envs_idx: IndexType = None, *, relative=True):
         """
         Get the position of the link.
 
@@ -334,7 +334,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_pos(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None, *, relative=True):
+    def get_quat(self, envs_idx: IndexType = None, *, relative=True):
         """
         Get the quaternion of the link.
 
@@ -349,7 +349,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_quat(self._idx, envs_idx, relative=relative)[..., 0, :]
 
     @gs.assert_built
-    def get_vel(self, envs_idx=None) -> torch.Tensor:
+    def get_vel(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the linear velocity of the link in the world frame.
 
@@ -361,7 +361,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_vel(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_ang(self, envs_idx=None) -> torch.Tensor:
+    def get_ang(self, envs_idx: IndexType = None) -> torch.Tensor:
         """
         Get the angular velocity of the link in the world frame.
 
@@ -373,7 +373,7 @@ class KinematicLink(RBC):
         return self._solver.get_links_ang(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_vAABB(self, envs_idx=None):
+    def get_vAABB(self, envs_idx: IndexType = None):
         """
         Get the axis-aligned bounding box (AABB) of the link's visual body in the world frame by aggregating all
         the visual geometries associated with this link (`link.vgeoms`).

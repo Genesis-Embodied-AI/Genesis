@@ -16,6 +16,7 @@ from genesis.engine.couplers import SAPCoupler
 from genesis.engine.states.cache import QueriedStates
 from genesis.engine.states.entities import FEMEntityState
 from genesis.repr_base import RBC
+from genesis.typing import IndexType
 from genesis.utils.misc import to_gs_tensor, tensor_to_array, broadcast_tensor
 
 from .base_entity import Entity
@@ -227,7 +228,7 @@ class FEMEntity(Entity):
     # ----------------------------------- basic entity ops -------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_verts_idx_local(self, verts_idx_local=None, envs_idx=None):
+    def _sanitize_verts_idx_local(self, verts_idx_local: IndexType = None, envs_idx: IndexType = None):
         if verts_idx_local is None:
             verts_idx_local = range(self.n_vertices)
 
@@ -244,7 +245,9 @@ class FEMEntity(Entity):
 
         return verts_idx_local_.contiguous()
 
-    def _sanitize_verts_tensor(self, tensor, dtype, verts_idx=None, envs_idx=None, element_shape=(), *, batched=True):
+    def _sanitize_verts_tensor(
+        self, tensor, dtype, verts_idx: IndexType = None, envs_idx: IndexType = None, element_shape=(), *, batched=True
+    ):
         n_vertices = verts_idx.shape[-1] if verts_idx is not None else self.n_vertices
         if batched:
             assert envs_idx is not None
@@ -953,7 +956,13 @@ class FEMEntity(Entity):
         )
 
     def set_vertex_constraints(
-        self, verts_idx_local, target_poss=None, link=None, is_soft_constraint=False, stiffness=0.0, envs_idx=None
+        self,
+        verts_idx_local: IndexType,
+        target_poss=None,
+        link=None,
+        is_soft_constraint=False,
+        stiffness=0.0,
+        envs_idx: IndexType = None,
     ):
         """
         Set vertex constraints for specified vertices.
@@ -1021,7 +1030,7 @@ class FEMEntity(Entity):
             envs_idx,
         )
 
-    def update_constraint_targets(self, verts_idx_local, target_poss, envs_idx=None):
+    def update_constraint_targets(self, verts_idx_local: IndexType, target_poss, envs_idx: IndexType = None):
         """Update target positions for existing constraints."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring update_constraint_targets; constraints have not been initialized.")
@@ -1035,7 +1044,7 @@ class FEMEntity(Entity):
 
         self._solver._kernel_update_constraint_targets(verts_idx, target_poss, envs_idx)
 
-    def remove_vertex_constraints(self, verts_idx_local=None, envs_idx=None):
+    def remove_vertex_constraints(self, verts_idx_local: IndexType = None, envs_idx: IndexType = None):
         """Remove constraints from specified vertices, or all if None."""
         if not self._solver._constraints_initialized:
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")

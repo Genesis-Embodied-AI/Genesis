@@ -8,6 +8,7 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.options.sensors.tactile import TactileProbeSensorOptionsMixin
+from genesis.typing import IndexType
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 if TYPE_CHECKING:
@@ -254,7 +255,7 @@ class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
             shared_metadata.dead_dirty = True
 
     @gs.assert_built
-    def set_probe_gain(self, value, envs_idx=None):
+    def set_probe_gain(self, value, envs_idx: IndexType = None):
         """Set the per-probe measured-branch contact-depth gain for the given envs.
 
         ``value`` may be a scalar (broadcast to all probes of this sensor), or an array of length ``n_probes``.
