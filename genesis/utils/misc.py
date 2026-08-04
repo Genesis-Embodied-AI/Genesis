@@ -24,7 +24,7 @@ import torch
 
 
 import genesis as gs
-from genesis.typing import is_sequence
+from genesis.typing import IndexType, is_sequence
 
 
 LOGGER = logging.getLogger(__name__)
@@ -679,8 +679,8 @@ def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
 
 def qd_to_torch(
     value: qd.Tensor | qd.Field | qd.Ndarray,
-    row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
-    col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    row_mask: IndexType = None,
+    col_mask: IndexType = None,
     keepdim: bool = True,
     transpose: bool = False,
     *,
@@ -743,8 +743,8 @@ def qd_to_torch(
 
 def qd_to_numpy(
     value: qd.Tensor | qd.Field | qd.Ndarray,
-    row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
-    col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
+    row_mask: IndexType = None,
+    col_mask: IndexType = None,
     keepdim: bool = True,
     transpose: bool = False,
     *,
@@ -847,7 +847,7 @@ def qd_zero_grad(value) -> None:
 
 
 def sanitize_index(
-    index: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None,
+    index: IndexType,
     expected_size: int,
     max_size: int,
     dim: int,
@@ -890,7 +890,7 @@ def sanitize_index(
 
 
 def sanitize_indices(
-    indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
+    indices: Sequence[IndexType],
     expected_shape: Sequence[int],
     max_shape: Sequence[int],
     dim_names: tuple[str, ...] | list[str],
@@ -977,7 +977,7 @@ def broadcast_tensor(
 def sanitize_indexed_tensor(
     tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
-    indices: Sequence[int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None],
+    indices: Sequence[IndexType],
     expected_shape: tuple[int, ...] | list[int],
     max_shape: tuple[int, ...] | list[int],
     dim_names: tuple[str, ...] | list[str],

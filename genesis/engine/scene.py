@@ -1595,9 +1595,7 @@ class Scene(RBC):
     # ----------------------------------- utilities --------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _sanitize_envs_idx(
-        self, envs_idx: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None
-    ) -> torch.Tensor:
+    def _sanitize_envs_idx(self, envs_idx: IndexType) -> torch.Tensor:
         if envs_idx is None:
             return self._envs_idx
 
