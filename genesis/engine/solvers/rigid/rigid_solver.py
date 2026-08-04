@@ -1357,8 +1357,8 @@ class RigidSolver(KinematicSolver):
         """Backward pass for the constraint solver: seed dL_dqacc from acc.grad, run the adjoint solve, fold its
         outputs back into the autodiff grad fields, then reverse the constraint-row assembly."""
         constraint_state = self.constraint_solver.constraint_state
-        # Pure grad shuffles: in-place through zero-copy views when supported, kernel dispatch otherwise (see
-        # "Pure read-write data accessors on the hot path" in CLAUDE.md). gs.use_zerocopy encodes every zero-copy
+        # Pure grad shuffles: in-place through zero-copy views when supported, kernel dispatch otherwise (see "Pure
+        # read-write data accessors on the hot path" in CODING_GUIDELINES.md). gs.use_zerocopy encodes every zero-copy
         # availability condition for these buffers (standalone dense allocations with DLPack-supported dtypes; the
         # platform gates live in gs.init). torch (MPS) and quadrants do not share a compute stream on Metal, so the
         # writes are flushed before the next kernels (see set_base_links_quat).
